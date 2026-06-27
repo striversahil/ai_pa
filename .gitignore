@@ -1,0 +1,15 @@
+browser_profiles/
+.wwebjs_auth/
+.wwebjs_cache/
+__pycache__/
+env/
+.env
+.env.*
+.venv/
+venv/
+node_modules/
+prospects.json
+prospects_verified.json
+*.zip
+.next/
+out/

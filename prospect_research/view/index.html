@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verified Prospects Directory</title>
+    <meta name="description" content="Browse, search, and audit all verified B2B prospects.">
+    <link rel="stylesheet" href="/view/index.css">
+    <!-- Google Fonts Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- HEADER -->
+        <header class="app-header">
+            <div class="logo-area">
+                <i class="fa-solid fa-square-check logo-icon"></i>
+                <h1>Prospect Research <span>Verified Directory</span></h1>
+            </div>
+            <div class="nav-area">
+                <a href="/" class="nav-workbench-btn"><i class="fa-solid fa-compass-drafting"></i> Research Workbench</a>
+            </div>
+        </header>
+
+        <!-- MAIN LAYOUT Split Panel -->
+        <main class="app-main">
+            <!-- LEFT COLUMN: Directory list with filters -->
+            <section class="directory-panel" aria-label="Verified Prospects Directory">
+                <div class="search-filter-box">
+                    <div class="search-wrapper">
+                        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                        <input type="text" id="search-input" placeholder="Search company, city, products..." autocomplete="off">
+                        <button id="clear-search-btn" class="clear-btn" style="display: none;"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <div class="filter-controls">
+                        <select id="filter-state" class="filter-select">
+                            <option value="">All States</option>
+                            <!-- States will be populated dynamically -->
+                        </select>
+                        <div class="priority-btn-group">
+                            <button class="prio-filter-btn" data-prio="High" title="Filter High Priority">High</button>
+                            <button class="prio-filter-btn" data-prio="Medium" title="Filter Medium Priority">Med</button>
+                            <button class="prio-filter-btn" data-prio="Low" title="Filter Low Priority">Low</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="list-wrapper">
+                    <ul class="prospects-list" id="prospects-list">
+                        <!-- Populated dynamically -->
+                    </ul>
+                </div>
+            </section>
+
+            <!-- RIGHT COLUMN: Rich View Panel -->
+            <section class="viewer-panel" id="viewer-panel">
+                <div class="empty-state" id="viewer-empty-state">
+                    <i class="fa-solid fa-square-check empty-icon"></i>
+                    <h2>No Prospect Selected</h2>
+                    <p>Select a verified company from the list on the left to display its full research documentation, alignment metrics, and contact channels.</p>
+                </div>
+                <div class="viewer-content" id="viewer-content" style="display: none;">
+                    <!-- HERO CARD -->
+                    <div class="prospect-hero">
+                        <div class="hero-header">
+                            <span id="view-type" class="type-tag">Flour Mill</span>
+                            <span id="view-priority" class="priority-badge">High</span>
+                        </div>
+                        <h2 id="view-company-name">Company Name</h2>
+                        <div class="meta-row">
+                            <span id="view-state-city"><i class="fa-solid fa-location-dot"></i> City, State</span>
+                            <span id="view-capacity"><i class="fa-solid fa-gauge-high"></i> Capacity: 200,000 tons</span>
+                            <a id="view-website-link" href="#" target="_blank" class="web-btn"><i class="fa-solid fa-globe"></i> Visit Website</a>
+                        </div>
+                        <div class="products-block">
+                            <label><i class="fa-solid fa-box-open"></i> Key Products Needed:</label>
+                            <div class="tags-container" id="view-products-tags">
+                                <!-- Tags dynamically generated -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- VIEWER TABS -->
+                    <div class="viewer-tabs">
+                        <button class="tab-btn active" id="btn-tab-desc" data-tab="desc"><i class="fa-solid fa-file-lines"></i> Operations Overview</button>
+                        <button class="tab-btn" id="btn-tab-align" data-tab="align"><i class="fa-solid fa-shuffle"></i> Alignment & Strategy</button>
+                        <button class="tab-btn" id="btn-tab-contact" data-tab="contact"><i class="fa-solid fa-address-book"></i> Decision Makers & Contact</button>
+                    </div>
+
+                    <!-- TAB CONTENT -->
+                    <div class="tab-content-panel" id="tab-content-panel">
+                        <!-- Structured parsed content will render here -->
+                    </div>
+
+                    <!-- LINKS PANEL -->
+                    <div class="links-panel">
+                        <h3><i class="fa-solid fa-link"></i> Verified Source & Reference Links</h3>
+                        <div class="links-grid" id="view-links-grid">
+                            <!-- Clickable links dynamically generated -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    
+    <script src="/view/index.js"></script>
+</body>
+</html>

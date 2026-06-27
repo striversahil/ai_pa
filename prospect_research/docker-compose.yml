@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  research-finder:
+    build: .
+    container_name: prospect-research-finder
+    volumes:
+      - .:/app
+    environment:
+      - CONCURRENCY_LIMIT=${CONCURRENCY_LIMIT:-4}
+      - PROXY_URL=${PROXY_URL}
