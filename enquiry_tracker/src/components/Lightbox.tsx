@@ -58,6 +58,19 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
       className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 cursor-zoom-out animate-fade-in"
       onClick={onClose}
     >
+      {/* Download button */}
+      <a 
+        href={activeImage} 
+        download={`drawing-${currentIndex + 1}.png`}
+        className="absolute top-4 right-16 text-white hover:text-zinc-400 p-2 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors flex items-center justify-center"
+        onClick={(e) => e.stopPropagation()}
+        title="Download Image"
+      >
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+      </a>
+
       {/* Close button */}
       <button 
         className="absolute top-4 right-4 text-white hover:text-zinc-400 p-2 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10"

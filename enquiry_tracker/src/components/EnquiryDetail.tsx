@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { Agent, Enquiry, Comment } from "../mockData";
 import CommentNode from "./CommentNode";
+import ClientProfile from "./ClientProfile";
+import SpecificationsSection from "./SpecificationsSection";
+import ActivityTimeline from "./ActivityTimeline";
 
 interface EnquiryDetailProps {
   selectedEnquiry: Enquiry;
@@ -31,35 +34,11 @@ export default function EnquiryDetail({
 }: EnquiryDetailProps) {
   // Localized view states
   const [activeDetailTab, setActiveDetailTab] = useState<"comments" | "activity">("comments");
-  const [unmaskedPII, setUnmaskedPII] = useState<Record<string, boolean>>({});
   
   // Comment posting states
   const [commentInput, setCommentInput] = useState("");
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [commentImage, setCommentImage] = useState<string | null>(null);
-
-  // PII masking toggles
-  const togglePII = (enqId: string) => {
-    setUnmaskedPII(prev => ({
-      ...prev,
-      [enqId]: !prev[enqId]
-    }));
-  };
-
-  const maskEmail = (email: string) => {
-    if (!email) return "";
-    const parts = email.split("@");
-    if (parts.length < 2) return email;
-    const [name, domain] = parts;
-    if (name.length <= 2) return `${name[0]}***@${domain}`;
-    return `${name.slice(0, 2)}***@${domain}`;
-  };
-
-  const maskPhone = (phone: string) => {
-    if (!phone) return "";
-    if (phone.length <= 6) return "***-***";
-    return `${phone.slice(0, 4)} ***-*** ${phone.slice(-3)}`;
-  };
 
   // Nested comment trees calculations
   const nestedComments = useMemo(() => {
@@ -107,6 +86,18 @@ export default function EnquiryDetail({
     setCommentInput("");
     setReplyToCommentId(null);
     setCommentImage(null);
+  };
+
+  // Convert uploaded image file to data URI
+  const handleCommentImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCommentImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   return (
@@ -158,282 +149,83 @@ export default function EnquiryDetail({
       <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
         
         {/* Left Column Profile panel */}
-        <div className="space-y-6">
-          
-          {/* B2B Status card */}
-          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
-            <h3 className="font-heading font-extrabold text-base border-b border-[var(--border-card)] pb-3">Enquiry Overview</h3>
-            
-            <div className="space-y-3.5">
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Client Company</span>
-                <span className="font-bold text-base mt-0.5 block">{selectedEnquiry.clientCompany}</span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Pipeline Value</span>
-                <span className="font-heading font-extrabold text-xl text-brand-indigo block mt-0.5">₹{selectedEnquiry.estimatedValue.toLocaleString()}</span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1">Sales Stage</span>
-                <select 
-                  value={selectedEnquiry.status}
-                  onChange={(e) => onUpdateStatus(selectedEnquiry.id, e.target.value as Enquiry["status"])}
-                  className="w-full px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer"
-                >
-                  <option value="new">New</option>
-                  <option value="contacted">Contacted</option>
-                  <option value="qualified">Qualified</option>
-                  <option value="proposal">Proposal</option>
-                  <option value="negotiation">Negotiation</option>
-                  <option value="won">Closed Won</option>
-                  <option value="lost">Closed Lost</option>
-                </select>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1">Assigned Agent</span>
-                <select 
-                  value={selectedEnquiry.assignedAgentId}
-                  onChange={(e) => onUpdateAgent(selectedEnquiry.id, e.target.value)}
-                  className="w-full px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer"
-                >
-                  {agents.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* B2B Contacts with masking */}
-          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
-            <h3 className="font-heading font-extrabold text-base border-b border-[var(--border-card)] pb-3">Client Contact PII</h3>
-            
-            <div className="space-y-3.5">
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Contact Person</span>
-                <span className="font-semibold text-sm mt-0.5 block">{selectedEnquiry.contactName}</span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Email Address</span>
-                <div className="flex items-center justify-between gap-2 mt-0.5">
-                  <span className="text-sm font-semibold truncate">
-                    {unmaskedPII[selectedEnquiry.id] ? (
-                      selectedEnquiry.contactEmail
-                    ) : (
-                      <span className="font-mono tracking-wider bg-[var(--bg-input)] px-2 py-0.5 rounded text-xs">{maskEmail(selectedEnquiry.contactEmail)}</span>
-                    )}
-                  </span>
-                  <button onClick={() => togglePII(selectedEnquiry.id)} className="text-xs font-bold text-brand-indigo hover:underline flex-shrink-0 cursor-pointer bg-transparent border-0">
-                    {unmaskedPII[selectedEnquiry.id] ? "Hide" : "Reveal"}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Phone Number</span>
-                <div className="flex items-center justify-between gap-2 mt-0.5">
-                  <span className="text-sm font-semibold">
-                    {unmaskedPII[selectedEnquiry.id] ? (
-                      selectedEnquiry.contactPhone || "Not provided"
-                    ) : (
-                      <span className="font-mono tracking-wider bg-[var(--bg-input)] px-2 py-0.5 rounded text-xs">{maskPhone(selectedEnquiry.contactPhone)}</span>
-                    )}
-                  </span>
-                  <button onClick={() => togglePII(selectedEnquiry.id)} className="text-xs font-bold text-brand-indigo hover:underline flex-shrink-0 cursor-pointer bg-transparent border-0">
-                    {unmaskedPII[selectedEnquiry.id] ? "Hide" : "Reveal"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ClientProfile
+          selectedEnquiry={selectedEnquiry}
+          agents={agents}
+          onUpdateStatus={onUpdateStatus}
+          onUpdateAgent={onUpdateAgent}
+        />
 
         {/* Right Column with Requirements & discussion thread */}
         <div className="space-y-6">
-          {/* Technical Requirements & drawings block */}
-          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="border-b border-[var(--border-card)] pb-3">
-              <h3 className="font-heading font-extrabold text-base flex items-center gap-2">
-                <svg className="w-5 h-5 text-brand-indigo" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span>Technical Requirements & Drawings</span>
-              </h3>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">Specifications & Scope</span>
-                <p className="text-xs md:text-sm text-zinc-900 dark:text-white font-medium whitespace-pre-wrap leading-relaxed bg-[var(--bg-input)]/25 p-3.5 rounded-xl border border-[var(--border-card)]/50">
-                  {selectedEnquiry.description || "No specifications provided."}
-                </p>
-              </div>
-
-              {selectedEnquiry.imageUrls && selectedEnquiry.imageUrls.length > 0 && (
-                <div>
-                  <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-2">Technical Drawings & Photos ({selectedEnquiry.imageUrls.length})</span>
-                  <div className="flex flex-wrap gap-3">
-                    {/* Render Image 1 */}
-                    <div 
-                      className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
-                      onClick={() => onOpenLightbox(selectedEnquiry.imageUrls![0], selectedEnquiry.imageUrls, 0)}
-                    >
-                      <img 
-                        src={selectedEnquiry.imageUrls[0]} 
-                        alt="Technical drawing 1" 
-                        className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200" 
-                      />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-all duration-200">
-                        <svg className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                      </div>
-                    </div>
-
-                    {/* Render Image 2 */}
-                    {selectedEnquiry.imageUrls.length > 1 && (
-                      <div 
-                        className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
-                        onClick={() => onOpenLightbox(selectedEnquiry.imageUrls![1], selectedEnquiry.imageUrls, 1)}
-                      >
-                        <img 
-                          src={selectedEnquiry.imageUrls[1]} 
-                          alt="Technical drawing 2" 
-                          className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200" 
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-all duration-200">
-                          <svg className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                          </svg>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Render Image 3 (or more with overlay) */}
-                    {selectedEnquiry.imageUrls.length > 2 && (
-                      <div 
-                        className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
-                        onClick={() => onOpenLightbox(selectedEnquiry.imageUrls![2], selectedEnquiry.imageUrls, 2)}
-                      >
-                        <img 
-                          src={selectedEnquiry.imageUrls[2]} 
-                          alt="Technical drawing 3" 
-                          className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200" 
-                        />
-                        {selectedEnquiry.imageUrls.length > 3 ? (
-                          /* Instagram-style overlay showing remaining images count */
-                          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-white transition-all duration-200 group-hover:bg-black/50 select-none">
-                            <span className="text-xl font-extrabold tracking-tight">+{selectedEnquiry.imageUrls.length - 3}</span>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-300 mt-0.5">drawings</span>
-                          </div>
-                        ) : (
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-all duration-200">
-                            <svg className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+          
+          <SpecificationsSection
+            selectedEnquiry={selectedEnquiry}
+            onOpenLightbox={onOpenLightbox}
+          />
 
           {/* Right Column Twitter threads & audit log */}
           <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm flex flex-col min-h-[500px]">
             <div className="flex items-center justify-between border-b border-[var(--border-card)] pb-4 mb-4">
-              <span className="font-heading font-extrabold text-base md:text-lg">Activity Discussion</span>
-              
-              <div className="flex bg-[var(--bg-input)] p-1 rounded-xl">
+              <div className="flex gap-4">
                 <button 
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer ${activeDetailTab === "comments" ? "bg-[var(--bg-card)] shadow-sm text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}
                   onClick={() => setActiveDetailTab("comments")}
+                  className={`text-sm font-bold pb-2 relative transition-all cursor-pointer ${activeDetailTab === "comments" ? "text-brand-indigo after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-brand-indigo" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
                   type="button"
                 >
-                  Twitter Thread
+                  Confirmations Timeline
                 </button>
                 <button 
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer ${activeDetailTab === "activity" ? "bg-[var(--bg-card)] shadow-sm text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}
                   onClick={() => setActiveDetailTab("activity")}
+                  className={`text-sm font-bold pb-2 relative transition-all cursor-pointer ${activeDetailTab === "activity" ? "text-brand-indigo after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-brand-indigo" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
                   type="button"
                 >
-                  Audit Log
+                  Activity Audit Logs
                 </button>
               </div>
             </div>
 
-            {/* TAB 1: Twitter-like Thread comments */}
+            {/* TAB 1: Threaded Discussion Feed */}
             {activeDetailTab === "comments" && (
-              <div className="flex flex-col flex-1 gap-6">
+              <div className="space-y-5 flex-grow flex flex-col">
                 
-                {/* Comment Input at the Top */}
-                <div className="pb-4 border-b border-[var(--border-card)]">
+                {/* Input block at the top */}
+                <div className="bg-[var(--bg-input)]/20 p-4 rounded-xl border border-[var(--border-card)] mb-2">
                   {replyToCommentId && (
-                    <div className="mb-2.5 p-2 bg-indigo-500/10 text-brand-indigo rounded-xl text-xs font-semibold flex justify-between items-center">
-                      <span>
-                        Replying to @{agents.find(a => a.id === comments.find(c => c.id === replyToCommentId)?.agentId)?.name || "Agent"}
-                      </span>
-                      <button onClick={() => setReplyToCommentId(null)} className="text-sm font-bold hover:opacity-75 cursor-pointer bg-transparent border-0" type="button">×</button>
+                    <div className="flex items-center justify-between bg-brand-indigo/10 px-3 py-1.5 rounded-lg mb-2 text-xs">
+                      <span className="font-semibold text-brand-indigo">Replying to comment...</span>
+                      <button onClick={() => setReplyToCommentId(null)} className="text-zinc-400 hover:text-zinc-200 cursor-pointer font-bold bg-transparent border-0">&times;</button>
                     </div>
                   )}
+                  
+                  <form onSubmit={handlePostComment} className="space-y-3">
+                    <textarea 
+                      value={commentInput}
+                      onChange={(e) => setCommentInput(e.target.value)}
+                      placeholder={replyToCommentId ? "Write a threaded reply..." : "Type your update or status confirmation..."}
+                      className="w-full bg-transparent border-0 text-sm outline-none resize-none placeholder-[var(--text-tertiary)] text-[var(--text-primary)] min-h-[60px]"
+                    />
 
-                  <form onSubmit={handlePostComment} className="flex gap-3">
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-xs flex-shrink-0" style={{ backgroundColor: currentAgent.color }}>
-                      {currentAgent.initials}
-                    </div>
-                    <div className="flex-grow flex flex-col gap-2">
-                      <textarea 
-                        value={commentInput}
-                        onChange={(e) => setCommentInput(e.target.value)}
-                        placeholder={replyToCommentId ? "Post your reply..." : "Log an update or confirmation inside this enquiry..."}
-                        className="w-full px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm resize-y min-h-[72px] text-[var(--text-primary)]"
-                      />
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                          <span className="text-[10px] text-[var(--text-tertiary)]">Posting as <strong>{currentAgent.name}</strong></span>
-                          <label className="p-1.5 rounded-lg bg-[var(--bg-input)] hover:opacity-85 text-[var(--text-secondary)] hover:text-brand-indigo cursor-pointer transition-all duration-200" title="Attach photo">
-                            <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                            <input 
-                              type="file" 
-                              accept="image/*" 
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  const reader = new FileReader();
-                                  reader.onload = (evt) => {
-                                    setCommentImage(evt.target?.result as string);
-                                  };
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                              className="hidden" 
-                            />
-                          </label>
-                          {commentImage && (
-                            <div className="relative w-8 h-8 border border-[var(--border-card)] rounded-lg overflow-hidden group">
-                              <img src={commentImage} alt="Preview" className="w-full h-full object-cover" />
-                              <button 
-                                type="button" 
-                                onClick={() => setCommentImage(null)}
-                                className="absolute inset-0 bg-black/60 flex items-center justify-center text-white text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer"
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        <button type="submit" className="bg-brand-indigo hover:opacity-90 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-all duration-200 cursor-pointer">
-                          {replyToCommentId ? "Reply" : "Comment"}
-                        </button>
+                    {commentImage && (
+                      <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-[var(--border-card)]">
+                        <img src={commentImage} alt="Attachment preview" className="w-full h-full object-cover" />
+                        <button type="button" onClick={() => setCommentImage(null)} className="absolute top-1 right-1 bg-black/75 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs cursor-pointer font-bold border-0">&times;</button>
                       </div>
+                    )}
+
+                    <div className="flex justify-between items-center pt-2 border-t border-[var(--border-card)]/50">
+                      <div className="flex gap-2">
+                        <label className="p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer rounded-lg bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-all">
+                          <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          <input type="file" onChange={handleCommentImageUpload} accept="image/*" className="hidden" />
+                        </label>
+                      </div>
+
+                      <button type="submit" className="bg-brand-indigo hover:opacity-90 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-all duration-200 cursor-pointer">
+                        {replyToCommentId ? "Reply" : "Comment"}
+                      </button>
                     </div>
                   </form>
                 </div>
@@ -448,7 +240,7 @@ export default function EnquiryDetail({
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {[...nestedComments].sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(comment => (
+                    {nestedComments.map(comment => (
                       <CommentNode 
                         key={comment.id} 
                         comment={comment} 
@@ -464,27 +256,10 @@ export default function EnquiryDetail({
 
             {/* TAB 2: Audit Logs timeline */}
             {activeDetailTab === "activity" && (
-              <div className="space-y-4">
-                {[...(selectedEnquiry.activities || [])]
-                  .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                  .map(act => {
-                    const actAgent = agents.find(a => a.id === act.agentId);
-                    return (
-                      <div key={act.id} className="flex gap-3 pl-4 relative before:absolute before:left-0 before:top-2 before:bottom-0 before:w-0.5 before:bg-[var(--border-card)]">
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs md:text-sm font-medium">
-                            {act.text}{" "}
-                            {actAgent && <strong className="text-[var(--text-primary)]">({actAgent.name})</strong>}
-                          </span>
-                          <span className="text-[10px] text-[var(--text-tertiary)] mt-0.5">
-                            {new Date(act.timestamp).toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })
-                }
-              </div>
+              <ActivityTimeline
+                activities={selectedEnquiry.activities}
+                agents={agents}
+              />
             )}
           </div>
         </div>

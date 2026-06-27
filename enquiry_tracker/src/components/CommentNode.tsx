@@ -13,18 +13,36 @@ export default function CommentNode({ comment, agents, onReplyClick, onImageClic
     return agents.find(a => a.id === comment.agentId) || { id: 0, name: "Agent", initials: "A", color: "#888", status: "inactive" };
   }, [agents, comment.agentId]);
 
+  const formatDiscordTimestamp = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    if (date.toDateString() === now.toDateString()) {
+      return `Today at ${timeStr}`;
+    }
+    
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (date.toDateString() === yesterday.toDateString()) {
+      return `Yesterday at ${timeStr}`;
+    }
+    
+    return `${date.toLocaleDateString([], { month: '2-digit', day: '2-digit', year: 'numeric' })} ${timeStr}`;
+  };
+
   return (
     <div className="comment-node-container space-y-3">
       {/* Self comment card */}
-      <div className="flex gap-3 hover:bg-[var(--bg-input)]/45 p-2 rounded-xl transition-all duration-200 z-10 relative">
+      <div className="flex gap-3 hover:bg-[var(--bg-input)]/30 px-3 py-1.5 rounded-lg transition-all duration-150 z-10 relative">
         <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-xs flex-shrink-0" style={{ backgroundColor: authorAgent.color }}>
           {authorAgent.initials}
         </div>
         <div className="flex-grow space-y-1">
           <div className="flex items-baseline gap-2">
-            <span className="font-extrabold text-sm text-[var(--text-primary)]">{authorAgent.name}</span>
-            <span className="text-[10px] text-[var(--text-tertiary)]">
-              {new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(comment.createdAt).toDateString().slice(4, 10)}
+            <span className="font-extrabold text-sm text-[var(--text-primary)] hover:underline cursor-pointer">{authorAgent.name}</span>
+            <span className="text-[10px] text-[var(--text-tertiary)] font-medium">
+              {formatDiscordTimestamp(comment.createdAt)}
             </span>
           </div>
           <p className="text-xs md:text-sm text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">{comment.content}</p>

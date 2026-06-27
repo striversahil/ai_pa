@@ -1,38 +1,72 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-indigo: #6366f1;
-  --color-brand-emerald: #10b981;
-  --color-brand-amber: #f59e0b;
-  --color-brand-rose: #f43f5e;
+  --color-brand-indigo: #5865f2;
+  --color-brand-emerald: #248046;
+  --color-brand-amber: #f0b232;
+  --color-brand-rose: #f04747;
 }
 
 :root {
-  --bg-app: #f9fafb;
-  --bg-card: #ffffff;
-  --border-card: #e5e7eb;
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-tertiary: #9ca3af;
-  --border-thread: #e5e7eb;
-  --bg-input: #f3f4f6;
+  --bg-app: #ffffff;
+  --bg-card: #f2f3f5;
+  --bg-sidebar: #e3e5e8;
+  --border-card: #e3e5e8;
+  --text-primary: #060607;
+  --text-secondary: #2e3338;
+  --text-tertiary: #5c6370;
+  --border-thread: #e3e5e8;
+  --bg-input: #e3e5e8;
 }
 
 .dark {
-  --bg-app: #09090b;
-  --bg-card: #18181b;
-  --border-card: #27272a;
-  --text-primary: #fafafa;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #52525b;
-  --border-thread: #27272a;
-  --bg-input: #27272a;
+  --bg-app: #1e1f22;
+  --bg-card: #2b2d31;
+  --bg-sidebar: #111214;
+  --border-card: #3f4248;
+  --text-primary: #f2f3f5;
+  --text-secondary: #dbdee1;
+  --text-tertiary: #949ba4;
+  --border-thread: #3f4248;
+  --bg-input: #111214;
 }
 
 body {
   background-color: var(--bg-app);
   color: var(--text-primary);
   transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Custom scrollbar styling to match Discord */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-app);
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #2e3035;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c4c9ce;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #1a1b1e;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a2a8ae;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #111214;
 }
 
 /* Vertical Thread Connector Lines for Twitter Thread */
