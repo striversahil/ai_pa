@@ -1,10 +1,12 @@
-@import "tailwindcss";
-
 @theme {
   --color-brand-indigo: #5865f2;
   --color-brand-emerald: #248046;
   --color-brand-amber: #f0b232;
   --color-brand-rose: #f04747;
+
+  --font-heading: var(--font-geist-sans), "Inter", sans-serif;
+  --font-sans: var(--font-geist-sans), "Inter", sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
 }
 
 :root {
@@ -132,4 +134,3 @@ body {
 .animate-fade-in {
   animation: fade-in 0.2s ease-out forwards;
 }
-
