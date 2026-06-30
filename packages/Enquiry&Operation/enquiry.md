@@ -8,7 +8,7 @@ This document outlines the walkthrough and code logic to prevent nested group me
 
 ### A. Logical Grouping (Time-Proximity)
 When users send an enquiry, they often send a text message first, followed immediately by an image/document or vice-versa. 
-* **Rule**: If a message comes from the same sender in the same chat within a **90-second threshold**, it is clubbed into the same `logicalGroupId`.
+* **Rule**: If a message is **not a reply/tag** and comes from the same sender in the same chat within a **90-second threshold**, it is clubbed into the same `logicalGroupId`. If the message is a reply/tag (i.e. it quotes another message), it is never clubbed using time-proximity.
 
 ### B. Thread Inheritance (Deep Tagging)
 When someone replies to/tags any message in the group, they are discussing that specific enquiry topic.
@@ -91,14 +91,16 @@ async function resolveLogicalGroupId(msg, isReply, quotedMsgId, sender, chat) {
         }
     }
 
-    // RULE 2: Time-Proximity Grouping (If same sender & sent within 90s, inherit group)
-    const lastMsgInfo = chatLastMessages.get(chatId);
-    if (lastMsgInfo && 
-        lastMsgInfo.sender === sender && 
-        (currentTimestampMs - lastMsgInfo.timestamp) <= TIME_THRESHOLD_MS) {
-        
-        console.log(` └── 👥 Clubbed with previous message under group: ${lastMsgInfo.logicalGroupId}`);
-        return lastMsgInfo.logicalGroupId;
+    // RULE 2: Time-Proximity Grouping (Only if NOT a reply/tag, same sender & sent within 90s, inherit group)
+    if (!isReply) {
+        const lastMsgInfo = chatLastMessages.get(chatId);
+        if (lastMsgInfo && 
+            lastMsgInfo.sender === sender && 
+            (currentTimestampMs - lastMsgInfo.timestamp) <= TIME_THRESHOLD_MS) {
+            
+            console.log(` └── 👥 Clubbed with previous message under group: ${lastMsgInfo.logicalGroupId}`);
+            return lastMsgInfo.logicalGroupId;
+        }
     }
 
     // RULE 3: Fallback (Start a brand-new group)
@@ -201,13 +203,15 @@ client.on('message_create', async (msg) => {
     // 7. Store the message in cache
     cacheMessage(messagePayload.messageId, messagePayload);
 
-    // 8. Update the last message tracker for time-proximity checking
-    chatLastMessages.set(chat.id._serialized, {
-        messageId: messagePayload.messageId,
-        sender: sender,
-        timestamp: messagePayload.timestamp,
-        logicalGroupId: logicalGroupId
-    });
+    // 8. Update the last message tracker for time-proximity checking (only if it is not a reply/tag)
+    if (!hasQuotedMsg) {
+        chatLastMessages.set(chat.id._serialized, {
+            messageId: messagePayload.messageId,
+            sender: sender,
+            timestamp: messagePayload.timestamp,
+            logicalGroupId: logicalGroupId
+        });
+    }
 
     // 9. Fetch all messages/media grouped under the same Logical Group
     const groupContext = getLogicalGroupMessages(logicalGroupId);
