@@ -113,68 +113,122 @@ function getRandomTypingDelay(min = 50, max = 150) {
 }
 
 /**
+ * Sends a message via the official whatsapp-web.js API as a reliable fallback
+ */
+async function sendFallbackMessage(client, contactSearchTerm, messageText) {
+    console.log(`[Fallback] Attempting to send message via official API to: "${contactSearchTerm}"...`);
+    
+    // 1. Check if contactSearchTerm is a phone number (only digits, spaces, plus, hyphens)
+    const cleanNumber = contactSearchTerm.replace(/[\s+-]/g, '');
+    const isPhoneNumber = /^\d+$/.test(cleanNumber);
+    
+    if (isPhoneNumber) {
+        const chatId = cleanNumber.includes('@') ? cleanNumber : `${cleanNumber}@c.us`;
+        await client.sendMessage(chatId, messageText);
+        console.log(`[Fallback] Message sent successfully via official API to phone number: ${chatId}`);
+        return;
+    }
+
+    // 2. Try to find a matching active chat by name
+    try {
+        const chats = await client.getChats();
+        const chat = chats.find(c => c.name && c.name.toLowerCase() === contactSearchTerm.toLowerCase());
+        if (chat) {
+            await client.sendMessage(chat.id._serialized, messageText);
+            console.log(`[Fallback] Message sent successfully via official API to chat name: "${chat.name}"`);
+            return;
+        }
+    } catch (e) {
+        console.warn(`[Fallback] Warning finding chat by name: ${e.message}`);
+    }
+
+    // 3. Try to find a matching contact by name or pushname
+    try {
+        const contacts = await client.getContacts();
+        const contact = contacts.find(c => 
+            (c.name && c.name.toLowerCase() === contactSearchTerm.toLowerCase()) || 
+            (c.pushname && c.pushname.toLowerCase() === contactSearchTerm.toLowerCase())
+        );
+        if (contact) {
+            await client.sendMessage(contact.id._serialized, messageText);
+            console.log(`[Fallback] Message sent successfully via official API to contact: "${contact.name || contact.pushname}"`);
+            return;
+        }
+    } catch (e) {
+        console.warn(`[Fallback] Warning finding contact: ${e.message}`);
+    }
+
+    throw new Error(`Could not find contact or chat matching "${contactSearchTerm}" to send fallback message.`);
+}
+
+/**
  * Sends a message by simulating human browser interactions (Clicks, Typing, Enter)
+ * Falls back to direct API if simulation fails.
  */
 async function sendHumanLikeMessage(client, contactSearchTerm, messageText) {
-    const page = client.pupPage; // Access the Puppeteer Page object
-    if (!page) {
-        throw new Error("Puppeteer page is not initialized yet.");
-    }
-
-    console.log(`[Human Sim] Starting message sequence to "${contactSearchTerm}"...`);
-
-    // 1. Locate and click the Search Box
-    const searchInputSelector = '#side div[contenteditable="true"]'; 
-    await page.waitForSelector('#side', { timeout: 20000 });
-    await page.waitForSelector(searchInputSelector, { timeout: 20000 });
-    await page.click(searchInputSelector);
-    await delay(500);
-
-    // Clear search box in case something is typed
-    await page.keyboard.down('Control');
-    await page.keyboard.press('A');
-    await page.keyboard.up('Control');
-    await page.keyboard.press('Backspace');
-    await delay(300);
-
-    // 2. Type contact/number with human-like speed
-    for (const char of contactSearchTerm) {
-        await page.keyboard.sendCharacter(char);
-        await delay(getRandomTypingDelay(80, 180));
-    }
-    await delay(2500); // Wait for search results to load
-
-    // 3. Select and click the first search result
-    const firstSearchResultSelector = '#pane-side div[role="row"]'; 
-    await page.waitForSelector(firstSearchResultSelector, { timeout: 15000 });
-    await page.click(firstSearchResultSelector);
-    await delay(2000); // Wait for chat to open and load
-
-    // 4. Locate and focus the Chat Message input
-    const chatInputSelector = '#main footer div[contenteditable="true"]';
-    await page.waitForSelector('#main', { timeout: 15000 });
-    await page.waitForSelector(chatInputSelector, { timeout: 15000 });
-    await page.click(chatInputSelector);
-    await delay(500);
-
-    // 5. Type the message with human-like typing delays
-    console.log(`[Human Sim] Typing message...`);
-    for (const char of messageText) {
-        if (char === '\n') {
-            await page.keyboard.down('Shift');
-            await page.keyboard.press('Enter');
-            await page.keyboard.up('Shift');
-        } else {
-            await page.keyboard.sendCharacter(char);
+    try {
+        const page = client.pupPage; // Access the Puppeteer Page object
+        if (!page) {
+            throw new Error("Puppeteer page is not initialized yet.");
         }
-        await delay(getRandomTypingDelay(50, 150));
-    }
-    await delay(1000); // Pause briefly before sending
 
-    // 6. Hit Enter to send
-    await page.keyboard.press('Enter');
-    console.log(`[Human Sim] Message sent successfully to ${contactSearchTerm}!`);
-    await delay(1000);
+        console.log(`[Human Sim] Starting message sequence to "${contactSearchTerm}"...`);
+
+        // 1. Locate and click the Search Box
+        const searchInputSelector = 'input[placeholder="Search or start a new chat"], input[aria-label="Search or start a new chat"], [data-testid="search-input"], div[contenteditable="true"][data-tab="3"]'; 
+        await page.waitForSelector(searchInputSelector, { timeout: 10000 });
+        await page.click(searchInputSelector);
+        await delay(500);
+
+        // Clear search box in case something is typed
+        await page.keyboard.down('Control');
+        await page.keyboard.press('A');
+        await page.keyboard.up('Control');
+        await page.keyboard.press('Backspace');
+        await delay(300);
+
+        // 2. Type contact/number with human-like speed
+        for (const char of contactSearchTerm) {
+            await page.keyboard.sendCharacter(char);
+            await delay(getRandomTypingDelay(80, 180));
+        }
+        await delay(2500); // Wait for search results to load
+
+        // 3. Select and click the first search result
+        const firstSearchResultSelector = '#pane-side div[role="row"], [data-testid="search-results"] div[role="row"]'; 
+        await page.waitForSelector(firstSearchResultSelector, { timeout: 10000 });
+        await page.click(firstSearchResultSelector);
+        await delay(2000); // Wait for chat to open and load
+
+        // 4. Locate and focus the Chat Message input
+        const chatInputSelector = '[data-testid="conversation-compose-box-input"], div[contenteditable="true"][data-tab="10"], #main footer div[contenteditable="true"]';
+        await page.waitForSelector(chatInputSelector, { timeout: 10000 });
+        await page.click(chatInputSelector);
+        await delay(500);
+
+        // 5. Type the message with human-like typing delays
+        console.log(`[Human Sim] Typing message...`);
+        for (const char of messageText) {
+            if (char === '\n') {
+                await page.keyboard.down('Shift');
+                await page.keyboard.press('Enter');
+                await page.keyboard.up('Shift');
+            } else {
+                await page.keyboard.sendCharacter(char);
+            }
+            await delay(getRandomTypingDelay(50, 150));
+        }
+        await delay(1000); // Pause briefly before sending
+
+        // 6. Hit Enter to send
+        await page.keyboard.press('Enter');
+        console.log(`[Human Sim] Message sent successfully to ${contactSearchTerm}!`);
+        await delay(1000);
+
+    } catch (error) {
+        console.warn(`[Human Sim] Simulation failed: ${error.message}. Invoking fallback...`);
+        await sendFallbackMessage(client, contactSearchTerm, messageText);
+    }
 }
 
 // 1. Generate and display QR code for initial authentication
@@ -216,6 +270,24 @@ client.on('ready', async () => {
     await new Promise(r => setTimeout(r, 5000));
     try {
         console.log("Analyzing page elements...");
+        await client.pupPage.screenshot({ path: 'whatsapp-debug.png' });
+        console.log("Screenshot saved to whatsapp-debug.png");
+
+        const pageInfo = await client.pupPage.evaluate(() => {
+            return {
+                inputs: Array.from(document.querySelectorAll('input, textarea, [contenteditable]')).map(el => ({
+                    tag: el.tagName,
+                    id: el.id,
+                    className: el.className,
+                    placeholder: el.getAttribute('placeholder') || el.placeholder,
+                    contenteditable: el.getAttribute('contenteditable'),
+                    role: el.getAttribute('role'),
+                    ariaLabel: el.getAttribute('aria-label')
+                }))
+            };
+        });
+        console.log("Page inputs:", JSON.stringify(pageInfo.inputs, null, 2));
+
         const divs = await client.pupPage.evaluate(() => {
             const list = Array.from(document.querySelectorAll('div[contenteditable="true"]'));
             return list.map(el => ({
@@ -386,7 +458,7 @@ client.on('message_create', async (msg) => {
     };
 
     // 12. Post payload to the endpoint
-    const webhookUrl = 'https://agent.apotza.com/webhook-test/07c95cd2-c9cd-4a74-a9ac-3d658a09c8a3';
+    const webhookUrl = 'http://localhost:3000/api/whatsapp/webhook';
     try {
         console.log(` └── 🚀 Sending payload to ${webhookUrl}...`);
         const response = await fetch(webhookUrl, {

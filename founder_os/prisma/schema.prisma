@@ -1,0 +1,78 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Priority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Message {
+  id          String   @id @default(uuid())
+  chatId      String
+  sender      String
+  body        String
+  timestamp   DateTime
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([chatId])
+  @@index([processed])
+}
+
+model Email {
+  id          String   @id @default(uuid())
+  subject     String
+  sender      String
+  body        String
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([processed])
+}
+
+model Digest {
+  id              String   @id @default(uuid())
+  chatId          String
+  chatName        String
+  summary         String
+  priority        Priority @default(medium)
+  category        String
+  sentiment       String
+  requiresFounder Boolean  @default(false)
+  suggestedReply  String?
+  createdAt       DateTime @default(now())
+
+  @@index([chatId])
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  title       String
+  owner       String
+  status      TaskStatus @default(PENDING)
+  deadline    DateTime?
+  source      String     // "WHATSAPP" | "EMAIL" | "MANUAL"
+  sourceId    String?
+  createdAt   DateTime   @default(now())
+}
+
+model FounderNote {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+}
