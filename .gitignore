@@ -13,3 +13,4 @@ prospects_verified.json
 *.zip
 .next/
 out/
+zoho_sent/google-service-account.json

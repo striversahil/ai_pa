@@ -1,6 +1,27 @@
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import os from 'os';
+
+// Configure the puppeteer-extra stealth plugin
+puppeteer.use(StealthPlugin());
+
+// Determine the OS-compatible User-Agent to avoid OS-fingerprint mismatch signatures
+function getUserAgentForOS() {
+    const platform = os.platform();
+    if (platform === 'darwin') {
+        return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    } else if (platform === 'win32') {
+        return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    } else {
+        // Fallback to a standard Linux User-Agent (common for cloud server environments)
+        return 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    }
+}
+
+const userAgent = getUserAgentForOS();
 
 // Initialize the client with LocalAuth to persist the session
 const client = new Client({
@@ -21,12 +42,11 @@ const client = new Client({
             '--no-first-run',
             '--no-zygote',
             '--disable-gpu',
-            '--disable-service-workers',
-            '--disable-features=ServiceWorker',
-            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            `--user-agent=${userAgent}`
         ],
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    }
+        userAgent: userAgent
+    },
+    puppeteerInstance: puppeteer // Wire up client to use the stealth-patched puppeteer instance
 });
 
 // --- Global caching and thread grouping structures ---

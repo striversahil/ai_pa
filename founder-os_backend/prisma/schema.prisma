@@ -1,0 +1,138 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Priority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Message {
+  id          String   @id @default(uuid())
+  chatId      String
+  sender      String
+  body        String
+  timestamp   DateTime
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([chatId])
+  @@index([processed])
+}
+
+model Email {
+  id          String   @id @default(uuid())
+  subject     String
+  sender      String
+  body        String
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([processed])
+}
+
+model Digest {
+  id              String   @id @default(uuid())
+  chatId          String
+  chatName        String
+  summary         String
+  priority        Priority @default(medium)
+  category        String
+  sentiment       String
+  requiresFounder Boolean  @default(false)
+  suggestedReply  String?
+  createdAt       DateTime @default(now())
+
+  @@index([chatId])
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  title       String
+  owner       String
+  status      TaskStatus @default(PENDING)
+  deadline    DateTime?
+  source      String     // "WHATSAPP" | "EMAIL" | "MANUAL"
+  sourceId    String?
+  createdAt   DateTime   @default(now())
+}
+
+model FounderNote {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model Estimate {
+  estimateId     String          @id
+  estimateNumber String
+  customerName   String
+  total          Float
+  date           String
+  status         String
+  lastSyncTime   DateTime        @default(now())
+  skipMatching   Boolean         @default(false)
+  comments       Comment[]
+  classification Classification?
+}
+
+model Comment {
+  commentId       String   @id
+  estimateId      String
+  description     String
+  commentedBy     String
+  date            String
+  dateDescription String
+  dateFormatted   String?
+  estimate        Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+}
+
+model Classification {
+  estimateId                 String   @id
+  meaningfulUpdate           Boolean  @default(false)
+  followUpMissing            String
+  notAnswering               String
+  improperFollowUp           String
+  lastCommentNotSatisfactory String
+  dayExceeded                String
+  movingSlow                 String
+  underDiscussion            String
+  confirm                    String
+  intentScore                Int
+  reasoning                  String
+  summary                    String   @default("")
+  processedAt                DateTime @default(now())
+  estimate                   Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+}
+
+// BrainContext: Normalized, searchable index of all company context
+// Powers the Company Brain (Pillar 1) — unified search across all data sources
+model BrainContext {
+  id          String   @id @default(uuid())
+  source      String   // "WHATSAPP" | "EMAIL" | "DIGEST" | "ESTIMATE" | "TASK" | "COMMENT"
+  sourceId    String   // Foreign key reference to original record
+  entityName  String?  // Customer, person, or company this relates to (for filtering)
+  content     String   // Full normalized text content for search
+  metadata    String?  // JSON string: extra context (e.g. subject, chatName, estimateNo, score)
+  indexedAt   DateTime @default(now())
+  eventDate   DateTime // When the original event occurred (for timeline ordering)
+
+  @@index([source])
+  @@index([entityName])
+  @@index([eventDate])
+  @@unique([source, sourceId]) // Prevent duplicate indexing
+}

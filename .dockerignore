@@ -1,0 +1,35 @@
+# Frontend — exclude node_modules and build artifacts
+founder-os_frontend/node_modules
+founder-os_frontend/.next
+founder-os_frontend/out
+
+# Backend — exclude node_modules, compiled output, TS cache, and generated public dir
+founder-os_backend/node_modules
+founder-os_backend/dist
+founder-os_backend/.tscache
+founder-os_backend/public
+
+# Git and editor files
+.git
+.gitignore
+**/.DS_Store
+**/*.log
+**/*.md
+
+# Dev-only directories
+1_random_dump
+prospect_research
+whatsapp_receiver
+packages
+zoho_sent
+
+# Docker files (no need to send back into the build context)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# IDE / OS
+.vscode
+.idea
+**/__pycache__
+**/.env.local
