@@ -7,7 +7,7 @@ function getProvider(): StorageProvider {
 }
 
 export class StorageRepository {
-  static async saveMessage(data: { chatId: string; sender: string; body: string; timestamp: Date }) {
+  static async saveMessage(data: { chatId: string; sender: string; body: string; timestamp: Date; wahaMessageId?: string | null }) {
     logger.info({ chatId: data.chatId, sender: data.sender }, 'Saving message');
     return getProvider().saveMessage(data);
   }
@@ -25,6 +25,11 @@ export class StorageRepository {
   static async fetchMessagesByChatId(chatId: string, limit = 50) {
     logger.debug({ chatId, limit }, 'Fetching messages for chat');
     return getProvider().fetchMessagesByChatId(chatId, limit);
+  }
+
+  static async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date) {
+    logger.debug({ messageId, classification }, 'Updating message classification');
+    return getProvider().updateMessageClassification(messageId, classification, reason, classifiedAt, slaDeadline);
   }
 
   static async storeEmail(data: { subject: string; sender: string; body: string }) {
@@ -50,6 +55,11 @@ export class StorageRepository {
   static async fetchDigests(limit = 100) {
     logger.debug({ limit }, 'Fetching digests');
     return getProvider().fetchDigests(limit);
+  }
+
+  static async fetchLatestDigestByChatId(chatId: string) {
+    logger.debug({ chatId }, 'Fetching latest digest for chat');
+    return getProvider().fetchLatestDigestByChatId(chatId);
   }
 
   static async createTask(data: { title: string; owner: string; status?: string; deadline?: Date | null; source: string; sourceId?: string | null }) {

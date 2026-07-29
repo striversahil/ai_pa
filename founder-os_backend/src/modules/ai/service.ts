@@ -2,12 +2,14 @@ import OpenAI from 'openai';
 import { config } from '../../config';
 import { logger } from '../../shared/logger';
 import { summarizeConversationPrompt } from './prompts/summarizeConversation';
+import { incrementalSummarizeConversationPrompt } from './prompts/incrementalSummarizeConversation';
 import { generateBriefPrompt } from './prompts/generateBrief';
 import { generateDailySummaryPrompt } from './prompts/generateDailySummary';
 import { answerFounderQuestionPrompt } from './prompts/answerFounderQuestion';
 import { classifyEstimatePrompt } from './prompts/classifyEstimate';
 import { extractEnquiryPrompt } from './prompts/extractEnquiry';
 import { matchBusinessPrompt } from './prompts/matchBusiness';
+import { classifyMessagePrompt } from './prompts/classifyMessage';
 import { brainQueryPrompt } from './prompts/brainQuery';
 
 
@@ -215,6 +217,73 @@ export class AIService {
       return JSON.parse(cleanJson) as SummaryOutput;
     } catch (err: any) {
       logger.error({ error: err.message }, 'Real LLM summarization failed');
+      throw err;
+    }
+  }
+
+  /**
+   * Incrementally summarizes WhatsApp chats given a previous summary.
+   * Sends only new messages + previous summary to the LLM, avoiding re-processing old context.
+   */
+  static async incrementalSummarizeConversation(
+    chatName: string,
+    messages: Array<{ sender: string; body: string; timestamp: Date }>,
+    previousSummary: string,
+    previousPriority: string,
+    previousActionItems: string,
+  ): Promise<SummaryOutput> {
+    const startTime = Date.now();
+    logger.info({ chatName, isMocked: isMockLLM }, 'AIService: incremental digesting conversation');
+
+    if (isMockLLM) {
+      await new Promise((r) => setTimeout(r, 400));
+      const bodiesCombined = messages.map((m) => m.body).join(' ').toLowerCase();
+      const hasNewAction = ['urgent', 'asap', 'please', 'need', 'help', 'meeting', 'call', 'deadline'].some(k => bodiesCombined.includes(k));
+
+      return {
+        chatName,
+        summary: hasNewAction
+          ? `${previousSummary} Additionally, new messages indicate further action required.`
+          : previousSummary,
+        priority: hasNewAction && previousPriority !== 'urgent' ? 'high' : (previousPriority as any),
+        category: 'Conversation',
+        sentiment: 'neutral',
+        action_items: hasNewAction
+          ? [{ task: 'Review new messages and respond accordingly', owner: 'Founder', deadline: null }]
+          : [],
+        requires_founder: hasNewAction,
+        suggested_reply: hasNewAction ? 'Thank you for the update. I will review and get back to you shortly.' : null,
+      };
+    }
+
+    try {
+      const systemContent = incrementalSummarizeConversationPrompt
+        .replace('{{previousSummary}}', previousSummary)
+        .replace('{{previousPriority}}', previousPriority)
+        .replace('{{previousActionItems}}', previousActionItems);
+
+      const response = await this.callLLM(async (client, model) => {
+        return client.chat.completions.create({
+          model: model,
+          messages: [
+            { role: 'system', content: systemContent },
+            { role: 'user', content: `Chat Name: ${chatName}\n\nNew Messages:\n${messages.map((m) => {
+              const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
+              return `[${ts}] ${m.sender}: ${m.body}`;
+            }).join('\n')}` },
+          ],
+          temperature: 0.1,
+        });
+      });
+
+      const latency = Date.now() - startTime;
+      logger.info({ latency }, 'Real LLM incremental summarization completed');
+
+      const rawContent = response.choices[0]?.message?.content || '';
+      const cleanJson = this.cleanJsonString(rawContent);
+      return JSON.parse(cleanJson) as SummaryOutput;
+    } catch (err: any) {
+      logger.error({ error: err.message }, 'Real LLM incremental summarization failed');
       throw err;
     }
   }
@@ -546,6 +615,73 @@ Please let me know which of these you would like more detail on, sir.`;
       return JSON.parse(cleanJson);
     } catch (err: any) {
       logger.error({ error: err.message }, 'Real LLM business matching failed');
+      throw err;
+    }
+  }
+
+  /**
+   * Classifies a single WhatsApp message as Pending / Not Pending via LLM.
+   */
+  static async classifyMessage(context: {
+    sender: string;
+    body: string;
+    timestamp: string;
+    conversationContext: string;
+  }): Promise<{
+    is_pending: boolean;
+    confidence: 'high' | 'medium' | 'low';
+    reason: string;
+    suggested_action: string | null;
+    priority: 'low' | 'medium' | 'high' | 'urgent';
+    category: string;
+  }> {
+    logger.info({ sender: context.sender, body: context.body.substring(0, 80) }, 'AIService: classifying message');
+
+    if (isMockLLM) {
+      await new Promise((r) => setTimeout(r, 300));
+      const lower = context.body.toLowerCase();
+      const hasPendingKeyword = ['urgent', 'asap', 'please', 'need', 'help', 'issue', 'problem', 'broken', 'when', 'how much', 'quote', 'price', 'order', 'complaint', 'request'].some(k => lower.includes(k));
+      const isQuestion = context.body.includes('?');
+
+      if (hasPendingKeyword || isQuestion) {
+        return {
+          is_pending: true,
+          confidence: 'medium',
+          reason: hasPendingKeyword ? 'Message contains keywords indicating a request or action item.' : 'Message is a question requiring a response.',
+          suggested_action: 'Review and respond to the sender.',
+          priority: lower.includes('urgent') ? 'urgent' : 'medium',
+          category: 'Customer',
+        };
+      }
+
+      return {
+        is_pending: false,
+        confidence: 'medium',
+        reason: 'Message appears informational with no action required.',
+        suggested_action: null,
+        priority: 'low',
+        category: 'Informational',
+      };
+    }
+
+    try {
+      const userMessage = `Sender: ${context.sender}\nTimestamp: ${context.timestamp}\nMessage: ${context.body}\n\nConversation Context:\n${context.conversationContext || 'No recent context'}`;
+
+      const response = await this.callLLM(async (client, model) => {
+        return client.chat.completions.create({
+          model: model,
+          messages: [
+            { role: 'system', content: classifyMessagePrompt },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0.1,
+        });
+      });
+
+      const cleanJson = this.cleanJsonString(response.choices[0]?.message?.content || '');
+      return JSON.parse(cleanJson);
+    } catch (err: any) {
+      logger.error({ error: err.message }, 'Real LLM message classification failed');
       throw err;
     }
   }

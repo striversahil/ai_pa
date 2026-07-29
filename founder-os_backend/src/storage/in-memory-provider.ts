@@ -22,11 +22,11 @@ export class InMemoryStorageProvider implements StorageProvider {
     const chatOps = '120363023032@g.us';
 
     this.messages = [
-      { id: 'msg-1', chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Hey Sahil, hope you are doing well.', timestamp: new Date(now.getTime() - 20 * 60 * 1000), processed: true, createdAt: now },
-      { id: 'msg-2', chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Wanted to follow up on the Q3 growth figures. Can we jump on a call tomorrow at 10 AM to discuss?', timestamp: new Date(now.getTime() - 19 * 60 * 1000), processed: true, createdAt: now },
-      { id: 'msg-3', chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Also need the pitch deck updated with the latest revenue run-rate.', timestamp: new Date(now.getTime() - 18 * 60 * 1000), processed: true, createdAt: now },
-      { id: 'msg-4', chatId: chatOps, sender: 'Amit (Ops Manager)', body: 'Hi guys, we are facing an issue with the staging server deployment.', timestamp: new Date(now.getTime() - 15 * 60 * 1000), processed: false, createdAt: now },
-      { id: 'msg-5', chatId: chatOps, sender: 'Neha (Tech Lead)', body: 'Yes, the database migrations are failing because of a locked connection. I need someone to check the database logs.', timestamp: new Date(now.getTime() - 14 * 60 * 1000), processed: false, createdAt: now },
+      { id: 'msg-1', wahaMessageId: null, chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Hey Sahil, hope you are doing well.', timestamp: new Date(now.getTime() - 20 * 60 * 1000), processed: true, classification: 'PENDING', classificationReason: 'Investor follow-up', classifiedAt: now, slaDeadline: new Date(now.getTime() + 15 * 60 * 1000), createdAt: now },
+      { id: 'msg-2', wahaMessageId: null, chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Wanted to follow up on the Q3 growth figures. Can we jump on a call tomorrow at 10 AM to discuss?', timestamp: new Date(now.getTime() - 19 * 60 * 1000), processed: true, classification: 'PENDING', classificationReason: 'Meeting request', classifiedAt: now, slaDeadline: new Date(now.getTime() + 15 * 60 * 1000), createdAt: now },
+      { id: 'msg-3', wahaMessageId: null, chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Also need the pitch deck updated with the latest revenue run-rate.', timestamp: new Date(now.getTime() - 18 * 60 * 1000), processed: true, classification: 'PENDING', classificationReason: 'Action item', classifiedAt: now, slaDeadline: new Date(now.getTime() + 15 * 60 * 1000), createdAt: now },
+      { id: 'msg-4', wahaMessageId: null, chatId: chatOps, sender: 'Amit (Ops Manager)', body: 'Hi guys, we are facing an issue with the staging server deployment.', timestamp: new Date(now.getTime() - 15 * 60 * 1000), processed: false, classification: null, classificationReason: null, classifiedAt: null, slaDeadline: null, createdAt: now },
+      { id: 'msg-5', wahaMessageId: null, chatId: chatOps, sender: 'Neha (Tech Lead)', body: 'Yes, the database migrations are failing because of a locked connection. I need someone to check the database logs.', timestamp: new Date(now.getTime() - 14 * 60 * 1000), processed: false, classification: null, classificationReason: null, classifiedAt: null, slaDeadline: null, createdAt: now },
     ];
 
     this.emails = [
@@ -55,7 +55,7 @@ export class InMemoryStorageProvider implements StorageProvider {
   }
 
   async saveMessage(data: MessageData): Promise<StoredMessage> {
-    const newMsg = { id: generateId('msg'), chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, createdAt: new Date() };
+    const newMsg = { id: generateId('msg'), wahaMessageId: data.wahaMessageId || null, chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, classification: null, classificationReason: null, classifiedAt: null, slaDeadline: null, createdAt: new Date() };
     this.messages.push(newMsg);
     return newMsg;
   }
@@ -70,6 +70,12 @@ export class InMemoryStorageProvider implements StorageProvider {
 
   async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
     return this.messages.filter((m: any) => m.chatId === chatId).sort((a: any, b: any) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, limit);
+  }
+
+  async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void> {
+    this.messages = this.messages.map((m: any) =>
+      m.id === messageId ? { ...m, processed: true, classification, classificationReason: reason, classifiedAt, slaDeadline } : m
+    );
   }
 
   async storeEmail(data: EmailData): Promise<StoredEmail> {
@@ -94,6 +100,12 @@ export class InMemoryStorageProvider implements StorageProvider {
 
   async fetchDigests(limit = 100): Promise<StoredDigest[]> {
     return [...this.digests].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit);
+  }
+
+  async fetchLatestDigestByChatId(chatId: string): Promise<StoredDigest | null> {
+    const matches = this.digests.filter((d: any) => d.chatId === chatId);
+    if (matches.length === 0) return null;
+    return matches.sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())[0];
   }
 
   async createTask(data: TaskData): Promise<StoredTask> {

@@ -5,7 +5,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 const router = Router();
 
 router.get('/:chatId', asyncHandler(async (req, res) => {
-  const { chatId } = req.params;
+  const { chatId } = req.params as { chatId: string };
   const messages = await WhatsAppService.fetchMessagesByChatId(chatId);
   res.status(200).json(messages);
 }));

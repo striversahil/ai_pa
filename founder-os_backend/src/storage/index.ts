@@ -3,13 +3,14 @@ import type { StorageProvider } from './interfaces';
 import { PrismaStorageProvider } from './prisma-provider';
 import { InMemoryStorageProvider } from './in-memory-provider';
 
-let provider: StorageProvider;
-if (useInMemoryDb) {
-  provider = new InMemoryStorageProvider();
-} else {
-  provider = new PrismaStorageProvider();
-}
+let prismaProvider: PrismaStorageProvider | null = null;
+let inMemoryProvider: InMemoryStorageProvider | null = null;
 
 export function getStorageProvider(): StorageProvider {
-  return provider;
+  if (useInMemoryDb) {
+    if (!inMemoryProvider) inMemoryProvider = new InMemoryStorageProvider();
+    return inMemoryProvider;
+  }
+  if (!prismaProvider) prismaProvider = new PrismaStorageProvider();
+  return prismaProvider;
 }

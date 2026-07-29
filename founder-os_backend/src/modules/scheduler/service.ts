@@ -7,6 +7,11 @@ import { logger } from '../../shared/logger';
 import { EngineRegistry, AnalysisEngine } from '../../shared/engine';
 import { SalesCopilotService } from '../sales_copilot/service';
 import { BrainService } from '../brain/service';
+import { SLAChecker } from '../monitoring/sla-check';
+import { NotificationBatcher } from '../whatsapp/batcher';
+import { prisma } from '../../shared/prisma';
+import { MessageQueueService } from '../queue/service';
+import { config } from '../../config';
 
 class WhatsappEngine implements AnalysisEngine {
   public name = 'WhatsApp Digest Engine';
@@ -73,14 +78,21 @@ export class SchedulerService {
     EngineRegistry.register('sales_copilot', new SalesCopilotService());
     EngineRegistry.register('brain', new BrainService());
 
-    // 1. WhatsApp processing - runs every 15 minutes
-    cron.schedule('*/15 * * * *', async () => {
+    // 1. WhatsApp processing - runs every 5 minutes
+    cron.schedule('*/5 * * * *', async () => {
       logger.info('Cron: Running WhatsApp digest job...');
       try {
         const eng = EngineRegistry.get('whatsapp');
         if (eng) await eng.runSync();
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: WhatsApp digest job failed');
+      }
+
+      // Drain Redis queue and batch-classify messages (written to Redis RAM by webhook handler)
+      try {
+        await MessageQueueService.drainAndProcessBatch();
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: Classification batch processing failed');
       }
     });
 
@@ -126,6 +138,77 @@ export class SchedulerService {
         await SchedulerService.generateAndSaveEveningSummary();
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Evening EOD summary job failed');
+      }
+    });
+
+    // 5. SLA Monitor - runs every minute
+    cron.schedule('* * * * *', async () => {
+      try {
+        await SLAChecker.check();
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: SLA check failed');
+      }
+    });
+
+    // 6. Notification Batcher - flushes grouped alerts every 15 minutes
+    cron.schedule('*/15 * * * *', async () => {
+      try {
+        await NotificationBatcher.flushAll();
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: Notification batcher flush failed');
+      }
+    });
+
+    // 7. Data retention - runs daily at 3:00 AM, deletes messages older than 90 days
+    cron.schedule('0 3 * * *', async () => {
+      logger.info('Cron: Running data retention cleanup...');
+      try {
+        const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+        let totalDeleted = 0;
+        let batchDeleted = 0;
+
+        do {
+          const batch = await prisma.message.findMany({
+            where: { createdAt: { lt: cutoff } },
+            select: { id: true },
+            take: 1000,
+          });
+          if (batch.length === 0) break;
+
+          const ids = batch.map(b => b.id);
+          const res = await prisma.message.deleteMany({ where: { id: { in: ids } } });
+          batchDeleted = res.count;
+          totalDeleted += batchDeleted;
+        } while (batchDeleted > 0);
+
+        logger.info({ totalDeleted }, 'Cleaned up messages older than 90 days');
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: Data retention cleanup failed');
+      }
+    });
+
+    // 8. WAHA session restart - runs daily at 4:00 AM (lowest activity period)
+    // Avoids detection from 24/7 connection; session persists via mounted volume
+    cron.schedule('0 4 * * *', async () => {
+      logger.info('Cron: Restarting WAHA session for connection hygiene...');
+      try {
+        const response = await fetch(`${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}/logout`, {
+          method: 'POST',
+          headers: { 'X-Api-Key': config.WAHA_API_KEY },
+        });
+        if (response.ok) {
+          logger.info('WAHA session logged out successfully');
+        }
+        await new Promise(r => setTimeout(r, 5000));
+        const startRes = await fetch(`${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Api-Key': config.WAHA_API_KEY },
+        });
+        if (startRes.ok) {
+          logger.info('WAHA session restarted successfully');
+        }
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: WAHA restart failed');
       }
     });
 

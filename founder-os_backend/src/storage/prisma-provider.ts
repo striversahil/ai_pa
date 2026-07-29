@@ -7,7 +7,7 @@ export class PrismaStorageProvider implements StorageProvider {
   async saveMessage(data: MessageData): Promise<StoredMessage> {
     logger.info({ chatId: data.chatId, sender: data.sender }, 'Saving raw message to storage');
     const msg = await prisma.message.create({
-      data: { chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false }
+      data: { chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, wahaMessageId: data.wahaMessageId || null }
     });
     return msg as StoredMessage;
   }
@@ -26,6 +26,13 @@ export class PrismaStorageProvider implements StorageProvider {
   async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
     logger.debug({ chatId, limit }, 'Fetching messages for chat');
     return prisma.message.findMany({ where: { chatId }, orderBy: { timestamp: 'desc' }, take: limit }) as Promise<StoredMessage[]>;
+  }
+
+  async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void> {
+    await prisma.message.update({
+      where: { id: messageId },
+      data: { processed: true, classification, classificationReason: reason, classifiedAt, slaDeadline },
+    });
   }
 
   async storeEmail(data: EmailData): Promise<StoredEmail> {
@@ -56,6 +63,11 @@ export class PrismaStorageProvider implements StorageProvider {
   async fetchDigests(limit = 100): Promise<StoredDigest[]> {
     logger.debug({ limit }, 'Fetching digests from storage');
     return prisma.digest.findMany({ orderBy: { createdAt: 'desc' }, take: limit }) as Promise<StoredDigest[]>;
+  }
+
+  async fetchLatestDigestByChatId(chatId: string): Promise<StoredDigest | null> {
+    const digest = await prisma.digest.findFirst({ where: { chatId }, orderBy: { createdAt: 'desc' } });
+    return digest as StoredDigest | null;
   }
 
   async createTask(data: TaskData): Promise<StoredTask> {

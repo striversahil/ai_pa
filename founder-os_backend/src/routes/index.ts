@@ -10,6 +10,7 @@ import estimatesRouter from './estimates';
 import triggersRouter from './triggers';
 import whatsappProxyRouter from './whatsapp-proxy';
 import whatsappWebhookRouter from './whatsapp-webhook';
+import healthRouter from './health';
 import { BrainService } from '../modules/brain/service';
 import { SalesCopilotService } from '../modules/sales_copilot/service';
 import { asyncHandler } from '../middleware/asyncHandler';
@@ -26,6 +27,7 @@ router.use('/brain', brainRouter);
 router.use('/estimates', estimatesRouter);
 router.use('/trigger', triggersRouter);
 router.use('/whatsapp', whatsappProxyRouter);
+router.use('/health', healthRouter);
 
 // Backward-compatible aliases for moved routes
 router.post('/ask-founder-ai', asyncHandler(async (req, res) => {

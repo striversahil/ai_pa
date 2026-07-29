@@ -1,0 +1,82 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: founder-os-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: founder
+      POSTGRES_PASSWORD: founder_secret
+      POSTGRES_DB: founder_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - founder-os-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: founder-os-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - founder-os-net
+
+  backend:
+    build: .
+    container_name: founder-os-backend
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://founder:founder_secret@postgres:5432/founder_os
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - WAHA_API_URL=http://waha:3002
+      - WAHA_API_KEY=MyLocalSecretKey!
+      - WAHA_SESSION_NAME=default
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
+      - EMAIL_IMAP_HOST=${EMAIL_IMAP_HOST}
+      - EMAIL_IMAP_PORT=${EMAIL_IMAP_PORT}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - NOTION_API_KEY=${NOTION_API_KEY}
+      - NOTION_DATABASE_ID=${NOTION_DATABASE_ID}
+      - MESSAGE_SLA_MINUTES=15
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    ports:
+      - "5000:3000"
+    networks:
+      - founder-os-net
+
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha
+    restart: unless-stopped
+    environment:
+      - WAHA_ENGINE=WEBJS
+      - WAHA_PRINT_QR=true
+      - WAHA_API_KEY=MyLocalSecretKey!
+      - WAHA_WEBJS_BROWSER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-blink-features=AutomationControlled,--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+      - WAHA_WEBHOOKS=[{"url": "http://backend:3000/api/whatsapp/webhook", "events": ["message"]}]
+    volumes:
+      - ./waha_sessions:/app/.wwebjs_auth
+    ports:
+      - "3002:3002"
+    networks:
+      - founder-os-net
+    mem_limit: 1g
+    cpus: 1
+
+volumes:
+  pgdata:
+
+networks:
+  founder-os-net:
+    driver: bridge

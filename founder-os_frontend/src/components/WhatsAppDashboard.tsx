@@ -359,6 +359,12 @@ export default function WhatsAppDashboard() {
           // Silently refresh contacts and digests lists to update indicators / summaries
           fetchDigests();
           fetchContacts();
+        } else if (payload.event === "message.classified") {
+          fetchDigests();
+          fetchContacts();
+          if (payload.data.chatId === selectedContactUid) {
+            fetchMessages(selectedContactUid, true);
+          }
         }
       } catch (err) {
         console.error("Failed to parse SSE real-time update:", err);

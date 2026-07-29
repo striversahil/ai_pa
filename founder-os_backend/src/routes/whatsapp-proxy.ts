@@ -144,7 +144,7 @@ router.post('/send', asyncHandler(async (req, res) => {
 // Contact messages
 router.get('/contacts/:contactUid/messages', asyncHandler(async (req, res) => {
   const cfg = getWaEngineConfig();
-  const contactUidRaw = req.params.contactUid;
+  const contactUidRaw = (req.params as any).contactUid as string;
   const contactUid = await resolveContactUid(contactUidRaw, cfg.vendorUid, cfg.bearerToken, cfg.apiBaseUrl);
   const localMsgs = await WhatsAppService.fetchMessagesByChatId(contactUidRaw);
   let cloudMsgs: any[] = [];
@@ -177,7 +177,7 @@ router.get('/contacts/:contactUid/messages', asyncHandler(async (req, res) => {
 
 router.post('/contacts/:contactUid/summarize', asyncHandler(async (req, res) => {
   const cfg = getWaEngineConfig();
-  const contactUidRaw = req.params.contactUid;
+  const contactUidRaw = (req.params as any).contactUid as string;
   const contactUid = await resolveContactUid(contactUidRaw, cfg.vendorUid, cfg.bearerToken, cfg.apiBaseUrl);
   const contactName = await resolveContactName(contactUidRaw, cfg.vendorUid, cfg.bearerToken, cfg.apiBaseUrl);
   const localMsgs = await WhatsAppService.fetchMessagesByChatId(contactUidRaw);

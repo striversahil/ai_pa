@@ -8,6 +8,7 @@ export class DigestService {
   /**
    * Run the message digesting batch job.
    * Fetches all unprocessed messages, groups by chat, and processes them in batches via the AI module.
+   * Uses incremental summarization when a previous digest exists for a chat.
    */
   static async processMessagesToDigests(): Promise<{
     processedChatsCount: number;
@@ -15,7 +16,7 @@ export class DigestService {
     tasksCreatedCount: number;
   }> {
     logger.info('DigestService: starting message digest job');
-    
+
     // 1. Fetch all unprocessed messages
     const messages = await WhatsAppService.fetchUnprocessedMessages();
     if (messages.length === 0) {
@@ -39,22 +40,44 @@ export class DigestService {
 
     // 3. Process each chat group independently
     for (const [chatId, chatMessages] of chatsMap.entries()) {
-      // Determine the chat display name from the messages
       const sampleMsg = chatMessages[0];
       const chatName = sampleMsg.sender || chatId;
 
       logger.info({ chatId, chatName, msgCount: chatMessages.length }, 'DigestService: processing chat group');
 
       try {
-        // Send conversation log to AI for structured JSON output
-        const summaryResult = await AIService.summarizeConversation(
-          chatName,
-          chatMessages.map((m) => ({
-            sender: m.sender,
-            body: m.body,
-            timestamp: m.timestamp,
-          }))
-        );
+        // Check if a previous digest exists for this chat (incremental mode)
+        const previousDigest = await StorageRepository.fetchLatestDigestByChatId(chatId);
+
+        let summaryResult: any;
+        if (previousDigest) {
+          logger.info({ chatId }, 'DigestService: previous digest found, using incremental summarization');
+          const previousActionItemsStr = JSON.stringify(previousDigest.suggestedReply
+            ? [{ task: previousDigest.summary.substring(0, 100) }]
+            : []
+          );
+          summaryResult = await AIService.incrementalSummarizeConversation(
+            chatName,
+            chatMessages.map((m) => ({
+              sender: m.sender,
+              body: m.body,
+              timestamp: m.timestamp,
+            })),
+            previousDigest.summary,
+            previousDigest.priority,
+            previousActionItemsStr,
+          );
+        } else {
+          logger.info({ chatId }, 'DigestService: no previous digest, full summarization');
+          summaryResult = await AIService.summarizeConversation(
+            chatName,
+            chatMessages.map((m) => ({
+              sender: m.sender,
+              body: m.body,
+              timestamp: m.timestamp,
+            }))
+          );
+        }
 
         // 4. Save the digest record to database
         const digest = await StorageRepository.saveDigest({
@@ -76,7 +99,7 @@ export class DigestService {
           );
           for (const item of summaryResult.action_items) {
             if (!item.task) continue;
-            
+
             let deadlineDate: Date | null = null;
             if (item.deadline) {
               const parsedDate = new Date(item.deadline);
@@ -104,7 +127,6 @@ export class DigestService {
         processedChatsCount++;
         logger.info({ chatId }, 'DigestService: successfully processed chat group');
       } catch (err: any) {
-        // Log error and continue with other chats to prevent blocking
         failedChatsCount++;
         logger.error(
           { chatId, error: err.message },

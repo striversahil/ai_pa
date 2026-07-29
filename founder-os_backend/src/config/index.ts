@@ -21,6 +21,14 @@ const configSchema = z.object({
   HF_API_KEY: z.string().optional().default(''),
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_SERVICE_ACCOUNT_PATH: z.string().optional(),
+  WAHA_API_URL: z.string().default('http://localhost:3002'),
+  WAHA_API_KEY: z.string().default('MyLocalSecretKey!'),
+  WAHA_SESSION_NAME: z.string().default('default'),
+  MESSAGE_SLA_MINUTES: z.coerce.number().default(15),
+  DIGEST_CRON_INTERVAL: z.string().default('*/5 * * * *'),
+  REDIS_HOST: z.string().default('localhost'),
+  REDIS_PORT: z.coerce.number().default(6379),
+  SLACK_WEBHOOK_URL: z.string().optional(),
 });
 
 const result = configSchema.safeParse(process.env);

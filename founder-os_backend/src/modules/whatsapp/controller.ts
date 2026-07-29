@@ -2,6 +2,38 @@ import { Request, Response } from 'express';
 import { WhatsAppService } from './service';
 import { logger } from '../../shared/logger';
 import { broadcastWhatsAppEvent } from '../../shared/sse';
+import { MessageQueueService } from '../queue/service';
+import { prisma, useInMemoryDb } from '../../shared/prisma';
+
+function extractMessageBody(payload: any): string {
+  if (payload.body) return payload.body;
+  if (payload.caption) return payload.caption;
+  const typeLabels: Record<string, string> = {
+    image: '[Image]',
+    video: '[Video]',
+    audio: '[Audio]',
+    document: payload.filename ? `[Document: ${payload.filename}]` : '[Document]',
+    location: '[Location]',
+    poll: '[Poll]',
+    sticker: '[Sticker]',
+    contact: '[Contact Card]',
+    buttons: '[Button Reply]',
+    list: '[List Selection]',
+  };
+  return typeLabels[payload.type] || '[Media/System Message]';
+}
+
+function extractSenderName(payload: any): string {
+  return payload.sender?.name || payload.sender?.pushname || payload.from?.split('@')[0] || 'Client';
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
 
 export class WhatsAppController {
   /**
@@ -10,6 +42,77 @@ export class WhatsAppController {
   static async handleWebhook(req: Request, res: Response) {
     try {
       logger.info({ body: req.body }, 'WhatsAppController: received webhook payload');
+
+      // WAHA webhook format
+      if (req.body.event === 'message' && req.body.payload) {
+        const payload = req.body.payload;
+        if (payload.fromMe) {
+          res.status(200).json({ success: true });
+          return;
+        }
+
+        const wahaMessageId = payload.id;
+        if (wahaMessageId && !useInMemoryDb) {
+          const existing = await prisma.message.findUnique({ where: { wahaMessageId } });
+          if (existing) {
+            logger.warn({ wahaMessageId }, 'Duplicate webhook delivery, skipping');
+            res.status(200).json({ success: true, dedup: true });
+            return;
+          }
+        }
+
+        const from = payload.chatId || payload.from;
+        const sender = extractSenderName(payload);
+        const body = extractMessageBody(payload);
+        const timestamp = new Date((payload.timestamp || 0) * 1000);
+        const mediaType = payload.type !== 'text' ? payload.type : null;
+
+        const saved = await WhatsAppService.saveMessage({ chatId: from, sender, body, timestamp, wahaMessageId });
+        await MessageQueueService.enqueueClassification(saved.id, from, sender, body, timestamp, mediaType);
+        broadcastWhatsAppEvent('message.received', { chatId: from, sender, body, timestamp });
+
+        res.status(200).json({ success: true });
+        return;
+      }
+
+      // Thundering herd: batch payloads array from WAHA replay
+      if (Array.isArray(req.body.payloads)) {
+        const BATCH_SIZE = 10;
+        const batches = chunkArray(req.body.payloads, BATCH_SIZE);
+        let savedCount = 0;
+
+        for (const batch of batches) {
+          const results = await Promise.allSettled(
+            batch.map(async (p: any) => {
+              if (p.fromMe) return null;
+
+              const wahaMessageId = p.id;
+              if (wahaMessageId && !useInMemoryDb) {
+                const existing = await prisma.message.findUnique({ where: { wahaMessageId } });
+                if (existing) return null;
+              }
+
+              const from = p.chatId || p.from;
+              const sender = extractSenderName(p);
+              const msgBody = extractMessageBody(p);
+              const ts = new Date((p.timestamp || 0) * 1000);
+              const mediaType = p.type !== 'text' ? p.type : null;
+
+              const saved = await WhatsAppService.saveMessage({ chatId: from, sender, body: msgBody, timestamp: ts, wahaMessageId });
+              await MessageQueueService.enqueueClassification(saved.id, from, sender, msgBody, ts, mediaType);
+              broadcastWhatsAppEvent('message.received', { chatId: from, sender, body: msgBody, timestamp: ts });
+              return saved;
+            })
+          );
+
+          savedCount += results.filter(r => r.status === 'fulfilled' && r.value !== null).length;
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        logger.info({ total: req.body.payloads.length, saved: savedCount }, 'Thundering herd batch processed');
+        res.status(200).json({ success: true, saved: savedCount });
+        return;
+      }
 
       let from = '';
       let sender = 'Client';
@@ -29,7 +132,6 @@ export class WhatsAppController {
 
         const phone = contact.phone_number || contact.wa_id || (whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from);
         
-        // Prefer contact.uid to match frontend selections, fall back to phone string
         from = contact.uid || contact.contact_uid || (phone ? `${phone}@c.us` : 'unknown');
         
         sender = message.direction === 'outbound' ? 'Founder' : (contact.full_name || contact.first_name || phone || 'Client');

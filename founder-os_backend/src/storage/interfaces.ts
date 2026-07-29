@@ -3,6 +3,7 @@ export interface MessageData {
   sender: string;
   body: string;
   timestamp: Date;
+  wahaMessageId?: string | null;
 }
 
 export interface StoredMessage {
@@ -12,6 +13,11 @@ export interface StoredMessage {
   body: string;
   timestamp: Date;
   processed: boolean;
+  wahaMessageId: string | null;
+  classification: string | null;
+  classificationReason: string | null;
+  classifiedAt: Date | null;
+  slaDeadline: Date | null;
   createdAt: Date;
 }
 
@@ -85,11 +91,13 @@ export interface StorageProvider {
   fetchUnprocessedMessages(): Promise<StoredMessage[]>;
   markMessagesProcessed(messageIds: string[]): Promise<void>;
   fetchMessagesByChatId(chatId: string, limit?: number): Promise<StoredMessage[]>;
+  updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void>;
   storeEmail(data: EmailData): Promise<StoredEmail>;
   fetchUnprocessedEmails(): Promise<StoredEmail[]>;
   markEmailsProcessed(emailIds: string[]): Promise<void>;
   saveDigest(data: DigestData): Promise<StoredDigest>;
   fetchDigests(limit?: number): Promise<StoredDigest[]>;
+  fetchLatestDigestByChatId(chatId: string): Promise<StoredDigest | null>;
   createTask(data: TaskData): Promise<StoredTask>;
   fetchTasks(): Promise<StoredTask[]>;
   saveFounderNote(content: string): Promise<StoredNote>;

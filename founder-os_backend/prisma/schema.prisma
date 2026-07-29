@@ -22,16 +22,23 @@ enum TaskStatus {
 }
 
 model Message {
-  id          String   @id @default(uuid())
-  chatId      String
-  sender      String
-  body        String
-  timestamp   DateTime
-  processed   Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id                   String    @id @default(uuid())
+  wahaMessageId        String?   @unique
+  chatId               String
+  sender               String
+  body                 String
+  timestamp            DateTime
+  processed            Boolean   @default(false)
+  classification       String?
+  classificationReason String?
+  classifiedAt         DateTime?
+  slaDeadline          DateTime?
+  createdAt            DateTime  @default(now())
 
   @@index([chatId])
   @@index([processed])
+  @@index([classification])
+  @@index([slaDeadline])
 }
 
 model Email {
