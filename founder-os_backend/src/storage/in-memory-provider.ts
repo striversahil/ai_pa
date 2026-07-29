@@ -1,0 +1,119 @@
+import { logger } from '../shared/logger';
+import type { StorageProvider, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote } from './interfaces';
+
+function generateId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+export class InMemoryStorageProvider implements StorageProvider {
+  private messages: any[] = [];
+  private emails: any[] = [];
+  private digests: any[] = [];
+  private tasks: any[] = [];
+  private founderNotes: any[] = [];
+
+  constructor() {
+    this.seed();
+  }
+
+  private seed() {
+    const now = new Date();
+    const chatRahul = '918595563952@c.us';
+    const chatOps = '120363023032@g.us';
+
+    this.messages = [
+      { id: 'msg-1', chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Hey Sahil, hope you are doing well.', timestamp: new Date(now.getTime() - 20 * 60 * 1000), processed: true, createdAt: now },
+      { id: 'msg-2', chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Wanted to follow up on the Q3 growth figures. Can we jump on a call tomorrow at 10 AM to discuss?', timestamp: new Date(now.getTime() - 19 * 60 * 1000), processed: true, createdAt: now },
+      { id: 'msg-3', chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Also need the pitch deck updated with the latest revenue run-rate.', timestamp: new Date(now.getTime() - 18 * 60 * 1000), processed: true, createdAt: now },
+      { id: 'msg-4', chatId: chatOps, sender: 'Amit (Ops Manager)', body: 'Hi guys, we are facing an issue with the staging server deployment.', timestamp: new Date(now.getTime() - 15 * 60 * 1000), processed: false, createdAt: now },
+      { id: 'msg-5', chatId: chatOps, sender: 'Neha (Tech Lead)', body: 'Yes, the database migrations are failing because of a locked connection. I need someone to check the database logs.', timestamp: new Date(now.getTime() - 14 * 60 * 1000), processed: false, createdAt: now },
+    ];
+
+    this.emails = [
+      { id: 'email-1', subject: 'URGENT: Stripe Account Verification Action Needed', sender: 'support@stripe.com', body: 'Hello Sahil, your account requires additional identity verification. Please upload the requested documents within 48 hours to avoid payout disruptions.', processed: false, createdAt: now },
+      { id: 'email-2', subject: 'Partnership Proposal - TechCorp', sender: 'john.doe@techcorp.com', body: 'Hi Sahil, I am John from TechCorp. We love what you are building and would love to explore a distribution partnership. Are you free for an introductory call next Tuesday?', processed: false, createdAt: now },
+    ];
+
+    this.digests = [{
+      id: 'digest-1', chatId: chatRahul, chatName: 'Rahul (Investor)',
+      summary: 'Rahul followed up on the Q3 growth figures, requested a meeting at 10 AM tomorrow, and asked for an updated pitch deck with current run-rate revenue.',
+      priority: 'high', category: 'Investor', sentiment: 'neutral', requiresFounder: true,
+      suggestedReply: 'Thanks Rahul, I will make sure the revised valuations and pitch deck are in your inbox tonight. Let sync tomorrow at 10 AM.',
+      createdAt: new Date(now.getTime() - 15 * 60 * 1000)
+    }];
+
+    this.tasks = [
+      { id: 'task-1', title: 'Update pitch deck with latest revenue run-rate', owner: 'Founder', status: 'PENDING', deadline: new Date(now.getTime() + 24 * 3600 * 1000), source: 'WHATSAPP', sourceId: 'digest-1', createdAt: now },
+      { id: 'task-2', title: 'Prepare Q3 valuations & growth slide deck figures', owner: 'Founder', status: 'PENDING', deadline: new Date(now.getTime() + 24 * 3600 * 1000), source: 'WHATSAPP', sourceId: 'digest-1', createdAt: now },
+    ];
+
+    this.founderNotes = [{
+      id: 'brief-1',
+      content: `# Morning Briefing - ${now.toLocaleDateString()}\n\n## Today Schedule & Meetings\n- 10:00 AM: Review Call with Rahul (Investor) - Prep valuations deck.\n\n## Urgent Matters\n- WhatsApp: Rahul (Investor) requested Q3 growth figures and updated pitch deck revenue numbers.\n- Email: Stripe Support requested verification documents within 48 hours to prevent account lockout.\n\n## High-Priority Conversations\n- Rahul (Investor): Active discussions regarding Q3 slide deck valuations.\n\n## Pending Action Items\n- [PENDING] Update pitch deck with latest revenue run-rate (Due: Tomorrow)\n- [PENDING] Prepare Q3 valuations & growth slide deck figures (Due: Tomorrow)\n\n## Suggested Focus Areas\n1. Update pitch deck revenue run-rates before the 10:00 AM call.\n2. Complete Stripe document uploads to avoid payout disruption.\n3. Review staging server deployment issues with Amit.`,
+      createdAt: now
+    }];
+  }
+
+  async saveMessage(data: MessageData): Promise<StoredMessage> {
+    const newMsg = { id: generateId('msg'), chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, createdAt: new Date() };
+    this.messages.push(newMsg);
+    return newMsg;
+  }
+
+  async fetchUnprocessedMessages(): Promise<StoredMessage[]> {
+    return this.messages.filter((m: any) => !m.processed);
+  }
+
+  async markMessagesProcessed(messageIds: string[]): Promise<void> {
+    this.messages = this.messages.map((m: any) => messageIds.includes(m.id) ? { ...m, processed: true } : m);
+  }
+
+  async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
+    return this.messages.filter((m: any) => m.chatId === chatId).sort((a: any, b: any) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, limit);
+  }
+
+  async storeEmail(data: EmailData): Promise<StoredEmail> {
+    const newEmail = { id: generateId('email'), subject: data.subject, sender: data.sender, body: data.body, processed: false, createdAt: new Date() };
+    this.emails.push(newEmail);
+    return newEmail;
+  }
+
+  async fetchUnprocessedEmails(): Promise<StoredEmail[]> {
+    return this.emails.filter((e: any) => !e.processed);
+  }
+
+  async markEmailsProcessed(emailIds: string[]): Promise<void> {
+    this.emails = this.emails.map((e: any) => emailIds.includes(e.id) ? { ...e, processed: true } : e);
+  }
+
+  async saveDigest(data: DigestData): Promise<StoredDigest> {
+    const newDigest = { id: generateId('digest'), ...data, suggestedReply: data.suggestedReply || null, createdAt: new Date() };
+    this.digests.push(newDigest);
+    return newDigest;
+  }
+
+  async fetchDigests(limit = 100): Promise<StoredDigest[]> {
+    return [...this.digests].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit);
+  }
+
+  async createTask(data: TaskData): Promise<StoredTask> {
+    const newTask = { id: generateId('task'), title: data.title, owner: data.owner, status: data.status || 'PENDING', deadline: data.deadline || null, source: data.source, sourceId: data.sourceId || null, createdAt: new Date() };
+    this.tasks.push(newTask);
+    return newTask;
+  }
+
+  async fetchTasks(): Promise<StoredTask[]> {
+    return [...this.tasks].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async saveFounderNote(content: string): Promise<StoredNote> {
+    const newNote = { id: generateId('brief'), content, createdAt: new Date() };
+    this.founderNotes.push(newNote);
+    return newNote;
+  }
+
+  async fetchLatestFounderNote(): Promise<StoredNote | null> {
+    if (this.founderNotes.length === 0) return null;
+    return [...this.founderNotes].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  }
+}

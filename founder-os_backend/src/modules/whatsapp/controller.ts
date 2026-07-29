@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { WhatsAppService } from './service';
 import { logger } from '../../shared/logger';
-import { broadcastWhatsAppEvent } from '../../server';
+import { broadcastWhatsAppEvent } from '../../shared/sse';
 
 export class WhatsAppController {
   /**
