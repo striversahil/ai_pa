@@ -141,7 +141,16 @@ export class SchedulerService {
       }
     });
 
-    // 5. SLA Monitor - runs every minute
+    // 5. Morning queue drain - runs every 5 minutes during working hours (8AM-10PM)
+    cron.schedule('* * * * *', async () => {
+      try {
+        await MessageQueueService.drainMorningQueue();
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: Morning queue drain failed');
+      }
+    });
+
+    // 6. SLA Monitor - runs every minute
     cron.schedule('* * * * *', async () => {
       try {
         await SLAChecker.check();
@@ -150,7 +159,7 @@ export class SchedulerService {
       }
     });
 
-    // 6. Notification Batcher - flushes grouped alerts every 15 minutes
+    // 7. Notification Batcher - flushes grouped alerts every 15 minutes
     cron.schedule('*/15 * * * *', async () => {
       try {
         await NotificationBatcher.flushAll();
@@ -159,7 +168,7 @@ export class SchedulerService {
       }
     });
 
-    // 7. Data retention - runs daily at 3:00 AM, deletes messages older than 90 days
+    // 8. Data retention - runs daily at 3:00 AM, deletes messages older than 90 days
     cron.schedule('0 3 * * *', async () => {
       logger.info('Cron: Running data retention cleanup...');
       try {
@@ -187,7 +196,7 @@ export class SchedulerService {
       }
     });
 
-    // 8. WAHA session restart - runs daily at 4:00 AM (lowest activity period)
+    // 9. WAHA session restart - runs daily at 4:00 AM (lowest activity period)
     // Avoids detection from 24/7 connection; session persists via mounted volume
     cron.schedule('0 4 * * *', async () => {
       logger.info('Cron: Restarting WAHA session for connection hygiene...');

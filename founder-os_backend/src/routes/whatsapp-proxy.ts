@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getWaEngineConfig, resolveContactName, resolveContactUid } from '../shared/wa-engine';
 import { WhatsAppService } from '../modules/whatsapp/service';
+import { OutboundService } from '../modules/whatsapp/outbound';
 import { AIService } from '../modules/ai/service';
 import { prisma } from '../shared/prisma';
 import { asyncHandler } from '../middleware/asyncHandler';
@@ -59,86 +60,13 @@ router.get('/contacts', asyncHandler(async (req, res) => {
   ]});
 }));
 
-// Campaigns
-router.get('/campaigns', asyncHandler(async (req, res) => {
-  try {
-    const response = await waFetch('/campaigns');
-    if (response.ok) { const data = await response.json(); return res.status(200).json(data); }
-  } catch (err: any) { logger.warn({ error: err.message }, 'Failed to fetch campaigns'); }
-  return res.status(200).json([
-    { campaign_uid: 'c-welcome', title: 'Welcome Campaign Jan', template_name: 'welcome_intro', target_count: 150, sent_count: 150, delivered_count: 148, read_count: 120, status: 'Completed', created_at: '2026-01-15' },
-    { campaign_uid: 'c-discount', title: 'Discount Push Feb', template_name: 'diwali_offer', target_count: 340, sent_count: 340, delivered_count: 330, read_count: 280, status: 'Completed', created_at: '2026-02-20' },
-    { campaign_uid: 'c-diwali', title: 'Diwali Campaign 2026', template_name: 'diwali_offer', target_count: 500, sent_count: 0, delivered_count: 0, read_count: 0, status: 'Scheduled', created_at: '2026-07-16' }
-  ]);
-}));
-
-router.post('/campaigns/create', asyncHandler(async (req, res) => {
-  const { title, template_name, template_language, group_uid, scheduled_at } = req.body;
-  try {
-    const response = await waFetch('/campaigns/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, template_name, template_language, group_uid, scheduled_at })
-    });
-    if (response.ok) { const data = await response.json(); return res.status(200).json(data); }
-  } catch (err: any) { logger.warn({ error: err.message }, 'Failed to create campaign'); }
-  return res.status(200).json({ success: true, message: 'Campaign scheduled successfully (mock)', campaign_uid: `c-mock-${Date.now()}` });
-}));
-
-// Groups
-router.get('/groups', asyncHandler(async (req, res) => {
-  try {
-    const response = await waFetch('/groups');
-    if (response.ok) { const data = await response.json(); return res.status(200).json(data); }
-  } catch (err: any) { logger.warn({ error: err.message }, 'Failed to fetch groups'); }
-  return res.status(200).json([
-    { group_uid: 'g-vip', name: 'VIP Customers', description: 'High value segment clients' },
-    { group_uid: 'g-leads', name: 'Lead Generators', description: 'Inbound telecaller leads' },
-    { group_uid: 'g-inactive', name: 'Inactive Accounts', description: 'Re-engagement segment' }
-  ]);
-}));
-
-router.post('/groups/create', asyncHandler(async (req, res) => {
-  const { name, description } = req.body;
-  try {
-    const response = await waFetch('/groups/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description })
-    });
-    if (response.ok) { const data = await response.json(); return res.status(200).json(data); }
-  } catch (err: any) { logger.warn({ error: err.message }, 'Failed to create group'); }
-  return res.status(200).json({ success: true, message: 'Group created successfully (mock)', group_uid: `g-mock-${Date.now()}` });
-}));
-
-// Templates
-router.get('/templates', asyncHandler(async (req, res) => {
-  try {
-    const response = await waFetch('/templates');
-    if (response.ok) { const data = await response.json(); return res.status(200).json(data); }
-  } catch (err: any) { logger.warn({ error: err.message }, 'Failed to fetch templates'); }
-  return res.status(200).json([
-    { name: 'welcome_intro', language: 'en', category: 'UTILITY', body: 'Hello {{1}}, welcome to Founder OS! How can we help you today?' },
-    { name: 'diwali_offer', language: 'en', category: 'MARKETING', body: 'Hi {{1}}, wishing you a happy Diwali! Use coupon DIWALI50 for 50% off.' },
-    { name: 'payment_reminder', language: 'en', category: 'UTILITY', body: 'Dear {{1}}, this is a reminder that your payment of INR{{2}} is due by {{3}}.' }
-  ]);
-}));
-
-// Send message
+// Send message via WAHA with ban-proof sequence
 router.post('/send', asyncHandler(async (req, res) => {
-  const cfg = getWaEngineConfig();
-  const { phone_number, message_body } = req.body;
-  if (!phone_number || !message_body) throw new AppError('Missing phone_number or message_body', 400);
-  await WhatsAppService.saveMessage({ chatId: phone_number, sender: 'You', body: message_body, timestamp: new Date() });
-  try {
-    const response = await fetch(`${cfg.apiBaseUrl}/${cfg.vendorUid}/contact/send-message`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.bearerToken}` },
-      body: JSON.stringify({ phone_number, message_body })
-    });
-    if (response.ok) { const data = await response.json(); return res.status(200).json({ success: true, message: 'Message sent successfully', data }); }
-  } catch (err: any) { logger.warn({ error: err.message }, 'Failed to send WhatsApp message via API'); }
-  return res.status(200).json({ success: true, message: 'Message sent successfully (mock)' });
+  const { chatId, message_body } = req.body;
+  if (!chatId || !message_body) throw new AppError('Missing chatId or message_body', 400);
+  await WhatsAppService.saveMessage({ chatId, sender: 'You', body: message_body, timestamp: new Date() });
+  const result = await OutboundService.sendWithJitter(chatId, message_body);
+  res.status(200).json({ success: true, result });
 }));
 
 // Contact messages

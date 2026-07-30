@@ -44,6 +44,34 @@ export class MessageQueueService {
   }
 
   /**
+   * Drains the morning queue — picks up delayed/waiting jobs that are now due and sends them.
+   * Called by the 5-minute cron during working hours (8AM–10PM).
+   * If rate-limited or outside hours, the job stays in the queue for the next cycle.
+   */
+  static async drainMorningQueue() {
+    const jobs = await this.morningQueue.getJobs(['delayed', 'waiting']);
+    const now = Date.now();
+    const due = jobs.filter(j => (j.delay || 0) + (j.timestamp || 0) <= now);
+    if (due.length === 0) return;
+
+    logger.info({ count: due.length }, 'Morning queue: sending deferred messages');
+
+    for (const job of due) {
+      try {
+        const { chatId, messageBody } = job.data;
+        const result = await OutboundService.sendWithJitter(chatId, messageBody);
+        // Only remove if actually sent. If rate_limited or outside_hours,
+        // keep in queue — next drain cycle will retry.
+        if (result === 'sent') {
+          await job.remove();
+        }
+      } catch (err: any) {
+        logger.error({ jobId: job.id, error: err.message }, 'Morning queue: job failed');
+      }
+    }
+  }
+
+  /**
    * Drains waiting classification jobs from Redis and processes them in chunks.
    * Called by the 5-minute cron — messages are stored in Redis RAM, then
    * batch-processed and written to PostgreSQL in chunks of 20.
