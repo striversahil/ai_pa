@@ -120,9 +120,27 @@ export class SalesCopilotService implements AnalysisEngine {
   }
 
   /**
+   * Shared lock so the manual force sync and the cron incremental sync never run
+   * concurrently (both would otherwise fetch comments + spend AI credits).
+   */
+  public static isSyncRunning = false;
+
+  /**
    * Main sync engine. Crawls estimates, analyzes, and performs Notion matching.
    */
   public async runSync(force: boolean = false): Promise<any> {
+    if (SalesCopilotService.isSyncRunning) {
+      throw new Error('Sales Copilot sync is already running. Please wait.');
+    }
+    SalesCopilotService.isSyncRunning = true;
+    try {
+      return await this.syncNow(force);
+    } finally {
+      SalesCopilotService.isSyncRunning = false;
+    }
+  }
+
+  private async syncNow(force: boolean): Promise<any> {
     logger.info(`SalesCopilotService: Starting sync execution (force: ${force})...`);
     const creds = this.parseCurlFile();
     if (!creds) {
@@ -144,7 +162,60 @@ export class SalesCopilotService implements AnalysisEngine {
 
     const activeEstIds = new Set<string>();
 
-    // 2. Process active estimates
+    // 2. Load the current DB state once. This single read is reused by both the
+    //    metadata sync and the AI change-detection below — previously we did one
+    //    findUnique per estimate on top of the metadata writes, so a full tick ran
+    //    ~200 sequential DB queries even when nothing had changed.
+    const existingRows = await prisma.estimate.findMany({
+      where: { estimateId: { in: estimates.map(e => e.estimate_id) } },
+      include: { classification: true }
+    });
+    const existingByEstId = new Map<string, any>();
+    for (const row of existingRows) existingByEstId.set(row.estimateId, row);
+
+    // 3. FAST metadata sync — ALWAYS runs first, before any AI analysis. This
+    //    brings the DB in sync with Zoho's current state immediately (new
+    //    estimates created, totals/statuses/names refreshed). Rows whose fields
+    //    already match Zoho are skipped so we never rewrite the same data every tick.
+    let metadataUpdated = 0;
+    for (const est of estimates) {
+      activeEstIds.add(est.estimate_id);
+
+      const metadata = {
+        estimateNumber: est.estimate_number,
+        customerName: est.customer_name,
+        total: parseFloat(est.total),
+        date: est.date,
+        status: est.status
+      };
+      const existing = existingByEstId.get(est.estimate_id);
+      const unchanged = !!existing &&
+        existing.estimateNumber === metadata.estimateNumber &&
+        existing.customerName === metadata.customerName &&
+        existing.total === metadata.total &&
+        existing.date === metadata.date &&
+        existing.status === metadata.status;
+
+      if (unchanged) continue;
+
+      await prisma.estimate.upsert({
+        where: { estimateId: est.estimate_id },
+        update: metadata,
+        create: { estimateId: est.estimate_id, ...metadata }
+      });
+      metadataUpdated++;
+    }
+    logger.info(`SalesCopilotService: Metadata sync updated ${metadataUpdated} of ${estimates.length} estimates.`);
+
+    // 4. Closed status sync — estimates that left the "sent" list in Zoho
+    // (accepted/declined/etc.). Runs before AI so statuses are in sync too.
+    await this.syncClosedStatuses(activeEstIds, orgId, headers);
+
+    // 5. AI analysis — only for estimates that are new, modified since their last
+    //    analysis, or forced. Skipped estimates keep their old lastSyncTime, so
+    //    anything changed while the machine was off is picked up on the next run.
+    let processedCount = 0;
+    let skippedCount = 0;
     for (const est of estimates) {
       const estId = est.estimate_id;
       const estNo = est.estimate_number;
@@ -153,28 +224,21 @@ export class SalesCopilotService implements AnalysisEngine {
       const dateVal = est.date;
       const estStatus = est.status;
 
-      activeEstIds.add(estId);
+      // ---- Incremental change detection ----
+      const lastModified = est.last_modified_time ? new Date(est.last_modified_time) : null;
+      const existingEstimate = existingByEstId.get(estId);
 
-      // Save estimate metadata to database
-      await prisma.estimate.upsert({
-        where: { estimateId: estId },
-        update: {
-          estimateNumber: estNo,
-          customerName: custName,
-          total,
-          date: dateVal,
-          status: estStatus,
-          lastSyncTime: new Date()
-        },
-        create: {
-          estimateId: estId,
-          estimateNumber: estNo,
-          customerName: custName,
-          total,
-          date: dateVal,
-          status: estStatus
-        }
-      });
+      const statusChanged = !existingEstimate || existingEstimate.status !== estStatus;
+      const neverAnalyzed = !existingEstimate?.classification;
+      const modifiedSinceLastSync = !!lastModified && !!existingEstimate &&
+        lastModified.getTime() > existingEstimate.lastSyncTime.getTime();
+
+      const needsProcessing = force || statusChanged || neverAnalyzed || modifiedSinceLastSync;
+
+      if (!needsProcessing) {
+        skippedCount++;
+        continue;
+      }
 
       // Fetch estimate comments
       let commentsJson: any = { comments: [] };
@@ -192,9 +256,6 @@ export class SalesCopilotService implements AnalysisEngine {
       }
 
       const comments = commentsJson.comments || [];
-
-      // Query database comment count BEFORE we upsert them to detect new comments
-      const commentCountBefore = await prisma.comment.count({ where: { estimateId: estId } });
 
       // Save comments and extract sales agent comments
       const salesComments: Array<{ id: string; date: string; author: string; text: string }> = [];
@@ -238,17 +299,8 @@ export class SalesCopilotService implements AnalysisEngine {
       const historyLines = salesComments.slice(0, 15).map(c => `[${c.date}] ${c.author}: ${c.text}`);
       const commentHistory = historyLines.join('\n');
 
-      // 3. Classify comments using AI
-      const existingEstimate = await prisma.estimate.findUnique({
-        where: { estimateId: estId },
-        include: { classification: true }
-      });
-      const commentCountDb = await prisma.comment.count({ where: { estimateId: estId } });
-      // Force reclassify if: (a) force flag set, (b) no existing classification,
-      // (c) comment count changed, or (d) summary is missing (classified before summary field existed)
-      const summaryMissing = existingEstimate?.classification && existingEstimate.classification.summary === '';
-      const skipAIClassification = !force && existingEstimate?.classification && commentCountBefore === comments.length && !summaryMissing;
-
+      // 3. Classify comments using AI (runs for every modified/forced estimate;
+      //    unmodified estimates never reach this point)
       if (!commentHistory) {
         // No comments found: default values directly
         const createdDate = new Date(dateVal);
@@ -289,8 +341,6 @@ export class SalesCopilotService implements AnalysisEngine {
             summary: 'No sales agent comment found.'
           }
         });
-      } else if (skipAIClassification) {
-        logger.info(`SalesCopilotService: Classification for ${estNo} is cached. Skipping AI call.`);
       } else {
         try {
           const result = await AIService.classifyEstimateComments(custName, total, commentHistory, dateVal);
@@ -349,12 +399,29 @@ export class SalesCopilotService implements AnalysisEngine {
             }
           });
         } catch (err: any) {
+          // Don't advance lastSyncTime on failure so this estimate is retried
+          // on the next sync.
           logger.error({ error: err.message }, `SalesCopilotService: AI classification error for ${estNo}`);
+          continue;
         }
       }
+
+      // Advance the per-estimate sync watermark only after successful processing.
+      // Skipped estimates keep their old lastSyncTime, so anything modified while
+      // the machine was off (e.g. 10h downtime) is detected on the next run.
+      await prisma.estimate.update({
+        where: { estimateId: estId },
+        data: { lastSyncTime: new Date() }
+      });
+      processedCount++;
     }
 
-    // 4. Closed Status Synchronization
+    logger.info(`SalesCopilotService: Processed ${processedCount} estimates, skipped ${skippedCount}.`);
+
+    return { success: true };
+  }
+
+  private async syncClosedStatuses(activeEstIds: Set<string>, orgId: string, headers: Record<string, string>): Promise<void> {
     // Fetch estimates currently labeled "sent" in local DB
     const localSentEstimates = await prisma.estimate.findMany({
       where: { status: 'sent' }
@@ -373,7 +440,7 @@ export class SalesCopilotService implements AnalysisEngine {
               logger.info(`SalesCopilotService: Estimate ${est.estimateNumber} status updated to: ${currentStatus}`);
               await prisma.estimate.update({
                 where: { estimateId: est.estimateId },
-                data: { status: currentStatus }
+                data: { status: currentStatus, lastSyncTime: new Date() }
               });
 
               // Fetch comments for this now-closed estimate to analyze its final comments (e.g. why it was declined/accepted)
@@ -389,7 +456,6 @@ export class SalesCopilotService implements AnalysisEngine {
               }
 
               const comments = commentsJson.comments || [];
-              const commentCountBefore = await prisma.comment.count({ where: { estimateId: est.estimateId } });
               const salesComments: Array<{ id: string; date: string; author: string; text: string }> = [];
 
               for (const c of comments) {
@@ -429,41 +495,31 @@ export class SalesCopilotService implements AnalysisEngine {
               const historyLines = salesComments.slice(0, 15).map(c => `[${c.date}] ${c.author}: ${c.text}`);
               const commentHistory = historyLines.join('\n');
 
-              const existingEstimate = await prisma.estimate.findUnique({
-                where: { estimateId: est.estimateId },
-                include: { classification: true }
-              });
-              const summaryMissing = existingEstimate?.classification && existingEstimate.classification.summary === '';
-              const skipAIClassification = !force && existingEstimate?.classification && commentCountBefore === comments.length && !summaryMissing;
-
               if (commentHistory) {
-                if (skipAIClassification) {
-                  logger.info(`SalesCopilotService: Classification for closed ${est.estimateNumber} is cached. Skipping AI call.`);
-                } else {
-                  try {
-                    const result = await AIService.classifyEstimateComments(est.customerName, est.total, commentHistory, est.date);
-                    await prisma.classification.upsert({
-                      where: { estimateId: est.estimateId },
-                      update: {
-                        meaningfulUpdate: result.meaningful_update,
-                        followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
-                        notAnswering: result.not_answering ? 'Yes' : 'No',
-                        improperFollowUp: result.improper_follow_up ? 'Yes' : 'No',
-                        lastCommentNotSatisfactory: result.last_comment_not_satisfactory ? 'Yes' : 'No',
-                        dayExceeded: result.day_exceeded ? 'Yes' : 'No',
-                        movingSlow: (result.moving_slow === true || result.moving_slow === 'Yes') ? 'Yes' : 'No',
-                        underDiscussion: result.under_discussion ? 'Yes' : 'No',
-                        confirm: result.confirm ? 'Yes' : 'No',
-                        intentScore: result.intent_score,
-                        reasoning: result.reasoning,
-                        summary: result.summary || '',
-                        processedAt: new Date()
-                      },
-                      create: {
-                        estimateId: est.estimateId,
-                        meaningfulUpdate: result.meaningful_update,
-                        followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
-                        notAnswering: result.not_answering ? 'Yes' : 'No',
+                try {
+                  const result = await AIService.classifyEstimateComments(est.customerName, est.total, commentHistory, est.date);
+                  await prisma.classification.upsert({
+                    where: { estimateId: est.estimateId },
+                    update: {
+                      meaningfulUpdate: result.meaningful_update,
+                      followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
+                      notAnswering: result.not_answering ? 'Yes' : 'No',
+                      improperFollowUp: result.improper_follow_up ? 'Yes' : 'No',
+                      lastCommentNotSatisfactory: result.last_comment_not_satisfactory ? 'Yes' : 'No',
+                      dayExceeded: result.day_exceeded ? 'Yes' : 'No',
+                      movingSlow: (result.moving_slow === true || result.moving_slow === 'Yes') ? 'Yes' : 'No',
+                      underDiscussion: result.under_discussion ? 'Yes' : 'No',
+                      confirm: result.confirm ? 'Yes' : 'No',
+                      intentScore: result.intent_score,
+                      reasoning: result.reasoning,
+                      summary: result.summary || '',
+                      processedAt: new Date()
+                    },
+                    create: {
+                      estimateId: est.estimateId,
+                      meaningfulUpdate: result.meaningful_update,
+                      followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
+                      notAnswering: result.not_answering ? 'Yes' : 'No',
                       improperFollowUp: result.improper_follow_up ? 'Yes' : 'No',
                       lastCommentNotSatisfactory: result.last_comment_not_satisfactory ? 'Yes' : 'No',
                       dayExceeded: result.day_exceeded ? 'Yes' : 'No',
@@ -482,13 +538,11 @@ export class SalesCopilotService implements AnalysisEngine {
             }
           }
         }
-        } catch (err: any) {
+        catch (err: any) {
           logger.warn({ error: err.message }, `SalesCopilotService: Failed to check closed status for ${est.estimateNumber}`);
         }
       }
     }
-
-    return { success: true };
   }
 
   /**

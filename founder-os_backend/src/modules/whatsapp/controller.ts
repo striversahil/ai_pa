@@ -1,9 +1,31 @@
 import { Request, Response } from 'express';
-import { WhatsAppService } from './service';
+import { StorageRepository } from '../storage/repository';
 import { logger } from '../../shared/logger';
 import { broadcastWhatsAppEvent } from '../../shared/sse';
-import { MessageQueueService } from '../queue/service';
-import { prisma, useInMemoryDb } from '../../shared/prisma';
+import { config } from '../../config';
+import { AuditService } from '../audit/service';
+import { messageBuffer } from './message-buffer';
+
+// Historical-replay threshold: payloads older than this (in seconds) are flagged
+// is_historical and bypass all real-time triggers (classification, SSE, unread).
+const HISTORICAL_THRESHOLD_MS = 120_000;
+
+// Fast-path dedup cache for WAHA replay storms. The DB ON CONFLICT DO NOTHING is
+// the source of truth; this only avoids redundant contact/SSE/audit work.
+const recentMessageIds = new Map<string, number>();
+const RECENT_ID_CACHE_MAX = 10_000;
+
+function noteRecentMessageId(id: string): boolean {
+  const now = Date.now();
+  if (recentMessageIds.has(id)) return true;
+  recentMessageIds.set(id, now);
+  if (recentMessageIds.size > RECENT_ID_CACHE_MAX) {
+    for (const [key, ts] of recentMessageIds) {
+      if (now - ts > 3_600_000) recentMessageIds.delete(key);
+    }
+  }
+  return false;
+}
 
 function extractMessageBody(payload: any): string {
   if (payload.body) return payload.body;
@@ -23,160 +45,276 @@ function extractMessageBody(payload: any): string {
   return typeLabels[payload.type] || '[Media/System Message]';
 }
 
+// WAHA message id can arrive as a bare string or as a { id, fromMe, participant... }
+// envelope — normalize both.
+function extractWahaMessageId(payload: any): string | null {
+  const raw = payload.id;
+  if (!raw) return null;
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object' && raw.id) return String(raw.id);
+  return null;
+}
+
+function isHistorical(timestamp: Date): boolean {
+  return Date.now() - timestamp.getTime() > HISTORICAL_THRESHOLD_MS;
+}
+
+function extractPhoneFromParticipant(participantId: string): string {
+  return participantId.replace(/[@\-].*$/, '').replace(/[^0-9]/g, '');
+}
+
+async function resolveGroupSenderName(participantId: string): Promise<string | null> {
+  if (!participantId) return null;
+  const clean = extractPhoneFromParticipant(participantId);
+  if (!clean || clean.length < 7) return null;
+  const local = await StorageRepository.fetchContactByPhoneNumber(clean).catch(() => null);
+  if (local?.name && local.name !== local.chatId && local.name !== clean) return local.name;
+  if (config.WAHA_API_URL) {
+    for (const suffix of ['@c.us', '@lid']) {
+      const resolved = await fetchContactNameFromWAHA(clean + suffix).catch(() => null);
+      if (resolved) return resolved;
+    }
+  }
+  return null;
+}
+
 function extractSenderName(payload: any): string {
   return payload.sender?.name || payload.sender?.pushname || payload.from?.split('@')[0] || 'Client';
 }
 
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
+function extractPushName(payload: any): string | null {
+  return payload.sender?.pushname || payload.sender?.name || null;
+}
+
+function extractPhoneNumber(chatId: string): string {
+  if (chatId.endsWith('@g.us')) return '';
+  return chatId.replace(/@c\.us$/, '').replace(/[^0-9]/g, '');
+}
+
+function isGroupChat(chatId: string): boolean {
+  return chatId.endsWith('@g.us');
+}
+
+async function fetchContactNameFromWAHA(chatId: string): Promise<string | null> {
+  try {
+    const encoded = encodeURIComponent(chatId);
+    if (chatId.endsWith('@g.us')) {
+      const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/groups/${encoded}`, {
+        headers: { 'X-Api-Key': config.WAHA_API_KEY },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.groupMetadata?.subject || null;
+    }
+    const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/contacts/${encoded}`, {
+      headers: { 'X-Api-Key': config.WAHA_API_KEY },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const displayName = data?.name || data?.pushname || data?.shortName || null;
+    if (displayName && displayName !== chatId.split('@')[0]) return displayName;
+    return null;
+  } catch {
+    return null;
   }
-  return chunks;
+}
+
+async function upsertContactFromPayload(chatId: string, payload: any, opts: { skipUnreadIncrement?: boolean } = {}) {
+  const group = isGroupChat(chatId);
+  const pushName = extractPushName(payload);
+  const phoneNumber = extractPhoneNumber(chatId);
+  const senderName = extractSenderName(payload);
+  let name = group ? chatId : senderName;
+
+  const existing = await StorageRepository.fetchContactByChatId(chatId).catch(() => null);
+
+  if (config.WAHA_API_URL) {
+    const nameIsRawId = !existing || existing.name === chatId || existing.name === chatId.split('@')[0];
+    if (nameIsRawId) {
+      const resolved = await fetchContactNameFromWAHA(chatId);
+      if (resolved) name = resolved;
+    } else {
+      name = existing.name;
+    }
+  }
+
+  await StorageRepository.upsertContact({
+    chatId,
+    name,
+    pushName: group ? null : pushName,
+    phoneNumber,
+    isGroup: group,
+    lastMessageAt: new Date((payload.timestamp || 0) * 1000),
+    lastMessageBody: extractMessageBody(payload),
+    ...(opts.skipUnreadIncrement ? { unreadCount: existing?.unreadCount ?? 0 } : {}),
+  });
+}
+
+async function processWahaMessage(payload: any): Promise<void> {
+  if (payload.fromMe) return;
+
+  const wahaMessageId = extractWahaMessageId(payload);
+  if (wahaMessageId && noteRecentMessageId(wahaMessageId)) {
+    logger.debug({ wahaMessageId }, 'Duplicate webhook delivery (recent cache), skipping');
+    return;
+  }
+
+  const from = payload.chatId || payload.from;
+  const group = isGroupChat(from);
+  let sender = extractSenderName(payload);
+  if (group) {
+    const participantId = payload.sender?.id || payload.participant || payload.from;
+    const pushName = payload.sender?.pushname || payload.sender?.name;
+    if (pushName && pushName !== participantId?.split('@')[0]) {
+      sender = pushName;
+    } else {
+      const resolved = await resolveGroupSenderName(participantId);
+      if (resolved) sender = resolved;
+    }
+  }
+  const body = extractMessageBody(payload);
+  const timestamp = new Date((payload.timestamp || 0) * 1000);
+  const mediaType = payload.type !== 'text' ? payload.type : null;
+  const historical = isHistorical(timestamp);
+
+  // Real-time triggers are skipped for historical replays.
+  if (!historical) {
+    broadcastWhatsAppEvent('message.received', { chatId: from, sender, body, timestamp });
+  }
+  AuditService.record('MESSAGE_RECEIVED', 'MESSAGE', null, {
+    chatId: from, sender, bodyLength: body.length, mediaType, isHistorical: historical,
+  }).catch(() => {});
+  await upsertContactFromPayload(from, payload, { skipUnreadIncrement: historical });
+  messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId, isHistorical: historical, mediaType });
 }
 
 export class WhatsAppController {
   /**
-   * Endpoint to receive message webhook updates from the whatsapp-web.js client
+   * Endpoint to receive message webhook updates from the whatsapp-web.js client.
+   *
+   * Returns 200 OK immediately — before any parsing, validation, or DB work — so
+   * WAHA never enters its timeout-and-retry loop. All processing happens in the
+   * background, writes are batched through the message buffer, and replayed
+   * duplicates are discarded by the DB's ON CONFLICT DO NOTHING.
    */
   static async handleWebhook(req: Request, res: Response) {
-    try {
-      logger.info({ body: req.body }, 'WhatsAppController: received webhook payload');
+    res.status(200).json({ success: true });
 
-      // WAHA webhook format
-      if (req.body.event === 'message' && req.body.payload) {
-        const payload = req.body.payload;
-        if (payload.fromMe) {
-          res.status(200).json({ success: true });
+    void (async () => {
+      try {
+        // WAHA webhook format
+        if (req.body.event === 'message' && req.body.payload) {
+          await processWahaMessage(req.body.payload);
           return;
         }
 
-        const wahaMessageId = payload.id;
-        if (wahaMessageId && !useInMemoryDb) {
-          const existing = await prisma.message.findUnique({ where: { wahaMessageId } });
-          if (existing) {
-            logger.warn({ wahaMessageId }, 'Duplicate webhook delivery, skipping');
-            res.status(200).json({ success: true, dedup: true });
+        // Thundering herd: batch payloads array from WAHA replay
+        if (Array.isArray(req.body.payloads)) {
+          let processed = 0;
+          for (const p of req.body.payloads) {
+            await processWahaMessage(p);
+            processed++;
+          }
+          logger.info({ total: req.body.payloads.length, processed }, 'Thundering herd batch processed');
+          return;
+        }
+
+        let from = '';
+        let sender = 'Client';
+        let body = '';
+        let timestamp = new Date();
+
+        if (req.body.currentMessage) {
+          const { from: f, senderName, senderPushname, body: b, timestamp: ts, fromMe } = req.body.currentMessage;
+          from = f;
+          sender = fromMe ? 'Founder' : (senderName || senderPushname || f);
+          body = b || '[Media/System Message]';
+          timestamp = new Date(ts);
+          if (!fromMe) {
+            const group = isGroupChat(from);
+            await StorageRepository.upsertContact({
+              chatId: from,
+              name: group ? from : sender,
+              pushName: group ? null : (senderPushname || senderName || null),
+              phoneNumber: extractPhoneNumber(from),
+              isGroup: group,
+              lastMessageAt: timestamp,
+              lastMessageBody: body,
+            });
+          }
+        } else if (req.body.message && req.body.contact) {
+          const message = req.body.message;
+          const contact = req.body.contact;
+          const whatsapp_webhook_payload = req.body.whatsapp_webhook_payload;
+
+          const phone = contact.phone_number || contact.wa_id || (whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from);
+
+          from = contact.uid || contact.contact_uid || (phone ? `${phone}@c.us` : 'unknown');
+
+          sender = message.direction === 'outbound' ? 'Founder' : (contact.full_name || contact.first_name || phone || 'Client');
+          body = message.body || message.message_body || '[Media/System Message]';
+
+          const rawTimestamp = whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.timestamp;
+          timestamp = rawTimestamp ? new Date(parseInt(rawTimestamp) * 1000) : new Date();
+
+          if (message.direction !== 'outbound') {
+            const group = isGroupChat(from);
+            await StorageRepository.upsertContact({
+              chatId: from,
+              name: group ? from : sender,
+              pushName: group ? null : (contact.pushname || contact.first_name || null),
+              phoneNumber: phone || extractPhoneNumber(from),
+              isGroup: group,
+              lastMessageAt: timestamp,
+              lastMessageBody: body,
+            });
+          }
+        } else if (req.body.event === 'message.received' || req.body.event === 'message.sent' || req.body.event === 'message.delivered') {
+          const message = req.body.data?.message;
+          const contact = req.body.data?.contact;
+          if (!message) {
+            logger.warn({ body: req.body }, 'Received WhatsJet event with missing message properties');
             return;
           }
-        }
+          from = contact?.uid || contact?.contact_uid || (contact?.wa_id ? `${contact.wa_id}@c.us` : (message.from_phone_number ? `${message.from_phone_number}@c.us` : 'unknown'));
+          sender = message.direction === 'outbound' ? 'Founder' : (contact?.full_name || contact?.first_name || from);
+          body = message.message_body || '[Media/System Message]';
+          timestamp = message.created_at ? new Date(message.created_at) : new Date();
 
-        const from = payload.chatId || payload.from;
-        const sender = extractSenderName(payload);
-        const body = extractMessageBody(payload);
-        const timestamp = new Date((payload.timestamp || 0) * 1000);
-        const mediaType = payload.type !== 'text' ? payload.type : null;
-
-        const saved = await WhatsAppService.saveMessage({ chatId: from, sender, body, timestamp, wahaMessageId });
-        await MessageQueueService.enqueueClassification(saved.id, from, sender, body, timestamp, mediaType);
-        broadcastWhatsAppEvent('message.received', { chatId: from, sender, body, timestamp });
-
-        res.status(200).json({ success: true });
-        return;
-      }
-
-      // Thundering herd: batch payloads array from WAHA replay
-      if (Array.isArray(req.body.payloads)) {
-        const BATCH_SIZE = 10;
-        const batches = chunkArray(req.body.payloads, BATCH_SIZE);
-        let savedCount = 0;
-
-        for (const batch of batches) {
-          const results = await Promise.allSettled(
-            batch.map(async (p: any) => {
-              if (p.fromMe) return null;
-
-              const wahaMessageId = p.id;
-              if (wahaMessageId && !useInMemoryDb) {
-                const existing = await prisma.message.findUnique({ where: { wahaMessageId } });
-                if (existing) return null;
-              }
-
-              const from = p.chatId || p.from;
-              const sender = extractSenderName(p);
-              const msgBody = extractMessageBody(p);
-              const ts = new Date((p.timestamp || 0) * 1000);
-              const mediaType = p.type !== 'text' ? p.type : null;
-
-              const saved = await WhatsAppService.saveMessage({ chatId: from, sender, body: msgBody, timestamp: ts, wahaMessageId });
-              await MessageQueueService.enqueueClassification(saved.id, from, sender, msgBody, ts, mediaType);
-              broadcastWhatsAppEvent('message.received', { chatId: from, sender, body: msgBody, timestamp: ts });
-              return saved;
-            })
-          );
-
-          savedCount += results.filter(r => r.status === 'fulfilled' && r.value !== null).length;
-          await new Promise(r => setTimeout(r, 100));
-        }
-
-        logger.info({ total: req.body.payloads.length, saved: savedCount }, 'Thundering herd batch processed');
-        res.status(200).json({ success: true, saved: savedCount });
-        return;
-      }
-
-      let from = '';
-      let sender = 'Client';
-      let body = '';
-      let timestamp = new Date();
-
-      if (req.body.currentMessage) {
-        const { from: f, senderName, senderPushname, body: b, timestamp: ts, fromMe } = req.body.currentMessage;
-        from = f;
-        sender = fromMe ? 'Founder' : (senderName || senderPushname || f);
-        body = b || '[Media/System Message]';
-        timestamp = new Date(ts);
-      } else if (req.body.message && req.body.contact) {
-        const message = req.body.message;
-        const contact = req.body.contact;
-        const whatsapp_webhook_payload = req.body.whatsapp_webhook_payload;
-
-        const phone = contact.phone_number || contact.wa_id || (whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from);
-        
-        from = contact.uid || contact.contact_uid || (phone ? `${phone}@c.us` : 'unknown');
-        
-        sender = message.direction === 'outbound' ? 'Founder' : (contact.full_name || contact.first_name || phone || 'Client');
-        body = message.body || message.message_body || '[Media/System Message]';
-
-        const rawTimestamp = whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.timestamp;
-        timestamp = rawTimestamp ? new Date(parseInt(rawTimestamp) * 1000) : new Date();
-      } else if (req.body.event === 'message.received' || req.body.event === 'message.sent' || req.body.event === 'message.delivered') {
-        const message = req.body.data?.message;
-        const contact = req.body.data?.contact;
-        if (!message) {
-          logger.warn({ body: req.body }, 'Received WhatsJet event with missing message properties');
-          res.status(400).json({ error: 'Missing message block in event data' });
+          if (message.direction !== 'outbound') {
+            const group = isGroupChat(from);
+            await StorageRepository.upsertContact({
+              chatId: from,
+              name: group ? from : sender,
+              pushName: group ? null : (contact?.pushname || contact?.first_name || null),
+              phoneNumber: contact?.wa_id || extractPhoneNumber(from),
+              isGroup: group,
+              lastMessageAt: timestamp,
+              lastMessageBody: body,
+            });
+          }
+        } else {
+          logger.warn({ body: req.body }, 'Received unrecognized WhatsApp webhook payload format');
           return;
         }
-        from = contact?.uid || contact?.contact_uid || (contact?.wa_id ? `${contact.wa_id}@c.us` : (message.from_phone_number ? `${message.from_phone_number}@c.us` : 'unknown'));
-        sender = message.direction === 'outbound' ? 'Founder' : (contact?.full_name || contact?.first_name || from);
-        body = message.message_body || '[Media/System Message]';
-        timestamp = message.created_at ? new Date(message.created_at) : new Date();
-      } else {
-        logger.warn({ body: req.body }, 'Received unrecognized WhatsApp webhook payload format');
-        res.status(200).json({ success: true, message: 'Ignored unrecognized event format' });
-        return;
+
+        logger.info({ chatId: from, sender, body }, 'Saving WhatsApp message from webhook');
+        const historical = isHistorical(timestamp);
+        if (!historical) {
+          broadcastWhatsAppEvent('message.received', {
+            chatId: from,
+            sender,
+            body,
+            timestamp,
+          });
+        }
+        messageBuffer.push({ chatId: from, sender, body, timestamp, isHistorical: historical });
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Error processing WhatsApp webhook');
       }
-
-      logger.info({ chatId: from, sender, body }, 'Saving WhatsApp message from webhook');
-      await WhatsAppService.saveMessage({
-        chatId: from,
-        sender,
-        body,
-        timestamp,
-      });
-
-      broadcastWhatsAppEvent('message.received', {
-        chatId: from,
-        sender,
-        body,
-        timestamp,
-      });
-
-      res.status(200).json({ success: true });
-    } catch (error: any) {
-      logger.error({ error: error.message }, 'Error handling WhatsApp webhook');
-      res.status(500).json({ error: 'Internal Server Error' });
-    }
+    })();
   }
 }
 export default WhatsAppController;

@@ -3,7 +3,6 @@ import path from 'path';
 import { config } from './config';
 import { logger } from './shared/logger';
 import { SchedulerService } from './modules/scheduler/service';
-import { WhatsAppController } from './modules/whatsapp/controller';
 import { WhatsAppService } from './modules/whatsapp/service';
 import { DigestService } from './modules/digest/service';
 import { TasksService } from './modules/tasks/service';
@@ -16,10 +15,21 @@ import { BrainService } from './modules/brain/service';
 import { GoogleSheetsService } from './modules/google_sheets/service';
 import { asyncHandler } from './utils/asyncHandler';
 import { errorHandler, notFoundHandler } from './utils/errorHandler';
-import { ParsedQs } from 'qs';
+import { OutboundService } from './modules/whatsapp/outbound';
+import { MessageQueueService } from './modules/queue/service';
+import { AuditService } from './modules/audit/service';
+import webhookRouter from './routes/whatsapp-webhook';
+import healthRouter from './routes/health';
 
 
 const app = express();
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error({ error: (reason as Error)?.message, stack: (reason as Error)?.stack }, 'UNHANDLED REJECTION');
+});
+process.on('uncaughtException', (err) => {
+  logger.error({ error: err.message, stack: err.stack }, 'UNCAUGHT EXCEPTION');
+});
 
 // Serve the static frontend files
 app.use(express.static(path.join(__dirname, '../public')));
@@ -32,8 +42,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- WhatsApp webhook endpoint ---
-app.post('/api/whatsapp/webhook', asyncHandler(WhatsAppController.handleWebhook));
+// --- WhatsApp webhook endpoint (secured: IP allowlist + rate limit) ---
+app.use('/api/whatsapp/webhook', webhookRouter);
+
+// --- Health Endpoints ---
+app.use('/api/health', healthRouter);
 
 // --- REST API Endpoints ---
 
@@ -215,29 +228,53 @@ app.get('/api/estimates', asyncHandler(async (req, res) => {
   res.status(200).json(estimates);
 }));
 
-let isSalesSyncRunning = false;
+let salesSyncLastCompletedAt: Date | null = null;
+let salesSyncLastError: string | null = null;
+
+/**
+ * GET /api/trigger/sales-sync/status
+ * Returns the current state of the Sales Copilot sync job so the UI can poll
+ * instead of holding a long-lived HTTP connection open.
+ */
+app.get('/api/trigger/sales-sync/status', asyncHandler(async (req, res) => {
+  res.status(200).json({
+    running: SalesCopilotService.isSyncRunning,
+    lastCompletedAt: salesSyncLastCompletedAt,
+    lastError: salesSyncLastError
+  });
+}));
 
 /**
  * POST /api/trigger/sales-sync
- * Force sync and analyze Zoho Estimates (Sales Copilot)
+ * Force sync and analyze Zoho Estimates (Sales Copilot).
+ * Runs the job in the background and responds immediately, because a full sync
+ * (fetching comments + AI classification for every estimate) can take minutes —
+ * holding the HTTP request open causes proxy timeouts ("socket hang up").
  */
 app.post('/api/trigger/sales-sync', asyncHandler(async (req, res) => {
-  if (isSalesSyncRunning) {
+  if (SalesCopilotService.isSyncRunning) {
     logger.warn('API: Sales sync trigger received while a job is already running. Rejecting request.');
     res.status(409).json({ error: 'Sync job is already processing. Please wait.' });
     return;
   }
 
-  isSalesSyncRunning = true;
-  try {
-    const force = Array.isArray(req.query.force) 
-      ? req.query.force[0] === 'true' 
-      : (req.query.force as string) === 'true' || req.body?.force === true;
-    const result = await new SalesCopilotService().runSync(force);
-    res.status(200).json({ message: 'Sales Copilot analysis job completed', result });
-  } finally {
-    isSalesSyncRunning = false;
-  }
+  const force = Array.isArray(req.query.force) 
+    ? req.query.force[0] === 'true' 
+    : (req.query.force as string) === 'true' || req.body?.force === true;
+
+  res.status(202).json({ message: 'Sales Copilot analysis started', status: 'started' });
+
+  (async () => {
+    try {
+      await new SalesCopilotService().runSync(force);
+      salesSyncLastCompletedAt = new Date();
+      salesSyncLastError = null;
+      logger.info('API: Sales Copilot background sync completed');
+    } catch (err: any) {
+      salesSyncLastError = err.message;
+      logger.error({ error: err.message, stack: err.stack }, 'API: Sales Copilot background sync failed');
+    }
+  })();
 }));
 
 /**
@@ -276,419 +313,141 @@ app.post('/api/trigger/brain-index', asyncHandler(async (req, res) => {
   res.status(200).json({ message: 'Company Brain re-index complete', result });
 }));
 
-// --- WhatsApp Automation Hub API Proxy Endpoints ---
-
-const getWaEngineConfig = (req: Request) => {
-  const vendorUid = req.headers['x-wa-vendor-uid'] as string || process.env.WA_ENGINE_VENDOR_UID || 'b35c07b9-99fa-4224-a7f3-1ea587cb2e64';
-  const bearerToken = req.headers['x-wa-bearer-token'] as string || process.env.WA_ENGINE_BEARER_TOKEN || 'aNxAArZ6ahSs81ogk4rZXgk1C8f7jJ66PtbkDOmlRVORWRMt0ZT9VJTA6Gmw2Ua8';
-  const apiBaseUrl = 'https://plus.waengine.in/api';
-  return { vendorUid, bearerToken, apiBaseUrl };
-};
+// --- Audit Endpoints ---
 
 /**
- * GET /api/whatsapp/campaigns
- * Fetch list of WhatsApp campaigns
+ * GET /api/audit
+ * Query audit log entries
  */
-app.get('/api/whatsapp/campaigns', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const url = `${apiBaseUrl}/${vendorUid}/campaigns`;
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${bearerToken}`
-    }
-  });
-  if (response.ok) {
-    const data = await response.json();
-    return res.status(200).json(data);
-  }
-  throw new Error(`WA Engine returned status ${response.status}`);
+app.get('/api/audit', asyncHandler(async (req, res) => {
+  const action = req.query.action as string | undefined;
+  const entityType = req.query.entityType as string | undefined;
+  const limit = req.query.limit ? parseInt(req.query.limit as string) : 100;
+  const since = req.query.since ? new Date(req.query.since as string) : undefined;
+  const entries = await AuditService.query({ action, entityType, limit, since });
+  res.status(200).json(entries);
 }));
 
 /**
- * POST /api/whatsapp/campaigns/create
- * Trigger template campaign blasts
+ * GET /api/audit/pending
+ * Get current pending items requiring founder attention
  */
-app.post('/api/whatsapp/campaigns/create', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const { title, template_name, template_language, group_uid, scheduled_at } = req.body;
-  const url = `${apiBaseUrl}/${vendorUid}/campaigns/create`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${bearerToken}`
-    },
-    body: JSON.stringify({ title, template_name, template_language, group_uid, scheduled_at })
-  });
-  if (response.ok) {
-    const data = await response.json();
-    return res.status(200).json(data);
-  }
-  throw new Error(`WA Engine returned status ${response.status}`);
+app.get('/api/audit/pending', asyncHandler(async (req, res) => {
+  const since = req.query.since ? new Date(req.query.since as string) : undefined;
+  const items = await AuditService.getPendingItems({ since });
+  res.status(200).json(items);
 }));
 
 /**
- * GET /api/whatsapp/groups
- * Fetch contact groups/lists
+ * GET /api/audit/sla-breaches
+ * Get SLA breaches since a given date
  */
-app.get('/api/whatsapp/groups', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const url = `${apiBaseUrl}/${vendorUid}/groups`;
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${bearerToken}`
-    }
-  });
-  if (response.ok) {
-    const data = await response.json();
-    return res.status(200).json(data);
-  }
-  throw new Error(`WA Engine returned status ${response.status}`);
+app.get('/api/audit/sla-breaches', asyncHandler(async (req, res) => {
+  const since = req.query.since ? new Date(req.query.since as string) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const breaches = await AuditService.getSLABreaches(since);
+  res.status(200).json(breaches);
 }));
 
-/**
- * POST /api/whatsapp/groups/create
- * Create target group segment
- */
-app.post('/api/whatsapp/groups/create', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const { name, description } = req.body;
-  const url = `${apiBaseUrl}/${vendorUid}/groups/create`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${bearerToken}`
-    },
-    body: JSON.stringify({ name, description })
-  });
-  if (response.ok) {
-    const data = await response.json();
-    return res.status(200).json(data);
-  }
-  throw new Error(`WA Engine returned status ${response.status}`);
-}));
-
-/**
- * GET /api/whatsapp/templates
- * Fetch approved template messages list
- */
-app.get('/api/whatsapp/templates', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const url = `${apiBaseUrl}/${vendorUid}/templates`;
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${bearerToken}`
-    }
-  });
-  if (response.ok) {
-    const data = await response.json();
-    return res.status(200).json(data);
-  }
-  throw new Error(`WA Engine returned status ${response.status}`);
-}));
+// --- WhatsApp API Endpoints (DB only — no WA Engine) ---
 
 /**
  * POST /api/whatsapp/send
- * Dispatches a WhatsApp text message and logs it locally
+ * Dispatches a WhatsApp text message via WAHA with ban-proof jitter
  */
 app.post('/api/whatsapp/send', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const { phone_number, message_body } = req.body;
-  if (!phone_number || !message_body) {
-    return res.status(400).json({ error: 'Missing phone_number or message_body' });
+  const { chatId, message_body } = req.body;
+  if (!chatId || !message_body) {
+    return res.status(400).json({ error: 'Missing chatId or message_body' });
+  }
+  let trimmed = chatId.trim();
+  if (!trimmed.includes('@')) {
+    trimmed = trimmed + '@c.us';
+  }
+  const suffix = trimmed.split('@').pop() || '';
+  if (suffix !== 'g.us' && suffix !== 'c.us' && suffix !== 'lid') {
+    return res.status(400).json({ error: 'chatId must end with @c.us, @g.us, or @lid' });
+  }
+  if (suffix === 'c.us') {
+    if (/\+/.test(trimmed)) {
+      return res.status(400).json({ error: 'chatId must not contain + sign (use e.g. 919876543210@c.us)' });
+    }
+    const match = trimmed.match(/^(\d+)@c\.us$/);
+    if (!match) {
+      return res.status(400).json({ error: 'chatId must be digits followed by @c.us (e.g. 919876543210@c.us)' });
+    }
+    const digits = match[1];
+    const localNumber = digits.slice(-10);
+    const countryCode = digits.slice(0, -10);
+    if (!countryCode || !/^\d+$/.test(countryCode)) {
+      return res.status(400).json({ error: 'chatId must include a numeric country code (e.g. 919876543210@c.us)' });
+    }
+    if (!/^\d{10}$/.test(localNumber)) {
+      return res.status(400).json({ error: 'chatId must contain exactly 10 digits after the country code (e.g. 919876543210@c.us)' });
+    }
   }
 
-  // Save to database locally first so it shows up in conversation logs immediately
   await WhatsAppService.saveMessage({
-    chatId: phone_number,
+    chatId: trimmed,
     sender: 'You',
     body: message_body,
     timestamp: new Date()
   });
 
-  const url = `${apiBaseUrl}/${vendorUid}/contact/send-message`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${bearerToken}`
-    },
-    body: JSON.stringify({
-      phone_number,
-      message_body
-    })
-  });
-  if (response.ok) {
-    const data = await response.json();
-    return res.status(200).json({ success: true, message: 'Message sent successfully', data });
+  const result = await OutboundService.sendWithJitter(trimmed, message_body);
+  if (result === 'rate_limited' || result === 'failed') {
+    // Account/burst cap reached or WAHA rejected the send: defer instead of
+    // dropping, and never fire in bulk.
+    await MessageQueueService.enqueueDelayedMorning(trimmed, message_body, 30 * 60 * 1000 + Math.floor(Math.random() * 30 * 60 * 1000));
+    logger.warn({ chatId: trimmed, result }, 'Send not delivered now: deferred to retry queue');
   }
-  throw new Error(`WA Engine returned status ${response.status}`);
+  return res.status(200).json({ success: true, result });
 }));
 
 /**
- * Helper function to resolve contact name by UUID or phone number
- */
-async function resolveContactName(contactUid: string, vendorUid: string, bearerToken: string, apiBaseUrl: string): Promise<string> {
-  try {
-    const groupsUrl = `${apiBaseUrl}/${vendorUid}/groups`;
-    const groupsRes = await fetch(groupsUrl, {
-      headers: {
-        'Authorization': `Bearer ${bearerToken}`
-      }
-    });
-    if (groupsRes.ok) {
-      const groupsData = await groupsRes.json() as any;
-      const groups = groupsData.data || [];
-      for (const group of groups) {
-        const contactsUrl = `${apiBaseUrl}/${vendorUid}/groups/${group.uid}/contacts`;
-        const contactsRes = await fetch(contactsUrl, {
-          headers: {
-            'Authorization': `Bearer ${bearerToken}`
-          }
-        });
-        if (contactsRes.ok) {
-          const contactsData = await contactsRes.json() as any;
-          const contacts = contactsData.data || [];
-          const matched = contacts.find((c: any) => c.uid === contactUid || c.wa_id === contactUid || `${c.wa_id}@c.us` === contactUid);
-          if (matched) {
-            return (matched.full_name || matched.first_name || matched.wa_id || 'Client').trim();
-          }
-        }
-      }
-    }
-  } catch (e: any) {}
-
-  if (contactUid.includes('919811044521')) return 'Sanjay Singhal';
-  if (contactUid.includes('918511299014')) return 'Vikram Rathore';
-  if (contactUid.includes('918595563952')) return 'Sahil Kumar';
-  
-  return contactUid.split('@')[0];
-}
-
-/**
- * Helper function to resolve phone number or chatId to WA Engine contact UUID
- */
-async function resolveContactUid(contactUid: string, vendorUid: string, bearerToken: string, apiBaseUrl: string): Promise<string> {
-  // If it's already a UUID, return directly
-  if (contactUid.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
-    return contactUid;
-  }
-  
-  // Extract numbers
-  const phoneNumber = contactUid.replace(/[^0-9]/g, '');
-  if (!phoneNumber) return contactUid;
-
-  try {
-    const url = `${apiBaseUrl}/${vendorUid}/contact/by-phone?phone_number=${phoneNumber}`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${bearerToken}`
-      }
-    });
-    if (response.ok) {
-      const data = await response.json() as any;
-      if (data.data?.contact_uid) {
-        return data.data.contact_uid;
-      }
-    }
-  } catch (e: any) {
-    logger.warn({ error: e.message, phoneNumber }, 'Failed to resolve contact UID by phone number');
-  }
-
-  return contactUid;
-}
-
-/**
  * GET /api/whatsapp/contacts
- * Fetch live contacts from WA Engine Plus
+ * Fetch all contacts from the local database
  */
 app.get('/api/whatsapp/contacts', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  
-  // 1. Fetch all groups first since global /contacts returns 404
-  const groupsUrl = `${apiBaseUrl}/${vendorUid}/groups`;
-  const groupsRes = await fetch(groupsUrl, {
-    headers: {
-      'Authorization': `Bearer ${bearerToken}`
-    }
-  });
-  
-  if (groupsRes.ok) {
-    const groupsData = await groupsRes.json() as any;
-    const groups = groupsData.data || [];
-    const allContactsMap = new Map<string, any>();
-    
-    // 2. Fetch contacts in each group to compile a complete de-duplicated list
-    for (const group of groups) {
-      try {
-        const contactsUrl = `${apiBaseUrl}/${vendorUid}/groups/${group.uid}/contacts`;
-        const contactsRes = await fetch(contactsUrl, {
-          headers: {
-            'Authorization': `Bearer ${bearerToken}`
-          }
-        });
-        if (contactsRes.ok) {
-          const contactsData = await contactsRes.json() as any;
-          const contacts = contactsData.data || [];
-          for (const c of contacts) {
-            if (c.wa_id && !allContactsMap.has(c.wa_id)) {
-              allContactsMap.set(c.wa_id, {
-                uid: c.uid || `${c.wa_id}@c.us`,
-                name: c.full_name || c.first_name || c.wa_id || 'Client',
-                phone_number: c.wa_id,
-                email: c.email || ''
-              });
-            }
-          }
-        }
-      } catch (e: any) {
-        logger.warn({ error: e.message, groupUid: group.uid }, 'Failed to fetch contacts for group');
-      }
-    }
-    
-    const contactsList = Array.from(allContactsMap.values());
-    if (contactsList.length > 0) {
-      return res.status(200).json({ contacts: contactsList });
-    }
-  }
-  
-  // Fallback: try direct contacts list
-  const url = `${apiBaseUrl}/${vendorUid}/contacts?page=1&per_page=50`;
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${bearerToken}`
-    }
-  });
-  if (response.ok) {
-    const data = await response.json();
-    return res.status(200).json(data);
-  }
-  throw new Error(`WA Engine returned status ${response.status}`);
+  const dbContacts = await StorageRepository.fetchContacts();
+  const contacts = dbContacts.map(c => ({
+    uid: c.chatId,
+    name: c.name,
+    phone_number: c.phoneNumber,
+    pushName: c.pushName,
+    isGroup: c.isGroup,
+    lastMessageAt: c.lastMessageAt,
+    lastMessageBody: c.lastMessageBody,
+    unreadCount: c.unreadCount,
+  }));
+  return res.status(200).json({ contacts });
 }));
 
 /**
  * GET /api/whatsapp/contacts/:contactUid/messages
- * Fetch live message history from WA Engine Plus for a specific contact
+ * Fetch messages from the local database only
  */
 app.get('/api/whatsapp/contacts/:contactUid/messages', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const contactUidRaw = req.params.contactUid;
-  const contactUidRawStr = Array.isArray(contactUidRaw) ? contactUidRaw[0] : contactUidRaw;
-  
-  const contactUid = await resolveContactUid(contactUidRawStr, vendorUid, bearerToken, apiBaseUrl);
-  
-  // Fetch local DB messages
-  const localMsgs = await WhatsAppService.fetchMessagesByChatId(contactUidRawStr);
-  
-  // Fetch live messages from WA Engine Plus
-  let cloudMsgs: any[] = [];
-  try {
-    const url = `${apiBaseUrl}/${vendorUid}/contacts/${contactUid}/messages?page=1&limit=50`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${bearerToken}`
-      }
-    });
-    if (response.ok) {
-      const data = await response.json() as any;
-      cloudMsgs = (data.data || data.messages || []).map((m: any) => ({
-        id: m.uid || m.id || String(Math.random()),
-        chatId: contactUidRawStr,
-        sender: m.direction === 'inbound' ? 'Client' : 'You',
-        body: m.message_body || m.body || '',
-        timestamp: m.created_at || m.timestamp || new Date().toISOString(),
-        processed: true
-      }));
-    }
-  } catch (e: any) {
-    logger.warn({ error: e.message }, 'Failed to fetch cloud messages, using local only');
-  }
-
-  // Merge and de-duplicate
-  const msgMap = new Map<string, any>();
-  for (const m of cloudMsgs) {
-    msgMap.set(m.id, m);
-  }
-  for (const m of localMsgs) {
-    if (!msgMap.has(m.id)) {
-      msgMap.set(m.id, {
-        id: m.id,
-        chatId: contactUidRawStr,
-        sender: m.sender === 'Founder' || m.sender === 'You' ? 'You' : 'Client',
-        body: m.body,
-        timestamp: m.timestamp,
-        processed: m.processed
-      });
-    }
-  }
-
-  const mergedMessages = Array.from(msgMap.values());
-  mergedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-  return res.status(200).json(mergedMessages);
+  const chatId = String(req.params.contactUid);
+  const messages = await WhatsAppService.fetchMessagesByChatId(chatId);
+  const sorted = messages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  return res.status(200).json(sorted);
 }));
 
 /**
  * GET /api/whatsapp/contacts/:contactUid/summarize
- * Generate a conversation summary for a specific contact
+ * Generate a conversation summary from local DB messages only
  */
 app.get('/api/whatsapp/contacts/:contactUid/summarize', asyncHandler(async (req, res) => {
-  const { vendorUid, bearerToken, apiBaseUrl } = getWaEngineConfig(req);
-  const contactUidRaw = req.params.contactUid;
-  const contactUidRawStr = Array.isArray(contactUidRaw) ? contactUidRaw[0] : contactUidRaw;
+  const chatId = String(req.params.contactUid);
+  const contact = await StorageRepository.fetchContactByChatId(chatId);
+  const contactName = contact?.name || chatId.split('@')[0];
 
-  const contactUid = await resolveContactUid(contactUidRawStr, vendorUid, bearerToken, apiBaseUrl);
-  const contactName = await resolveContactName(contactUidRawStr, vendorUid, bearerToken, apiBaseUrl);
-  
-  // Fetch local DB messages
-  const localMsgs = await WhatsAppService.fetchMessagesByChatId(contactUidRawStr);
-  
-  // Fetch live messages from WA Engine Plus
-  let cloudMsgs: any[] = [];
-  try {
-    const url = `${apiBaseUrl}/${vendorUid}/contacts/${contactUid}/messages?page=1&limit=50`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${bearerToken}`
-      }
-    });
-    if (response.ok) {
-      const data = await response.json() as any;
-      cloudMsgs = data.data || data.messages || [];
-    }
-  } catch (e: any) {
-    logger.warn({ error: e.message }, 'Failed to fetch cloud messages for summary');
-  }
-
-  // Merge messages
-  const msgMap = new Map<string, any>();
-  for (const m of cloudMsgs) {
-    const uid = m.uid || m.id || String(Math.random());
-    msgMap.set(uid, {
-      direction: m.direction,
-      message_body: m.message_body || m.body || '',
-      created_at: m.created_at || m.timestamp || new Date().toISOString()
-    });
-  }
-  for (const m of localMsgs) {
-    if (!msgMap.has(m.id)) {
-      msgMap.set(m.id, {
-        direction: m.sender === 'Founder' || m.sender === 'You' ? 'outbound' : 'inbound',
-        message_body: m.body,
-        created_at: m.timestamp
-      });
-    }
-  }
-
-  const rawMessages = Array.from(msgMap.values());
-  rawMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-  if (rawMessages.length === 0) {
+  const localMsgs = await WhatsAppService.fetchMessagesByChatId(chatId);
+  if (localMsgs.length === 0) {
     return res.status(200).json({
-      id: contactUid,
-      chatId: contactUid,
-      chatName: 'Unknown Client',
+      id: chatId,
+      chatId,
+      chatName: contactName,
       summary: 'No message history available to summarize.',
       priority: 'low',
       category: 'General',
@@ -698,21 +457,20 @@ app.get('/api/whatsapp/contacts/:contactUid/summarize', asyncHandler(async (req,
     });
   }
 
-  // 3. Map messages into AI input format
-  const messagesInput = rawMessages.map((m: any) => ({
-    sender: m.direction === 'inbound' ? contactName : 'You',
-    body: m.message_body || m.body || '',
-    timestamp: m.created_at || m.timestamp || new Date().toISOString()
-  }));
+  const messagesInput = localMsgs
+    .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    .map(m => ({
+      sender: m.sender === 'You' || m.sender === 'Founder' ? 'You' : m.sender,
+      body: m.body,
+      timestamp: m.timestamp,
+    }));
 
-  // 4. Trigger LLM to generate digest summary
   const summaryResult = await AIService.summarizeConversation(contactName, messagesInput);
 
-  // 5. Upsert digest in DB
   const digest = await prisma.digest.upsert({
-    where: { id: contactUid },
+    where: { id: chatId },
     update: {
-      chatId: contactUid,
+      chatId,
       chatName: contactName,
       summary: summaryResult.summary,
       priority: (summaryResult.priority || 'medium') as any,
@@ -723,8 +481,8 @@ app.get('/api/whatsapp/contacts/:contactUid/summarize', asyncHandler(async (req,
       createdAt: new Date()
     },
     create: {
-      id: contactUid,
-      chatId: contactUid,
+      id: chatId,
+      chatId,
       chatName: contactName,
       summary: summaryResult.summary,
       priority: (summaryResult.priority || 'medium') as any,
@@ -775,16 +533,56 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // --- Boot Server & Start Cron Scheduler ---
+/**
+ * Blocks the background services (scheduler, workers) until WAHA's session engine
+ * reaches status "WORKING". Cold-booting alongside a freshly-started WAHA would
+ * otherwise fire crons against a session that is still generating its QR code.
+ */
+async function waitForWahaSession(timeoutMs = 180_000): Promise<boolean> {
+  const url = `${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'X-Api-Key': config.WAHA_API_KEY },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const data = await res.json() as { status?: string };
+        if (data.status === 'WORKING') {
+          logger.info('WAHA session is WORKING — starting background services');
+          return true;
+        }
+      }
+    } catch {
+      // WAHA not reachable yet — keep polling.
+    }
+    logger.info('Waiting for WAHA session to reach WORKING...');
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  logger.warn('Timed out waiting for WAHA session; starting background services anyway');
+  return false;
+}
+
 async function startServer() {
   // Test connection to PostgreSQL at boot
   await checkDatabaseConnection();
 
   const port = config.PORT;
-  app.listen(port, () => {
+  app.listen(port, '0.0.0.0', async () => {
     logger.info(`🚀 Founder Assistant OS Server is running on http://localhost:${port} in ${config.NODE_ENV} mode`);
+
+    // Cold-boot gate: wait for WAHA to be fully connected before any cron/worker
+    // touches it. The HTTP API is already listening, so health checks pass.
+    await waitForWahaSession();
 
     // Start Background Scheduler
     SchedulerService.init();
+
+    // Start the BullMQ classification worker for real-time message classification.
+    // The morning queue is drained by the 1-minute scheduler cron — keeping two
+    // consumers on the same queue caused duplicate deliveries.
+    MessageQueueService.startWorker();
   });
 }
 

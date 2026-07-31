@@ -21,6 +21,24 @@ enum TaskStatus {
   CANCELLED
 }
 
+model Contact {
+  id              String     @id @default(uuid())
+  chatId          String     @unique
+  name            String
+  pushName        String?
+  phoneNumber     String
+  isGroup         Boolean    @default(false)
+  lastMessageAt   DateTime?
+  lastMessageBody String?
+  unreadCount     Int        @default(0)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([name])
+  @@index([lastMessageAt])
+  @@index([isGroup])
+}
+
 model Message {
   id                   String    @id @default(uuid())
   wahaMessageId        String?   @unique
@@ -29,6 +47,7 @@ model Message {
   body                 String
   timestamp            DateTime
   processed            Boolean   @default(false)
+  isHistorical         Boolean   @default(false)
   classification       String?
   classificationReason String?
   classifiedAt         DateTime?
@@ -124,6 +143,20 @@ model Classification {
   summary                    String   @default("")
   processedAt                DateTime @default(now())
   estimate                   Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  action      String   // e.g. "MESSAGE_RECEIVED", "MESSAGE_CLASSIFIED", "MESSAGE_SENT", "SLA_BREACHED", "WAHA_RECONNECT"
+  entityType  String   // e.g. "MESSAGE", "CONTACT", "SESSION"
+  entityId    String?
+  metadata    String?  // JSON string with context (chatId, sender, result, etc.)
+  createdAt   DateTime @default(now())
+
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+  @@index([entityType, entityId])
 }
 
 // BrainContext: Normalized, searchable index of all company context

@@ -64,15 +64,39 @@ export default function ZohoEstimates() {
     setIsSyncing(true);
     try {
       const res = await fetch("/api/trigger/sales-sync?force=true", { method: "POST" });
-      if (res.ok) {
-        alert("Sales Copilot analysis completed successfully!");
-        fetchEstimates();
-      } else {
+      if (!res.ok) {
         const errorText = await res.text();
         alert(`Sync failed: ${errorText}`);
+        return;
       }
+
+      // Metadata is synced to the DB immediately on the server, before AI runs.
+      // Refresh the list right away so up-to-date numbers/statuses show while the
+      // background analysis is still filling in classifications.
+      fetchEstimates();
+
+      // Sync runs in the background on the server. Poll its status until it
+      // finishes instead of holding the request open (which times out).
+      for (let i = 0; i < 600; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const statusRes = await fetch("/api/trigger/sales-sync/status");
+        if (!statusRes.ok) continue;
+        const status = await statusRes.json();
+        if (!status.running) {
+          if (status.lastError) {
+            alert(`Sales Copilot sync failed: ${status.lastError}`);
+          } else {
+            alert("Sales Copilot analysis completed successfully!");
+          }
+          fetchEstimates();
+          return;
+        }
+      }
+      alert("Sales Copilot sync is still running. Please refresh shortly.");
+      fetchEstimates();
     } catch (e: any) {
       alert(`Sync failed: ${e.message}`);
+      fetchEstimates();
     } finally {
       setIsSyncing(false);
     }

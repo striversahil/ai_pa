@@ -1,6 +1,7 @@
-import { Queue } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 import { config } from '../../config';
 import { logger } from '../../shared/logger';
+import { nextKolkataTimeUtc } from '../../shared/ist-time';
 import { ClassificationService } from '../classification/service';
 import { OutboundService } from '../whatsapp/outbound';
 import { prisma, useInMemoryDb } from '../../shared/prisma';
@@ -29,15 +30,16 @@ export class MessageQueueService {
     return job.id;
   }
 
-  static async enqueueDelayedMorning(chatId: string, messageBody: string) {
-    const now = new Date();
-    const target = new Date(now);
-    target.setHours(8, 0, 0, 0);
-    if (now >= target) target.setDate(target.getDate() + 1);
-    const delayMs = target.getTime() - now.getTime();
+  static async enqueueDelayedMorning(chatId: string, messageBody: string, delayMs?: number) {
+    // Default target: next 8:00 AM in Asia/Kolkata (business hours are IST, not server-local time).
+    // When delayMs is given (e.g. rate-limited retry), defer by that relative window instead.
+    const target = delayMs !== undefined
+      ? new Date(Date.now() + delayMs)
+      : nextKolkataTimeUtc(new Date(), 8);
+    const delay = target.getTime() - Date.now();
 
     await this.morningQueue.add('send-morning', { chatId, messageBody }, {
-      delay: delayMs,
+      delay,
       attempts: 2,
       removeOnComplete: true,
     });
@@ -60,9 +62,10 @@ export class MessageQueueService {
       try {
         const { chatId, messageBody } = job.data;
         const result = await OutboundService.sendWithJitter(chatId, messageBody);
-        // Only remove if actually sent. If rate_limited or outside_hours,
-        // keep in queue — next drain cycle will retry.
-        if (result === 'sent') {
+        // Remove only when the job is truly done: sent, or re-deferred for a
+        // later window (sendWithJitter already enqueued a new delayed job).
+        // If rate_limited, keep the job — the next drain cycle retries it.
+        if (result === 'sent' || result === 'outside_hours') {
           await job.remove();
         }
       } catch (err: any) {
@@ -123,5 +126,29 @@ export class MessageQueueService {
     }
 
     logger.info({ processed: waiting.length, chunkSize: CHUNK_SIZE }, 'Batch processor: queue drained');
+  }
+
+  static startWorker() {
+    const worker = new Worker('whatsapp-classification', async (job) => {
+      const { messageId, chatId, sender, body, timestamp, mediaType } = job.data;
+      await ClassificationService.processSingleMessage(
+        messageId, chatId, sender, body, new Date(timestamp), mediaType
+      );
+    }, {
+      connection,
+      concurrency: 5,
+      maxStalledCount: 2,
+      lockDuration: 60000,
+    });
+
+    worker.on('completed', (job) => {
+      logger.info({ jobId: job.id }, 'Classification worker: job completed');
+    });
+    worker.on('failed', (job, err) => {
+      logger.error({ jobId: job?.id, error: err.message }, 'Classification worker: job failed');
+    });
+
+    logger.info('Classification BullMQ worker started (concurrency=5)');
+    return worker;
   }
 }

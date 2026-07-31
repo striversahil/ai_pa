@@ -12,6 +12,61 @@ import { NotificationBatcher } from '../whatsapp/batcher';
 import { prisma } from '../../shared/prisma';
 import { MessageQueueService } from '../queue/service';
 import { config } from '../../config';
+import { AuditService } from '../audit/service';
+
+// Track WAHA connection state for hygiene monitoring
+let lastWahaStatus = 'unknown';
+let wahaDisconnectedSince: Date | null = null;
+
+async function checkWahaSession(): Promise<void> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const sr = await fetch(`${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (sr.ok) {
+      const sData = await sr.json();
+      const status = sData.status || 'unknown';
+      if (status !== 'WORKING') {
+        if (lastWahaStatus === 'WORKING') {
+          wahaDisconnectedSince = new Date();
+          logger.warn({ wahaStatus: status }, 'WAHA session lost, will attempt reconnect');
+          AuditService.record('WAHA_DISCONNECTED', 'SESSION', null, { status, since: wahaDisconnectedSince.toISOString() }).catch(() => {});
+        }
+        if (wahaDisconnectedSince && Date.now() - wahaDisconnectedSince.getTime() > 60_000) {
+          logger.info('WAHA session disconnected >1 min, attempting reconnect...');
+          const startRes = await fetch(`${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Api-Key': config.WAHA_API_KEY },
+          });
+          if (startRes.ok) {
+            logger.info('WAHA session reconnected successfully');
+            wahaDisconnectedSince = null;
+            AuditService.record('WAHA_RECONNECT', 'SESSION', null, {}).catch(() => {});
+          }
+        }
+      } else {
+        if (lastWahaStatus !== 'WORKING' && lastWahaStatus !== 'unknown') {
+          logger.info('WAHA session restored to WORKING');
+          wahaDisconnectedSince = null;
+          AuditService.record('WAHA_RECONNECT', 'SESSION', null, {}).catch(() => {});
+        }
+        wahaDisconnectedSince = null;
+      }
+      lastWahaStatus = status;
+    } else {
+      logger.warn({ status: sr.status }, 'WAHA session check returned non-OK');
+      lastWahaStatus = 'error';
+    }
+  } catch {
+    if (lastWahaStatus !== 'unreachable') {
+      logger.error('WAHA is unreachable');
+      wahaDisconnectedSince = wahaDisconnectedSince || new Date();
+      AuditService.record('WAHA_DISCONNECTED', 'SESSION', null, { status: 'unreachable' }).catch(() => {});
+    }
+    lastWahaStatus = 'unreachable';
+  }
+}
 
 class WhatsappEngine implements AnalysisEngine {
   public name = 'WhatsApp Digest Engine';
@@ -87,18 +142,11 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: WhatsApp digest job failed');
       }
-
-      // Drain Redis queue and batch-classify messages (written to Redis RAM by webhook handler)
-      try {
-        await MessageQueueService.drainAndProcessBatch();
-      } catch (error: any) {
-        logger.error({ error: error.message }, 'Cron Error: Classification batch processing failed');
-      }
     });
 
-    // 2. Email & Zoho syncing - runs every 30 minutes
+    // 2. Email syncing - runs every 30 minutes
     cron.schedule('*/30 * * * *', async () => {
-      logger.info('Cron: Running Email, Sales Copilot, and Brain index jobs...');
+      logger.info('Cron: Running Email and Brain index jobs...');
       try {
         const emailEng = EngineRegistry.get('email');
         if (emailEng) await emailEng.runSync();
@@ -107,17 +155,27 @@ export class SchedulerService {
       }
 
       try {
-        const zohoEng = EngineRegistry.get('sales_copilot');
-        if (zohoEng) await zohoEng.runSync();
-      } catch (error: any) {
-        logger.error({ error: error.message }, 'Cron Error: Sales Copilot sync job failed');
-      }
-
-      try {
         const brainEng = EngineRegistry.get('brain');
         if (brainEng) await brainEng.runSync();
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Brain indexing job failed');
+      }
+    });
+
+    // 2b. Sales Copilot (Zoho) incremental sync - runs every 15 minutes.
+    // Only estimates that are new or modified since their last sync are fetched
+    // and re-analyzed; everything else is skipped. Any estimate modified while
+    // the machine was off is automatically caught up on the first tick back.
+    cron.schedule('*/15 * * * *', async () => {
+      if (SalesCopilotService.isSyncRunning) {
+        logger.info('Cron: Sales Copilot sync already running, skipping this tick.');
+        return;
+      }
+      try {
+        const zohoEng = EngineRegistry.get('sales_copilot');
+        if (zohoEng) await zohoEng.runSync();
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: Sales Copilot incremental sync failed');
       }
     });
 
@@ -172,7 +230,7 @@ export class SchedulerService {
     cron.schedule('0 3 * * *', async () => {
       logger.info('Cron: Running data retention cleanup...');
       try {
-        const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         let totalDeleted = 0;
         let batchDeleted = 0;
 
@@ -190,34 +248,19 @@ export class SchedulerService {
           totalDeleted += batchDeleted;
         } while (batchDeleted > 0);
 
-        logger.info({ totalDeleted }, 'Cleaned up messages older than 90 days');
+        logger.info({ totalDeleted }, 'Cleaned up messages older than 7 days');
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Data retention cleanup failed');
       }
     });
 
-    // 9. WAHA session restart - runs daily at 4:00 AM (lowest activity period)
-    // Avoids detection from 24/7 connection; session persists via mounted volume
-    cron.schedule('0 4 * * *', async () => {
-      logger.info('Cron: Restarting WAHA session for connection hygiene...');
+    // 9. WAHA session health monitor - runs every 5 minutes
+    // Checks session status and auto-reconnects if disconnected for >1 minute
+    cron.schedule('*/5 * * * *', async () => {
       try {
-        const response = await fetch(`${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}/logout`, {
-          method: 'POST',
-          headers: { 'X-Api-Key': config.WAHA_API_KEY },
-        });
-        if (response.ok) {
-          logger.info('WAHA session logged out successfully');
-        }
-        await new Promise(r => setTimeout(r, 5000));
-        const startRes = await fetch(`${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Api-Key': config.WAHA_API_KEY },
-        });
-        if (startRes.ok) {
-          logger.info('WAHA session restarted successfully');
-        }
+        await checkWahaSession();
       } catch (error: any) {
-        logger.error({ error: error.message }, 'Cron Error: WAHA restart failed');
+        logger.error({ error: error.message }, 'Cron Error: WAHA health check failed');
       }
     });
 

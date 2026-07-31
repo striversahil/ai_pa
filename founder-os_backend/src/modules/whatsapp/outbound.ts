@@ -1,6 +1,9 @@
 import { config } from '../../config';
 import { logger } from '../../shared/logger';
+import { getKolkataHour } from '../../shared/ist-time';
 import { MessageQueueService } from '../queue/service';
+import { AuditService } from '../audit/service';
+import { StorageRepository } from '../storage/repository';
 
 function randomUniform(min: number, max: number): number {
   return Math.random() * (max - min) + min;
@@ -10,10 +13,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export type SendResult = 'sent' | 'rate_limited' | 'outside_hours';
+export type SendResult = 'sent' | 'rate_limited' | 'outside_hours' | 'failed';
 
 export class OutboundService {
-  private static sendLocks = new Map<string, Promise<SendResult>>();
+  // Global account-level mutex: every send waits for the previous one to fully
+  // complete (sendSeen → pause → startTyping → typing delay → sendText) before it
+  // starts. This guarantees that no two messages are ever sent at the same time to
+  // different recipients, no matter how many are queued (10k+ still go one-by-one).
+  private static globalSendLock: Promise<SendResult> = Promise.resolve('sent' as const);
+
+  // Burst guard: only this many sends may sit in the queue at once. Anything
+  // beyond it is rejected as 'rate_limited' so callers defer it — an accidental
+  // 5,000-message push can never flood the send chain (or WhatsApp).
+  private static pendingSendCount = 0;
+  private static readonly MAX_PENDING_SENDS = 25;
 
   private static rateLimitCache = new Map<string, number[]>();
   private static readonly MAX_PER_CHAT_PER_MINUTE = 15;
@@ -47,10 +60,25 @@ export class OutboundService {
   }
 
   static async sendWithJitter(chatId: string, messageBody: string): Promise<SendResult> {
-    const prev = this.sendLocks.get(chatId) || Promise.resolve('sent' as const);
-    const next = prev.then(() => this.executeSend(chatId, messageBody));
-    this.sendLocks.set(chatId, next);
-    return next;
+    // Hard flood guard: if too many sends are already waiting, reject immediately
+    // instead of chaining on. The caller defers the message to a retry queue, so
+    // nothing is fired in bulk and nothing is lost.
+    if (this.pendingSendCount >= this.MAX_PENDING_SENDS) {
+      logger.warn(
+        { chatId, pending: this.pendingSendCount },
+        'Send burst guard active: queue full, message deferred'
+      );
+      return 'rate_limited';
+    }
+
+    this.pendingSendCount++;
+    const result = this.globalSendLock.then(() => this.executeSend(chatId, messageBody));
+    // Keep the chain alive even when a send fails, so one failure never blocks
+    // the sends queued behind it.
+    this.globalSendLock = result.catch(() => 'sent' as SendResult);
+    return result.finally(() => {
+      this.pendingSendCount--;
+    });
   }
 
   private static async executeSend(chatId: string, messageBody: string): Promise<SendResult> {
@@ -69,54 +97,94 @@ export class OutboundService {
       return 'outside_hours';
     }
 
-    await fetch(`${config.WAHA_API_URL}/api/sendSeen`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': config.WAHA_API_KEY,
-      },
-      body: JSON.stringify({
-        session: config.WAHA_SESSION_NAME,
-        chatId,
-      }),
-    });
+    AuditService.record('MESSAGE_SENT', 'MESSAGE', null, { chatId, bodyLength: messageBody.length }).catch(() => {});
 
-    await sleep(randomUniform(1000, 2500));
+    const wahaFetch = async (path: string, body: unknown): Promise<Response> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+      try {
+        return await fetch(`${config.WAHA_API_URL}${path}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': config.WAHA_API_KEY,
+          },
+          body: JSON.stringify({ session: config.WAHA_SESSION_NAME, ...(body as object) }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
 
-    await fetch(`${config.WAHA_API_URL}/api/startTyping`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': config.WAHA_API_KEY,
-      },
-      body: JSON.stringify({
-        session: config.WAHA_SESSION_NAME,
-        chatId,
-      }),
-    });
+    // GROUP ROUTE (@g.us): WhatsApp manages group read status and typing metadata
+    // differently. Running sendSeen/startTyping against a group forces WAHA to parse
+    // every participant's state — it throws errors and creates a broken, machine-like
+    // pattern that Meta can flag. Groups skip all behavioral steps and send directly
+    // after a short micro-jitter so the server stream stays calm.
+    const isGroup = chatId.endsWith('@g.us');
 
-    const typingDelay = Math.min(Math.max(messageBody.length * 50, 2000), 6000);
-    const jitter = randomUniform(500, 3000);
-    await sleep(typingDelay + jitter);
+    if (isGroup) {
+      await sleep(randomUniform(1500, 2500));
+    } else {
+      // INDIVIDUAL ROUTE (@c.us): simulate a human reading + typing the reply.
 
-    await fetch(`${config.WAHA_API_URL}/api/sendText`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': config.WAHA_API_KEY,
-      },
-      body: JSON.stringify({
-        session: config.WAHA_SESSION_NAME,
-        chatId,
-        text: messageBody,
-      }),
-    });
+      // Only send a read receipt if the chat actually has unread messages. Reading a
+      // chat we initiated (0 unread) is an impossible human action and is a dead give-
+      // away to WhatsApp — so for outbound-first messages we skip sendSeen entirely and
+      // go straight to typing. If we can't determine the unread state, default to NOT
+      // sending the receipt (safer than the flagged pattern).
+      let unreadCount = 0;
+      try {
+        const contact = await StorageRepository.fetchContactByChatId(chatId);
+        unreadCount = contact?.unreadCount || 0;
+      } catch (err: any) {
+        logger.warn({ chatId, error: err.message }, 'Could not read unread count, skipping sendSeen');
+      }
+
+      if (unreadCount > 0) {
+        const seenRes = await wahaFetch('/api/sendSeen', { chatId });
+        if (!seenRes.ok) {
+          logger.warn({ chatId, status: seenRes.status }, 'WAHA sendSeen failed (non-fatal)');
+        } else {
+          // Mark the chat as read locally so the next send doesn't repeat the receipt.
+          await StorageRepository.updateContactUnread(chatId, -unreadCount).catch(() => {});
+        }
+      } else {
+        logger.debug({ chatId }, 'Outbound-first message: skipping sendSeen (0 unread)');
+      }
+
+      await sleep(randomUniform(1500, 4500));
+
+      const typingRes = await wahaFetch('/api/startTyping', { chatId });
+      if (!typingRes.ok) {
+        logger.warn({ chatId, status: typingRes.status }, 'WAHA startTyping failed (non-fatal)');
+      }
+
+      const typingDelay = Math.min(Math.max(messageBody.length * 50, 2000), 6000);
+      const jitter = randomUniform(1000, 9000);
+      await sleep(typingDelay + jitter);
+    }
+
+    const sendRes = await wahaFetch('/api/sendText', { chatId, text: messageBody });
+    if (!sendRes.ok) {
+      const errorBody = await sendRes.text().catch(() => '');
+      logger.error(
+        { chatId, status: sendRes.status, errorBody },
+        'WAHA sendText failed — message was NOT delivered'
+      );
+      return 'failed';
+    }
+
+    // Post-send cooldown: varies the gap between successive sends widely so the
+    // cadence never looks regular (anywhere from ~4.5s to ~21s+ between messages).
+    await sleep(randomUniform(2000, 12000));
 
     return 'sent';
   }
 
   private static isWithinWorkingHours(startHour = 8, endHour = 22): boolean {
-    const currentHour = new Date().getHours();
+    const currentHour = getKolkataHour(new Date());
     return currentHour >= startHour && currentHour < endHour;
   }
 }

@@ -405,7 +405,7 @@ export default function TelecallerDashboard({
           <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Presets:</span>
           <select
             onChange={(e) => applyPresetRange(e.target.value)}
-            defaultValue="all"
+            defaultValue="today"
             className="bg-zinc-950 border border-zinc-850 text-zinc-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500 cursor-pointer"
           >
             <option value="today">Today</option>

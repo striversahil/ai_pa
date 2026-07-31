@@ -59,19 +59,25 @@ services:
     image: devlikeapro/waha:latest
     container_name: waha
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       - WAHA_ENGINE=WEBJS
       - WAHA_PRINT_QR=true
       - WAHA_API_KEY=MyLocalSecretKey!
-      - WAHA_WEBJS_BROWSER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-blink-features=AutomationControlled,--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
-      - WAHA_WEBHOOKS=[{"url": "http://backend:3000/api/whatsapp/webhook", "events": ["message"]}]
+      - TZ=Asia/Kolkata
+      - WAHA_WEBHOOK_CONCURRENCY=5
+      - WAHA_WEBJS_PUPPETER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-blink-features=AutomationControlled --use-gl=angle --use-angle=swiftshader-webgl --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader
+      - WHATSAPP_HOOK_URL=http://host.docker.internal:5000/api/whatsapp/webhook
+      - WHATSAPP_HOOK_EVENTS=message
     volumes:
-      - ./waha_sessions:/app/.wwebjs_auth
+      - ./waha_sessions:/app/.sessions
+    extra_hosts:
+      - "host.docker.internal:172.28.229.49"
     ports:
-      - "3002:3002"
+      - "127.0.0.1:3002:3000"
     networks:
       - founder-os-net
-    mem_limit: 1g
+    mem_limit: 2g
     cpus: 1
 
 volumes:
