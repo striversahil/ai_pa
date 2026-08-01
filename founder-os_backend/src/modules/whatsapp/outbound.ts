@@ -30,8 +30,8 @@ export class OutboundService {
 
   private static rateLimitCache = new Map<string, number[]>();
   private static readonly MAX_PER_CHAT_PER_MINUTE = 15;
-  private static readonly MAX_PER_ACCOUNT_PER_HOUR_BASE = 175;
-  private static readonly MAX_PER_ACCOUNT_PER_HOUR_JITTER = 25;
+  private static readonly MAX_PER_ACCOUNT_PER_HOUR_BASE = 50;
+  private static readonly MAX_PER_ACCOUNT_PER_HOUR_JITTER = 10;
   private static accountTimestamps: number[] = [];
   private static currentHourLimit = OutboundService.computeHourLimit();
 
@@ -87,7 +87,7 @@ export class OutboundService {
       return 'rate_limited';
     }
     if (!this.checkAccountRateLimit()) {
-      logger.warn('Account rate limit reached (250/hour). Deferring.');
+      logger.warn('Account rate limit reached (40-60/hour). Deferring.');
       return 'rate_limited';
     }
 

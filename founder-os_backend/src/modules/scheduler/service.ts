@@ -13,6 +13,7 @@ import { prisma } from '../../shared/prisma';
 import { MessageQueueService } from '../queue/service';
 import { config } from '../../config';
 import { AuditService } from '../audit/service';
+import { kolkataDayStartUtc } from '../../shared/ist-time';
 
 // Track WAHA connection state for hygiene monitoring
 let lastWahaStatus = 'unknown';
@@ -142,7 +143,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: WhatsApp digest job failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 2. Email syncing - runs every 30 minutes
     cron.schedule('*/30 * * * *', async () => {
@@ -160,7 +161,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Brain indexing job failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 2b. Sales Copilot (Zoho) incremental sync - runs every 15 minutes.
     // Only estimates that are new or modified since their last sync are fetched
@@ -177,7 +178,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Sales Copilot incremental sync failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 3. Morning Founder Briefing - runs daily at 8:00 AM
     cron.schedule('0 8 * * *', async () => {
@@ -187,7 +188,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Morning briefing job failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 4. Evening EOD Summary - runs daily at 7:00 PM
     cron.schedule('0 19 * * *', async () => {
@@ -197,7 +198,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Evening EOD summary job failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 5. Morning queue drain - runs every 5 minutes during working hours (8AM-10PM)
     cron.schedule('* * * * *', async () => {
@@ -206,7 +207,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Morning queue drain failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 6. SLA Monitor - runs every minute
     cron.schedule('* * * * *', async () => {
@@ -215,7 +216,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: SLA check failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 7. Notification Batcher - flushes grouped alerts every 15 minutes
     cron.schedule('*/15 * * * *', async () => {
@@ -224,13 +225,13 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Notification batcher flush failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 8. Data retention - runs daily at 3:00 AM, deletes messages older than 90 days
     cron.schedule('0 3 * * *', async () => {
       logger.info('Cron: Running data retention cleanup...');
       try {
-        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
         let totalDeleted = 0;
         let batchDeleted = 0;
 
@@ -248,11 +249,11 @@ export class SchedulerService {
           totalDeleted += batchDeleted;
         } while (batchDeleted > 0);
 
-        logger.info({ totalDeleted }, 'Cleaned up messages older than 7 days');
+        logger.info({ totalDeleted }, 'Cleaned up messages older than 90 days');
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: Data retention cleanup failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     // 9. WAHA session health monitor - runs every 5 minutes
     // Checks session status and auto-reconnects if disconnected for >1 minute
@@ -262,7 +263,7 @@ export class SchedulerService {
       } catch (error: any) {
         logger.error({ error: error.message }, 'Cron Error: WAHA health check failed');
       }
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
     logger.info('SchedulerService: all scheduled cron tasks successfully started');
   }
@@ -342,8 +343,8 @@ export class SchedulerService {
 
     // Tasks created today
     const tasks = await StorageRepository.fetchTasks();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Tasks created today (IST day boundary, not host-local)
+    const today = kolkataDayStartUtc(new Date());
     const todayTasks = tasks.filter((t) => new Date(t.createdAt) >= today);
     const tasksCreated = todayTasks.length > 0
       ? todayTasks.map((t) => `- "${t.title}" (Assigned: ${t.owner})`).join('\n')

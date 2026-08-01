@@ -15,6 +15,7 @@ export class PrismaStorageProvider implements StorageProvider {
         lastMessageAt: data.lastMessageAt || undefined,
         lastMessageBody: data.lastMessageBody || undefined,
         unreadCount: data.unreadCount !== undefined ? data.unreadCount : { increment: 1 },
+        hasInbound: data.hasInbound === true ? true : undefined,
       },
       create: {
         chatId: data.chatId,
@@ -25,6 +26,7 @@ export class PrismaStorageProvider implements StorageProvider {
         lastMessageAt: data.lastMessageAt || null,
         lastMessageBody: data.lastMessageBody || null,
         unreadCount: data.unreadCount || 1,
+        hasInbound: data.hasInbound === true,
       },
     });
     return contact as StoredContact;
@@ -56,7 +58,13 @@ export class PrismaStorageProvider implements StorageProvider {
   async saveMessage(data: MessageData): Promise<StoredMessage> {
     logger.info({ chatId: data.chatId, sender: data.sender }, 'Saving raw message to storage');
     const msg = await prisma.message.create({
-      data: { chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, isHistorical: data.isHistorical || false, wahaMessageId: data.wahaMessageId || null }
+      data: {
+        chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false,
+        isHistorical: data.isHistorical || false, wahaMessageId: data.wahaMessageId || null,
+        quotedMessageId: data.quotedMessageId || null,
+        quotedBody: data.quotedBody || null,
+        quotedSender: data.quotedSender || null,
+      }
     });
     return msg as StoredMessage;
   }
@@ -65,7 +73,6 @@ export class PrismaStorageProvider implements StorageProvider {
     logger.debug('Fetching unprocessed messages from storage');
     return prisma.message.findMany({ where: { processed: false }, orderBy: { timestamp: 'asc' } }) as Promise<StoredMessage[]>;
   }
-
   async markMessagesProcessed(messageIds: string[]): Promise<void> {
     if (messageIds.length === 0) return;
     logger.info({ count: messageIds.length }, 'Marking messages as processed');
@@ -73,8 +80,28 @@ export class PrismaStorageProvider implements StorageProvider {
   }
 
   async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
-    logger.debug({ chatId, limit }, 'Fetching messages for chat');
     return prisma.message.findMany({ where: { chatId }, orderBy: { timestamp: 'desc' }, take: limit }) as Promise<StoredMessage[]>;
+  }
+
+  async hasInboundMessages(chatId: string): Promise<boolean> {
+    // Persistent allowlist: the flag lives on the never-pruned Contact row, so
+    // the 90-day message retention can never reset who is allowed to be replied
+    // to. Falls back to message history for chats without a Contact row yet.
+    const contact = await prisma.contact.findUnique({
+      where: { chatId },
+      select: { hasInbound: true },
+    });
+    if (contact) return contact.hasInbound;
+    const count = await prisma.message.count({
+      where: {
+        chatId,
+        OR: [
+          { wahaMessageId: { not: null } },
+          { sender: { notIn: ['You', 'Founder'] } },
+        ],
+      },
+    });
+    return count > 0;
   }
 
   async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void> {

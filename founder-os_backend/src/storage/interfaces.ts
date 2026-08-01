@@ -7,6 +7,7 @@ export interface ContactData {
   lastMessageAt?: Date | null;
   lastMessageBody?: string | null;
   unreadCount?: number;
+  hasInbound?: boolean;
 }
 
 export interface StoredContact {
@@ -19,6 +20,7 @@ export interface StoredContact {
   lastMessageAt: Date | null;
   lastMessageBody: string | null;
   unreadCount: number;
+  hasInbound: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,6 +32,9 @@ export interface MessageData {
   timestamp: Date;
   wahaMessageId?: string | null;
   isHistorical?: boolean;
+  quotedMessageId?: string | null;
+  quotedBody?: string | null;
+  quotedSender?: string | null;
 }
 
 export interface StoredMessage {
@@ -40,6 +45,10 @@ export interface StoredMessage {
   timestamp: Date;
   processed: boolean;
   wahaMessageId: string | null;
+  isHistorical: boolean;
+  quotedMessageId: string | null;
+  quotedBody: string | null;
+  quotedSender: string | null;
   classification: string | null;
   classificationReason: string | null;
   classifiedAt: Date | null;
@@ -122,6 +131,7 @@ export interface StorageProvider {
   fetchUnprocessedMessages(): Promise<StoredMessage[]>;
   markMessagesProcessed(messageIds: string[]): Promise<void>;
   fetchMessagesByChatId(chatId: string, limit?: number): Promise<StoredMessage[]>;
+  hasInboundMessages(chatId: string): Promise<boolean>;
   updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void>;
   storeEmail(data: EmailData): Promise<StoredEmail>;
   fetchUnprocessedEmails(): Promise<StoredEmail[]>;

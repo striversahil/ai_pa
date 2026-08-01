@@ -8,10 +8,16 @@ services:
       POSTGRES_USER: founder
       POSTGRES_PASSWORD: founder_secret
       POSTGRES_DB: founder_os
+      TZ: Asia/Kolkata
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - founder-os-net
 
@@ -19,8 +25,18 @@ services:
     image: redis:7-alpine
     container_name: founder-os-redis
     restart: unless-stopped
+    command: redis-server --appendonly yes --appendfsync everysec
+    environment:
+      TZ: Asia/Kolkata
     ports:
       - "6379:6379"
+    volumes:
+      - redisdata:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - founder-os-net
 
@@ -33,6 +49,7 @@ services:
       - redis
     environment:
       - NODE_ENV=development
+      - TZ=Asia/Kolkata
       - DATABASE_URL=postgresql://founder:founder_secret@postgres:5432/founder_os
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -52,11 +69,16 @@ services:
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
     ports:
       - "5000:3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - founder-os-net
 
   waha:
-    image: devlikeapro/waha:latest
+    image: devlikeapro/waha:latest-2026.7.2
     container_name: waha
     restart: unless-stopped
     stop_grace_period: 30s
@@ -79,9 +101,15 @@ services:
       - founder-os-net
     mem_limit: 2g
     cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pgdata:
+  redisdata:
 
 networks:
   founder-os-net:

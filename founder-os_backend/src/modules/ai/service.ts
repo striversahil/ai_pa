@@ -128,7 +128,7 @@ export class AIService {
    */
   static async summarizeConversation(
     chatName: string,
-    messages: Array<{ sender: string; body: string; timestamp: Date }>
+    messages: Array<{ sender: string; body: string; timestamp: Date; replyTo?: string | null }>
   ): Promise<SummaryOutput> {
     const startTime = Date.now();
     logger.info({ chatName, isMocked: isMockLLM }, 'AIService: digesting conversation');
@@ -207,7 +207,8 @@ export class AIService {
             { role: 'system', content: summarizeConversationPrompt },
             { role: 'user', content: `Chat Name: ${chatName}\n\nMessages:\n${messages.map((m) => {
               const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
-              return `[${ts}] ${m.sender}: ${m.body}`;
+              const quoted = m.replyTo ? ` [replying to: "${m.replyTo}"]` : '';
+              return `[${ts}] ${m.sender}: ${m.body}${quoted}`;
             }).join('\n')}` },
           ],
           temperature: 0.1,

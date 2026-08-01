@@ -15,6 +15,41 @@ const HISTORICAL_THRESHOLD_MS = 120_000;
 const recentMessageIds = new Map<string, number>();
 const RECENT_ID_CACHE_MAX = 10_000;
 
+// WEBJS increasingly addresses individual chats by LID (@lid) instead of phone
+// (@c.us). The rest of the system (sends, allowlist, message history) keys on
+// @c.us, so LID chatIds are resolved to their @c.us form at ingestion. WAHA
+// exposes the reverse mapping (LID -> @c.us); the map is cached per LID.
+const lidToCusCache = new Map<string, string | null>();
+
+// Contact/group-name lookups against WAHA are memoized (TTL 1h, including
+// negative results) so the contacts/groups API is not hit on every message.
+const contactNameCache = new Map<string, { name: string | null; at: number }>();
+const CONTACT_NAME_CACHE_TTL_MS = 60 * 60 * 1000;
+
+async function resolveLidToCus(chatId: string): Promise<string> {
+  if (!chatId.endsWith('@lid')) return chatId;
+  if (lidToCusCache.has(chatId)) return lidToCusCache.get(chatId) || chatId;
+  try {
+    const encoded = encodeURIComponent(chatId);
+    const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/contacts/${encoded}`, {
+      headers: { 'X-Api-Key': config.WAHA_API_KEY },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const cus = data?.id || data?.chatId || null;
+      if (cus && cus.endsWith('@c.us')) {
+        lidToCusCache.set(chatId, cus);
+        return cus;
+      }
+    }
+  } catch (err: any) {
+    logger.warn({ chatId, error: err.message }, 'Could not resolve LID to @c.us, keeping LID');
+  }
+  lidToCusCache.set(chatId, null);
+  return chatId;
+}
+
 function noteRecentMessageId(id: string): boolean {
   const now = Date.now();
   if (recentMessageIds.has(id)) return true;
@@ -43,6 +78,25 @@ function extractMessageBody(payload: any): string {
     list: '[List Selection]',
   };
   return typeLabels[payload.type] || '[Media/System Message]';
+}
+
+// WAHA WEBJS exposes the replied-to message as payload.replyTo
+// ({ id, participant, body, hasMedia, media }); other engines use quotedMsg.
+// Returns quoted message metadata or empty fields when the message is not a reply.
+function extractQuotedMessage(payload: any): { quotedMessageId: string | null; quotedBody: string | null; quotedSender: string | null } {
+  const q = payload.replyTo || payload.quotedMsg || payload.quotedMessage;
+  if (!q || typeof q !== 'object') {
+    return { quotedMessageId: null, quotedBody: null, quotedSender: null };
+  }
+  let body: string | null = typeof q.body === 'string' && q.body ? q.body : null;
+  if (!body && (q.hasMedia || q.media)) body = '[Media]';
+  const participant = q.participant || q.from || q.sender?.id || q.chatId;
+  const sender = typeof participant === 'string' && participant ? participant : null;
+  return {
+    quotedMessageId: typeof q.id === 'string' ? q.id : null,
+    quotedBody: body,
+    quotedSender: sender,
+  };
 }
 
 // WAHA message id can arrive as a bare string or as a { id, fromMe, participant... }
@@ -96,6 +150,9 @@ function isGroupChat(chatId: string): boolean {
 }
 
 async function fetchContactNameFromWAHA(chatId: string): Promise<string | null> {
+  const cached = contactNameCache.get(chatId);
+  if (cached && Date.now() - cached.at < CONTACT_NAME_CACHE_TTL_MS) return cached.name;
+  let result: string | null = null;
   try {
     const encoded = encodeURIComponent(chatId);
     if (chatId.endsWith('@g.us')) {
@@ -103,22 +160,26 @@ async function fetchContactNameFromWAHA(chatId: string): Promise<string | null> 
         headers: { 'X-Api-Key': config.WAHA_API_KEY },
         signal: AbortSignal.timeout(5000),
       });
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data?.groupMetadata?.subject || null;
+      if (res.ok) {
+        const data = await res.json();
+        result = data?.groupMetadata?.subject || null;
+      }
+    } else {
+      const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/contacts/${encoded}`, {
+        headers: { 'X-Api-Key': config.WAHA_API_KEY },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const displayName = data?.name || data?.pushname || data?.shortName || null;
+        if (displayName && displayName !== chatId.split('@')[0]) result = displayName;
+      }
     }
-    const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/contacts/${encoded}`, {
-      headers: { 'X-Api-Key': config.WAHA_API_KEY },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const displayName = data?.name || data?.pushname || data?.shortName || null;
-    if (displayName && displayName !== chatId.split('@')[0]) return displayName;
-    return null;
   } catch {
-    return null;
+    result = null;
   }
+  contactNameCache.set(chatId, { name: result, at: Date.now() });
+  return result;
 }
 
 async function upsertContactFromPayload(chatId: string, payload: any, opts: { skipUnreadIncrement?: boolean } = {}) {
@@ -148,6 +209,7 @@ async function upsertContactFromPayload(chatId: string, payload: any, opts: { sk
     isGroup: group,
     lastMessageAt: new Date((payload.timestamp || 0) * 1000),
     lastMessageBody: extractMessageBody(payload),
+    hasInbound: true,
     ...(opts.skipUnreadIncrement ? { unreadCount: existing?.unreadCount ?? 0 } : {}),
   });
 }
@@ -161,7 +223,8 @@ async function processWahaMessage(payload: any): Promise<void> {
     return;
   }
 
-  const from = payload.chatId || payload.from;
+  const fromRaw = payload.chatId || payload.from;
+  const from = isGroupChat(fromRaw) ? fromRaw : await resolveLidToCus(fromRaw);
   const group = isGroupChat(from);
   let sender = extractSenderName(payload);
   if (group) {
@@ -178,16 +241,17 @@ async function processWahaMessage(payload: any): Promise<void> {
   const timestamp = new Date((payload.timestamp || 0) * 1000);
   const mediaType = payload.type !== 'text' ? payload.type : null;
   const historical = isHistorical(timestamp);
+  const quoted = extractQuotedMessage(payload);
 
   // Real-time triggers are skipped for historical replays.
   if (!historical) {
-    broadcastWhatsAppEvent('message.received', { chatId: from, sender, body, timestamp });
+    broadcastWhatsAppEvent('message.received', { chatId: from, sender, body, timestamp, ...quoted });
   }
   AuditService.record('MESSAGE_RECEIVED', 'MESSAGE', null, {
     chatId: from, sender, bodyLength: body.length, mediaType, isHistorical: historical,
   }).catch(() => {});
   await upsertContactFromPayload(from, payload, { skipUnreadIncrement: historical });
-  messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId, isHistorical: historical, mediaType });
+  messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId, isHistorical: historical, mediaType, ...quoted });
 }
 
 export class WhatsAppController {
@@ -242,6 +306,7 @@ export class WhatsAppController {
               isGroup: group,
               lastMessageAt: timestamp,
               lastMessageBody: body,
+              hasInbound: true,
             });
           }
         } else if (req.body.message && req.body.contact) {
@@ -269,6 +334,7 @@ export class WhatsAppController {
               isGroup: group,
               lastMessageAt: timestamp,
               lastMessageBody: body,
+              hasInbound: true,
             });
           }
         } else if (req.body.event === 'message.received' || req.body.event === 'message.sent' || req.body.event === 'message.delivered') {
@@ -293,6 +359,7 @@ export class WhatsAppController {
               isGroup: group,
               lastMessageAt: timestamp,
               lastMessageBody: body,
+              hasInbound: true,
             });
           }
         } else {

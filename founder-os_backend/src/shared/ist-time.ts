@@ -33,6 +33,16 @@ export function getKolkataHour(date: Date = new Date()): number {
 }
 
 /**
+ * Returns the UTC instant of 00:00 IST (Asia/Kolkata) for the calendar day
+ * that `now` falls on. Used for "created today" boundaries so they align with
+ * IST, not the process/host timezone.
+ */
+export function kolkataDayStartUtc(now: Date = new Date()): Date {
+  const p = getKolkataParts(now);
+  return new Date(Date.UTC(p.year, p.month - 1, p.day, 0, 0, 0) - KOLKATA_OFFSET_MS);
+}
+
+/**
  * Returns the UTC instant of the next occurrence of `targetHour:00` in Asia/Kolkata
  * strictly after `now` (rolls to the following day if already past).
  */

@@ -386,6 +386,14 @@ app.post('/api/whatsapp/send', asyncHandler(async (req, res) => {
     }
   }
 
+  // Allowlist gate: only contacts who have messaged us in the past can receive
+  // outbound messages. Everything else is rejected upfront — no cold outreach.
+  const allowlisted = await StorageRepository.hasInboundMessages(trimmed);
+  if (!allowlisted) {
+    logger.warn({ chatId: trimmed }, 'Send rejected: chat is not allowlisted (never messaged us)');
+    return res.status(403).json({ success: false, error: 'chatId is not allowlisted: only contacts who have messaged you in the past can receive messages' });
+  }
+
   await WhatsAppService.saveMessage({
     chatId: trimmed,
     sender: 'You',

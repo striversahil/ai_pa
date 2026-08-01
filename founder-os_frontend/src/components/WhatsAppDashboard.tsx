@@ -30,6 +30,9 @@ interface RawMessage {
   body: string;
   timestamp: string;
   processed: boolean;
+  quotedMessageId?: string | null;
+  quotedBody?: string | null;
+  quotedSender?: string | null;
 }
 
 export default function WhatsAppDashboard() {
@@ -190,7 +193,11 @@ export default function WhatsAppDashboard() {
                   chatId: selectedContactUid,
                   sender: msg.sender === 'Founder' || msg.sender === 'You' ? 'You' : 'Client',
                   body: msg.body,
-                  timestamp: msg.timestamp
+                  timestamp: msg.timestamp,
+                  processed: false,
+                  quotedMessageId: msg.quotedMessageId || null,
+                  quotedBody: msg.quotedBody || null,
+                  quotedSender: msg.quotedSender || null,
                 }
               ];
             });
@@ -200,7 +207,7 @@ export default function WhatsAppDashboard() {
         } else if (payload.event === "message.classified") {
           fetchDigests();
           fetchContacts();
-          if (payload.data.chatId === selectedContactUid) {
+          if (selectedContactUid && payload.data.chatId === selectedContactUid) {
             fetchMessages(selectedContactUid, true);
           }
         }
@@ -395,6 +402,20 @@ export default function WhatsAppDashboard() {
                             <span className="text-[9px] font-extrabold text-indigo-400 block mb-1 uppercase tracking-wider">
                               {senderLabel}
                             </span>
+                          )}
+                          {msg.quotedBody && (
+                            <div className={`mb-1.5 rounded-lg px-2.5 py-1.5 border-l-2 text-[10px] truncate ${
+                              isMe
+                                ? "bg-indigo-500/30 border-indigo-300/60 text-indigo-100"
+                                : "bg-zinc-900/60 border-zinc-500 text-zinc-400"
+                            }`}>
+                              {msg.quotedSender && (
+                                <span className="font-extrabold block mb-0.5 text-[9px] uppercase tracking-wider opacity-80">
+                                  {msg.quotedSender.replace(/@.*$/, '')}
+                                </span>
+                              )}
+                              <span className="italic">{msg.quotedBody}</span>
+                            </div>
                           )}
                           <p className="whitespace-pre-wrap">{msg.body}</p>
                           <span className="text-[9px] text-zinc-400 block mt-1.5 text-right font-mono">

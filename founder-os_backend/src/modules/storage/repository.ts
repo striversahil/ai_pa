@@ -52,6 +52,11 @@ export class StorageRepository {
     return getProvider().fetchMessagesByChatId(chatId, limit);
   }
 
+  static async hasInboundMessages(chatId: string): Promise<boolean> {
+    logger.debug({ chatId }, 'Checking whether chat has ever messaged us (allowlist)');
+    return getProvider().hasInboundMessages(chatId);
+  }
+
   static async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date) {
     logger.debug({ messageId, classification }, 'Updating message classification');
     return getProvider().updateMessageClassification(messageId, classification, reason, classifiedAt, slaDeadline);

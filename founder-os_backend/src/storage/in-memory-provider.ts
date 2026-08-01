@@ -70,6 +70,7 @@ export class InMemoryStorageProvider implements StorageProvider {
       if (data.lastMessageAt) existing.lastMessageAt = data.lastMessageAt;
       if (data.lastMessageBody) existing.lastMessageBody = data.lastMessageBody;
       existing.unreadCount = data.unreadCount !== undefined ? data.unreadCount : (existing.unreadCount || 0) + 1;
+      if (data.hasInbound === true) existing.hasInbound = true;
       existing.updatedAt = new Date();
       return existing;
     }
@@ -83,6 +84,7 @@ export class InMemoryStorageProvider implements StorageProvider {
       lastMessageAt: data.lastMessageAt || null,
       lastMessageBody: data.lastMessageBody || null,
       unreadCount: data.unreadCount || 1,
+      hasInbound: data.hasInbound === true,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -115,7 +117,12 @@ export class InMemoryStorageProvider implements StorageProvider {
   }
 
   async saveMessage(data: MessageData): Promise<StoredMessage> {
-    const newMsg = { id: generateId('msg'), wahaMessageId: data.wahaMessageId || null, chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, isHistorical: data.isHistorical || false, classification: null, classificationReason: null, classifiedAt: null, slaDeadline: null, createdAt: new Date() };
+    const newMsg = {
+      id: generateId('msg'), wahaMessageId: data.wahaMessageId || null, chatId: data.chatId, sender: data.sender, body: data.body,
+      timestamp: data.timestamp, processed: false, isHistorical: data.isHistorical || false,
+      quotedMessageId: data.quotedMessageId || null, quotedBody: data.quotedBody || null, quotedSender: data.quotedSender || null,
+      classification: null, classificationReason: null, classifiedAt: null, slaDeadline: null, createdAt: new Date()
+    };
     this.messages.push(newMsg);
     return newMsg;
   }
@@ -130,6 +137,14 @@ export class InMemoryStorageProvider implements StorageProvider {
 
   async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
     return this.messages.filter((m: any) => m.chatId === chatId).sort((a: any, b: any) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, limit);
+  }
+
+  async hasInboundMessages(chatId: string): Promise<boolean> {
+    const contact = this.contacts.find((c: any) => c.chatId === chatId);
+    if (contact) return contact.hasInbound === true;
+    return this.messages.some(
+      (m: any) => m.chatId === chatId && (m.wahaMessageId != null || !['You', 'Founder'].includes(m.sender))
+    );
   }
 
   async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void> {

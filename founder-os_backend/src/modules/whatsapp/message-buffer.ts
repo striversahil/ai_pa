@@ -11,6 +11,9 @@ export interface BufferedMessage {
   wahaMessageId?: string | null;
   isHistorical?: boolean;
   mediaType?: string | null;
+  quotedMessageId?: string | null;
+  quotedBody?: string | null;
+  quotedSender?: string | null;
 }
 
 const FLUSH_THRESHOLD = 50;
@@ -72,6 +75,9 @@ class MessageBuffer {
           timestamp: m.timestamp,
           isHistorical: m.isHistorical || false,
           wahaMessageId: m.wahaMessageId || null,
+          quotedMessageId: m.quotedMessageId || null,
+          quotedBody: m.quotedBody || null,
+          quotedSender: m.quotedSender || null,
         }));
         const created = await prisma.message.createManyAndReturn({
           data: rows,

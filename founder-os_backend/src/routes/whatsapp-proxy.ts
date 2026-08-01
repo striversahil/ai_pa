@@ -46,6 +46,15 @@ router.post('/send', asyncHandler(async (req, res) => {
   if (!chatId || !message_body) throw new AppError('Missing chatId or message_body', 400);
   const validationError = validateChatId(chatId);
   if (validationError) throw new AppError(validationError, 400);
+
+  // Allowlist gate: only contacts who have messaged us in the past can receive
+  // outbound messages. Everything else is rejected upfront — no cold outreach.
+  const allowlisted = await StorageRepository.hasInboundMessages(chatId);
+  if (!allowlisted) {
+    logger.warn({ chatId }, 'Send rejected: chat is not allowlisted (never messaged us)');
+    throw new AppError('chatId is not allowlisted: only contacts who have messaged you in the past can receive messages', 403);
+  }
+
   await WhatsAppService.saveMessage({ chatId, sender: 'You', body: message_body, timestamp: new Date() });
   const result = await OutboundService.sendWithJitter(chatId, message_body);
   if (result === 'rate_limited' || result === 'failed') {
@@ -81,7 +90,7 @@ router.post('/contacts/:contactUid/summarize', asyncHandler(async (req, res) => 
 
   const messagesInput = localMsgs
     .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-    .map(m => ({ sender: m.sender === 'You' || m.sender === 'Founder' ? 'You' : m.sender, body: m.body, timestamp: m.timestamp }));
+    .map(m => ({ sender: m.sender === 'You' || m.sender === 'Founder' ? 'You' : m.sender, body: m.body, timestamp: m.timestamp, replyTo: m.quotedBody || null }));
 
   const summaryResult = await AIService.summarizeConversation(contactName, messagesInput);
 
