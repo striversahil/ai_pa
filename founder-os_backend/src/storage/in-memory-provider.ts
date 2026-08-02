@@ -1,16 +1,18 @@
 import { logger } from '../shared/logger';
-import type { StorageProvider, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote } from './interfaces';
+import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry } from './interfaces';
 
 function generateId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
 export class InMemoryStorageProvider implements StorageProvider {
+  private contacts: any[] = [];
   private messages: any[] = [];
   private emails: any[] = [];
   private digests: any[] = [];
   private tasks: any[] = [];
   private founderNotes: any[] = [];
+  private auditLogs: any[] = [];
 
   constructor() {
     this.seed();
@@ -20,6 +22,11 @@ export class InMemoryStorageProvider implements StorageProvider {
     const now = new Date();
     const chatRahul = '918595563952@c.us';
     const chatOps = '120363023032@g.us';
+
+    this.contacts = [
+      { id: 'contact-1', chatId: chatRahul, name: 'Rahul (Investor)', pushName: 'Rahul', phoneNumber: '918595563952', isGroup: false, lastMessageAt: new Date(now.getTime() - 18 * 60 * 1000), lastMessageBody: 'Also need the pitch deck updated with the latest revenue run-rate.', unreadCount: 0, createdAt: now, updatedAt: now },
+      { id: 'contact-2', chatId: chatOps, name: 'Amit (Ops Manager)', pushName: 'Amit', phoneNumber: '120363023032', isGroup: true, lastMessageAt: new Date(now.getTime() - 14 * 60 * 1000), lastMessageBody: 'Yes, the database migrations are failing because of a locked connection.', unreadCount: 2, createdAt: now, updatedAt: now },
+    ];
 
     this.messages = [
       { id: 'msg-1', wahaMessageId: null, chatId: chatRahul, sender: 'Rahul (Investor)', body: 'Hey Sahil, hope you are doing well.', timestamp: new Date(now.getTime() - 20 * 60 * 1000), processed: true, classification: 'PENDING', classificationReason: 'Investor follow-up', classifiedAt: now, slaDeadline: new Date(now.getTime() + 15 * 60 * 1000), createdAt: now },
@@ -54,8 +61,68 @@ export class InMemoryStorageProvider implements StorageProvider {
     }];
   }
 
+  async upsertContact(data: ContactData): Promise<StoredContact> {
+    const existing = this.contacts.find((c: any) => c.chatId === data.chatId);
+    if (existing) {
+      existing.name = data.name;
+      existing.pushName = data.pushName || existing.pushName;
+      existing.phoneNumber = data.phoneNumber;
+      if (data.lastMessageAt) existing.lastMessageAt = data.lastMessageAt;
+      if (data.lastMessageBody) existing.lastMessageBody = data.lastMessageBody;
+      existing.unreadCount = data.unreadCount !== undefined ? data.unreadCount : (existing.unreadCount || 0) + 1;
+      if (data.hasInbound === true) existing.hasInbound = true;
+      existing.updatedAt = new Date();
+      return existing;
+    }
+    const newContact = {
+      id: generateId('contact'),
+      chatId: data.chatId,
+      name: data.name,
+      pushName: data.pushName || null,
+      phoneNumber: data.phoneNumber,
+      isGroup: data.isGroup ?? false,
+      lastMessageAt: data.lastMessageAt || null,
+      lastMessageBody: data.lastMessageBody || null,
+      unreadCount: data.unreadCount || 1,
+      hasInbound: data.hasInbound === true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.contacts.push(newContact);
+    return newContact;
+  }
+
+  async fetchContacts(): Promise<StoredContact[]> {
+    return [...this.contacts].sort((a: any, b: any) => {
+      if (!a.lastMessageAt) return 1;
+      if (!b.lastMessageAt) return -1;
+      return b.lastMessageAt.getTime() - a.lastMessageAt.getTime();
+    });
+  }
+
+  async fetchContactByChatId(chatId: string): Promise<StoredContact | null> {
+    return this.contacts.find((c: any) => c.chatId === chatId) || null;
+  }
+
+  async fetchContactByPhoneNumber(phoneNumber: string): Promise<StoredContact | null> {
+    if (!phoneNumber) return null;
+    return this.contacts.find((c: any) => c.phoneNumber === phoneNumber) || null;
+  }
+
+  async updateContactUnread(chatId: string, delta: number): Promise<void> {
+    const contact = this.contacts.find((c: any) => c.chatId === chatId);
+    if (contact) {
+      contact.unreadCount = Math.max(0, (contact.unreadCount || 0) + delta);
+    }
+  }
+
   async saveMessage(data: MessageData): Promise<StoredMessage> {
-    const newMsg = { id: generateId('msg'), wahaMessageId: data.wahaMessageId || null, chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, classification: null, classificationReason: null, classifiedAt: null, slaDeadline: null, createdAt: new Date() };
+    const newMsg = {
+      id: generateId('msg'), wahaMessageId: data.wahaMessageId || null, chatId: data.chatId, sender: data.sender, body: data.body,
+      timestamp: data.timestamp, processed: false, isHistorical: data.isHistorical || false,
+      quotedMessageId: data.quotedMessageId || null, quotedBody: data.quotedBody || null, quotedSender: data.quotedSender || null,
+      classification: null, classificationReason: null, classifiedAt: null, slaDeadline: null, createdAt: new Date()
+    };
     this.messages.push(newMsg);
     return newMsg;
   }
@@ -70,6 +137,14 @@ export class InMemoryStorageProvider implements StorageProvider {
 
   async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
     return this.messages.filter((m: any) => m.chatId === chatId).sort((a: any, b: any) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, limit);
+  }
+
+  async hasInboundMessages(chatId: string): Promise<boolean> {
+    const contact = this.contacts.find((c: any) => c.chatId === chatId);
+    if (contact) return contact.hasInbound === true;
+    return this.messages.some(
+      (m: any) => m.chatId === chatId && (m.wahaMessageId != null || !['You', 'Founder'].includes(m.sender))
+    );
   }
 
   async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void> {
@@ -127,5 +202,17 @@ export class InMemoryStorageProvider implements StorageProvider {
   async fetchLatestFounderNote(): Promise<StoredNote | null> {
     if (this.founderNotes.length === 0) return null;
     return [...this.founderNotes].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  }
+
+  async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void> {
+    this.auditLogs.push({ id: generateId('audit'), action, entityType, entityId: entityId || null, metadata: metadata ? JSON.stringify(metadata) : null, createdAt: new Date() });
+  }
+
+  async queryAuditEntries(options: { action?: string; entityType?: string; limit?: number; since?: Date }): Promise<AuditEntry[]> {
+    let results = [...this.auditLogs];
+    if (options.action) results = results.filter((e: any) => e.action === options.action);
+    if (options.entityType) results = results.filter((e: any) => e.entityType === options.entityType);
+    if (options.since) results = results.filter((e: any) => e.createdAt >= options.since!);
+    return results.sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, options.limit || 100);
   }
 }

@@ -1,9 +1,40 @@
+export interface ContactData {
+  chatId: string;
+  name: string;
+  pushName?: string | null;
+  phoneNumber: string;
+  isGroup?: boolean;
+  lastMessageAt?: Date | null;
+  lastMessageBody?: string | null;
+  unreadCount?: number;
+  hasInbound?: boolean;
+}
+
+export interface StoredContact {
+  id: string;
+  chatId: string;
+  name: string;
+  pushName: string | null;
+  phoneNumber: string;
+  isGroup: boolean;
+  lastMessageAt: Date | null;
+  lastMessageBody: string | null;
+  unreadCount: number;
+  hasInbound: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface MessageData {
   chatId: string;
   sender: string;
   body: string;
   timestamp: Date;
   wahaMessageId?: string | null;
+  isHistorical?: boolean;
+  quotedMessageId?: string | null;
+  quotedBody?: string | null;
+  quotedSender?: string | null;
 }
 
 export interface StoredMessage {
@@ -14,6 +45,10 @@ export interface StoredMessage {
   timestamp: Date;
   processed: boolean;
   wahaMessageId: string | null;
+  isHistorical: boolean;
+  quotedMessageId: string | null;
+  quotedBody: string | null;
+  quotedSender: string | null;
   classification: string | null;
   classificationReason: string | null;
   classifiedAt: Date | null;
@@ -87,10 +122,16 @@ export interface StoredNote {
 }
 
 export interface StorageProvider {
+  upsertContact(data: ContactData): Promise<StoredContact>;
+  fetchContacts(): Promise<StoredContact[]>;
+  fetchContactByChatId(chatId: string): Promise<StoredContact | null>;
+  fetchContactByPhoneNumber(phoneNumber: string): Promise<StoredContact | null>;
+  updateContactUnread(chatId: string, delta: number): Promise<void>;
   saveMessage(data: MessageData): Promise<StoredMessage>;
   fetchUnprocessedMessages(): Promise<StoredMessage[]>;
   markMessagesProcessed(messageIds: string[]): Promise<void>;
   fetchMessagesByChatId(chatId: string, limit?: number): Promise<StoredMessage[]>;
+  hasInboundMessages(chatId: string): Promise<boolean>;
   updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void>;
   storeEmail(data: EmailData): Promise<StoredEmail>;
   fetchUnprocessedEmails(): Promise<StoredEmail[]>;
@@ -102,4 +143,16 @@ export interface StorageProvider {
   fetchTasks(): Promise<StoredTask[]>;
   saveFounderNote(content: string): Promise<StoredNote>;
   fetchLatestFounderNote(): Promise<StoredNote | null>;
+
+  recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void>;
+  queryAuditEntries(options: { action?: string; entityType?: string; limit?: number; since?: Date }): Promise<AuditEntry[]>;
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  metadata: string | null;
+  createdAt: Date;
 }

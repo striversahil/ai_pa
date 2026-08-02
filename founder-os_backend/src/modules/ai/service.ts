@@ -37,6 +37,8 @@ export interface SummaryOutput {
 }
 
 export class AIService {
+  static metrics = { totalCalls: 0, failedCalls: 0 };
+
   private static async callLLM<T>(apiCall: (openai: OpenAI, model: string) => Promise<T>): Promise<T> {
     if (isMockLLM || apiKeys.length === 0) {
       throw new Error('LLM is mocked or API key is missing');
@@ -77,6 +79,7 @@ export class AIService {
 
       for (const model of finalModels) {
         try {
+          this.metrics.totalCalls++;
           const client = new OpenAI({
             apiKey: key,
             baseURL: isGroq ? 'https://api.groq.com/openai/v1' : (config.LLM_BASE_URL || 'https://api.openai.com/v1'),
@@ -100,11 +103,13 @@ export class AIService {
             );
             continue;
           }
+          this.metrics.failedCalls++;
           throw err;
         }
       }
     }
 
+    this.metrics.failedCalls++;
     logger.error('AIService: All configured LLM API keys and fallback models returned rate limit errors.');
     throw lastError || new Error('All LLM keys and models exhausted.');
   }
@@ -123,7 +128,7 @@ export class AIService {
    */
   static async summarizeConversation(
     chatName: string,
-    messages: Array<{ sender: string; body: string; timestamp: Date }>
+    messages: Array<{ sender: string; body: string; timestamp: Date; replyTo?: string | null }>
   ): Promise<SummaryOutput> {
     const startTime = Date.now();
     logger.info({ chatName, isMocked: isMockLLM }, 'AIService: digesting conversation');
@@ -202,7 +207,8 @@ export class AIService {
             { role: 'system', content: summarizeConversationPrompt },
             { role: 'user', content: `Chat Name: ${chatName}\n\nMessages:\n${messages.map((m) => {
               const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
-              return `[${ts}] ${m.sender}: ${m.body}`;
+              const quoted = m.replyTo ? ` [replying to: "${m.replyTo}"]` : '';
+              return `[${ts}] ${m.sender}: ${m.body}${quoted}`;
             }).join('\n')}` },
           ],
           temperature: 0.1,

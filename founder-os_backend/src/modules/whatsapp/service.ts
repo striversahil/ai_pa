@@ -21,6 +21,9 @@ export class WhatsAppService {
     body: string;
     timestamp: Date;
     wahaMessageId?: string | null;
+    quotedMessageId?: string | null;
+    quotedBody?: string | null;
+    quotedSender?: string | null;
   }) {
     logger.debug({ chatId: data.chatId, sender: data.sender }, 'WhatsAppService: saving message');
     return StorageRepository.saveMessage(data);

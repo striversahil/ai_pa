@@ -239,7 +239,7 @@ export default function GoogleSheetsDashboard({}: GoogleSheetsDashboardProps) {
 
   // Date Presets Formatter
   const applyPresetRange = (preset: string) => {
-    const baseDate = new Date("2026-07-13"); 
+    const baseDate = new Date(); // Use actual current date
     const formatDateToIso = (dateObj: Date): string => {
       const year = dateObj.getFullYear();
       const month = String(dateObj.getMonth() + 1).padStart(2, "0");

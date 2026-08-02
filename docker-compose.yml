@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  founder-os:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    container_name: founder-os
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Kolkata
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/founder_os?schema=public
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
+      - EMAIL_IMAP_HOST=mock
+      - EMAIL_IMAP_PORT=993
+      - EMAIL_USER=test@example.com
+      - EMAIL_PASSWORD=password
+      - NOTION_API_KEY=${NOTION_API_KEY}
+      - NOTION_DATABASE_ID=${NOTION_DATABASE_ID}
+      - HF_API_KEY=${HF_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./zoho_sent:/app/zoho_sent:ro
+      # ⚠️  DO NOT mount ./founder-os_backend/public here!
+      # The frontend is built INSIDE Docker and baked into the image.
+      # Mounting the local public/ dir would override it with stale files.
+      # To deploy: run ./deploy.sh (it clears stale artifacts automatically)
+
+  db:
+    image: pgvector/pgvector:pg15
+    container_name: founder-os-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=founder_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

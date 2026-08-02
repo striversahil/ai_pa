@@ -1,12 +1,37 @@
 import { logger } from '../../shared/logger';
 import { getStorageProvider } from '../../storage';
-import type { StorageProvider } from '../../storage/interfaces';
+import type { StorageProvider, ContactData, StoredContact } from '../../storage/interfaces';
 
 function getProvider(): StorageProvider {
   return getStorageProvider();
 }
 
 export class StorageRepository {
+  static async upsertContact(data: ContactData): Promise<StoredContact> {
+    logger.info({ chatId: data.chatId, name: data.name }, 'Upserting contact');
+    return getProvider().upsertContact(data);
+  }
+
+  static async fetchContacts(): Promise<StoredContact[]> {
+    logger.debug('Fetching contacts');
+    return getProvider().fetchContacts();
+  }
+
+  static async fetchContactByChatId(chatId: string): Promise<StoredContact | null> {
+    logger.debug({ chatId }, 'Fetching contact by chatId');
+    return getProvider().fetchContactByChatId(chatId);
+  }
+
+  static async fetchContactByPhoneNumber(phoneNumber: string): Promise<StoredContact | null> {
+    logger.debug({ phoneNumber }, 'Fetching contact by phone number');
+    return getProvider().fetchContactByPhoneNumber(phoneNumber);
+  }
+
+  static async updateContactUnread(chatId: string, delta: number): Promise<void> {
+    logger.debug({ chatId, delta }, 'Updating contact unread count');
+    return getProvider().updateContactUnread(chatId, delta);
+  }
+
   static async saveMessage(data: { chatId: string; sender: string; body: string; timestamp: Date; wahaMessageId?: string | null }) {
     logger.info({ chatId: data.chatId, sender: data.sender }, 'Saving message');
     return getProvider().saveMessage(data);
@@ -25,6 +50,11 @@ export class StorageRepository {
   static async fetchMessagesByChatId(chatId: string, limit = 50) {
     logger.debug({ chatId, limit }, 'Fetching messages for chat');
     return getProvider().fetchMessagesByChatId(chatId, limit);
+  }
+
+  static async hasInboundMessages(chatId: string): Promise<boolean> {
+    logger.debug({ chatId }, 'Checking whether chat has ever messaged us (allowlist)');
+    return getProvider().hasInboundMessages(chatId);
   }
 
   static async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date) {
@@ -80,6 +110,14 @@ export class StorageRepository {
   static async fetchLatestFounderNote() {
     logger.debug('Fetching latest founder note');
     return getProvider().fetchLatestFounderNote();
+  }
+
+  static async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null) {
+    return getProvider().recordAuditEntry(action, entityType, entityId, metadata);
+  }
+
+  static async queryAuditEntries(options: { action?: string; entityType?: string; limit?: number; since?: Date }) {
+    return getProvider().queryAuditEntries(options);
   }
 }
 export default StorageRepository;

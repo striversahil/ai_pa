@@ -4,6 +4,7 @@ import { StorageRepository } from '../storage/repository';
 import { broadcastWhatsAppEvent } from '../../shared/sse';
 import { heuristicClassify, ClassificationResult } from './heuristics';
 import { logger } from '../../shared/logger';
+import { AuditService } from '../audit/service';
 
 export class ClassificationService {
   static async processSingleMessage(
@@ -71,6 +72,11 @@ export class ClassificationService {
         });
       }
     }
+
+    AuditService.record('MESSAGE_CLASSIFIED', 'MESSAGE', messageId, {
+      chatId, isPending: result.isPending, classification: result.isPending ? 'PENDING' : 'NOT_PENDING',
+      priority: result.priority, category: result.category, confidence: result.confidence,
+    }).catch(() => {});
 
     broadcastWhatsAppEvent('message.classified', {
       messageId, chatId,

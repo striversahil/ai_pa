@@ -20,6 +20,7 @@ interface Contact {
   name: string;
   phone_number: string;
   email?: string;
+  isGroup?: boolean;
 }
 
 interface RawMessage {
@@ -29,6 +30,9 @@ interface RawMessage {
   body: string;
   timestamp: string;
   processed: boolean;
+  quotedMessageId?: string | null;
+  quotedBody?: string | null;
+  quotedSender?: string | null;
 }
 
 export default function WhatsAppDashboard() {
@@ -189,7 +193,11 @@ export default function WhatsAppDashboard() {
                   chatId: selectedContactUid,
                   sender: msg.sender === 'Founder' || msg.sender === 'You' ? 'You' : 'Client',
                   body: msg.body,
-                  timestamp: msg.timestamp
+                  timestamp: msg.timestamp,
+                  processed: false,
+                  quotedMessageId: msg.quotedMessageId || null,
+                  quotedBody: msg.quotedBody || null,
+                  quotedSender: msg.quotedSender || null,
                 }
               ];
             });
@@ -199,7 +207,7 @@ export default function WhatsAppDashboard() {
         } else if (payload.event === "message.classified") {
           fetchDigests();
           fetchContacts();
-          if (payload.data.chatId === selectedContactUid) {
+          if (selectedContactUid && payload.data.chatId === selectedContactUid) {
             fetchMessages(selectedContactUid, true);
           }
         }
@@ -318,8 +326,11 @@ export default function WhatsAppDashboard() {
                     }`}
                   >
                     <div className="flex justify-between items-center">
-                      <span className="font-bold text-sm text-zinc-100 block">{c.name || c.phone_number}</span>
-                      <span className="text-[10px] text-zinc-500">{c.phone_number}</span>
+                      <span className="font-bold text-sm text-zinc-100 block flex items-center gap-1.5">
+                        {c.isGroup && <span title="Group" className="text-[11px]">👥</span>}
+                        {c.name || c.phone_number}
+                      </span>
+                      <span className="text-[10px] text-zinc-500">{c.isGroup ? 'Group' : c.phone_number}</span>
                     </div>
                     {digest ? (
                       <>
@@ -354,7 +365,8 @@ export default function WhatsAppDashboard() {
             <>
               <div className="p-4 border-b border-zinc-850 flex items-center justify-between bg-zinc-950/20">
                 <div>
-                  <h3 className="font-extrabold text-white text-sm">
+                  <h3 className="font-extrabold text-white text-sm flex items-center gap-1.5">
+                    {contactList.find(c => c.uid === selectedContactUid)?.isGroup && <span className="text-[14px]">👥</span>}
                     {contactList.find(c => c.uid === selectedContactUid)?.name || selectedContactUid}
                   </h3>
                   <p className="text-[10px] text-zinc-500 mt-0.5">Contact: <span className="font-mono text-[9px]">{selectedContactUid}</span></p>
@@ -376,6 +388,9 @@ export default function WhatsAppDashboard() {
                 ) : (
                   messageList.map((msg, index) => {
                     const isMe = msg.sender === "You";
+                    const selectedContact = contactList.find(c => c.uid === selectedContactUid);
+                    const isGroup = selectedContact?.isGroup;
+                    const senderLabel = isGroup && !isMe ? (msg.sender || "Unknown") : "";
                     return (
                       <div key={msg.id || index} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
                         <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm leading-relaxed ${
@@ -383,10 +398,24 @@ export default function WhatsAppDashboard() {
                             ? "bg-indigo-600 text-white rounded-br-none"
                             : "bg-zinc-800/90 text-zinc-100 rounded-bl-none border border-zinc-700/50"
                         }`}>
-                          {!isMe && (
+                          {senderLabel && (
                             <span className="text-[9px] font-extrabold text-indigo-400 block mb-1 uppercase tracking-wider">
-                              {contactList.find(c => c.uid === selectedContactUid)?.name || "Client"}
+                              {senderLabel}
                             </span>
+                          )}
+                          {msg.quotedBody && (
+                            <div className={`mb-1.5 rounded-lg px-2.5 py-1.5 border-l-2 text-[10px] truncate ${
+                              isMe
+                                ? "bg-indigo-500/30 border-indigo-300/60 text-indigo-100"
+                                : "bg-zinc-900/60 border-zinc-500 text-zinc-400"
+                            }`}>
+                              {msg.quotedSender && (
+                                <span className="font-extrabold block mb-0.5 text-[9px] uppercase tracking-wider opacity-80">
+                                  {msg.quotedSender.replace(/@.*$/, '')}
+                                </span>
+                              )}
+                              <span className="italic">{msg.quotedBody}</span>
+                            </div>
                           )}
                           <p className="whitespace-pre-wrap">{msg.body}</p>
                           <span className="text-[9px] text-zinc-400 block mt-1.5 text-right font-mono">

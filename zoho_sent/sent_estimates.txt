@@ -1,0 +1,20 @@
+curl 'https://books.zoho.com/api/v3/estimates?page=1&per_page=200&filter_by=Status.Sent&sort_column=estimate_number&sort_order=D&requiredfields=date%2Cbranch_name%2Cestimate_number%2Creference_number%2Ccustomer_name%2Cstatus%2Ctotal%2Ccreated_time%2Clast_modified_time%2Cestimate_id%2Ccustomer_id%2Cis_viewed_by_client%2Cclient_viewed_time%2Cclient_viewed_time_formatted%2Cis_viewed_in_mail%2Cmail_last_viewed_time%2Cmail_last_viewed_time_formatted%2Cis_emailed%2Cis_edited_after_sign%2Chas_attachment&usestate=true&organization_id=676267428' \
+  --compressed \
+  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0' \
+  -H 'Accept: */*' \
+  -H 'Accept-Language: en-US,en;q=0.9' \
+  -H 'Accept-Encoding: gzip, deflate, br, zstd' \
+  -H 'Referer: https://books.zoho.com/app/676267428' \
+  -H 'X-ZCSRF-TOKEN: zbcsparam=7f4289a86923fc7b19a68be8b02cbcc369d0e4df9e8a20cc7361f8d34d357a4c5b18aa79aac35a74bd7071da1d69ccc161d93a4599bbb970ff6cf677fb192650' \
+  -H 'X-ZOHO-Include-Formatted: true' \
+  -H 'X-ZB-SOURCE: zbclient' \
+  -H 'X-ZB-Asset-Version: Jul_30_2026_2267' \
+  -H 'X-ROLE-ID: 1584229000000000619' \
+  -H 'Sec-GPC: 1' \
+  -H 'Sec-Fetch-Dest: empty' \
+  -H 'Sec-Fetch-Mode: cors' \
+  -H 'Sec-Fetch-Site: same-origin' \
+  -H 'Connection: keep-alive' \
+  -H 'Cookie: ZohoBooksRef=https%3A%2F%2Fwww.google.com%2F; ZohoBooksPageURL=https%3A%2F%2Fwww.zoho.com%2Fin%2Fbooks%2F; __Secure-iamsdt=0.CAESdBIwVPqScR1zsYNiStglx0HkdPaTCLXJTAjhUDzgcED4ArV9YbPHQjVvO_tHEGJPx-seGkD8x4k_6MSrLh5-CR3pQQFb7fQudAvWcmZnu0HyBPzJuZe1p7SI98TE5lTMq6NS28MlRGe4CWGlvICYin5nN_oZIMiV3-an47bxFw; _iamadt=54fa92711d73b183624ad825c741e474f69308b5c94c08e1503ce07040f802b57d61b3c742356f3bfb4710624fc7eb1e; _iambdt=fcc7893fe8c4ab2e1e7e091de941015bedf42e740bd6726667bb41f204fcc9b997b5a7b488f7c4c4e654ccaba352dbc3254467b80961a5bc80988a7e6737fa19; siq1.zohocares-_zldp=dMx6e5HtWrVtLWaSzcwjyOYWdxWzrE9Lc8YzXPU2AARYv4d4roI1DSqtV%2BQ0S1Ea2ho4O%2B%2Bmt1I%3D; siq1.zohocares-_zldt=98ef214b-5057-4658-a83c-de26839e230e-0; ZohoMarkRef="https://www.zoho.com/in/books/"; ZohoMarkSrc="google:books|google:books|direct:books"; zalb_ba05f91d88=021c21f2be87755c8193333b509951c1; zbcscook=7f4289a86923fc7b19a68be8b02cbcc369d0e4df9e8a20cc7361f8d34d357a4c5b18aa79aac35a74bd7071da1d69ccc161d93a4599bbb970ff6cf677fb192650; MU=2-19f993ac155ff898b86f6effea46fa26030d4f1ef0ba7bb5; zalb_zid=764911936; JSESSIONID=9CBF80C13057197BB62BD9193BEFF19E; zalb_3309580ed5=5395b7af7665f175397e214afd2f5def; CT_CSRF_TOKEN=7f4289a86923fc7b19a68be8b02cbcc369d0e4df9e8a20cc7361f8d34d357a4c5b18aa79aac35a74bd7071da1d69ccc161d93a4599bbb970ff6cf677fb192650; wms-tkp-token=676267682-212fa8a8-6961cc5d0f8f3c602d4db93b2728e2b4; zalb_8b7213828d=540713a537d6cca885952c6c68c1dcd5; CSRF_TOKEN=7f4289a86923fc7b19a68be8b02cbcc369d0e4df9e8a20cc7361f8d34d357a4c5b18aa79aac35a74bd7071da1d69ccc161d93a4599bbb970ff6cf677fb192650; com_chat_owner=1785474054090; com_avcliq_owner=1785474054090' \
+  -H 'Priority: u=0' \
+  -H 'TE: trailers'

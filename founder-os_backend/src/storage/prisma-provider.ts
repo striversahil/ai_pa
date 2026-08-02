@@ -1,13 +1,70 @@
 import { prisma } from '../shared/prisma';
 import { logger } from '../shared/logger';
 import { Priority, TaskStatus } from '@prisma/client';
-import type { StorageProvider, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote } from './interfaces';
+import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry } from './interfaces';
 
 export class PrismaStorageProvider implements StorageProvider {
+  async upsertContact(data: ContactData): Promise<StoredContact> {
+    const contact = await prisma.contact.upsert({
+      where: { chatId: data.chatId },
+      update: {
+        name: data.name,
+        pushName: data.pushName || null,
+        phoneNumber: data.phoneNumber,
+        isGroup: data.isGroup ?? false,
+        lastMessageAt: data.lastMessageAt || undefined,
+        lastMessageBody: data.lastMessageBody || undefined,
+        unreadCount: data.unreadCount !== undefined ? data.unreadCount : { increment: 1 },
+        hasInbound: data.hasInbound === true ? true : undefined,
+      },
+      create: {
+        chatId: data.chatId,
+        name: data.name,
+        pushName: data.pushName || null,
+        phoneNumber: data.phoneNumber,
+        isGroup: data.isGroup ?? false,
+        lastMessageAt: data.lastMessageAt || null,
+        lastMessageBody: data.lastMessageBody || null,
+        unreadCount: data.unreadCount || 1,
+        hasInbound: data.hasInbound === true,
+      },
+    });
+    return contact as StoredContact;
+  }
+
+  async fetchContacts(): Promise<StoredContact[]> {
+    return prisma.contact.findMany({ orderBy: { lastMessageAt: 'desc' } }) as Promise<StoredContact[]>;
+  }
+
+  async fetchContactByChatId(chatId: string): Promise<StoredContact | null> {
+    const contact = await prisma.contact.findUnique({ where: { chatId } });
+    return contact as StoredContact | null;
+  }
+
+  async fetchContactByPhoneNumber(phoneNumber: string): Promise<StoredContact | null> {
+    if (!phoneNumber) return null;
+    const contact = await prisma.contact.findFirst({ where: { phoneNumber } });
+    return contact as StoredContact | null;
+  }
+
+  async updateContactUnread(chatId: string, delta: number): Promise<void> {
+    const contact = await prisma.contact.findUnique({ where: { chatId } });
+    if (contact) {
+      const newCount = Math.max(0, (contact.unreadCount || 0) + delta);
+      await prisma.contact.update({ where: { chatId }, data: { unreadCount: newCount } });
+    }
+  }
+
   async saveMessage(data: MessageData): Promise<StoredMessage> {
     logger.info({ chatId: data.chatId, sender: data.sender }, 'Saving raw message to storage');
     const msg = await prisma.message.create({
-      data: { chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false, wahaMessageId: data.wahaMessageId || null }
+      data: {
+        chatId: data.chatId, sender: data.sender, body: data.body, timestamp: data.timestamp, processed: false,
+        isHistorical: data.isHistorical || false, wahaMessageId: data.wahaMessageId || null,
+        quotedMessageId: data.quotedMessageId || null,
+        quotedBody: data.quotedBody || null,
+        quotedSender: data.quotedSender || null,
+      }
     });
     return msg as StoredMessage;
   }
@@ -16,7 +73,6 @@ export class PrismaStorageProvider implements StorageProvider {
     logger.debug('Fetching unprocessed messages from storage');
     return prisma.message.findMany({ where: { processed: false }, orderBy: { timestamp: 'asc' } }) as Promise<StoredMessage[]>;
   }
-
   async markMessagesProcessed(messageIds: string[]): Promise<void> {
     if (messageIds.length === 0) return;
     logger.info({ count: messageIds.length }, 'Marking messages as processed');
@@ -24,8 +80,28 @@ export class PrismaStorageProvider implements StorageProvider {
   }
 
   async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
-    logger.debug({ chatId, limit }, 'Fetching messages for chat');
     return prisma.message.findMany({ where: { chatId }, orderBy: { timestamp: 'desc' }, take: limit }) as Promise<StoredMessage[]>;
+  }
+
+  async hasInboundMessages(chatId: string): Promise<boolean> {
+    // Persistent allowlist: the flag lives on the never-pruned Contact row, so
+    // the 90-day message retention can never reset who is allowed to be replied
+    // to. Falls back to message history for chats without a Contact row yet.
+    const contact = await prisma.contact.findUnique({
+      where: { chatId },
+      select: { hasInbound: true },
+    });
+    if (contact) return contact.hasInbound;
+    const count = await prisma.message.count({
+      where: {
+        chatId,
+        OR: [
+          { wahaMessageId: { not: null } },
+          { sender: { notIn: ['You', 'Founder'] } },
+        ],
+      },
+    });
+    return count > 0;
   }
 
   async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void> {
@@ -93,5 +169,19 @@ export class PrismaStorageProvider implements StorageProvider {
     logger.debug('Fetching latest founder note/briefing');
     const note = await prisma.founderNote.findFirst({ orderBy: { createdAt: 'desc' } });
     return note as StoredNote | null;
+  }
+
+  async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void> {
+    await prisma.auditLog.create({
+      data: { action, entityType, entityId: entityId || null, metadata: metadata ? JSON.stringify(metadata) : null },
+    });
+  }
+
+  async queryAuditEntries(options: { action?: string; entityType?: string; limit?: number; since?: Date }): Promise<AuditEntry[]> {
+    const where: any = {};
+    if (options.action) where.action = options.action;
+    if (options.entityType) where.entityType = options.entityType;
+    if (options.since) where.createdAt = { gte: options.since };
+    return prisma.auditLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: options.limit || 100 }) as Promise<AuditEntry[]>;
   }
 }
