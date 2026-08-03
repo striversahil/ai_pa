@@ -49,6 +49,7 @@ function parseSheetDate(dateStr: string | null | undefined): Date | null {
 const getEmployeeName = (row: any) => String(row['Employee Name'] || row['Agent Name'] || row['Agent'] || 'Unknown').trim();
 const getWorkAssigned = (row: any) => String(row['Work Assigned'] || row['Role'] || 'Telecaller').trim();
 const getDialed = (row: any) => parseInt(row['Outgoing Calls Count'] || row['Total Calls Dialed'] || row['Dialed Calls'] || '0') || 0;
+const getIncoming = (row: any) => parseInt(row['Incoming Calls Count'] || row['Incoming Calls'] || '0') || 0;
 const getConnected = (row: any) => parseInt(row['Total Connected Calls Count'] || row['Answered Calls'] || row['Connected Calls'] || '0') || 0;
 const getTalkTime = (row: any) => parseTalkTimeToMinutes(row['Total Call Duration'] || row['Talk Time'] || row['Call Duration'] || '');
 const getConfirmed = (row: any) => parseInt(row['Total SO Created- Count'] || row['Confirmed Orders'] || row['SO Count'] || '0') || 0;
@@ -91,6 +92,31 @@ function soWarnings(rows: ScanRecord[], maxDailySO: number): any[] {
   return warnings;
 }
 
+/**
+ * Connected calls can never exceed the total calls handled (incoming + outgoing).
+ * The sheet's self-reported counts sometimes break that invariant, which would
+ * otherwise produce impossible >100% connection rates.
+ */
+function callWarnings(rows: ScanRecord[]): any[] {
+  const warnings: any[] = [];
+  rows.forEach((row: any) => {
+    const incoming = getIncoming(row);
+    const outgoing = getDialed(row);
+    const connected = getConnected(row);
+    const total = incoming + outgoing;
+    if (connected > total && total > 0) {
+      warnings.push({
+        sNo: String(row.Date || row._rowId || 'N/A'),
+        company: getEmployeeName(row),
+        field: 'Total Connected Calls Count',
+        issue: `Connected (${connected}) exceeds total calls handled (${incoming} incoming + ${outgoing} outgoing = ${total}). Rate capped at 100%.`,
+        severity: 'warning',
+      });
+    }
+  });
+  return warnings;
+}
+
 const isOnlyLeadGen = (role: string) => {
   const r = role.toLowerCase();
   return r === 'telle caller' || r === 'telecaller' || r === 'lead generator';
@@ -126,6 +152,7 @@ function aggregate(rows: ScanRecord[], maxDailySO: number): any[] {
         role: getWorkAssigned(row),
         daysCount: 0,
         totalDialed: 0,
+        totalIncoming: 0,
         totalConnected: 0,
         totalTalktime: 0,
         totalConfirmed: 0,
@@ -134,6 +161,7 @@ function aggregate(rows: ScanRecord[], maxDailySO: number): any[] {
     }
     aggMap[emp].daysCount += 1;
     aggMap[emp].totalDialed += getDialed(row);
+    aggMap[emp].totalIncoming += getIncoming(row);
     aggMap[emp].totalConnected += getConnected(row);
     aggMap[emp].totalTalktime += getTalkTime(row);
     aggMap[emp].totalConfirmed += soCount(row, maxDailySO);
@@ -179,6 +207,7 @@ function buildDashboard(rows: ScanRecord[], maxDailySO: number): any {
 
   let totalSO = 0;
   let totalCallsDialed = 0;
+  let totalCallsIncoming = 0;
   let totalCallsConnected = 0;
   let totalLeads = 0;
   rows.forEach((row: any) => {
@@ -186,10 +215,12 @@ function buildDashboard(rows: ScanRecord[], maxDailySO: number): any {
     if (!emp || emp === 'Unknown' || emp === '') return;
     totalSO += soCount(row, maxDailySO);
     totalCallsDialed += getDialed(row);
+    totalCallsIncoming += getIncoming(row);
     totalCallsConnected += getConnected(row);
     totalLeads += getLeadsTotal(row);
   });
-  const callRate = totalCallsDialed > 0 ? Math.round((totalCallsConnected / totalCallsDialed) * 100) : 0;
+  const totalCalls = totalCallsDialed + totalCallsIncoming;
+  const callRate = totalCalls > 0 ? Math.min(100, Math.round((totalCallsConnected / totalCalls) * 100)) : 0;
   const soRate = totalCallsConnected > 0 ? Math.round((totalSO / totalCallsConnected) * 100) : 0;
   const leadGenRate = totalCallsConnected > 0 ? Math.round((totalLeads / totalCallsConnected) * 100) : 0;
 
@@ -200,7 +231,8 @@ function buildDashboard(rows: ScanRecord[], maxDailySO: number): any {
     if (isAGen) return b.leadsTotal - a.leadsTotal;
     return b.totalConfirmed - a.totalConfirmed;
   }).map((emp: any, idx: number) => {
-    const rate = emp.totalDialed > 0 ? Math.round((emp.totalConnected / emp.totalDialed) * 100) : 0;
+    const totalCalls = emp.totalDialed + emp.totalIncoming;
+    const rate = totalCalls > 0 ? Math.min(100, Math.round((emp.totalConnected / totalCalls) * 100)) : 0;
     const leadRate = emp.totalConnected > 0 ? Math.round((emp.leadsTotal / emp.totalConnected) * 100) : 0;
     const conv = emp.totalConnected > 0 ? Math.round((emp.totalConfirmed / emp.totalConnected) * 100) : 0;
     return [
@@ -208,6 +240,7 @@ function buildDashboard(rows: ScanRecord[], maxDailySO: number): any {
       emp.name,
       emp.role,
       emp.totalDialed,
+      emp.totalIncoming,
       emp.totalConnected,
       `${rate}%`,
       emp.leadsTotal,
@@ -222,6 +255,7 @@ function buildDashboard(rows: ScanRecord[], maxDailySO: number): any {
     getEmployeeName(row),
     getWorkAssigned(row),
     getDialed(row),
+    getIncoming(row),
     getConnected(row),
     row['Total Call Duration'] || row['Talk Time'] || '0',
     getLeadsTotal(row),
@@ -234,21 +268,21 @@ function buildDashboard(rows: ScanRecord[], maxDailySO: number): any {
   return {
     kpis: [
       { label: 'Total SO Created', value: `${totalSO} orders`, sub: 'Total sales orders generated', accent: 'indigo' },
-      { label: 'Call Connection Rate', value: `${callRate}% (${totalCallsConnected}/${totalCallsDialed})`, sub: 'Successful call connections ratio', accent: 'emerald' },
+      { label: 'Call Connection Rate', value: `${callRate}% (${totalCallsConnected}/${totalCalls})`, sub: 'Connected / total calls (incoming + outgoing)', accent: 'emerald' },
       { label: 'Total Leads Generated', value: `${totalLeads} Leads`, sub: `Lead Gen Rate: ${leadGenRate}% of connected`, accent: 'violet' },
       { label: 'SO Conversion Rate', value: `${soRate}%`, sub: 'SO Created / Connected calls ratio', accent: 'amber' },
     ],
     insights: insights(aggregated),
-    warnings: soWarnings(rows, maxDailySO),
+    warnings: [...soWarnings(rows, maxDailySO), ...callWarnings(rows)],
     tables: [
       {
         title: 'Telecaller Connection & SO Conversion Leaderboard',
-        columns: ['Rank', 'Employee Name', 'Work Assigned', 'Calls Dialed', 'Calls Connected', 'Call Connection Rate', 'Leads Generated', 'Lead Gen Rate', 'SO Created (Conversions)', 'SO Conversion Rate'],
+        columns: ['Rank', 'Employee Name', 'Work Assigned', 'Calls Dialed', 'Incoming Calls', 'Calls Connected', 'Call Connection Rate', 'Leads Generated', 'Lead Gen Rate', 'SO Created (Conversions)', 'SO Conversion Rate'],
         rows: leaderboard,
       },
       {
         title: 'Raw Telecaller Sheet Data',
-        columns: ['Date', 'Employee Name', 'Work Assigned', 'Outgoing Calls', 'Connected Calls', 'Talk Time', 'Leads Generated', 'Lead Gen Rate', 'SO Created', 'Report Screenshot', 'Remarks'],
+        columns: ['Date', 'Employee Name', 'Work Assigned', 'Outgoing Calls', 'Incoming Calls', 'Connected Calls', 'Talk Time', 'Leads Generated', 'Lead Gen Rate', 'SO Created', 'Report Screenshot', 'Remarks'],
         rows: rawLog,
       },
     ],

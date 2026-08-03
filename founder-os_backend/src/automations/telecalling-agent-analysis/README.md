@@ -58,3 +58,11 @@ with a ₹74,635 amount). Such a row silently inflates period totals. Rows whose
 daily SO count exceeds `maxDailySO` are:
 - excluded from KPIs, the leaderboard and insights (treated as 0), and
 - surfaced in the dashboard's **Data Quality & Integrity Audit** table.
+
+## Connection rate
+
+`Total Connected Calls Count` includes calls connected in **both** directions
+(incoming + outgoing), while `Outgoing Calls Count` is dials only — so dividing
+connected by dials yields impossible >100% rates. The **Call Connection Rate** is
+therefore computed as `connected / (incoming + outgoing)`, capped at 100%. Rows
+where connected exceeds incoming + outgoing are flagged in the audit table.
