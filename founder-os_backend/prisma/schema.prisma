@@ -257,3 +257,12 @@ model PriceQuote {
   @@index([dppChatId])
   @@index([quotedAt])
 }
+
+// Generic key/value runtime state (e.g. pipeline completion watermarks that
+// aren't tied to a single row). Not user-editable config — that lives in
+// Automation.configJson.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

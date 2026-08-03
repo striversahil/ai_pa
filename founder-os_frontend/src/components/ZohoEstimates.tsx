@@ -14,6 +14,7 @@ export default function ZohoEstimates() {
   const [baselineDate, setBaselineDate] = useState<string>("");
   const [showClosed, setShowClosed] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [lastCompleteSyncAt, setLastCompleteSyncAt] = useState<string | null>(null);
 
   const getTodayDateString = () => {
     const d = new Date();
@@ -24,23 +25,20 @@ export default function ZohoEstimates() {
     setCurrentPage(1);
   }, [showClosed, filters]);
 
-  // Compute the last sync time from loaded estimates
+  // "Last synced" reflects the last fully-completed processing pass (all new or
+  // modified estimates analyzed), not just any manual/automatic sync run.
   const lastSyncTimeStr = useMemo(() => {
-    if (!estimates || estimates.length === 0) return null;
-    const times = estimates
-      .map((e) => (e.lastSyncTime ? new Date(e.lastSyncTime).getTime() : 0))
-      .filter((t) => t > 0);
-    if (times.length === 0) return null;
-    const latestTime = new Date(Math.max(...times));
-    return latestTime.toLocaleString();
-  }, [estimates]);
+    if (!lastCompleteSyncAt) return null;
+    return new Date(lastCompleteSyncAt).toLocaleString();
+  }, [lastCompleteSyncAt]);
 
   const fetchEstimates = async () => {
     setIsLoading(true);
     try {
       const res = await fetch("/api/estimates");
       const data = await res.json();
-      setEstimates(data);
+      setEstimates(data.estimates ?? []);
+      setLastCompleteSyncAt(data.lastCompleteSyncAt ?? null);
     } catch (e) {
       console.error("Error loading Zoho estimates:", e);
     } finally {

@@ -260,6 +260,8 @@ export class SalesCopilotService implements AnalysisEngine {
     //    anything changed while the machine was off is picked up on the next run.
     let processedCount = 0;
     let skippedCount = 0;
+    let neededCount = 0;
+    let failedCount = 0;
     for (const est of estimates) {
       const estId = est.estimate_id;
       const estNo = est.estimate_number;
@@ -280,7 +282,9 @@ export class SalesCopilotService implements AnalysisEngine {
       const fetched = fetchedCommentsByEst.get(estId);
       if (!fetched) {
         // Comment fetch failed this tick — skip without advancing lastSyncTime
-        // so the estimate is retried on the next run.
+        // so the estimate is retried on the next run. Also marks this run as
+        // incomplete: we couldn't verify every estimate.
+        failedCount++;
         continue;
       }
       const hasNewComments = fetched.hasNew;
@@ -290,6 +294,7 @@ export class SalesCopilotService implements AnalysisEngine {
         skippedCount++;
         continue;
       }
+      neededCount++;
 
       // Save comments and extract sales agent comments
       const comments = fetched.comments;
@@ -435,8 +440,9 @@ export class SalesCopilotService implements AnalysisEngine {
           });
         } catch (err: any) {
           // Don't advance lastSyncTime on failure so this estimate is retried
-          // on the next sync.
+          // on the next sync. Also marks this run as incomplete.
           logger.error({ error: err.message }, `SalesCopilotService: AI classification error for ${estNo}`);
+          failedCount++;
           continue;
         }
       }
@@ -453,7 +459,26 @@ export class SalesCopilotService implements AnalysisEngine {
 
     logger.info(`SalesCopilotService: Processed ${processedCount} estimates, skipped ${skippedCount}.`);
 
-    return { success: true };
+    // A run is only "complete" when every estimate that needed processing (new
+    // or modified since its last sync) was actually processed with zero
+    // failures. Only then is the watermark advanced — the dashboard's "Last
+    // synced" time reflects the last fully-completed processing pass, not just
+    // any sync/analyze run. A run where nothing needed processing leaves the
+    // existing watermark untouched.
+    const complete = neededCount > 0 && failedCount === 0;
+    if (complete) {
+      const completedAt = new Date();
+      await prisma.setting.upsert({
+        where: { key: 'sales_copilot:last_complete_sync_at' },
+        update: { value: completedAt.toISOString() },
+        create: { key: 'sales_copilot:last_complete_sync_at', value: completedAt.toISOString() }
+      });
+      logger.info(`SalesCopilotService: Complete processing pass finished at ${completedAt.toISOString()} (needed ${neededCount}, failed ${failedCount}).`);
+    } else {
+      logger.warn(`SalesCopilotService: Sync run incomplete — needed ${neededCount}, failed ${failedCount}. Watermark not advanced.`);
+    }
+
+    return { success: true, processedCount, skippedCount, neededCount, failedCount, complete };
   }
 
   private async syncClosedStatuses(activeEstIds: Set<string>, orgId: string, headers: Record<string, string>): Promise<void> {

@@ -13,13 +13,13 @@ export async function handler() {
  */
 export async function data() {
   const where = { OR: [{ status: 'sent' }, { status: 'accepted' }, { status: 'declined' }, { status: 'confirmed' }] };
-  const [estimates, sent, sentClassified, accepted, declined, latestSync] = await Promise.all([
+  const [estimates, sent, sentClassified, accepted, declined, lastCompleteSync] = await Promise.all([
     prisma.estimate.findMany({ where, select: { estimateId: true, estimateNumber: true, customerName: true, total: true, status: true, lastSyncTime: true } }),
     prisma.estimate.count({ where: { status: 'sent' } }),
     prisma.estimate.count({ where: { status: 'sent', classification: { isNot: null } } }),
     prisma.estimate.count({ where: { status: { in: ['accepted', 'confirmed'] } } }),
     prisma.estimate.count({ where: { status: 'declined' } }),
-    prisma.estimate.aggregate({ _max: { lastSyncTime: true } }),
+    prisma.setting.findUnique({ where: { key: 'sales_copilot:last_complete_sync_at' } }),
   ]);
 
   const totalValue = estimates.filter((e) => e.status === 'sent').reduce((sum, e) => sum + e.total, 0);
@@ -32,7 +32,9 @@ export async function data() {
     acceptedEstimates: accepted,
     declinedEstimates: declined,
     totalSentValue: totalValue,
-    lastSyncAt: latestSync._max.lastSyncTime,
+    // Only the last fully-completed processing pass counts as "last synced" —
+    // not a partial/incremental sync run. Null until the first complete pass.
+    lastSyncAt: lastCompleteSync?.value ? new Date(lastCompleteSync.value) : null,
     recent: estimates
       .sort((a, b) => new Date(b.lastSyncTime).getTime() - new Date(a.lastSyncTime).getTime())
       .slice(0, 10)
