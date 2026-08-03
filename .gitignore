@@ -15,3 +15,5 @@ prospects_verified.json
 out/
 zoho_sent/google-service-account.json
 waha_sessions/
+google-service-account.json
+.runtime/
