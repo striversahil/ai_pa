@@ -642,14 +642,22 @@ Action: (single clear objective — close order / clarify doubts / send revised 
     <div className="space-y-6 text-zinc-100 pb-12">
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-800 pb-5">
-        <div>
-          <h1 className="text-3xl font-bold font-heading text-white">Zoho Sent Estimates Analyzer</h1>
-          <p className="text-sm text-zinc-400">Classifies customer intent & follow-up efficiency from comment history</p>
-          {lastSyncTimeStr && (
-            <p className="text-xs text-zinc-500 mt-1">
-              Last synced: <span className="font-semibold text-zinc-400">{lastSyncTimeStr}</span>
-            </p>
-          )}
+        <div className="flex items-start gap-3">
+          <div className="hidden sm:flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 shadow-lg shadow-indigo-500/10">
+            <svg className="w-5 h-5 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17h6m-6-4h6m-6-4h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zm0 8V5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2v-8z" /></svg>
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold font-heading tracking-tight">
+              <span className="bg-gradient-to-r from-white via-indigo-100 to-indigo-400 bg-clip-text text-transparent">Zoho Sent Estimates</span>
+            </h1>
+            <p className="text-sm text-zinc-400 mt-0.5">AI classification of customer intent & follow-up efficiency from comment history</p>
+            {lastSyncTimeStr && (
+              <p className="text-xs text-zinc-500 mt-1.5 flex items-center gap-1.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Last synced: <span className="font-semibold text-zinc-400">{lastSyncTimeStr}</span>
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -746,21 +754,53 @@ Action: (single clear objective — close order / clarify doubts / send revised 
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm">
-          <span className="text-xs text-zinc-400 block mb-1">Active Sent Estimates</span>
-          <span className="text-2xl font-bold text-white block">{stats.totalCount}</span>
+        <div className="group relative overflow-hidden bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm hover:border-indigo-500/40 hover:shadow-lg hover:shadow-indigo-500/5 hover:-translate-y-0.5 transition-all duration-300">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-indigo-500 to-violet-500" />
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-xs text-zinc-400 block mb-1">Active Sent Estimates</span>
+              <span className="text-2xl font-bold text-white block">{stats.totalCount}</span>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            </div>
+          </div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm">
-          <span className="text-xs text-zinc-400 block mb-1">Cumulative Value</span>
-          <span className="text-2xl font-bold text-white block">₹{stats.totalValue.toLocaleString()}</span>
+        <div className="group relative overflow-hidden bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5 transition-all duration-300">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-emerald-500 to-teal-500" />
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-xs text-zinc-400 block mb-1">Cumulative Value</span>
+              <span className="text-2xl font-bold text-white block">₹{stats.totalValue.toLocaleString()}</span>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+          </div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm">
-          <span className="text-xs text-zinc-400 block mb-1">Follow-up Missing</span>
-          <span className="text-2xl font-bold text-rose-400 block">{stats.followUpMissingCount}</span>
+        <div className="group relative overflow-hidden bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm hover:border-rose-500/40 hover:shadow-lg hover:shadow-rose-500/5 hover:-translate-y-0.5 transition-all duration-300">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-rose-500 to-orange-500" />
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-xs text-zinc-400 block mb-1">Follow-up Missing</span>
+              <span className="text-2xl font-bold text-rose-400 block">{stats.followUpMissingCount}</span>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+            </div>
+          </div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm">
-          <span className="text-xs text-zinc-400 block mb-1">Deadline Exceeded</span>
-          <span className="text-2xl font-bold text-amber-400 block">{stats.dayExceededCount}</span>
+        <div className="group relative overflow-hidden bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5 transition-all duration-300">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-amber-500 to-yellow-500" />
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-xs text-zinc-400 block mb-1">Deadline Exceeded</span>
+              <span className="text-2xl font-bold text-amber-400 block">{stats.dayExceededCount}</span>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -770,9 +810,10 @@ Action: (single clear objective — close order / clarify doubts / send revised 
             <div className="border-b border-zinc-800 pb-4 mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <span>🚨</span> Calling Priority Checklist
+                  <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500/20 to-orange-500/20 border border-rose-500/30 text-sm">🚨</span>
+                  Calling Priority Checklist
                 </h3>
-                <p className="text-xs text-zinc-500">Estimates requiring urgent calls or action items, ordered by Intent Score</p>
+                <p className="text-xs text-zinc-500 mt-1">Estimates requiring urgent calls or action items, ordered by Intent Score</p>
               </div>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-950/40 px-3 py-1.5 rounded-lg border border-zinc-800 cursor-pointer hover:border-zinc-750 transition-colors">
@@ -1035,27 +1076,62 @@ Action: (single clear objective — close order / clarify doubts / send revised 
             </div>
 
             {isLoading ? (
-              <div className="py-12 text-center text-zinc-500 animate-pulse">Loading priority list...</div>
+              <div className="space-y-6">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="p-6 md:p-8 bg-zinc-900/30 border border-zinc-800 rounded-2xl animate-pulse space-y-4">
+                    <div className="flex justify-between items-center gap-4">
+                      <div className="space-y-2 flex-1">
+                        <div className="h-4 w-48 bg-zinc-800 rounded-md" />
+                        <div className="h-3 w-64 bg-zinc-800/70 rounded-md" />
+                      </div>
+                      <div className="h-6 w-24 bg-zinc-800 rounded-full" />
+                    </div>
+                    <div className="h-3 w-full bg-zinc-800/50 rounded-md" />
+                    <div className="h-3 w-4/5 bg-zinc-800/50 rounded-md" />
+                    <div className="h-20 w-full bg-zinc-800/30 rounded-xl" />
+                  </div>
+                ))}
+              </div>
             ) : priorityList.length === 0 ? (
               <div className="text-center py-8 text-zinc-500 text-sm">No priority calls flagged.</div>
             ) : (
               <div className="space-y-6 max-h-[900px] overflow-y-auto pr-2 scrollbar-thin">
                 {(showClosed ? priorityList.slice((currentPage - 1) * 100, currentPage * 100) : priorityList).map((e) => {
                   const c = e.classification;
+                  const accentClass = e.total > 80000
+                    ? "from-amber-500 to-rose-500"
+                    : c.underDiscussion === "Yes"
+                    ? "from-indigo-500 to-violet-500"
+                    : c.movingSlow === "Yes"
+                    ? "from-orange-500 to-amber-500"
+                    : "from-zinc-600 to-zinc-700";
+                  const initials = (e.customerName || "?")
+                    .split(" ")
+                    .filter((p: string) => p.trim())
+                    .map((p: string) => p[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase();
                   return (
                     <div
                       key={e.estimateId}
-                      className="p-6 md:p-8 bg-zinc-900/30 border border-zinc-800 rounded-2xl hover:border-zinc-700/80 hover:bg-zinc-900/50 transition-all space-y-4 shadow-sm"
+                      className="relative overflow-hidden p-6 md:p-8 bg-zinc-900/30 border border-zinc-800 rounded-2xl hover:border-zinc-700/80 hover:bg-zinc-900/50 hover:shadow-lg hover:shadow-black/20 transition-all space-y-4 shadow-sm"
                     >
-                      <div className="flex flex-wrap justify-between items-center gap-4 border-b border-zinc-800/60 pb-4">
-                        <div>
-                          <span className="font-extrabold text-lg text-zinc-100 block tracking-tight">{e.customerName}</span>
-                          <div className="text-xs text-zinc-400 mt-1 flex flex-wrap items-center gap-2">
-                            <span>Estimate No: <strong>{e.estimateNumber}</strong></span>
-                            <span>•</span>
-                            <span>Value: <strong className="text-indigo-400">₹{e.total.toLocaleString()}</strong></span>
-                            <span>•</span>
-                            <span>Date: <strong>{e.date}</strong></span>
+                      <div className={`absolute left-0 top-6 bottom-6 w-1 rounded-r-full bg-gradient-to-b ${accentClass}`} />
+                      <div className="flex flex-wrap justify-between items-center gap-4 border-b border-zinc-800/60 pb-4 pl-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/30 to-violet-500/30 border border-indigo-500/30 flex items-center justify-center text-sm font-bold text-indigo-200">
+                            {initials}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-extrabold text-lg text-zinc-100 block tracking-tight truncate">{e.customerName}</span>
+                            <div className="text-xs text-zinc-400 mt-1 flex flex-wrap items-center gap-2">
+                              <span>Estimate No: <strong>{e.estimateNumber}</strong></span>
+                              <span>•</span>
+                              <span>Value: <strong className="text-indigo-400">₹{e.total.toLocaleString()}</strong></span>
+                              <span>•</span>
+                              <span>Date: <strong>{e.date}</strong></span>
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">

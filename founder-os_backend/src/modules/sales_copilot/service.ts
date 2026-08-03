@@ -211,8 +211,52 @@ export class SalesCopilotService implements AnalysisEngine {
     // (accepted/declined/etc.). Runs before AI so statuses are in sync too.
     await this.syncClosedStatuses(activeEstIds, orgId, headers);
 
-    // 5. AI analysis — only for estimates that are new, modified since their last
-    //    analysis, or forced. Skipped estimates keep their old lastSyncTime, so
+    // 5. Comment refresh — ALWAYS runs for every sent estimate on every tick.
+    //    Zoho Books comments do NOT bump the estimate's last_modified_time, so the
+    //    incremental gate below would otherwise never re-fetch new sales comments
+    //    and the dashboard's "last comment" age/counts would go stale. Comments are
+    //    fetched in parallel (small concurrency), and new comments are detected by
+    //    comparing Zoho's max comment_id against the highest one stored in the DB.
+    const dbMaxCommentIdByEst = new Map<string, string>();
+    {
+      const rows = await prisma.comment.groupBy({
+        by: ['estimateId'],
+        _max: { commentId: true }
+      });
+      for (const r of rows) dbMaxCommentIdByEst.set(r.estimateId, (r._max.commentId as string) || '');
+    }
+
+    const fetchedCommentsByEst = new Map<string, { comments: any[]; hasNew: boolean }>();
+    const COMMENT_FETCH_CONCURRENCY = 6;
+    for (let i = 0; i < estimates.length; i += COMMENT_FETCH_CONCURRENCY) {
+      const batch = estimates.slice(i, i + COMMENT_FETCH_CONCURRENCY);
+      await Promise.all(batch.map(async (est) => {
+        const estId = est.estimate_id;
+        const estNo = est.estimate_number;
+        try {
+          const commentsUrl = `https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`;
+          const commentsRes = await fetch(commentsUrl, { headers });
+          if (!commentsRes.ok) {
+            logger.warn(`SalesCopilotService: Failed to fetch comments for ${estNo}: ${commentsRes.status}`);
+            return;
+          }
+          const commentsJson = (await commentsRes.json()) as any;
+          const comments = commentsJson.comments || [];
+          let maxZohoId = '';
+          for (const c of comments) {
+            if (c.comment_id > maxZohoId) maxZohoId = c.comment_id;
+          }
+          const hasNew = maxZohoId > (dbMaxCommentIdByEst.get(estId) || '');
+          fetchedCommentsByEst.set(estId, { comments, hasNew });
+        } catch (err: any) {
+          logger.warn({ error: err.message }, `SalesCopilotService: Failed to fetch comments for ${estNo} due to network error`);
+        }
+      }));
+    }
+
+    // 6. AI analysis — comments are already fresh; classification runs only for
+    //    estimates that are new, modified since their last sync, forced, or that
+    //    gained new comments. Skipped estimates keep their old lastSyncTime, so
     //    anything changed while the machine was off is picked up on the next run.
     let processedCount = 0;
     let skippedCount = 0;
@@ -233,31 +277,22 @@ export class SalesCopilotService implements AnalysisEngine {
       const modifiedSinceLastSync = !!lastModified && !!existingEstimate &&
         lastModified.getTime() > existingEstimate.lastSyncTime.getTime();
 
-      const needsProcessing = force || statusChanged || neverAnalyzed || modifiedSinceLastSync;
+      const fetched = fetchedCommentsByEst.get(estId);
+      if (!fetched) {
+        // Comment fetch failed this tick — skip without advancing lastSyncTime
+        // so the estimate is retried on the next run.
+        continue;
+      }
+      const hasNewComments = fetched.hasNew;
+      const needsProcessing = force || statusChanged || neverAnalyzed || modifiedSinceLastSync || hasNewComments;
 
       if (!needsProcessing) {
         skippedCount++;
         continue;
       }
 
-      // Fetch estimate comments
-      let commentsJson: any = { comments: [] };
-      try {
-        const commentsUrl = `https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`;
-        const commentsRes = await fetch(commentsUrl, { headers });
-        if (!commentsRes.ok) {
-          logger.warn(`SalesCopilotService: Failed to fetch comments for ${estNo}: ${commentsRes.status}`);
-          continue;
-        }
-        commentsJson = (await commentsRes.json()) as any;
-      } catch (err: any) {
-        logger.warn({ error: err.message }, `SalesCopilotService: Failed to fetch comments for ${estNo} due to network error`);
-        continue;
-      }
-
-      const comments = commentsJson.comments || [];
-
       // Save comments and extract sales agent comments
+      const comments = fetched.comments;
       const salesComments: Array<{ id: string; date: string; author: string; text: string }> = [];
 
       for (const c of comments) {
