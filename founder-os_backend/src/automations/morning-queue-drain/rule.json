@@ -1,0 +1,8 @@
+{
+  "id": "morning-queue-drain",
+  "name": "Morning Queue Drain",
+  "description": "Every minute, send due deferred WhatsApp messages (drain-locked, 60/cycle cap).",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "* * * * *" },
+  "enabled": true
+}

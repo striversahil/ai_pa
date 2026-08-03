@@ -18,9 +18,10 @@ import FounderAssistant from "../components/FounderAssistant";
 import ZohoEstimates from "../components/ZohoEstimates";
 import GoogleSheetsDashboard from "../components/GoogleSheetsDashboard";
 import WhatsAppDashboard from "../components/WhatsAppDashboard";
+import Automations from "../components/Automations";
 import type { Enquiry, Comment } from "../types";
 
-type ViewType = "dashboard" | "enquiries" | "detail" | "briefing" | "zoho" | "sheets" | "whatsapp";
+type ViewType = "dashboard" | "enquiries" | "detail" | "briefing" | "zoho" | "sheets" | "whatsapp" | "automations";
 
 export default function Home() {
   const {
@@ -193,6 +194,7 @@ export default function Home() {
           {activeView === "zoho" && <ZohoEstimates />}
           {activeView === "sheets" && <GoogleSheetsDashboard />}
           {activeView === "whatsapp" && <WhatsAppDashboard />}
+          {activeView === "automations" && <Automations />}
         </ErrorBoundary>
       </main>
 

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { DigestService } from '../modules/digest/service';
+import { processMessagesToDigests } from '../automations/whatsapp-digest/process';
 import { EmailService } from '../modules/email/service';
 import { SchedulerService } from '../modules/scheduler/service';
 import { BrainService } from '../modules/brain/service';
@@ -8,7 +8,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 const router = Router();
 
 router.post('/digest', asyncHandler(async (req, res) => {
-  const result = await DigestService.processMessagesToDigests();
+  const result = await processMessagesToDigests();
   res.status(200).json({ message: 'Digest job triggered successfully', result });
 }));
 

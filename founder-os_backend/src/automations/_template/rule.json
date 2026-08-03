@@ -1,0 +1,28 @@
+{
+  "id": "my-automation",
+  "name": "My Automation",
+  "description": "One line: what it does and why.",
+  "trigger": {
+    "type": "event",
+    "event": "whatsapp.message.inbound"
+  },
+  "condition": {
+    "all": [
+      { "field": "chatId", "op": "eq", "value": "SOME_CHAT@g.us" }
+    ]
+  },
+  "dedupField": "wahaMessageId",
+  "actions": [
+    {
+      "type": "whatsapp_send",
+      "chatId": "{{config.targetChatId}}",
+      "body": "Alert: {{record.body}}",
+      "allowNonAllowlisted": true
+    }
+  ],
+  "config": {
+    "targetChatId": ""
+  },
+  "cooldownMs": 0,
+  "enabled": true
+}

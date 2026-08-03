@@ -1,6 +1,6 @@
 import { config } from '../../config';
 import { logger } from '../../shared/logger';
-import { AuditService } from '../audit/service';
+import { AuditService } from '../../modules/audit/service';
 
 // Track WAHA connection state for hygiene monitoring
 let lastWahaStatus = 'unknown';

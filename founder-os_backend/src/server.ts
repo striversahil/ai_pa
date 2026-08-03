@@ -5,12 +5,13 @@ import { logger } from './shared/logger';
 import { SchedulerService } from './modules/scheduler/service';
 import { WhatsAppService } from './modules/whatsapp/service';
 import { DigestService } from './modules/digest/service';
+import { processMessagesToDigests } from './automations/whatsapp-digest/process';
 import { TasksService } from './modules/tasks/service';
 import { StorageRepository } from './modules/storage/repository';
 import { AIService } from './modules/ai/service';
 import { EmailService } from './modules/email/service';
 import { checkDatabaseConnection, useInMemoryDb, prisma } from './shared/prisma';
-import { SalesCopilotService } from './modules/sales_copilot/service';
+import { SalesCopilotService } from './automations/zoho-sent-analyzer/service';
 import { BrainService } from './modules/brain/service';
 import { GoogleSheetsService } from './modules/google_sheets/service';
 import { asyncHandler } from './utils/asyncHandler';
@@ -20,6 +21,7 @@ import { MessageQueueService } from './modules/queue/service';
 import { AuditService } from './modules/audit/service';
 import webhookRouter from './routes/whatsapp-webhook';
 import healthRouter from './routes/health';
+import { automationRouter } from './modules/automation';
 
 
 const app = express();
@@ -47,6 +49,9 @@ app.use('/api/whatsapp/webhook', webhookRouter);
 
 // --- Health Endpoints ---
 app.use('/api/health', healthRouter);
+
+// --- Automation Framework (admin/dashboard API) ---
+app.use('/api/automations', automationRouter);
 
 // --- REST API Endpoints ---
 
@@ -84,7 +89,7 @@ app.get('/api/digests', asyncHandler(async (req, res) => {
   let digests = await DigestService.fetchAllDigests();
   if (digests.length === 0) {
     logger.info('GET /api/digests: Digests list is empty. Triggering message digests compilation...');
-    await DigestService.processMessagesToDigests();
+    await processMessagesToDigests();
     digests = await DigestService.fetchAllDigests();
   }
   res.status(200).json(digests);
@@ -173,7 +178,7 @@ app.post('/api/ask-founder-ai', asyncHandler(async (req, res) => {
  * Force trigger WhatsApp messages digestion
  */
 app.post('/api/trigger/digest', asyncHandler(async (req, res) => {
-  const result = await DigestService.processMessagesToDigests();
+  const result = await processMessagesToDigests();
   res.status(200).json({ message: 'Digest job triggered successfully', result });
 }));
 
@@ -588,8 +593,9 @@ async function startServer() {
     // touches it. The HTTP API is already listening, so health checks pass.
     await waitForWahaSession();
 
-    // Start Background Scheduler
-    SchedulerService.init();
+    // Start Background Scheduler (registers engines + discovers/schedules
+    // every automation in src/automations/)
+    await SchedulerService.init();
 
     // Start the BullMQ classification worker for real-time message classification.
     // The morning queue is drained by the 1-minute scheduler cron — keeping two

@@ -1,0 +1,8 @@
+{
+  "id": "orphaned-message-recovery",
+  "name": "Orphaned Message Recovery",
+  "description": "Every 2 minutes, re-enqueue messages saved to DB but never classified.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "*/2 * * * *" },
+  "enabled": true
+}

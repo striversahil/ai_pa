@@ -1,5 +1,5 @@
-import { OutboundService, SendResult } from './outbound';
-import { MessageQueueService } from '../queue/service';
+import { OutboundService, SendResult } from '../../modules/whatsapp/outbound';
+import { MessageQueueService } from '../../modules/queue/service';
 import { logger } from '../../shared/logger';
 
 // Spin-tax: the same batch body must not go out verbatim to many recipients —

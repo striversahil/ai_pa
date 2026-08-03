@@ -14,5 +14,6 @@
     "incremental": true,
     "tsBuildInfoFile": "./.tscache/tsconfig.tsbuildinfo"
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/automations/_template"]
 }

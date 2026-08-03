@@ -1,0 +1,8 @@
+{
+  "id": "morning-brief",
+  "name": "Morning Founder Brief",
+  "description": "Daily at 8:00 AM IST, generate and save the AI founder briefing.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "0 8 * * *" },
+  "enabled": true
+}

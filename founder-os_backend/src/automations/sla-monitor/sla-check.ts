@@ -1,8 +1,8 @@
 import { prisma, useInMemoryDb } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
-import { Alerter } from './alerter';
-import { StorageRepository } from '../storage/repository';
-import { AuditService } from '../audit/service';
+import { Alerter } from '../../modules/monitoring/alerter';
+import { StorageRepository } from '../../modules/storage/repository';
+import { AuditService } from '../../modules/audit/service';
 
 export class SLAChecker {
   private static consecutiveBreaches = 0;

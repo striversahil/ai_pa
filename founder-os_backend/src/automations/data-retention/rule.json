@@ -1,0 +1,8 @@
+{
+  "id": "data-retention",
+  "name": "Data Retention Cleanup",
+  "description": "Daily at 3:00 AM, delete WhatsApp messages older than 90 days.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "0 3 * * *" },
+  "enabled": true
+}

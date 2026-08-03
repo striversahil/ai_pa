@@ -2,7 +2,7 @@ import { AnalysisEngine } from '../../shared/engine';
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { config } from '../../config';
-import { AIService } from '../ai/service';
+import { AIService } from '../../modules/ai/service';
 import fs from 'fs';
 import path from 'path';
 

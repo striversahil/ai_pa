@@ -1,12 +1,12 @@
 import { AnalysisEngine } from '../../shared/engine';
-import { DigestService } from '../digest/service';
+import { processMessagesToDigests } from '../../automations/whatsapp-digest/process';
 import { StorageRepository } from '../storage/repository';
 
 export class WhatsappEngine implements AnalysisEngine {
   public name = 'WhatsApp Digest Engine';
 
   public async runSync() {
-    return DigestService.processMessagesToDigests();
+    return processMessagesToDigests();
   }
 
   public async getBriefingContext(): Promise<string> {

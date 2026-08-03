@@ -1,0 +1,8 @@
+{
+  "id": "email-brain-index",
+  "name": "Email + Brain Index",
+  "description": "Every 30 minutes, sync emails and re-index the company brain.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "*/30 * * * *" },
+  "enabled": true
+}

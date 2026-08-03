@@ -1,0 +1,8 @@
+{
+  "id": "waha-session-monitor",
+  "name": "WAHA Session Monitor",
+  "description": "Every 5 minutes, check WAHA session health and auto-reconnect if needed.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "*/5 * * * *" },
+  "enabled": true
+}

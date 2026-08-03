@@ -196,3 +196,64 @@ model BrainContext {
   @@index([eventDate])
   @@unique([source, sourceId]) // Prevent duplicate indexing
 }
+
+// Automation framework: one row per automation folder in src/automations/.
+// rule.json is the template; runtime-editable fields (enabled, cooldownMs,
+// configJson) persist across redeploys. The Json fields are JSON-encoded strings.
+model Automation {
+  id            String   @id @default(uuid())
+  slug          String   @unique // folder name in src/automations/
+  name          String
+  description   String?
+  type          String   @default("rule") // "rule" | "handler"
+  triggerJson   String
+  conditionJson String?
+  actionsJson   String?
+  configJson    String?
+  dedupField    String?
+  enabled       Boolean  @default(true)
+  cooldownMs    Int      @default(0)
+  lastRunAt     DateTime?
+  runCount      Int      @default(0)
+  readmePath    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  runs          AutomationRun[]
+
+  @@index([enabled])
+}
+
+// One fire of a rule automation. The unique (automationId, dedupKey) makes
+// double-firing structurally impossible — the same logical event (e.g. one
+// enquiry message) can never fire twice, even across restarts.
+model AutomationRun {
+  id           String     @id @default(uuid())
+  automationId String
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  dedupKey     String
+  status       String     @default("SUCCESS") // SUCCESS | SKIPPED | FAILED
+  payloadJson  String?
+  error        String?
+  createdAt    DateTime   @default(now())
+
+  @@unique([automationId, dedupKey])
+  @@index([automationId, createdAt])
+}
+
+// Parsed DPP price-quote lines (dpp-prices-dashboard automation). One row per
+// item parsed from a DPP price message; KPI aggregates are computed from these.
+model PriceQuote {
+  id         String   @id @default(uuid())
+  messageId  String   @unique
+  dppChatId  String
+  itemName   String
+  unitPrice  Float?
+  currency   String   @default("INR")
+  rawLine    String
+  quotedAt   DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([dppChatId])
+  @@index([quotedAt])
+}

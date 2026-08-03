@@ -1,0 +1,8 @@
+{
+  "id": "whatsapp-digest",
+  "name": "WhatsApp Digest",
+  "description": "Every 5 minutes, summarize unprocessed WhatsApp messages into per-chat digests.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "*/5 * * * *" },
+  "enabled": true
+}

@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "while true; do npx ts-node src/server.ts; echo '⚠️ Backend crashed, restarting in 2s...'; sleep 2; done",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-automations.js",
     "start": "node dist/server.js",
     "seed": "ts-node src/shared/seed.ts",
     "test": "echo \"Error: no test specified\" && exit 1"

@@ -12,7 +12,7 @@ import whatsappProxyRouter from './whatsapp-proxy';
 import whatsappWebhookRouter from './whatsapp-webhook';
 import healthRouter from './health';
 import { BrainService } from '../modules/brain/service';
-import { SalesCopilotService } from '../modules/sales_copilot/service';
+import { SalesCopilotService } from '../automations/zoho-sent-analyzer/service';
 import { asyncHandler } from '../middleware/asyncHandler';
 
 const router = Router();
