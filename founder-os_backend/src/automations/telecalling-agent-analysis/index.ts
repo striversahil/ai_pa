@@ -68,13 +68,8 @@ const DEFAULT_MAX_DAILY_SO = 50;
  * silently inflates the whole period total, so rows above the per-day cap are
  * excluded from the aggregates and flagged as data-quality warnings instead.
  */
-function readSO(row: any): number {
-  const raw = getConfirmed(row);
-  return raw;
-}
-
 function soCount(row: any, maxDailySO: number): number {
-  const raw = readSO(row);
+  const raw = getConfirmed(row);
   if (raw > maxDailySO) return 0;
   return raw;
 }
@@ -82,7 +77,7 @@ function soCount(row: any, maxDailySO: number): number {
 function soWarnings(rows: ScanRecord[], maxDailySO: number): any[] {
   const warnings: any[] = [];
   rows.forEach((row: any) => {
-    const raw = readSO(row);
+    const raw = getConfirmed(row);
     if (raw > maxDailySO) {
       warnings.push({
         sNo: String(row.Date || row._rowId || 'N/A'),
