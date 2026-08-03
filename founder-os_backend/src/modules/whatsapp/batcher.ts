@@ -1,4 +1,5 @@
 import { OutboundService, SendResult } from './outbound';
+import { MessageQueueService } from '../queue/service';
 import { logger } from '../../shared/logger';
 
 // Spin-tax: the same batch body must not go out verbatim to many recipients —
@@ -38,7 +39,13 @@ export class NotificationBatcher {
       const summary = `${pickHeading(chatId)}\n\n${alerts.map((a, i) => `${i + 1}. ${a}`).join('\n')}`;
       const result: SendResult = await OutboundService.sendWithJitter(chatId, summary);
 
-      if (result !== 'sent') {
+      if (result === 'outside_hours') {
+        // Outside business hours: re-buffering would retry every flush and burn
+        // the next morning's send budget without sending anything. Defer to the
+        // next 8 AM IST window and drop the buffer entry.
+        await MessageQueueService.enqueueDelayedMorning(chatId, summary);
+        logger.info({ chatId }, 'Batcher: outside hours, deferred to morning queue');
+      } else if (result !== 'sent') {
         retries.set(chatId, alerts);
         logger.warn({ chatId, result }, 'Batcher: message deferred, re-buffering for next flush');
       }

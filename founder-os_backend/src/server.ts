@@ -407,6 +407,10 @@ app.post('/api/whatsapp/send', asyncHandler(async (req, res) => {
     // dropping, and never fire in bulk.
     await MessageQueueService.enqueueDelayedMorning(trimmed, message_body, 30 * 60 * 1000 + Math.floor(Math.random() * 30 * 60 * 1000));
     logger.warn({ chatId: trimmed, result }, 'Send not delivered now: deferred to retry queue');
+  } else if (result === 'outside_hours') {
+    // Outside business hours: schedule for the next 8 AM IST window.
+    await MessageQueueService.enqueueDelayedMorning(trimmed, message_body);
+    logger.info({ chatId: trimmed }, 'Send deferred to next working-hours window');
   }
   return res.status(200).json({ success: true, result });
 }));

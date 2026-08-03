@@ -1,7 +1,6 @@
 import { config } from '../../config';
 import { logger } from '../../shared/logger';
 import { getKolkataHour } from '../../shared/ist-time';
-import { MessageQueueService } from '../queue/service';
 import { AuditService } from '../audit/service';
 import { StorageRepository } from '../storage/repository';
 import { getRateLimitState, persistRateLimitState } from './rate-limit-store';
@@ -96,6 +95,15 @@ export class OutboundService {
   }
 
   private static async executeSend(chatId: string, messageBody: string): Promise<SendResult> {
+    // Outside-hours check first: a deferred send must never consume the chat or
+    // account rate-limit budget for a message that isn't being sent now. Callers
+    // own the deferral (the drain and the send routes re-queue to the morning
+    // queue), so outbound stays a pure sender and never imports the queue layer.
+    if (!this.isWithinWorkingHours()) {
+      logger.info({ chatId }, 'Outside working hours. Deferring to morning queue.');
+      return 'outside_hours';
+    }
+
     if (!this.checkChatRateLimit(chatId)) {
       logger.warn({ chatId }, 'Chat rate limit reached (15/min). Deferring.');
       return 'rate_limited';
@@ -103,12 +111,6 @@ export class OutboundService {
     if (!this.checkAccountRateLimit()) {
       logger.warn('Account rate limit reached (40-60/hour). Deferring.');
       return 'rate_limited';
-    }
-
-    if (!this.isWithinWorkingHours()) {
-      logger.info({ chatId }, 'Outside working hours. Deferring to morning queue.');
-      await MessageQueueService.enqueueDelayedMorning(chatId, messageBody);
-      return 'outside_hours';
     }
 
     AuditService.record('MESSAGE_SENT', 'MESSAGE', null, { chatId, bodyLength: messageBody.length }).catch(() => {});

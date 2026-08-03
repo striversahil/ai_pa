@@ -62,6 +62,10 @@ router.post('/send', asyncHandler(async (req, res) => {
     // dropping, and never fire in bulk.
     await MessageQueueService.enqueueDelayedMorning(chatId, message_body, 30 * 60 * 1000 + Math.floor(Math.random() * 30 * 60 * 1000));
     logger.warn({ chatId, result }, 'Send not delivered now: deferred to retry queue');
+  } else if (result === 'outside_hours') {
+    // Outside business hours: schedule for the next 8 AM IST window.
+    await MessageQueueService.enqueueDelayedMorning(chatId, message_body);
+    logger.info({ chatId }, 'Send deferred to next working-hours window');
   }
   res.status(200).json({ success: true, result });
 }));

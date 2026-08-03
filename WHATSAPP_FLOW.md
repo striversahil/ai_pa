@@ -118,7 +118,7 @@ Result: replay storms are de-duplicated atomically, the DB is never hammered, an
 
 - **Worker** (`MessageQueueService.startWorker`): BullMQ `whatsapp-classification` worker, concurrency 5, runs on boot — the primary path. It re-checks the DB `processed` flag before classifying (idempotency guard).
 - **Orphan recovery** (`recoverOrphanedMessages`, cron `*/2`): re-enqueues messages that are `processed=false`, non-historical, and older than 2 minutes but have no job — i.e. the Redis-down-during-flush case. Safe to run repeatedly because classification writes are **atomic** (`updateMany WHERE processed=false`), so only the first of two racing jobs wins.
-- `drainAndProcessBatch` (legacy batch drain) is **no longer scheduled** — the BullMQ worker covers it.
+- `drainAndProcessBatch` (legacy batch drain) was **removed** — dead code; the BullMQ worker covers it.
 
 ### 2.2 Single Message Classification
 
@@ -207,7 +207,9 @@ sendWithJitter(chatId, body)
        │        backend restart right before the 8 AM burst does NOT reset the
        │        throttles to zero and re-fires at full speed.
        ├── 3. Working hours: 8:00 AM – 10:00 PM IST only.
-       │        Outside → enqueueDelayedMorning() → 'outside_hours'
+       │        Outside → 'outside_hours'  (outbound is a pure sender; the
+       │        caller owns deferral — /send routes and the drain re-queue to
+       │        the morning queue targeting the next 8 AM window).
        │
        ├── GROUP ROUTE (@g.us):
        │        sleep 1500–2500ms → sendText
@@ -232,8 +234,8 @@ sendWithJitter(chatId, body)
 
 ### 4.5 Deferral & Retry (nothing is dropped, nothing is flooded)
 
-- `/send` endpoints: on `'rate_limited'` or `'failed'` → `enqueueDelayedMorning(chatId, body, 30–60min jitter)`.
-- `drainMorningQueue()` cron **every minute** (working hours only): pulls due jobs, calls `sendWithJitter`; removes the job only on `'sent'`/`'outside_hours'`; keeps it on `'rate_limited'` for the next cycle. A **drain lock** prevents two overlapping cron runs from double-sending the same job, and each cycle processes at most **60** due jobs so a giant 8 AM backlog paces itself instead of monopolizing the serialized send chain.
+- `/send` endpoints: on `'rate_limited'` or `'failed'` → `enqueueDelayedMorning(chatId, body, 30–60min jitter)`; on `'outside_hours'` → `enqueueDelayedMorning(chatId, body)` (targets next 8 AM IST).
+- `drainMorningQueue()` cron **every minute** (working hours only): pulls due jobs, calls `sendWithJitter`; removes the job only on `'sent'`; on `'outside_hours'` it **re-enqueues** the job targeting the next 8 AM window and removes the superseded job; keeps it on `'rate_limited'` for the next cycle. A **drain lock** prevents two overlapping cron runs from double-sending the same job, and each cycle processes at most **60** due jobs so a giant 8 AM backlog paces itself instead of monopolizing the serialized send chain. This deferral lives in the drain rather than in `outbound.ts`, keeping outbound a pure sender (and breaking the old outbound↔queue import cycle).
 - Morning queue lives in **Redis (persistent)** — backend crashes don't lose it.
 - **Redis-down durability (`OutboundIntent`):** if `enqueueDelayedMorning` cannot reach Redis (deferral would be lost), it instead writes an `OutboundIntent` row (`status=PENDING`, original delay preserved, deduped against rapid retries). `recoverOutboundIntents()` (cron `* * * * *`) re-deferrals PENDING intents into the morning queue once Redis is back, then marks them `ENQUEUED`. Outbound sends survive even a full Redis outage at deferral time.
 
@@ -259,6 +261,8 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 `GET /api/health/whatsapp` → status (`healthy`/`degraded`), WAHA session state, metrics (unprocessed, SLA breaches, last webhook, lag).
 
 ### 6.2 Cron Jobs (SchedulerService.init)
+
+`SchedulerService.init()` is a thin aggregator: each module owns its engine (`whatsapp/engine.ts`, `email/engine.ts`) and its own cron registrar (`whatsapp/jobs.ts`, `email/jobs.ts`, `sales_copilot/jobs.ts`, `queue/jobs.ts`, `monitoring/jobs.ts`, `storage/jobs.ts`, `scheduler/briefing.ts`), which it wires together. This replaced the old single-file scheduler god-class.
 
 | Job | Schedule | What it does |
 |---|---|---|
