@@ -64,6 +64,22 @@ model Message {
   @@index([slaDeadline])
 }
 
+// Persistent intent to send a WhatsApp message later. Created only when the
+// morning queue (Redis) is unavailable at deferral time, so an outbound message
+// is never lost just because Redis was down. A recovery sweep re-enqueues
+// PENDING intents into the morning queue once Redis is back.
+model OutboundIntent {
+  id            String    @id @default(uuid())
+  chatId        String
+  messageBody   String
+  status        String    @default("PENDING") // PENDING | ENQUEUED
+  targetDelayMs Int?
+  createdAt     DateTime  @default(now())
+  enqueuedAt    DateTime?
+
+  @@index([status, createdAt])
+}
+
 model Email {
   id          String   @id @default(uuid())
   subject     String

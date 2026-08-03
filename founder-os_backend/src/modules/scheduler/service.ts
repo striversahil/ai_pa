@@ -209,6 +209,26 @@ export class SchedulerService {
       }
     }, { timezone: 'Asia/Kolkata' });
 
+    // 5b. Orphaned-message recovery - every 2 minutes, re-enqueues messages that
+    // were saved to the DB but never classified (Redis was down during a flush).
+    cron.schedule('*/2 * * * *', async () => {
+      try {
+        await MessageQueueService.recoverOrphanedMessages();
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: Orphan recovery failed');
+      }
+    }, { timezone: 'Asia/Kolkata' });
+
+    // 5c. Outbound-intent recovery - every minute, re-deferrals persisted sends
+    // that could not reach the morning queue while Redis was down.
+    cron.schedule('* * * * *', async () => {
+      try {
+        await MessageQueueService.recoverOutboundIntents();
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Cron Error: Outbound intent recovery failed');
+      }
+    }, { timezone: 'Asia/Kolkata' });
+
     // 6. SLA Monitor - runs every minute
     cron.schedule('* * * * *', async () => {
       try {

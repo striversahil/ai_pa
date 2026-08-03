@@ -32,6 +32,11 @@ services:
       - "6379:6379"
     volumes:
       - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     logging:
       driver: json-file
       options:
@@ -89,8 +94,11 @@ services:
       - TZ=Asia/Kolkata
       - WAHA_WEBHOOK_CONCURRENCY=5
       - WAHA_WEBJS_PUPPETER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-blink-features=AutomationControlled --use-gl=angle --use-angle=swiftshader-webgl --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader
-      - WHATSAPP_HOOK_URL=http://host.docker.internal:5000/api/whatsapp/webhook
+      - WHATSAPP_HOOK_URL=http://host.docker.internal:5099/api/whatsapp/webhook
       - WHATSAPP_HOOK_EVENTS=message
+      - WHATSAPP_HOOK_RETRIES_POLICY=constant
+      - WHATSAPP_HOOK_RETRIES_DELAY_SECONDS=2
+      - WHATSAPP_HOOK_RETRIES_ATTEMPTS=120
     volumes:
       - ./waha_sessions:/app/.sessions
     extra_hosts:
@@ -101,6 +109,41 @@ services:
       - founder-os-net
     mem_limit: 2g
     cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Always-on WhatsApp webhook sink. WAHA POSTs every message here; the relay
+  # acks instantly, persists to a disk write-ahead log, and forwards to the
+  # backend (host process on :5000). If the backend is down, the burst is held
+  # on disk until it returns — no message is lost, and nothing polls WAHA.
+  webhook-relay:
+    image: node:20-alpine
+    container_name: webhook-relay
+    restart: unless-stopped
+    command: ["node", "/relay/relay.js"]
+    environment:
+      - RELAY_PORT=5099
+      - RELAY_BACKEND=http://host.docker.internal:5000
+      - RELAY_FORWARD_PATH=/api/whatsapp/webhook
+      - RELAY_LOG_DIR=/runtime
+      - TZ=Asia/Kolkata
+    volumes:
+      - ../webhook-relay:/relay
+      - ./.runtime:/runtime
+    extra_hosts:
+      - "host.docker.internal:172.28.229.49"
+    ports:
+      - "127.0.0.1:5099:5099"
+    networks:
+      - founder-os-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5099/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     logging:
       driver: json-file
       options:

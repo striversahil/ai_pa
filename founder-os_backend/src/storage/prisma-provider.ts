@@ -105,8 +105,12 @@ export class PrismaStorageProvider implements StorageProvider {
   }
 
   async updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void> {
-    await prisma.message.update({
-      where: { id: messageId },
+    // Atomic guard (processed=false): if two classification jobs race on the
+    // same message (e.g. a duplicate from the recovery sweep), only the first
+    // one to land wins; the loser matches 0 rows and does nothing instead of
+    // overwriting or re-running side effects.
+    await prisma.message.updateMany({
+      where: { id: messageId, processed: false },
       data: { processed: true, classification, classificationReason: reason, classifiedAt, slaDeadline },
     });
   }

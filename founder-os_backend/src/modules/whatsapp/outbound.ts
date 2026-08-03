@@ -4,6 +4,7 @@ import { getKolkataHour } from '../../shared/ist-time';
 import { MessageQueueService } from '../queue/service';
 import { AuditService } from '../audit/service';
 import { StorageRepository } from '../storage/repository';
+import { getRateLimitState, persistRateLimitState } from './rate-limit-store';
 
 function randomUniform(min: number, max: number): number {
   return Math.random() * (max - min) + min;
@@ -28,34 +29,47 @@ export class OutboundService {
   private static pendingSendCount = 0;
   private static readonly MAX_PENDING_SENDS = 25;
 
-  private static rateLimitCache = new Map<string, number[]>();
+  private static rateLimitState = getRateLimitState();
   private static readonly MAX_PER_CHAT_PER_MINUTE = 15;
   private static readonly MAX_PER_ACCOUNT_PER_HOUR_BASE = 50;
   private static readonly MAX_PER_ACCOUNT_PER_HOUR_JITTER = 10;
-  private static accountTimestamps: number[] = [];
-  private static currentHourLimit = OutboundService.computeHourLimit();
+  private static currentHourLimit = OutboundService.initHourLimit();
 
   private static computeHourLimit(): number {
     return this.MAX_PER_ACCOUNT_PER_HOUR_BASE + Math.floor(randomUniform(-this.MAX_PER_ACCOUNT_PER_HOUR_JITTER, this.MAX_PER_ACCOUNT_PER_HOUR_JITTER + 1));
   }
 
+  // Restore the daily randomized account limit across restarts. A persisted
+  // value (from a previous process run) wins; otherwise compute and persist a
+  // fresh one so a restart right before the morning burst keeps the same cap.
+  private static initHourLimit(): number {
+    const st = this.rateLimitState;
+    if (st.hourLimit > 0) return st.hourLimit;
+    const computed = this.computeHourLimit();
+    st.hourLimit = computed;
+    persistRateLimitState();
+    return computed;
+  }
+
   private static checkChatRateLimit(chatId: string): boolean {
     const now = Date.now();
     const window = 60_000;
-    const timestamps = (this.rateLimitCache.get(chatId) || [])
+    const timestamps = (this.rateLimitState.chatTimestamps[chatId] || [])
       .filter(t => now - t < window);
     if (timestamps.length >= this.MAX_PER_CHAT_PER_MINUTE) return false;
     timestamps.push(now);
-    this.rateLimitCache.set(chatId, timestamps);
+    this.rateLimitState.chatTimestamps[chatId] = timestamps;
+    persistRateLimitState();
     return true;
   }
 
   private static checkAccountRateLimit(): boolean {
     const now = Date.now();
     const window = 3_600_000;
-    this.accountTimestamps = this.accountTimestamps.filter(t => now - t < window);
-    if (this.accountTimestamps.length >= this.currentHourLimit) return false;
-    this.accountTimestamps.push(now);
+    this.rateLimitState.accountTimestamps = this.rateLimitState.accountTimestamps.filter(t => now - t < window);
+    if (this.rateLimitState.accountTimestamps.length >= this.currentHourLimit) return false;
+    this.rateLimitState.accountTimestamps.push(now);
+    persistRateLimitState();
     return true;
   }
 

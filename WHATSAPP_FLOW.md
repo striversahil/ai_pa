@@ -1,16 +1,16 @@
 # WhatsApp Integration — Complete Guide (Hardened)
 
-This document explains the end-to-end WhatsApp flow in the **founder-os_backend** project: how messages come in, get classified, trigger actions, and how replies are sent back — with every anti-ban hardening that has been applied. It is the single source of truth for a future engineer/AI to understand and operate the system.
+This document explains the end-to-end WhatsApp flow in the **founder-os_backend** project: how messages come in, get classified, trigger actions, and how replies are sent back — with every anti-ban hardening and durability mechanism that has been applied. It is the single source of truth for a future engineer/AI to understand and operate the system.
 
-> **Last updated: 2026-08-01.** Reflects the current production state (global lock, allowlist gate, LID normalization, message buffer, persistent Redis, pinned WAHA, etc.).
+> **Last updated: 2026-08-03.** Reflects the current production state: webhook relay (always-on disk-backed sink), persistent Redis, outbound-intent durability, persisted rate-limit state, orphan recovery, drain locks, message-buffer re-queue, allowlist gate, LID normalization, global send lock, etc.
 
 ---
 
 ## Architecture Overview
 
 ```
-Phone → WhatsApp Web → WAHA (Docker) → Backend Webhook → immediate 200 + buffer → Redis (BullMQ) → AI/Heuristic → PostgreSQL
-                                                                                                              ↓
+Phone → WhatsApp Web → WAHA (Docker) → Webhook Relay (Docker) → Backend Webhook → 200 + buffer → Redis (BullMQ) → AI/Heuristic → PostgreSQL
+                                                                                       ↓ (relay holds on disk when backend is down)
 Phone ← WhatsApp Web ← WAHA ← sendWithJitter() ← OutboundService ← Backend API/Frontend   (allowlist-gated, global lock)
 ```
 
@@ -19,13 +19,19 @@ Phone ← WhatsApp Web ← WAHA ← sendWithJitter() ← OutboundService ← Bac
 | Component | Role | Address |
 |---|---|---|
 | **WAHA** | WhatsApp Web bridge (Docker, WEBJS engine) | `127.0.0.1:3002` (host) |
+| **webhook-relay** | Always-on dead-letter sink: acks WAHA instantly, persists payloads to a disk write-ahead log, forwards to the backend | `127.0.0.1:5099` (host) |
 | **Backend** | Express + TS, runs via `npx ts-node src/server.ts` | `0.0.0.0:5000` (host) |
-| **Redis** | BullMQ queues + AOF persistence | `6379` (host) |
-| **PostgreSQL** | Persistent storage (messages, digests, tasks, contacts) | `5432` |
+| **Redis** | BullMQ queues + AOF persistence (named volume) | `6379` (host) |
+| **PostgreSQL** | Persistent storage (messages, digests, tasks, contacts, outbound intents) | `5432` |
 
 **How the backend runs (important):**
 - The backend is **not** run as the compose `backend` container in practice — it runs on the host under a supervisor shell: `while true; do npx ts-node src/server.ts; echo 'Backend crashed, restarting in 2s...'; sleep 2; done`. This auto-restarts it on crash.
 - Backend startup sequence (`server.ts`): `app.listen()` → `await waitForWahaSession()` (polls `GET /api/sessions/default` every 3s up to 180s until `status === "WORKING"`) → `SchedulerService.init()` → `MessageQueueService.startWorker()`.
+
+**Why a relay (instead of WAHA → backend directly, or polling WAHA):**
+- WAHA's webhook retry window is ~4 minutes (120 attempts × 2s). If the backend is down longer, WAHA *drops* the event permanently.
+- We deliberately do **not** poll WAHA's chat store to recover missed messages (fragile, heavy, and it re-introduces a direct WAHA dependency for reads).
+- The relay is a tiny zero-dependency Node container (`webhook-relay/relay.js`) that is always up (`restart: unless-stopped`). It ack's WAHA `200` **before** the backend is involved, so WAHA never retries; every payload is appended to a durable write-ahead log on disk and replayed to the backend when it's reachable. A multi-hour backend outage = messages wait on disk, nothing is lost.
 
 ---
 
@@ -33,13 +39,20 @@ Phone ← WhatsApp Web ← WAHA ← sendWithJitter() ← OutboundService ← Bac
 
 ### 1.1 Webhook Ingestion
 
-WAHA POSTs to `http://host.docker.internal:5000/api/whatsapp/webhook` for every inbound `message` event.
+WAHA POSTs to `http://host.docker.internal:5099/api/whatsapp/webhook` (**the relay**, not the backend) for every inbound `message` event.
 
 ```
 Phone sends "Hi, can you send me a quote for 500 units?"
   → WAHA receives via WhatsApp Web
-  → WAHA POSTs to http://host.docker.internal:5000/api/whatsapp/webhook
+  → WAHA POSTs to http://host.docker.internal:5099/api/whatsapp/webhook   (relay)
+  → relay acks 200 immediately + appends payload to .runtime/webhook-relay.log
+  → relay forwards to http://host.docker.internal:5000/api/whatsapp/webhook (backend)
+  → if the backend is down, the payload waits on disk and is retried every ~2s
+```
 
+Example body WAHA sends to the relay (relay forwards it byte-for-byte):
+
+```
 Body: {
   "event": "message",
   "payload": {
@@ -92,17 +105,20 @@ The handler returns **HTTP 200 immediately** (before any parsing/validation/DB w
 - **Write:** `prisma.message.createManyAndReturn({ skipDuplicates: true })` → `INSERT ... ON CONFLICT DO NOTHING` on the unique `wahaMessageId`.
 - **Only newly-created rows** get classification enqueued; duplicates and `isHistorical` rows are skipped.
 - If Postgres is unavailable (`useInMemoryDb`), falls back to per-message inserts.
+- **Durability:** if a flush fails (Postgres down), the batch is **re-queued to the front of the buffer** and retried every 5s (bounded at 10k buffered — beyond that, oldest are dropped with an error log). A DB outage delays writes; it does not silently drop in-flight messages.
+- **If Redis is down mid-flush:** the INSERT succeeds but `enqueueClassification` throws. Those rows sit `processed=false` with no job — the orphan-recovery sweep (Section 2.1) re-enqueues them.
 
-Result: replay storms are de-duplicated atomically and the DB is never hammered.
+Result: replay storms are de-duplicated atomically, the DB is never hammered, and no inbound message is lost to a transient backend/DB/Redis failure.
 
 ---
 
 ## 2. Classification Pipeline
 
-### 2.1 Two delivery paths
+### 2.1 Delivery paths & recovery
 
-- **Worker** (`MessageQueueService.startWorker`): BullMQ `whatsapp-classification` worker, concurrency 5, runs on boot.
-- **Batch drain** (`drainAndProcessBatch`): cron every 5 minutes, chunks of 20, `Promise.allSettled`, dedup check first.
+- **Worker** (`MessageQueueService.startWorker`): BullMQ `whatsapp-classification` worker, concurrency 5, runs on boot — the primary path. It re-checks the DB `processed` flag before classifying (idempotency guard).
+- **Orphan recovery** (`recoverOrphanedMessages`, cron `*/2`): re-enqueues messages that are `processed=false`, non-historical, and older than 2 minutes but have no job — i.e. the Redis-down-during-flush case. Safe to run repeatedly because classification writes are **atomic** (`updateMany WHERE processed=false`), so only the first of two racing jobs wins.
+- `drainAndProcessBatch` (legacy batch drain) is **no longer scheduled** — the BullMQ worker covers it.
 
 ### 2.2 Single Message Classification
 
@@ -186,6 +202,10 @@ sendWithJitter(chatId, body)
        ├── 1. Chat rate limit: max 15 msgs / rolling 60s per chat → 'rate_limited'
        ├── 2. Account rate limit: max 50±10 (40–60) msgs / rolling hour → 'rate_limited'
        │        (hourly cap recomputed each hour with jitter)
+       │        COUNTERS PERSIST: timestamps + the daily cap are written to
+       │        .runtime/rate-limit-state.json (debounced, flushed on exit), so a
+       │        backend restart right before the 8 AM burst does NOT reset the
+       │        throttles to zero and re-fires at full speed.
        ├── 3. Working hours: 8:00 AM – 10:00 PM IST only.
        │        Outside → enqueueDelayedMorning() → 'outside_hours'
        │
@@ -213,8 +233,9 @@ sendWithJitter(chatId, body)
 ### 4.5 Deferral & Retry (nothing is dropped, nothing is flooded)
 
 - `/send` endpoints: on `'rate_limited'` or `'failed'` → `enqueueDelayedMorning(chatId, body, 30–60min jitter)`.
-- `drainMorningQueue()` cron **every minute** (working hours only): pulls due jobs, calls `sendWithJitter`; removes the job only on `'sent'`/`'outside_hours'`; keeps it on `'rate_limited'` for the next cycle.
+- `drainMorningQueue()` cron **every minute** (working hours only): pulls due jobs, calls `sendWithJitter`; removes the job only on `'sent'`/`'outside_hours'`; keeps it on `'rate_limited'` for the next cycle. A **drain lock** prevents two overlapping cron runs from double-sending the same job, and each cycle processes at most **60** due jobs so a giant 8 AM backlog paces itself instead of monopolizing the serialized send chain.
 - Morning queue lives in **Redis (persistent)** — backend crashes don't lose it.
+- **Redis-down durability (`OutboundIntent`):** if `enqueueDelayedMorning` cannot reach Redis (deferral would be lost), it instead writes an `OutboundIntent` row (`status=PENDING`, original delay preserved, deduped against rapid retries). `recoverOutboundIntents()` (cron `* * * * *`) re-deferrals PENDING intents into the morning queue once Redis is back, then marks them `ENQUEUED`. Outbound sends survive even a full Redis outage at deferral time.
 
 ### 4.6 Notification Batcher (`batcher.ts`)
 
@@ -243,10 +264,12 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 |---|---|---|
 | WhatsApp digest | `*/5 * * * *` | Drain classification queue, classify messages |
 | Email + Brain index | `*/30 * * * *` | Email sync + RAG indexing |
-| Sales Copilot (Zoho) incremental | `*/15 * * * *` | Sync new/changed Zoho estimates |
+| Sales Copilot (Zoho) | `*/15 * * * *` | Sync Zoho estimates + **always refresh comments** (new comments detected via comment_id; AI re-classify only when new/changed) |
 | Morning founder brief | `0 8 * * *` | Daily briefing via AI |
 | Evening EOD summary | `0 19 * * *` | Daily end-of-day summary |
-| **Morning queue drain** | `* * * * *` | Send due deferred messages (working hours) |
+| **Morning queue drain** | `* * * * *` | Send due deferred messages (working hours) — drain-locked, 60/cycle cap |
+| **Orphaned-message recovery** | `*/2 * * * *` | Re-enqueue `processed=false` messages stuck with no job (Redis-down flush) |
+| **Outbound-intent recovery** | `* * * * *` | Re-deferral persisted `OutboundIntent` rows once Redis is back |
 | SLA monitor | `* * * * *` | Flag SLA breaches → Slack |
 | Notification batcher flush | `*/15 * * * *` | Flush grouped alerts (spin-taxed) |
 | **Data retention** | `0 3 * * *` | Delete messages older than **90 days** (batches of 1000) |
@@ -287,7 +310,7 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
-| `POST` | `/api/whatsapp/webhook` | WAHA ingestion | Returns 200 before processing |
+| `POST` | `/api/whatsapp/webhook` | Backend ingestion (reached via the webhook relay at `:5099`) | Returns 200 before processing |
 | `GET` | `/api/whatsapp/events` | SSE stream | |
 | `POST` | `/api/whatsapp/send` | Send reply | **403 if not allowlisted**; validates format |
 | `GET` | `/api/whatsapp/contacts` | List contacts | includes `hasInbound` |
@@ -310,8 +333,9 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 
 | Service | Image | Key config |
 |---|---|---|
-| `waha` | `devlikeapro/waha:latest-2026.7.2` (**pinned**) | `WAHA_ENGINE=WEBJS`, `TZ=Asia/Kolkata`, `WAHA_WEBHOOK_CONCURRENCY=5`, `WAHA_WEBJS_PUPPETER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-blink-features=AutomationControlled --use-gl=angle --use-angle=swiftshader-webgl --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader`, `WHATSAPP_HOOK_URL=http://host.docker.internal:5000/api/whatsapp/webhook`, volume `./waha_sessions:/app/.sessions`, `mem_limit: 2g`, `cpus: 1`, `stop_grace_period: 30s`, port `127.0.0.1:3002:3000` |
-| `redis` | `redis:7-alpine` | `redis-server --appendonly yes --appendfsync everysec`, `TZ=Asia/Kolkata`, volume `redisdata:/data` (**persistent**) |
+| `waha` | `devlikeapro/waha:latest-2026.7.2` (**pinned**) | `WAHA_ENGINE=WEBJS`, `TZ=Asia/Kolkata`, `WAHA_WEBHOOK_CONCURRENCY=5`, `WAHA_WEBJS_PUPPETER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-blink-features=AutomationControlled --use-gl=angle --use-angle=swiftshader-webgl --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader`, `WHATSAPP_HOOK_URL=http://host.docker.internal:5099/api/whatsapp/webhook` (**relay**), `WHATSAPP_HOOK_RETRIES_POLICY=constant`, `WHATSAPP_HOOK_RETRIES_DELAY_SECONDS=2`, `WHATSAPP_HOOK_RETRIES_ATTEMPTS=120`, volume `./waha_sessions:/app/.sessions`, `mem_limit: 2g`, `cpus: 1`, `stop_grace_period: 30s`, port `127.0.0.1:3002:3000` |
+| `webhook-relay` | `node:20-alpine` | Zero-dep `relay.js` (bind-mounted from `../webhook-relay`); `RELAY_BACKEND=http://host.docker.internal:5000`, `RELAY_LOG_DIR=/runtime` (writes `webhook-relay.log` + `.offset`), healthcheck `wget 127.0.0.1:5099/health` (use **IPv4**, busybox wget on `localhost` fails via `::1`), port `127.0.0.1:5099:5099`, `restart: unless-stopped` |
+| `redis` | `redis:7-alpine` | `redis-server --appendonly yes --appendfsync everysec`, `TZ=Asia/Kolkata`, volume `redisdata:/data` (**persistent** — named volume + AOF) |
 | `postgres` | `postgres:16-alpine` | `TZ=Asia/Kolkata`, volume `pgdata` (container `founder-os-db`, managed by a **separate** compose project `ai_pa`) |
 | `backend` | build | `TZ=Asia/Kolkata` (defined but backend actually runs on host via ts-node) |
 
@@ -340,9 +364,11 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 
 ```bash
 cd /home/sahil/development/ai_pa/founder-os_backend
-docker compose up -d postgres redis waha     # postgres is actually in the ai_pa project
-npx ts-node src/server.ts                    # under the supervisor while-loop in production
+docker compose up -d webhook-relay redis waha    # postgres is actually in the ai_pa project
+npx ts-node src/server.ts                        # under the supervisor while-loop in production
 ```
+
+`start.sh` automates all of this (including the Redis volume/AOF guard and the relay healthcheck); on `docker compose up` always target specific services — never bare `up -d` (see gotcha 6).
 
 ### 10.2 WAHA session & QR
 
@@ -397,6 +423,14 @@ The backend is a host process under a supervisor `while true` loop. Restart it b
 kill "$(ss -tlnp 2>/dev/null | grep 5000 | grep -oP 'pid=\K[0-9]+' | head -1)"
 ```
 
+### 10.7 Webhook relay ops
+
+- **Health:** `curl http://127.0.0.1:5099/health` → `ok`. If the container shows `unhealthy`, it's almost always the IPv4/IPv6 healthcheck trap (fix is in compose).
+- **Buffer location:** `founder-os_backend/.runtime/webhook-relay.log` (append-only JSONL) + `.runtime/webhook-relay.offset` (bytes already forwarded). A live count of held messages: `wc -l < .runtime/webhook-relay.log`.
+- **Manual drain:** the relay drains automatically every ~2s; if it's stuck behind a long backend outage it resumes on its own once the backend answers.
+- **To reset the buffer** (e.g. after a disk/data fix): stop the relay, delete both files, `docker compose up -d webhook-relay`. Only do this when you intend to drop the held payloads.
+- **Log rotation:** the relay truncates the log to 0 bytes whenever it fully drains; it never grows unbounded in steady state.
+
 ---
 
 ## 11. Known Gotchas
@@ -409,3 +443,8 @@ kill "$(ss -tlnp 2>/dev/null | grep 5000 | grep -oP 'pid=\K[0-9]+' | head -1)"
 6. **Don't run `docker compose up -d` (bare):** it would try to create the `backend` container and conflict with the host-run backend on port 5000. Use service-specific targets (`docker compose up -d waha redis`).
 7. **Pinned image `latest-2026.7.2`** matched the running digest exactly — pinning was a zero-change no-op. On upgrade, update the tag deliberately.
 8. **Redis is persistent now** (AOF + volume). Morning/classification jobs survive container recreates.
+9. **WAHA webhooks go to the relay, not the backend.** If you change `WHATSAPP_HOOK_URL` back to `:5000` you lose the hold-on-disk guarantee. The relay forwards to the backend's IP-allowlisted webhook; its container egress (docker bridge `172.28.x.x`) is inside `172.16.0.0/12` so it passes.
+10. **Relay healthcheck must use `127.0.0.1`**, not `localhost` — the relay binds IPv4 only, and busybox `wget` resolves `localhost` to `::1` → connection refused → container marked unhealthy.
+11. **Rate-limit state is a file** (`.runtime/rate-limit-state.json`), not Redis — by design, so throttling still works when Redis is down. It's gitignored; don't commit it.
+12. **`OutboundIntent` table:** created via `prisma db execute` (never `db push`). If you recreate the DB from scratch, re-run the `CREATE TABLE "OutboundIntent"` DDL in the schema's matching migration.
+13. **Orphan/intent sweeps are idempotent** because the storage layer uses atomic `updateMany WHERE processed=false` — safe to run every minute, no double-classification.

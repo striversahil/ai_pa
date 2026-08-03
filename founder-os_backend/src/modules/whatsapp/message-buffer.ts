@@ -18,6 +18,8 @@ export interface BufferedMessage {
 
 const FLUSH_THRESHOLD = 50;
 const FLUSH_INTERVAL_MS = 3000;
+const FLUSH_RETRY_MS = 5000;
+const MAX_BUFFERED = 10_000;
 
 /**
  * Transient write-behind buffer for inbound webhook messages.
@@ -91,7 +93,20 @@ class MessageBuffer {
       }
       logger.debug({ count: batch.length }, 'Bulk flushed buffered messages');
     } catch (err: any) {
-      logger.error({ error: err.message, count: batch.length }, 'Bulk message flush failed');
+      // Never drop inbound messages because a downstream service was down. The
+      // batch was already spliced out, so re-queue it (bounding memory with a
+      // hard cap) and schedule a retry — the DB insert is idempotent via
+      // skipDuplicates, so a partial-success flush is safe to replay.
+      logger.error({ error: err.message, count: batch.length }, 'Bulk message flush failed, re-queuing batch');
+      this.buffer = [...batch, ...this.buffer];
+      if (this.buffer.length > MAX_BUFFERED) {
+        const dropped = this.buffer.length - MAX_BUFFERED;
+        logger.error({ dropped }, 'Message buffer overflow: dropping oldest buffered messages');
+        this.buffer = this.buffer.slice(this.buffer.length - MAX_BUFFERED);
+      }
+      if (!this.timer) {
+        this.timer = setTimeout(() => void this.flush(), FLUSH_RETRY_MS);
+      }
     } finally {
       this.flushing = false;
     }

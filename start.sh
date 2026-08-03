@@ -43,6 +43,50 @@ until docker exec founder-os-db pg_isready -U postgres >/dev/null 2>&1; do
 done
 echo "✅ Database is online!"
 
+# ── Redis durability guard ────────────────────────────────────────────────
+# The 8 AM morning queue (BullMQ delayed jobs) lives ONLY in Redis. If the
+# container is recreated without its named volume the whole deferred queue is
+# silently lost, so refuse to start rather than risk that.
+echo "🐳 Ensuring Redis container (founder-os-redis) is running..."
+if ! docker ps --format '{{.Names}}' | grep -qx founder-os-redis; then
+  docker-compose -f founder-os_backend/docker-compose.yml up -d redis
+fi
+
+REDIS_VOL=$(docker inspect founder-os-redis --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' 2>/dev/null)
+if [ -z "$REDIS_VOL" ]; then
+  echo "❌ Fatal: Redis container has no /data volume mount."
+  echo "   The morning queue (BullMQ delayed jobs) is stored ONLY in Redis — recreating it"
+  echo "   without the named volume would permanently lose every deferred message."
+  echo "   Fix: docker-compose -f founder-os_backend/docker-compose.yml up -d redis"
+  exit 1
+fi
+
+AOF=$(docker exec founder-os-redis redis-cli CONFIG GET appendonly 2>/dev/null | tail -n1)
+if [ "$AOF" != "yes" ]; then
+  echo "⚠️  Warning: Redis appendonly is disabled (appendonly=$AOF). Delayed morning jobs could be lost on a crash."
+fi
+
+echo "⏳ Waiting for Redis to be ready..."
+until docker exec founder-os-redis redis-cli ping >/dev/null 2>&1; do
+  sleep 1
+done
+echo "✅ Redis is online!"
+
+# ── Webhook relay guard ───────────────────────────────────────────────────
+# WAHA webhooks go to the relay (always-on), which holds the burst on disk and
+# forwards to the backend. Without it, messages arriving while the backend is
+# down would be dropped by WAHA after its retry window.
+echo "🐳 Ensuring webhook relay container (webhook-relay) is running..."
+if ! docker ps --format '{{.Names}}' | grep -qx webhook-relay; then
+  docker-compose -f founder-os_backend/docker-compose.yml up -d webhook-relay
+fi
+
+echo "⏳ Waiting for webhook relay to be ready..."
+until curl -sf http://localhost:5099/health >/dev/null 2>&1; do
+  sleep 1
+done
+echo "✅ Webhook relay is online!"
+
 # Sync Prisma Schema
 echo "⚙️ Syncing database schema with Prisma..."
 cd founder-os_backend
