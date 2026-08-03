@@ -42,10 +42,19 @@ This folder is **self-contained**: the entire analysis lives in `index.ts`. It o
 
 ## Config
 
-| key       | description                                   | default |
-|-----------|-----------------------------------------------|---------|
-| `sheetUrl`| full Google Sheets URL **or** raw spreadsheet ID | telecalling agents sheet |
-| `range`   | A1 range (incl. header row)                   | `A1:Z1000` |
+| key         | description                                   | default |
+|-------------|-----------------------------------------------|---------|
+| `sheetUrl`  | full Google Sheets URL **or** raw spreadsheet ID | telecalling agents sheet |
+| `range`     | A1 range (incl. header row)                   | `A1:Z1000` |
+| `maxDailySO`| per-day SO-count cap; rows above it are flagged as data-entry errors and excluded from totals | `50` |
 
 The sheet URL is the *only* thing to change to point this analysis at another
 spreadsheet. The Google Sheets API stays identical.
+
+## Data-quality guard (SO counts)
+
+The count column sometimes gets a rupee **amount** pasted into it (e.g. 74,635
+with a ₹74,635 amount). Such a row silently inflates period totals. Rows whose
+daily SO count exceeds `maxDailySO` are:
+- excluded from KPIs, the leaderboard and insights (treated as 0), and
+- surfaced in the dashboard's **Data Quality & Integrity Audit** table.
