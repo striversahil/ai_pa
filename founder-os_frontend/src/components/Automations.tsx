@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import ZohoEstimates from "./ZohoEstimates";
 import DppPricesDashboard from "./DppPricesDashboard";
+import SheetAnalysisDashboard from "./SheetAnalysisDashboard";
 
 type AutomationTrigger = {
   type?: string;
@@ -86,11 +87,9 @@ export default function Automations() {
   const renderDashboard = () => {
     if (selected === "zoho-sent-analyzer") return <ZohoEstimates />;
     if (selected === "dpp-prices-dashboard") return <DppPricesDashboard />;
-    return (
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-10 text-center text-sm text-zinc-500">
-        No dashboard wired for <code className="text-zinc-300">{selected}</code> yet.
-      </div>
-    );
+    // Generic sheet-analysis renderer: any automation whose `data()` returns
+    // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
+    return <SheetAnalysisDashboard slug={selected ?? ""} />;
   };
 
   return (

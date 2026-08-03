@@ -101,7 +101,22 @@ export class GoogleSheetsService {
   }
 
   /**
+   * Accepts either a raw spreadsheet ID or a full Google Sheets URL
+   * (https://docs.google.com/spreadsheets/d/<ID>/edit...) and returns the ID.
+   */
+  public static extractSpreadsheetId(input: string): string {
+    const trimmed = String(input ?? '').trim();
+    const urlMatch = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (urlMatch) return urlMatch[1];
+    if (/^[a-zA-Z0-9-_]{25,}$/.test(trimmed)) return trimmed;
+    const looseMatch = trimmed.match(/([a-zA-Z0-9-_]{25,})/);
+    if (looseMatch) return looseMatch[1];
+    return trimmed;
+  }
+
+  /**
    * Reads cell values from a Google Spreadsheet sheet range.
+   * `spreadsheetId` may be a raw ID or a full sheets.google.com URL.
    */
   public static async getSpreadsheetData(spreadsheetId: string, range: string) {
     const credentials = this.getCredentials();
@@ -116,13 +131,15 @@ export class GoogleSheetsService {
       };
     }
 
+    const resolvedId = this.extractSpreadsheetId(spreadsheetId);
+
     try {
       // 1. Get Google OAuth access token
       const accessToken = await this.getAccessToken(credentials.client_email, credentials.private_key);
 
       // 2. Fetch sheet values using native fetch
       const encodedRange = encodeURIComponent(range);
-      const sheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodedRange}`;
+      const sheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${resolvedId}/values/${encodedRange}`;
 
       const response = await fetch(sheetUrl, {
         headers: {

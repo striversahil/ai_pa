@@ -88,7 +88,7 @@ router.patch('/:slug', asyncHandler(async (req, res) => {
 
 router.get('/:slug/data', asyncHandler(async (req, res) => {
   try {
-    const data = await AutomationEngine.getData(String(req.params.slug));
+    const data = await AutomationEngine.getData(String(req.params.slug), req.query as Record<string, any>);
     res.json(data);
   } catch (e: any) {
     res.status(404).json({ error: e?.message ?? 'no data provider' });

@@ -37,12 +37,13 @@ export class AutomationEngine {
 
   /**
    * Optional dashboard data provider (`GET /api/automations/:slug/data`).
+   * Query params (e.g. start/end) are exposed to `data()` via `ctx.subject`.
    */
-  static async getData(slug: string): Promise<any> {
+  static async getData(slug: string, query: Record<string, any> = {}): Promise<any> {
     const entry = this.loaded.get(slug);
     if (!entry) throw new Error('automation not loaded');
     if (!entry.module.data) throw new Error('no data provider');
-    return entry.module.data(this.ctxFor(slug, {}));
+    return entry.module.data(this.ctxFor(slug, query ?? {}));
   }
 
   private static ctxFor(slug: string, subject: Record<string, any>): AutomationContext {

@@ -1,0 +1,15 @@
+{
+  "id": "dispatch-sheet-analysis",
+  "name": "Dispatch & CRM Tracker → Dashboard",
+  "description": "Reads the Dispatch & CRM Tracker Google Sheet, audits data quality and computes dispatch KPIs for the dashboard. Point config.sheetUrl at any Google Sheet to onboard a new analysis.",
+  "type": "handler",
+  "trigger": {
+    "type": "schedule",
+    "cron": "*/30 * * * *"
+  },
+  "config": {
+    "sheetUrl": "https://docs.google.com/spreadsheets/d/1NFLA7kmuOgkG3NSJDAYtnekfUcSmbemptkAWNycal8I/edit",
+    "range": "A1:Z1000"
+  },
+  "enabled": true
+}

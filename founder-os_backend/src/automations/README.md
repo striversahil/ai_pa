@@ -34,6 +34,8 @@ src/automations/
 ├── morning-brief/                # 0 8 — brief generation (service.ts)
 ├── eod-summary/                  # 0 19 — EOD generation (service.ts)
 ├── data-retention/               # 0 3 — delete messages > 90 days (index.ts)
+├── dispatch-sheet-analysis/      # */30 — Google Sheet audit + dispatch KPIs (index.ts)
+├── telecalling-agent-analysis/   # */30 — Google Sheet per-agent metrics (index.ts)
 │
 │  ── orchestrators (own schedule; platform services do the work) ──
 ├── email-brain-index/            # */30 — email sync + brain re-index
@@ -93,3 +95,18 @@ renders the dashboard for it. Example: `zoho-sent-analyzer` → Zoho estimates b
 
 Google Sheets, webhooks, more CRM sources — all map onto the framework's three
 extension points: [new events, new actions, new scanners](../../src/modules/automation/README.md#extensibility).
+
+## Sheet-analysis pattern (add any Google Sheet analysis in 1 folder)
+
+The **dispatch** and **telecalling-agent** automations follow this recipe; copy one
+to onboard a new sheet with zero changes to shared code or the frontend:
+
+1. Copy the folder, pick a new `kebab-case-slug`.
+2. In `rule.json` set `config.sheetUrl` to the new Google Sheet URL (or raw ID) —
+   the Google Sheets API (`src/modules/google_sheets/service.ts`) accepts either.
+3. Point `config.range` at the right tab, e.g. `Sheet1!A1:Z1000`.
+4. Rewrite `index.ts` analysis to the new sheet's columns, keeping the `data()`
+   payload shape (`meta.analysis: 'sheet'`, `kpis`, optional `warnings`/`insights`/`tables`).
+
+The frontend `SheetAnalysisDashboard` renders any automation whose `data()` returns
+that shape — new sheets show up in the Automations page automatically.
