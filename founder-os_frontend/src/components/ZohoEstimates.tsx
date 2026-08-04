@@ -212,7 +212,7 @@ export default function ZohoEstimates() {
       // AI timeline summary
       const summary = c.summary ? c.summary.trim() : "";
 
-      let line = `${est.estimateNumber} - ${est.customerName} (₹${est.total.toLocaleString()}) - ${catString}`;
+      let line = `${est.estimateNumber} - ${est.customerName} (₹${est.total.toLocaleString()}) - ${catString} - Created on: ${est.date || "Unknown"}`;
       line += `\n  Last Comment [${lastCommentDate}]${lastCommentBy ? ` by ${lastCommentBy}` : ""}:`;
       line += `\n  "${lastCommentText || "No comment text"}"`;
       line += `\n  Audit: ${c.reasoning || "No review details."}`;
@@ -270,7 +270,7 @@ export default function ZohoEstimates() {
       // AI timeline summary
       const summary = c.summary ? c.summary.trim() : "";
 
-      let line = `${est.estimateNumber} - ${est.customerName} (₹${est.total.toLocaleString()}) - ${catString}`;
+      let line = `${est.estimateNumber} - ${est.customerName} (₹${est.total.toLocaleString()}) - ${catString} - Created on: ${est.date || "Unknown"}`;
       line += `\n  Last Comment [${lastCommentDate}]${lastCommentBy ? ` by ${lastCommentBy}` : ""}:`;
       line += `\n  "${lastCommentText || "No comment text"}"`;
       line += `\n  Audit: ${c.reasoning || "No review details."}`;

@@ -48,6 +48,7 @@ app.use((req, res, next) => {
 app.use('/api/whatsapp/webhook', webhookRouter);
 
 // --- Health Endpoints ---
+app.use('/health', healthRouter);
 app.use('/api/health', healthRouter);
 
 // --- Automation Framework (admin/dashboard API) ---

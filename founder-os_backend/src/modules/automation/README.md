@@ -106,10 +106,36 @@ reference their runtime-editable config.
 | `whatsapp_send` | `chatId`, `body`, `allowNonAllowlisted?` | `OutboundService.sendWithJitter` (full anti-ban pipeline + allowlist gate) |
 | `create_task` | `title`, `owner?`, `source?` | `TasksService.createTask` |
 | `notify` | `chatId`, `message` | `NotificationBatcher.addAlert` (15-min flush) |
+| `ai_analyze` | `method`, `args`, `as?`, `onError?` | `AIService` (see below) |
 | `sheets_update` | `spreadsheetId`, `range`, `values` | not wired yet (GoogleSheetsService is read-only today) |
 | `zoho_update` | `recordType`, `id`, `fields` | not wired yet |
 | `email_send` | `to`, `subject`, `body` | not wired yet (EmailService has no send) |
 | `custom:<key>` | any | the automation's own `index.ts` `actions` map |
+
+### `ai_analyze` — call AI from declarative rule.json
+
+Lets rule automations run a curated `AIService` method without writing a handler.
+The result is written to the run context and available to later actions via templates.
+
+```json
+{ "type": "ai_analyze", "method": "classifyMessage",
+  "args": { "sender": "{{payload.sender}}", "body": "{{payload.body}}",
+            "timestamp": "{{payload.timestamp}}", "conversationContext": "{{config.recentContext}}" },
+  "as": "classification", "onError": "skip" }
+```
+
+| field | meaning |
+|---|---|
+| `method` | one of `classifyMessage`, `summarizeConversation`, `extractEnquiry`, `classifyEstimateComments`, `queryBrain`, `answerFounderQuestion` |
+| `args` | object mapped onto the method's parameters; values are templated and JSON-parsed (`{...}` / `[...]`) |
+| `as` | namespace for the result (default: merged into `ai` directly) |
+| `onError` | `fail` (run FAILED, default) or `skip` (run continues without the result) |
+
+Templating downstream: no `as` → `{{ai.<field>}}` (e.g. `{{ai.priority}}`); with `as`
+→ `{{ai.<as>.<field>}}`; string results (e.g. `queryBrain`) → `{{ai.result}}`.
+`classifyMessage` output is a flat object, so a `whatsapp_send` body can do
+`Priority: {{ai.priority}} — {{ai.reason}}`. Multi-key/model fallback, mock mode and
+`/health` AI metrics all apply automatically via `AIService`.
 
 ## Event catalog (current)
 

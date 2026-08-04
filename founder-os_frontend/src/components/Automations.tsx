@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import ZohoEstimates from "./ZohoEstimates";
 import DppPricesDashboard from "./DppPricesDashboard";
 import SheetAnalysisDashboard from "./SheetAnalysisDashboard";
+import WahaSessionDashboard from "./WahaSessionDashboard";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 
 type AutomationTrigger = {
   type?: string;
@@ -34,11 +36,40 @@ function describeTrigger(t: AutomationTrigger | null | undefined): string {
   return t.type ?? "—";
 }
 
-export default function Automations() {
+interface AutomationsProps {
+  slug: string | null;
+  onNavigate: (path: string) => void;
+}
+
+export default function Automations({ slug, onNavigate }: AutomationsProps) {
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [selected, setSelected] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [pinned, setPinned] = useLocalStorage<string[]>("pinned_automations", []);
+
+  const selected = slug;
+
+  const togglePin = (s: string) => {
+    setPinned(pinned.includes(s) ? pinned.filter(x => x !== s) : [...pinned, s]);
+  };
+
+  const [dragSlug, setDragSlug] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+
+  const handleDropOn = (targetSlug: string) => {
+    if (dragSlug && dragSlug !== targetSlug) {
+      const next = [...pinned];
+      const from = next.indexOf(dragSlug);
+      const to = next.indexOf(targetSlug);
+      if (from !== -1 && to !== -1) {
+        next.splice(from, 1);
+        next.splice(to, 0, dragSlug);
+        setPinned(next);
+      }
+    }
+    setDragSlug(null);
+    setDropTarget(null);
+  };
 
   const fetchList = async () => {
     try {
@@ -84,12 +115,105 @@ export default function Automations() {
     }
   };
 
+  const { pinnedList, restList } = useMemo(() => {
+    const bySlug = new Map(automations.map(a => [a.slug, a]));
+    return {
+      pinnedList: pinned.map(slug => bySlug.get(slug)).filter(Boolean) as Automation[],
+      restList: automations.filter(a => !pinned.includes(a.slug)),
+    };
+  }, [automations, pinned]);
+
   const renderDashboard = () => {
     if (selected === "zoho-sent-analyzer") return <ZohoEstimates />;
     if (selected === "dpp-prices-dashboard") return <DppPricesDashboard />;
+    if (selected === "waha-session-monitor") return <WahaSessionDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;
+  };
+
+  const renderCard = (a: Automation, opts: { draggable?: boolean } = {}) => {
+    const isDraggable = !!opts.draggable;
+    const isDragging = dragSlug === a.slug;
+    const isDropTarget = dropTarget === a.slug && dragSlug && dragSlug !== a.slug;
+    return (
+      <div
+        key={a.slug}
+        draggable={isDraggable}
+        onDragStart={isDraggable ? (e) => { setDragSlug(a.slug); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", a.slug); } : undefined}
+        onDragOver={isDraggable ? (e) => { e.preventDefault(); if (dropTarget !== a.slug) setDropTarget(a.slug); } : undefined}
+        onDragLeave={isDraggable ? () => { if (dropTarget === a.slug) setDropTarget(null); } : undefined}
+        onDrop={isDraggable ? (e) => { e.preventDefault(); handleDropOn(a.slug); } : undefined}
+        onDragEnd={isDraggable ? () => { setDragSlug(null); setDropTarget(null); } : undefined}
+        className={`bg-zinc-900 border rounded-xl p-5 transition-all duration-200 ${
+          isDraggable ? "cursor-grab active:cursor-grabbing" : ""
+        } ${isDropTarget ? "border-indigo-500 ring-1 ring-indigo-500/50" : "border-zinc-800/80 hover:border-indigo-500/40"} ${isDragging ? "opacity-50" : ""}`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-bold text-white truncate">{a.name}</h3>
+            <code className="text-[11px] text-indigo-400 font-mono">{a.slug}</code>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {isDraggable && (
+              <span className="text-zinc-600 select-none text-lg leading-none" title="Drag to reorder">⠿</span>
+            )}
+            <button
+              onClick={() => togglePin(a.slug)}
+              title={pinned.includes(a.slug) ? "Unpin" : "Pin for quick access"}
+              className={`px-2 py-0.5 text-xs rounded-full border transition-all duration-200 cursor-pointer ${
+                pinned.includes(a.slug)
+                  ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
+                  : "bg-zinc-800 text-zinc-500 border-zinc-700 hover:text-zinc-300 hover:border-zinc-600"
+              }`}
+            >
+              {pinned.includes(a.slug) ? "📌 Pinned" : "📌 Pin"}
+            </button>
+            <span
+              className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border ${
+                a.enabled
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                  : "bg-zinc-800 text-zinc-500 border-zinc-700"
+              }`}
+            >
+              {a.enabled ? "Active" : "Paused"}
+            </span>
+          </div>
+        </div>
+
+        {a.description && (
+          <p className="text-xs text-zinc-400 mt-2 line-clamp-2">{a.description}</p>
+        )}
+
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-500 mt-3">
+          <span>{describeTrigger(a.trigger)}</span>
+          <span>runs: {a.runCount}</span>
+          {a.lastRunAt && <span>last: {new Date(a.lastRunAt).toLocaleString()}</span>}
+        </div>
+
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button
+            onClick={() => toggleEnabled(a)}
+            disabled={toggling === a.slug}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer border-0 disabled:opacity-50 ${
+              a.enabled
+                ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                : "bg-emerald-600 hover:bg-emerald-500 text-white"
+            }`}
+          >
+            {a.enabled ? "Pause" : "Enable"}
+          </button>
+          {a.hasDashboard && (
+            <button
+              onClick={() => onNavigate(`#/automations/${a.slug}`)}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all duration-200 cursor-pointer border-0"
+            >
+              📊 View Dashboard
+            </button>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -100,18 +224,30 @@ export default function Automations() {
         </h1>
         <p className="text-sm text-zinc-400 mt-0.5">
           Every scheduled & event-driven job in the system. Each lives in its own folder under{" "}
-          <code className="text-zinc-300">src/automations/&lt;slug&gt;/</code>.
+          <code className="text-zinc-300">src/automations/&lt;slug&gt;/</code>. Pin your favourite dashboards for quick access.
         </p>
       </div>
 
       {selected ? (
         <div className="space-y-4">
-          <button
-            onClick={() => setSelected(null)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-sm transition-all duration-200 cursor-pointer border-0"
-          >
-            ← Back to all automations
-          </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button
+              onClick={() => onNavigate("#/automations")}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-sm transition-all duration-200 cursor-pointer border-0"
+            >
+              ← Back to all automations
+            </button>
+            <button
+              onClick={() => togglePin(selected)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-0 ${
+                pinned.includes(selected)
+                  ? "bg-indigo-500/10 text-indigo-300 border border-indigo-500/30"
+                  : "bg-zinc-800 hover:bg-zinc-700 text-white"
+              }`}
+            >
+              {pinned.includes(selected) ? "📌 Pinned" : "📌 Pin this dashboard"}
+            </button>
+          </div>
           {renderDashboard()}
         </div>
       ) : loading ? (
@@ -119,62 +255,28 @@ export default function Automations() {
           <span className="animate-pulse">Loading automations...</span>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
-          {automations.map((a) => (
-            <div
-              key={a.slug}
-              className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 hover:border-indigo-500/40 transition-all duration-200"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="font-bold text-white truncate">{a.name}</h3>
-                  <code className="text-[11px] text-indigo-400 font-mono">{a.slug}</code>
-                </div>
-                <span
-                  className={`shrink-0 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border ${
-                    a.enabled
-                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                      : "bg-zinc-800 text-zinc-500 border-zinc-700"
-                  }`}
-                >
-                  {a.enabled ? "Active" : "Paused"}
-                </span>
-              </div>
-
-              {a.description && (
-                <p className="text-xs text-zinc-400 mt-2 line-clamp-2">{a.description}</p>
-              )}
-
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-500 mt-3">
-                <span>{describeTrigger(a.trigger)}</span>
-                <span>runs: {a.runCount}</span>
-                {a.lastRunAt && <span>last: {new Date(a.lastRunAt).toLocaleString()}</span>}
-              </div>
-
-              <div className="flex flex-wrap gap-2 mt-4">
-                <button
-                  onClick={() => toggleEnabled(a)}
-                  disabled={toggling === a.slug}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer border-0 disabled:opacity-50 ${
-                    a.enabled
-                      ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-                      : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                  }`}
-                >
-                  {a.enabled ? "Pause" : "Enable"}
-                </button>
-                {a.hasDashboard && (
-                  <button
-                    onClick={() => setSelected(a.slug)}
-                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all duration-200 cursor-pointer border-0"
-                  >
-                    📊 View Dashboard
-                  </button>
-                )}
+        <>
+          {pinnedList.length > 0 && (
+            <div className="space-y-4">
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-indigo-300">
+                📌 Pinned <span className="text-zinc-500 normal-case font-medium">— drag to reorder</span>
+              </h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                {pinnedList.map(a => renderCard(a, { draggable: true }))}
               </div>
             </div>
-          ))}
-        </div>
+          )}
+          <div className="space-y-4">
+            {pinnedList.length > 0 && (
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">
+                All Automations
+              </h2>
+            )}
+            <div className="grid gap-4 md:grid-cols-2">
+              {restList.map(a => renderCard(a))}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

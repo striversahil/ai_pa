@@ -5,6 +5,7 @@ import { useEnquiryData } from "../hooks/useEnquiryData";
 import { useTheme } from "../hooks/useTheme";
 import { useToast } from "../hooks/useToast";
 import { useCSV } from "../hooks/useCSV";
+import { useHashRoute } from "../hooks/useHashRoute";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Sidebar from "../components/layout/Sidebar";
 import MobileNav from "../components/layout/MobileNav";
@@ -33,9 +34,6 @@ export default function Home() {
   const { toasts, showToast } = useToast();
   const { exportCSV, importCSV } = useCSV(showToast);
 
-  const [activeView, setActiveView] = useState<ViewType>("dashboard");
-  const [selectedEnquiryId, setSelectedEnquiryId] = useState<string | null>(null);
-
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingEnquiry, setEditingEnquiry] = useState<Enquiry | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -44,12 +42,27 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const { route, navigate } = useHashRoute();
+  const activeView: ViewType =
+    route.view === "enquiries" && route.sub
+      ? "detail"
+      : (["dashboard", "enquiries", "briefing", "whatsapp", "automations"] as ViewType[]).includes(route.view as ViewType)
+        ? (route.view as ViewType)
+        : "automations";
+  const selectedEnquiryId = route.view === "enquiries" ? route.sub : null;
   const selectedEnquiry = enquiries.find(e => e.id === selectedEnquiryId) || null;
 
   const navigateTo = useCallback((view: ViewType) => {
-    setActiveView(view);
-    if (view !== "detail") setSelectedEnquiryId(null);
-  }, []);
+    const paths: Record<ViewType, string> = {
+      dashboard: "#/dashboard",
+      enquiries: "#/enquiries",
+      detail: "#/enquiries",
+      briefing: "#/briefing",
+      whatsapp: "#/whatsapp",
+      automations: "#/automations",
+    };
+    navigate(paths[view]);
+  }, [navigate]);
 
   const handleOpenLightbox = useCallback((url: string, list?: string[], idx = 0) => {
     setLightboxImage(url);
@@ -98,10 +111,9 @@ export default function Home() {
     if (confirm("Are you sure you want to delete this enquiry and all nested comments?")) {
       syncState(enquiries.filter(e => e.id !== enquiryId), comments.filter(c => c.enquiryId !== enquiryId), agents);
       showToast("Enquiry deleted", "danger");
-      setSelectedEnquiryId(null);
-      setActiveView("enquiries");
+      navigate("#/enquiries");
     }
-  }, [enquiries, comments, agents, syncState, showToast]);
+  }, [enquiries, comments, agents, syncState, showToast, navigate]);
 
   const handleUpdateStatus = useCallback((enquiryId: string, newStatus: Enquiry["status"]) => {
     const updatedEnquiries = enquiries.map(e => e.id === enquiryId ? {
@@ -163,13 +175,13 @@ export default function Home() {
           {activeView === "dashboard" && (
             <Dashboard enquiries={enquiries} agents={agents} currentAgent={currentAgent}
               onOpenCreate={handleOpenCreate}
-              onViewDetail={(id) => { setSelectedEnquiryId(id); setActiveView("detail"); }}
-              onViewAllEnquiries={() => setActiveView("enquiries")}
+              onViewDetail={(id) => navigate(`#/enquiries/${encodeURIComponent(id)}`)}
+              onViewAllEnquiries={() => navigate("#/enquiries")}
             />
           )}
           {activeView === "enquiries" && (
             <EnquiryList enquiries={enquiries} agents={agents}
-              onViewDetail={(id) => { setSelectedEnquiryId(id); setActiveView("detail"); }}
+              onViewDetail={(id) => navigate(`#/enquiries/${encodeURIComponent(id)}`)}
               onOpenCreate={handleOpenCreate}
               onExportCSV={handleExportCSV}
               onImportCSV={handleImportCSV}
@@ -184,13 +196,15 @@ export default function Home() {
               onAddComment={handleAddComment}
               onDeleteEnquiry={handleDeleteEnquiry}
               onOpenEdit={handleOpenEdit}
-              onBack={() => { setActiveView("enquiries"); setSelectedEnquiryId(null); }}
+              onBack={() => navigate("#/enquiries")}
               onOpenLightbox={handleOpenLightbox}
             />
           )}
           {activeView === "briefing" && <FounderAssistant />}
           {activeView === "whatsapp" && <WhatsAppDashboard />}
-          {activeView === "automations" && <Automations />}
+          {activeView === "automations" && (
+            <Automations slug={route.view === "automations" ? route.sub : null} onNavigate={navigate} />
+          )}
         </ErrorBoundary>
       </main>
 

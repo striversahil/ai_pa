@@ -110,3 +110,93 @@ to onboard a new sheet with zero changes to shared code or the frontend:
 
 The frontend `SheetAnalysisDashboard` renders any automation whose `data()` returns
 that shape — new sheets show up in the Automations page automatically.
+
+## AI-processing pattern (reusable AI for any automation)
+
+Every piece of AI in the system goes through one shared core, so any automation —
+declarative *or* code — gets the same reliability and observability for free.
+
+### The core: `AIService` (`src/modules/ai/service.ts`)
+
+Single shared LLM client. Handles automatically:
+
+| Concern | Behaviour |
+|---|---|
+| **Mock mode** | If `LLM_API_KEY` is unset, every method returns canned responses — the whole system works in dev with no key. |
+| **Key rotation** | Comma-separated keys (Groq `gsk_*` or OpenAI), shuffled, tried in order. |
+| **Model fallback** | `LLM_MODEL` first, then `llama-3.3-70b-versatile` → `llama-3.1-8b-instant` → `gemma2-9b-it` (Groq) / `gpt-4o-mini` → `gpt-4o` (OpenAI). Retries on 429 / model-deprecation only. |
+| **Metrics** | `totalCalls` / `failedCalls` / failure rate surface in `/health` (shown in the WAHA Session Monitor dashboard). |
+
+Prompt-specific methods: `classifyMessage`, `summarizeConversation`, `incrementalSummarizeConversation`, `generateFounderBrief`, `generateDailySummary`, `answerFounderQuestion`, `queryBrain`, `classifyEstimateComments`, `extractEnquiryAndDate`, `matchBusinessEntity`.
+
+### How work reaches AI — three paths
+
+1. **Inbound WhatsApp (real-time pipeline)** — webhook → `controller.ts` → message-buffer → BullMQ classification queue (concurrency 5, 3 retries) → worker → `AIService.classifyMessage`; on AI failure it **falls back to `heuristicClassify`** so nothing is lost. At the same time `emitInboundEvents` fires `whatsapp.group.message` / `whatsapp.message.inbound` to event automations.
+2. **Automations** — the reusable, no-code path (below) via the `ai_analyze` action, or directly from a handler/scanner (`AIService.<method>(...)`).
+3. **On-demand REST** — e.g. `/health/whatsapp`, brain Q&A (`AIService.queryBrain` with RAG context from `modules/brain`).
+
+### Reusable component #1 — the declarative `ai_analyze` action
+
+Add AI to a **rule.json with zero handler code**. `ai_analyze` is a built-in action
+(defined in `src/modules/automation/actions.ts`); the result is written to the run
+context and reusable by **later actions** in the same rule.
+
+```json
+{ "type": "ai_analyze", "method": "classifyMessage",
+  "args": { "sender": "{{payload.sender}}", "body": "{{payload.body}}",
+            "timestamp": "{{payload.timestamp}}", "conversationContext": "{{config.recentContext}}" },
+  "as": "classification", "onError": "skip" }
+```
+
+| field | meaning |
+|---|---|
+| `method` | `classifyMessage`, `summarizeConversation`, `extractEnquiry`, `classifyEstimateComments`, `queryBrain`, `answerFounderQuestion` |
+| `args` | object mapped onto the method's parameters; values are templated (`{{payload.x}}`, `{{config.x}}`, `{{record.x}}`) and JSON-parsed for structured args (`{...}` / `[...]`) |
+| `as` | namespace for the result — with it, later actions use `{{ai.<as>.<field>}}`; without it the result merges into `ai` directly (`{{ai.<field>}}`) |
+| `onError` | `fail` (run recorded FAILED, default) or `skip` (rule continues without the result) |
+
+**Templating the result downstream:** flat object (e.g. `classifyMessage`) → `{{ai.priority}}`, `{{ai.reason}}`, `{{ai.category}}`, `{{ai.suggested_action}}`; string methods (e.g. `queryBrain`, `answerFounderQuestion`) → `{{ai.result}}`; with `as` → `{{ai.<as>.<field>}}`.
+
+A full classify → react rule, no handler code:
+
+```json
+{
+  "type": "rule",
+  "trigger": { "type": "event", "event": "whatsapp.group.message" },
+  "actions": [
+    { "type": "ai_analyze", "method": "classifyMessage",
+      "args": { "sender": "{{payload.sender}}", "body": "{{payload.body}}", "timestamp": "{{payload.timestamp}}" } },
+    { "type": "create_task",
+      "title": "{{ai.priority}}: {{ai.reason}}", "source": "WHATSAPP" },
+    { "type": "whatsapp_send",
+      "chatId": "{{config.dppChatId}}", "allowNonAllowlisted": true,
+      "body": "📊 Classified {{ai.category}} ({{ai.priority}})\n{{ai.reason}}" }
+  ]
+}
+```
+
+### Reusable component #2 — the handler pattern (heavier / custom AI)
+
+For AI that needs custom orchestration (batches, RAG over DB, multi-step), import
+`AIService` directly in the automation's `index.ts` handler or scanner. Same shared
+core, same mock/fallback/metrics. See `whatsapp-digest` (`incrementalSummarizeConversation`),
+`zoho-sent-analyzer` (`classifyEstimateComments` + `extractEnquiryAndDate`),
+`morning-brief` / `eod-summary` (`generateFounderBrief` / `generateDailySummary`).
+
+```ts
+import { AIService } from '../../modules/ai/service';
+// in handler(ctx) or scanner(ctx):
+const result = await AIService.classifyMessage({ sender, body, timestamp, conversationContext });
+```
+
+### Guardrails & observability (automatic — do not bypass)
+
+- **AI is never a hard dependency.** Wrap the call; fall back to heuristics
+  (`modules/classification/heuristics.ts`) or continue with `onError: "skip"` so an
+  LLM outage can't break the pipeline.
+- **Audit + events:** record `AuditService.record(...)` and `broadcastWhatsAppEvent(...)`
+  so dashboards / the Automations page see what AI did.
+- **Send-safety still applies:** an `ai_analyze` result feeding a `whatsapp_send`
+  still goes through the full anti-ban pipeline + allowlist gate.
+- **Observability:** every call is counted in `/health` `metrics.ai`; per-run results
+  are visible on the automation's detail page.

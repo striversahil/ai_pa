@@ -1,7 +1,8 @@
 /**
  * Template interpolation for automation actions and conditions.
- * Supports `{{config.x}}`, `{{payload.x}}`, `{{record.x}}` and bare `{{x}}`
- * (resolved against the subject: event payload or scan record).
+ * Supports `{{config.x}}`, `{{payload.x}}`, `{{record.x}}`, `{{ai.x}}` (result
+ * of the built-in `ai_analyze` action) and bare `{{x}}` (resolved against the
+ * subject: event payload or scan record).
  */
 import type { AutomationContext } from './types';
 
@@ -17,9 +18,10 @@ export function renderTemplate(template: string, ctx: AutomationContext): string
     if (scope === 'config') base = ctx.config;
     else if (scope === 'payload') base = ctx.payload;
     else if (scope === 'record') base = ctx.record;
+    else if (scope === 'ai') base = ctx.ai;
     else base = ctx.subject;
 
-    const val = scope === 'config' || scope === 'payload' || scope === 'record'
+    const val = scope === 'config' || scope === 'payload' || scope === 'record' || scope === 'ai'
       ? resolvePath(base, rest.join('.'))
       : resolvePath(ctx.subject, path);
 

@@ -36,7 +36,7 @@ export interface ConditionNode {
 }
 
 export interface ActionSpec {
-  type: string; // 'whatsapp_send' | 'create_task' | 'notify' | 'sheets_update' | 'zoho_update' | 'email_send' | 'custom:<key>'
+  type: string; // 'whatsapp_send' | 'create_task' | 'notify' | 'ai_analyze' | 'sheets_update' | 'zoho_update' | 'email_send' | 'custom:<key>'
   [key: string]: unknown;
 }
 
@@ -60,12 +60,16 @@ export interface AutomationDefinition {
  * Context passed to handlers, scanners, custom actions and conditions.
  * `subject` is the payload (event) or scan record; `payload`/`record` alias it
  * for template rendering (`{{payload.x}}`, `{{record.x}}`, `{{config.x}}`).
+ * `ai` is written by the built-in `ai_analyze` action so later actions can
+ * reference its result (`{{ai.<field>}}`, or `{{ai.<as>.<field>}}` when a
+ * namespace `as` is set).
  */
 export interface AutomationContext {
   subject: Record<string, any>;
   payload?: Record<string, any>;
   record?: Record<string, any>;
   config: Record<string, any>;
+  ai?: Record<string, any>;
   log: (level: 'info' | 'warn' | 'error', msg: string, meta?: Record<string, unknown>) => void;
 }
 

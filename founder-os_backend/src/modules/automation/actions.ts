@@ -8,6 +8,7 @@ import { StorageRepository } from '../storage/repository';
 import { OutboundService, SendResult } from '../whatsapp/outbound';
 import { NotificationBatcher } from '../../automations/notification-batcher/batcher';
 import { TasksService } from '../tasks/service';
+import { AIService } from '../ai/service';
 import type { ActionSpec, AutomationContext, AutomationModule } from './types';
 import { renderTemplate } from './template';
 
@@ -73,10 +74,106 @@ async function emailSend(spec: ActionSpec): Promise<ActionResult> {
   return { status: 'unsupported' };
 }
 
+/**
+ * Curated AIService methods callable from declarative rule.json actions.
+ * Each adapter maps the action's `args` object onto the method signature.
+ */
+type AiAdapter = (args: Record<string, unknown>, ctx: AutomationContext) => Promise<unknown>;
+
+function str(v: unknown, fallback = ''): string {
+  return v == null ? fallback : String(v);
+}
+
+const AI_ADAPTERS: Record<string, AiAdapter> = {
+  classifyMessage: (a) => AIService.classifyMessage({
+    sender: str(a.sender),
+    body: str(a.body),
+    timestamp: str(a.timestamp, new Date().toISOString()),
+    conversationContext: str(a.conversationContext),
+  }),
+  summarizeConversation: async (a) => {
+    const messages = Array.isArray(a.messages) ? a.messages : [];
+    return AIService.summarizeConversation(str(a.chatName), messages as any[]);
+  },
+  extractEnquiry: (a) => AIService.extractEnquiryAndDate(str(a.commentsHistory ?? a.comments)),
+  classifyEstimateComments: (a) => AIService.classifyEstimateComments(
+    str(a.customerName),
+    Number(a.total ?? 0),
+    str(a.commentsHistory ?? a.comments),
+    str(a.estimateDate, new Date().toISOString().split('T')[0]),
+  ),
+  queryBrain: (a) => AIService.queryBrain(str(a.question), str(a.contextText ?? a.context)),
+  answerFounderQuestion: (a) => AIService.answerFounderQuestion(str(a.question), {
+    digests: str(a.digests),
+    tasks: str(a.tasks),
+    metadata: str(a.metadata),
+  }),
+};
+
+/**
+ * Renders an arg value: runs template interpolation, then parses structured
+ * JSON (`{...}` / `[...]`) so automations can pass objects/arrays declaratively.
+ */
+function renderArg(raw: unknown, ctx: AutomationContext): unknown {
+  if (typeof raw !== 'string') return raw;
+  const rendered = renderTemplate(raw, ctx);
+  const trimmed = rendered.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return rendered;
+    }
+  }
+  return rendered;
+}
+
+/**
+ * ai_analyze — built-in AI action for declarative rule automations.
+ *
+ * spec: { type: 'ai_analyze', method, args, as?, onError? }
+ *   method  one of AI_ADAPTERS (classifyMessage, summarizeConversation, ...)
+ *   args    object of arguments, values templated (`{{payload.x}}`, `{{config.x}}`)
+ *   as      optional namespace; result stored at ctx.ai[as] → `{{ai.<as>.<field>}}`
+ *           (default: merged into ctx.ai → `{{ai.<field>}}`; string results → `{{ai.result}}`)
+ *   onError 'fail' (default: run FAILED) | 'skip' (run still succeeds without result)
+ */
+async function aiAnalyze(spec: ActionSpec, ctx: AutomationContext): Promise<ActionResult> {
+  const method = str(spec.method);
+  const adapter = AI_ADAPTERS[method];
+  if (!adapter) {
+    ctx.log('warn', `ai_analyze: unknown method "${method}"`);
+    return { status: 'skipped', detail: `unknown_method:${method}` };
+  }
+
+  const rawArgs = (spec.args && typeof spec.args === 'object' ? spec.args : {}) as Record<string, unknown>;
+  const args: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rawArgs)) args[k] = renderArg(v, ctx);
+
+  let result: unknown;
+  try {
+    result = await adapter(args, ctx);
+  } catch (e: any) {
+    ctx.log('error', `ai_analyze: ${method} failed`, { error: e?.message });
+    if (str(spec.onError) === 'skip') return { status: 'skipped', detail: 'ai_error' };
+    throw e;
+  }
+
+  const ns = str(spec.as || '').trim();
+  const normalized = result && typeof result === 'object' ? result : { result };
+  ctx.ai = ns
+    ? { ...(ctx.ai ?? {}), [ns]: normalized }
+    : { ...(ctx.ai ?? {}), ...(normalized as Record<string, any>) };
+
+  ctx.log('info', `ai_analyze executed`, { method, storedUnder: ns ? `ai.${ns}` : 'ai' });
+  return { status: 'success' };
+}
+
 const BUILTIN_ACTIONS: Record<string, (spec: ActionSpec, ctx: AutomationContext) => Promise<ActionResult>> = {
   whatsapp_send: whatsappSend,
   create_task: createTask,
   notify,
+  ai_analyze: aiAnalyze,
   sheets_update: sheetsUpdate,
   zoho_update: zohoUpdate,
   email_send: emailSend,

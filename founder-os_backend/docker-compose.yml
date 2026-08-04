@@ -136,7 +136,7 @@ services:
     extra_hosts:
       - "host.docker.internal:172.28.229.49"
     ports:
-      - "127.0.0.1:5099:5099"
+      - "5099:5099"
     networks:
       - founder-os-net
     healthcheck:
