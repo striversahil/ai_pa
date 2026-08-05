@@ -100,7 +100,13 @@ services:
       - WHATSAPP_HOOK_RETRIES_DELAY_SECONDS=2
       - WHATSAPP_HOOK_RETRIES_ATTEMPTS=120
     volumes:
-      - ./waha_sessions:/app/.sessions
+      # Named volume (NOT a host bind mount). A host bind mount through Docker
+      # Desktop on WSL2 intermittently falls back to a tmpfs at container start
+      # (the docker-desktop-bind-mounts shim isn't ready), which hides the saved
+      # session and yields "Session not found" / /api/sessions = []. A named
+      # volume lives natively in the vm and survives every restart. See
+      # WHATSAPP_FLOW.md §10.3.
+      - waha_sessions:/app/.sessions
     extra_hosts:
       - "host.docker.internal:172.28.229.49"
     ports:
@@ -153,6 +159,7 @@ services:
 volumes:
   pgdata:
   redisdata:
+  waha_sessions:
 
 networks:
   founder-os-net:

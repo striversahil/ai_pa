@@ -21,6 +21,7 @@ import { MessageQueueService } from './modules/queue/service';
 import { AuditService } from './modules/audit/service';
 import webhookRouter from './routes/whatsapp-webhook';
 import healthRouter from './routes/health';
+import whatsappMarketingRouter from './routes/whatsapp-marketing';
 import { automationRouter } from './modules/automation';
 
 
@@ -53,6 +54,9 @@ app.use('/api/health', healthRouter);
 
 // --- Automation Framework (admin/dashboard API) ---
 app.use('/api/automations', automationRouter);
+
+// --- WhatsApp Marketing (campaign CRUD + lead upload) ---
+app.use('/api/whatsapp-marketing', whatsappMarketingRouter);
 
 // --- REST API Endpoints ---
 

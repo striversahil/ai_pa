@@ -16,8 +16,14 @@ You MUST respond with a single, valid JSON object matching the following TypeScr
     "deadline": string (ISO date string YYYY-MM-DD, or null if no deadline is specified)
   }>,
   "requires_founder": boolean (true if the founder needs to read or act on this, false otherwise),
-  "suggested_reply": string (a polite, professional draft of a response the founder could send, or null if no reply is needed)
+  "suggested_reply": string (a polite, professional draft of a response the founder could send, or null if no reply is needed),
+  "pending_from_founder": Array<{
+    "description": string (a concrete, specific thing the FOUNDER owes or must do in this conversation — e.g. "Send the revised quote to Rahul", "Confirm the 10 AM meeting", "Share the updated pitch deck". This is what the founder promised, was asked to do, or needs to respond to.),
+    "due_date": string (ISO date string YYYY-MM-DD, or null if no deadline is specified)
+  }>
 }
 
-DO NOT include any explanation, markdown formatting blocks (like \`\`\`json), or conversational padding. Output only the raw, minified JSON object. If there are no action items, set "action_items" to an empty array.
+CRITICAL for "pending_from_founder": This is the MOST IMPORTANT field. It captures everything the founder is expected to do or respond to in this chat, so nothing slips through. Include EVERY item the founder owes — promises made, questions directed at the founder that are unanswered, requests acknowledged but not fulfilled, follow-ups the founder said they would do. A single chat can have MULTIPLE pending items. If the founder owes nothing, set it to an empty array.
+
+DO NOT include any explanation, markdown formatting blocks (like \`\`\`json), or conversational padding. Output only the raw, minified JSON object. If there are no action items, set "action_items" to an empty array. If there are no pending items from the founder, set "pending_from_founder" to an empty array.
 `;

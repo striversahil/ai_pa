@@ -34,6 +34,10 @@ export interface SummaryOutput {
   }>;
   requires_founder: boolean;
   suggested_reply: string | null;
+  pending_from_founder?: Array<{
+    description: string;
+    due_date: string | null;
+  }>;
 }
 
 export class AIService {
@@ -60,7 +64,7 @@ export class AIService {
 
     for (let i = 0; i < shuffledKeys.length; i++) {
       const key = shuffledKeys[i];
-      const maskedKey = key.length > 12 
+      const maskedKey = key.length > 12
         ? `${key.substring(0, 8)}...${key.substring(key.length - 4)}`
         : '***';
 
@@ -93,10 +97,10 @@ export class AIService {
           lastError = err;
           const status = err.status || err.statusCode;
           const msg = (err.message || '').toLowerCase();
-          
+
           const isRateLimit = status === 429 || msg.includes('429') || msg.includes('rate limit');
           const isModelError = status === 400 || status === 404 || msg.includes('decommissioned') || msg.includes('not support') || msg.includes('not found');
-          
+
           if (isRateLimit || isModelError) {
             logger.warn(
               `AIService: API Key ${maskedKey} with model ${model} failed (${status || err.message}). Attempting fallback model/key...`
@@ -162,6 +166,11 @@ export class AIService {
           ],
           requires_founder: true,
           suggested_reply: 'Thanks Rahul, I will make sure the revised valuations and pitch deck are in your inbox tonight. Let\'s sync tomorrow at 10 AM.',
+          pending_from_founder: [
+            { description: 'Update pitch deck with latest revenue run-rate', due_date: new Date(Date.now() + 24 * 3600 * 1000).toISOString().split('T')[0] },
+            { description: 'Prepare Q3 valuations & growth slide deck figures', due_date: new Date(Date.now() + 24 * 3600 * 1000).toISOString().split('T')[0] },
+            { description: 'Confirm the 10 AM meeting with Rahul tomorrow', due_date: new Date(Date.now() + 24 * 3600 * 1000).toISOString().split('T')[0] },
+          ],
         };
       }
 
@@ -182,6 +191,9 @@ export class AIService {
           ],
           requires_founder: true,
           suggested_reply: 'Amit, I am on it. Checking the database pool locks now to release the migration session.',
+          pending_from_founder: [
+            { description: 'Review locked database connection logs on staging server', due_date: null },
+          ],
         };
       }
 
@@ -195,6 +207,7 @@ export class AIService {
         action_items: [],
         requires_founder: false,
         suggested_reply: null,
+        pending_from_founder: [],
       };
     }
 
@@ -205,11 +218,13 @@ export class AIService {
           model: model,
           messages: [
             { role: 'system', content: summarizeConversationPrompt },
-            { role: 'user', content: `Chat Name: ${chatName}\n\nMessages:\n${messages.map((m) => {
-              const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
-              const quoted = m.replyTo ? ` [replying to: "${m.replyTo}"]` : '';
-              return `[${ts}] ${m.sender}: ${m.body}${quoted}`;
-            }).join('\n')}` },
+            {
+              role: 'user', content: `Chat Name: ${chatName}\n\nMessages:\n${messages.map((m) => {
+                const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
+                const quoted = m.replyTo ? ` [replying to: "${m.replyTo}"]` : '';
+                return `[${ts}] ${m.sender}: ${m.body}${quoted}`;
+              }).join('\n')}`
+            },
           ],
           temperature: 0.1,
         });
@@ -259,6 +274,9 @@ export class AIService {
           : [],
         requires_founder: hasNewAction,
         suggested_reply: hasNewAction ? 'Thank you for the update. I will review and get back to you shortly.' : null,
+        pending_from_founder: hasNewAction
+          ? [{ description: 'Review new messages and respond accordingly', due_date: null }]
+          : [],
       };
     }
 
@@ -273,10 +291,12 @@ export class AIService {
           model: model,
           messages: [
             { role: 'system', content: systemContent },
-            { role: 'user', content: `Chat Name: ${chatName}\n\nNew Messages:\n${messages.map((m) => {
-              const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
-              return `[${ts}] ${m.sender}: ${m.body}`;
-            }).join('\n')}` },
+            {
+              role: 'user', content: `Chat Name: ${chatName}\n\nNew Messages:\n${messages.map((m) => {
+                const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
+                return `[${ts}] ${m.sender}: ${m.body}`;
+              }).join('\n')}`
+            },
           ],
           temperature: 0.1,
         });

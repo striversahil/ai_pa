@@ -337,7 +337,7 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 
 | Service | Image | Key config |
 |---|---|---|
-| `waha` | `devlikeapro/waha:latest-2026.7.2` (**pinned**) | `WAHA_ENGINE=WEBJS`, `TZ=Asia/Kolkata`, `WAHA_WEBHOOK_CONCURRENCY=5`, `WAHA_WEBJS_PUPPETER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-blink-features=AutomationControlled --use-gl=angle --use-angle=swiftshader-webgl --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader`, `WHATSAPP_HOOK_URL=http://host.docker.internal:5099/api/whatsapp/webhook` (**relay**), `WHATSAPP_HOOK_RETRIES_POLICY=constant`, `WHATSAPP_HOOK_RETRIES_DELAY_SECONDS=2`, `WHATSAPP_HOOK_RETRIES_ATTEMPTS=120`, volume `./waha_sessions:/app/.sessions`, `mem_limit: 2g`, `cpus: 1`, `stop_grace_period: 30s`, port `127.0.0.1:3002:3000` |
+| `waha` | `devlikeapro/waha:latest-2026.7.2` (**pinned**) | `WAHA_ENGINE=WEBJS`, `TZ=Asia/Kolkata`, `WAHA_WEBHOOK_CONCURRENCY=5`, `WAHA_WEBJS_PUPPETER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-blink-features=AutomationControlled --use-gl=angle --use-angle=swiftshader-webgl --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader`, `WHATSAPP_HOOK_URL=http://host.docker.internal:5099/api/whatsapp/webhook` (**relay**), `WHATSAPP_HOOK_RETRIES_POLICY=constant`, `WHATSAPP_HOOK_RETRIES_DELAY_SECONDS=2`, `WHATSAPP_HOOK_RETRIES_ATTEMPTS=120`, volume `waha_sessions:/app/.sessions` (**named volume**, not a bind — see §10.3), `mem_limit: 2g`, `cpus: 1`, `stop_grace_period: 30s`, port `127.0.0.1:3002:3000` |
 | `webhook-relay` | `node:20-alpine` | Zero-dep `relay.js` (bind-mounted from `../webhook-relay`); `RELAY_BACKEND=http://host.docker.internal:5000`, `RELAY_LOG_DIR=/runtime` (writes `webhook-relay.log` + `.offset`), healthcheck `wget 127.0.0.1:5099/health` (use **IPv4**, busybox wget on `localhost` fails via `::1`), port `127.0.0.1:5099:5099`, `restart: unless-stopped` |
 | `redis` | `redis:7-alpine` | `redis-server --appendonly yes --appendfsync everysec`, `TZ=Asia/Kolkata`, volume `redisdata:/data` (**persistent** — named volume + AOF) |
 | `postgres` | `postgres:16-alpine` | `TZ=Asia/Kolkata`, volume `pgdata` (container `founder-os-db`, managed by a **separate** compose project `ai_pa`) |
@@ -376,39 +376,51 @@ npx ts-node src/server.ts                        # under the supervisor while-lo
 
 ### 10.2 WAHA session & QR
 
-- Session `default` should be **WORKING** (`curl http://127.0.0.1:3002/api/sessions/default -H "X-Api-Key: MyLocalSecretKey!"`).
-- **A QR scan is only needed if the saved auth is gone.** The auth lives in `founder-os-backend/waha_sessions/webjs/default/session-default/` — never delete it.
-- QR if required: open `http://127.0.0.1:3002/api/sessions/default/auth/qr` and scan.
+- Session `default` should be **WORKING** (`curl http://127.0.0.1:3002/api/sessions/default -H "X-Api-Key: MyLocalSecretKey!"` → `status: WORKING`, `me.pushName` set).
+- **A QR scan is only needed if the saved auth is gone.** The auth lives in the `waha_sessions` named volume at `webjs/default/session-default/` — never delete it.
+- **To re-pair / change the linked phone or account** (works safely now that storage is a named volume):
+  1. `POST /api/sessions/default/logout` — unlinks the device (server-side; the old auth becomes useless immediately)
+  2. Wait for status `SCAN_QR_CODE`, then `GET /api/default/auth/qr` — fetch the QR **right before scanning** (each QR lasts ~20s; WAHA re-issues a new one constantly and a stale QR silently fails to pair)
+  3. Scan with the phone; whatever you pair is persisted in the volume and survives every reboot.
+- ⚠️ **`logout` is destructive** — it deactivates the link on WhatsApp's side. Never call it "just to check"; there is no file-level recovery afterwards, only a fresh QR scan.
+- ⚠️ If after scanning the phone shows **"Continue on WhatsApp Web / passkey"** and linking never completes, that is the known WhatsApp passkey device-linking gate for consumer accounts (WAHA issue #2140) — WAHA's server-side browser has no authenticator to finish it. Some accounts are unaffected (this deployment's is not gated); for gated accounts a WAHA version/engine update may be required.
 
-### 10.3 Session recovery (IMPORTANT — the bind-mount trap)
+### 10.3 Session storage (IMPORTANT — why a named volume, not a host bind)
 
-**Symptom:** WAHA returns `Session not found` / `/api/sessions` = `[]` even though `waha_sessions/` has data on the host. The host data is intact — the container is just not seeing it.
+**2026-08-05 change:** `/app/.sessions` now mounts the **named volume** `waha_sessions` (registered in compose `volumes:`), NOT the host dir `./waha_sessions`. This is a permanent fix for the recurring "Session not found" trap below — the container self-heals on every boot because there is no bind mount to break. The old host dir `founder-os_backend/waha_sessions` is no longer used (kept as a stale snapshot; session data was migrated into the volume). **CONFIRMED working:** a full container restart restores `WORKING` from the volume with no QR rescan.
 
-**Root cause (seen in production):** the container's `/app/.sessions` was mounted as a **tmpfs**, not the bind. Verify with:
+**Why (the bind-mount trap, seen repeatedly in production):** Docker Desktop on WSL2 proxies host bind mounts through a shim at `/mnt/wsl/docker-desktop-bind-mounts/Ubuntu/<hash>`. If that shim isn't attached when the container starts (VM cold start, Docker Desktop restart), Docker silently substitutes an empty **tmpfs** for the bind. WAHA then starts with empty storage → `Session not found` / `/api/sessions = []`, even though the host dir still has data. The container cannot fix its own mount (the tmpfs lives in its mount namespace), and `start.sh` is only run manually, so the trap recurred across reboots. A named volume lives natively in the Docker Desktop VM — no shim, no race, no tmpfs fallback.
+
+**Verification** (a healthy `/app/.sessions` is `ext4` via a volume, never `tmpfs`):
 ```bash
-docker exec waha mount | grep sessions        # must be /dev/* type ext4, NOT "tmpfs"
-docker exec waha sh -c 'echo x > /app/.sessions/probe.txt' && ls founder-os_backend/waha_sessions/probe.txt
+docker exec waha mount | grep sessions        # /dev/sdX type ext4, NOT "tmpfs"
 ```
 
-**Fix without a QR rescan:**
+**If you ever hit "Session not found" again** — do NOT recreate/QR-rescan first; check the mount type. If it's `tmpfs`, something regressed the compose config back to a bind — fix the compose file, then:
 ```bash
-docker stop waha
-docker compose rm -sf waha            # removes the container + its tmpfs
-docker compose up -d waha             # recreates; bind re-attaches to the host dir
-# verify mount is ext4 (not tmpfs) BEFORE trusting it, then poll:
+docker compose up -d waha            # recreates against the named volume
+# poll:
 curl http://127.0.0.1:3002/api/sessions/default -H "X-Api-Key: MyLocalSecretKey!"   # → WORKING, me set
 ```
 
-### 10.4 Backup the session (root-owned files)
+**Background noise to ignore:** recurring `refreshQR is not a function` warnings and occasional `Attempted to use detached Frame` unhandled-rejection lines in the WAHA logs are cosmetic (WAHA's QR auto-refresh vs current WhatsApp Web); a `WORKING` session is unaffected. If the browser page keeps crashing such that the session falls to `FAILED`, stop + start the session (`POST /api/sessions/default/stop` → `POST /api/sessions/default/start`) to return to `SCAN_QR_CODE`/`WORKING`.
 
-`waha_sessions` files are root-owned (created by the container). Back up **inside the container** and pull the archive out:
+### 10.4 Backup the session (root-owned files, inside the volume)
+
+Session files are root-owned (created by the container) inside the `waha_sessions` named volume. Back up **inside the container** and pull the archive out:
 ```bash
 docker exec waha sh -c 'tar czf /tmp/ws.tar.gz -C /app/.sessions . 2>/dev/null; true'
 docker cp waha:/tmp/ws.tar.gz /home/sahil/waha_sessions_backup.tar.gz
 docker exec waha rm /tmp/ws.tar.gz
 tar -tzf /home/sahil/waha_sessions_backup.tar.gz >/dev/null && echo VALID   # verify
-# restore: tar -xzf ~/waha_sessions_backup.tar.gz -C founder-os_backend/waha_sessions
+# restore into the volume:
+docker run --rm -v founder-os_backend_waha_sessions:/target -v ~/waha_sessions_backup.tar.gz:/tmp/ws.tar.gz:ro \
+  alpine sh -c 'tar xzf /tmp/ws.tar.gz -C /target'
 ```
+
+**Current backups (2026-08-05):**
+- `~/waha_sessions_post_pair.tar.gz` — **the good, current session** (~37MB, auth in `Login Data` + `IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/`). Restore from this if the volume is ever lost.
+- `~/waha_sessions_pre_migration.tar.gz` — stale snapshot of the pre-volume session (~1.1G, includes long-dead credentials). The old login was invalidated; keep only for file-reference, do **not** restore it expecting a live session.
 
 ### 10.5 Database migration caveat (prisma)
 

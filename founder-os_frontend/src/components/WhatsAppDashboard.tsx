@@ -35,6 +35,26 @@ interface RawMessage {
   quotedSender?: string | null;
 }
 
+interface PendingItem {
+  id: string;
+  chatId: string;
+  chatName: string;
+  description: string;
+  status: string;
+  dueDate: string | null;
+  sourceMessageId: string | null;
+  resolvedBy: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+interface PendingChat {
+  chatId: string;
+  chatName: string;
+  openCount: number;
+  items: PendingItem[];
+}
+
 export default function WhatsAppDashboard() {
   const [inboxCategory, setInboxCategory] = useState<"all" | "urgent" | "leads" | "support">("all");
 
@@ -49,6 +69,9 @@ export default function WhatsAppDashboard() {
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+
+  const [pendingChats, setPendingChats] = useState<PendingChat[]>([]);
+  const [isLoadingPending, setIsLoadingPending] = useState(false);
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -84,8 +107,8 @@ export default function WhatsAppDashboard() {
         const contactListFetched = Array.isArray(data)
           ? data
           : data.contacts && Array.isArray(data.contacts)
-          ? data.contacts
-          : [];
+            ? data.contacts
+            : [];
         if (contactListFetched.length > 0 && !selectedContactUid) {
           setSelectedContactUid(contactListFetched[0].uid);
         }
@@ -147,9 +170,37 @@ export default function WhatsAppDashboard() {
     }
   };
 
+  const fetchPendingItems = async () => {
+    setIsLoadingPending(true);
+    try {
+      const res = await fetch("/api/pending-items");
+      if (res.ok) {
+        const data = await res.json();
+        const chats = Array.isArray(data) ? data : data.chats && Array.isArray(data.chats) ? data.chats : [];
+        setPendingChats(chats);
+      }
+    } catch (err) {
+      console.error("Failed to fetch pending items:", err);
+    } finally {
+      setIsLoadingPending(false);
+    }
+  };
+
+  const resolvePendingItem = async (id: string) => {
+    try {
+      const res = await fetch(`/api/pending-items/${id}/resolve`, { method: "POST" });
+      if (res.ok) {
+        fetchPendingItems();
+      }
+    } catch (err) {
+      console.error("Failed to resolve pending item:", err);
+    }
+  };
+
   useEffect(() => {
     fetchContacts();
     fetchDigests();
+    fetchPendingItems();
   }, []);
 
   useEffect(() => {
@@ -204,9 +255,11 @@ export default function WhatsAppDashboard() {
           }
           fetchDigests();
           fetchContacts();
+          fetchPendingItems();
         } else if (payload.event === "message.classified") {
           fetchDigests();
           fetchContacts();
+          fetchPendingItems();
           if (selectedContactUid && payload.data.chatId === selectedContactUid) {
             fetchMessages(selectedContactUid, true);
           }
@@ -255,6 +308,20 @@ export default function WhatsAppDashboard() {
     return digestList.find((d) => d.id === selectedContactUid || d.chatId === selectedContactUid) || null;
   }, [digestList, selectedContactUid]);
 
+  const activePendingItems = useMemo(() => {
+    if (!selectedContactUid) return [];
+    const chat = pendingChats.find((c) => c.chatId === selectedContactUid);
+    return chat ? chat.items : [];
+  }, [pendingChats, selectedContactUid]);
+
+  const pendingCountForChat = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const chat of pendingChats) {
+      map[chat.chatId] = chat.openCount;
+    }
+    return map;
+  }, [pendingChats]);
+
   const filteredContacts = useMemo(() => {
     const list = contactList.filter((c) => {
       const digest = digestList.find((d) => d.id === c.uid || d.chatId === c.uid);
@@ -297,11 +364,10 @@ export default function WhatsAppDashboard() {
               <button
                 key={cat}
                 onClick={() => setInboxCategory(cat)}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all border-0 cursor-pointer ${
-                  inboxCategory === cat
-                    ? "bg-zinc-800 text-white border border-zinc-700"
-                    : "text-zinc-500 hover:text-zinc-300 bg-transparent"
-                }`}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all border-0 cursor-pointer ${inboxCategory === cat
+                  ? "bg-zinc-800 text-white border border-zinc-700"
+                  : "text-zinc-500 hover:text-zinc-300 bg-transparent"
+                  }`}
               >
                 {cat === "all" ? "All" : cat === "urgent" ? "Urgent" : cat === "leads" ? "Leads" : "Support"}
               </button>
@@ -321,26 +387,34 @@ export default function WhatsAppDashboard() {
                   <div
                     key={c.uid || index}
                     onClick={() => setSelectedContactUid(c.uid)}
-                    className={`p-4 cursor-pointer hover:bg-zinc-850/50 transition-all space-y-2 border-l-4 ${
-                      isSelected ? "bg-zinc-850/60 border-l-indigo-500" : "border-l-transparent"
-                    }`}
+                    className={`p-4 cursor-pointer hover:bg-zinc-850/50 transition-all space-y-2 border-l-4 ${isSelected ? "bg-zinc-850/60 border-l-indigo-500" : "border-l-transparent"
+                      }`}
                   >
                     <div className="flex justify-between items-center">
                       <span className="font-bold text-sm text-zinc-100 block flex items-center gap-1.5">
                         {c.isGroup && <span title="Group" className="text-[11px]">👥</span>}
                         {c.name || c.phone_number}
                       </span>
-                      <span className="text-[10px] text-zinc-500">{c.isGroup ? 'Group' : c.phone_number}</span>
+                      <div className="flex items-center gap-1.5">
+                        {pendingCountForChat[c.uid] > 0 && (
+                          <span
+                            title={`${pendingCountForChat[c.uid]} pending from you`}
+                            className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                          >
+                            {pendingCountForChat[c.uid]} ⏳
+                          </span>
+                        )}
+                        <span className="text-[10px] text-zinc-500">{c.isGroup ? 'Group' : c.phone_number}</span>
+                      </div>
                     </div>
                     {digest ? (
                       <>
                         <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">{digest.summary}</p>
                         <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                          <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded ${
-                            digest.priority === "urgent" || digest.priority === "high"
-                              ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                              : "bg-zinc-800 text-zinc-400 border border-zinc-700"
-                          }`}>
+                          <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded ${digest.priority === "urgent" || digest.priority === "high"
+                            ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                            : "bg-zinc-800 text-zinc-400 border border-zinc-700"
+                            }`}>
                             {digest.priority}
                           </span>
                           <span className="bg-zinc-850 text-zinc-400 text-[9px] font-semibold px-2 py-0.5 rounded border border-zinc-850">
@@ -393,22 +467,20 @@ export default function WhatsAppDashboard() {
                     const senderLabel = isGroup && !isMe ? (msg.sender || "Unknown") : "";
                     return (
                       <div key={msg.id || index} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm leading-relaxed ${
-                          isMe
-                            ? "bg-indigo-600 text-white rounded-br-none"
-                            : "bg-zinc-800/90 text-zinc-100 rounded-bl-none border border-zinc-700/50"
-                        }`}>
+                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm leading-relaxed ${isMe
+                          ? "bg-indigo-600 text-white rounded-br-none"
+                          : "bg-zinc-800/90 text-zinc-100 rounded-bl-none border border-zinc-700/50"
+                          }`}>
                           {senderLabel && (
                             <span className="text-[9px] font-extrabold text-indigo-400 block mb-1 uppercase tracking-wider">
                               {senderLabel}
                             </span>
                           )}
                           {msg.quotedBody && (
-                            <div className={`mb-1.5 rounded-lg px-2.5 py-1.5 border-l-2 text-[10px] truncate ${
-                              isMe
-                                ? "bg-indigo-500/30 border-indigo-300/60 text-indigo-100"
-                                : "bg-zinc-900/60 border-zinc-500 text-zinc-400"
-                            }`}>
+                            <div className={`mb-1.5 rounded-lg px-2.5 py-1.5 border-l-2 text-[10px] truncate ${isMe
+                              ? "bg-indigo-500/30 border-indigo-300/60 text-indigo-100"
+                              : "bg-zinc-900/60 border-zinc-500 text-zinc-400"
+                              }`}>
                               {msg.quotedSender && (
                                 <span className="font-extrabold block mb-0.5 text-[9px] uppercase tracking-wider opacity-80">
                                   {msg.quotedSender.replace(/@.*$/, '')}
@@ -460,6 +532,50 @@ export default function WhatsAppDashboard() {
                 </h3>
               </div>
 
+              {/* Per-chat "What I Owe" ledger */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase block">⏳ What I Owe</span>
+                  {activePendingItems.length > 0 && (
+                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      {activePendingItems.length} open
+                    </span>
+                  )}
+                </div>
+                {isLoadingPending ? (
+                  <div className="text-xs text-zinc-500 animate-pulse">Loading pending items...</div>
+                ) : activePendingItems.length === 0 ? (
+                  <div className="p-3 bg-zinc-950/40 border border-zinc-850 rounded-xl text-xs text-zinc-500 italic">
+                    Nothing pending from your side in this chat. ✅
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {activePendingItems.map((item) => {
+                      const isOverdue = item.dueDate && new Date(item.dueDate).getTime() < Date.now();
+                      return (
+                        <div key={item.id} className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs text-zinc-200 leading-relaxed flex-1">{item.description}</p>
+                            <button
+                              onClick={() => resolvePendingItem(item.id)}
+                              title="Mark as done"
+                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
+                            >
+                              ✓ Done
+                            </button>
+                          </div>
+                          {item.dueDate && (
+                            <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-400" : "text-zinc-500"}`}>
+                              {isOverdue ? "⚠️ Overdue" : "Due"}: {new Date(item.dueDate).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {isSummarizing ? (
                 <div className="py-20 text-center space-y-3">
                   <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
@@ -470,13 +586,12 @@ export default function WhatsAppDashboard() {
                   <div className="bg-zinc-950/40 p-4 border border-zinc-855 rounded-xl space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] text-zinc-500 font-bold uppercase">Sentiment</span>
-                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${
-                        activeDigest.sentiment === "positive"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : activeDigest.sentiment === "negative"
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${activeDigest.sentiment === "positive"
+                        ? "bg-emerald-500/10 text-emerald-400"
+                        : activeDigest.sentiment === "negative"
                           ? "bg-rose-500/10 text-rose-400"
                           : "bg-zinc-800 text-zinc-400"
-                      }`}>
+                        }`}>
                         {activeDigest.sentiment}
                       </span>
                     </div>

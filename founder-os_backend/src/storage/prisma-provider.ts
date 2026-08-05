@@ -1,7 +1,7 @@
 import { prisma } from '../shared/prisma';
 import { logger } from '../shared/logger';
 import { Priority, TaskStatus } from '@prisma/client';
-import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry } from './interfaces';
+import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry, ChatPendingItemData, StoredChatPendingItem } from './interfaces';
 
 export class PrismaStorageProvider implements StorageProvider {
   async upsertContact(data: ContactData): Promise<StoredContact> {
@@ -173,6 +173,64 @@ export class PrismaStorageProvider implements StorageProvider {
     logger.debug('Fetching latest founder note/briefing');
     const note = await prisma.founderNote.findFirst({ orderBy: { createdAt: 'desc' } });
     return note as StoredNote | null;
+  }
+
+  async createChatPendingItem(data: ChatPendingItemData): Promise<StoredChatPendingItem> {
+    logger.info({ chatId: data.chatId, description: data.description.substring(0, 60) }, 'Creating chat pending item');
+    const item = await prisma.chatPendingItem.create({
+      data: {
+        chatId: data.chatId,
+        chatName: data.chatName,
+        description: data.description,
+        status: data.status || 'OPEN',
+        dueDate: data.dueDate || null,
+        sourceMessageId: data.sourceMessageId || null,
+        resolvedBy: data.resolvedBy || null,
+      },
+    });
+    return item as StoredChatPendingItem;
+  }
+
+  async fetchOpenChatPendingItems(chatId?: string): Promise<StoredChatPendingItem[]> {
+    const where: any = { status: 'OPEN' };
+    if (chatId) where.chatId = chatId;
+    return prisma.chatPendingItem.findMany({
+      where,
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+    }) as Promise<StoredChatPendingItem[]>;
+  }
+
+  async fetchAllChatPendingItems(limit = 200): Promise<StoredChatPendingItem[]> {
+    return prisma.chatPendingItem.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    }) as Promise<StoredChatPendingItem[]>;
+  }
+
+  async resolveChatPendingItem(id: string, resolvedBy = 'MANUAL'): Promise<StoredChatPendingItem | null> {
+    const item = await prisma.chatPendingItem.updateMany({
+      where: { id, status: 'OPEN' },
+      data: { status: 'DONE', resolvedBy, resolvedAt: new Date() },
+    });
+    if (item.count === 0) return null;
+    return prisma.chatPendingItem.findUnique({ where: { id } }) as Promise<StoredChatPendingItem | null>;
+  }
+
+  async resolveChatPendingItemsByChatId(chatId: string, resolvedBy = 'SEND'): Promise<number> {
+    const result = await prisma.chatPendingItem.updateMany({
+      where: { chatId, status: 'OPEN' },
+      data: { status: 'DONE', resolvedBy, resolvedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  async cancelChatPendingItem(id: string): Promise<StoredChatPendingItem | null> {
+    const item = await prisma.chatPendingItem.updateMany({
+      where: { id, status: 'OPEN' },
+      data: { status: 'CANCELLED', resolvedBy: 'MANUAL', resolvedAt: new Date() },
+    });
+    if (item.count === 0) return null;
+    return prisma.chatPendingItem.findUnique({ where: { id } }) as Promise<StoredChatPendingItem | null>;
   }
 
   async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void> {

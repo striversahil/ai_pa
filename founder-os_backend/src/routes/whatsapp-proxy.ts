@@ -56,6 +56,15 @@ router.post('/send', asyncHandler(async (req, res) => {
   }
 
   await WhatsAppService.saveMessage({ chatId, sender: 'You', body: message_body, timestamp: new Date() });
+
+  // Per-chat "Pending From Me" ledger: when the founder sends a message in a
+  // chat, all open pending items for that chat are auto-resolved — the founder
+  // has responded, so the items are no longer pending from their side.
+  const resolvedCount = await StorageRepository.resolveChatPendingItemsByChatId(chatId, 'SEND');
+  if (resolvedCount > 0) {
+    logger.info({ chatId, resolvedCount }, 'Resolved open pending items after founder send');
+  }
+
   const result = await OutboundService.sendWithJitter(chatId, message_body);
   if (result === 'rate_limited' || result === 'failed') {
     // Account/burst cap reached or WAHA rejected the send: defer instead of
@@ -103,6 +112,25 @@ router.post('/contacts/:contactUid/summarize', asyncHandler(async (req, res) => 
     update: { chatId, chatName: contactName, summary: summaryResult.summary, priority: (summaryResult.priority || 'medium') as any, category: summaryResult.category || 'General', sentiment: summaryResult.sentiment || 'neutral', requiresFounder: !!summaryResult.requires_founder, suggestedReply: summaryResult.suggested_reply || null },
     create: { id: chatId, chatId, chatName: contactName, summary: summaryResult.summary, priority: (summaryResult.priority || 'medium') as any, category: summaryResult.category || 'General', sentiment: summaryResult.sentiment || 'neutral', requiresFounder: !!summaryResult.requires_founder, suggestedReply: summaryResult.suggested_reply || null }
   });
+
+  // Persist per-chat "Pending From Me" items from the manual summary too.
+  if (summaryResult.pending_from_founder && summaryResult.pending_from_founder.length > 0) {
+    for (const item of summaryResult.pending_from_founder) {
+      if (!item.description) continue;
+      let dueDate: Date | null = null;
+      if (item.due_date) {
+        const parsedDate = new Date(item.due_date);
+        if (!isNaN(parsedDate.getTime())) dueDate = parsedDate;
+      }
+      await StorageRepository.createChatPendingItem({
+        chatId,
+        chatName: contactName,
+        description: item.description,
+        dueDate,
+      });
+    }
+  }
+
   return res.status(200).json(digest);
 }));
 

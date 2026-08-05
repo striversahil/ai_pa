@@ -5,6 +5,7 @@ import ZohoEstimates from "./ZohoEstimates";
 import DppPricesDashboard from "./DppPricesDashboard";
 import SheetAnalysisDashboard from "./SheetAnalysisDashboard";
 import WahaSessionDashboard from "./WahaSessionDashboard";
+import WhatsAppMarketingDashboard from "./WhatsAppMarketingDashboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 
 type AutomationTrigger = {
@@ -127,6 +128,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "zoho-sent-analyzer") return <ZohoEstimates />;
     if (selected === "dpp-prices-dashboard") return <DppPricesDashboard />;
     if (selected === "waha-session-monitor") return <WahaSessionDashboard />;
+    if (selected === "whatsapp-marketing") return <WhatsAppMarketingDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;

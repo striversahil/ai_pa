@@ -87,6 +87,33 @@ export async function processMessagesToDigests(): Promise<{
         suggestedReply: summaryResult.suggested_reply || undefined,
       });
 
+      // Per-chat "Pending From Me" ledger: persist every item the founder owes
+      // in this conversation so nothing slips through. A single chat can have
+      // multiple open items. Items are auto-resolved when the founder sends a
+      // message in the chat (see whatsapp-proxy send route).
+      if (summaryResult.pending_from_founder && summaryResult.pending_from_founder.length > 0) {
+        logger.info(
+          { pendingCount: summaryResult.pending_from_founder.length },
+          'WhatsAppDigest: saving pending-from-founder items'
+        );
+        for (const item of summaryResult.pending_from_founder) {
+          if (!item.description) continue;
+          let dueDate: Date | null = null;
+          if (item.due_date) {
+            const parsedDate = new Date(item.due_date);
+            if (!isNaN(parsedDate.getTime())) {
+              dueDate = parsedDate;
+            }
+          }
+          await StorageRepository.createChatPendingItem({
+            chatId,
+            chatName: summaryResult.chatName || chatName,
+            description: item.description,
+            dueDate,
+          });
+        }
+      }
+
       if (summaryResult.action_items && summaryResult.action_items.length > 0) {
         logger.info(
           { actionItemsCount: summaryResult.action_items.length },
