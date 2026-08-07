@@ -462,6 +462,28 @@ app.get('/api/whatsapp/contacts/:contactUid/messages', asyncHandler(async (req, 
 }));
 
 /**
+ * GET /api/whatsapp/contacts/:contactUid/note
+ * Private per-chat note (Personal Context). One note per chat/group, visible
+ * only to the founder.
+ */
+app.get('/api/whatsapp/contacts/:contactUid/note', asyncHandler(async (req, res) => {
+  const chatId = String(req.params.contactUid);
+  const note = await StorageRepository.getChatNote(chatId);
+  return res.status(200).json({ chatId, content: note?.content || '' });
+}));
+
+/**
+ * PUT /api/whatsapp/contacts/:contactUid/note
+ * Upsert the private per-chat note.
+ */
+app.put('/api/whatsapp/contacts/:contactUid/note', asyncHandler(async (req, res) => {
+  const chatId = String(req.params.contactUid);
+  const content = String(req.body?.content ?? '').trim();
+  const note = await StorageRepository.upsertChatNote(chatId, content);
+  return res.status(200).json({ chatId, content: note.content });
+}));
+
+/**
  * GET /api/whatsapp/contacts/:contactUid/summarize
  * Generate a conversation summary from local DB messages only
  */
@@ -470,6 +492,7 @@ app.get('/api/whatsapp/contacts/:contactUid/summarize', asyncHandler(async (req,
   const contact = await StorageRepository.fetchContactByChatId(chatId);
   const contactName = contact?.name || chatId.split('@')[0];
 
+  const founderNote = await StorageRepository.getChatNote(chatId);
   const localMsgs = await WhatsAppService.fetchMessagesByChatId(chatId);
   if (localMsgs.length === 0) {
     return res.status(200).json({
@@ -493,7 +516,7 @@ app.get('/api/whatsapp/contacts/:contactUid/summarize', asyncHandler(async (req,
       timestamp: m.timestamp,
     }));
 
-  const summaryResult = await AIService.summarizeConversation(contactName, messagesInput);
+  const summaryResult = await AIService.summarizeConversation(contactName, messagesInput, founderNote?.content || '');
 
   const digest = await prisma.digest.upsert({
     where: { id: chatId },

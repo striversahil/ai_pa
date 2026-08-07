@@ -34,7 +34,7 @@ src/automations/
 ├── morning-brief/                # 0 8 — brief generation (service.ts)
 ├── eod-summary/                  # 0 19 — EOD generation (service.ts)
 ├── data-retention/               # 0 3 — delete messages > 90 days (index.ts)
-├── dispatch-sheet-analysis/      # */30 — Google Sheet audit + dispatch KPIs (index.ts)
+├── enterprise-operations-analytics/ # */30 — 18-point enterprise supply chain analysis (index.ts)
 ├── telecalling-agent-analysis/   # */30 — Google Sheet per-agent metrics (index.ts)
 │
 │  ── orchestrators (own schedule; platform services do the work) ──

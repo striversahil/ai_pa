@@ -86,6 +86,21 @@ router.get('/contacts/:contactUid/messages', asyncHandler(async (req, res) => {
   return res.status(200).json(sorted);
 }));
 
+// Private per-chat note (Personal Context). One note per chat/group, visible
+// only to the founder. GET returns the note, PUT upserts it.
+router.get('/contacts/:contactUid/note', asyncHandler(async (req, res) => {
+  const chatId = String(req.params.contactUid);
+  const note = await StorageRepository.getChatNote(chatId);
+  res.status(200).json({ chatId, content: note?.content || '' });
+}));
+
+router.put('/contacts/:contactUid/note', asyncHandler(async (req, res) => {
+  const chatId = String(req.params.contactUid);
+  const content = String(req.body?.content ?? '').trim();
+  const note = await StorageRepository.upsertChatNote(chatId, content);
+  res.status(200).json({ chatId, content: note.content });
+}));
+
 router.post('/contacts/:contactUid/summarize', asyncHandler(async (req, res) => {
   const chatId = String(req.params.contactUid);
   const contact = await StorageRepository.fetchContactByChatId(chatId);
@@ -101,11 +116,13 @@ router.post('/contacts/:contactUid/summarize', asyncHandler(async (req, res) => 
     });
   }
 
+  const note = await StorageRepository.getChatNote(chatId);
+
   const messagesInput = localMsgs
     .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
     .map(m => ({ sender: m.sender === 'You' || m.sender === 'Founder' ? 'You' : m.sender, body: m.body, timestamp: m.timestamp, replyTo: m.quotedBody || null }));
 
-  const summaryResult = await AIService.summarizeConversation(contactName, messagesInput);
+  const summaryResult = await AIService.summarizeConversation(contactName, messagesInput, note?.content || '');
 
   const digest = await prisma.digest.upsert({
     where: { id: chatId },

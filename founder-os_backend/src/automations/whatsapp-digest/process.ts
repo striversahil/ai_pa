@@ -46,6 +46,11 @@ export async function processMessagesToDigests(): Promise<{
     try {
       const previousDigest = await StorageRepository.fetchLatestDigestByChatId(chatId);
 
+      // Personal context for this chat — the founder's private note on what they
+      // want to watch for. Fed to the AI so it surfaces what the founder cares about.
+      const chatNote = await StorageRepository.getChatNote(chatId);
+      const founderContext = chatNote?.content || '';
+
       let summaryResult: any;
       if (previousDigest) {
         logger.info({ chatId }, 'WhatsAppDigest: previous digest found, using incremental summarization');
@@ -63,6 +68,7 @@ export async function processMessagesToDigests(): Promise<{
           previousDigest.summary,
           previousDigest.priority,
           previousActionItemsStr,
+          founderContext,
         );
       } else {
         logger.info({ chatId }, 'WhatsAppDigest: no previous digest, full summarization');
@@ -72,7 +78,8 @@ export async function processMessagesToDigests(): Promise<{
             sender: m.sender,
             body: m.body,
             timestamp: m.timestamp,
-          }))
+          })),
+          founderContext,
         );
       }
 

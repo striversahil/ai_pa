@@ -13,8 +13,9 @@ Every morning at 8:00 AM IST, gathers context from all registered engines (Whats
 ## Flow (what happens inside `service.ts`)
 1. Gather briefing context from engines via `EngineRegistry` (`whatsapp`, `email`, `sales_copilot`).
 2. Fetch pending/in-progress tasks from `StorageRepository`.
-3. `AIService.generateFounderBrief({ meetings, whatsappDigests, unreadEmails, pendingTasks })`.
-4. Save the markdown to the founder notes table.
+3. Fetch open per-chat "Pending From Me" items (overdue first) from `StorageRepository`.
+4. `AIService.generateFounderBrief({ meetings, whatsappDigests, unreadEmails, pendingTasks, pendingFromFounder })` — the brief's "What I Owe" section lists overdue items first so nothing slips through.
+5. Save the markdown to the founder notes table.
 
 ## Trigger
 `type: handler` · cron `0 8 * * *` (IST).

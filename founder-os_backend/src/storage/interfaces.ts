@@ -144,6 +144,13 @@ export interface StoredChatPendingItem {
   resolvedAt: Date | null;
 }
 
+export interface StoredChatNote {
+  chatId: string;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface StorageProvider {
   upsertContact(data: ContactData): Promise<StoredContact>;
   fetchContacts(): Promise<StoredContact[]>;
@@ -173,6 +180,9 @@ export interface StorageProvider {
   resolveChatPendingItem(id: string, resolvedBy?: string): Promise<StoredChatPendingItem | null>;
   resolveChatPendingItemsByChatId(chatId: string, resolvedBy?: string): Promise<number>;
   cancelChatPendingItem(id: string): Promise<StoredChatPendingItem | null>;
+
+  getChatNote(chatId: string): Promise<StoredChatNote | null>;
+  upsertChatNote(chatId: string, content: string): Promise<StoredChatNote>;
 
   recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void>;
   queryAuditEntries(options: { action?: string; entityType?: string; limit?: number; since?: Date }): Promise<AuditEntry[]>;

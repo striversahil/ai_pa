@@ -29,11 +29,35 @@ export async function generateAndSaveMorningBrief(): Promise<string> {
         .join('\n')
     : 'No pending tasks in queue.';
 
+  // Per-chat "Pending From Me" ledger: surface every open item the founder owes,
+  // overdue items first, so nothing slips through. These are the "what I owe in
+  // each conversation" items extracted by the WhatsApp digest automation.
+  const openPending = await StorageRepository.fetchOpenChatPendingItems();
+  const now = Date.now();
+  const sortedPending = openPending.sort((a, b) => {
+    const aOverdue = a.dueDate && new Date(a.dueDate).getTime() < now ? 0 : 1;
+    const bOverdue = b.dueDate && new Date(b.dueDate).getTime() < now ? 0 : 1;
+    if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+    const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+    const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+    return aDue - bDue;
+  });
+  const pendingFromFounderContext = sortedPending.length > 0
+    ? sortedPending
+        .map((item) => {
+          const overdue = item.dueDate && new Date(item.dueDate).getTime() < now;
+          const due = item.dueDate ? ` | Due: ${item.dueDate.toISOString().split('T')[0]}` : ' | Due: None';
+          return `- [${item.chatName || item.chatId}] "${item.description}"${due}${overdue ? ' ⚠️ OVERDUE' : ''}`;
+        })
+        .join('\n')
+    : 'No open items pending from your side. ✅';
+
   const briefMarkdown = await AIService.generateFounderBrief({
     meetings,
     whatsappDigests: whatsappContext,
     unreadEmails: combinedEmailAndZohoContext,
     pendingTasks: tasksContext,
+    pendingFromFounder: pendingFromFounderContext,
   });
 
   await StorageRepository.saveFounderNote(briefMarkdown);

@@ -1,6 +1,6 @@
 import { logger } from '../../shared/logger';
 import { getStorageProvider } from '../../storage';
-import type { StorageProvider, ContactData, StoredContact, ChatPendingItemData, StoredChatPendingItem } from '../../storage/interfaces';
+import type { StorageProvider, ContactData, StoredContact, ChatPendingItemData, StoredChatPendingItem, StoredChatNote } from '../../storage/interfaces';
 
 function getProvider(): StorageProvider {
   return getStorageProvider();
@@ -137,9 +137,18 @@ export class StorageRepository {
     return getProvider().resolveChatPendingItemsByChatId(chatId, resolvedBy);
   }
 
-  static async cancelChatPendingItem(id: string): Promise<StoredChatPendingItem | null> {
+    static async cancelChatPendingItem(id: string): Promise<StoredChatPendingItem | null> {
     logger.info({ id }, 'Cancelling chat pending item');
     return getProvider().cancelChatPendingItem(id);
+  }
+
+  static async getChatNote(chatId: string): Promise<StoredChatNote | null> {
+    return getProvider().getChatNote(chatId);
+  }
+
+  static async upsertChatNote(chatId: string, content: string): Promise<StoredChatNote> {
+    logger.info({ chatId }, 'Saving private chat note');
+    return getProvider().upsertChatNote(chatId, content);
   }
 
   static async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null) {

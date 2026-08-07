@@ -6,6 +6,7 @@ import DppPricesDashboard from "./DppPricesDashboard";
 import SheetAnalysisDashboard from "./SheetAnalysisDashboard";
 import WahaSessionDashboard from "./WahaSessionDashboard";
 import WhatsAppMarketingDashboard from "./WhatsAppMarketingDashboard";
+import EnterpriseOperationsDashboard from "./EnterpriseOperationsDashboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 
 type AutomationTrigger = {
@@ -125,6 +126,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
   }, [automations, pinned]);
 
   const renderDashboard = () => {
+    if (selected === "enterprise-operations-analytics") return <EnterpriseOperationsDashboard />;
     if (selected === "zoho-sent-analyzer") return <ZohoEstimates />;
     if (selected === "dpp-prices-dashboard") return <DppPricesDashboard />;
     if (selected === "waha-session-monitor") return <WahaSessionDashboard />;
@@ -147,9 +149,8 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
         onDragLeave={isDraggable ? () => { if (dropTarget === a.slug) setDropTarget(null); } : undefined}
         onDrop={isDraggable ? (e) => { e.preventDefault(); handleDropOn(a.slug); } : undefined}
         onDragEnd={isDraggable ? () => { setDragSlug(null); setDropTarget(null); } : undefined}
-        className={`bg-zinc-900 border rounded-xl p-5 transition-all duration-200 ${
-          isDraggable ? "cursor-grab active:cursor-grabbing" : ""
-        } ${isDropTarget ? "border-indigo-500 ring-1 ring-indigo-500/50" : "border-zinc-800/80 hover:border-indigo-500/40"} ${isDragging ? "opacity-50" : ""}`}
+        className={`bg-zinc-900 border rounded-xl p-5 transition-all duration-200 ${isDraggable ? "cursor-grab active:cursor-grabbing" : ""
+          } ${isDropTarget ? "border-indigo-500 ring-1 ring-indigo-500/50" : "border-zinc-800/80 hover:border-indigo-500/40"} ${isDragging ? "opacity-50" : ""}`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -163,20 +164,18 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
             <button
               onClick={() => togglePin(a.slug)}
               title={pinned.includes(a.slug) ? "Unpin" : "Pin for quick access"}
-              className={`px-2 py-0.5 text-xs rounded-full border transition-all duration-200 cursor-pointer ${
-                pinned.includes(a.slug)
+              className={`px-2 py-0.5 text-xs rounded-full border transition-all duration-200 cursor-pointer ${pinned.includes(a.slug)
                   ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
                   : "bg-zinc-800 text-zinc-500 border-zinc-700 hover:text-zinc-300 hover:border-zinc-600"
-              }`}
+                }`}
             >
               {pinned.includes(a.slug) ? "📌 Pinned" : "📌 Pin"}
             </button>
             <span
-              className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border ${
-                a.enabled
+              className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border ${a.enabled
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                   : "bg-zinc-800 text-zinc-500 border-zinc-700"
-              }`}
+                }`}
             >
               {a.enabled ? "Active" : "Paused"}
             </span>
@@ -197,11 +196,10 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
           <button
             onClick={() => toggleEnabled(a)}
             disabled={toggling === a.slug}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer border-0 disabled:opacity-50 ${
-              a.enabled
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer border-0 disabled:opacity-50 ${a.enabled
                 ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
                 : "bg-emerald-600 hover:bg-emerald-500 text-white"
-            }`}
+              }`}
           >
             {a.enabled ? "Pause" : "Enable"}
           </button>
@@ -241,11 +239,10 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
             </button>
             <button
               onClick={() => togglePin(selected)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-0 ${
-                pinned.includes(selected)
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-0 ${pinned.includes(selected)
                   ? "bg-indigo-500/10 text-indigo-300 border border-indigo-500/30"
                   : "bg-zinc-800 hover:bg-zinc-700 text-white"
-              }`}
+                }`}
             >
               {pinned.includes(selected) ? "📌 Pinned" : "📌 Pin this dashboard"}
             </button>

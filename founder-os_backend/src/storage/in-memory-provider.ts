@@ -1,5 +1,5 @@
 import { logger } from '../shared/logger';
-import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry, ChatPendingItemData, StoredChatPendingItem } from './interfaces';
+import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry, ChatPendingItemData, StoredChatPendingItem, StoredChatNote } from './interfaces';
 
 function generateId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).substr(2, 9)}`;
@@ -14,6 +14,7 @@ export class InMemoryStorageProvider implements StorageProvider {
   private founderNotes: any[] = [];
   private auditLogs: any[] = [];
   private chatPendingItems: any[] = [];
+  private chatNotes: any[] = [];
 
   constructor() {
     this.seed();
@@ -265,6 +266,28 @@ export class InMemoryStorageProvider implements StorageProvider {
     item.resolvedBy = 'MANUAL';
     item.resolvedAt = new Date();
     return item;
+  }
+
+  async getChatNote(chatId: string): Promise<StoredChatNote | null> {
+    const note = this.chatNotes.find((n: any) => n.chatId === chatId);
+    return note || null;
+  }
+
+  async upsertChatNote(chatId: string, content: string): Promise<StoredChatNote> {
+    const existing = this.chatNotes.find((n: any) => n.chatId === chatId);
+    if (existing) {
+      existing.content = content;
+      existing.updatedAt = new Date();
+      return existing;
+    }
+    const note = {
+      chatId,
+      content,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.chatNotes.push(note);
+    return note;
   }
 
   async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void> {

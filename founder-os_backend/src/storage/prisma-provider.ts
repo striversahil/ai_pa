@@ -1,7 +1,7 @@
 import { prisma } from '../shared/prisma';
 import { logger } from '../shared/logger';
 import { Priority, TaskStatus } from '@prisma/client';
-import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry, ChatPendingItemData, StoredChatPendingItem } from './interfaces';
+import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry, ChatPendingItemData, StoredChatPendingItem, StoredChatNote } from './interfaces';
 
 export class PrismaStorageProvider implements StorageProvider {
   async upsertContact(data: ContactData): Promise<StoredContact> {
@@ -231,6 +231,19 @@ export class PrismaStorageProvider implements StorageProvider {
     });
     if (item.count === 0) return null;
     return prisma.chatPendingItem.findUnique({ where: { id } }) as Promise<StoredChatPendingItem | null>;
+  }
+
+  async getChatNote(chatId: string): Promise<StoredChatNote | null> {
+    return prisma.chatNote.findUnique({ where: { chatId } }) as Promise<StoredChatNote | null>;
+  }
+
+  async upsertChatNote(chatId: string, content: string): Promise<StoredChatNote> {
+    const note = await prisma.chatNote.upsert({
+      where: { chatId },
+      create: { chatId, content },
+      update: { content },
+    });
+    return note as StoredChatNote;
   }
 
   async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void> {

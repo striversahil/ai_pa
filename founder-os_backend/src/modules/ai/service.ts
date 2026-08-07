@@ -132,7 +132,8 @@ export class AIService {
    */
   static async summarizeConversation(
     chatName: string,
-    messages: Array<{ sender: string; body: string; timestamp: Date; replyTo?: string | null }>
+    messages: Array<{ sender: string; body: string; timestamp: Date; replyTo?: string | null }>,
+    founderContext = ''
   ): Promise<SummaryOutput> {
     const startTime = Date.now();
     logger.info({ chatName, isMocked: isMockLLM }, 'AIService: digesting conversation');
@@ -219,7 +220,7 @@ export class AIService {
           messages: [
             { role: 'system', content: summarizeConversationPrompt },
             {
-              role: 'user', content: `Chat Name: ${chatName}\n\nMessages:\n${messages.map((m) => {
+              role: 'user', content: `Chat Name: ${chatName}\n${founderContext.length > 0 ? `Founder's personal context for this chat (actively watch for these):\n${founderContext}\n` : ''}\nMessages:\n${messages.map((m) => {
                 const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
                 const quoted = m.replyTo ? ` [replying to: "${m.replyTo}"]` : '';
                 return `[${ts}] ${m.sender}: ${m.body}${quoted}`;
@@ -252,6 +253,7 @@ export class AIService {
     previousSummary: string,
     previousPriority: string,
     previousActionItems: string,
+    founderContext = '',
   ): Promise<SummaryOutput> {
     const startTime = Date.now();
     logger.info({ chatName, isMocked: isMockLLM }, 'AIService: incremental digesting conversation');
@@ -292,7 +294,7 @@ export class AIService {
           messages: [
             { role: 'system', content: systemContent },
             {
-              role: 'user', content: `Chat Name: ${chatName}\n\nNew Messages:\n${messages.map((m) => {
+              role: 'user', content: `Chat Name: ${chatName}\n${founderContext.length > 0 ? `Founder's personal context for this chat (actively watch for these):\n${founderContext}\n` : ''}\nNew Messages:\n${messages.map((m) => {
                 const ts = typeof m.timestamp === 'string' ? m.timestamp : (m.timestamp instanceof Date ? m.timestamp.toISOString() : new Date(m.timestamp).toISOString());
                 return `[${ts}] ${m.sender}: ${m.body}`;
               }).join('\n')}`
@@ -322,6 +324,7 @@ export class AIService {
     whatsappDigests: string;
     unreadEmails: string;
     pendingTasks: string;
+    pendingFromFounder: string;
   }): Promise<string> {
     const startTime = Date.now();
     logger.info({ isMocked: isMockLLM }, 'AIService: generating morning brief');
@@ -345,6 +348,9 @@ export class AIService {
 - [PENDING] Update pitch deck with latest revenue run-rate (Due: Tomorrow, Source: WhatsApp)
 - [PENDING] Prepare Q3 valuations & growth slide deck figures (Due: Tomorrow, Source: WhatsApp)
 
+## ⏳ What I Owe (Pending From Me)
+${context.pendingFromFounder}
+
 ## 🎯 Suggested Focus Areas for Today
 1. Update pitch deck revenue run-rates before the 10:00 AM call.
 2. Complete Stripe document uploads to avoid payout disruption.
@@ -357,7 +363,8 @@ export class AIService {
         .replace('{meetings}', context.meetings)
         .replace('{whatsappDigests}', context.whatsappDigests)
         .replace('{unreadEmails}', context.unreadEmails)
-        .replace('{pendingTasks}', context.pendingTasks);
+        .replace('{pendingTasks}', context.pendingTasks)
+        .replace('{pendingFromFounder}', context.pendingFromFounder);
 
       const response = await this.callLLM(async (client, model) => {
         return client.chat.completions.create({

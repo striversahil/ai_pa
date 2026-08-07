@@ -72,6 +72,10 @@ export default function WhatsAppDashboard() {
 
   const [pendingChats, setPendingChats] = useState<PendingChat[]>([]);
   const [isLoadingPending, setIsLoadingPending] = useState(false);
+  const [showOwePanel, setShowOwePanel] = useState(true);
+
+  const [noteText, setNoteText] = useState("");
+  const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -197,6 +201,36 @@ export default function WhatsAppDashboard() {
     }
   };
 
+  const fetchNote = async (contactUid: string) => {
+    try {
+      const res = await fetch(`/api/whatsapp/contacts/${encodeURIComponent(contactUid)}/note`);
+      if (res.ok) {
+        const data = await res.json();
+        setNoteText(data.content || "");
+        setNoteStatus("idle");
+      }
+    } catch (err) {
+      console.error("Failed to fetch note:", err);
+    }
+  };
+
+  const saveNote = async () => {
+    if (!selectedContactUid) return;
+    setNoteStatus("saving");
+    try {
+      const res = await fetch(`/api/whatsapp/contacts/${encodeURIComponent(selectedContactUid)}/note`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: noteText }),
+      });
+      setNoteStatus(res.ok ? "saved" : "error");
+    } catch (err) {
+      console.error("Failed to save note:", err);
+      setNoteStatus("error");
+    }
+    setTimeout(() => setNoteStatus((s) => (s === "saved" ? "idle" : s)), 2000);
+  };
+
   useEffect(() => {
     fetchContacts();
     fetchDigests();
@@ -206,6 +240,7 @@ export default function WhatsAppDashboard() {
   useEffect(() => {
     if (selectedContactUid) {
       fetchMessages(selectedContactUid);
+      fetchNote(selectedContactUid);
       const exists = digestList.some(d => d.id === selectedContactUid || d.chatId === selectedContactUid);
       if (!exists) {
         generateContactSummary(selectedContactUid);
@@ -294,6 +329,7 @@ export default function WhatsAppDashboard() {
 
       if (res.ok) {
         await fetchMessages(selectedContactUid);
+        fetchPendingItems();
       } else {
         alert("Failed to send message.");
       }
@@ -313,6 +349,21 @@ export default function WhatsAppDashboard() {
     const chat = pendingChats.find((c) => c.chatId === selectedContactUid);
     return chat ? chat.items : [];
   }, [pendingChats, selectedContactUid]);
+
+  const oweChats = useMemo(() => {
+    const now = Date.now();
+    return pendingChats.map((chat) => ({
+      ...chat,
+      items: [...chat.items].sort((a, b) => {
+        const aOverdue = a.dueDate && new Date(a.dueDate).getTime() < now ? 0 : 1;
+        const bOverdue = b.dueDate && new Date(b.dueDate).getTime() < now ? 0 : 1;
+        if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+        const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+        const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+        return aDue - bDue;
+      }),
+    }));
+  }, [pendingChats]);
 
   const pendingCountForChat = useMemo(() => {
     const map: Record<string, number> = {};
@@ -355,6 +406,72 @@ export default function WhatsAppDashboard() {
           <p className="text-sm text-zinc-400">AI-powered chat summaries and real-time messaging</p>
         </div>
       </div>
+
+      {/* Global "What I Owe" panel: every chat with open pending-from-founder items */}
+      {pendingChats.length > 0 && (
+        <div className="bg-zinc-900/30 border border-zinc-800/80 rounded-2xl p-4">
+          <button
+            onClick={() => setShowOwePanel(!showOwePanel)}
+            className="w-full flex items-center justify-between cursor-pointer border-0 bg-transparent"
+          >
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-white text-sm flex items-center gap-2">
+                <span>⏳</span> What I Owe
+              </h2>
+              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                {pendingChats.reduce((n, c) => n + c.openCount, 0)} open
+              </span>
+            </div>
+            <span className="text-zinc-500 text-xs">{showOwePanel ? "▾ Collapse" : "▸ Expand"}</span>
+          </button>
+
+          {showOwePanel && (
+            <div className="mt-3 space-y-3">
+              {isLoadingPending ? (
+                <div className="text-xs text-zinc-500 animate-pulse">Loading pending items...</div>
+              ) : (
+                oweChats.map((chat) => (
+                  <div key={chat.chatId} className="bg-zinc-950/40 border border-zinc-850 rounded-xl p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => setSelectedContactUid(chat.chatId)}
+                        className="text-xs font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer border-0 bg-transparent p-0 text-left"
+                      >
+                        {chat.chatName}
+                      </button>
+                      <span className="text-[9px] font-extrabold text-zinc-500 shrink-0">{chat.openCount} item{chat.openCount !== 1 ? "s" : ""}</span>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {chat.items.map((item) => {
+                        const isOverdue = item.dueDate && new Date(item.dueDate).getTime() < Date.now();
+                        return (
+                          <div key={item.id} className={`flex items-start justify-between gap-2 rounded-lg px-2.5 py-2 border ${isOverdue ? "bg-rose-500/5 border-rose-500/30" : "bg-zinc-900/60 border-zinc-800"}`}>
+                            <div className="space-y-0.5 min-w-0">
+                              <p className={`text-xs leading-relaxed ${isOverdue ? "text-rose-200" : "text-zinc-200"}`}>{item.description}</p>
+                              {item.dueDate && (
+                                <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-400" : "text-zinc-500"}`}>
+                                  {isOverdue ? "⚠️ Overdue" : "Due"}: {new Date(item.dueDate).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => resolvePendingItem(item.id)}
+                              title="Mark as done"
+                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
+                            >
+                              ✓ Done
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[800px]">
         {/* Left panel: Contacts */}
@@ -530,6 +647,34 @@ export default function WhatsAppDashboard() {
                 <h3 className="font-extrabold text-white text-sm flex items-center gap-1.5 pb-2 border-b border-zinc-850">
                   <span>🧠</span> AI Conversation Audit
                 </h3>
+              </div>
+
+              {/* Private per-chat note (Personal Context) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase block">📝 My Note (private)</span>
+                  <span className="text-[9px] text-zinc-600 italic block">Only you can see this</span>
+                </div>
+                <textarea
+                  rows={3}
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  onBlur={saveNote}
+                  placeholder="Why you're following this conversation & what to watch for — e.g. 'Awaiting revised PO timeline; I owe Rahul the new pricing. Flag any mention of delivery delays.'"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 resize-none"
+                />
+                <div className="flex items-center justify-between">
+                  <span className={`text-[9px] font-bold ${noteStatus === "saved" ? "text-emerald-400" : noteStatus === "error" ? "text-rose-400" : noteStatus === "saving" ? "text-amber-400" : "text-transparent"}`}>
+                    {noteStatus === "saved" ? "✓ Saved" : noteStatus === "saving" ? "Saving..." : noteStatus === "error" ? "Failed to save" : "·"}
+                  </span>
+                  <button
+                    onClick={saveNote}
+                    disabled={noteStatus === "saving"}
+                    className="px-2.5 py-1 text-[9px] bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 font-extrabold rounded border border-indigo-500/30 cursor-pointer disabled:opacity-40"
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
 
               {/* Per-chat "What I Owe" ledger */}
