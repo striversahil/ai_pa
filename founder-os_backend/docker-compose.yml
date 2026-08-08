@@ -88,7 +88,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
-      - WAHA_ENGINE=WEBJS
+      - WAHA_ENGINE=NOWEB
+      - WHATSAPP_DEFAULT_ENGINE=NOWEB
       - WAHA_PRINT_QR=true
       - WAHA_API_KEY=MyLocalSecretKey!
       - TZ=Asia/Kolkata
