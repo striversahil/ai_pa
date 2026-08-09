@@ -369,12 +369,14 @@ Zoho Books API
       ▼  GET /estimates?status=sent
 Fetch all active sent estimates
       │
-      ▼  For each estimate:
-Fetch internal comments from Zoho
+      ▼  Every tick, for ALL estimates (in parallel):
+Fetch internal comments from Zoho (comments do NOT bump last_modified_time,
+so this runs unconditionally; new comments are detected by comparing Zoho's
+max comment_id against the highest comment_id already in the DB)
       │
-      ▼  Check DB: does Classification exist with same comment count?
-      ├── YES → Skip LLM call (cached result)
-      └── NO  → Call Groq LLM with classifyEstimate.ts prompt
+      ▼  Check DB: new comment_id, no Classification, estimate modified, or forced?
+      ├── NO  → Skip LLM call
+      └── YES → Call Groq LLM with classifyEstimate.ts prompt
                       │
                       ▼  Returns JSON:
                  { intentScore, meaningfulUpdate, followUpMissing,

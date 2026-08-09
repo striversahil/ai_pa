@@ -1,0 +1,16 @@
+{
+  "id": "telecalling-agent-analysis",
+  "name": "Telecalling Agents → Dashboard",
+  "description": "Reads the Telecalling Agents Google Sheet and computes per-agent connection, lead-gen and SO conversion metrics for the dashboard. Point config.sheetUrl at any Google Sheet to onboard a new analysis.",
+  "type": "handler",
+  "trigger": {
+    "type": "schedule",
+    "cron": "*/30 * * * *"
+  },
+  "config": {
+    "sheetUrl": "https://docs.google.com/spreadsheets/d/1OsQevXQpPT1x2iJgcg0lgUcOInxjZh3tvfNjxAbcENs/edit",
+    "range": "A1:Z1000",
+    "maxDailySO": 50
+  },
+  "enabled": true
+}

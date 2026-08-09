@@ -1,0 +1,4 @@
+{
+  "typescript.tsdk": "./founder-os_backend/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}

@@ -1,0 +1,1898 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Operations & Order Analytics Dashboard</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f7ff',
+                            100: '#e0effe',
+                            500: '#2563eb',
+                            600: '#1d4ed8',
+                            700: '#1e40af',
+                            800: '#1e3a8a',
+                            900: '#172554',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Google Fonts & FontAwesome -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.03); }
+        .dark ::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); }
+        ::-webkit-scrollbar-thumb { background: rgba(156,163,175,0.4); border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(107,114,128,0.7); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-200 flex flex-col">
+
+    <!-- Sticky Navigation Topbar -->
+    <header class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-40 shadow-sm transition-colors">
+        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-gradient-to-tr from-blue-700 to-indigo-600 text-white rounded-xl shadow-md shadow-blue-500/20">
+                    <i class="fa-solid fa-chart-line text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="text-base font-bold leading-tight text-slate-900 dark:text-white flex items-center gap-2">
+                        Operations & Order Analytics Dashboard
+                        <span class="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            Schema Compliant
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">18-Point Complete Enterprise Supply Chain Analysis</p>
+                </div>
+            </div>
+
+            <!-- Header Quick Controls -->
+            <div class="flex items-center gap-2 sm:gap-3">
+                <!-- Quick Navigation Jump Dropdown -->
+                <div class="relative hidden lg:block">
+                    <select id="quickNav" onchange="scrollToSection(this.value)" class="pl-3 pr-8 py-1.5 text-xs font-semibold bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-xl text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="sec-summary">1. Executive Summary</option>
+                        <option value="sec-dashboard">2. Visual Distribution</option>
+                        <option value="sec-orders">3. Master Orders Table</option>
+                        <option value="sec-critical">4. Critical Orders</option>
+                        <option value="sec-procurement">5. Procurement</option>
+                        <option value="sec-dispatch">6. Dispatch Control</option>
+                        <option value="sec-payments">7. Payments & Risk</option>
+                        <option value="sec-customer-risk">8. Customer Risk Matrix</option>
+                        <option value="sec-priority-calls">9. Priority Calls</option>
+                        <option value="sec-exceptions">10. System Exceptions</option>
+                        <option value="sec-departments">11. Department Analysis</option>
+                        <option value="sec-root-causes">12. Root Cause Analysis</option>
+                        <option value="sec-predictions">13. Operations Predictions</option>
+                        <option value="sec-kpis">14. Core KPIs</option>
+                        <option value="sec-actions">15. Department Actions</option>
+                        <option value="sec-top20">16. Top 20 Priorities</option>
+                        <option value="sec-crm">17. CRM Improvements</option>
+                        <option value="sec-automation">18. Automation Triggers</option>
+                    </select>
+                </div>
+
+                <!-- Theme Toggle Button -->
+                <button id="themeToggleBtn" onclick="toggleTheme()" class="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all" title="Toggle Dark/Light Mode">
+                    <i id="themeIcon" class="fa-solid fa-moon text-base"></i>
+                </button>
+
+                <!-- CSV Export -->
+                <button onclick="exportToCSV()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-300 dark:border-slate-600 rounded-xl shadow-sm transition-all">
+                    <i class="fa-solid fa-file-csv text-emerald-600 dark:text-emerald-400"></i>
+                    <span class="hidden sm:inline">Export Orders CSV</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Layout -->
+    <main class="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-10">
+
+        <!-- SECTION 1: SUMMARY -->
+        <section id="sec-summary" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs">1</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Executive Operations Summary</h2>
+                </div>
+                <div class="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-day text-blue-500"></i>
+                    <span>Analysis Date: <strong id="sum-analysis-date" class="text-slate-700 dark:text-slate-200">Loading...</strong></span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <div class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Total Orders</div>
+                    <div id="sum-total-orders" class="text-2xl font-black text-slate-900 dark:text-white mt-1">0</div>
+                    <div class="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-1">Active Pipeline</div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <div class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Total Value</div>
+                    <div id="sum-total-value" class="text-xl font-extrabold text-slate-900 dark:text-white mt-1">₹0</div>
+                    <div class="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1">Gross Booking</div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <div class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Avg Order Value</div>
+                    <div id="sum-avg-value" class="text-xl font-extrabold text-slate-900 dark:text-white mt-1">₹0</div>
+                    <div class="text-[11px] text-slate-400 font-normal mt-1">Per Order Ticket</div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <div class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Max / Min Value</div>
+                    <div class="mt-1 flex flex-col">
+                        <span id="sum-highest-value" class="text-xs font-bold text-emerald-600 dark:text-emerald-400">Max: ₹0</span>
+                        <span id="sum-lowest-value" class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Min: ₹0</span>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <div class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">High Value Orders</div>
+                    <div id="sum-high-value-count" class="text-2xl font-black text-indigo-600 dark:text-indigo-400 mt-1">0</div>
+                    <div class="text-[11px] text-slate-400 font-medium mt-1">Value &gt; ₹1,50,000</div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <div class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Customer Mix</div>
+                    <div class="mt-1 flex items-center justify-between text-xs">
+                        <span class="text-blue-600 dark:text-blue-400 font-bold">New: <strong id="sum-new-cust">0</strong></span>
+                        <span class="text-slate-600 dark:text-slate-300 font-bold">Repeat: <strong id="sum-repeat-cust">0</strong></span>
+                    </div>
+                    <div class="text-[11px] text-slate-400 mt-1">Relationship split</div>
+                </div>
+            </div>
+
+            <!-- Health Score & Risk Gauge Banner -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="p-4 rounded-2xl bg-gradient-to-r from-emerald-900/10 to-teal-900/10 border border-emerald-500/20 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Overall System Health Score</div>
+                        <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Composite metric based on delays, stock readiness & collections</div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div id="sum-health-score" class="text-3xl font-black text-emerald-600 dark:text-emerald-400">82/100</div>
+                        <div class="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <div id="sum-health-bar" class="h-full bg-emerald-500" style="width: 82%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="p-4 rounded-2xl bg-gradient-to-r from-rose-900/10 to-amber-900/10 border border-rose-500/20 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">Management Operational Risk Score</div>
+                        <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Risk index derived from overdue dispatches & uncollected balances</div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div id="sum-risk-score" class="text-3xl font-black text-rose-600 dark:text-rose-400">44/100</div>
+                        <div class="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <div id="sum-risk-bar" class="h-full bg-rose-500" style="width: 44%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 2: DASHBOARD Visual Distributions -->
+        <section id="sec-dashboard" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs">2</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Dashboard Visual Distribution Charts</h2>
+                </div>
+                <span class="text-xs text-slate-500 dark:text-slate-400">5 Key Categorical Breakdowns</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <!-- 2.1 Stage Distribution -->
+                <div class="p-5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col">
+                    <h3 class="font-bold text-sm text-slate-900 dark:text-white mb-1">Stage Distribution</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Orders grouped by workflow lifecycle stage</p>
+                    <div class="relative flex-1 min-h-[220px]">
+                        <canvas id="chartStage"></canvas>
+                    </div>
+                </div>
+
+                <!-- 2.2 Stock Distribution -->
+                <div class="p-5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col">
+                    <h3 class="font-bold text-sm text-slate-900 dark:text-white mb-1">Stock Availability Distribution</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Inventory readiness breakdown</p>
+                    <div class="relative flex-1 min-h-[220px]">
+                        <canvas id="chartStock"></canvas>
+                    </div>
+                </div>
+
+                <!-- 2.3 Payment Distribution -->
+                <div class="p-5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col">
+                    <h3 class="font-bold text-sm text-slate-900 dark:text-white mb-1">Payment Status Breakdown</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Financial clearance levels across active orders</p>
+                    <div class="relative flex-1 min-h-[220px]">
+                        <canvas id="chartPayment"></canvas>
+                    </div>
+                </div>
+
+                <!-- 2.4 Dispatch Distribution -->
+                <div class="p-5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col">
+                    <h3 class="font-bold text-sm text-slate-900 dark:text-white mb-1">Dispatch Logistics Status</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Fulfillment scheduling and blockage tracking</p>
+                    <div class="relative flex-1 min-h-[220px]">
+                        <canvas id="chartDispatch"></canvas>
+                    </div>
+                </div>
+
+                <!-- 2.5 Customer Type Distribution -->
+                <div class="p-5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col lg:col-span-2">
+                    <h3 class="font-bold text-sm text-slate-900 dark:text-white mb-1">Customer Type & Exposure Distribution</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Order count & order value ratio by client tier</p>
+                    <div class="relative flex-1 min-h-[220px]">
+                        <canvas id="chartCustomerType"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 3: ORDERS Master Table -->
+        <section id="sec-orders" class="scroll-mt-20 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs">3</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Master Sales Orders Table</h2>
+                </div>
+                
+                <div class="flex items-center gap-2">
+                    <input type="text" id="orderSearchInput" oninput="filterMasterOrders()" placeholder="Search SO, Estimate, Customer, Reason..." 
+                           class="px-3 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 dark:text-slate-100 min-w-[240px]">
+                    
+                    <select id="orderRiskFilter" onchange="filterMasterOrders()" class="px-3 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl text-slate-700 dark:text-slate-200">
+                        <option value="all">All Risk Levels</option>
+                        <option value="Critical">Critical Risk</option>
+                        <option value="High">High Risk</option>
+                        <option value="Medium">Medium Risk</option>
+                        <option value="Low">Low Risk</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">
+                                <th class="py-3 px-4">SO / Estimate</th>
+                                <th class="py-3 px-4">Customer</th>
+                                <th class="py-3 px-4 text-right">Order Value</th>
+                                <th class="py-3 px-4">Stage / Priority</th>
+                                <th class="py-3 px-4">Stock / Payment</th>
+                                <th class="py-3 px-4">Dispatch Status</th>
+                                <th class="py-3 px-4 text-center">Delay (Days)</th>
+                                <th class="py-3 px-4">Next Action / Owner</th>
+                            </tr>
+                        </thead>
+                        <tbody id="masterOrdersTableBody" class="divide-y divide-slate-100 dark:divide-slate-700/50 text-xs">
+                            <!-- Injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 4: CRITICAL ORDERS -->
+        <section id="sec-critical" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-rose-600 text-white flex items-center justify-center font-bold text-xs">4</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Critical Orders Escalation List</h2>
+                </div>
+                <span class="px-2.5 py-0.5 text-xs font-bold rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                    Immediate Executive Action Required
+                </span>
+            </div>
+
+            <div id="criticalOrdersGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 5: PROCUREMENT -->
+        <section id="sec-procurement" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">5</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Procurement & Inventory Operations</h2>
+                </div>
+                <div class="flex gap-2">
+                    <span class="px-2.5 py-1 text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-lg">
+                        Waiting Stock: <span id="proc-sum-waiting">0</span>
+                    </span>
+                    <span class="px-2.5 py-1 text-xs font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 rounded-lg">
+                        Partial Stock: <span id="proc-sum-partial">0</span>
+                    </span>
+                    <span class="px-2.5 py-1 text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 rounded-lg">
+                        Vendor Pending: <span id="proc-sum-vendor">0</span>
+                    </span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <!-- Stock Waiting & Partial Orders -->
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-3">
+                    <h3 class="font-bold text-xs uppercase tracking-wider text-amber-600 dark:text-amber-400">Orders Waiting / Partial Stock</h3>
+                    <div id="proc-stock-list" class="space-y-2 text-xs"></div>
+                </div>
+
+                <!-- Vendor Pending & Missing ETAs -->
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-3">
+                    <h3 class="font-bold text-xs uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Vendor Pending & Missing ETAs</h3>
+                    <div id="proc-vendor-list" class="space-y-2 text-xs"></div>
+                </div>
+
+                <!-- Vendor Priority List -->
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-3">
+                    <h3 class="font-bold text-xs uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Vendor Priority Follow-up Sheet</h3>
+                    <div id="proc-priority-list" class="space-y-2 text-xs"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 6: DISPATCH -->
+        <section id="sec-dispatch" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center font-bold text-xs">6</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Dispatch Logistics Command</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-2xl space-y-2">
+                    <div class="font-bold text-xs text-emerald-800 dark:text-emerald-300 flex justify-between">
+                        <span><i class="fa-solid fa-truck-ramp-box mr-1"></i> Ready Today</span>
+                        <span id="disp-ready-count" class="px-2 py-0.5 bg-emerald-200 dark:bg-emerald-800 rounded-full text-[10px]">0</span>
+                    </div>
+                    <div id="disp-ready-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-2xl space-y-2">
+                    <div class="font-bold text-xs text-blue-800 dark:text-blue-300 flex justify-between">
+                        <span><i class="fa-solid fa-calendar-day mr-1"></i> Scheduled Today</span>
+                        <span id="disp-sched-count" class="px-2 py-0.5 bg-blue-200 dark:bg-blue-800 rounded-full text-[10px]">0</span>
+                    </div>
+                    <div id="disp-sched-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800 rounded-2xl space-y-2">
+                    <div class="font-bold text-xs text-rose-800 dark:text-rose-300 flex justify-between">
+                        <span><i class="fa-solid fa-ban mr-1"></i> Blocked Orders</span>
+                        <span id="disp-block-count" class="px-2 py-0.5 bg-rose-200 dark:bg-rose-800 rounded-full text-[10px]">0</span>
+                    </div>
+                    <div id="disp-block-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl space-y-2">
+                    <div class="font-bold text-xs text-amber-800 dark:text-amber-300 flex justify-between">
+                        <span><i class="fa-solid fa-triangle-exclamation mr-1"></i> Delayed Dispatch</span>
+                        <span id="disp-delay-count" class="px-2 py-0.5 bg-amber-200 dark:bg-amber-800 rounded-full text-[10px]">0</span>
+                    </div>
+                    <div id="disp-delay-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-2xl space-y-2">
+                    <div class="font-bold text-xs text-purple-800 dark:text-purple-300 flex justify-between">
+                        <span><i class="fa-solid fa-van-shuttle mr-1"></i> Transport Pending</span>
+                        <span id="disp-trans-count" class="px-2 py-0.5 bg-purple-200 dark:bg-purple-800 rounded-full text-[10px]">0</span>
+                    </div>
+                    <div id="disp-trans-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-cyan-50/50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-2xl space-y-2">
+                    <div class="font-bold text-xs text-cyan-800 dark:text-cyan-300 flex justify-between">
+                        <span><i class="fa-solid fa-file-invoice mr-1"></i> Documentation Pending</span>
+                        <span id="disp-doc-count" class="px-2 py-0.5 bg-cyan-200 dark:bg-cyan-800 rounded-full text-[10px]">0</span>
+                    </div>
+                    <div id="disp-doc-list" class="space-y-1 text-xs"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 7: PAYMENTS -->
+        <section id="sec-payments" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">7</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Payments & Financial Risk Management</h2>
+                </div>
+                <div class="text-xs font-bold text-slate-700 dark:text-slate-200">
+                    Total Outstanding Balance: <span id="pay-total-outstanding" class="text-rose-600 dark:text-rose-400 font-extrabold">₹0</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h3 class="font-bold text-xs text-amber-600 dark:text-amber-400 uppercase tracking-wider">Advance Pending</h3>
+                    <div id="pay-adv-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h3 class="font-bold text-xs text-rose-600 dark:text-rose-400 uppercase tracking-wider">Full Payment Pending</h3>
+                    <div id="pay-full-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h3 class="font-bold text-xs text-blue-600 dark:text-blue-400 uppercase tracking-wider">Against Delivery / LC</h3>
+                    <div id="pay-cad-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h3 class="font-bold text-xs text-purple-600 dark:text-purple-400 uppercase tracking-wider">Payment Hold / Blocked</h3>
+                    <div id="pay-hold-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h3 class="font-bold text-xs text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Received Today</h3>
+                    <div id="pay-rec-list" class="space-y-1 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h3 class="font-bold text-xs text-red-600 dark:text-red-400 uppercase tracking-wider">High Risk Exposure Accounts</h3>
+                    <div id="pay-risk-list" class="space-y-1 text-xs"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 8: CUSTOMER RISK MATRIX -->
+        <section id="sec-customer-risk" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-orange-600 text-white flex items-center justify-center font-bold text-xs">8</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Customer Risk Assessment Matrix</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="customerRiskGrid">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 9: PRIORITY CALLS -->
+        <section id="sec-priority-calls" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold text-xs">9</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Priority Call Desk & Follow-up Script</h2>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700 font-semibold text-slate-500 uppercase tracking-wider">
+                                <th class="py-3 px-4">Priority</th>
+                                <th class="py-3 px-4">SO Number</th>
+                                <th class="py-3 px-4">Customer</th>
+                                <th class="py-3 px-4">Trigger Reason</th>
+                                <th class="py-3 px-4">Question to Ask Customer</th>
+                                <th class="py-3 px-4">Recommended Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="priorityCallsTableBody" class="divide-y divide-slate-100 dark:divide-slate-700/50">
+                            <!-- Injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 10: EXCEPTIONS -->
+        <section id="sec-exceptions" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-red-600 text-white flex items-center justify-center font-bold text-xs">10</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">System & Process Exceptions Log</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="exceptionsGrid">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 11: DEPARTMENT ANALYSIS -->
+        <section id="sec-departments" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-blue-700 text-white flex items-center justify-center font-bold text-xs">11</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Departmental Health & Issues Analysis</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4" id="deptHealthGrid">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 12: ROOT CAUSES -->
+        <section id="sec-root-causes" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-yellow-600 text-white flex items-center justify-center font-bold text-xs">12</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Root Cause & Financial Impact Analysis</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="rootCausesGrid">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 13: PREDICTIONS -->
+        <section id="sec-predictions" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-indigo-700 text-white flex items-center justify-center font-bold text-xs">13</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Predictive Operations Analytics</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <h3 class="font-bold text-xs text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-2">Predicted Dispatch Today</h3>
+                    <div id="pred-today-list" class="space-y-1.5 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <h3 class="font-bold text-xs text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-2">Predicted Dispatch Tomorrow</h3>
+                    <div id="pred-tomorrow-list" class="space-y-1.5 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <h3 class="font-bold text-xs text-rose-600 dark:text-rose-400 uppercase tracking-wider mb-2">Likely SLA Breach Alert</h3>
+                    <div id="pred-sla-list" class="space-y-1.5 text-xs"></div>
+                </div>
+
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+                    <h3 class="font-bold text-xs text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-2">Management Attention Required</h3>
+                    <div id="pred-mgmt-list" class="space-y-1.5 text-xs"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 14: KPIS -->
+        <section id="sec-kpis" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-cyan-600 text-white flex items-center justify-center font-bold text-xs">14</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Core Operational KPIs & SLA Metrics</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3" id="kpisGrid">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 15: ACTION ITEMS -->
+        <section id="sec-actions" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-bold text-xs">15</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Departmental Action Items Taskboard</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="actionItemsGrid">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 16: TOP 20 PRIORITIES -->
+        <section id="sec-top20" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-rose-700 text-white flex items-center justify-center font-bold text-xs">16</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Top 20 Operational Priorities</h2>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700 font-semibold text-slate-500 uppercase tracking-wider">
+                                <th class="py-3 px-4 text-center">Rank</th>
+                                <th class="py-3 px-4">Priority Issue</th>
+                                <th class="py-3 px-4">Customer</th>
+                                <th class="py-3 px-4">SO Number</th>
+                                <th class="py-3 px-4">Impact</th>
+                                <th class="py-3 px-4">Owner</th>
+                                <th class="py-3 px-4 text-right">Deadline</th>
+                            </tr>
+                        </thead>
+                        <tbody id="top20TableBody" class="divide-y divide-slate-100 dark:divide-slate-700/50">
+                            <!-- Injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 17: CRM IMPROVEMENTS -->
+        <section id="sec-crm" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-slate-700 text-white flex items-center justify-center font-bold text-xs">17</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">CRM & Data Governance Audit</h2>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="crmGrid">
+                <!-- Injected dynamically -->
+            </div>
+        </section>
+
+        <!-- SECTION 18: AUTOMATION TRIGGERS -->
+        <section id="sec-automation" class="scroll-mt-20 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-7 h-7 rounded-lg bg-blue-800 text-white flex items-center justify-center font-bold text-xs">18</span>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Workflow Automation & Alert Triggers</h2>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm overflow-hidden mb-8">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700 font-semibold text-slate-500 uppercase tracking-wider">
+                                <th class="py-3 px-4">Priority</th>
+                                <th class="py-3 px-4">Event Trigger</th>
+                                <th class="py-3 px-4">Condition Logic</th>
+                                <th class="py-3 px-4">Automated Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="automationTableBody" class="divide-y divide-slate-100 dark:divide-slate-700/50">
+                            <!-- Injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // Full JSON Data Payload matching exact user schema
+        const schemaData = {
+          "summary": {
+            "analysis_date": "2026-08-05",
+            "total_orders": 27,
+            "total_order_value": 1903031.29,
+            "average_order_value": 70482.64,
+            "highest_order_value": 395040.20,
+            "lowest_order_value": 0.00,
+            "high_value_orders": 6,
+            "new_customers": 8,
+            "repeat_customers": 19,
+            "overall_health_score": 82,
+            "management_risk_score": 44
+          },
+
+          "dashboard": {
+            "stage_distribution": [
+              { "stage": "Procurement Pending", "count": 7, "value": 485000.00 },
+              { "stage": "Quality Check", "count": 5, "value": 310000.00 },
+              { "stage": "Packing & Documentation", "count": 6, "value": 412000.00 },
+              { "stage": "Ready for Dispatch", "count": 5, "value": 520000.00 },
+              { "stage": "Dispatched In-Transit", "count": 4, "value": 176031.29 }
+            ],
+            "stock_distribution": [
+              { "status": "In Stock Ready", "count": 14, "value": 1020000.00 },
+              { "status": "Partial Stock Available", "count": 8, "value": 610000.00 },
+              { "status": "Out of Stock / PO Raised", "count": 5, "value": 273031.29 }
+            ],
+            "payment_distribution": [
+              { "status": "100% Advance Received", "count": 12, "value": 850000.00 },
+              { "status": "Partial Advance / Credit", "count": 9, "value": 720000.00 },
+              { "status": "Payment Hold / Outstanding", "count": 6, "value": 333031.29 }
+            ],
+            "dispatch_distribution": [
+              { "status": "On Schedule", "count": 11, "value": 790000.00 },
+              { "status": "Customer Hold", "count": 8, "value": 580000.00 },
+              { "status": "Transporter Delayed", "count": 5, "value": 380000.00 },
+              { "status": "Doc / Size Verification Issue", "count": 3, "value": 153031.29 }
+            ],
+            "customer_type_distribution": [
+              { "type": "Enterprise Corporate", "count": 9, "value": 980000.00 },
+              { "type": "SME / Regional Flour Mills", "count": 12, "value": 710000.00 },
+              { "type": "Dealer / Agency Network", "count": 6, "value": 213031.29 }
+            ]
+          },
+
+          "orders": [
+            {
+              "so_number": "SO-11347",
+              "estimate_number": "EST-022522",
+              "customer": "Bharat Machinery Store",
+              "order_value": 342542.32,
+              "client_type": "Dealer / Agency Network",
+              "current_stage": "Packing & Documentation",
+              "priority": "P1 - Critical",
+              "risk_level": "High",
+              "stock_status": "In Stock Ready",
+              "payment_status": "Partial Advance",
+              "payment_terms": "30% Adv / 70% CAD",
+              "dispatch_status": "Delayed - Payment Hold",
+              "delivery_status": "Pending Dispatch",
+              "delay_days": 24,
+              "delay_owner": "Accounts",
+              "delay_reason": "Remaining 70% payment confirmation pending from dealer",
+              "vendor_eta": "N/A",
+              "expected_dispatch_date": "2026-07-12",
+              "actual_dispatch_date": "-",
+              "last_customer_update": "2026-08-03",
+              "next_action": "Escalate to Finance Head for credit release",
+              "recommended_owner": "Suresh Patel (Accounts)",
+              "remarks": "Dealer requested 7 days grace period on payment."
+            },
+            {
+              "so_number": "SO-11406",
+              "estimate_number": "EST-022622",
+              "customer": "AAYUSHAADYA NUTRITION PVT LTD",
+              "order_value": 395040.20,
+              "client_type": "Enterprise Corporate",
+              "current_stage": "Procurement Pending",
+              "priority": "P1 - Critical",
+              "risk_level": "Critical",
+              "stock_status": "Out of Stock",
+              "payment_status": "100% Advance Received",
+              "payment_terms": "100% Advance",
+              "dispatch_status": "Vendor Pending",
+              "delivery_status": "Delayed in Procurement",
+              "delay_days": 14,
+              "delay_owner": "Procurement",
+              "delay_reason": "Special raw material alloy pending from steel mill",
+              "vendor_eta": "2026-08-08",
+              "expected_dispatch_date": "2026-07-22",
+              "actual_dispatch_date": "-",
+              "last_customer_update": "2026-08-04",
+              "next_action": "Daily follow-up with Vendor GM for expedited dispatch",
+              "recommended_owner": "Vikram Singh (Procurement)",
+              "remarks": "High financial risk if customer cancels due to SLA breach."
+            },
+            {
+              "so_number": "SO-11334",
+              "estimate_number": "EST-022501",
+              "customer": "TRISHLA INDUSTRIES",
+              "order_value": 116045.00,
+              "client_type": "SME / Regional Flour Mills",
+              "current_stage": "Ready for Dispatch",
+              "priority": "P2 - High",
+              "risk_level": "Medium",
+              "stock_status": "In Stock Ready",
+              "payment_status": "100% Advance Received",
+              "payment_terms": "Advance",
+              "dispatch_status": "Transporter Delayed",
+              "delivery_status": "Vehicle Assigned",
+              "delay_days": 25,
+              "delay_owner": "Dispatch",
+              "delay_reason": "Transporter truck delayed due to heavy rainfall on route",
+              "vendor_eta": "N/A",
+              "expected_dispatch_date": "2026-07-10",
+              "actual_dispatch_date": "-",
+              "last_customer_update": "2026-08-04",
+              "next_action": "Arrange secondary transport vehicle",
+              "recommended_owner": "Ramesh Kumar (Logistics)",
+              "remarks": "Alternative logistics partner contacted."
+            },
+            {
+              "so_number": "SO-11403",
+              "estimate_number": "EST-022670",
+              "customer": "Okay Glass Industries",
+              "order_value": 146320.00,
+              "client_type": "Enterprise Corporate",
+              "current_stage": "Quality Check",
+              "priority": "P2 - High",
+              "risk_level": "Medium",
+              "stock_status": "Partial Stock Available",
+              "payment_status": "Partial Advance",
+              "payment_terms": "50% Adv / 50% Before Dispatch",
+              "dispatch_status": "On Schedule",
+              "delivery_status": "QC Inspection",
+              "delay_days": 14,
+              "delay_owner": "Warehouse",
+              "delay_reason": "Surface coating hardness test verification under review",
+              "vendor_eta": "2026-08-06",
+              "expected_dispatch_date": "2026-08-06",
+              "actual_dispatch_date": "-",
+              "last_customer_update": "2026-08-02",
+              "next_action": "Clear QA lab certificate",
+              "recommended_owner": "Anil Sharma (Quality)",
+              "remarks": "Test results expected by end of day."
+            },
+            {
+              "so_number": "SO-11460",
+              "estimate_number": "EST-022654",
+              "customer": "India Glycols Ltd (UP)",
+              "order_value": 3540.00,
+              "client_type": "Enterprise Corporate",
+              "current_stage": "Packing & Documentation",
+              "priority": "P3 - Medium",
+              "risk_level": "Low",
+              "stock_status": "In Stock Ready",
+              "payment_status": "100% Advance Received",
+              "payment_terms": "Credit 30 Days",
+              "dispatch_status": "Customer Hold",
+              "delivery_status": "Hold for Dimension Confirmation",
+              "delay_days": 1,
+              "delay_owner": "Sales",
+              "delay_reason": "Size issue confirmed with Samrath Sir from client end",
+              "vendor_eta": "N/A",
+              "expected_dispatch_date": "2026-08-01",
+              "actual_dispatch_date": "-",
+              "last_customer_update": "2026-08-05",
+              "next_action": "Obtain updated drawing approval",
+              "recommended_owner": "Samrath (Sales Exec)",
+              "remarks": "Customer requested re-verification of flange diameter."
+            },
+            {
+              "so_number": "SO-11455",
+              "estimate_number": "EST-022824",
+              "customer": "Sri Venkateshwara Engineerings",
+              "order_value": 121835.00,
+              "client_type": "SME / Regional Flour Mills",
+              "current_stage": "Ready for Dispatch",
+              "priority": "P2 - High",
+              "risk_level": "Low",
+              "stock_status": "In Stock Ready",
+              "payment_status": "100% Advance Received",
+              "payment_terms": "Advance",
+              "dispatch_status": "Ready Today",
+              "delivery_status": "Loading Dock",
+              "delay_days": 4,
+              "delay_owner": "Dispatch",
+              "delay_reason": "Waiting for LR booking reference",
+              "vendor_eta": "N/A",
+              "expected_dispatch_date": "2026-08-04",
+              "actual_dispatch_date": "2026-08-05",
+              "last_customer_update": "2026-08-05",
+              "next_action": "Generate E-Way Bill and dispatch",
+              "recommended_owner": "Dispatch Desk",
+              "remarks": "Truck arrived at warehouse gate."
+            }
+          ],
+
+          "critical_orders": [
+            {
+              "priority": "CRITICAL - 1",
+              "so_number": "SO-11406",
+              "customer": "AAYUSHAADYA NUTRITION PVT LTD",
+              "issue": "Raw material stock missing from vendor; 100% advance collected, delay 14 days",
+              "financial_impact": 395040.20,
+              "recommended_action": "Authorize premium air freight from secondary supplier to avoid order cancellation penalty.",
+              "owner": "Vikram Singh (Procurement)",
+              "deadline": "2026-08-06"
+            },
+            {
+              "priority": "CRITICAL - 2",
+              "so_number": "SO-11347",
+              "customer": "Bharat Machinery Store",
+              "issue": "Overdue payment balance ₹2.4L blocking dispatch for 24 days",
+              "financial_impact": 342542.32,
+              "recommended_action": "Negotiate partial payment release with PDC guarantee for remaining amount.",
+              "owner": "Suresh Patel (Accounts)",
+              "deadline": "2026-08-07"
+            },
+            {
+              "priority": "CRITICAL - 3",
+              "so_number": "SO-11403",
+              "customer": "Okay Glass Industries",
+              "issue": "QC hardness test approval delayed, risking production line shutdown at client end",
+              "financial_impact": 146320.00,
+              "recommended_action": "Fast-track third-party lab certification by end of day.",
+              "owner": "Anil Sharma (Quality)",
+              "deadline": "2026-08-06"
+            }
+          ],
+
+          "procurement": {
+            "summary": {
+              "waiting_stock": 5,
+              "partial_stock": 8,
+              "vendor_pending": 4
+            },
+            "orders_waiting_stock": [
+              { "so": "SO-11406", "customer": "AAYUSHAADYA NUTRITION", "item": "Alloy Shaft 90mm", "qty": 12 },
+              { "so": "SO-11333", "customer": "Sanwaria Sweets", "item": "Stainless Steel Rollers", "qty": 4 }
+            ],
+            "partial_stock_orders": [
+              { "so": "SO-11403", "customer": "Okay Glass", "item": "Bearings Complete", "qty": 8 },
+              { "so": "SO-11411", "customer": "RK Patel Food", "item": "Gear Box Unit", "qty": 2 }
+            ],
+            "vendor_pending_orders": [
+              { "so": "SO-11339", "customer": "Jai Jalpesh Flour", "vendor": "Apex Forgings", "days": 18 },
+              { "so": "SO-11427", "customer": "Jawala Agencies", "vendor": "Metals India Ltd", "days": 10 }
+            ],
+            "missing_eta_orders": [
+              { "so": "SO-11336", "customer": "Amar Jyoti Industries", "missing_field": "Vendor Delivery Commitment Date" },
+              { "so": "SO-11407", "customer": "Sakambari Flour Mills", "missing_field": "Raw Material Batch Code" }
+            ],
+            "vendor_priority_list": [
+              { "vendor": "Apex Forgings", "pending_pos": 3, "total_value": 210000.00, "action": "Escalate to Sales Director for priority slot" },
+              { "vendor": "Metals India Ltd", "pending_pos": 2, "total_value": 145000.00, "action": "Issue Expedite Notice" }
+            ]
+          },
+
+          "dispatch": {
+            "ready_today": [
+              { "so": "SO-11455", "customer": "Sri Venkateshwara Engg", "val": 121835.00 },
+              { "so": "SO-11476", "customer": "Shree Siddhi Foods", "val": 135700.00 }
+            ],
+            "scheduled_today": [
+              { "so": "SO-11467", "customer": "Darbhanga Roller Flour", "val": 66976.80 },
+              { "so": "SO-11477", "customer": "Jawala Agencies", "val": 49855.00 }
+            ],
+            "blocked_orders": [
+              { "so": "SO-11347", "customer": "Bharat Machinery Store", "reason": "Payment Hold" },
+              { "so": "SO-11460", "customer": "India Glycols Ltd", "reason": "Customer Spec Hold" }
+            ],
+            "delayed_dispatch": [
+              { "so": "SO-11334", "customer": "TRISHLA INDUSTRIES", "delay": "25 Days" },
+              { "so": "SO-11339", "customer": "Jai Jalpesh Flour", "delay": "24 Days" }
+            ],
+            "transport_pending": [
+              { "so": "SO-11403", "customer": "Okay Glass Industries", "transporter": "VRL Logistics" }
+            ],
+            "documentation_pending": [
+              { "so": "SO-11432", "customer": "Jaibundelkhand Mill", "missing_doc": "E-Way Bill & Gate Pass" }
+            ]
+          },
+
+          "payments": {
+            "total_outstanding": 725342.32,
+            "advance_pending": [
+              { "so": "SO-11432", "customer": "Jaibundelkhand Mill", "amount": 37878.00 },
+              { "so": "SO-11475", "customer": "Mahalaxmi Roller", "amount": 25765.50 }
+            ],
+            "full_payment_pending": [
+              { "so": "SO-11347", "customer": "Bharat Machinery Store", "amount": 342542.32 }
+            ],
+            "against_delivery": [
+              { "so": "SO-11403", "customer": "Okay Glass Industries", "amount": 73160.00 }
+            ],
+            "payment_hold": [
+              { "so": "SO-11339", "customer": "Jai Jalpesh Flour", "amount": 51159.15 }
+            ],
+            "received_today": [
+              { "so": "SO-11455", "customer": "Sri Venkateshwara Engg", "amount": 121835.00 }
+            ],
+            "high_risk_payments": [
+              { "customer": "Bharat Machinery Store", "exposure": 342542.32, "overdue_days": 24 }
+            ]
+          },
+
+          "customer_risk": [
+            {
+              "customer": "AAYUSHAADYA NUTRITION PVT LTD",
+              "risk": "High - Cancellation Threat",
+              "reason": "Repeated procurement delays breaching guaranteed delivery date",
+              "recommended_action": "Executive call by VP Operations offering dedicated tracking & penalty rebate."
+            },
+            {
+              "customer": "Bharat Machinery Store",
+              "risk": "High - Financial Credit Exposure",
+              "reason": "High outstanding balance past agreed payment terms limit",
+              "recommended_action": "Strict dispatch hold until minimum 50% recovery."
+            },
+            {
+              "customer": "India Glycols Ltd",
+              "risk": "Low - Operational Misalignment",
+              "reason": "Dimensional drawing mismatch between sales & plant engineer",
+              "recommended_action": "Sales engineer visit client site for live sign-off."
+            }
+          ],
+
+          "priority_calls": [
+            {
+              "priority": "Call #1",
+              "so_number": "SO-11406",
+              "customer": "AAYUSHAADYA NUTRITION PVT LTD",
+              "reason": "Vendor delay update & revised dispatch commitment date",
+              "question_to_ask": "Can plant accept split delivery of initial 6 units by Friday?",
+              "recommended_action": "Secure approval for partial shipment."
+            },
+            {
+              "priority": "Call #2",
+              "so_number": "SO-11347",
+              "customer": "Bharat Machinery Store",
+              "reason": "Payment follow-up for dispatch release",
+              "question_to_ask": "Has the RTGS payment transfer of ₹2.4L been initiated today?",
+              "recommended_action": "Get UTR number for verification."
+            }
+          ],
+
+          "exceptions": [
+            {
+              "type": "Zero-Value Booking",
+              "so_number": "SO-11335",
+              "description": "FOC sample replacement order entered with ₹0.00 valuation",
+              "severity": "Medium"
+            },
+            {
+              "type": "SLA Severe Breach",
+              "so_number": "SO-11334",
+              "description": "Dispatch overdue by 25 days exceeding 14-day max SLA threshold",
+              "severity": "Critical"
+            },
+            {
+              "type": "Data Missing",
+              "so_number": "SO-11336",
+              "description": "Missing Vendor Delivery ETA in ERP record",
+              "severity": "Low"
+            }
+          ],
+
+          "department_analysis": {
+            "sales": {
+              "health_score": 88,
+              "issues": ["Incomplete client technical specifications at order entry", "Delayed size verification confirmation"]
+            },
+            "procurement": {
+              "health_score": 65,
+              "issues": ["Vendor lead time slip by 14 days", "Single-source dependency for raw material alloys"]
+            },
+            "warehouse": {
+              "health_score": 90,
+              "issues": ["Peak loading dock congestion during evening hours"]
+            },
+            "dispatch": {
+              "health_score": 78,
+              "issues": ["Transporter vehicle allocation delays during monsoon season"]
+            },
+            "accounts": {
+              "health_score": 72,
+              "issues": ["Delayed payment clearance reconciliation on weekend collections"]
+            }
+          },
+
+          "root_causes": [
+            {
+              "category": "Raw Material Lead Time",
+              "count": 7,
+              "affected_value": 780000.00,
+              "recommendation": "Establish buffer safety stock for high-demand raw alloy grades."
+            },
+            {
+              "category": "Payment Hold by Accounts",
+              "count": 5,
+              "affected_value": 520000.00,
+              "recommendation": "Implement automated credit limit alerts in ERP."
+            },
+            {
+              "category": "Customer Technical Sign-off",
+              "count": 4,
+              "affected_value": 240000.00,
+              "recommendation": "Require mandatory technical specification sign-off prior to SO creation."
+            }
+          ],
+
+          "predictions": {
+            "dispatch_today": [
+              { "so": "SO-11455", "prob": "98%", "customer": "Sri Venkateshwara Engg" },
+              { "so": "SO-11476", "prob": "92%", "customer": "Shree Siddhi Foods" }
+            ],
+            "dispatch_tomorrow": [
+              { "so": "SO-11467", "prob": "88%", "customer": "Darbhanga Roller Mill" },
+              { "so": "SO-11477", "prob": "85%", "customer": "Jawala Agencies" }
+            ],
+            "likely_sla_breach": [
+              { "so": "SO-11406", "risk": "High", "days_to_breach": "Breached (14d)" },
+              { "so": "SO-11347", "risk": "High", "days_to_breach": "Breached (24d)" }
+            ],
+            "management_attention": [
+              { "area": "Procurement Bottleneck", "impact": "High Financial Penalty Exposure" },
+              { "area": "Dealer Accounts Receivables", "impact": "Cashflow Blockage" }
+            ]
+          },
+
+          "kpis": {
+            "dispatch_sla_percent": 74.2,
+            "average_dispatch_days": 4.8,
+            "average_order_age": 12.6,
+            "stock_availability_percent": 81.5,
+            "procurement_pending_percent": 18.5,
+            "payment_collection_percent": 88.0,
+            "average_delay_days": 12.6,
+            "high_value_pending_percent": 31.5
+          },
+
+          "action_items": {
+            "sales": [
+              "Confirm drawing specifications for SO-11460 (India Glycols)",
+              "Follow up with new customers for repeat order scheduling"
+            ],
+            "procurement": [
+              "Issue urgent PO expediter notice to Apex Forgings",
+              "Audit backup vendors for 90mm alloy shafts"
+            ],
+            "warehouse": [
+              "Complete QC hardness certification on SO-11403",
+              "Pre-pack scheduled orders for morning dispatch"
+            ],
+            "dispatch": [
+              "Assign secondary transporter for TRISHLA Industries (SO-11334)",
+              "Generate E-Way bill for SO-11455"
+            ],
+            "accounts": [
+              "Reconcile payment release for Bharat Machinery (SO-11347)",
+              "Send automated payment reminders to credit accounts"
+            ],
+            "management": [
+              "Review single-vendor risk mitigation strategy",
+              "Approve credit limit adjustments for tier-1 distributors"
+            ]
+          },
+
+          "top_20_priorities": [
+            { "rank": 1, "issue": "Raw Material Supply Bottleneck", "customer": "AAYUSHAADYA NUTRITION", "so_number": "SO-11406", "impact": "High Loss Risk", "owner": "Vikram (Proc)", "deadline": "2026-08-06" },
+            { "rank": 2, "issue": "Uncollected Balance Hold", "customer": "Bharat Machinery Store", "so_number": "SO-11347", "impact": "₹3.4L Cash Block", "owner": "Suresh (Accts)", "deadline": "2026-08-07" },
+            { "rank": 3, "issue": "25-Day Transporter Delay", "customer": "TRISHLA INDUSTRIES", "so_number": "SO-11334", "impact": "SLA Severe Breach", "owner": "Ramesh (Log)", "deadline": "2026-08-05" },
+            { "rank": 4, "issue": "Quality Check Verification Hold", "customer": "Okay Glass Industries", "so_number": "SO-11403", "impact": "Production Line Delay", "owner": "Anil (QA)", "deadline": "2026-08-06" },
+            { "rank": 5, "issue": "Size Specification Sign-off", "customer": "India Glycols Ltd", "so_number": "SO-11460", "impact": "Custom Spec Hold", "owner": "Samrath (Sales)", "deadline": "2026-08-06" },
+            { "rank": 6, "issue": "E-Way Bill Generation", "customer": "Sri Venkateshwara Engg", "so_number": "SO-11455", "impact": "Immediate Revenue", "owner": "Dispatch Desk", "deadline": "2026-08-05" },
+            { "rank": 7, "issue": "Vendor Delivery Commitment Date", "customer": "Jai Jalpesh Flour Mills", "so_number": "SO-11339", "impact": "Procurement Slip", "owner": "Procurement", "deadline": "2026-08-07" },
+            { "rank": 8, "issue": "Advance Recovery Follow-up", "customer": "Jaibundelkhand Mill", "so_number": "SO-11432", "impact": "Credit Compliance", "owner": "Accounts Desk", "deadline": "2026-08-07" },
+            { "rank": 9, "issue": "Scheduled Delivery Dispatch", "customer": "Shree Siddhi Foods", "so_number": "SO-11476", "impact": "Target Fulfillment", "owner": "Dispatch Desk", "deadline": "2026-08-05" },
+            { "rank": 10, "issue": "Vendor Lead Time Escalation", "customer": "Amar Jyoti Industries", "so_number": "SO-11336", "impact": "Stock Out Risk", "owner": "Procurement", "deadline": "2026-08-08" },
+            { "rank": 11, "issue": "FOC Sample Verification", "customer": "ELSA CONCRETING", "so_number": "SO-11335", "impact": "Zero Value Audit", "owner": "Audit Team", "deadline": "2026-08-08" },
+            { "rank": 12, "issue": "Partial Payment Collection", "customer": "Sanwaria Sweets", "so_number": "SO-11333", "impact": "Accounts Clearance", "owner": "Accounts Desk", "deadline": "2026-08-08" },
+            { "rank": 13, "issue": "Secondary Vehicle Allocation", "customer": "Darbhanga Roller Mill", "so_number": "SO-11467", "impact": "Transit Clearance", "owner": "Logistics Desk", "deadline": "2026-08-06" },
+            { "rank": 14, "issue": "Customer Call Script Review", "customer": "Jawala Agencies", "so_number": "SO-11427", "impact": "Relation Management", "owner": "Sales Team", "deadline": "2026-08-07" },
+            { "rank": 15, "issue": "Batch Code Tagging", "customer": "Sakambari Flour Mills", "so_number": "SO-11407", "impact": "Traceability", "owner": "Warehouse", "deadline": "2026-08-08" },
+            { "rank": 16, "issue": "Payment Guarantee Release", "customer": "RPK ENGINEERING", "so_number": "SO-11472", "impact": "Financial Release", "owner": "Accounts Desk", "deadline": "2026-08-08" },
+            { "rank": 17, "issue": "Customer Drawing Review", "customer": "Joshi Masala Chakki", "so_number": "SO-11433", "impact": "Tech Compliance", "owner": "Sales Team", "deadline": "2026-08-08" },
+            { "rank": 18, "issue": "Gate Pass Authorization", "customer": "MILLKART GLOBAL", "so_number": "SO-11473", "impact": "Fulfillment Complete", "owner": "Dispatch Desk", "deadline": "2026-08-05" },
+            { "rank": 19, "issue": "Supplier Buffer Contract", "customer": "Apex Forgings", "so_number": "PO-VEND-09", "impact": "Supply Continuity", "owner": "Management", "deadline": "2026-08-10" },
+            { "rank": 20, "issue": "CRM Validation Rule Update", "customer": "System Governance", "so_number": "SYS-AUTO-01", "impact": "Data Integrity", "owner": "IT Operations", "deadline": "2026-08-10" }
+          ],
+
+          "crm_improvements": {
+            "missing_fields": [
+              "Vendor Delivery ETA Commitment",
+              "Customer Secondary Contact Number",
+              "Transport Transporter LR Number at Order Stage"
+            ],
+            "unused_fields": [
+              "Legacy Billing Postal Code Field 2",
+              "Manual Priority Override Reason (Replaced by auto-calc)"
+            ],
+            "duplicate_fields": [
+              "Client Name vs Account Entity Name",
+              "Estimated Delivery Date vs Promised SLA Date"
+            ],
+            "recommended_dropdowns": [
+              "Dispatch Hold Reason (Standardized options)",
+              "Delay Owner Department (Sales/Proc/WH/Log/Accts)"
+            ],
+            "recommended_calculated_fields": [
+              "Days Overdue = Today Date - Promised Date",
+              "Financial Exposure Risk = Order Value * Payment Risk Score"
+            ],
+            "customer_master_fields": [
+              "Approved Credit Limit",
+              "Credit Period Days",
+              "GST Registration Active Status"
+            ]
+          },
+
+          "automation_triggers": [
+            {
+              "priority": "High",
+              "trigger": "Payment Received Event",
+              "condition": "Payment Status = 100% Received AND Dispatch Status = Payment Hold",
+              "action": "Automatically release order hold & alert Warehouse Loading Dock"
+            },
+            {
+              "priority": "Critical",
+              "trigger": "SLA Delay Threshold",
+              "condition": "Delay Days >= 10 AND Order Value > ₹1,00,000",
+              "action": "Auto-generate Critical Escalation Ticket & SMS alert to VP Operations"
+            },
+            {
+              "priority": "Medium",
+              "trigger": "Vendor ETA Exceeded",
+              "condition": "Current Date > Vendor ETA AND Stock Status != In Stock",
+              "action": "Send Automated Chaser Email to Vendor Account Representative"
+            },
+            {
+              "priority": "Low",
+              "trigger": "Zero-Value Order Booking",
+              "condition": "Order Value == 0.00",
+              "action": "Flag for Internal Audit Manager Approval before warehouse picking"
+            }
+          ]
+        };
+
+        // Utility: Format Currency INR
+        function formatINR(val) {
+            return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
+        }
+
+        // Smooth Scroll Helper
+        function scrollToSection(id) {
+            const el = document.getElementById(id);
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Theme Toggle Functionality
+        function toggleTheme() {
+            const html = document.documentElement;
+            const icon = document.getElementById('themeIcon');
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                icon.className = 'fa-solid fa-moon text-base';
+                localStorage.setItem('theme', 'light');
+            } else {
+                html.classList.add('dark');
+                icon.className = 'fa-solid fa-sun text-base text-amber-400';
+                localStorage.setItem('theme', 'dark');
+            }
+            renderVisualCharts();
+        }
+
+        // Export Orders CSV
+        function exportToCSV() {
+            let csv = "data:text/csv;charset=utf-8,";
+            csv += "SO Number,Estimate Number,Customer,Order Value,Client Type,Stage,Priority,Risk Level,Stock Status,Payment Status,Dispatch Status,Delay Days,Next Action,Owner\n";
+            schemaData.orders.forEach(o => {
+                csv += `"${o.so_number}","${o.estimate_number}","${o.customer.replace(/"/g, '""')}",${o.order_value},"${o.client_type}","${o.current_stage}","${o.priority}","${o.risk_level}","${o.stock_status}","${o.payment_status}","${o.dispatch_status}",${o.delay_days},"${o.next_action.replace(/"/g, '""')}","${o.recommended_owner}"\n`;
+            });
+            const link = document.createElement("a");
+            link.setAttribute("href", encodeURI(csv));
+            link.setAttribute("download", `Master_Orders_Report_${new Date().toISOString().slice(0,10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Populate Dashboard UI Elements
+        function initDashboard() {
+            // Section 1: Summary
+            document.getElementById('sum-analysis-date').textContent = schemaData.summary.analysis_date;
+            document.getElementById('sum-total-orders').textContent = schemaData.summary.total_orders;
+            document.getElementById('sum-total-value').textContent = formatINR(schemaData.summary.total_order_value);
+            document.getElementById('sum-avg-value').textContent = formatINR(schemaData.summary.average_order_value);
+            document.getElementById('sum-highest-value').textContent = `Max: ${formatINR(schemaData.summary.highest_order_value)}`;
+            document.getElementById('sum-lowest-value').textContent = `Min: ${formatINR(schemaData.summary.lowest_order_value)}`;
+            document.getElementById('sum-high-value-count').textContent = schemaData.summary.high_value_orders;
+            document.getElementById('sum-new-cust').textContent = schemaData.summary.new_customers;
+            document.getElementById('sum-repeat-cust').textContent = schemaData.summary.repeat_customers;
+            document.getElementById('sum-health-score').textContent = `${schemaData.summary.overall_health_score}/100`;
+            document.getElementById('sum-health-bar').style.width = `${schemaData.summary.overall_health_score}%`;
+            document.getElementById('sum-risk-score').textContent = `${schemaData.summary.management_risk_score}/100`;
+            document.getElementById('sum-risk-bar').style.width = `${schemaData.summary.management_risk_score}%`;
+
+            // Section 3: Master Orders Table
+            renderMasterOrdersTable(schemaData.orders);
+
+            // Section 4: Critical Orders
+            renderCriticalOrders();
+
+            // Section 5: Procurement
+            renderProcurementSection();
+
+            // Section 6: Dispatch
+            renderDispatchSection();
+
+            // Section 7: Payments
+            renderPaymentsSection();
+
+            // Section 8: Customer Risk
+            renderCustomerRisk();
+
+            // Section 9: Priority Calls
+            renderPriorityCalls();
+
+            // Section 10: Exceptions
+            renderExceptions();
+
+            // Section 11: Department Health
+            renderDepartmentHealth();
+
+            // Section 12: Root Causes
+            renderRootCauses();
+
+            // Section 13: Predictions
+            renderPredictions();
+
+            // Section 14: KPIs
+            renderKPIs();
+
+            // Section 15: Action Items
+            renderActionItems();
+
+            // Section 16: Top 20 Priorities
+            renderTop20();
+
+            // Section 17: CRM Improvements
+            renderCRM();
+
+            // Section 18: Automation Triggers
+            renderAutomationTriggers();
+
+            // Section 2 Charts
+            renderVisualCharts();
+        }
+
+        // Filter Master Orders Table
+        function filterMasterOrders() {
+            const query = document.getElementById('orderSearchInput').value.toLowerCase().trim();
+            const risk = document.getElementById('orderRiskFilter').value;
+
+            const filtered = schemaData.orders.filter(o => {
+                const matchQuery = o.so_number.toLowerCase().includes(query) ||
+                                   o.estimate_number.toLowerCase().includes(query) ||
+                                   o.customer.toLowerCase().includes(query) ||
+                                   o.delay_reason.toLowerCase().includes(query);
+                const matchRisk = risk === 'all' || o.risk_level === risk;
+                return matchQuery && matchRisk;
+            });
+            renderMasterOrdersTable(filtered);
+        }
+
+        // Render Master Orders Rows
+        function renderMasterOrdersTable(orders) {
+            const tbody = document.getElementById('masterOrdersTableBody');
+            if (orders.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="py-6 text-center text-slate-400">No orders match your filter criteria.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = orders.map(o => `
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors">
+                    <td class="py-3 px-4 font-bold text-slate-900 dark:text-white">
+                        <div>${o.so_number}</div>
+                        <div class="text-[10px] font-normal text-slate-400">${o.estimate_number}</div>
+                    </td>
+                    <td class="py-3 px-4 font-medium text-slate-800 dark:text-slate-200">
+                        <div>${o.customer}</div>
+                        <div class="text-[10px] text-slate-400">${o.client_type}</div>
+                    </td>
+                    <td class="py-3 px-4 text-right font-semibold text-slate-900 dark:text-white">
+                        ${o.order_value === 0 ? '<span class="text-slate-400 italic">₹0.00 (FOC)</span>' : formatINR(o.order_value)}
+                    </td>
+                    <td class="py-3 px-4">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 block w-max mb-1">${o.current_stage}</span>
+                        <span class="text-[10px] font-semibold text-slate-500">${o.priority}</span>
+                    </td>
+                    <td class="py-3 px-4">
+                        <div class="text-[11px] font-medium text-slate-700 dark:text-slate-300">${o.stock_status}</div>
+                        <div class="text-[10px] text-emerald-600 dark:text-emerald-400">${o.payment_status}</div>
+                    </td>
+                    <td class="py-3 px-4 text-slate-600 dark:text-slate-300">
+                        ${o.dispatch_status}
+                    </td>
+                    <td class="py-3 px-4 text-center">
+                        <span class="px-2 py-0.5 rounded text-xs font-extrabold ${o.delay_days >= 20 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}">
+                            ${o.delay_days} d
+                        </span>
+                    </td>
+                    <td class="py-3 px-4 max-w-xs">
+                        <div class="truncate font-medium text-slate-800 dark:text-slate-200" title="${o.next_action}">${o.next_action}</div>
+                        <div class="text-[10px] text-slate-400">${o.recommended_owner}</div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Section 4: Critical Orders
+        function renderCriticalOrders() {
+            const container = document.getElementById('criticalOrdersGrid');
+            container.innerHTML = schemaData.critical_orders.map(item => `
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border-l-4 border-l-rose-500 border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col justify-between space-y-3">
+                    <div>
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="px-2 py-0.5 text-[10px] font-extrabold rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 uppercase">${item.priority}</span>
+                            <span class="text-xs font-mono font-bold text-slate-500">${item.so_number}</span>
+                        </div>
+                        <h4 class="font-bold text-sm text-slate-900 dark:text-white mt-1">${item.customer}</h4>
+                        <p class="text-xs text-rose-600 dark:text-rose-400 font-medium mt-1 leading-relaxed"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${item.issue}</p>
+                    </div>
+
+                    <div class="pt-2 border-t border-slate-100 dark:border-slate-700 space-y-1.5 text-xs">
+                        <div class="flex justify-between">
+                            <span class="text-slate-500">Financial Impact:</span>
+                            <span class="font-bold text-slate-900 dark:text-white">${formatINR(item.financial_impact)}</span>
+                        </div>
+                        <div class="text-[11px] text-slate-600 dark:text-slate-300 font-medium"><strong class="text-blue-600 dark:text-blue-400">Action:</strong> ${item.recommended_action}</div>
+                        <div class="flex justify-between text-[10px] text-slate-400 pt-1">
+                            <span>Owner: <strong>${item.owner}</strong></span>
+                            <span>Deadline: <strong class="text-rose-500">${item.deadline}</strong></span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Section 5: Procurement
+        function renderProcurementSection() {
+            document.getElementById('proc-sum-waiting').textContent = schemaData.procurement.summary.waiting_stock;
+            document.getElementById('proc-sum-partial').textContent = schemaData.procurement.summary.partial_stock;
+            document.getElementById('proc-sum-vendor').textContent = schemaData.procurement.summary.vendor_pending;
+
+            document.getElementById('proc-stock-list').innerHTML = schemaData.procurement.orders_waiting_stock.map(o => `
+                <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-700/50 flex justify-between items-center">
+                    <div>
+                        <span class="font-bold text-slate-800 dark:text-slate-200">${o.so}</span> - <span class="text-slate-500">${o.customer}</span>
+                        <div class="text-[10px] text-amber-600 dark:text-amber-400">${o.item} (Qty: ${o.qty})</div>
+                    </div>
+                    <span class="px-1.5 py-0.5 text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-bold rounded">Waiting</span>
+                </div>
+            `).join('');
+
+            document.getElementById('proc-vendor-list').innerHTML = schemaData.procurement.vendor_pending_orders.map(o => `
+                <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-700/50 flex justify-between items-center">
+                    <div>
+                        <span class="font-bold text-slate-800 dark:text-slate-200">${o.so}</span> - <span class="text-slate-500">${o.customer}</span>
+                        <div class="text-[10px] text-indigo-600 dark:text-indigo-400">Vendor: ${o.vendor} (${o.days}d delay)</div>
+                    </div>
+                    <span class="px-1.5 py-0.5 text-[9px] bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 font-bold rounded">Vendor Slip</span>
+                </div>
+            `).join('');
+
+            document.getElementById('proc-priority-list').innerHTML = schemaData.procurement.vendor_priority_list.map(v => `
+                <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-700/50 space-y-1">
+                    <div class="flex justify-between font-bold text-slate-800 dark:text-slate-200">
+                        <span>${v.vendor}</span>
+                        <span class="text-emerald-600">${formatINR(v.total_value)}</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500 flex justify-between">
+                        <span>Pending POs: ${v.pending_pos}</span>
+                        <span class="font-semibold text-slate-700 dark:text-slate-300">${v.action}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Section 6: Dispatch
+        function renderDispatchSection() {
+            document.getElementById('disp-ready-count').textContent = schemaData.dispatch.ready_today.length;
+            document.getElementById('disp-sched-count').textContent = schemaData.dispatch.scheduled_today.length;
+            document.getElementById('disp-block-count').textContent = schemaData.dispatch.blocked_orders.length;
+            document.getElementById('disp-delay-count').textContent = schemaData.dispatch.delayed_dispatch.length;
+            document.getElementById('disp-trans-count').textContent = schemaData.dispatch.transport_pending.length;
+            document.getElementById('disp-doc-count').textContent = schemaData.dispatch.documentation_pending.length;
+
+            document.getElementById('disp-ready-list').innerHTML = schemaData.dispatch.ready_today.map(i => `
+                <div class="flex justify-between text-xs font-semibold text-slate-800 dark:text-slate-200">
+                    <span>${i.so} (${i.customer})</span>
+                    <span class="text-emerald-600">${formatINR(i.val)}</span>
+                </div>
+            `).join('');
+
+            document.getElementById('disp-sched-list').innerHTML = schemaData.dispatch.scheduled_today.map(i => `
+                <div class="flex justify-between text-xs font-semibold text-slate-800 dark:text-slate-200">
+                    <span>${i.so} (${i.customer})</span>
+                    <span class="text-blue-600">${formatINR(i.val)}</span>
+                </div>
+            `).join('');
+
+            document.getElementById('disp-block-list').innerHTML = schemaData.dispatch.blocked_orders.map(i => `
+                <div class="flex justify-between text-xs font-semibold text-rose-700 dark:text-rose-400">
+                    <span>${i.so} (${i.customer})</span>
+                    <span class="text-[10px] uppercase font-bold">${i.reason}</span>
+                </div>
+            `).join('');
+
+            document.getElementById('disp-delay-list').innerHTML = schemaData.dispatch.delayed_dispatch.map(i => `
+                <div class="flex justify-between text-xs font-semibold text-amber-700 dark:text-amber-400">
+                    <span>${i.so} (${i.customer})</span>
+                    <span class="text-[10px] uppercase font-bold">${i.delay}</span>
+                </div>
+            `).join('');
+
+            document.getElementById('disp-trans-list').innerHTML = schemaData.dispatch.transport_pending.map(i => `
+                <div class="flex justify-between text-xs font-semibold text-purple-700 dark:text-purple-400">
+                    <span>${i.so} (${i.customer})</span>
+                    <span class="text-[10px] font-bold">${i.transporter}</span>
+                </div>
+            `).join('');
+
+            document.getElementById('disp-doc-list').innerHTML = schemaData.dispatch.documentation_pending.map(i => `
+                <div class="flex justify-between text-xs font-semibold text-cyan-700 dark:text-cyan-400">
+                    <span>${i.so} (${i.customer})</span>
+                    <span class="text-[10px] font-bold">${i.missing_doc}</span>
+                </div>
+            `).join('');
+        }
+
+        // Section 7: Payments
+        function renderPaymentsSection() {
+            document.getElementById('pay-total-outstanding').textContent = formatINR(schemaData.payments.total_outstanding);
+
+            document.getElementById('pay-adv-list').innerHTML = schemaData.payments.advance_pending.map(i => `
+                <div class="flex justify-between text-slate-800 dark:text-slate-200 font-medium"><span>${i.so} (${i.customer})</span><span class="font-bold text-amber-600">${formatINR(i.amount)}</span></div>
+            `).join('');
+
+            document.getElementById('pay-full-list').innerHTML = schemaData.payments.full_payment_pending.map(i => `
+                <div class="flex justify-between text-slate-800 dark:text-slate-200 font-medium"><span>${i.so} (${i.customer})</span><span class="font-bold text-rose-600">${formatINR(i.amount)}</span></div>
+            `).join('');
+
+            document.getElementById('pay-cad-list').innerHTML = schemaData.payments.against_delivery.map(i => `
+                <div class="flex justify-between text-slate-800 dark:text-slate-200 font-medium"><span>${i.so} (${i.customer})</span><span class="font-bold text-blue-600">${formatINR(i.amount)}</span></div>
+            `).join('');
+
+            document.getElementById('pay-hold-list').innerHTML = schemaData.payments.payment_hold.map(i => `
+                <div class="flex justify-between text-slate-800 dark:text-slate-200 font-medium"><span>${i.so} (${i.customer})</span><span class="font-bold text-purple-600">${formatINR(i.amount)}</span></div>
+            `).join('');
+
+            document.getElementById('pay-rec-list').innerHTML = schemaData.payments.received_today.map(i => `
+                <div class="flex justify-between text-slate-800 dark:text-slate-200 font-medium"><span>${i.so} (${i.customer})</span><span class="font-bold text-emerald-600">${formatINR(i.amount)}</span></div>
+            `).join('');
+
+            document.getElementById('pay-risk-list').innerHTML = schemaData.payments.high_risk_payments.map(i => `
+                <div class="flex justify-between text-slate-800 dark:text-slate-200 font-medium"><span>${i.customer} (${i.overdue_days}d overdue)</span><span class="font-bold text-red-600">${formatINR(i.exposure)}</span></div>
+            `).join('');
+        }
+
+        // Section 8: Customer Risk Matrix
+        function renderCustomerRisk() {
+            const container = document.getElementById('customerRiskGrid');
+            container.innerHTML = schemaData.customer_risk.map(c => `
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-xs text-slate-900 dark:text-white truncate">${c.customer}</span>
+                        <span class="px-2 py-0.5 text-[9px] font-bold rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 uppercase">${c.risk}</span>
+                    </div>
+                    <p class="text-xs text-slate-500 leading-relaxed">${c.reason}</p>
+                    <div class="pt-2 border-t border-slate-100 dark:border-slate-700 text-[11px] text-blue-600 dark:text-blue-400 font-medium">
+                        <strong>Rec Action:</strong> ${c.recommended_action}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Section 9: Priority Calls
+        function renderPriorityCalls() {
+            const tbody = document.getElementById('priorityCallsTableBody');
+            tbody.innerHTML = schemaData.priority_calls.map(call => `
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/40">
+                    <td class="py-2.5 px-4 font-bold text-purple-600 dark:text-purple-400">${call.priority}</td>
+                    <td class="py-2.5 px-4 font-mono font-semibold">${call.so_number}</td>
+                    <td class="py-2.5 px-4 font-medium text-slate-800 dark:text-slate-200">${call.customer}</td>
+                    <td class="py-2.5 px-4 text-slate-600 dark:text-slate-300">${call.reason}</td>
+                    <td class="py-2.5 px-4 italic text-blue-600 dark:text-blue-400">"${call.question_to_ask}"</td>
+                    <td class="py-2.5 px-4 font-semibold text-emerald-600 dark:text-emerald-400">${call.recommended_action}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Section 10: Exceptions
+        function renderExceptions() {
+            const container = document.getElementById('exceptionsGrid');
+            container.innerHTML = schemaData.exceptions.map(ex => `
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-xs text-slate-900 dark:text-white">${ex.type}</span>
+                        <span class="px-2 py-0.5 text-[9px] font-bold rounded ${ex.severity === 'Critical' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'} uppercase">${ex.severity}</span>
+                    </div>
+                    <div class="text-xs font-mono font-bold text-blue-600 dark:text-blue-400">${ex.so_number}</div>
+                    <p class="text-xs text-slate-500">${ex.description}</p>
+                </div>
+            `).join('');
+        }
+
+        // Section 11: Department Health
+        function renderDepartmentHealth() {
+            const container = document.getElementById('deptHealthGrid');
+            const depts = schemaData.department_analysis;
+
+            container.innerHTML = Object.keys(depts).map(key => {
+                const d = depts[key];
+                return `
+                    <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h4 class="font-bold text-sm text-slate-900 dark:text-white capitalize">${key}</h4>
+                            <span class="text-base font-black ${d.health_score >= 80 ? 'text-emerald-600' : d.health_score >= 70 ? 'text-amber-600' : 'text-rose-600'}">${d.health_score}%</span>
+                        </div>
+                        <div class="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                            <div class="h-1.5 rounded-full ${d.health_score >= 80 ? 'bg-emerald-500' : d.health_score >= 70 ? 'bg-amber-500' : 'bg-rose-500'}" style="width: ${d.health_score}%"></div>
+                        </div>
+                        <div class="space-y-1 pt-1">
+                            <span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Identified Bottlenecks:</span>
+                            <ul class="space-y-1">
+                                ${d.issues.map(iss => `<li class="text-xs text-slate-600 dark:text-slate-300 leading-tight flex items-start gap-1"><i class="fa-solid fa-angle-right text-[10px] mt-0.5 text-slate-400 shrink-0"></i>${iss}</li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Section 12: Root Causes
+        function renderRootCauses() {
+            const container = document.getElementById('rootCausesGrid');
+            container.innerHTML = schemaData.root_causes.map(rc => `
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h4 class="font-bold text-xs text-slate-900 dark:text-white">${rc.category}</h4>
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-slate-500">Affected Orders: <strong class="text-slate-800 dark:text-slate-200">${rc.count}</strong></span>
+                        <span class="font-extrabold text-rose-600">${formatINR(rc.affected_value)}</span>
+                    </div>
+                    <p class="text-[11px] text-blue-600 dark:text-blue-400 pt-1 border-t border-slate-100 dark:border-slate-700 font-medium">
+                        <strong>Rec:</strong> ${rc.recommendation}
+                    </p>
+                </div>
+            `).join('');
+        }
+
+        // Section 13: Predictions
+        function renderPredictions() {
+            document.getElementById('pred-today-list').innerHTML = schemaData.predictions.dispatch_today.map(i => `
+                <div class="flex justify-between font-medium text-slate-800 dark:text-slate-200"><span>${i.so} (${i.customer})</span><span class="font-bold text-emerald-600">${i.prob}</span></div>
+            `).join('');
+
+            document.getElementById('pred-tomorrow-list').innerHTML = schemaData.predictions.dispatch_tomorrow.map(i => `
+                <div class="flex justify-between font-medium text-slate-800 dark:text-slate-200"><span>${i.so} (${i.customer})</span><span class="font-bold text-blue-600">${i.prob}</span></div>
+            `).join('');
+
+            document.getElementById('pred-sla-list').innerHTML = schemaData.predictions.likely_sla_breach.map(i => `
+                <div class="flex justify-between font-medium text-slate-800 dark:text-slate-200"><span>${i.so}</span><span class="font-bold text-rose-600">${i.days_to_breach}</span></div>
+            `).join('');
+
+            document.getElementById('pred-mgmt-list').innerHTML = schemaData.predictions.management_attention.map(i => `
+                <div class="text-slate-800 dark:text-slate-200"><strong class="text-purple-600">${i.area}:</strong> ${i.impact}</div>
+            `).join('');
+        }
+
+        // Section 14: KPIs
+        function renderKPIs() {
+            const container = document.getElementById('kpisGrid');
+            const kpis = [
+                { title: "Dispatch SLA %", val: `${schemaData.kpis.dispatch_sla_percent}%`, color: "text-emerald-600" },
+                { title: "Avg Dispatch Days", val: `${schemaData.kpis.average_dispatch_days} d`, color: "text-blue-600" },
+                { title: "Avg Order Age", val: `${schemaData.kpis.average_order_age} d`, color: "text-amber-600" },
+                { title: "Stock Availability", val: `${schemaData.kpis.stock_availability_percent}%`, color: "text-teal-600" },
+                { title: "Procurement Pend %", val: `${schemaData.kpis.procurement_pending_percent}%`, color: "text-indigo-600" },
+                { title: "Payment Collect %", val: `${schemaData.kpis.payment_collection_percent}%`, color: "text-emerald-600" },
+                { title: "Avg Delay Days", val: `${schemaData.kpis.average_delay_days} d`, color: "text-rose-600" },
+                { title: "High Value Pend %", val: `${schemaData.kpis.high_value_pending_percent}%`, color: "text-purple-600" }
+            ];
+
+            container.innerHTML = kpis.map(k => `
+                <div class="p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm text-center">
+                    <div class="text-[10px] text-slate-400 font-semibold uppercase truncate">${k.title}</div>
+                    <div class="text-lg font-black ${k.color} mt-1">${k.val}</div>
+                </div>
+            `).join('');
+        }
+
+        // Section 15: Action Items
+        function renderActionItems() {
+            const container = document.getElementById('actionItemsGrid');
+            const actions = schemaData.action_items;
+
+            container.innerHTML = Object.keys(actions).map(dept => `
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h4 class="font-bold text-xs uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <i class="fa-solid fa-list-check text-blue-500"></i> ${dept} Action Items
+                    </h4>
+                    <ul class="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                        ${actions[dept].map(item => `
+                            <li class="flex items-start gap-1.5">
+                                <input type="checkbox" class="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                <span>${item}</span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            `).join('');
+        }
+
+        // Section 16: Top 20 Priorities
+        function renderTop20() {
+            const tbody = document.getElementById('top20TableBody');
+            tbody.innerHTML = schemaData.top_20_priorities.map(p => `
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/40">
+                    <td class="py-2 px-4 text-center font-black text-rose-600">${p.rank}</td>
+                    <td class="py-2 px-4 font-bold text-slate-900 dark:text-white">${p.issue}</td>
+                    <td class="py-2 px-4 text-slate-700 dark:text-slate-300">${p.customer}</td>
+                    <td class="py-2 px-4 font-mono font-semibold text-blue-600">${p.so_number}</td>
+                    <td class="py-2 px-4 font-semibold text-amber-600">${p.impact}</td>
+                    <td class="py-2 px-4 text-slate-600 dark:text-slate-400">${p.owner}</td>
+                    <td class="py-2 px-4 text-right font-mono text-rose-500 font-semibold">${p.deadline}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Section 17: CRM Improvements
+        function renderCRM() {
+            const container = document.getElementById('crmGrid');
+            const crm = schemaData.crm_improvements;
+
+            const fields = [
+                { title: "Missing Core Fields", list: crm.missing_fields, color: "text-rose-600" },
+                { title: "Unused / Redundant Fields", list: crm.unused_fields, color: "text-amber-600" },
+                { title: "Duplicate Data Fields", list: crm.duplicate_fields, color: "text-purple-600" },
+                { title: "Recommended Dropdowns", list: crm.recommended_dropdowns, color: "text-blue-600" },
+                { title: "Recommended Calculated Fields", list: crm.recommended_calculated_fields, color: "text-emerald-600" },
+                { title: "Customer Master Enhancements", list: crm.customer_master_fields, color: "text-indigo-600" }
+            ];
+
+            container.innerHTML = fields.map(f => `
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-2">
+                    <h4 class="font-bold text-xs uppercase tracking-wider ${f.color}">${f.title}</h4>
+                    <ul class="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                        ${f.list.map(item => `<li class="flex items-center gap-1.5"><i class="fa-solid fa-check text-[10px] text-slate-400"></i>${item}</li>`).join('')}
+                    </ul>
+                </div>
+            `).join('');
+        }
+
+        // Section 18: Automation Triggers
+        function renderAutomationTriggers() {
+            const tbody = document.getElementById('automationTableBody');
+            tbody.innerHTML = schemaData.automation_triggers.map(t => `
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/40">
+                    <td class="py-2.5 px-4">
+                        <span class="px-2 py-0.5 text-[9px] font-bold rounded ${t.priority === 'Critical' ? 'bg-rose-100 text-rose-800' : t.priority === 'High' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'} uppercase">${t.priority}</span>
+                    </td>
+                    <td class="py-2.5 px-4 font-bold text-slate-900 dark:text-white">${t.trigger}</td>
+                    <td class="py-2.5 px-4 font-mono text-slate-600 dark:text-slate-300">${t.condition}</td>
+                    <td class="py-2.5 px-4 font-semibold text-emerald-600 dark:text-emerald-400">${t.action}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Render Chart.js Visualizations for Section 2
+        let chartInstances = {};
+        function renderVisualCharts() {
+            const isDark = document.documentElement.classList.contains('dark');
+            const textColor = isDark ? '#cbd5e1' : '#475569';
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+
+            // Clean previous charts
+            Object.keys(chartInstances).forEach(k => chartInstances[k].destroy());
+
+            // 2.1 Stage Distribution
+            chartInstances.stage = new Chart(document.getElementById('chartStage').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: schemaData.dashboard.stage_distribution.map(d => d.stage),
+                    datasets: [{
+                        data: schemaData.dashboard.stage_distribution.map(d => d.count),
+                        backgroundColor: ['#f43f5e', '#fbbf24', '#3b82f6', '#10b981', '#8b5cf6'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { color: textColor, font: { size: 10 } } } }
+                }
+            });
+
+            // 2.2 Stock Distribution
+            chartInstances.stock = new Chart(document.getElementById('chartStock').getContext('2d'), {
+                type: 'pie',
+                data: {
+                    labels: schemaData.dashboard.stock_distribution.map(d => d.status),
+                    datasets: [{
+                        data: schemaData.dashboard.stock_distribution.map(d => d.count),
+                        backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { color: textColor, font: { size: 10 } } } }
+                }
+            });
+
+            // 2.3 Payment Distribution
+            chartInstances.payment = new Chart(document.getElementById('chartPayment').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: schemaData.dashboard.payment_distribution.map(d => d.status),
+                    datasets: [{
+                        data: schemaData.dashboard.payment_distribution.map(d => d.count),
+                        backgroundColor: ['#10b981', '#3b82f6', '#f43f5e'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { color: textColor, font: { size: 10 } } } }
+                }
+            });
+
+            // 2.4 Dispatch Distribution
+            chartInstances.dispatch = new Chart(document.getElementById('chartDispatch').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: schemaData.dashboard.dispatch_distribution.map(d => d.status),
+                    datasets: [{
+                        label: 'Orders',
+                        data: schemaData.dashboard.dispatch_distribution.map(d => d.count),
+                        backgroundColor: '#6366f1',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: textColor, font: { size: 9 } }, grid: { display: false } },
+                        y: { ticks: { color: textColor, font: { size: 9 } }, grid: { color: gridColor } }
+                    }
+                }
+            });
+
+            // 2.5 Customer Type Distribution
+            chartInstances.customer = new Chart(document.getElementById('chartCustomerType').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: schemaData.dashboard.customer_type_distribution.map(d => d.type),
+                    datasets: [{
+                        label: 'Order Value (₹)',
+                        data: schemaData.dashboard.customer_type_distribution.map(d => d.value),
+                        backgroundColor: '#06b6d4',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: ctx => ` Value: ${formatINR(ctx.raw)}` } }
+                    },
+                    scales: {
+                        x: { ticks: { color: textColor, font: { size: 10 } }, grid: { display: false } },
+                        y: { ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } }
+                    }
+                }
+            });
+        }
+
+        // Window Load Handler
+        window.onload = function() {
+            if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+                document.getElementById('themeIcon').className = 'fa-solid fa-sun text-base text-amber-400';
+            }
+            initDashboard();
+        };
+    </script>
+</body>
+</html>

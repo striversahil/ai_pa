@@ -1,9 +1,9 @@
 import { config } from '../../config';
 import { logger } from '../../shared/logger';
 import { getKolkataHour } from '../../shared/ist-time';
-import { MessageQueueService } from '../queue/service';
 import { AuditService } from '../audit/service';
 import { StorageRepository } from '../storage/repository';
+import { getRateLimitState, persistRateLimitState } from './rate-limit-store';
 
 function randomUniform(min: number, max: number): number {
   return Math.random() * (max - min) + min;
@@ -17,26 +17,27 @@ export type SendResult = 'sent' | 'rate_limited' | 'outside_hours' | 'failed' | 
 
 export class OutboundService {
   // Global account-level mutex: every send waits for the previous one to fully
-  // complete (sendSeen → pause → startTyping → typing delay → sendText → cooldown) before it
+  // complete (sendSeen → pause → startTyping → typing delay → sendText) before it
   // starts. This guarantees that no two messages are ever sent at the same time to
-  // different recipients, maintaining a singular human-like stream.
+  // different recipients, no matter how many are queued (10k+ still go one-by-one).
   private static globalSendLock: Promise<SendResult> = Promise.resolve('sent' as const);
 
-  // Burst guard: limits how many concurrent send operations can sit waiting in memory.
-  // Anything beyond this threshold is immediately rejected as 'rate_limited' so the upper
-  // application layer/queues can handle backoff gracefully.
+  // Burst guard: only this many sends may sit in the queue at once. Anything
+  // beyond it is rejected as 'rate_limited' so callers defer it — an accidental
+  // 5,000-message push can never flood the send chain (or WhatsApp).
   private static pendingSendCount = 0;
   private static readonly MAX_PENDING_SENDS = 25;
 
-  // Rate Limiting Cache & Constants
-  private static rateLimitCache = new Map<string, number[]>();
+  // Rate limiting state is persisted to disk (see rate-limit-store) so a restart
+  // keeps the throttling exactly where the previous process left off instead of
+  // resetting counters to zero and triggering a post-restart burst.
+  private static rateLimitState = getRateLimitState();
   private static readonly MAX_PER_CHAT_PER_MINUTE = 15;
   private static readonly MAX_PER_ACCOUNT_PER_HOUR_BASE = 50;
   private static readonly MAX_PER_ACCOUNT_PER_HOUR_JITTER = 10;
-  private static accountTimestamps: number[] = [];
-  private static currentHourLimit = OutboundService.computeHourLimit();
+  private static currentHourLimit = OutboundService.initHourLimit();
 
-  // Hard Circuit Breaker Strategy: Protects the founder's personal line from infinite loops
+  // Hard Circuit Breaker Strategy: protects the founder's personal line from infinite loops
   // caused by upstream AI agents or automated webhooks repeating payloads.
   private static dailyOutboundCount = 0;
   private static currentSystemDay = new Date().getDate();
@@ -47,38 +48,40 @@ export class OutboundService {
    * so that the macro-cadence variations cannot be fingerprint-profiled by Meta.
    */
   private static computeHourLimit(): number {
-    return (
-      this.MAX_PER_ACCOUNT_PER_HOUR_BASE +
-      Math.floor(randomUniform(-this.MAX_PER_ACCOUNT_PER_HOUR_JITTER, this.MAX_PER_ACCOUNT_PER_HOUR_JITTER + 1))
-    );
+    return this.MAX_PER_ACCOUNT_PER_HOUR_BASE + Math.floor(randomUniform(-this.MAX_PER_ACCOUNT_PER_HOUR_JITTER, this.MAX_PER_ACCOUNT_PER_HOUR_JITTER + 1));
   }
 
-  /**
-   * Enforces specific transmission ceilings per distinct chat thread.
-   */
+  // Restore the daily randomized account limit across restarts. A persisted
+  // value (from a previous process run) wins; otherwise compute and persist a
+  // fresh one so a restart right before the morning burst keeps the same cap.
+  private static initHourLimit(): number {
+    const st = this.rateLimitState;
+    if (st.hourLimit > 0) return st.hourLimit;
+    const computed = this.computeHourLimit();
+    st.hourLimit = computed;
+    persistRateLimitState();
+    return computed;
+  }
+
   private static checkChatRateLimit(chatId: string): boolean {
     const now = Date.now();
     const window = 60_000;
-    const timestamps = (this.rateLimitCache.get(chatId) || []).filter(t => now - t < window);
-    
+    const timestamps = (this.rateLimitState.chatTimestamps[chatId] || [])
+      .filter(t => now - t < window);
     if (timestamps.length >= this.MAX_PER_CHAT_PER_MINUTE) return false;
-    
     timestamps.push(now);
-    this.rateLimitCache.set(chatId, timestamps);
+    this.rateLimitState.chatTimestamps[chatId] = timestamps;
+    persistRateLimitState();
     return true;
   }
 
-  /**
-   * Tracks global account delivery volume across rolling hourly windows.
-   */
   private static checkAccountRateLimit(): boolean {
     const now = Date.now();
     const window = 3_600_000;
-    this.accountTimestamps = this.accountTimestamps.filter(t => now - t < window);
-    
-    if (this.accountTimestamps.length >= this.currentHourLimit) return false;
-    
-    this.accountTimestamps.push(now);
+    this.rateLimitState.accountTimestamps = this.rateLimitState.accountTimestamps.filter(t => now - t < window);
+    if (this.rateLimitState.accountTimestamps.length >= this.currentHourLimit) return false;
+    this.rateLimitState.accountTimestamps.push(now);
+    persistRateLimitState();
     return true;
   }
 
@@ -88,7 +91,7 @@ export class OutboundService {
    */
   private static checkDailyCircuitBreaker(): boolean {
     const today = new Date().getDate();
-    
+
     // Reset counter if calendar date shifts forward
     if (this.currentSystemDay !== today) {
       this.currentSystemDay = today;
@@ -112,56 +115,55 @@ export class OutboundService {
    * Gateway entry method exposing clean async job scheduling interfaces to external controllers.
    */
   static async sendWithJitter(chatId: string, messageBody: string): Promise<SendResult> {
-    // Hard flood guard check
+    // Hard flood guard: if too many sends are already waiting, reject immediately
+    // instead of chaining on. The caller defers the message to a retry queue, so
+    // nothing is fired in bulk and nothing is lost.
     if (this.pendingSendCount >= this.MAX_PENDING_SENDS) {
       logger.warn(
         { chatId, pending: this.pendingSendCount },
-        'Send burst guard active: queue capacity saturated, message deferred'
+        'Send burst guard active: queue full, message deferred'
       );
       return 'rate_limited';
     }
 
     this.pendingSendCount++;
-    
-    // Append operation execution payload directly to the running sequential Promise chain
     const result = this.globalSendLock.then(() => this.executeSend(chatId, messageBody));
-    
-    // Maintain chain health regardless of isolated operational errors
+    // Keep the chain alive even when a send fails, so one failure never blocks
+    // the sends queued behind it.
     this.globalSendLock = result.catch(() => 'sent' as SendResult);
-    
     return result.finally(() => {
       this.pendingSendCount--;
     });
   }
 
-  /**
-   * Contains core behavioral simulation logic and low-level proxy network delivery orchestration.
-   */
   private static async executeSend(chatId: string, messageBody: string): Promise<SendResult> {
-    // 1. Run Structural Telemetry & Boundary Access Validations
+    // Daily hard circuit breaker first: if the internal daily safety cap has been
+    // reached, refuse immediately regardless of windows or hourly budgets.
     if (!this.checkDailyCircuitBreaker()) {
       return 'circuit_broken';
     }
-    if (!this.checkChatRateLimit(chatId)) {
-      logger.warn({ chatId }, 'Chat specific rate limit active (15/min). Deferring task.');
-      return 'rate_limited';
-    }
-    if (!this.checkAccountRateLimit()) {
-      logger.warn('Account global hourly limits reached. Deferring task.');
-      return 'rate_limited';
-    }
+
+    // Outside-hours check before consuming any rate-limit budget. A deferred send
+    // must never spend the chat or account rate limit for a message that isn't
+    // being sent now. Callers own the deferral (the drain and send routes re-queue
+    // to the morning queue), so outbound stays a pure sender and never imports the
+    // queue layer.
     if (!this.isWithinWorkingHours()) {
-      logger.info({ chatId }, 'Outside operational working hour parameters. Moving to morning queue layer.');
-      await MessageQueueService.enqueueDelayedMorning(chatId, messageBody);
+      logger.info({ chatId }, 'Outside working hours. Deferring to morning queue.');
       return 'outside_hours';
     }
 
-    // Fire off asynchronous background tracking without blocking primary network pipe execution
+    if (!this.checkChatRateLimit(chatId)) {
+      logger.warn({ chatId }, 'Chat rate limit reached (15/min). Deferring.');
+      return 'rate_limited';
+    }
+    if (!this.checkAccountRateLimit()) {
+      logger.warn('Account rate limit reached (40-60/hour). Deferring.');
+      return 'rate_limited';
+    }
+
     AuditService.record('MESSAGE_SENT', 'MESSAGE', null, { chatId, bodyLength: messageBody.length }).catch(() => {});
 
-    /**
-     * Isolated HTTP transmission client wrapping standard platform timeout guards
-     */
     const wahaFetch = async (path: string, body: unknown): Promise<Response> => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30_000);
@@ -183,68 +185,65 @@ export class OutboundService {
     const isGroup = chatId.endsWith('@g.us');
 
     if (isGroup) {
-      // Group structures utilize streamlined micro-jitter profiles to bypass multi-client metadata calculations
-      await sleep(randomUniform(1500, 3500));
+      // GROUP ROUTE (@g.us): WhatsApp manages group read status and typing metadata
+      // differently. Running sendSeen/startTyping against a group forces WAHA to parse
+      // every participant's state — it throws errors and creates a broken, machine-like
+      // pattern that Meta can flag. Groups skip all behavioral steps and send directly
+      // after a short micro-jitter so the server stream stays calm.
+      await sleep(randomUniform(1500, 2500));
     } else {
-      // =========================================================================
-      // INDIVIDUAL CHAT ROUTE (@c.us): Stateful Human Interaction Simulation
-      // =========================================================================
+      // INDIVIDUAL ROUTE (@c.us): simulate a human reading + typing the reply.
 
+      // Only send a read receipt if the chat actually has unread messages. Reading a
+      // chat we initiated (0 unread) is an impossible human action and is a dead give-
+      // away to WhatsApp — so for outbound-first messages we skip sendSeen entirely and
+      // go straight to typing. If we can't determine the unread state, default to NOT
+      // sending the receipt (safer than the flagged pattern).
       let unreadCount = 0;
       try {
         const contact = await StorageRepository.fetchContactByChatId(chatId);
         unreadCount = contact?.unreadCount || 0;
       } catch (err: any) {
-        logger.warn({ chatId, error: err.message }, 'Unable to safely verify chat state, bypassing sendSeen payload');
+        logger.warn({ chatId, error: err.message }, 'Could not read unread count, skipping sendSeen');
       }
 
-      // Safeguard: Never issue read acknowledgments if no data context indicates unread messages exist.
       if (unreadCount > 0) {
         const seenRes = await wahaFetch('/api/sendSeen', { chatId });
         if (!seenRes.ok) {
-          logger.warn({ chatId, status: seenRes.status }, 'WAHA inbound acknowledgement sync failed (non-fatal)');
+          logger.warn({ chatId, status: seenRes.status }, 'WAHA sendSeen failed (non-fatal)');
         } else {
-          // Commit counter updates locally to clear double-trigger windows
+          // Mark the chat as read locally so the next send doesn't repeat the receipt.
           await StorageRepository.updateContactUnread(chatId, -unreadCount).catch(() => {});
         }
       } else {
-        logger.debug({ chatId }, 'Outbound initialized transaction: bypassing unread ack layers safely');
+        logger.debug({ chatId }, 'Outbound-first message: skipping sendSeen (0 unread)');
       }
 
-      // Post-read comprehension lag delay simulation
-      await sleep(randomUniform(1800, 4200));
+      await sleep(randomUniform(1500, 4500));
 
-      // Broadcast an explicit visual state notification over the active node tree
       const typingRes = await wahaFetch('/api/startTyping', { chatId });
       if (!typingRes.ok) {
-        logger.warn({ chatId, status: typingRes.status }, 'WAHA structural telemetry composition start failed (non-fatal)');
+        logger.warn({ chatId, status: typingRes.status }, 'WAHA startTyping failed (non-fatal)');
       }
 
-      // Calculate an unpredictable typing dynamic profile mimicking unique character generation speeds
-      const randomizedTypingSpeed = randomUniform(35, 65); // ms per character matrix
-      const baseTypingDuration = Math.min(Math.max(messageBody.length * randomizedTypingSpeed, 2200), 7500);
-      const readingThinkingJitter = randomUniform(800, 4500);
-      
-      // Keep socket thread alive within human typing envelope bounds
-      await sleep(baseTypingDuration + readingThinkingJitter);
+      const typingDelay = Math.min(Math.max(messageBody.length * 50, 2000), 6000);
+      const jitter = randomUniform(1000, 9000);
+      await sleep(typingDelay + jitter);
     }
 
-    // 3. Dispatch Content Payload
     const sendRes = await wahaFetch('/api/sendText', { chatId, text: messageBody });
     if (!sendRes.ok) {
       const errorBody = await sendRes.text().catch(() => '');
       logger.error(
         { chatId, status: sendRes.status, errorBody },
-        'WAHA endpoint rejected transaction framework delivery parameters'
+        'WAHA sendText failed — message was NOT delivered'
       );
       return 'failed';
     }
 
-    // 4. Sequential Post-Send Execution Cooldown Boundary (Enforced inside globalSendLock)
-    // Ensures that even if multiple tasks are stacked behind this one in BullMQ, the physical
-    // browser node waits a randomized window before processing the next request in line.
-    const postSendCooldown = randomUniform(4000, 14000);
-    await sleep(postSendCooldown);
+    // Post-send cooldown: varies the gap between successive sends widely so the
+    // cadence never looks regular (anywhere from ~4.5s to ~21s+ between messages).
+    await sleep(randomUniform(4000, 14000));
 
     return 'sent';
   }

@@ -121,6 +121,36 @@ export interface StoredNote {
   createdAt: Date;
 }
 
+export interface ChatPendingItemData {
+  chatId: string;
+  chatName: string;
+  description: string;
+  status?: string;
+  dueDate?: Date | null;
+  sourceMessageId?: string | null;
+  resolvedBy?: string | null;
+}
+
+export interface StoredChatPendingItem {
+  id: string;
+  chatId: string;
+  chatName: string;
+  description: string;
+  status: string;
+  dueDate: Date | null;
+  sourceMessageId: string | null;
+  resolvedBy: string | null;
+  createdAt: Date;
+  resolvedAt: Date | null;
+}
+
+export interface StoredChatNote {
+  chatId: string;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface StorageProvider {
   upsertContact(data: ContactData): Promise<StoredContact>;
   fetchContacts(): Promise<StoredContact[]>;
@@ -143,6 +173,16 @@ export interface StorageProvider {
   fetchTasks(): Promise<StoredTask[]>;
   saveFounderNote(content: string): Promise<StoredNote>;
   fetchLatestFounderNote(): Promise<StoredNote | null>;
+
+  createChatPendingItem(data: ChatPendingItemData): Promise<StoredChatPendingItem>;
+  fetchOpenChatPendingItems(chatId?: string): Promise<StoredChatPendingItem[]>;
+  fetchAllChatPendingItems(limit?: number): Promise<StoredChatPendingItem[]>;
+  resolveChatPendingItem(id: string, resolvedBy?: string): Promise<StoredChatPendingItem | null>;
+  resolveChatPendingItemsByChatId(chatId: string, resolvedBy?: string): Promise<number>;
+  cancelChatPendingItem(id: string): Promise<StoredChatPendingItem | null>;
+
+  getChatNote(chatId: string): Promise<StoredChatNote | null>;
+  upsertChatNote(chatId: string, content: string): Promise<StoredChatNote>;
 
   recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void>;
   queryAuditEntries(options: { action?: string; entityType?: string; limit?: number; since?: Date }): Promise<AuditEntry[]>;

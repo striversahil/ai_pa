@@ -1,6 +1,6 @@
 import { logger } from '../../shared/logger';
 import { getStorageProvider } from '../../storage';
-import type { StorageProvider, ContactData, StoredContact } from '../../storage/interfaces';
+import type { StorageProvider, ContactData, StoredContact, ChatPendingItemData, StoredChatPendingItem, StoredChatNote } from '../../storage/interfaces';
 
 function getProvider(): StorageProvider {
   return getStorageProvider();
@@ -110,6 +110,45 @@ export class StorageRepository {
   static async fetchLatestFounderNote() {
     logger.debug('Fetching latest founder note');
     return getProvider().fetchLatestFounderNote();
+  }
+
+  static async createChatPendingItem(data: ChatPendingItemData): Promise<StoredChatPendingItem> {
+    logger.info({ chatId: data.chatId, description: data.description.substring(0, 60) }, 'Creating chat pending item');
+    return getProvider().createChatPendingItem(data);
+  }
+
+  static async fetchOpenChatPendingItems(chatId?: string): Promise<StoredChatPendingItem[]> {
+    logger.debug({ chatId }, 'Fetching open chat pending items');
+    return getProvider().fetchOpenChatPendingItems(chatId);
+  }
+
+  static async fetchAllChatPendingItems(limit = 200): Promise<StoredChatPendingItem[]> {
+    logger.debug({ limit }, 'Fetching all chat pending items');
+    return getProvider().fetchAllChatPendingItems(limit);
+  }
+
+  static async resolveChatPendingItem(id: string, resolvedBy = 'MANUAL'): Promise<StoredChatPendingItem | null> {
+    logger.info({ id, resolvedBy }, 'Resolving chat pending item');
+    return getProvider().resolveChatPendingItem(id, resolvedBy);
+  }
+
+  static async resolveChatPendingItemsByChatId(chatId: string, resolvedBy = 'SEND'): Promise<number> {
+    logger.info({ chatId, resolvedBy }, 'Resolving all open chat pending items for chat');
+    return getProvider().resolveChatPendingItemsByChatId(chatId, resolvedBy);
+  }
+
+    static async cancelChatPendingItem(id: string): Promise<StoredChatPendingItem | null> {
+    logger.info({ id }, 'Cancelling chat pending item');
+    return getProvider().cancelChatPendingItem(id);
+  }
+
+  static async getChatNote(chatId: string): Promise<StoredChatNote | null> {
+    return getProvider().getChatNote(chatId);
+  }
+
+  static async upsertChatNote(chatId: string, content: string): Promise<StoredChatNote> {
+    logger.info({ chatId }, 'Saving private chat note');
+    return getProvider().upsertChatNote(chatId, content);
   }
 
   static async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null) {

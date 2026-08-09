@@ -1,0 +1,31 @@
+{
+  "id": "telecalling-enquiry-to-dpp",
+  "name": "Telecalling Enquiry → Forward to DPP",
+  "description": "Forward telecalling-group enquiries to DPP via WhatsApp within 5 minutes.",
+  "type": "rule",
+  "trigger": {
+    "type": "event_plus_scan",
+    "event": "whatsapp.group.message",
+    "fallbackCron": "* * * * *"
+  },
+  "condition": {
+    "all": [
+      { "field": "chatId", "op": "eq", "value": "{{config.teleGroupChatId}}" },
+      { "field": "sender", "op": "neq", "value": "{{config.dppChatId}}" }
+    ]
+  },
+  "dedupField": "wahaMessageId",
+  "actions": [
+    {
+      "type": "whatsapp_send",
+      "chatId": "{{config.dppChatId}}",
+      "body": "📞 Enquiry ({{timestamp}})\nFrom: {{sender}}\n\n{{body}}",
+      "allowNonAllowlisted": true
+    }
+  ],
+  "config": {
+    "teleGroupChatId": "",
+    "dppChatId": ""
+  },
+  "enabled": true
+}

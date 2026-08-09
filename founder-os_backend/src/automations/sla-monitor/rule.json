@@ -1,0 +1,8 @@
+{
+  "id": "sla-monitor",
+  "name": "SLA Monitor",
+  "description": "Every minute, flag SLA breaches and alert via Slack.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "* * * * *" },
+  "enabled": true
+}

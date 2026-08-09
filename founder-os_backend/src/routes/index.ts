@@ -10,9 +10,11 @@ import estimatesRouter from './estimates';
 import triggersRouter from './triggers';
 import whatsappProxyRouter from './whatsapp-proxy';
 import whatsappWebhookRouter from './whatsapp-webhook';
+import whatsappMarketingRouter from './whatsapp-marketing';
+import pendingItemsRouter from './pending-items';
 import healthRouter from './health';
 import { BrainService } from '../modules/brain/service';
-import { SalesCopilotService } from '../modules/sales_copilot/service';
+import { SalesCopilotService } from '../automations/zoho-sent-analyzer/service';
 import { asyncHandler } from '../middleware/asyncHandler';
 
 const router = Router();
@@ -27,6 +29,8 @@ router.use('/brain', brainRouter);
 router.use('/estimates', estimatesRouter);
 router.use('/trigger', triggersRouter);
 router.use('/whatsapp', whatsappProxyRouter);
+router.use('/whatsapp-marketing', whatsappMarketingRouter);
+router.use('/pending-items', pendingItemsRouter);
 router.use('/health', healthRouter);
 
 // Backward-compatible aliases for moved routes

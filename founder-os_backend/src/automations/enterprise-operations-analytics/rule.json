@@ -1,0 +1,11 @@
+{
+    "id": "enterprise-operations-analytics",
+    "name": "Enterprise Operations & Order Analytics",
+    "description": "18-Point Complete Enterprise Supply Chain Analysis dashboard covering executive summary, visual distributions, master orders, critical orders, procurement, dispatch, payments, customer risk, priority calls, exceptions, department analysis, root causes, predictions, KPIs, action items, top 20 priorities, CRM improvements and automation triggers.",
+    "type": "handler",
+    "trigger": {
+        "type": "schedule",
+        "cron": "*/30 * * * *"
+    },
+    "enabled": true
+}

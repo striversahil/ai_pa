@@ -1,0 +1,8 @@
+{
+  "id": "eod-summary",
+  "name": "Evening EOD Summary",
+  "description": "Daily at 7:00 PM IST, generate and save the end-of-day summary.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "0 19 * * *" },
+  "enabled": true
+}

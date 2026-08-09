@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "while true; do npx ts-node src/server.ts; echo '⚠️ Backend crashed, restarting in 2s...'; sleep 2; done",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-automations.js",
     "start": "node dist/server.js",
     "seed": "ts-node src/shared/seed.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -18,6 +18,7 @@
     "@prisma/client": "^6.19.3",
     "@types/qs": "^6.15.1",
     "bullmq": "^5.45.0",
+    "cron-parser": "^5.7.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^7.5.0",

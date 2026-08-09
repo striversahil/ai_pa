@@ -5,6 +5,7 @@ import { broadcastWhatsAppEvent } from '../../shared/sse';
 import { config } from '../../config';
 import { AuditService } from '../audit/service';
 import { messageBuffer } from './message-buffer';
+import { AutomationEngine } from '../automation/engine';
 
 // Historical-replay threshold: payloads older than this (in seconds) are flagged
 // is_historical and bypass all real-time triggers (classification, SSE, unread).
@@ -214,6 +215,25 @@ async function upsertContactFromPayload(chatId: string, payload: any, opts: { sk
   });
 }
 
+/**
+ * Emits inbound-message events to the automation framework at ingest time
+ * (before the classification queue), so event automations can react
+ * near-real-time. Group chats get `whatsapp.group.message`; 1:1 chats get
+ * `whatsapp.message.inbound`.
+ */
+function emitInboundEvents(chatId: string, sender: string, body: string, wahaMessageId: string | undefined, timestamp: Date) {
+  const event = chatId.endsWith('@g.us') ? 'whatsapp.group.message' : 'whatsapp.message.inbound';
+  AutomationEngine.trigger(event, {
+    chatId,
+    sender,
+    body,
+    wahaMessageId,
+    timestamp: timestamp.toISOString(),
+  }).catch((e: any) => {
+    logger.error({ error: e.message }, 'Automation event emit failed');
+  });
+}
+
 async function processWahaMessage(payload: any): Promise<void> {
   if (payload.fromMe) return;
 
@@ -251,6 +271,7 @@ async function processWahaMessage(payload: any): Promise<void> {
     chatId: from, sender, bodyLength: body.length, mediaType, isHistorical: historical,
   }).catch(() => {});
   await upsertContactFromPayload(from, payload, { skipUnreadIncrement: historical });
+  emitInboundEvents(from, sender, body, wahaMessageId ?? undefined, timestamp);
   messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId, isHistorical: historical, mediaType, ...quoted });
 }
 
@@ -377,6 +398,7 @@ export class WhatsAppController {
             timestamp,
           });
         }
+        emitInboundEvents(from, sender, body, undefined, timestamp);
         messageBuffer.push({ chatId: from, sender, body, timestamp, isHistorical: historical });
       } catch (error: any) {
         logger.error({ error: error.message }, 'Error processing WhatsApp webhook');

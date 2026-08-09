@@ -1,0 +1,68 @@
+# telecalling-agent-analysis
+
+Reads the **Telecalling Agents** Google Sheet and computes per-agent connection,
+lead-gen and SO conversion metrics for the dashboard.
+
+## Architecture
+
+```
+src/automations/telecalling-agent-analysis/
+├── rule.json   → declarative definition (schedule + config)
+├── index.ts    → ALL analysis code lives here (aggregation, insights, leaderboard)
+└── README.md   → this file
+```
+
+This folder is **self-contained**: the entire analysis lives in `index.ts`. It only
+*references* the shared platform Google Sheets API — it never re-implements it:
+
+| Concern            | Owned by                                  |
+|--------------------|-------------------------------------------|
+| Google Sheets API  | `src/modules/google_sheets/service.ts` (shared, unchanged) |
+| Schedule (cron)    | framework via `rule.json` `trigger`        |
+| Dashboard API      | framework via `index.ts` `data()` export   |
+| Analysis logic     | **this folder** (`index.ts`)               |
+
+## Data flow
+
+1. `trigger` fires the automation every 30 minutes (`*/30 * * * *`).
+2. `handler()` calls `GoogleSheetsService.getSpreadsheetData(sheetUrl, range)` and
+   logs a scan summary (rows read, SO created, leads, agent count).
+3. `data()` runs the same read + full analysis and is served at
+   `GET /api/automations/telecalling-agent-analysis/data` for the frontend dashboard.
+4. The frontend renders it generically (`SheetAnalysisDashboard`), no per-sheet
+   frontend code needed.
+
+## Dashboard payload
+
+- `meta` — title, spreadsheet URL, range, rows read, generated time.
+- `kpis` — total SO created, call connection rate, total leads, SO conversion rate.
+- `insights` — AI-style performance & consistency evaluation per agent
+  (Star/Good Lead Gen, Star/Good Performer vs. Low Lead Rate/Low Conversions).
+- `tables` — telecaller leaderboard (ranked) and the raw telecaller log.
+
+## Config
+
+| key         | description                                   | default |
+|-------------|-----------------------------------------------|---------|
+| `sheetUrl`  | full Google Sheets URL **or** raw spreadsheet ID | telecalling agents sheet |
+| `range`     | A1 range (incl. header row)                   | `A1:Z1000` |
+| `maxDailySO`| per-day SO-count cap; rows above it are flagged as data-entry errors and excluded from totals | `50` |
+
+The sheet URL is the *only* thing to change to point this analysis at another
+spreadsheet. The Google Sheets API stays identical.
+
+## Data-quality guard (SO counts)
+
+The count column sometimes gets a rupee **amount** pasted into it (e.g. 74,635
+with a ₹74,635 amount). Such a row silently inflates period totals. Rows whose
+daily SO count exceeds `maxDailySO` are:
+- excluded from KPIs, the leaderboard and insights (treated as 0), and
+- surfaced in the dashboard's **Data Quality & Integrity Audit** table.
+
+## Connection rate
+
+`Total Connected Calls Count` includes calls connected in **both** directions
+(incoming + outgoing), while `Outgoing Calls Count` is dials only — so dividing
+connected by dials yields impossible >100% rates. The **Call Connection Rate** is
+therefore computed as `connected / (incoming + outgoing)`, capped at 100%. Rows
+where connected exceeds incoming + outgoing are flagged in the audit table.

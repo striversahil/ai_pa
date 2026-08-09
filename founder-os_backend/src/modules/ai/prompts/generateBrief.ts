@@ -8,6 +8,7 @@ Input data to synthesize:
 2. Urgent/High-Priority WhatsApp Digests: {whatsappDigests}
 3. Urgent/Unread Emails: {unreadEmails}
 4. Pending Tasks: {pendingTasks}
+5. Pending From Me (per chat, what the founder owes): {pendingFromFounder}
 
 The briefing MUST include these sections:
 # Morning Briefing - [Date]
@@ -20,6 +21,11 @@ The briefing MUST include these sections:
 
 ## 💬 High-Priority Conversations
 - Summarize important discussions from the last 24 hours that the founder should know.
+
+## ⏳ What I Owe (Pending From Me)
+- List every open item the founder owes, grouped per chat, with its due date.
+- Items that are OVERDUE (due date passed) MUST be listed first, marked ⚠️ OVERDUE.
+- Call out overdue items as the top priority — these are what slips through.
 
 ## 📋 Pending Action Items & Tasks
 - List key tasks, their status, owner, and deadline.

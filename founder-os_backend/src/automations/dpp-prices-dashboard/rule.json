@@ -1,0 +1,24 @@
+{
+  "id": "dpp-prices-dashboard",
+  "name": "DPP Prices → Dashboard",
+  "description": "Parse DPP price messages into PriceQuote rows and compute KRA/KPI for the dashboard.",
+  "type": "rule",
+  "trigger": {
+    "type": "event_plus_scan",
+    "event": "whatsapp.message.inbound",
+    "fallbackCron": "* * * * *"
+  },
+  "condition": {
+    "all": [
+      { "field": "chatId", "op": "eq", "value": "{{config.dppChatId}}" }
+    ]
+  },
+  "dedupField": "wahaMessageId",
+  "actions": [
+    { "type": "custom:storePrices" }
+  ],
+  "config": {
+    "dppChatId": ""
+  },
+  "enabled": true
+}

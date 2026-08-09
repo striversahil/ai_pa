@@ -1,5 +1,5 @@
 import { logger } from '../shared/logger';
-import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry } from './interfaces';
+import type { StorageProvider, ContactData, StoredContact, MessageData, StoredMessage, EmailData, StoredEmail, DigestData, StoredDigest, TaskData, StoredTask, StoredNote, AuditEntry, ChatPendingItemData, StoredChatPendingItem, StoredChatNote } from './interfaces';
 
 function generateId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).substr(2, 9)}`;
@@ -13,6 +13,8 @@ export class InMemoryStorageProvider implements StorageProvider {
   private tasks: any[] = [];
   private founderNotes: any[] = [];
   private auditLogs: any[] = [];
+  private chatPendingItems: any[] = [];
+  private chatNotes: any[] = [];
 
   constructor() {
     this.seed();
@@ -202,6 +204,90 @@ export class InMemoryStorageProvider implements StorageProvider {
   async fetchLatestFounderNote(): Promise<StoredNote | null> {
     if (this.founderNotes.length === 0) return null;
     return [...this.founderNotes].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  }
+
+  async createChatPendingItem(data: ChatPendingItemData): Promise<StoredChatPendingItem> {
+    const newItem = {
+      id: generateId('pending'),
+      chatId: data.chatId,
+      chatName: data.chatName,
+      description: data.description,
+      status: data.status || 'OPEN',
+      dueDate: data.dueDate || null,
+      sourceMessageId: data.sourceMessageId || null,
+      resolvedBy: data.resolvedBy || null,
+      createdAt: new Date(),
+      resolvedAt: null,
+    };
+    this.chatPendingItems.push(newItem);
+    return newItem;
+  }
+
+  async fetchOpenChatPendingItems(chatId?: string): Promise<StoredChatPendingItem[]> {
+    let items = this.chatPendingItems.filter((i: any) => i.status === 'OPEN');
+    if (chatId) items = items.filter((i: any) => i.chatId === chatId);
+    return [...items].sort((a: any, b: any) => {
+      if (a.dueDate && b.dueDate) return a.dueDate.getTime() - b.dueDate.getTime();
+      if (a.dueDate) return -1;
+      if (b.dueDate) return 1;
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
+  }
+
+  async fetchAllChatPendingItems(limit = 200): Promise<StoredChatPendingItem[]> {
+    return [...this.chatPendingItems].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit);
+  }
+
+  async resolveChatPendingItem(id: string, resolvedBy = 'MANUAL'): Promise<StoredChatPendingItem | null> {
+    const item = this.chatPendingItems.find((i: any) => i.id === id);
+    if (!item) return null;
+    item.status = 'DONE';
+    item.resolvedBy = resolvedBy;
+    item.resolvedAt = new Date();
+    return item;
+  }
+
+  async resolveChatPendingItemsByChatId(chatId: string, resolvedBy = 'SEND'): Promise<number> {
+    let count = 0;
+    this.chatPendingItems = this.chatPendingItems.map((i: any) => {
+      if (i.chatId === chatId && i.status === 'OPEN') {
+        count++;
+        return { ...i, status: 'DONE', resolvedBy, resolvedAt: new Date() };
+      }
+      return i;
+    });
+    return count;
+  }
+
+  async cancelChatPendingItem(id: string): Promise<StoredChatPendingItem | null> {
+    const item = this.chatPendingItems.find((i: any) => i.id === id);
+    if (!item) return null;
+    item.status = 'CANCELLED';
+    item.resolvedBy = 'MANUAL';
+    item.resolvedAt = new Date();
+    return item;
+  }
+
+  async getChatNote(chatId: string): Promise<StoredChatNote | null> {
+    const note = this.chatNotes.find((n: any) => n.chatId === chatId);
+    return note || null;
+  }
+
+  async upsertChatNote(chatId: string, content: string): Promise<StoredChatNote> {
+    const existing = this.chatNotes.find((n: any) => n.chatId === chatId);
+    if (existing) {
+      existing.content = content;
+      existing.updatedAt = new Date();
+      return existing;
+    }
+    const note = {
+      chatId,
+      content,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.chatNotes.push(note);
+    return note;
   }
 
   async recordAuditEntry(action: string, entityType: string, entityId?: string | null, metadata?: Record<string, any> | null): Promise<void> {

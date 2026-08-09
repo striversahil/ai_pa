@@ -35,6 +35,26 @@ interface RawMessage {
   quotedSender?: string | null;
 }
 
+interface PendingItem {
+  id: string;
+  chatId: string;
+  chatName: string;
+  description: string;
+  status: string;
+  dueDate: string | null;
+  sourceMessageId: string | null;
+  resolvedBy: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+interface PendingChat {
+  chatId: string;
+  chatName: string;
+  openCount: number;
+  items: PendingItem[];
+}
+
 export default function WhatsAppDashboard() {
   const [inboxCategory, setInboxCategory] = useState<"all" | "urgent" | "leads" | "support">("all");
 
@@ -49,6 +69,13 @@ export default function WhatsAppDashboard() {
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+
+  const [pendingChats, setPendingChats] = useState<PendingChat[]>([]);
+  const [isLoadingPending, setIsLoadingPending] = useState(false);
+  const [showOwePanel, setShowOwePanel] = useState(true);
+
+  const [noteText, setNoteText] = useState("");
+  const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -84,8 +111,8 @@ export default function WhatsAppDashboard() {
         const contactListFetched = Array.isArray(data)
           ? data
           : data.contacts && Array.isArray(data.contacts)
-          ? data.contacts
-          : [];
+            ? data.contacts
+            : [];
         if (contactListFetched.length > 0 && !selectedContactUid) {
           setSelectedContactUid(contactListFetched[0].uid);
         }
@@ -147,14 +174,73 @@ export default function WhatsAppDashboard() {
     }
   };
 
+  const fetchPendingItems = async () => {
+    setIsLoadingPending(true);
+    try {
+      const res = await fetch("/api/pending-items");
+      if (res.ok) {
+        const data = await res.json();
+        const chats = Array.isArray(data) ? data : data.chats && Array.isArray(data.chats) ? data.chats : [];
+        setPendingChats(chats);
+      }
+    } catch (err) {
+      console.error("Failed to fetch pending items:", err);
+    } finally {
+      setIsLoadingPending(false);
+    }
+  };
+
+  const resolvePendingItem = async (id: string) => {
+    try {
+      const res = await fetch(`/api/pending-items/${id}/resolve`, { method: "POST" });
+      if (res.ok) {
+        fetchPendingItems();
+      }
+    } catch (err) {
+      console.error("Failed to resolve pending item:", err);
+    }
+  };
+
+  const fetchNote = async (contactUid: string) => {
+    try {
+      const res = await fetch(`/api/whatsapp/contacts/${encodeURIComponent(contactUid)}/note`);
+      if (res.ok) {
+        const data = await res.json();
+        setNoteText(data.content || "");
+        setNoteStatus("idle");
+      }
+    } catch (err) {
+      console.error("Failed to fetch note:", err);
+    }
+  };
+
+  const saveNote = async () => {
+    if (!selectedContactUid) return;
+    setNoteStatus("saving");
+    try {
+      const res = await fetch(`/api/whatsapp/contacts/${encodeURIComponent(selectedContactUid)}/note`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: noteText }),
+      });
+      setNoteStatus(res.ok ? "saved" : "error");
+    } catch (err) {
+      console.error("Failed to save note:", err);
+      setNoteStatus("error");
+    }
+    setTimeout(() => setNoteStatus((s) => (s === "saved" ? "idle" : s)), 2000);
+  };
+
   useEffect(() => {
     fetchContacts();
     fetchDigests();
+    fetchPendingItems();
   }, []);
 
   useEffect(() => {
     if (selectedContactUid) {
       fetchMessages(selectedContactUid);
+      fetchNote(selectedContactUid);
       const exists = digestList.some(d => d.id === selectedContactUid || d.chatId === selectedContactUid);
       if (!exists) {
         generateContactSummary(selectedContactUid);
@@ -204,9 +290,11 @@ export default function WhatsAppDashboard() {
           }
           fetchDigests();
           fetchContacts();
+          fetchPendingItems();
         } else if (payload.event === "message.classified") {
           fetchDigests();
           fetchContacts();
+          fetchPendingItems();
           if (selectedContactUid && payload.data.chatId === selectedContactUid) {
             fetchMessages(selectedContactUid, true);
           }
@@ -241,6 +329,7 @@ export default function WhatsAppDashboard() {
 
       if (res.ok) {
         await fetchMessages(selectedContactUid);
+        fetchPendingItems();
       } else {
         alert("Failed to send message.");
       }
@@ -254,6 +343,35 @@ export default function WhatsAppDashboard() {
   const activeDigest = useMemo(() => {
     return digestList.find((d) => d.id === selectedContactUid || d.chatId === selectedContactUid) || null;
   }, [digestList, selectedContactUid]);
+
+  const activePendingItems = useMemo(() => {
+    if (!selectedContactUid) return [];
+    const chat = pendingChats.find((c) => c.chatId === selectedContactUid);
+    return chat ? chat.items : [];
+  }, [pendingChats, selectedContactUid]);
+
+  const oweChats = useMemo(() => {
+    const now = Date.now();
+    return pendingChats.map((chat) => ({
+      ...chat,
+      items: [...chat.items].sort((a, b) => {
+        const aOverdue = a.dueDate && new Date(a.dueDate).getTime() < now ? 0 : 1;
+        const bOverdue = b.dueDate && new Date(b.dueDate).getTime() < now ? 0 : 1;
+        if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+        const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+        const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+        return aDue - bDue;
+      }),
+    }));
+  }, [pendingChats]);
+
+  const pendingCountForChat = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const chat of pendingChats) {
+      map[chat.chatId] = chat.openCount;
+    }
+    return map;
+  }, [pendingChats]);
 
   const filteredContacts = useMemo(() => {
     const list = contactList.filter((c) => {
@@ -289,6 +407,72 @@ export default function WhatsAppDashboard() {
         </div>
       </div>
 
+      {/* Global "What I Owe" panel: every chat with open pending-from-founder items */}
+      {pendingChats.length > 0 && (
+        <div className="bg-zinc-900/30 border border-zinc-800/80 rounded-2xl p-4">
+          <button
+            onClick={() => setShowOwePanel(!showOwePanel)}
+            className="w-full flex items-center justify-between cursor-pointer border-0 bg-transparent"
+          >
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-white text-sm flex items-center gap-2">
+                <span>⏳</span> What I Owe
+              </h2>
+              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                {pendingChats.reduce((n, c) => n + c.openCount, 0)} open
+              </span>
+            </div>
+            <span className="text-zinc-500 text-xs">{showOwePanel ? "▾ Collapse" : "▸ Expand"}</span>
+          </button>
+
+          {showOwePanel && (
+            <div className="mt-3 space-y-3">
+              {isLoadingPending ? (
+                <div className="text-xs text-zinc-500 animate-pulse">Loading pending items...</div>
+              ) : (
+                oweChats.map((chat) => (
+                  <div key={chat.chatId} className="bg-zinc-950/40 border border-zinc-850 rounded-xl p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => setSelectedContactUid(chat.chatId)}
+                        className="text-xs font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer border-0 bg-transparent p-0 text-left"
+                      >
+                        {chat.chatName}
+                      </button>
+                      <span className="text-[9px] font-extrabold text-zinc-500 shrink-0">{chat.openCount} item{chat.openCount !== 1 ? "s" : ""}</span>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {chat.items.map((item) => {
+                        const isOverdue = item.dueDate && new Date(item.dueDate).getTime() < Date.now();
+                        return (
+                          <div key={item.id} className={`flex items-start justify-between gap-2 rounded-lg px-2.5 py-2 border ${isOverdue ? "bg-rose-500/5 border-rose-500/30" : "bg-zinc-900/60 border-zinc-800"}`}>
+                            <div className="space-y-0.5 min-w-0">
+                              <p className={`text-xs leading-relaxed ${isOverdue ? "text-rose-200" : "text-zinc-200"}`}>{item.description}</p>
+                              {item.dueDate && (
+                                <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-400" : "text-zinc-500"}`}>
+                                  {isOverdue ? "⚠️ Overdue" : "Due"}: {new Date(item.dueDate).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => resolvePendingItem(item.id)}
+                              title="Mark as done"
+                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
+                            >
+                              ✓ Done
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[800px]">
         {/* Left panel: Contacts */}
         <div className="lg:col-span-4 bg-zinc-900/30 border border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden">
@@ -297,11 +481,10 @@ export default function WhatsAppDashboard() {
               <button
                 key={cat}
                 onClick={() => setInboxCategory(cat)}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all border-0 cursor-pointer ${
-                  inboxCategory === cat
-                    ? "bg-zinc-800 text-white border border-zinc-700"
-                    : "text-zinc-500 hover:text-zinc-300 bg-transparent"
-                }`}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all border-0 cursor-pointer ${inboxCategory === cat
+                  ? "bg-zinc-800 text-white border border-zinc-700"
+                  : "text-zinc-500 hover:text-zinc-300 bg-transparent"
+                  }`}
               >
                 {cat === "all" ? "All" : cat === "urgent" ? "Urgent" : cat === "leads" ? "Leads" : "Support"}
               </button>
@@ -321,26 +504,34 @@ export default function WhatsAppDashboard() {
                   <div
                     key={c.uid || index}
                     onClick={() => setSelectedContactUid(c.uid)}
-                    className={`p-4 cursor-pointer hover:bg-zinc-850/50 transition-all space-y-2 border-l-4 ${
-                      isSelected ? "bg-zinc-850/60 border-l-indigo-500" : "border-l-transparent"
-                    }`}
+                    className={`p-4 cursor-pointer hover:bg-zinc-850/50 transition-all space-y-2 border-l-4 ${isSelected ? "bg-zinc-850/60 border-l-indigo-500" : "border-l-transparent"
+                      }`}
                   >
                     <div className="flex justify-between items-center">
                       <span className="font-bold text-sm text-zinc-100 block flex items-center gap-1.5">
                         {c.isGroup && <span title="Group" className="text-[11px]">👥</span>}
                         {c.name || c.phone_number}
                       </span>
-                      <span className="text-[10px] text-zinc-500">{c.isGroup ? 'Group' : c.phone_number}</span>
+                      <div className="flex items-center gap-1.5">
+                        {pendingCountForChat[c.uid] > 0 && (
+                          <span
+                            title={`${pendingCountForChat[c.uid]} pending from you`}
+                            className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                          >
+                            {pendingCountForChat[c.uid]} ⏳
+                          </span>
+                        )}
+                        <span className="text-[10px] text-zinc-500">{c.isGroup ? 'Group' : c.phone_number}</span>
+                      </div>
                     </div>
                     {digest ? (
                       <>
                         <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">{digest.summary}</p>
                         <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                          <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded ${
-                            digest.priority === "urgent" || digest.priority === "high"
-                              ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                              : "bg-zinc-800 text-zinc-400 border border-zinc-700"
-                          }`}>
+                          <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded ${digest.priority === "urgent" || digest.priority === "high"
+                            ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                            : "bg-zinc-800 text-zinc-400 border border-zinc-700"
+                            }`}>
                             {digest.priority}
                           </span>
                           <span className="bg-zinc-850 text-zinc-400 text-[9px] font-semibold px-2 py-0.5 rounded border border-zinc-850">
@@ -393,22 +584,20 @@ export default function WhatsAppDashboard() {
                     const senderLabel = isGroup && !isMe ? (msg.sender || "Unknown") : "";
                     return (
                       <div key={msg.id || index} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm leading-relaxed ${
-                          isMe
-                            ? "bg-indigo-600 text-white rounded-br-none"
-                            : "bg-zinc-800/90 text-zinc-100 rounded-bl-none border border-zinc-700/50"
-                        }`}>
+                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm leading-relaxed ${isMe
+                          ? "bg-indigo-600 text-white rounded-br-none"
+                          : "bg-zinc-800/90 text-zinc-100 rounded-bl-none border border-zinc-700/50"
+                          }`}>
                           {senderLabel && (
                             <span className="text-[9px] font-extrabold text-indigo-400 block mb-1 uppercase tracking-wider">
                               {senderLabel}
                             </span>
                           )}
                           {msg.quotedBody && (
-                            <div className={`mb-1.5 rounded-lg px-2.5 py-1.5 border-l-2 text-[10px] truncate ${
-                              isMe
-                                ? "bg-indigo-500/30 border-indigo-300/60 text-indigo-100"
-                                : "bg-zinc-900/60 border-zinc-500 text-zinc-400"
-                            }`}>
+                            <div className={`mb-1.5 rounded-lg px-2.5 py-1.5 border-l-2 text-[10px] truncate ${isMe
+                              ? "bg-indigo-500/30 border-indigo-300/60 text-indigo-100"
+                              : "bg-zinc-900/60 border-zinc-500 text-zinc-400"
+                              }`}>
                               {msg.quotedSender && (
                                 <span className="font-extrabold block mb-0.5 text-[9px] uppercase tracking-wider opacity-80">
                                   {msg.quotedSender.replace(/@.*$/, '')}
@@ -460,6 +649,78 @@ export default function WhatsAppDashboard() {
                 </h3>
               </div>
 
+              {/* Private per-chat note (Personal Context) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase block">📝 My Note (private)</span>
+                  <span className="text-[9px] text-zinc-600 italic block">Only you can see this</span>
+                </div>
+                <textarea
+                  rows={3}
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  onBlur={saveNote}
+                  placeholder="Why you're following this conversation & what to watch for — e.g. 'Awaiting revised PO timeline; I owe Rahul the new pricing. Flag any mention of delivery delays.'"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 resize-none"
+                />
+                <div className="flex items-center justify-between">
+                  <span className={`text-[9px] font-bold ${noteStatus === "saved" ? "text-emerald-400" : noteStatus === "error" ? "text-rose-400" : noteStatus === "saving" ? "text-amber-400" : "text-transparent"}`}>
+                    {noteStatus === "saved" ? "✓ Saved" : noteStatus === "saving" ? "Saving..." : noteStatus === "error" ? "Failed to save" : "·"}
+                  </span>
+                  <button
+                    onClick={saveNote}
+                    disabled={noteStatus === "saving"}
+                    className="px-2.5 py-1 text-[9px] bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 font-extrabold rounded border border-indigo-500/30 cursor-pointer disabled:opacity-40"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+
+              {/* Per-chat "What I Owe" ledger */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase block">⏳ What I Owe</span>
+                  {activePendingItems.length > 0 && (
+                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      {activePendingItems.length} open
+                    </span>
+                  )}
+                </div>
+                {isLoadingPending ? (
+                  <div className="text-xs text-zinc-500 animate-pulse">Loading pending items...</div>
+                ) : activePendingItems.length === 0 ? (
+                  <div className="p-3 bg-zinc-950/40 border border-zinc-850 rounded-xl text-xs text-zinc-500 italic">
+                    Nothing pending from your side in this chat. ✅
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {activePendingItems.map((item) => {
+                      const isOverdue = item.dueDate && new Date(item.dueDate).getTime() < Date.now();
+                      return (
+                        <div key={item.id} className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs text-zinc-200 leading-relaxed flex-1">{item.description}</p>
+                            <button
+                              onClick={() => resolvePendingItem(item.id)}
+                              title="Mark as done"
+                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
+                            >
+                              ✓ Done
+                            </button>
+                          </div>
+                          {item.dueDate && (
+                            <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-400" : "text-zinc-500"}`}>
+                              {isOverdue ? "⚠️ Overdue" : "Due"}: {new Date(item.dueDate).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {isSummarizing ? (
                 <div className="py-20 text-center space-y-3">
                   <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
@@ -470,13 +731,12 @@ export default function WhatsAppDashboard() {
                   <div className="bg-zinc-950/40 p-4 border border-zinc-855 rounded-xl space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] text-zinc-500 font-bold uppercase">Sentiment</span>
-                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${
-                        activeDigest.sentiment === "positive"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : activeDigest.sentiment === "negative"
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${activeDigest.sentiment === "positive"
+                        ? "bg-emerald-500/10 text-emerald-400"
+                        : activeDigest.sentiment === "negative"
                           ? "bg-rose-500/10 text-rose-400"
                           : "bg-zinc-800 text-zinc-400"
-                      }`}>
+                        }`}>
                         {activeDigest.sentiment}
                       </span>
                     </div>

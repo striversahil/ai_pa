@@ -1,0 +1,8 @@
+{
+  "id": "outbound-intent-recovery",
+  "name": "Outbound Intent Recovery",
+  "description": "Every minute, re-deferral persisted outbound intents once Redis is back.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "* * * * *" },
+  "enabled": true
+}

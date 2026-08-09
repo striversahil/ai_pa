@@ -203,5 +203,6 @@ docker-compose up --build -d
 ## LLM Rate Limiting
 
 The Groq free tier has a **100,000 tokens/day** limit. The `ZohoNotionService` has built-in classification caching:
-- If an estimate already has a `Classification` record in the database **and** the comment count hasn't changed, the LLM call is **skipped**.
+- Every tick, comments are refreshed for all sent estimates in parallel (Zoho comments don't bump `last_modified_time`, so the fetch runs unconditionally).
+- The LLM call is **skipped** unless the estimate is new, was modified since its last sync, or Zoho has a **new comment_id** (higher than the max already stored).
 - Estimates that fail classification (rate-limited) still appear in the frontend with a "Classification pending" placeholder — they will be classified on the next successful sync.

@@ -64,6 +64,22 @@ model Message {
   @@index([slaDeadline])
 }
 
+// Persistent intent to send a WhatsApp message later. Created only when the
+// morning queue (Redis) is unavailable at deferral time, so an outbound message
+// is never lost just because Redis was down. A recovery sweep re-enqueues
+// PENDING intents into the morning queue once Redis is back.
+model OutboundIntent {
+  id            String    @id @default(uuid())
+  chatId        String
+  messageBody   String
+  status        String    @default("PENDING") // PENDING | ENQUEUED
+  targetDelayMs Int?
+  createdAt     DateTime  @default(now())
+  enqueuedAt    DateTime?
+
+  @@index([status, createdAt])
+}
+
 model Email {
   id          String   @id @default(uuid())
   subject     String
@@ -99,6 +115,39 @@ model Task {
   source      String     // "WHATSAPP" | "EMAIL" | "MANUAL"
   sourceId    String?
   createdAt   DateTime   @default(now())
+}
+
+// Per-chat "Pending From Me" ledger. One row per open item the founder owes in a
+// specific WhatsApp chat/group. A single chat can have multiple open items, so
+// the founder can see exactly what is pending from their side in each
+// conversation — eliminating context loss. Items are created by the WhatsApp
+// digest automation (AI-extracted) and auto-resolved when the founder sends a
+// message in the chat (or manually via the API).
+model ChatPendingItem {
+  id              String    @id @default(uuid())
+  chatId          String
+  chatName        String
+  description     String
+  status          String    @default("OPEN") // OPEN | DONE | CANCELLED
+  dueDate         DateTime?
+  sourceMessageId String?
+  resolvedBy      String?   // "SEND" | "MANUAL" | "AI"
+  createdAt       DateTime  @default(now())
+  resolvedAt      DateTime?
+
+  @@index([chatId, status])
+  @@index([status, createdAt])
+}
+
+// Private per-chat note written by the founder. One note per chat/group: it
+// records what the founder wants to watch for, remember, or check in that
+// conversation. Visible only to the founder; it is also fed to the digest AI as
+// personal context so it can surface what the founder cares about.
+model ChatNote {
+  chatId    String   @id
+  content   String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model FounderNote {
@@ -179,4 +228,148 @@ model BrainContext {
   @@index([entityName])
   @@index([eventDate])
   @@unique([source, sourceId]) // Prevent duplicate indexing
+}
+
+// Automation framework: one row per automation folder in src/automations/.
+// rule.json is the template; runtime-editable fields (enabled, cooldownMs,
+// configJson) persist across redeploys. The Json fields are JSON-encoded strings.
+model Automation {
+  id            String   @id @default(uuid())
+  slug          String   @unique // folder name in src/automations/
+  name          String
+  description   String?
+  type          String   @default("rule") // "rule" | "handler"
+  triggerJson   String
+  conditionJson String?
+  actionsJson   String?
+  configJson    String?
+  dedupField    String?
+  enabled       Boolean  @default(true)
+  cooldownMs    Int      @default(0)
+  lastRunAt     DateTime?
+  runCount      Int      @default(0)
+  readmePath    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  runs          AutomationRun[]
+
+  @@index([enabled])
+}
+
+// One fire of a rule automation. The unique (automationId, dedupKey) makes
+// double-firing structurally impossible — the same logical event (e.g. one
+// enquiry message) can never fire twice, even across restarts.
+model AutomationRun {
+  id           String     @id @default(uuid())
+  automationId String
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  dedupKey     String
+  status       String     @default("SUCCESS") // SUCCESS | SKIPPED | FAILED
+  payloadJson  String?
+  error        String?
+  createdAt    DateTime   @default(now())
+
+  @@unique([automationId, dedupKey])
+  @@index([automationId, createdAt])
+}
+
+// Parsed DPP price-quote lines (dpp-prices-dashboard automation). One row per
+// item parsed from a DPP price message; KPI aggregates are computed from these.
+model PriceQuote {
+  id         String   @id @default(uuid())
+  messageId  String   @unique
+  dppChatId  String
+  itemName   String
+  unitPrice  Float?
+  currency   String   @default("INR")
+  rawLine    String
+  quotedAt   DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([dppChatId])
+  @@index([quotedAt])
+}
+
+// Generic key/value runtime state (e.g. pipeline completion watermarks that
+// aren't tied to a single row). Not user-editable config — that lives in
+// Automation.configJson.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// WhatsApp Marketing (whatsapp-marketing automation). One row per marketing
+// campaign. A campaign targets its own lead list (MarketingLead) at its own
+// trigger time (one-shot scheduledAt, or a recurring cron) through a provider
+// (WABA Meta Cloud API, or an AiSensy-style campaign service).
+model MarketingCampaign {
+  id                  String   @id @default(uuid())
+  name                String
+  description         String?
+  type                String   @default("promotional") // promotional | reengagement | invoice | seasonal | custom
+  provider            String   @default("waba") // waba | aisensy
+  status              String   @default("draft") // draft | active | paused | completed | archived
+  scheduleType        String   @default("one_shot") // one_shot | recurring
+  scheduledAt         DateTime? // one-shot fire time (Asia/Kolkata)
+  cron                String? // recurring schedule, e.g. "0 9 * * MON"
+  timezone            String   @default("Asia/Kolkata")
+  templateName        String? // WABA approved template name
+  templateLanguage    String   @default("en")
+  templateParams      String? // JSON array of static param values (or lead field mappings)
+  messageBody         String? // free-text body (session sends) or {{lead.<field>}} templated
+  mediaUrl            String? // optional media attached to the message (e.g. invoice PDF)
+  mediaFilename       String?
+  senderPhoneNumberId String? // WABA: phone number ID to send from
+  aisensyCampaignName String? // AiSensy: name of the live API campaign
+  enabled             Boolean  @default(true)
+  lastRunAt           DateTime?
+  runCount            Int      @default(0)
+  statsJson           String? // cached aggregates: { total, sent, delivered, read, failed }
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  leads MarketingLead[]
+  runs   MarketingCampaignRun[]
+
+  @@index([enabled, status])
+  @@index([provider])
+}
+
+// One target lead inside a marketing campaign. Deduped per (campaign, phone).
+model MarketingLead {
+  id            String   @id @default(uuid())
+  campaignId    String
+  campaign      MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  phoneNumber   String // E.164, e.g. 919876543210
+  name          String?
+  attributes    String? // JSON object: lead-specific values used to fill {{lead.<key>}}
+  status        String   @default("pending") // pending | sent | delivered | read | failed | optout
+  messageId     String?
+  error         String?
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  @@unique([campaignId, phoneNumber])
+  @@index([campaignId, status])
+}
+
+// One execution of a campaign: a run iterates the pending leads and sends.
+model MarketingCampaignRun {
+  id          String   @id @default(uuid())
+  campaignId  String
+  campaign    MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  status      String   @default("running") // running | completed | failed | partial
+  total       Int      @default(0)
+  sent        Int      @default(0)
+  failed      Int      @default(0)
+  skipped     Int      @default(0)
+  error       String?
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+
+  @@index([campaignId, startedAt])
 }
