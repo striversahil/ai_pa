@@ -56,14 +56,14 @@ This document describes the system architecture, design patterns, and extension 
              └──────────────────────────────┘
 
 External:
-  ┌────────┐    webhook      ┌──────────┐
-  │ WAHA   │───────────────▶ │ Backend  │
-  │ (Docker│   POST /api/    │ :3000    │
-  │ :3002) │   whatsapp/     │          │
-  │        │   webhook       │          │
-  │  QR    │◀────────────────│ Outbound │
-  │ scan   │   sendText      │          │
-  └────────┘                 └──────────┘
+  ┌────────────────┐   webhook     ┌──────────┐
+  │ WA Engine Pro  │──────────────▶│ Backend  │
+  │ (cloud, waengin│  POST /api/   │ :3000    │
+  │ e.pro, X-API-  │  whatsapp/    │          │
+  │ Key)           │  webhook      │          │
+  │                │◀──────────────│ Outbound │
+  │                │  /messages/send          │
+  └────────────────┘               └──────────┘
 ```
 
 ---
@@ -145,7 +145,7 @@ src/modules/
 │   └── service.ts                # node-cron definitions + EngineRegistry bootstrapper
 │                                   Schedules: classification batch (every 5m), digest (every 5m),
 │                                   SLA check (every 1m), batcher flush (every 15m),
-│                                   data retention (daily 3AM), WAHA restart (daily 4AM)
+│                                   data retention (daily 3AM), WA Engine Pro monitor (*/5)
 │
 ├── storage/
 │   └── repository.ts             # All CRUD operations — routes through StorageProvider
@@ -156,11 +156,11 @@ src/modules/
 │
 ├── whatsapp/
 │   ├── controller.ts             # POST /api/whatsapp/webhook handler
-│   │                               WAHA webhook format, thundering herd batch format,
-│   │                               legacy Whapi/WhatsJet formats — all supported
+│   │                               WA Engine Pro message.received (primary), legacy
+│   │                               WAHA/Whapi/WhatsJet formats — all tolerated
 │   ├── service.ts                # Message persistence + retrieval + dedup via WhatsAppService
-│   ├── outbound.ts               # Ban-proofed send sequence: sendSeen→pause→startTyping→
-│   │                               typing delay jitter→sendText, working hours guard
+│   ├── outbound.ts               # Plain send via POST /messages/send with jittered
+│   │                               delays + working hours guard (waEngineFetch)
 │   └── batcher.ts                # 15-min notification batching via Map-based buffer + flushAll()
 │
 ├── sales_copilot/
@@ -177,12 +177,12 @@ src/modules/
 ### 4.1 Webhook Flow
 
 ```
-WAHA (Docker container)
-  │  event: "message"
+WA Engine Pro (cloud) via webhook-relay
+  │  event: "message.received", data: { message, contact }
   ▼
 POST /api/whatsapp/webhook
   │
-  ├── WAHA format (event: "message", payload: {...})
+  ├── WA Engine Pro format (message.received)
   │     ├── Dedup check: prisma.message.findUnique({ where: { wahaMessageId } })
   │     ├── Extract body (text or media type label via extractMessageBody())
   │     ├── Save message to PostgreSQL/In-Memory via StorageRepository
@@ -305,7 +305,7 @@ sendSeen(chatId)
 - **Random jitter** added to all delays (±0.5s on pause, ±400ms on typing)
 - **Working hours guard**: Messages only sent between 8 AM and 10 PM
 - **Night deferral**: Messages outside working hours are enqueued to `morningQueue` with delay until 8 AM next day
-- **WAHA restart**: Daily 4 AM cron restarts the WAHA container to prevent session staleness
+- **WA Engine Pro**: cloud SaaS — no local session to restart; the wa-engine-monitor automation checks `/me` every 5 min and audits sustained outages
 
 ### 7.3 Notification Batcher
 
@@ -331,7 +331,7 @@ Fetch all messages where classifiedAt IS NULL AND slaDeadline < now()
 When SLAs are breached, the `Alerter` sends a formatted Slack message with:
 - Count of breached messages
 - Oldest unclassified message time
-- Warning to check WAHA session or API keys
+- Warning to check WA Engine Pro connectivity or API key
 
 Configured via `SLACK_WEBHOOK_URL` env var. Silently skipped if not configured.
 
@@ -342,7 +342,7 @@ Configured via `SLACK_WEBHOOK_URL` env var. Silently skipped if not configured.
 ```json
 {
   "status": "healthy" | "degraded" | "down",
-  "wahaStatus": "WORKING" | "STOPPED" | "unknown",
+  "waEngine": { "reachable": true, "name": "Samarth Gupta", "id": "..." },
   "metrics": {
     "unprocessedMessages": 0,
     "slaBreaches": 0,
@@ -489,7 +489,7 @@ Then create a new view in `founder-os_frontend` and rebuild.
 | **AI first, heuristic fallback** | LLM provides nuanced classification; heuristics ensure zero downtime |
 | **Incremental digesting** | Avoids re-summarizing entire conversation history — 80% token reduction on subsequent runs |
 | **Ban-proof outbound sequence** | Prevents WhatsApp account restrictions via natural typing simulation |
-| **WAHA (WEBJS) over cloud APIs** | Self-hosted, full control over anti-detection, no per-message API costs |
+| **WA Engine Pro (cloud)** | No local container/session to babysit; webhooks + API key auth; plain sends |
 | **In-memory fallback mode** | Development and demo without PostgreSQL dependency |
 | **Body-hash classification cache** | Prevents repeat LLM calls for identical messages (e.g. "Hi", "?") |
 | **Static Next.js export** | No separate frontend server needed; Express serves everything |
@@ -509,7 +509,7 @@ Then create a new view in `founder-os_frontend` and rebuild.
 | SLA check | `* * * * *` | Detect messages exceeding 15-min SLA deadline |
 | Notification batcher flush | `*/15 * * * *` | Send buffered outbound notifications |
 | Data retention | `0 3 * * *` | Purge messages older than 90 days (chunks of 1000) |
-| WAHA restart | `0 4 * * *` | Restart WAHA container to prevent session staleness |
+| WA Engine Pro monitor | `*/5 * * * *` | Verify `/me` connectivity; audit sustained outages |
 | Email sync | `*/15 * * * *` | Sync IMAP inbox → stores emails |
 | Zoho + Notion sync | `*/30 * * * *` | Sync estimates, classify, match to Notion |
 | Morning briefing | `0 7 * * *` | Generate morning briefing via LLM |
@@ -525,9 +525,9 @@ Then create a new view in `founder-os_frontend` and rebuild.
 | `LLM_API_KEY` | No | — | Groq/OpenAI API key (comma-separated for fallback) |
 | `LLM_BASE_URL` | No | `https://api.groq.com/openai/v1` | OpenAI-compatible endpoint |
 | `LLM_MODEL` | No | `llama-3.3-70b-versatile` | Primary LLM model |
-| `WAHA_API_URL` | Yes | `http://localhost:3002` | WAHA REST API base URL |
-| `WAHA_API_KEY` | Yes | — | WAHA API authentication key |
-| `WAHA_SESSION_NAME` | No | `default` | WAHA session name |
+| `WA_ENGINE_BASE_URL` | Yes | `https://waengine.pro/api/v1` | WA Engine Pro base URL |
+| `WA_ENGINE_API_KEY` | Yes | — | WA Engine Pro X-API-Key |
+| *(removed)* | — | — | No local session concept in the cloud API |
 | `REDIS_HOST` | No | `localhost` | Redis host for BullMQ |
 | `REDIS_PORT` | No | `6379` | Redis port |
 | `MESSAGE_SLA_MINUTES` | No | `15` | SLA deadline in minutes |

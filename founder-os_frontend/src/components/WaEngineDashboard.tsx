@@ -15,7 +15,7 @@ type Table = {
   rows: (string | number)[][];
 };
 
-type WahaData = {
+type WaEngineData = {
   meta: {
     analysis: string;
     title: string;
@@ -42,7 +42,7 @@ type WahaData = {
   };
   health: {
     status: string;
-    waha?: {
+    waEngine?: {
       status: string;
       reachable: boolean;
       checkedAt: string | null;
@@ -70,8 +70,8 @@ const ACCENT_CLASS: Record<string, { text: string; glow: string }> = {
   violet: { text: "text-violet-400", glow: "bg-violet-500/10" },
 };
 
-export default function WahaSessionDashboard() {
-  const [data, setData] = useState<WahaData | null>(null);
+export default function WaEngineDashboard() {
+  const [data, setData] = useState<WaEngineData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState<number>(7);
@@ -80,7 +80,7 @@ export default function WahaSessionDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/automations/waha-session-monitor/data?windowDays=${days}`);
+      const res = await fetch(`/api/automations/wa-engine-monitor/data?windowDays=${days}`);
       if (!res.ok) {
         setError(`Dashboard not available (HTTP ${res.status}).`);
         setData(null);
@@ -100,7 +100,7 @@ export default function WahaSessionDashboard() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/automations/waha-session-monitor/data?windowDays=${windowDays}`);
+        const res = await fetch(`/api/automations/wa-engine-monitor/data?windowDays=${windowDays}`);
         if (!res.ok) {
           if (!cancelled) {
             setError(`Dashboard not available (HTTP ${res.status}).`);
@@ -131,13 +131,13 @@ export default function WahaSessionDashboard() {
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-zinc-800 pb-5">
         <div>
           <h1 className="text-2xl font-bold font-heading tracking-tight flex items-center gap-2">
-            <span>📶</span> {data?.meta?.title ?? "WAHA Session Monitor"}
+            <span>📶</span> {data?.meta?.title ?? "WA Engine Pro Monitor"}
           </h1>
           <p className="text-xs text-zinc-400 mt-0.5">
             session <code className="text-zinc-300 font-mono">{data?.meta?.sessionName ?? "—"}</code>
             {data?.meta?.generatedAt && ` · updated ${new Date(data.meta.generatedAt).toLocaleTimeString()}`}
             {typeof data?.meta?.cacheAgeSec === "number" && (
-              <span className="text-zinc-500"> · WAHA snapshot {data.meta.cacheAgeSec}s old (cron refreshes every 5m)</span>
+              <span className="text-zinc-500"> · WA Engine snapshot {data.meta.cacheAgeSec}s old (cron refreshes every 5m)</span>
             )}
           </p>
         </div>
@@ -175,7 +175,7 @@ export default function WahaSessionDashboard() {
             {liveOk
               ? "WhatsApp session is connected and responding."
               : data.live.error
-                ? `WAHA API error: ${data.live.error}`
+                ? `WA Engine API error: ${data.live.error}`
                 : "WhatsApp session is not in WORKING state."}
           </span>
           {data.live.error && <span className="text-xs font-mono opacity-70">{data.live.error}</span>}
@@ -217,7 +217,7 @@ export default function WahaSessionDashboard() {
                   </div>
                 </div>
                 <DiagField label="Engine" value={data.diagnostics.engine} />
-                <DiagField label="WAHA Web Version" value={data.diagnostics.webVersion} />
+                <DiagField label="WA Engine" value={data.diagnostics.webVersion} />
                 <DiagField label="LinkedID" value={data.diagnostics.lid} />
               </div>
             </div>

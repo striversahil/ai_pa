@@ -2,36 +2,36 @@
 
 This document explains the end-to-end WhatsApp flow in the **founder-os_backend** project: how messages come in, get classified, trigger actions, and how replies are sent back — with every anti-ban hardening and durability mechanism that has been applied. It is the single source of truth for a future engineer/AI to understand and operate the system.
 
-> **Last updated: 2026-08-03.** Reflects the current production state: webhook relay (always-on disk-backed sink), persistent Redis, outbound-intent durability, persisted rate-limit state, orphan recovery, drain locks, message-buffer re-queue, allowlist gate, LID normalization, global send lock, etc.
+> **Last updated: 2026-08-18.** Reflects the current production state: WA Engine Pro (cloud API) as the WhatsApp provider, webhook relay (always-on disk-backed sink), persistent Redis, outbound-intent durability, persisted rate-limit state, orphan recovery, drain locks, message-buffer re-queue, allowlist gate, global send lock, etc.
 
 ---
 
 ## Architecture Overview
 
 ```
-Phone → WhatsApp Web → WAHA (Docker) → Webhook Relay (Docker) → Backend Webhook → 200 + buffer → Redis (BullMQ) → AI/Heuristic → PostgreSQL
-                                                                                       ↓ (relay holds on disk when backend is down)
-Phone ← WhatsApp Web ← WAHA ← sendWithJitter() ← OutboundService ← Backend API/Frontend   (allowlist-gated, global lock)
+Phone → WhatsApp → WA Engine Pro (cloud) → Webhook Relay (Docker) → Backend Webhook → 200 + buffer → Redis (BullMQ) → AI/Heuristic → PostgreSQL
+                                                                                      ↓ (relay holds on disk when backend is down)
+Phone ← WhatsApp ← WA Engine Pro (cloud) ← sendWithJitter() ← OutboundService ← Backend API/Frontend   (allowlist-gated, global lock)
 ```
 
 **Components & live ports in this deployment:**
 
 | Component | Role | Address |
 |---|---|---|
-| **WAHA** | WhatsApp Web bridge (Docker, WEBJS engine) | `127.0.0.1:3002` (host) |
-| **webhook-relay** | Always-on dead-letter sink: acks WAHA instantly, persists payloads to a disk write-ahead log, forwards to the backend | `127.0.0.1:5099` (host) |
+| **WA Engine Pro** | Cloud WhatsApp SaaS API (`https://waengine.pro/api/v1`, `X-API-Key` auth) | external |
+| **webhook-relay** | Always-on dead-letter sink: acks the provider instantly, persists payloads to a disk write-ahead log, forwards to the backend | `127.0.0.1:5099` (host) |
 | **Backend** | Express + TS, runs via `npx ts-node src/server.ts` | `0.0.0.0:5000` (host) |
 | **Redis** | BullMQ queues + AOF persistence (named volume) | `6379` (host) |
 | **PostgreSQL** | Persistent storage (messages, digests, tasks, contacts, outbound intents) | `5432` |
 
 **How the backend runs (important):**
 - The backend is **not** run as the compose `backend` container in practice — it runs on the host under a supervisor shell: `while true; do npx ts-node src/server.ts; echo 'Backend crashed, restarting in 2s...'; sleep 2; done`. This auto-restarts it on crash.
-- Backend startup sequence (`server.ts`): `app.listen()` → `await waitForWahaSession()` (polls `GET /api/sessions/default` every 3s up to 180s until `status === "WORKING"`) → `SchedulerService.init()` → `MessageQueueService.startWorker()`.
+- Backend startup sequence (`server.ts`): `app.listen()` → `await waitForWaEngine()` (polls `GET /me` on `WA_ENGINE_BASE_URL` every 3s up to 60s until the API key verifies) → `SchedulerService.init()` → `MessageQueueService.startWorker()`.
 
-**Why a relay (instead of WAHA → backend directly, or polling WAHA):**
-- WAHA's webhook retry window is ~4 minutes (120 attempts × 2s). If the backend is down longer, WAHA *drops* the event permanently.
-- We deliberately do **not** poll WAHA's chat store to recover missed messages (fragile, heavy, and it re-introduces a direct WAHA dependency for reads).
-- The relay is a tiny zero-dependency Node container (`webhook-relay/relay.js`) that is always up (`restart: unless-stopped`). It ack's WAHA `200` **before** the backend is involved, so WAHA never retries; every payload is appended to a durable write-ahead log on disk and replayed to the backend when it's reachable. A multi-hour backend outage = messages wait on disk, nothing is lost.
+**Why a relay (instead of provider → backend directly, or polling the provider):**
+- WA Engine Pro's webhook retry window is bounded (~120 attempts × 2s). If the backend is down longer, the provider *drops* the event permanently.
+- We deliberately do **not** poll the provider's message store to recover missed messages (fragile, heavy, and it re-introduces a direct provider dependency for reads).
+- The relay is a tiny zero-dependency Node container (`webhook-relay/relay.js`) that is always up (`restart: unless-stopped`). It acks the provider `200` **before** the backend is involved, so the provider never retries; every payload is appended to a durable write-ahead log on disk and replayed to the backend when it's reachable. A multi-hour backend outage = messages wait on disk, nothing is lost.
 
 ---
 
@@ -39,18 +39,18 @@ Phone ← WhatsApp Web ← WAHA ← sendWithJitter() ← OutboundService ← Bac
 
 ### 1.1 Webhook Ingestion
 
-WAHA POSTs to `http://host.docker.internal:5099/api/whatsapp/webhook` (**the relay**, not the backend) for every inbound `message` event.
+WA Engine Pro POSTs to the configured webhook URL — the relay at `http://host.docker.internal:5099/api/whatsapp/webhook` — for every inbound `message.received` event.
 
 ```
 Phone sends "Hi, can you send me a quote for 500 units?"
-  → WAHA receives via WhatsApp Web
-  → WAHA POSTs to http://host.docker.internal:5099/api/whatsapp/webhook   (relay)
+  → WA Engine Pro (cloud) receives via WhatsApp
+  → WA Engine Pro POSTs message.received to the relay webhook URL
   → relay acks 200 immediately + appends payload to .runtime/webhook-relay.log
   → relay forwards to http://host.docker.internal:5000/api/whatsapp/webhook (backend)
   → if the backend is down, the payload waits on disk and is retried every ~2s
 ```
 
-Example body WAHA sends to the relay (relay forwards it byte-for-byte):
+Example body the provider sends to the relay (relay forwards it byte-for-byte):
 
 ```
 Body: {
@@ -69,23 +69,23 @@ Body: {
 
 ### 1.2 Backend Processing (`WhatsAppController.handleWebhook`)
 
-The handler returns **HTTP 200 immediately** (before any parsing/validation/DB work) so WAHA never enters its retry loop. All processing happens in a background IIFE.
+The handler returns **HTTP 200 immediately** (before any parsing/validation/DB work) so the provider never enters its retry loop. All processing happens in a background IIFE.
 
 ```
-1. Respond 200 { success: true }                       ← non-blocking, stops WAHA retries
+1. Respond 200 { success: true }                       ← non-blocking, stops provider retries
 
 2. Identify format:
-   - WAHA:   { event: "message", payload }
+   - WA Engine Pro: { event: "message.received", data: { message, contact } }
    - Burst:  { payloads: [...] }                       ← thundering-herd replay array
    - Legacy: currentMessage / message+contact / WhatsJet — kept for backwards compat
 
-3. Per message (processWahaMessage):
+3. Per message (processInboundMessage):
    a. Skip if payload.fromMe (our own sent messages never re-ingested)
    b. Dedup cache: recentMessageIds (Map, cap 10_000, 1h expiry) on wahaMessageId → skip if seen
-   c. Normalize chatId: if individual chat arrives as @lid, resolve to @c.us via WAHA
+   c. Normalize chatId: convert provider phone → @c.us chatId (cloud API has no LIDs)
       contacts endpoint (cached per LID). LID → @c.us is how WEBJS addresses chats now.
       Contact/group name lookups are also memoized (1h TTL, incl. misses) so the
-      WAHA contacts/groups API is NOT hit on every message.
+      Provider contact lookups are NOT hit on every message (local DB name resolution only).
    d. Extract: sender, body (media → "[Image]"/"[Video]"/"[Document: x]"/etc.), timestamp, mediaType
    e. Quoted/reply context: payload.replyTo (WEBJS) → { quotedMessageId, quotedBody, quotedSender }
       (fallback: payload.quotedMsg). Stored on the Message row so the dashboard can
@@ -169,7 +169,7 @@ POST /api/whatsapp/send  (also /api/whatsapp-proxy/send)
   → validate chatId format
   → StorageRepository.hasInboundMessages(chatId)?
         NO  → HTTP 403 { success:false, error: "chatId is not allowlisted: ..." }
-              (no message saved, no WAHA call, no queue entry — verified in logs)
+              (no message saved, no provider call, no queue entry — verified in logs)
         YES → proceed to saveMessage + sendWithJitter
 ```
 
@@ -182,7 +182,7 @@ POST /api/whatsapp/send  (also /api/whatsapp-proxy/send)
 
 WEBJS increasingly addresses individual chats by **LID** (`32070705410048@lid`) instead of phone (`918595563952@c.us`).
 
-- **Ingestion:** LID chatIds are resolved to `@c.us` via `GET /api/{session}/contacts/{lid}` (WAHA returns `id: "<phone>@c.us"`), cached per LID in `controller.ts` (`resolveLidToCus`).
+- **Ingestion:** WA Engine Pro webhooks carry the phone directly; `controller.ts` normalizes it to `<phone>@c.us`.
 - **Why:** sends target `@c.us`; the allowlist, message history, and Contact table all key on `@c.us`. Without normalization, a chat that messaged us under its LID would look "never messaged" and get blocked.
 
 ### 4.4 Ban-Proof Send Sequence (`outbound.ts`)
@@ -196,7 +196,7 @@ sendWithJitter(chatId, body)
   ├── GLOBAL LOCK: every send chains onto a single account-wide promise
   │        (globalSendLock). No two messages are EVER sent at the same time to
   │        any recipient, no matter how many are queued. Verified: 5 parallel
-  │        requests fired within µs landed 5.5–6s apart at WAHA.
+  │        requests fired within µs landed 5.5–6s apart at the provider.
   │
   └── executeSend(chatId, body)
        ├── 1. Chat rate limit: max 15 msgs / rolling 60s per chat → 'rate_limited'
@@ -214,7 +214,7 @@ sendWithJitter(chatId, body)
        ├── GROUP ROUTE (@g.us):
        │        sleep 1500–2500ms → sendText
        │        (NO sendSeen, NO startTyping — groups must never get typing/
-       │        presence broadcasts; verified in WAHA logs: group send = sendText only)
+       │        presence broadcasts; verified in provider logs)
        │
        ├── INDIVIDUAL ROUTE (@c.us / @lid):
        │        a. sendSeen ONLY if chat.unreadCount > 0 (reading a chat we
@@ -224,8 +224,8 @@ sendWithJitter(chatId, body)
        │        c. startTyping
        │        d. typing delay = clamp(body.length × 50ms, 2000, 6000) + jitter 1000–9000ms
        │
-       ├── sendText via WAHA
-       │        ALL WAHA calls go through wahaFetch: 30s AbortController timeout,
+       ├── POST /messages/send via WA Engine Pro
+       │        ALL WA Engine calls go through waEngineFetch: 30s AbortController timeout,
        │        checks res.ok. If sendText fails → 'failed' (never "silently sent").
        │
        └── post-send cooldown sleep 2000–12000ms  → 'sent'
@@ -258,7 +258,7 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 
 ### 6.1 Health
 
-`GET /api/health/whatsapp` → status (`healthy`/`degraded`), WAHA session state, metrics (unprocessed, SLA breaches, last webhook, lag).
+`GET /api/health/whatsapp` → status (`healthy`/`degraded`), WA Engine Pro connectivity, metrics (unprocessed, SLA breaches, last webhook, lag).
 
 ### 6.2 Cron Jobs (SchedulerService.init)
 
@@ -277,7 +277,7 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 | SLA monitor | `* * * * *` | Flag SLA breaches → Slack |
 | Notification batcher flush | `*/15 * * * *` | Flush grouped alerts (spin-taxed) |
 | **Data retention** | `0 3 * * *` | Delete messages older than **90 days** (batches of 1000) |
-| WAHA session health monitor | `*/5 * * * *` | If session not WORKING for >1min → `POST /start` |
+| WA Engine Pro monitor | `*/5 * * * *` | Check `/me` connectivity, audit sustained outages |
 
 **Timezone:** every `cron.schedule` passes `{ timezone: 'Asia/Kolkata' }`, so all schedules fire in IST even though the host runs `Etc/UTC`. `* * * * *` / `*/N` interval jobs are timezone-independent anyway. The EOD "tasks created today" boundary also uses IST midnight (`kolkataDayStartUtc`), and the morning-queue target time is computed from IST via `nextKolkataTimeUtc`.
 
@@ -298,9 +298,9 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 | **Conditional read receipts** | sendSeen only when the chat actually has unread |
 | **Human typing simulation** | length-based delay + 1–9s jitter |
 | **Post-send cooldown** | 2–12s irregular gap between messages (4.5–21s+ total) |
-| **Honest failures** | `failed` on WAHA errors; deferred to retry, never silently dropped |
+| **Honest failures** | `failed` on provider errors; deferred to retry, never silently dropped |
 | **Content spin-tax** | Batch headings vary per recipient (hash-stable) |
-| **Webhook instant 200** | No WAHA retry loops |
+| **Webhook instant 200** | No provider retry loops |
 | **Idempotent ingestion** | unique `wahaMessageId` + `ON CONFLICT DO NOTHING` |
 | **120s historical barrier** | old replay packets never trigger real-time actions |
 | **Retention 90 days** | Never resets the allowlist (flag lives on Contact, not Message) |
@@ -328,7 +328,7 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 |---|---|---|
 | `GET` | `/api/digests` | Conversation digests |
 | `GET` | `/api/tasks` | Action items |
-| `GET` | `/api/health/whatsapp` | WAHA + SLA health |
+| `GET` | `/api/health/whatsapp` | WA Engine Pro + SLA health |
 | `POST` | `/api/trigger/digest` | Force digest generation |
 
 ---
@@ -337,7 +337,7 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 
 | Service | Image | Key config |
 |---|---|---|
-| `waha` | `devlikeapro/waha:latest-2026.7.2` (**pinned**) | `WAHA_ENGINE=WEBJS`, `TZ=Asia/Kolkata`, `WAHA_WEBHOOK_CONCURRENCY=5`, `WAHA_WEBJS_PUPPETER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-blink-features=AutomationControlled --use-gl=angle --use-angle=swiftshader-webgl --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader`, `WHATSAPP_HOOK_URL=http://host.docker.internal:5099/api/whatsapp/webhook` (**relay**), `WHATSAPP_HOOK_RETRIES_POLICY=constant`, `WHATSAPP_HOOK_RETRIES_DELAY_SECONDS=2`, `WHATSAPP_HOOK_RETRIES_ATTEMPTS=120`, volume `waha_sessions:/app/.sessions` (**named volume**, not a bind — see §10.3), `mem_limit: 2g`, `cpus: 1`, `stop_grace_period: 30s`, port `127.0.0.1:3002:3000` |
+| *(removed — WAHA deleted 2026-08-18)* | — | WhatsApp provider is now **WA Engine Pro** (cloud, `waengine.pro`); no local container/session. Configured via `WA_ENGINE_BASE_URL` + `WA_ENGINE_API_KEY` on the backend. |
 | `webhook-relay` | `node:20-alpine` | Zero-dep `relay.js` (bind-mounted from `../webhook-relay`); `RELAY_BACKEND=http://host.docker.internal:5000`, `RELAY_LOG_DIR=/runtime` (writes `webhook-relay.log` + `.offset`), healthcheck `wget 127.0.0.1:5099/health` (use **IPv4**, busybox wget on `localhost` fails via `::1`), port `127.0.0.1:5099:5099`, `restart: unless-stopped` |
 | `redis` | `redis:7-alpine` | `redis-server --appendonly yes --appendfsync everysec`, `TZ=Asia/Kolkata`, volume `redisdata:/data` (**persistent** — named volume + AOF) |
 | `postgres` | `postgres:16-alpine` | `TZ=Asia/Kolkata`, volume `pgdata` (container `founder-os-db`, managed by a **separate** compose project `ai_pa`) |
@@ -350,9 +350,9 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `3000` | Backend listen port (deployed as `5000`) |
-| `WAHA_API_URL` | `http://localhost:3002` | WAHA REST API |
-| `WAHA_API_KEY` | `MyLocalSecretKey!` | WAHA auth |
-| `WAHA_SESSION_NAME` | `default` | WAHA session |
+| `WA_ENGINE_BASE_URL` | `https://waengine.pro/api/v1` | WA Engine Pro base URL |
+| `WA_ENGINE_API_KEY` | *(secret)* | WA Engine Pro X-API-Key |
+| *(removed)* | — | No local session concept in the cloud API |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | BullMQ Redis |
 | `DATABASE_URL` | — | PostgreSQL (absent = in-memory mode) |
 | `MESSAGE_SLA_MINUTES` | `15` | Classification SLA |
@@ -368,59 +368,25 @@ Alerts are grouped per chat and flushed every 15 minutes as one summary.
 
 ```bash
 cd /home/sahil/development/ai_pa/founder-os_backend
-docker compose up -d webhook-relay redis waha    # postgres is actually in the ai_pa project
+docker compose up -d webhook-relay redis    # postgres is actually in the ai_pa project
 npx ts-node src/server.ts                        # under the supervisor while-loop in production
 ```
 
 `start.sh` automates all of this (including the Redis volume/AOF guard and the relay healthcheck); on `docker compose up` always target specific services — never bare `up -d` (see gotcha 6).
 
-### 10.2 WAHA session & QR
+### 10.2 Provider connectivity (WA Engine Pro — no local session)
 
-- Session `default` should be **WORKING** (`curl http://127.0.0.1:3002/api/sessions/default -H "X-Api-Key: MyLocalSecretKey!"` → `status: WORKING`, `me.pushName` set).
-- **A QR scan is only needed if the saved auth is gone.** The auth lives in the `waha_sessions` named volume at `webjs/default/session-default/` — never delete it.
-- **To re-pair / change the linked phone or account** (works safely now that storage is a named volume):
-  1. `POST /api/sessions/default/logout` — unlinks the device (server-side; the old auth becomes useless immediately)
-  2. Wait for status `SCAN_QR_CODE`, then `GET /api/default/auth/qr` — fetch the QR **right before scanning** (each QR lasts ~20s; WAHA re-issues a new one constantly and a stale QR silently fails to pair)
-  3. Scan with the phone; whatever you pair is persisted in the volume and survives every reboot.
-- ⚠️ **`logout` is destructive** — it deactivates the link on WhatsApp's side. Never call it "just to check"; there is no file-level recovery afterwards, only a fresh QR scan.
-- ⚠️ If after scanning the phone shows **"Continue on WhatsApp Web / passkey"** and linking never completes, that is the known WhatsApp passkey device-linking gate for consumer accounts (WAHA issue #2140) — WAHA's server-side browser has no authenticator to finish it. Some accounts are unaffected (this deployment's is not gated); for gated accounts a WAHA version/engine update may be required.
-
-### 10.3 Session storage (IMPORTANT — why a named volume, not a host bind)
-
-**2026-08-05 change:** `/app/.sessions` now mounts the **named volume** `waha_sessions` (registered in compose `volumes:`), NOT the host dir `./waha_sessions`. This is a permanent fix for the recurring "Session not found" trap below — the container self-heals on every boot because there is no bind mount to break. The old host dir `founder-os_backend/waha_sessions` is no longer used (kept as a stale snapshot; session data was migrated into the volume). **CONFIRMED working:** a full container restart restores `WORKING` from the volume with no QR rescan.
-
-**Why (the bind-mount trap, seen repeatedly in production):** Docker Desktop on WSL2 proxies host bind mounts through a shim at `/mnt/wsl/docker-desktop-bind-mounts/Ubuntu/<hash>`. If that shim isn't attached when the container starts (VM cold start, Docker Desktop restart), Docker silently substitutes an empty **tmpfs** for the bind. WAHA then starts with empty storage → `Session not found` / `/api/sessions = []`, even though the host dir still has data. The container cannot fix its own mount (the tmpfs lives in its mount namespace), and `start.sh` is only run manually, so the trap recurred across reboots. A named volume lives natively in the Docker Desktop VM — no shim, no race, no tmpfs fallback.
-
-**Verification** (a healthy `/app/.sessions` is `ext4` via a volume, never `tmpfs`):
+WA Engine Pro is a **cloud SaaS** — there is no local WhatsApp session, no QR scan, no container to pair. Connectivity is verified by `GET /me` with the `X-API-Key`:
 ```bash
-docker exec waha mount | grep sessions        # /dev/sdX type ext4, NOT "tmpfs"
+curl https://waengine.pro/api/v1/me -H "X-API-Key: $WA_ENGINE_API_KEY"   # → { "success": true, "data": { "id": "...", "name": "..." } }
 ```
+- The backend checks this at boot (`waitForWaEngine()`) and every 5 min via the `wa-engine-monitor` automation.
+- If `/me` fails: the API key is wrong/revoked, or the network can't reach `waengine.pro`. Rotate the key in the WA Engine Pro dashboard and update `.env` (`WA_ENGINE_API_KEY`).
+- The inbound webhook URL is registered on the provider's side (must be publicly reachable; points at the relay).
 
-**If you ever hit "Session not found" again** — do NOT recreate/QR-rescan first; check the mount type. If it's `tmpfs`, something regressed the compose config back to a bind — fix the compose file, then:
-```bash
-docker compose up -d waha            # recreates against the named volume
-# poll:
-curl http://127.0.0.1:3002/api/sessions/default -H "X-Api-Key: MyLocalSecretKey!"   # → WORKING, me set
-```
+### 10.3 (removed — replaced by §10.2)
 
-**Background noise to ignore:** recurring `refreshQR is not a function` warnings and occasional `Attempted to use detached Frame` unhandled-rejection lines in the WAHA logs are cosmetic (WAHA's QR auto-refresh vs current WhatsApp Web); a `WORKING` session is unaffected. If the browser page keeps crashing such that the session falls to `FAILED`, stop + start the session (`POST /api/sessions/default/stop` → `POST /api/sessions/default/start`) to return to `SCAN_QR_CODE`/`WORKING`.
-
-### 10.4 Backup the session (root-owned files, inside the volume)
-
-Session files are root-owned (created by the container) inside the `waha_sessions` named volume. Back up **inside the container** and pull the archive out:
-```bash
-docker exec waha sh -c 'tar czf /tmp/ws.tar.gz -C /app/.sessions . 2>/dev/null; true'
-docker cp waha:/tmp/ws.tar.gz /home/sahil/waha_sessions_backup.tar.gz
-docker exec waha rm /tmp/ws.tar.gz
-tar -tzf /home/sahil/waha_sessions_backup.tar.gz >/dev/null && echo VALID   # verify
-# restore into the volume:
-docker run --rm -v founder-os_backend_waha_sessions:/target -v ~/waha_sessions_backup.tar.gz:/tmp/ws.tar.gz:ro \
-  alpine sh -c 'tar xzf /tmp/ws.tar.gz -C /target'
-```
-
-**Current backups (2026-08-05):**
-- `~/waha_sessions_post_pair.tar.gz` — **the good, current session** (~37MB, auth in `Login Data` + `IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/`). Restore from this if the volume is ever lost.
-- `~/waha_sessions_pre_migration.tar.gz` — stale snapshot of the pre-volume session (~1.1G, includes long-dead credentials). The old login was invalidated; keep only for file-reference, do **not** restore it expecting a live session.
+### 10.4 (removed — replaced by §10.2)
 
 ### 10.5 Database migration caveat (prisma)
 
@@ -454,12 +420,12 @@ kill "$(ss -tlnp 2>/dev/null | grep 5000 | grep -oP 'pid=\K[0-9]+' | head -1)"
 1. **LID vs @c.us:** inbound individual chats may arrive as `@lid`. Normalization (Section 4.3) handles it; the allowlist and history key on `@c.us`.
 2. **`hasInbound` never resets:** retention prunes Message rows, never Contact. Don't "optimize" the allowlist back to scanning Message rows or customers get locked out after 90 days.
 3. **Global lock ≠ per-chat:** the account-wide promise chain serializes everything. Do not replace it with per-chat locks — that reintroduces simultaneous sends.
-4. **Groups must stay silent:** never add startTyping/sendSeen to `@g.us`. Verified in WAHA logs: a group send emits only `sendText`.
-5. **`WAHA_WEBJS_PUPPETER_ARGS` is the real env var** (space-separated, parsed by WebJSEngineConfigService). `WAHA_CHROME_ARGS` does not exist; `WAHA_WEBJS_BROWSER_ARGS` is never read.
-6. **Don't run `docker compose up -d` (bare):** it would try to create the `backend` container and conflict with the host-run backend on port 5000. Use service-specific targets (`docker compose up -d waha redis`).
+4. **Groups must stay silent:** never add startTyping/sendSeen to `@g.us`. Verified in provider logs: a group send emits only the text message.
+5. **(removed — WAHA-specific puppeteer tuning no longer applies.)**
+6. **Don't run `docker compose up -d` (bare):** it would try to create the `backend` container and conflict with the host-run backend on port 5000. Use service-specific targets (`docker compose up -d webhook-relay redis`).
 7. **Pinned image `latest-2026.7.2`** matched the running digest exactly — pinning was a zero-change no-op. On upgrade, update the tag deliberately.
 8. **Redis is persistent now** (AOF + volume). Morning/classification jobs survive container recreates.
-9. **WAHA webhooks go to the relay, not the backend.** If you change `WHATSAPP_HOOK_URL` back to `:5000` you lose the hold-on-disk guarantee. The relay forwards to the backend's IP-allowlisted webhook; its container egress (docker bridge `172.28.x.x`) is inside `172.16.0.0/12` so it passes.
+9. **Provider webhooks go to the relay, not the backend.** The relay forwards to the backend's webhook, which accepts private-IP sources (the relay's bridge `172.28.x.x` is inside `172.16.0.0/12`) or public sources carrying `X-Api-Key` matching `WA_ENGINE_API_KEY`. Point the provider webhook at the relay's URL.
 10. **Relay healthcheck must use `127.0.0.1`**, not `localhost` — the relay binds IPv4 only, and busybox `wget` resolves `localhost` to `::1` → connection refused → container marked unhealthy.
 11. **Rate-limit state is a file** (`.runtime/rate-limit-state.json`), not Redis — by design, so throttling still works when Redis is down. It's gitignored; don't commit it.
 12. **`OutboundIntent` table:** created via `prisma db execute` (never `db push`). If you recreate the DB from scratch, re-run the `CREATE TABLE "OutboundIntent"` DDL in the schema's matching migration.

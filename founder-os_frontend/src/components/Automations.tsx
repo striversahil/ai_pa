@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import ZohoEstimates from "./ZohoEstimates";
 import DppPricesDashboard from "./DppPricesDashboard";
 import SheetAnalysisDashboard from "./SheetAnalysisDashboard";
-import WahaSessionDashboard from "./WahaSessionDashboard";
+import WaEngineDashboard from "./WaEngineDashboard";
 import WhatsAppMarketingDashboard from "./WhatsAppMarketingDashboard";
 import EnterpriseOperationsDashboard from "./EnterpriseOperationsDashboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -129,7 +129,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "enterprise-operations-analytics") return <EnterpriseOperationsDashboard />;
     if (selected === "zoho-sent-analyzer") return <ZohoEstimates />;
     if (selected === "dpp-prices-dashboard") return <DppPricesDashboard />;
-    if (selected === "waha-session-monitor") return <WahaSessionDashboard />;
+    if (selected === "wa-engine-monitor") return <WaEngineDashboard />;
     if (selected === "whatsapp-marketing") return <WhatsAppMarketingDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.

@@ -2,7 +2,6 @@ import { config } from '../../config';
 import { logger } from '../../shared/logger';
 import { getKolkataHour } from '../../shared/ist-time';
 import { AuditService } from '../audit/service';
-import { StorageRepository } from '../storage/repository';
 import { getRateLimitState, persistRateLimitState } from './rate-limit-store';
 
 function randomUniform(min: number, max: number): number {
@@ -14,6 +13,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 export type SendResult = 'sent' | 'rate_limited' | 'outside_hours' | 'failed' | 'circuit_broken';
+
+/** WA Engine Pro expects a bare phone number (country code, no +, no @suffix). */
+function chatIdToPhone(chatId: string): string | null {
+  if (chatId.endsWith('@c.us') || chatId.endsWith('@lid')) {
+    const digits = chatId.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+    return digits || null;
+  }
+  if (chatId.endsWith('@g.us')) {
+    // WA Engine Pro is a phone-based API; it has no group send endpoint.
+    return null;
+  }
+  return chatId.replace(/[^0-9]/g, '') || null;
+}
 
 export class OutboundService {
   // Global account-level mutex: every send waits for the previous one to fully
@@ -164,79 +176,21 @@ export class OutboundService {
 
     AuditService.record('MESSAGE_SENT', 'MESSAGE', null, { chatId, bodyLength: messageBody.length }).catch(() => {});
 
-    const wahaFetch = async (path: string, body: unknown): Promise<Response> => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30_000);
-      try {
-        return await fetch(`${config.WAHA_API_URL}${path}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Api-Key': config.WAHA_API_KEY,
-          },
-          body: JSON.stringify({ session: config.WAHA_SESSION_NAME, ...(body as object) }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    };
-
-    const isGroup = chatId.endsWith('@g.us');
-
-    if (isGroup) {
-      // GROUP ROUTE (@g.us): WhatsApp manages group read status and typing metadata
-      // differently. Running sendSeen/startTyping against a group forces WAHA to parse
-      // every participant's state — it throws errors and creates a broken, machine-like
-      // pattern that Meta can flag. Groups skip all behavioral steps and send directly
-      // after a short micro-jitter so the server stream stays calm.
-      await sleep(randomUniform(1500, 2500));
-    } else {
-      // INDIVIDUAL ROUTE (@c.us): simulate a human reading + typing the reply.
-
-      // Only send a read receipt if the chat actually has unread messages. Reading a
-      // chat we initiated (0 unread) is an impossible human action and is a dead give-
-      // away to WhatsApp — so for outbound-first messages we skip sendSeen entirely and
-      // go straight to typing. If we can't determine the unread state, default to NOT
-      // sending the receipt (safer than the flagged pattern).
-      let unreadCount = 0;
-      try {
-        const contact = await StorageRepository.fetchContactByChatId(chatId);
-        unreadCount = contact?.unreadCount || 0;
-      } catch (err: any) {
-        logger.warn({ chatId, error: err.message }, 'Could not read unread count, skipping sendSeen');
-      }
-
-      if (unreadCount > 0) {
-        const seenRes = await wahaFetch('/api/sendSeen', { chatId });
-        if (!seenRes.ok) {
-          logger.warn({ chatId, status: seenRes.status }, 'WAHA sendSeen failed (non-fatal)');
-        } else {
-          // Mark the chat as read locally so the next send doesn't repeat the receipt.
-          await StorageRepository.updateContactUnread(chatId, -unreadCount).catch(() => {});
-        }
-      } else {
-        logger.debug({ chatId }, 'Outbound-first message: skipping sendSeen (0 unread)');
-      }
-
-      await sleep(randomUniform(1500, 4500));
-
-      const typingRes = await wahaFetch('/api/startTyping', { chatId });
-      if (!typingRes.ok) {
-        logger.warn({ chatId, status: typingRes.status }, 'WAHA startTyping failed (non-fatal)');
-      }
-
-      const typingDelay = Math.min(Math.max(messageBody.length * 50, 2000), 6000);
-      const jitter = randomUniform(1000, 9000);
-      await sleep(typingDelay + jitter);
+    const phone = chatIdToPhone(chatId);
+    if (!phone) {
+      logger.warn({ chatId }, 'WA Engine Pro cannot send to this chat (no phone number / group) — message NOT delivered');
+      return 'failed';
     }
 
-    const sendRes = await wahaFetch('/api/sendText', { chatId, text: messageBody });
+    // WA Engine Pro is a cloud SaaS API: no local session, no sendSeen/startTyping.
+    // Send the message directly with a human-like cadence preserved through the
+    // existing jitter + post-send cooldown below.
+    const sendRes = await waEngineFetch('/messages/send', { phone, message: messageBody });
     if (!sendRes.ok) {
       const errorBody = await sendRes.text().catch(() => '');
       logger.error(
         { chatId, status: sendRes.status, errorBody },
-        'WAHA sendText failed — message was NOT delivered'
+        'WA Engine Pro /messages/send failed — message was NOT delivered'
       );
       return 'failed';
     }
@@ -254,5 +208,24 @@ export class OutboundService {
   private static isWithinWorkingHours(startHour = 8, endHour = 22): boolean {
     const currentHour = getKolkataHour(new Date());
     return currentHour >= startHour && currentHour < endHour;
+  }
+}
+
+/** Shared fetch helper for the WA Engine Pro API (X-API-Key auth, 30s timeout). */
+async function waEngineFetch(path: string, body: unknown): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  try {
+    return await fetch(`${config.WA_ENGINE_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': config.WA_ENGINE_API_KEY,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
   }
 }

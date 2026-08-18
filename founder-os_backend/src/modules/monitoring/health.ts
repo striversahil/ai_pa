@@ -3,19 +3,19 @@ import { StorageRepository } from '../storage/repository';
 import { logger } from '../../shared/logger';
 import { classificationQueue } from '../queue/service';
 import { AIService } from '../ai/service';
-import { getWahaStatus } from '../whatsapp/session-status';
-import type { WahaStatus } from '../whatsapp/session-status';
+import { getWaEngineStatus } from '../whatsapp/session-status';
+import type { WaEngineStatus } from '../whatsapp/session-status';
 
 /**
  * Shared platform health payload used by GET /health, GET /api/health and the
- * WAHA session monitor dashboard. Pass a pre-fetched wahaStatus to avoid a
- * duplicate WAHA call (the dashboard already fetched it).
+ * WA Engine session monitor dashboard. Pass a pre-fetched waEngineStatus to
+ * avoid a duplicate WA Engine Pro call (the dashboard already fetched it).
  */
-export async function buildHealthPayload(wahaStatus?: WahaStatus) {
+export async function buildHealthPayload(waEngineStatus?: WaEngineStatus) {
   const now = new Date();
   const fifteenMinAgo = new Date(now.getTime() - 15 * 60 * 1000);
 
-  const waha = wahaStatus ?? await getWahaStatus();
+  const waEngine = waEngineStatus ?? await getWaEngineStatus();
 
   let unprocessedCount = 0;
   let breachedCount = 0;
@@ -52,8 +52,8 @@ export async function buildHealthPayload(wahaStatus?: WahaStatus) {
   const aiFailureRate = aiMetrics.totalCalls > 0 ? (aiMetrics.failedCalls / aiMetrics.totalCalls * 100).toFixed(2) : '0';
 
   return {
-    status: (breachedCount === 0 && waha.status === 'WORKING') ? 'healthy' : 'degraded',
-    waha: { status: waha.status, reachable: waha.reachable },
+    status: (breachedCount === 0 && waEngine.status === 'WORKING') ? 'healthy' : 'degraded',
+    waEngine: { status: waEngine.status, reachable: waEngine.reachable },
     metrics: {
       unprocessedMessages: unprocessedCount,
       slaBreaches: breachedCount,

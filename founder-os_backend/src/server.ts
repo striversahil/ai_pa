@@ -16,12 +16,14 @@ import { BrainService } from './modules/brain/service';
 import { GoogleSheetsService } from './modules/google_sheets/service';
 import { asyncHandler } from './utils/asyncHandler';
 import { errorHandler, notFoundHandler } from './utils/errorHandler';
+import { isSystemGeneratedComment } from './shared/systemComment';
 import { OutboundService } from './modules/whatsapp/outbound';
 import { MessageQueueService } from './modules/queue/service';
 import { AuditService } from './modules/audit/service';
 import webhookRouter from './routes/whatsapp-webhook';
 import healthRouter from './routes/health';
 import whatsappMarketingRouter from './routes/whatsapp-marketing';
+import pendingItemsRouter from './routes/pending-items';
 import { automationRouter } from './modules/automation';
 
 
@@ -57,6 +59,9 @@ app.use('/api/automations', automationRouter);
 
 // --- WhatsApp Marketing (campaign CRUD + lead upload) ---
 app.use('/api/whatsapp-marketing', whatsappMarketingRouter);
+
+// --- Pending From Me (founder "What I Owe" view) ---
+app.use('/api/pending-items', pendingItemsRouter);
 
 // --- REST API Endpoints ---
 
@@ -238,8 +243,15 @@ app.get('/api/estimates', asyncHandler(async (req, res) => {
     }),
     prisma.setting.findUnique({ where: { key: 'sales_copilot:last_complete_sync_at' } }),
   ]);
+  // Zoho auto-logged comments ("Quote marked as sent", "Quote updated. Amount
+  // changed ...") carry no sales intent and must not reach the UI timeline or
+  // comment counts, nor the LLM prompt. Filter them out of the payload.
+  const estimatesWithRealComments = estimates.map(e => ({
+    ...e,
+    comments: (e.comments || []).filter(c => !isSystemGeneratedComment(c.description, c.commentedBy))
+  }));
   res.status(200).json({
-    estimates,
+    estimates: estimatesWithRealComments,
     lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null
   });
 }));
@@ -585,33 +597,30 @@ app.use(errorHandler);
 
 // --- Boot Server & Start Cron Scheduler ---
 /**
- * Blocks the background services (scheduler, workers) until WAHA's session engine
- * reaches status "WORKING". Cold-booting alongside a freshly-started WAHA would
- * otherwise fire crons against a session that is still generating its QR code.
+ * Blocks the background services (scheduler, workers) until WA Engine Pro's API
+ * key verifies via GET /me. Cold-booting alongside a network that can't reach
+ * waengine.pro would otherwise fire crons against an unauthenticated provider.
  */
-async function waitForWahaSession(timeoutMs = 180_000): Promise<boolean> {
-  const url = `${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}`;
+async function waitForWaEngine(timeoutMs = 60_000): Promise<boolean> {
+  const url = `${config.WA_ENGINE_BASE_URL}/me`;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, {
-        headers: { 'X-Api-Key': config.WAHA_API_KEY },
+        headers: { 'X-API-Key': config.WA_ENGINE_API_KEY },
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
-        const data = await res.json() as { status?: string };
-        if (data.status === 'WORKING') {
-          logger.info('WAHA session is WORKING — starting background services');
-          return true;
-        }
+        logger.info('WA Engine Pro API reachable — starting background services');
+        return true;
       }
     } catch {
-      // WAHA not reachable yet — keep polling.
+      // WA Engine not reachable yet — keep polling.
     }
-    logger.info('Waiting for WAHA session to reach WORKING...');
+    logger.info('Waiting for WA Engine Pro API to become reachable...');
     await new Promise(r => setTimeout(r, 3000));
   }
-  logger.warn('Timed out waiting for WAHA session; starting background services anyway');
+  logger.warn('Timed out waiting for WA Engine Pro API; starting background services anyway');
   return false;
 }
 
@@ -623,9 +632,9 @@ async function startServer() {
   app.listen(port, '0.0.0.0', async () => {
     logger.info(`🚀 Founder Assistant OS Server is running on http://localhost:${port} in ${config.NODE_ENV} mode`);
 
-    // Cold-boot gate: wait for WAHA to be fully connected before any cron/worker
+    // Cold-boot gate: wait for WA Engine Pro to be reachable before any cron/worker
     // touches it. The HTTP API is already listening, so health checks pass.
-    await waitForWahaSession();
+    await waitForWaEngine();
 
     // Start Background Scheduler (registers engines + discovers/schedules
     // every automation in src/automations/)

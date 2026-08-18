@@ -73,9 +73,9 @@ done
 echo "✅ Redis is online!"
 
 # ── Webhook relay guard ───────────────────────────────────────────────────
-# WAHA webhooks go to the relay (always-on), which holds the burst on disk and
+# WA Engine Pro webhooks go to the relay (always-on), which holds the burst on disk and
 # forwards to the backend. Without it, messages arriving while the backend is
-# down would be dropped by WAHA after its retry window.
+# down would be dropped by the provider after its retry window.
 echo "🐳 Ensuring webhook relay container (webhook-relay) is running..."
 if ! docker ps --format '{{.Names}}' | grep -qx webhook-relay; then
   docker-compose -f founder-os_backend/docker-compose.yml up -d webhook-relay
@@ -107,8 +107,10 @@ fi
 (cd founder-os_backend && pnpm run dev) &
 BACKEND_PID=$!
 
-# Run frontend with npm (explicitly specifying port 3000 to avoid port 5000 conflict)
-(cd founder-os_frontend && npm run dev -- -p 3000) &
+# Run frontend via run-dev.sh (guarded --webpack entrypoint; see
+# founder-os_frontend/run-dev.sh and the systemd unit for why webpack is
+# required). Port 3000 to avoid the backend's 5000.
+(cd founder-os_frontend && ./run-dev.sh) &
 FRONTEND_PID=$!
 
 # Kill every dev server (and its whole process group) on Ctrl+C / normal exit.

@@ -1,10 +1,11 @@
 /**
  * webhook-relay.js — zero-dependency WhatsApp webhook sink.
  *
- * Sits between WAHA and the main backend. WAHA POSTs every message event here
- * (instead of hitting the backend directly); this service:
+ * Sits between WA Engine Pro (cloud) and the main backend. WA Engine Pro POSTs
+ * every message event here (instead of hitting the backend directly); this
+ * service:
  *
- *   1. Acks WAHA with 200 IMMEDIATELY — WAHA never enters its retry loop.
+ *   1. Acks WA Engine Pro with 200 IMMEDIATELY — it never enters its retry loop.
  *   2. Appends the raw payload to a durable write-ahead log on disk.
  *   3. Drains the log to the backend (POST /api/whatsapp/webhook). If the
  *      backend is down, it simply waits and retries with backoff — the burst is

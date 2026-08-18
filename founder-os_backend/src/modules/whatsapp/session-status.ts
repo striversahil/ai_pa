@@ -1,62 +1,61 @@
 import { config } from '../../config';
 
-export interface WahaStatus {
+export interface WaEngineStatus {
   status: string;
   reachable: boolean;
   error?: string | null;
 }
 
-export interface WahaSessionInfo {
+export interface WaEngineSessionInfo {
   status: string;
   reachable: boolean;
   error?: string | null;
   name: string | null;
-  me: { id: string | null; pushName: string | null; lid: string | null } | null;
+  me: { id: string | null; name: string | null } | null;
   engine: { engine: string | null; webVersion: string | null; state: string | null } | null;
   config: Record<string, unknown>;
   timestamps: Record<string, unknown> | null;
 }
 
 /**
- * Full live WAHA session snapshot (status + connected account + engine
- * version). Single source of truth for the session monitor dashboard.
+ * Full live WA Engine Pro snapshot (auth/workspace check via GET /me + account
+ * info). Single source of truth for the session monitor dashboard.
  */
-export async function getWahaSessionInfo(timeoutMs = 3000): Promise<WahaSessionInfo> {
+export async function getWaEngineSessionInfo(timeoutMs = 3000): Promise<WaEngineSessionInfo> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const sr = await fetch(`${config.WAHA_API_URL}/api/sessions/${config.WAHA_SESSION_NAME}`, {
-      headers: { 'X-Api-Key': config.WAHA_API_KEY },
+    const sr = await fetch(`${config.WA_ENGINE_BASE_URL}/me`, {
+      headers: { 'X-API-Key': config.WA_ENGINE_API_KEY },
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
     if (sr.ok) {
       const d = await sr.json();
+      const data = d?.data || d;
       return {
-        status: String(d?.status || 'unknown'),
+        status: 'WORKING',
         reachable: true,
-        name: d?.name ?? null,
-        me: d?.me
-          ? { id: d.me.id ?? null, pushName: d.me.pushName ?? null, lid: d.me.lid ?? null }
+        name: data?.name ?? null,
+        me: data?.id
+          ? { id: data.id ?? null, name: data.name ?? null }
           : null,
-        engine: d?.engine
-          ? { engine: d.engine.engine ?? null, webVersion: d.engine.WWebVersion ?? null, state: d.engine.state ?? null }
-          : null,
-        config: d?.config ?? {},
-        timestamps: d?.timestamps ?? null,
+        engine: { engine: 'WA Engine Pro (Cloud)', webVersion: null, state: 'connected' },
+        config: {},
+        timestamps: null,
       };
     }
     return { status: `http_${sr.status}`, reachable: true, error: `HTTP ${sr.status}`, name: null, me: null, engine: null, config: {}, timestamps: null };
   } catch {
-    return { status: 'unreachable', reachable: false, error: 'WAHA API unreachable', name: null, me: null, engine: null, config: {}, timestamps: null };
+    return { status: 'unreachable', reachable: false, error: 'WA Engine Pro API unreachable', name: null, me: null, engine: null, config: {}, timestamps: null };
   }
 }
 
 /**
- * Live WAHA session status check. Single source of truth for the `/health`
- * endpoint — callers never fetch WAHA directly.
+ * Live WA Engine Pro connectivity check. Single source of truth for the
+ * `/health` endpoint — callers never fetch the API directly.
  */
-export async function getWahaStatus(timeoutMs = 3000): Promise<WahaStatus> {
-  const info = await getWahaSessionInfo(timeoutMs);
+export async function getWaEngineStatus(timeoutMs = 3000): Promise<WaEngineStatus> {
+  const info = await getWaEngineSessionInfo(timeoutMs);
   return { status: info.status, reachable: info.reachable, error: info.error };
 }

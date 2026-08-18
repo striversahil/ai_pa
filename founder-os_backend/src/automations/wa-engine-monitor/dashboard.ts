@@ -1,6 +1,6 @@
 import { config } from '../../config';
 import { AuditService } from '../../modules/audit/service';
-import { getWahaCache } from '../../modules/whatsapp/waha-cache';
+import { getWaEngineCache } from '../../modules/whatsapp/wa-engine-cache';
 import type { AutomationContext } from '../../modules/automation/types';
 
 const DEFAULT_WINDOW_DAYS = 7;
@@ -27,7 +27,7 @@ function fmtDuration(totalSeconds: number): string {
 
 interface SessionEvent {
   ts: number;
-  type: 'WAHA_DISCONNECTED' | 'WAHA_RECONNECT';
+  type: 'WA_ENGINE_DISCONNECTED' | 'WA_ENGINE_RECONNECT';
   status: string | null;
 }
 
@@ -66,28 +66,29 @@ function computeUptimeByDay(outages: Outage[], windowDays: number, now: number):
 }
 
 /**
- * Dashboard data provider for GET /api/automations/waha-session-monitor/data.
- * Serves the WAHA snapshot + health payload from the in-memory cache (refreshed
- * every 5 min by the session monitor cron, with a live TTL fallback) and pairs
- * it with the live audit trail of disconnects / reconnects for uptime & outages.
+ * Dashboard data provider for GET /api/automations/wa-engine-monitor/data.
+ * Serves the WA Engine Pro snapshot + health payload from the in-memory cache
+ * (refreshed every 5 min by the session monitor cron, with a live TTL fallback)
+ * and pairs it with the live audit trail of disconnects / reconnects for
+ * uptime & outages.
  */
-export async function getWahaDashboardData(ctx: AutomationContext): Promise<any> {
+export async function getWaEngineDashboardData(ctx: AutomationContext): Promise<any> {
   const queryDays = Number(ctx.subject?.windowDays ?? 0);
   const windowDays = queryDays > 0 ? queryDays : (Number(ctx.config.windowDays ?? 0) || DEFAULT_WINDOW_DAYS);
   const now = Date.now();
   const windowStart = now - windowDays * 24 * 60 * 60 * 1000;
 
-  const cached = await getWahaCache();
+  const cached = await getWaEngineCache();
   const sessionInfo = cached.sessionInfo;
   const health = cached.health;
 
-  const rawEvents = await AuditService.query({ action: 'WAHA_DISCONNECTED', entityType: 'SESSION', limit: 1000, since: new Date(windowStart) });
-  const recEvents = await AuditService.query({ action: 'WAHA_RECONNECT', entityType: 'SESSION', limit: 1000, since: new Date(windowStart) });
+  const rawEvents = await AuditService.query({ action: 'WA_ENGINE_DISCONNECTED', entityType: 'SESSION', limit: 1000, since: new Date(windowStart) });
+  const recEvents = await AuditService.query({ action: 'WA_ENGINE_RECONNECT', entityType: 'SESSION', limit: 1000, since: new Date(windowStart) });
 
   const events: SessionEvent[] = [...rawEvents, ...recEvents]
     .map((e) => ({
       ts: e.createdAt.getTime(),
-      type: e.action === 'WAHA_DISCONNECTED' ? ('WAHA_DISCONNECTED' as const) : ('WAHA_RECONNECT' as const),
+      type: e.action === 'WA_ENGINE_DISCONNECTED' ? ('WA_ENGINE_DISCONNECTED' as const) : ('WA_ENGINE_RECONNECT' as const),
       status: parseMeta(e).status ?? null,
     }))
     .sort((a, b) => a.ts - b.ts);
@@ -96,10 +97,10 @@ export async function getWahaDashboardData(ctx: AutomationContext): Promise<any>
   let openStart: number | null = null;
   let openStatus = 'unknown';
   for (const ev of events) {
-    if (ev.type === 'WAHA_DISCONNECTED' && openStart === null) {
+    if (ev.type === 'WA_ENGINE_DISCONNECTED' && openStart === null) {
       openStart = ev.ts;
       openStatus = ev.status || 'unknown';
-    } else if (ev.type === 'WAHA_RECONNECT' && openStart !== null) {
+    } else if (ev.type === 'WA_ENGINE_RECONNECT' && openStart !== null) {
       outages.push({ startedAt: new Date(openStart), endedAt: new Date(ev.ts), status: openStatus, ongoing: false });
       openStart = null;
     }
@@ -136,7 +137,7 @@ export async function getWahaDashboardData(ctx: AutomationContext): Promise<any>
 
   const recentEvents = [...events].reverse().slice(0, 50).map((ev) => [
     new Date(ev.ts).toLocaleString('en-IN'),
-    ev.type === 'WAHA_DISCONNECTED' ? 'Disconnected' : 'Reconnected',
+    ev.type === 'WA_ENGINE_DISCONNECTED' ? 'Disconnected' : 'Reconnected',
     ev.status || '—',
   ]);
 
@@ -145,9 +146,9 @@ export async function getWahaDashboardData(ctx: AutomationContext): Promise<any>
 
   return {
     meta: {
-      analysis: 'waha-session',
-      title: 'WAHA Session Monitor',
-      sessionName: config.WAHA_SESSION_NAME,
+      analysis: 'wa-engine',
+      title: 'WA Engine Pro Monitor',
+      sessionName: config.WA_ENGINE_BASE_URL,
       windowDays,
       generatedAt: new Date().toISOString(),
       liveCheckedAt: new Date(cached.capturedAt).toISOString(),
@@ -159,10 +160,10 @@ export async function getWahaDashboardData(ctx: AutomationContext): Promise<any>
       error: sessionInfo.error ?? null,
     },
     diagnostics: {
-      sessionName: sessionInfo.name ?? config.WAHA_SESSION_NAME,
+      sessionName: config.WA_ENGINE_BASE_URL,
       accountId: me?.id ?? null,
-      lid: me?.lid ?? null,
-      pushName: me?.pushName ?? null,
+      lid: null,
+      pushName: me?.name ?? null,
       engine: engine?.engine ?? null,
       webVersion: engine?.webVersion ?? null,
       connectionState: engine?.state ?? null,
@@ -171,9 +172,9 @@ export async function getWahaDashboardData(ctx: AutomationContext): Promise<any>
     health,
     kpis: [
       {
-        label: 'Current Session Status',
+        label: 'Current API Status',
         value: currentStatus,
-        sub: `checked ${new Date().toLocaleTimeString('en-IN')} · session "${config.WAHA_SESSION_NAME}"`,
+        sub: `checked ${new Date().toLocaleTimeString('en-IN')} · ${config.WA_ENGINE_BASE_URL}`,
         accent: liveOk ? 'emerald' : 'rose',
       },
       {

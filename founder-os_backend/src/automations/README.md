@@ -29,7 +29,7 @@ src/automations/
 ├── zoho-sent-analyzer/           # */15 — Zoho analyzer (service.ts) + dashboard
 ├── whatsapp-digest/              # */5 — digest batch job (process.ts)
 ├── sla-monitor/                  # * * * * * — SLA checker (sla-check.ts)
-├── waha-session-monitor/         # */5 — WAHA health/reconnect (session-monitor.ts)
+├── wa-engine-monitor/            # */5 — WA Engine Pro connectivity (session-monitor.ts)
 ├── notification-batcher/         # */15 — alert batching (batcher.ts)
 ├── morning-brief/                # 0 8 — brief generation (service.ts)
 ├── eod-summary/                  # 0 19 — EOD generation (service.ts)
@@ -125,7 +125,7 @@ Single shared LLM client. Handles automatically:
 | **Mock mode** | If `LLM_API_KEY` is unset, every method returns canned responses — the whole system works in dev with no key. |
 | **Key rotation** | Comma-separated keys (Groq `gsk_*` or OpenAI), shuffled, tried in order. |
 | **Model fallback** | `LLM_MODEL` first, then `llama-3.3-70b-versatile` → `llama-3.1-8b-instant` → `gemma2-9b-it` (Groq) / `gpt-4o-mini` → `gpt-4o` (OpenAI). Retries on 429 / model-deprecation only. |
-| **Metrics** | `totalCalls` / `failedCalls` / failure rate surface in `/health` (shown in the WAHA Session Monitor dashboard). |
+| **Metrics** | `totalCalls` / `failedCalls` / failure rate surface in `/health` (shown in the WA Engine Pro Monitor dashboard). |
 
 Prompt-specific methods: `classifyMessage`, `summarizeConversation`, `incrementalSummarizeConversation`, `generateFounderBrief`, `generateDailySummary`, `answerFounderQuestion`, `queryBrain`, `classifyEstimateComments`, `extractEnquiryAndDate`, `matchBusinessEntity`.
 

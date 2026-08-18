@@ -11,45 +11,10 @@ import { AutomationEngine } from '../automation/engine';
 // is_historical and bypass all real-time triggers (classification, SSE, unread).
 const HISTORICAL_THRESHOLD_MS = 120_000;
 
-// Fast-path dedup cache for WAHA replay storms. The DB ON CONFLICT DO NOTHING is
+// Fast-path dedup cache for webhook replay storms. The DB ON CONFLICT DO NOTHING is
 // the source of truth; this only avoids redundant contact/SSE/audit work.
 const recentMessageIds = new Map<string, number>();
 const RECENT_ID_CACHE_MAX = 10_000;
-
-// WEBJS increasingly addresses individual chats by LID (@lid) instead of phone
-// (@c.us). The rest of the system (sends, allowlist, message history) keys on
-// @c.us, so LID chatIds are resolved to their @c.us form at ingestion. WAHA
-// exposes the reverse mapping (LID -> @c.us); the map is cached per LID.
-const lidToCusCache = new Map<string, string | null>();
-
-// Contact/group-name lookups against WAHA are memoized (TTL 1h, including
-// negative results) so the contacts/groups API is not hit on every message.
-const contactNameCache = new Map<string, { name: string | null; at: number }>();
-const CONTACT_NAME_CACHE_TTL_MS = 60 * 60 * 1000;
-
-async function resolveLidToCus(chatId: string): Promise<string> {
-  if (!chatId.endsWith('@lid')) return chatId;
-  if (lidToCusCache.has(chatId)) return lidToCusCache.get(chatId) || chatId;
-  try {
-    const encoded = encodeURIComponent(chatId);
-    const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/contacts/${encoded}`, {
-      headers: { 'X-Api-Key': config.WAHA_API_KEY },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const cus = data?.id || data?.chatId || null;
-      if (cus && cus.endsWith('@c.us')) {
-        lidToCusCache.set(chatId, cus);
-        return cus;
-      }
-    }
-  } catch (err: any) {
-    logger.warn({ chatId, error: err.message }, 'Could not resolve LID to @c.us, keeping LID');
-  }
-  lidToCusCache.set(chatId, null);
-  return chatId;
-}
 
 function noteRecentMessageId(id: string): boolean {
   const now = Date.now();
@@ -63,14 +28,16 @@ function noteRecentMessageId(id: string): boolean {
   return false;
 }
 
-function extractMessageBody(payload: any): string {
-  if (payload.body) return payload.body;
-  if (payload.caption) return payload.caption;
+function extractMessageBody(message: any): string {
+  if (message.body) return message.body;
+  if (message.text) return typeof message.text === 'string' ? message.text : JSON.stringify(message.text);
+  if (message.caption) return message.caption;
+  const type = message.type || message.media_type;
   const typeLabels: Record<string, string> = {
     image: '[Image]',
     video: '[Video]',
     audio: '[Audio]',
-    document: payload.filename ? `[Document: ${payload.filename}]` : '[Document]',
+    document: message.filename ? `[Document: ${message.filename}]` : '[Document]',
     location: '[Location]',
     poll: '[Poll]',
     sticker: '[Sticker]',
@@ -78,14 +45,13 @@ function extractMessageBody(payload: any): string {
     buttons: '[Button Reply]',
     list: '[List Selection]',
   };
-  return typeLabels[payload.type] || '[Media/System Message]';
+  return typeLabels[type] || '[Media/System Message]';
 }
 
-// WAHA WEBJS exposes the replied-to message as payload.replyTo
-// ({ id, participant, body, hasMedia, media }); other engines use quotedMsg.
-// Returns quoted message metadata or empty fields when the message is not a reply.
-function extractQuotedMessage(payload: any): { quotedMessageId: string | null; quotedBody: string | null; quotedSender: string | null } {
-  const q = payload.replyTo || payload.quotedMsg || payload.quotedMessage;
+// WA Engine Pro exposes the replied-to message on the inbound message. Returns
+// quoted message metadata or empty fields when the message is not a reply.
+function extractQuotedMessage(message: any): { quotedMessageId: string | null; quotedBody: string | null; quotedSender: string | null } {
+  const q = message.replyTo || message.quotedMsg || message.quotedMessage;
   if (!q || typeof q !== 'object') {
     return { quotedMessageId: null, quotedBody: null, quotedSender: null };
   }
@@ -98,16 +64,6 @@ function extractQuotedMessage(payload: any): { quotedMessageId: string | null; q
     quotedBody: body,
     quotedSender: sender,
   };
-}
-
-// WAHA message id can arrive as a bare string or as a { id, fromMe, participant... }
-// envelope — normalize both.
-function extractWahaMessageId(payload: any): string | null {
-  const raw = payload.id;
-  if (!raw) return null;
-  if (typeof raw === 'string') return raw;
-  if (typeof raw === 'object' && raw.id) return String(raw.id);
-  return null;
 }
 
 function isHistorical(timestamp: Date): boolean {
@@ -124,21 +80,20 @@ async function resolveGroupSenderName(participantId: string): Promise<string | n
   if (!clean || clean.length < 7) return null;
   const local = await StorageRepository.fetchContactByPhoneNumber(clean).catch(() => null);
   if (local?.name && local.name !== local.chatId && local.name !== clean) return local.name;
-  if (config.WAHA_API_URL) {
-    for (const suffix of ['@c.us', '@lid']) {
-      const resolved = await fetchContactNameFromWAHA(clean + suffix).catch(() => null);
-      if (resolved) return resolved;
-    }
-  }
   return null;
 }
 
-function extractSenderName(payload: any): string {
-  return payload.sender?.name || payload.sender?.pushname || payload.from?.split('@')[0] || 'Client';
+function extractSenderName(message: any, contact?: any): string {
+  if (contact?.name) return contact.name;
+  if (message?.sender?.name) return message.sender.name;
+  if (message?.sender?.pushname) return message.sender.pushname;
+  if (contact?.first_name) return contact.first_name;
+  const phone = extractPhoneFromParticipant(message?.from || message?.chatId || '');
+  return phone || 'Client';
 }
 
-function extractPushName(payload: any): string | null {
-  return payload.sender?.pushname || payload.sender?.name || null;
+function extractPushName(message: any, contact?: any): string | null {
+  return message?.sender?.pushname || message?.sender?.name || contact?.pushname || null;
 }
 
 function extractPhoneNumber(chatId: string): string {
@@ -150,57 +105,14 @@ function isGroupChat(chatId: string): boolean {
   return chatId.endsWith('@g.us');
 }
 
-async function fetchContactNameFromWAHA(chatId: string): Promise<string | null> {
-  const cached = contactNameCache.get(chatId);
-  if (cached && Date.now() - cached.at < CONTACT_NAME_CACHE_TTL_MS) return cached.name;
-  let result: string | null = null;
-  try {
-    const encoded = encodeURIComponent(chatId);
-    if (chatId.endsWith('@g.us')) {
-      const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/groups/${encoded}`, {
-        headers: { 'X-Api-Key': config.WAHA_API_KEY },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        result = data?.groupMetadata?.subject || null;
-      }
-    } else {
-      const res = await fetch(`${config.WAHA_API_URL}/api/${config.WAHA_SESSION_NAME}/contacts/${encoded}`, {
-        headers: { 'X-Api-Key': config.WAHA_API_KEY },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const displayName = data?.name || data?.pushname || data?.shortName || null;
-        if (displayName && displayName !== chatId.split('@')[0]) result = displayName;
-      }
-    }
-  } catch {
-    result = null;
-  }
-  contactNameCache.set(chatId, { name: result, at: Date.now() });
-  return result;
-}
-
-async function upsertContactFromPayload(chatId: string, payload: any, opts: { skipUnreadIncrement?: boolean } = {}) {
+async function upsertContactFromMessage(chatId: string, message: any, contact: any, opts: { skipUnreadIncrement?: boolean } = {}) {
   const group = isGroupChat(chatId);
-  const pushName = extractPushName(payload);
+  const pushName = extractPushName(message, contact);
   const phoneNumber = extractPhoneNumber(chatId);
-  const senderName = extractSenderName(payload);
-  let name = group ? chatId : senderName;
+  const senderName = extractSenderName(message, contact);
+  const name = group ? chatId : senderName;
 
   const existing = await StorageRepository.fetchContactByChatId(chatId).catch(() => null);
-
-  if (config.WAHA_API_URL) {
-    const nameIsRawId = !existing || existing.name === chatId || existing.name === chatId.split('@')[0];
-    if (nameIsRawId) {
-      const resolved = await fetchContactNameFromWAHA(chatId);
-      if (resolved) name = resolved;
-    } else {
-      name = existing.name;
-    }
-  }
 
   await StorageRepository.upsertContact({
     chatId,
@@ -208,8 +120,8 @@ async function upsertContactFromPayload(chatId: string, payload: any, opts: { sk
     pushName: group ? null : pushName,
     phoneNumber,
     isGroup: group,
-    lastMessageAt: new Date((payload.timestamp || 0) * 1000),
-    lastMessageBody: extractMessageBody(payload),
+    lastMessageAt: new Date((message.timestamp || Date.now() / 1000) * 1000),
+    lastMessageBody: extractMessageBody(message),
     hasInbound: true,
     ...(opts.skipUnreadIncrement ? { unreadCount: existing?.unreadCount ?? 0 } : {}),
   });
@@ -221,35 +133,53 @@ async function upsertContactFromPayload(chatId: string, payload: any, opts: { sk
  * near-real-time. Group chats get `whatsapp.group.message`; 1:1 chats get
  * `whatsapp.message.inbound`.
  */
-function emitInboundEvents(chatId: string, sender: string, body: string, wahaMessageId: string | undefined, timestamp: Date) {
+function emitInboundEvents(chatId: string, sender: string, body: string, messageId: string | undefined, timestamp: Date) {
   const event = chatId.endsWith('@g.us') ? 'whatsapp.group.message' : 'whatsapp.message.inbound';
   AutomationEngine.trigger(event, {
     chatId,
     sender,
     body,
-    wahaMessageId,
+    messageId,
     timestamp: timestamp.toISOString(),
   }).catch((e: any) => {
     logger.error({ error: e.message }, 'Automation event emit failed');
   });
 }
 
-async function processWahaMessage(payload: any): Promise<void> {
-  if (payload.fromMe) return;
+// WA Engine Pro message id can arrive as a bare string or an envelope —
+// normalize both.
+function extractMessageId(message: any): string | null {
+  const raw = message.id || message.message_id || message.wa_id;
+  if (!raw) return null;
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object' && raw.id) return String(raw.id);
+  return null;
+}
 
-  const wahaMessageId = extractWahaMessageId(payload);
-  if (wahaMessageId && noteRecentMessageId(wahaMessageId)) {
-    logger.debug({ wahaMessageId }, 'Duplicate webhook delivery (recent cache), skipping');
+/** Normalize a WA Engine Pro phone/contact id to a chatId (@c.us / @g.us). */
+function toChatId(raw: string | undefined, message: any): string {
+  const contactId = raw || message.from || message.chatId || '';
+  const cleaned = contactId.replace(/[^0-9@]/g, '');
+  if (cleaned.endsWith('@g.us')) return cleaned;
+  if (cleaned.endsWith('@c.us') || cleaned.endsWith('@lid')) return cleaned;
+  const digits = cleaned.replace(/[^0-9]/g, '');
+  if (!digits) return contactId || 'unknown';
+  return `${digits}@c.us`;
+}
+
+async function processInboundMessage(message: any, contact?: any): Promise<void> {
+  const messageId = extractMessageId(message);
+  if (messageId && noteRecentMessageId(messageId)) {
+    logger.debug({ messageId }, 'Duplicate webhook delivery (recent cache), skipping');
     return;
   }
 
-  const fromRaw = payload.chatId || payload.from;
-  const from = isGroupChat(fromRaw) ? fromRaw : await resolveLidToCus(fromRaw);
+  const from = toChatId(message.phone || contact?.phone_number || contact?.wa_id, message);
   const group = isGroupChat(from);
-  let sender = extractSenderName(payload);
+  let sender = extractSenderName(message, contact);
   if (group) {
-    const participantId = payload.sender?.id || payload.participant || payload.from;
-    const pushName = payload.sender?.pushname || payload.sender?.name;
+    const participantId = message.sender?.id || message.participant || message.from;
+    const pushName = message.sender?.pushname || message.sender?.name;
     if (pushName && pushName !== participantId?.split('@')[0]) {
       sender = pushName;
     } else {
@@ -257,11 +187,11 @@ async function processWahaMessage(payload: any): Promise<void> {
       if (resolved) sender = resolved;
     }
   }
-  const body = extractMessageBody(payload);
-  const timestamp = new Date((payload.timestamp || 0) * 1000);
-  const mediaType = payload.type !== 'text' ? payload.type : null;
+  const body = extractMessageBody(message);
+  const timestamp = new Date((message.timestamp || Date.now() / 1000) * 1000);
+  const mediaType = message.type && message.type !== 'text' ? message.type : null;
   const historical = isHistorical(timestamp);
-  const quoted = extractQuotedMessage(payload);
+  const quoted = extractQuotedMessage(message);
 
   // Real-time triggers are skipped for historical replays.
   if (!historical) {
@@ -270,53 +200,65 @@ async function processWahaMessage(payload: any): Promise<void> {
   AuditService.record('MESSAGE_RECEIVED', 'MESSAGE', null, {
     chatId: from, sender, bodyLength: body.length, mediaType, isHistorical: historical,
   }).catch(() => {});
-  await upsertContactFromPayload(from, payload, { skipUnreadIncrement: historical });
-  emitInboundEvents(from, sender, body, wahaMessageId ?? undefined, timestamp);
-  messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId, isHistorical: historical, mediaType, ...quoted });
+  await upsertContactFromMessage(from, message, contact, { skipUnreadIncrement: historical });
+  emitInboundEvents(from, sender, body, messageId ?? undefined, timestamp);
+  messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId: messageId, isHistorical: historical, mediaType, ...quoted });
 }
 
 export class WhatsAppController {
   /**
-   * Endpoint to receive message webhook updates from the whatsapp-web.js client.
+   * Endpoint to receive message webhook updates from WA Engine Pro.
    *
    * Returns 200 OK immediately — before any parsing, validation, or DB work — so
-   * WAHA never enters its timeout-and-retry loop. All processing happens in the
-   * background, writes are batched through the message buffer, and replayed
-   * duplicates are discarded by the DB's ON CONFLICT DO NOTHING.
+   * WA Engine Pro never enters its timeout-and-retry loop. All processing happens
+   * in the background, writes are batched through the message buffer, and
+   * replayed duplicates are discarded by the DB's ON CONFLICT DO NOTHING.
    */
   static async handleWebhook(req: Request, res: Response) {
     res.status(200).json({ success: true });
 
     void (async () => {
       try {
-        // WAHA webhook format
-        if (req.body.event === 'message' && req.body.payload) {
-          await processWahaMessage(req.body.payload);
-          return;
-        }
+        const body = req.body;
 
-        // Thundering herd: batch payloads array from WAHA replay
-        if (Array.isArray(req.body.payloads)) {
-          let processed = 0;
-          for (const p of req.body.payloads) {
-            await processWahaMessage(p);
-            processed++;
+        // WA Engine Pro primary format: { event: "message.received", data: { message, contact } }
+        if (body.event === 'message.received') {
+          const data = body.data || body;
+          const message = data.message || body.message;
+          if (message) {
+            await processInboundMessage(message, data.contact || body.contact);
+            return;
           }
-          logger.info({ total: req.body.payloads.length, processed }, 'Thundering herd batch processed');
+        }
+
+        // Thundering herd: batch payloads array
+        if (Array.isArray(body.payloads)) {
+          let processed = 0;
+          for (const p of body.payloads) {
+            const message = p.message || p.data?.message || p.payload;
+            if (message) {
+              await processInboundMessage(message, p.contact || p.data?.contact);
+              processed++;
+            }
+          }
+          logger.info({ total: body.payloads.length, processed }, 'Thundering herd batch processed');
           return;
         }
 
-        let from = '';
-        let sender = 'Client';
-        let body = '';
-        let timestamp = new Date();
+        // Legacy WAHA format { event: "message", payload: {...} } — tolerated for
+        // relay replay during migration.
+        if (body.event === 'message' && body.payload) {
+          await processInboundMessage(body.payload);
+          return;
+        }
 
-        if (req.body.currentMessage) {
-          const { from: f, senderName, senderPushname, body: b, timestamp: ts, fromMe } = req.body.currentMessage;
-          from = f;
-          sender = fromMe ? 'Founder' : (senderName || senderPushname || f);
-          body = b || '[Media/System Message]';
-          timestamp = new Date(ts);
+        // Legacy flat format { currentMessage: {...} } — tolerated during migration.
+        if (body.currentMessage) {
+          const { from: f, senderName, senderPushname, body: b, timestamp: ts, fromMe } = body.currentMessage;
+          const from = toChatId(f, body.currentMessage);
+          const sender = fromMe ? 'Founder' : (senderName || senderPushname || f);
+          const msgBody = b || '[Media/System Message]';
+          const timestamp = new Date(ts || Date.now());
           if (!fromMe) {
             const group = isGroupChat(from);
             await StorageRepository.upsertContact({
@@ -326,24 +268,30 @@ export class WhatsAppController {
               phoneNumber: extractPhoneNumber(from),
               isGroup: group,
               lastMessageAt: timestamp,
-              lastMessageBody: body,
+              lastMessageBody: msgBody,
               hasInbound: true,
             });
+            emitInboundEvents(from, sender, msgBody, undefined, timestamp);
+            messageBuffer.push({ chatId: from, sender, body: msgBody, timestamp, isHistorical: isHistorical(timestamp) });
           }
-        } else if (req.body.message && req.body.contact) {
-          const message = req.body.message;
-          const contact = req.body.contact;
-          const whatsapp_webhook_payload = req.body.whatsapp_webhook_payload;
+          return;
+        }
+
+        // Legacy WhatsApp Cloud / WhatsJet format — tolerated during migration.
+        if (body.message && body.contact) {
+          const message = body.message;
+          const contact = body.contact;
+          const whatsapp_webhook_payload = body.whatsapp_webhook_payload;
 
           const phone = contact.phone_number || contact.wa_id || (whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from);
 
-          from = contact.uid || contact.contact_uid || (phone ? `${phone}@c.us` : 'unknown');
+          const from = contact.uid || contact.contact_uid || (phone ? `${phone}@c.us` : 'unknown');
 
-          sender = message.direction === 'outbound' ? 'Founder' : (contact.full_name || contact.first_name || phone || 'Client');
-          body = message.body || message.message_body || '[Media/System Message]';
+          const sender = message.direction === 'outbound' ? 'Founder' : (contact.full_name || contact.first_name || phone || 'Client');
+          const msgBody = message.body || message.message_body || '[Media/System Message]';
 
           const rawTimestamp = whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.timestamp;
-          timestamp = rawTimestamp ? new Date(parseInt(rawTimestamp) * 1000) : new Date();
+          const timestamp = rawTimestamp ? new Date(parseInt(rawTimestamp) * 1000) : new Date();
 
           if (message.direction !== 'outbound') {
             const group = isGroupChat(from);
@@ -354,52 +302,16 @@ export class WhatsAppController {
               phoneNumber: phone || extractPhoneNumber(from),
               isGroup: group,
               lastMessageAt: timestamp,
-              lastMessageBody: body,
+              lastMessageBody: msgBody,
               hasInbound: true,
             });
+            emitInboundEvents(from, sender, msgBody, undefined, timestamp);
+            messageBuffer.push({ chatId: from, sender, body: msgBody, timestamp, isHistorical: isHistorical(timestamp) });
           }
-        } else if (req.body.event === 'message.received' || req.body.event === 'message.sent' || req.body.event === 'message.delivered') {
-          const message = req.body.data?.message;
-          const contact = req.body.data?.contact;
-          if (!message) {
-            logger.warn({ body: req.body }, 'Received WhatsJet event with missing message properties');
-            return;
-          }
-          from = contact?.uid || contact?.contact_uid || (contact?.wa_id ? `${contact.wa_id}@c.us` : (message.from_phone_number ? `${message.from_phone_number}@c.us` : 'unknown'));
-          sender = message.direction === 'outbound' ? 'Founder' : (contact?.full_name || contact?.first_name || from);
-          body = message.message_body || '[Media/System Message]';
-          timestamp = message.created_at ? new Date(message.created_at) : new Date();
-
-          if (message.direction !== 'outbound') {
-            const group = isGroupChat(from);
-            await StorageRepository.upsertContact({
-              chatId: from,
-              name: group ? from : sender,
-              pushName: group ? null : (contact?.pushname || contact?.first_name || null),
-              phoneNumber: contact?.wa_id || extractPhoneNumber(from),
-              isGroup: group,
-              lastMessageAt: timestamp,
-              lastMessageBody: body,
-              hasInbound: true,
-            });
-          }
-        } else {
-          logger.warn({ body: req.body }, 'Received unrecognized WhatsApp webhook payload format');
           return;
         }
 
-        logger.info({ chatId: from, sender, body }, 'Saving WhatsApp message from webhook');
-        const historical = isHistorical(timestamp);
-        if (!historical) {
-          broadcastWhatsAppEvent('message.received', {
-            chatId: from,
-            sender,
-            body,
-            timestamp,
-          });
-        }
-        emitInboundEvents(from, sender, body, undefined, timestamp);
-        messageBuffer.push({ chatId: from, sender, body, timestamp, isHistorical: historical });
+        logger.warn({ body: body }, 'Received unrecognized WhatsApp webhook payload format');
       } catch (error: any) {
         logger.error({ error: error.message }, 'Error processing WhatsApp webhook');
       }
