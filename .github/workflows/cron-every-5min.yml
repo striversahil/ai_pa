@@ -1,0 +1,27 @@
+name: Cron - Every 5 min
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-automations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: whatsapp-digest
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/whatsapp-digest" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: wa-engine-monitor
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/wa-engine-monitor" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: morning-queue-drain
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/morning-queue-drain" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: orphaned-message-recovery
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/orphaned-message-recovery" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: outbound-intent-recovery
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/outbound-intent-recovery" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: sla-monitor
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/sla-monitor" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: whatsapp-marketing
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/whatsapp-marketing" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: notification-batcher
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/notification-batcher" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

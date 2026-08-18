@@ -1,0 +1,30 @@
+name: Cron - Daily IST
+
+on:
+  schedule:
+    # data-retention 3:00 AM IST = 21:30 UTC
+    - cron: "30 21 * * *"
+    # morning-brief 8:00 AM IST = 02:30 UTC
+    - cron: "30 2 * * *"
+    # eod-summary 7:00 PM IST = 13:30 UTC
+    - cron: "30 13 * * *"
+  workflow_dispatch:
+
+jobs:
+  data-retention:
+    runs-on: ubuntu-latest
+    steps:
+      - name: data-retention
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/data-retention" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+
+  morning-brief:
+    runs-on: ubuntu-latest
+    steps:
+      - name: morning-brief
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/morning-brief" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+
+  eod-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: eod-summary
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/eod-summary" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

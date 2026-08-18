@@ -47,9 +47,25 @@ export class SalesCopilotService implements AnalysisEngine {
   }
 
   /**
-   * Parses Zoho curl credentials from local file.
+   * Parses Zoho curl credentials from local file, or reads them from env vars
+   * (ZOHO_BOOKS_SENT_URL + ZOHO_BOOKS_AUTH_TOKEN) on the Worker where fs is
+   * unavailable. Env vars win when present.
    */
   private parseCurlFile(): { url: string; headers: Record<string, string>; orgId: string } | null {
+    const envUrl = (process as any)?.env?.ZOHO_BOOKS_SENT_URL || (globalThis as any)?.ZOHO_BOOKS_SENT_URL;
+    const envToken = (process as any)?.env?.ZOHO_BOOKS_AUTH_TOKEN || (globalThis as any)?.ZOHO_BOOKS_AUTH_TOKEN;
+    if (envUrl && envToken) {
+      const orgMatch = envUrl.match(/organization_id=([0-9]+)/);
+      return {
+        url: envUrl,
+        headers: {
+          Authorization: `Zoho-oauthtoken ${envToken}`,
+          'Content-Type': 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+        },
+        orgId: orgMatch ? orgMatch[1] : '',
+      };
+    }
     try {
       let curlFile = path.join('/app', 'zoho_sent', 'sent_estimates.txt');
       if (!fs.existsSync(curlFile)) {

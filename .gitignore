@@ -17,3 +17,16 @@ zoho_sent/google-service-account.json
 waha_sessions/
 google-service-account.json
 .runtime/
+
+# Local AI runner — contains live secrets (worker URL, API keys)
+local-runner.env
+
+# Cloudflare Worker build artifacts + wrangler local state
+founder-os_backend/dist-worker/
+founder-os_backend/.wrangler/
+waba-worker/node_modules/
+waba-worker/.wrangler/
+waba-worker/package-lock.json
+
+# Frontend build artifact (accidentally committed before)
+founder-os_frontend/tsconfig.tsbuildinfo

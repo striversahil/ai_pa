@@ -31,9 +31,9 @@ export function useCSV(showToast: (text: string, type?: string) => void) {
     showToast('CSV file downloaded', 'success');
   }, [showToast]);
 
-  const importCSV = useCallback((e: React.ChangeEvent<HTMLInputElement>, currentAgentId: number): Enquiry[] => {
+  const importCSV = useCallback((e: React.ChangeEvent<HTMLInputElement>, currentAgentId: number): Promise<Enquiry[]> => {
     const file = e.target.files?.[0];
-    if (!file) return [];
+    if (!file) return Promise.resolve([]);
     const reader = new FileReader();
     return new Promise(resolve => {
       reader.onload = (evt) => {

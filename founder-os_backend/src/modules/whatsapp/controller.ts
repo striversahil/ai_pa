@@ -205,6 +205,104 @@ async function processInboundMessage(message: any, contact?: any): Promise<void>
   messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId: messageId, isHistorical: historical, mediaType, ...quoted });
 }
 
+/**
+ * Core webhook payload processor (framework-agnostic). Parses any of the
+ * tolerated payload shapes and fans the messages out to ingest processing.
+ */
+export async function processWebhookPayload(body: any): Promise<void> {
+  // WA Engine Pro primary format: { event: "message.received", data: { message, contact } }
+  if (body.event === 'message.received') {
+    const data = body.data || body;
+    const message = data.message || body.message;
+    if (message) {
+      await processInboundMessage(message, data.contact || body.contact);
+      return;
+    }
+  }
+
+  // Thundering herd: batch payloads array
+  if (Array.isArray(body.payloads)) {
+    let processed = 0;
+    for (const p of body.payloads) {
+      const message = p.message || p.data?.message || p.payload;
+      if (message) {
+        await processInboundMessage(message, p.contact || p.data?.contact);
+        processed++;
+      }
+    }
+    logger.info({ total: body.payloads.length, processed }, 'Thundering herd batch processed');
+    return;
+  }
+
+  // Legacy WAHA format { event: "message", payload: {...} } — tolerated for
+  // relay replay during migration.
+  if (body.event === 'message' && body.payload) {
+    await processInboundMessage(body.payload);
+    return;
+  }
+
+  // Legacy flat format { currentMessage: {...} } — tolerated during migration.
+  if (body.currentMessage) {
+    const { from: f, senderName, senderPushname, body: b, timestamp: ts, fromMe } = body.currentMessage;
+    const from = toChatId(f, body.currentMessage);
+    const sender = fromMe ? 'Founder' : (senderName || senderPushname || f);
+    const msgBody = b || '[Media/System Message]';
+    const timestamp = new Date(ts || Date.now());
+    if (!fromMe) {
+      const group = isGroupChat(from);
+      await StorageRepository.upsertContact({
+        chatId: from,
+        name: group ? from : sender,
+        pushName: group ? null : (senderPushname || senderName || null),
+        phoneNumber: extractPhoneNumber(from),
+        isGroup: group,
+        lastMessageAt: timestamp,
+        lastMessageBody: msgBody,
+        hasInbound: true,
+      });
+      emitInboundEvents(from, sender, msgBody, undefined, timestamp);
+      messageBuffer.push({ chatId: from, sender, body: msgBody, timestamp, isHistorical: isHistorical(timestamp) });
+    }
+    return;
+  }
+
+  // Legacy WhatsApp Cloud / WhatsJet format — tolerated during migration.
+  if (body.message && body.contact) {
+    const message = body.message;
+    const contact = body.contact;
+    const whatsapp_webhook_payload = body.whatsapp_webhook_payload;
+
+    const phone = contact.phone_number || contact.wa_id || (whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from);
+
+    const from = contact.uid || contact.contact_uid || (phone ? `${phone}@c.us` : 'unknown');
+
+    const sender = message.direction === 'outbound' ? 'Founder' : (contact.full_name || contact.first_name || phone || 'Client');
+    const msgBody = message.body || message.message_body || '[Media/System Message]';
+
+    const rawTimestamp = whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.timestamp;
+    const timestamp = rawTimestamp ? new Date(parseInt(rawTimestamp) * 1000) : new Date();
+
+    if (message.direction !== 'outbound') {
+      const group = isGroupChat(from);
+      await StorageRepository.upsertContact({
+        chatId: from,
+        name: group ? from : sender,
+        pushName: group ? null : (contact.pushname || contact.first_name || null),
+        phoneNumber: phone || extractPhoneNumber(from),
+        isGroup: group,
+        lastMessageAt: timestamp,
+        lastMessageBody: msgBody,
+        hasInbound: true,
+      });
+      emitInboundEvents(from, sender, msgBody, undefined, timestamp);
+      messageBuffer.push({ chatId: from, sender, body: msgBody, timestamp, isHistorical: isHistorical(timestamp) });
+    }
+    return;
+  }
+
+  logger.warn({ body: body }, 'Received unrecognized WhatsApp webhook payload format');
+}
+
 export class WhatsAppController {
   /**
    * Endpoint to receive message webhook updates from WA Engine Pro.
@@ -217,105 +315,9 @@ export class WhatsAppController {
   static async handleWebhook(req: Request, res: Response) {
     res.status(200).json({ success: true });
 
-    void (async () => {
-      try {
-        const body = req.body;
-
-        // WA Engine Pro primary format: { event: "message.received", data: { message, contact } }
-        if (body.event === 'message.received') {
-          const data = body.data || body;
-          const message = data.message || body.message;
-          if (message) {
-            await processInboundMessage(message, data.contact || body.contact);
-            return;
-          }
-        }
-
-        // Thundering herd: batch payloads array
-        if (Array.isArray(body.payloads)) {
-          let processed = 0;
-          for (const p of body.payloads) {
-            const message = p.message || p.data?.message || p.payload;
-            if (message) {
-              await processInboundMessage(message, p.contact || p.data?.contact);
-              processed++;
-            }
-          }
-          logger.info({ total: body.payloads.length, processed }, 'Thundering herd batch processed');
-          return;
-        }
-
-        // Legacy WAHA format { event: "message", payload: {...} } — tolerated for
-        // relay replay during migration.
-        if (body.event === 'message' && body.payload) {
-          await processInboundMessage(body.payload);
-          return;
-        }
-
-        // Legacy flat format { currentMessage: {...} } — tolerated during migration.
-        if (body.currentMessage) {
-          const { from: f, senderName, senderPushname, body: b, timestamp: ts, fromMe } = body.currentMessage;
-          const from = toChatId(f, body.currentMessage);
-          const sender = fromMe ? 'Founder' : (senderName || senderPushname || f);
-          const msgBody = b || '[Media/System Message]';
-          const timestamp = new Date(ts || Date.now());
-          if (!fromMe) {
-            const group = isGroupChat(from);
-            await StorageRepository.upsertContact({
-              chatId: from,
-              name: group ? from : sender,
-              pushName: group ? null : (senderPushname || senderName || null),
-              phoneNumber: extractPhoneNumber(from),
-              isGroup: group,
-              lastMessageAt: timestamp,
-              lastMessageBody: msgBody,
-              hasInbound: true,
-            });
-            emitInboundEvents(from, sender, msgBody, undefined, timestamp);
-            messageBuffer.push({ chatId: from, sender, body: msgBody, timestamp, isHistorical: isHistorical(timestamp) });
-          }
-          return;
-        }
-
-        // Legacy WhatsApp Cloud / WhatsJet format — tolerated during migration.
-        if (body.message && body.contact) {
-          const message = body.message;
-          const contact = body.contact;
-          const whatsapp_webhook_payload = body.whatsapp_webhook_payload;
-
-          const phone = contact.phone_number || contact.wa_id || (whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from);
-
-          const from = contact.uid || contact.contact_uid || (phone ? `${phone}@c.us` : 'unknown');
-
-          const sender = message.direction === 'outbound' ? 'Founder' : (contact.full_name || contact.first_name || phone || 'Client');
-          const msgBody = message.body || message.message_body || '[Media/System Message]';
-
-          const rawTimestamp = whatsapp_webhook_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.timestamp;
-          const timestamp = rawTimestamp ? new Date(parseInt(rawTimestamp) * 1000) : new Date();
-
-          if (message.direction !== 'outbound') {
-            const group = isGroupChat(from);
-            await StorageRepository.upsertContact({
-              chatId: from,
-              name: group ? from : sender,
-              pushName: group ? null : (contact.pushname || contact.first_name || null),
-              phoneNumber: phone || extractPhoneNumber(from),
-              isGroup: group,
-              lastMessageAt: timestamp,
-              lastMessageBody: msgBody,
-              hasInbound: true,
-            });
-            emitInboundEvents(from, sender, msgBody, undefined, timestamp);
-            messageBuffer.push({ chatId: from, sender, body: msgBody, timestamp, isHistorical: isHistorical(timestamp) });
-          }
-          return;
-        }
-
-        logger.warn({ body: body }, 'Received unrecognized WhatsApp webhook payload format');
-      } catch (error: any) {
-        logger.error({ error: error.message }, 'Error processing WhatsApp webhook');
-      }
-    })();
+    void processWebhookPayload(req.body).catch((error: any) => {
+      logger.error({ error: error.message }, 'Error processing WhatsApp webhook');
+    });
   }
 }
 export default WhatsAppController;

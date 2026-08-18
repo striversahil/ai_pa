@@ -1,0 +1,13 @@
+name: Cron - Every 15 min
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-automations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: zoho-sent-analyzer
+        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/zoho-sent-analyzer" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

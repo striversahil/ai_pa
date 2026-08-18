@@ -1,0 +1,19 @@
+[Unit]
+Description=WhatsApp AI Processing Queue (local omniroute inference)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/sahil/development/ai_pa
+EnvironmentFile=/home/sahil/development/ai_pa/local-runner.env
+ExecStart=/usr/bin/node /home/sahil/development/ai_pa/local-runner.js
+Restart=always
+RestartSec=10
+# Wait for the local omniroute model to be reachable before marking the unit up
+ExecStartPre=/bin/sh -c 'until curl -sf http://localhost:20128/v1/models -H "Authorization: Bearer $(sed -n "s/^OMNIROUTE_API_KEY=//p" /home/sahil/development/ai_pa/local-runner.env)"; do sleep 5; done'
+StandardOutput=append:/home/sahil/development/ai_pa/local-runner.log
+StandardError=append:/home/sahil/development/ai_pa/local-runner.log
+
+[Install]
+WantedBy=multi-user.target
