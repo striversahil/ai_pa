@@ -1,0 +1,25 @@
+version: '3.8'
+
+# Local AI processing queue runner for the Cloudflare founder-os worker.
+#
+# Polls the worker's waba_payloads queue (/api/logs?mode=cron), classifies each
+# pending message with deterministic rules, falls back to the local omniroute
+# (OpenAI-compatible, container "omniroute" on 127.0.0.1:20128), and writes the
+# result back via /api/update.
+#
+# Uses host networking so it can reach omniroute's 127.0.0.1 binding directly.
+# restart: unless-stopped matches omniroute — it auto-starts on PC boot and
+# resumes draining any backlog accumulated while the machine was off.
+
+services:
+  local-runner:
+    image: node:20-alpine
+    container_name: founder-os-ai-runner
+    restart: unless-stopped
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - ./local-runner.js:/app/local-runner.js:ro
+    env_file:
+      - ./local-runner.env
+    command: ["node", "local-runner.js"]

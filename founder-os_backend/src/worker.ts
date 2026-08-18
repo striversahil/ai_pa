@@ -133,6 +133,37 @@ app.post('/webhook', async (c) => {
         `INSERT INTO waba_payloads (whatsapp_id, payload, direction, created_at) VALUES (?, ?, ?, ?)
          ON CONFLICT(whatsapp_id) DO UPDATE SET payload = excluded.payload, direction = excluded.direction`
       ).bind(wabaId, raw, direction, now).run();
+
+      // Also feed the founder-os pipeline (Message/Contact/Digest tables) so the
+      // founder-os dashboard reflects real inbound traffic, not just the raw
+      // waba_payloads store. Runs in the background; the raw store above still
+      // serves the local-runner AI queue.
+      if (event === 'message.received') {
+        const { WhatsAppController } = deps();
+        // waengine.pro flat shape: { event, timestamp, data: { phone, type, text, message_id } }.
+        // Normalize to the nested form the founder-os pipeline expects.
+        const normalized = d.message
+          ? payload
+          : {
+              event,
+              timestamp: payload.timestamp,
+              data: {
+                message: {
+                  id: d.message_id,
+                  phone: d.phone,
+                  type: d.type || 'text',
+                  text: { body: d.text || '' },
+                  timestamp: payload.timestamp,
+                },
+                contact: { phone_number: d.phone },
+              },
+            };
+        void c.executionCtx.waitUntil(
+          WhatsAppController.handleWebhook(normalized).catch((err: any) => {
+            console.log('Founder-os pipeline webhook processing failed:', err?.message);
+          })
+        );
+      }
     }
     return c.text('EVENT_RECEIVED', 200);
   } catch (err) {

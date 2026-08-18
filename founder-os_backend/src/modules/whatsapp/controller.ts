@@ -30,7 +30,7 @@ function noteRecentMessageId(id: string): boolean {
 
 function extractMessageBody(message: any): string {
   if (message.body) return message.body;
-  if (message.text) return typeof message.text === 'string' ? message.text : JSON.stringify(message.text);
+  if (message.text) return typeof message.text === 'string' ? message.text : (message.text.body || JSON.stringify(message.text));
   if (message.caption) return message.caption;
   const type = message.type || message.media_type;
   const typeLabels: Record<string, string> = {
