@@ -50,6 +50,7 @@ function bootstrapEnv(env: Bindings) {
     WA_ENGINE_API_KEY: (env.WA_ENGINE_API_KEY as string) || '',
     ZOHO_BOOKS_SENT_URL: (env.ZOHO_BOOKS_SENT_URL as string) || '',
     ZOHO_BOOKS_AUTH_TOKEN: (env.ZOHO_BOOKS_AUTH_TOKEN as string) || '',
+    ZOHO_CURL_CONTENT: (env.ZOHO_CURL_CONTENT as string) || '',
     GOOGLE_SERVICE_ACCOUNT_JSON: (env.GOOGLE_SERVICE_ACCOUNT_JSON as string) || '',
     DATABASE_URL: '',
   };
@@ -299,6 +300,113 @@ app.get('/api/estimates', async (c) => {
     comments: (e.comments || []).filter((cm: any) => !isSystemGeneratedComment(cm.description, cm.commentedBy)),
   }));
   return c.json({ estimates: estimatesWithRealComments, lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null });
+});
+
+// ── Zoho Estimate AI Classification (GitHub Actions) ──────────────────────────
+app.get('/api/estimates/pending-ai', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma, isSystemGeneratedComment } = deps();
+  const { PENDING_AI_MARKER } = await import('./automations/zoho-sent-analyzer/service');
+  const rows = await prisma.classification.findMany({ where: { reasoning: PENDING_AI_MARKER } });
+  const ids = rows.map((r: any) => r.estimateId);
+  if (!ids.length) return c.json({ estimates: [] });
+  const estimates = await prisma.estimate.findMany({
+    where: { estimateId: { in: ids } },
+    include: { comments: { orderBy: { commentId: 'desc' } } },
+  });
+  const out = estimates.map((e: any) => {
+    const comments = (e.comments || []).filter((cm: any) => !isSystemGeneratedComment(cm.description, cm.commentedBy));
+    const historyLines = comments.map((cm: any) => `[${cm.date}] ${cm.commentedBy}: ${cm.description}`);
+    return {
+      estimateId: e.estimateId,
+      estimateNumber: e.estimateNumber,
+      customerName: e.customerName,
+      total: e.total,
+      date: e.date,
+      status: e.status,
+      latestComment: historyLines[0] || '',
+      commentHistory: historyLines.slice(0, 15).join('\n'),
+    };
+  });
+  return c.json({ estimates: out });
+});
+
+app.post('/api/estimates/classify', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json();
+  const { estimateId, badgeResult, journeyResult } = body;
+  if (!estimateId || !badgeResult) return c.json({ error: 'estimateId + badgeResult required' }, 400);
+
+  await prisma.classification.upsert({
+    where: { estimateId },
+    update: {
+      meaningfulUpdate: !!badgeResult.meaningful_update,
+      notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+      movingSlow: 'No',
+      underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+      confirm: badgeResult.confirm ? 'Yes' : 'No',
+      intentScore: journeyResult?.intent_score ?? 2,
+      reasoning: badgeResult.reasoning || 'AI classification',
+      summary: journeyResult?.summary || '',
+      processedAt: new Date(),
+    },
+    create: {
+      estimateId,
+      meaningfulUpdate: !!badgeResult.meaningful_update,
+      notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+      movingSlow: 'No',
+      underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+      confirm: badgeResult.confirm ? 'Yes' : 'No',
+      intentScore: journeyResult?.intent_score ?? 2,
+      reasoning: badgeResult.reasoning || 'AI classification',
+      summary: journeyResult?.summary || '',
+      processedAt: new Date(),
+    },
+  });
+  await prisma.estimate.update({ where: { estimateId }, data: { lastSyncTime: new Date() } });
+  return c.json({ ok: true });
+});
+
+app.post('/api/estimates/bulk-upsert', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json();
+  const { estimates, lastSyncAt } = body;
+  if (!estimates || !Array.isArray(estimates) || !estimates.length) return c.json({ ok: true, count: 0 });
+  let upserted = 0;
+  for (const est of estimates) {
+    await prisma.estimate.upsert({
+      where: { estimateId: est.estimateId },
+      update: {
+        estimateNumber: est.estimateNumber,
+        customerName: est.customerName,
+        total: est.total,
+        date: est.date,
+        status: est.status,
+        skipMatching: est.skipMatching || 0,
+      },
+      create: {
+        estimateId: est.estimateId,
+        estimateNumber: est.estimateNumber,
+        customerName: est.customerName,
+        total: est.total,
+        date: est.date,
+        status: est.status,
+        skipMatching: est.skipMatching || 0,
+        lastSyncTime: new Date(),
+      },
+    });
+    upserted++;
+  }
+  if (lastSyncAt) {
+    await prisma.setting.upsert({
+      where: { key: 'sales_copilot:last_complete_sync_at' },
+      update: { value: lastSyncAt },
+      create: { key: 'sales_copilot:last_complete_sync_at', value: lastSyncAt },
+    });
+  }
+  return c.json({ ok: true, count: upserted });
 });
 
 // ── Audit ───────────────────────────────────────────────────────────────────
