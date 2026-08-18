@@ -6,12 +6,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-automations:
+  email-brain-index:
     runs-on: ubuntu-latest
     steps:
-      - name: email-brain-index
-        run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/email-brain-index" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - uses: actions/checkout@v4
+      - name: email-brain-index (sync + re-index on runner)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: node scripts/email-brain-index-runner.js
+
+  light-triggers:
+    runs-on: ubuntu-latest
+    steps:
       - name: enterprise-operations-analytics
         run: |
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/enterprise-operations-analytics" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

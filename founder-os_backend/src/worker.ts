@@ -303,34 +303,6 @@ app.get('/api/estimates', async (c) => {
 });
 
 // ── Zoho Estimate AI Classification (GitHub Actions) ──────────────────────────
-app.get('/api/estimates/pending-ai', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { prisma, isSystemGeneratedComment } = deps();
-  const { PENDING_AI_MARKER } = await import('./automations/zoho-sent-analyzer/service');
-  const rows = await prisma.classification.findMany({ where: { reasoning: PENDING_AI_MARKER } });
-  const ids = rows.map((r: any) => r.estimateId);
-  if (!ids.length) return c.json({ estimates: [] });
-  const estimates = await prisma.estimate.findMany({
-    where: { estimateId: { in: ids } },
-    include: { comments: { orderBy: { commentId: 'desc' } } },
-  });
-  const out = estimates.map((e: any) => {
-    const comments = (e.comments || []).filter((cm: any) => !isSystemGeneratedComment(cm.description, cm.commentedBy));
-    const historyLines = comments.map((cm: any) => `[${cm.date}] ${cm.commentedBy}: ${cm.description}`);
-    return {
-      estimateId: e.estimateId,
-      estimateNumber: e.estimateNumber,
-      customerName: e.customerName,
-      total: e.total,
-      date: e.date,
-      status: e.status,
-      latestComment: historyLines[0] || '',
-      commentHistory: historyLines.slice(0, 15).join('\n'),
-    };
-  });
-  return c.json({ estimates: out });
-});
-
 app.post('/api/estimates/classify', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
   const { prisma } = deps();
@@ -373,31 +345,32 @@ app.post('/api/estimates/bulk-upsert', async (c) => {
   const { prisma } = deps();
   const body = await c.req.json();
   const { estimates, lastSyncAt } = body;
-  if (!estimates || !Array.isArray(estimates) || !estimates.length) return c.json({ ok: true, count: 0 });
   let upserted = 0;
-  for (const est of estimates) {
-    await prisma.estimate.upsert({
-      where: { estimateId: est.estimateId },
-      update: {
-        estimateNumber: est.estimateNumber,
-        customerName: est.customerName,
-        total: est.total,
-        date: est.date,
-        status: est.status,
-        skipMatching: est.skipMatching || 0,
-      },
-      create: {
-        estimateId: est.estimateId,
-        estimateNumber: est.estimateNumber,
-        customerName: est.customerName,
-        total: est.total,
-        date: est.date,
-        status: est.status,
-        skipMatching: est.skipMatching || 0,
-        lastSyncTime: new Date(),
-      },
-    });
-    upserted++;
+  if (estimates && Array.isArray(estimates)) {
+    for (const est of estimates) {
+      await prisma.estimate.upsert({
+        where: { estimateId: est.estimateId },
+        update: {
+          estimateNumber: est.estimateNumber,
+          customerName: est.customerName,
+          total: est.total,
+          date: est.date,
+          status: est.status,
+          skipMatching: est.skipMatching || 0,
+        },
+        create: {
+          estimateId: est.estimateId,
+          estimateNumber: est.estimateNumber,
+          customerName: est.customerName,
+          total: est.total,
+          date: est.date,
+          status: est.status,
+          skipMatching: est.skipMatching || 0,
+          lastSyncTime: new Date(),
+        },
+      });
+      upserted++;
+    }
   }
   if (lastSyncAt) {
     await prisma.setting.upsert({
@@ -716,6 +689,295 @@ app.post('/api/trigger/:slug', async (c) => {
   if (!entry) return c.json({ error: `automation '${slug}' not loaded` }, 404);
   await AutomationEngine.scan(slug);
   return c.json({ message: `Automation '${slug}' triggered`, ok: true });
+});
+
+// ── Runner API (GitHub Actions heavy processing) ──────────────────────────────
+// Instant D1 data-read + result-write endpoints for the GH Actions runner
+// scripts (scripts/*.js). Heavy AI / cron / Zoho crawling runs on the runner;
+// this worker only fetches raw rows and persists results. All endpoints are
+// SHARED_SECRET gated and stay well under the 30s CPU limit.
+
+// ── whatsapp-digest runner ───────────────────────────────────────────────────
+app.get('/api/runner/messages/unprocessed', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const messages = await StorageRepository.fetchUnprocessedMessages();
+  return c.json(messages.map((m: any) => ({
+    id: m.id, chatId: m.chatId, sender: m.sender, body: m.body,
+    timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+  })));
+});
+
+app.get('/api/runner/digests/latest', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const chatId = c.req.query('chatId') || '';
+  if (!chatId) return c.json({ error: 'chatId query required' }, 400);
+  const digest = await StorageRepository.fetchLatestDigestByChatId(chatId);
+  if (!digest) return c.json({ digest: null });
+  return c.json({ digest: { summary: digest.summary, priority: digest.priority, suggestedReply: digest.suggestedReply } });
+});
+
+app.get('/api/runner/chat-notes', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const chatId = c.req.query('chatId') || '';
+  if (!chatId) return c.json({ error: 'chatId query required' }, 400);
+  const note = await StorageRepository.getChatNote(chatId);
+  return c.json({ content: note?.content || '' });
+});
+
+app.post('/api/runner/digests', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.chatId || !body.summary) return c.json({ error: 'chatId + summary required' }, 400);
+  const digest = await StorageRepository.saveDigest({
+    chatId: body.chatId,
+    chatName: body.chatName || body.chatId,
+    summary: body.summary,
+    priority: body.priority || 'medium',
+    category: body.category || 'General',
+    sentiment: body.sentiment || 'neutral',
+    requiresFounder: !!body.requiresFounder,
+    suggestedReply: body.suggestedReply || undefined,
+  });
+  return c.json({ ok: true, id: digest.id });
+});
+
+app.post('/api/runner/tasks', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.title) return c.json({ error: 'title required' }, 400);
+  let deadline: Date | null = null;
+  if (body.deadline) { const d = new Date(body.deadline); if (!isNaN(d.getTime())) deadline = d; }
+  const task = await StorageRepository.createTask({
+    title: body.title,
+    owner: body.owner || 'Founder',
+    status: body.status || 'PENDING',
+    deadline,
+    source: body.source || 'WHATSAPP',
+    sourceId: body.sourceId || null,
+  });
+  return c.json({ ok: true, id: task.id });
+});
+
+app.post('/api/runner/pending-items', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.chatId || !body.description) return c.json({ error: 'chatId + description required' }, 400);
+  let dueDate: Date | null = null;
+  if (body.dueDate) { const d = new Date(body.dueDate); if (!isNaN(d.getTime())) dueDate = d; }
+  const item = await StorageRepository.createChatPendingItem({
+    chatId: body.chatId,
+    chatName: body.chatName || body.chatId,
+    description: body.description,
+    dueDate,
+  });
+  return c.json({ ok: true, id: item.id });
+});
+
+app.post('/api/runner/messages/mark-processed', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
+  if (!ids.length) return c.json({ ok: true, count: 0 });
+  await StorageRepository.markMessagesProcessed(ids);
+  return c.json({ ok: true, count: ids.length });
+});
+
+// ── morning-brief / eod-summary runner ───────────────────────────────────────
+app.get('/api/runner/brief-data', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository, prisma } = deps();
+  const [digests, tasks, pendingItems, emails, estimates] = await Promise.all([
+    StorageRepository.fetchDigests(15),
+    StorageRepository.fetchTasks(),
+    StorageRepository.fetchOpenChatPendingItems(),
+    StorageRepository.fetchUnprocessedEmails(),
+    prisma.estimate.findMany({ where: { status: 'sent' }, include: { classification: true } }),
+  ]);
+  return c.json({ digests, tasks, pendingItems, emails, estimates });
+});
+
+app.post('/api/runner/founder-notes', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.content) return c.json({ error: 'content required' }, 400);
+  const note = await StorageRepository.saveFounderNote(String(body.content));
+  return c.json({ ok: true, id: note.id, createdAt: note.createdAt });
+});
+
+// ── zoho-sent-analyzer runner ────────────────────────────────────────────────
+app.get('/api/runner/zoho/state', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const [estimates, maxComments, lastCompleteSync] = await Promise.all([
+    prisma.estimate.findMany({ include: { classification: true } }),
+    prisma.comment.groupBy({ by: ['estimateId'], _max: { commentId: true } }),
+    prisma.setting.findUnique({ where: { key: 'sales_copilot:last_complete_sync_at' } }),
+  ]);
+  const maxCommentIdByEstimate: Record<string, string> = {};
+  for (const row of maxComments) {
+    maxCommentIdByEstimate[row.estimateId] = (row._max.commentId as string) || '';
+  }
+  return c.json({
+    estimates,
+    maxCommentIdByEstimate,
+    lastCompleteSyncAt: lastCompleteSync?.value || null,
+  });
+});
+
+app.post('/api/runner/zoho/comments', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const comments = Array.isArray(body.comments) ? body.comments : [];
+  let upserted = 0;
+  for (const cm of comments) {
+    if (!cm.commentId) continue;
+    await prisma.comment.upsert({
+      where: { commentId: cm.commentId },
+      update: {
+        estimateId: cm.estimateId,
+        description: cm.description || '',
+        commentedBy: cm.commentedBy || '',
+        date: cm.date || '',
+        dateDescription: cm.dateDescription || '',
+        dateFormatted: cm.dateFormatted || null,
+      },
+      create: {
+        commentId: cm.commentId,
+        estimateId: cm.estimateId,
+        description: cm.description || '',
+        commentedBy: cm.commentedBy || '',
+        date: cm.date || '',
+        dateDescription: cm.dateDescription || '',
+        dateFormatted: cm.dateFormatted || null,
+      },
+    });
+    upserted++;
+  }
+  return c.json({ ok: true, count: upserted });
+});
+
+app.post('/api/runner/zoho/status', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const updates = Array.isArray(body.updates) ? body.updates : [];
+  let updated = 0;
+  for (const u of updates) {
+    if (!u.estimateId || !u.status) continue;
+    await prisma.estimate.update({
+      where: { estimateId: u.estimateId },
+      data: { status: u.status, lastSyncTime: new Date() },
+    });
+    updated++;
+  }
+  return c.json({ ok: true, count: updated });
+});
+
+app.post('/api/runner/zoho/classification', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const { estimateId, classification } = body;
+  if (!estimateId || !classification) return c.json({ error: 'estimateId + classification required' }, 400);
+  const now = new Date();
+  await prisma.classification.upsert({
+    where: { estimateId },
+    update: {
+      meaningfulUpdate: !!classification.meaningfulUpdate,
+      notAnswering: classification.notAnswering ? 'Yes' : 'No',
+      movingSlow: classification.movingSlow ? 'Yes' : 'No',
+      underDiscussion: classification.underDiscussion ? 'Yes' : 'No',
+      confirm: classification.confirm ? 'Yes' : 'No',
+      intentScore: classification.intentScore ?? 2,
+      reasoning: classification.reasoning || '',
+      summary: classification.summary || '',
+      processedAt: now,
+    },
+    create: {
+      estimateId,
+      meaningfulUpdate: !!classification.meaningfulUpdate,
+      notAnswering: classification.notAnswering ? 'Yes' : 'No',
+      movingSlow: classification.movingSlow ? 'Yes' : 'No',
+      underDiscussion: classification.underDiscussion ? 'Yes' : 'No',
+      confirm: classification.confirm ? 'Yes' : 'No',
+      intentScore: classification.intentScore ?? 2,
+      reasoning: classification.reasoning || '',
+      summary: classification.summary || '',
+      processedAt: now,
+    },
+  });
+  await prisma.estimate.update({ where: { estimateId }, data: { lastSyncTime: now } });
+  return c.json({ ok: true });
+});
+
+// ── email-brain-index runner ─────────────────────────────────────────────────
+app.post('/api/runner/emails', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { StorageRepository } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const emails = Array.isArray(body.emails) ? body.emails : [];
+  let saved = 0;
+  for (const e of emails) {
+    if (!e.subject || !e.sender || !e.body) continue;
+    await StorageRepository.storeEmail({ subject: e.subject, sender: e.sender, body: e.body });
+    saved++;
+  }
+  return c.json({ ok: true, count: saved });
+});
+
+app.get('/api/runner/brain/sources', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const [messages, emails, digests, estimates, tasks] = await Promise.all([
+    prisma.message.findMany({ where: { timestamp: { gte: cutoff } }, orderBy: { timestamp: 'desc' }, take: 500 }),
+    prisma.email.findMany({ orderBy: { createdAt: 'desc' }, take: 300 }),
+    prisma.digest.findMany({ orderBy: { createdAt: 'desc' }, take: 300 }),
+    prisma.estimate.findMany({ include: { comments: true, classification: true }, orderBy: { lastSyncTime: 'desc' }, take: 500 }),
+    prisma.task.findMany({ orderBy: { createdAt: 'desc' }, take: 300 }),
+  ]);
+  return c.json({ messages, emails, digests, estimates, tasks });
+});
+
+app.post('/api/runner/brain/context', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+  let upserted = 0;
+  for (const row of rows) {
+    if (!row.source || !row.sourceId || !row.content) continue;
+    await prisma.brainContext.upsert({
+      where: { source_sourceId: { source: row.source, sourceId: row.sourceId } },
+      update: {
+        entityName: row.entityName || null,
+        content: row.content,
+        metadata: row.metadata || null,
+        eventDate: row.eventDate ? new Date(row.eventDate) : new Date(),
+        indexedAt: new Date(),
+      },
+      create: {
+        source: row.source,
+        sourceId: row.sourceId,
+        entityName: row.entityName || null,
+        content: row.content,
+        metadata: row.metadata || null,
+        eventDate: row.eventDate ? new Date(row.eventDate) : new Date(),
+        indexedAt: new Date(),
+      },
+    });
+    upserted++;
+  }
+  return c.json({ ok: true, count: upserted });
 });
 
 // ── Automation admin API ────────────────────────────────────────────────────
