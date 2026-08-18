@@ -129,8 +129,9 @@ function extractMessage(payload) {
 }
 
 function messageText(message) {
-  return message?.text?.body || message?.body || message?.text ||
+  const t = message?.text?.body || message?.body || message?.text ||
     message?.caption || message?.message || '';
+  return typeof t === 'string' ? t : (JSON.stringify(t) || '');
 }
 
 // waengine.pro message.status payload: { event, timestamp, data: { wa_message_id, status, recipient } }
