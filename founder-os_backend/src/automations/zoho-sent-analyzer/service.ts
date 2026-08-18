@@ -3,6 +3,8 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { config } from '../../config';
 import { AIService } from '../../modules/ai/service';
+import { isSystemGeneratedComment } from '../../shared/systemComment';
+import { classifyDeterministic } from '../../modules/ai/deterministicClassifier';
 import fs from 'fs';
 import path from 'path';
 
@@ -26,43 +28,22 @@ export class SalesCopilotService implements AnalysisEngine {
   private isRealSalesComment(desc: string, commentedBy: string, commentType: string): boolean {
     if (!desc) return false;
     if (commentType !== 'internal') return false;
-
-    const commentedByLower = (commentedBy || '').toLowerCase();
-    if (commentedByLower.includes('system')) return false;
-
-    const descLower = desc.toLowerCase();
-    const systemPhrases = [
-      'estimate has been created',
-      'estimate has been sent',
-      'email sent to',
-      'mail sent to',
-      'status changed from',
-      'quote created',
-      'sent status',
-      'created by',
-      'updated by',
-      'viewed in mail',
-      'client viewed',
-      'accepted by',
-      'declined by',
-      'payment received',
-      'has been printed',
-      'estimate sent',
-      'quote marked as',
-      'marked as sent',
-      'created for',
-      'quote sent',
-      'email sent',
-      'mail sent'
-    ];
-
-    for (const phrase of systemPhrases) {
-      if (descLower.includes(phrase)) {
-        return false;
-      }
-    }
-
+    if (isSystemGeneratedComment(desc, commentedBy)) return false;
     return true;
+  }
+
+  /**
+   * Classifies the latest comment's badges. Deterministic rules run FIRST
+   * (100% repeatable for common comment patterns); the LLM is only called for
+   * comments that match no rule. This keeps results consistent run-to-run.
+   */
+  private async classifyBadges(custName: string, total: number, latestComment: string, dateVal: string): Promise<any> {
+    const rule = classifyDeterministic(latestComment, dateVal);
+    if (rule) {
+      logger.info({ est: custName, rule: true }, 'SalesCopilotService: deterministic badge classification');
+      return rule;
+    }
+    return AIService.classifyLatestEstimateComment(custName, total, latestComment, dateVal);
   }
 
   /**
@@ -244,6 +225,7 @@ export class SalesCopilotService implements AnalysisEngine {
           const comments = commentsJson.comments || [];
           let maxZohoId = '';
           for (const c of comments) {
+            if (!this.isRealSalesComment(c.description || '', c.commented_by, c.comment_type)) continue;
             if (c.comment_id > maxZohoId) maxZohoId = c.comment_id;
           }
           const hasNew = maxZohoId > (dbMaxCommentIdByEst.get(estId) || '');
@@ -258,10 +240,19 @@ export class SalesCopilotService implements AnalysisEngine {
     //    estimates that are new, modified since their last sync, forced, or that
     //    gained new comments. Skipped estimates keep their old lastSyncTime, so
     //    anything changed while the machine was off is picked up on the next run.
+    //    Processing is PARALLEL (concurrency pool) to cut wall-clock time, and any
+    //    estimate that fails (e.g. all 3 LLM models error) is retried once after
+    //    5 minutes. If it still fails, its lastSyncTime is NOT advanced, so the
+    //    next 15-minute tick re-processes it.
+    const AI_CONCURRENCY = 6;
+    const AI_RETRY_DELAY_MS = 5 * 60 * 1000;
     let processedCount = 0;
     let skippedCount = 0;
     let neededCount = 0;
     let failedCount = 0;
+
+    // ---- Gather the work list (change detection) ----
+    const workItems: Array<{ estId: string; estNo: string; custName: string; total: number; dateVal: string; estStatus: string; existingEstimate: any; fetched: any }> = [];
     for (const est of estimates) {
       const estId = est.estimate_id;
       const estNo = est.estimate_number;
@@ -270,7 +261,6 @@ export class SalesCopilotService implements AnalysisEngine {
       const dateVal = est.date;
       const estStatus = est.status;
 
-      // ---- Incremental change detection ----
       const lastModified = est.last_modified_time ? new Date(est.last_modified_time) : null;
       const existingEstimate = existingByEstId.get(estId);
 
@@ -295,166 +285,38 @@ export class SalesCopilotService implements AnalysisEngine {
         continue;
       }
       neededCount++;
+      workItems.push({ estId, estNo, custName, total, dateVal, estStatus, existingEstimate, fetched });
+    }
 
-      // Save comments and extract sales agent comments
-      const comments = fetched.comments;
-      const salesComments: Array<{ id: string; date: string; author: string; text: string }> = [];
-
-      for (const c of comments) {
-        const descClean = this.cleanHtml(c.description || '');
-
-        await prisma.comment.upsert({
-          where: { commentId: c.comment_id },
-          update: {
-            estimateId: estId,
-            description: descClean,
-            commentedBy: c.commented_by,
-            date: c.date,
-            dateDescription: c.date_description,
-            dateFormatted: c.date_formatted || null
-          },
-          create: {
-            commentId: c.comment_id,
-            estimateId: estId,
-            description: descClean,
-            commentedBy: c.commented_by,
-            date: c.date,
-            dateDescription: c.date_description,
-            dateFormatted: c.date_formatted || null
+    // ---- Parallel processing worker pool. Returns the jobs that failed. ----
+    const runWorkerPool = async (items: Array<{ estId: string; estNo: string; custName: string; total: number; dateVal: string; estStatus: string; existingEstimate: any; fetched: any }>): Promise<typeof items> => {
+      let index = 0;
+      const failed: typeof items = [];
+      const runner = async () => {
+        while (index < items.length) {
+          const job = items[index++];
+          try {
+            await this.processEstimate(job);
+            processedCount++;
+          } catch (err: any) {
+            logger.error({ error: err.message }, `SalesCopilotService: AI processing error for ${job.estNo}`);
+            failed.push(job);
           }
-        });
-
-        if (this.isRealSalesComment(descClean, c.commented_by, c.comment_type)) {
-          salesComments.push({
-            id: c.comment_id,
-            date: c.date || '',
-            author: c.commented_by || 'Unknown',
-            text: descClean
-          });
         }
+      };
+      await Promise.all(Array.from({ length: Math.min(AI_CONCURRENCY, items.length) }, () => runner()));
+      return failed;
+    };
+
+    let failedItems = await runWorkerPool(workItems);
+    if (failedItems.length > 0) {
+      logger.warn(`SalesCopilotService: ${failedItems.length} estimates failed AI processing. Retrying in 5 minutes...`);
+      await new Promise(r => setTimeout(r, AI_RETRY_DELAY_MS));
+      const stillFailed = await runWorkerPool(failedItems);
+      failedCount += stillFailed.length;
+      if (stillFailed.length > 0) {
+        logger.warn(`SalesCopilotService: ${stillFailed.length} estimates still failing after retry — left unprocessed for the next 15-minute tick.`);
       }
-
-      // Sort timeline latest first using sequential Zoho comment IDs
-      salesComments.sort((a, b) => b.id.localeCompare(a.id));
-      const historyLines = salesComments.slice(0, 15).map(c => `[${c.date}] ${c.author}: ${c.text}`);
-      const commentHistory = historyLines.join('\n');
-
-      // 3. Classify comments using AI (runs for every modified/forced estimate;
-      //    unmodified estimates never reach this point)
-      if (!commentHistory) {
-        // No comments found: default values directly
-        const createdDate = new Date(dateVal);
-        const diffDays = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000));
-        const isOlderThan3Days = diffDays > 3;
-        const isOlderThan5Days = diffDays > 5;
-
-        await prisma.classification.upsert({
-          where: { estimateId: estId },
-          update: {
-            meaningfulUpdate: false,
-            followUpMissing: 'Yes',
-            notAnswering: 'No',
-            improperFollowUp: 'No',
-            lastCommentNotSatisfactory: 'No',
-            dayExceeded: isOlderThan3Days ? 'Yes' : 'No',
-            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
-            underDiscussion: 'No',
-            confirm: 'No',
-            intentScore: 2,
-            reasoning: 'No sales agent comment found.',
-            summary: 'No sales agent comment found.',
-            processedAt: new Date()
-          },
-          create: {
-            estimateId: estId,
-            meaningfulUpdate: false,
-            followUpMissing: 'Yes',
-            notAnswering: 'No',
-            improperFollowUp: 'No',
-            lastCommentNotSatisfactory: 'No',
-            dayExceeded: isOlderThan3Days ? 'Yes' : 'No',
-            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
-            underDiscussion: 'No',
-            confirm: 'No',
-            intentScore: 2,
-            reasoning: 'No sales agent comment found.',
-            summary: 'No sales agent comment found.'
-          }
-        });
-      } else {
-        try {
-          const result = await AIService.classifyEstimateComments(custName, total, commentHistory, dateVal);
-          const createdDate = new Date(dateVal);
-          const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
-
-          let finalConfirm = result.confirm ? 'Yes' : 'No';
-          if (result.confirm) {
-            const confirmDateStr = result.confirm_date;
-            if (confirmDateStr && confirmDateStr !== 'None') {
-              try {
-                const confirmDate = new Date(confirmDateStr);
-                const diffDays = Math.floor((Date.now() - confirmDate.getTime()) / (24 * 60 * 60 * 1000));
-                if (diffDays > 2) {
-                  finalConfirm = 'No';
-                }
-              } catch (e) {
-                finalConfirm = 'No';
-              }
-            } else {
-              finalConfirm = 'No';
-            }
-          }
-
-          await prisma.classification.upsert({
-            where: { estimateId: estId },
-            update: {
-              meaningfulUpdate: result.meaningful_update,
-              followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
-              notAnswering: result.not_answering ? 'Yes' : 'No',
-              improperFollowUp: result.improper_follow_up ? 'Yes' : 'No',
-              lastCommentNotSatisfactory: result.last_comment_not_satisfactory ? 'Yes' : 'No',
-              dayExceeded: result.day_exceeded ? 'Yes' : 'No',
-              movingSlow: (result.moving_slow === true || result.moving_slow === 'Yes' || isOlderThan5Days) ? 'Yes' : 'No',
-              underDiscussion: result.under_discussion ? 'Yes' : 'No',
-              confirm: finalConfirm,
-              intentScore: result.intent_score,
-              reasoning: result.reasoning,
-              summary: result.summary || '',
-              processedAt: new Date()
-            },
-            create: {
-              estimateId: estId,
-              meaningfulUpdate: result.meaningful_update,
-              followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
-              notAnswering: result.not_answering ? 'Yes' : 'No',
-              improperFollowUp: result.improper_follow_up ? 'Yes' : 'No',
-              lastCommentNotSatisfactory: result.last_comment_not_satisfactory ? 'Yes' : 'No',
-              dayExceeded: result.day_exceeded ? 'Yes' : 'No',
-              movingSlow: (result.moving_slow === true || result.moving_slow === 'Yes' || isOlderThan5Days) ? 'Yes' : 'No',
-              underDiscussion: result.under_discussion ? 'Yes' : 'No',
-              confirm: finalConfirm,
-              intentScore: result.intent_score,
-              reasoning: result.reasoning,
-              summary: result.summary || ''
-            }
-          });
-        } catch (err: any) {
-          // Don't advance lastSyncTime on failure so this estimate is retried
-          // on the next sync. Also marks this run as incomplete.
-          logger.error({ error: err.message }, `SalesCopilotService: AI classification error for ${estNo}`);
-          failedCount++;
-          continue;
-        }
-      }
-
-      // Advance the per-estimate sync watermark only after successful processing.
-      // Skipped estimates keep their old lastSyncTime, so anything modified while
-      // the machine was off (e.g. 10h downtime) is detected on the next run.
-      await prisma.estimate.update({
-        where: { estimateId: estId },
-        data: { lastSyncTime: new Date() }
-      });
-      processedCount++;
     }
 
     logger.info(`SalesCopilotService: Processed ${processedCount} estimates, skipped ${skippedCount}.`);
@@ -479,6 +341,162 @@ export class SalesCopilotService implements AnalysisEngine {
     }
 
     return { success: true, processedCount, skippedCount, neededCount, failedCount, complete };
+  }
+
+  /**
+   * Saves an estimate's comments, then runs classification (badges from the
+   * latest comment only; summary + intent score from the full journey). Advances
+   * lastSyncTime only on success so a failure leaves the estimate for retry.
+   */
+  private async processEstimate(job: {
+    estId: string;
+    estNo: string;
+    custName: string;
+    total: number;
+    dateVal: string;
+    estStatus: string;
+    existingEstimate: any;
+    fetched: any;
+  }): Promise<void> {
+    const { estId, estNo, custName, total, dateVal, fetched } = job;
+
+    // Save comments and extract sales agent comments
+    const comments = fetched.comments;
+    const salesComments: Array<{ id: string; date: string; author: string; text: string }> = [];
+
+    for (const c of comments) {
+      const descClean = this.cleanHtml(c.description || '');
+
+      await prisma.comment.upsert({
+        where: { commentId: c.comment_id },
+        update: {
+          estimateId: estId,
+          description: descClean,
+          commentedBy: c.commented_by,
+          date: c.date,
+          dateDescription: c.date_description,
+          dateFormatted: c.date_formatted || null
+        },
+        create: {
+          commentId: c.comment_id,
+          estimateId: estId,
+          description: descClean,
+          commentedBy: c.commented_by,
+          date: c.date,
+          dateDescription: c.date_description,
+          dateFormatted: c.date_formatted || null
+        }
+      });
+
+      if (this.isRealSalesComment(descClean, c.commented_by, c.comment_type)) {
+        salesComments.push({
+          id: c.comment_id,
+          date: c.date || '',
+          author: c.commented_by || 'Unknown',
+          text: descClean
+        });
+      }
+    }
+
+    // Sort timeline latest first using sequential Zoho comment IDs
+    salesComments.sort((a, b) => b.id.localeCompare(a.id));
+    const historyLines = salesComments.slice(0, 15).map(c => `[${c.date}] ${c.author}: ${c.text}`);
+    const commentHistory = historyLines.join('\n');
+
+    if (!commentHistory) {
+      // No comments found: default values directly (no LLM call needed)
+      const createdDate = new Date(dateVal);
+      const diffDays = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000));
+      const isOlderThan5Days = diffDays > 5;
+
+      await prisma.classification.upsert({
+        where: { estimateId: estId },
+        update: {
+          meaningfulUpdate: false,
+          notAnswering: 'No',
+          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+          underDiscussion: 'No',
+          confirm: 'No',
+          intentScore: 2,
+          reasoning: 'No sales agent comment found.',
+          summary: 'No sales agent comment found.',
+          processedAt: new Date()
+        },
+        create: {
+          estimateId: estId,
+          meaningfulUpdate: false,
+          notAnswering: 'No',
+          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+          underDiscussion: 'No',
+          confirm: 'No',
+          intentScore: 2,
+          reasoning: 'No sales agent comment found.',
+          summary: 'No sales agent comment found.'
+        }
+      });
+    } else {
+      // Split concerns: badges come from ONLY the single latest comment;
+      // summary + intent score come from the entire journey timeline.
+      const latestComment = historyLines[0] || '';
+      const [badgeResult, journeyResult] = await Promise.all([
+        this.classifyBadges(custName, total, latestComment, dateVal),
+        AIService.summarizeEstimateJourney(commentHistory)
+      ]);
+      const createdDate = new Date(dateVal);
+      const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
+
+      let finalConfirm = badgeResult.confirm ? 'Yes' : 'No';
+      if (badgeResult.confirm) {
+        const confirmDateStr = badgeResult.confirm_date;
+        if (confirmDateStr && confirmDateStr !== 'None') {
+          try {
+            const confirmDate = new Date(confirmDateStr);
+            const diffDays = Math.floor((Date.now() - confirmDate.getTime()) / (24 * 60 * 60 * 1000));
+            if (diffDays > 2) {
+              finalConfirm = 'No';
+            }
+          } catch (e) {
+            finalConfirm = 'No';
+          }
+        } else {
+          finalConfirm = 'No';
+        }
+      }
+
+      await prisma.classification.upsert({
+        where: { estimateId: estId },
+        update: {
+          meaningfulUpdate: badgeResult.meaningful_update,
+          notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+          underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+          confirm: finalConfirm,
+          intentScore: journeyResult.intent_score,
+          reasoning: badgeResult.reasoning,
+          summary: journeyResult.summary || '',
+          processedAt: new Date()
+        },
+        create: {
+          estimateId: estId,
+          meaningfulUpdate: badgeResult.meaningful_update,
+          notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+          underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+          confirm: finalConfirm,
+          intentScore: journeyResult.intent_score,
+          reasoning: badgeResult.reasoning,
+          summary: journeyResult.summary || ''
+        }
+      });
+    }
+
+    // Advance the per-estimate sync watermark only after successful processing.
+    // Skipped estimates keep their old lastSyncTime, so anything modified while
+    // the machine was off (e.g. 10h downtime) is detected on the next run.
+    await prisma.estimate.update({
+      where: { estimateId: estId },
+      data: { lastSyncTime: new Date() }
+    });
   }
 
   private async syncClosedStatuses(activeEstIds: Set<string>, orgId: string, headers: Record<string, string>): Promise<void> {
@@ -557,38 +575,34 @@ export class SalesCopilotService implements AnalysisEngine {
 
               if (commentHistory) {
                 try {
-                  const result = await AIService.classifyEstimateComments(est.customerName, est.total, commentHistory, est.date);
+                  const latestComment = historyLines[0] || '';
+                  const [badgeResult, journeyResult] = await Promise.all([
+                    AIService.classifyLatestEstimateComment(est.customerName, est.total, latestComment, est.date),
+                    AIService.summarizeEstimateJourney(commentHistory)
+                  ]);
                   await prisma.classification.upsert({
                     where: { estimateId: est.estimateId },
                     update: {
-                      meaningfulUpdate: result.meaningful_update,
-                      followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
-                      notAnswering: result.not_answering ? 'Yes' : 'No',
-                      improperFollowUp: result.improper_follow_up ? 'Yes' : 'No',
-                      lastCommentNotSatisfactory: result.last_comment_not_satisfactory ? 'Yes' : 'No',
-                      dayExceeded: result.day_exceeded ? 'Yes' : 'No',
-                      movingSlow: (result.moving_slow === true || result.moving_slow === 'Yes') ? 'Yes' : 'No',
-                      underDiscussion: result.under_discussion ? 'Yes' : 'No',
-                      confirm: result.confirm ? 'Yes' : 'No',
-                      intentScore: result.intent_score,
-                      reasoning: result.reasoning,
-                      summary: result.summary || '',
+                      meaningfulUpdate: badgeResult.meaningful_update,
+                      notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+                      movingSlow: 'No',
+                      underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+                      confirm: badgeResult.confirm ? 'Yes' : 'No',
+                      intentScore: journeyResult.intent_score,
+                      reasoning: badgeResult.reasoning,
+                      summary: journeyResult.summary || '',
                       processedAt: new Date()
                     },
                     create: {
                       estimateId: est.estimateId,
-                      meaningfulUpdate: result.meaningful_update,
-                      followUpMissing: result.follow_up_missing ? 'Yes' : 'No',
-                      notAnswering: result.not_answering ? 'Yes' : 'No',
-                      improperFollowUp: result.improper_follow_up ? 'Yes' : 'No',
-                      lastCommentNotSatisfactory: result.last_comment_not_satisfactory ? 'Yes' : 'No',
-                      dayExceeded: result.day_exceeded ? 'Yes' : 'No',
-                      movingSlow: (result.moving_slow === true || result.moving_slow === 'Yes') ? 'Yes' : 'No',
-                      underDiscussion: result.under_discussion ? 'Yes' : 'No',
-                      confirm: result.confirm ? 'Yes' : 'No',
-                      intentScore: result.intent_score,
-                      reasoning: result.reasoning,
-                      summary: result.summary || ''
+                      meaningfulUpdate: badgeResult.meaningful_update,
+                      notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+                      movingSlow: 'No',
+                      underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+                      confirm: badgeResult.confirm ? 'Yes' : 'No',
+                      intentScore: journeyResult.intent_score,
+                      reasoning: badgeResult.reasoning,
+                      summary: journeyResult.summary || ''
                     }
                   });
                 } catch (err: any) {

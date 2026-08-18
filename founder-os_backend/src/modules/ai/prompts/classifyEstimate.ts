@@ -9,11 +9,7 @@ The list is ordered from NEWEST (top) to OLDEST (bottom).
 Evaluate the comment history and output the following keys for each estimate:
 1. meaningful_update: Mark as true if the LATEST comment contains a meaningful work update. Mark as false if it does not.
 2. Chip Mapping keys (true or false):
-   - follow_up_missing: true if the latest comments indicate follow-up has not been done, is missing, or needs to be done. Else false.
    - not_answering: true if the latest comment states the customer did not answer, is not replying, or call was not picked up. Else false.
-   - improper_follow_up: true if the latest comment only states communication occurred (WhatsApp sent, message sent, left message, called) without presenting any result, or if a follow-up date/deadline passed. Else false.
-   - last_comment_not_satisfactory: true if the latest comment is older than 2 days (relative to today's date), is vague/generic, is quotation-only (without response/outcome), is an acknowledgment, greeting, or request for information. Else false.
-   - day_exceeded: true if the latest sales comment does NOT clearly mention a specific future follow-up date, day, or time (e.g. "will call on 5th", "follow up set for next Tuesday") AND the estimate created date (provided as 'estimate_date') is older than 3 days relative to today's date ({today}). Else false.
    - under_discussion: true if the comment history shows active discussions are ongoing (e.g. price negotiation, technical configuration review, requirement clarification, or visiting plans being finalized). Else false.
    - confirm: true if the comment history shows the order/estimate has been confirmed, final verbal approval is given, payment details are being shared, or purchase order is expected. Else false.
    - confirm_date: The date (YYYY-MM-DD format) of the most recent comment from the timeline that mentions confirmation/payment or PO expectation if 'confirm' is true. If 'confirm' is false, output "None".
@@ -31,17 +27,13 @@ Strict Decision Rules:
 - Weigh the latest comment (at the top of the list) the most, as it represents the current active status.
 - Mark meaningful_update as false if the latest update is older than 2 days.
 - If the latest comment only records an action (calling, messaging, sending a quotation) without presenting the outcome, next step, or decision, it must be false.
-- If meaningful_update is true, then all unqualified chip mapping keys (follow_up_missing, not_answering, improper_follow_up, last_comment_not_satisfactory, day_exceeded) must be false. If meaningful_update is false, at least one of these keys must be true. Note: under_discussion can be true regardless of meaningful_update status. confirm should typically be true when meaningful_update is true.
+- If meaningful_update is true, then not_answering must be false. If meaningful_update is false, not_answering may be true or false as the comment dictates. under_discussion can be true regardless of meaningful_update status. confirm should typically be true when meaningful_update is true.
 
 Response Format:
 Return only a valid JSON object matching the JSON structure:
 {
   "meaningful_update": false,
-  "follow_up_missing": false,
   "not_answering": false,
-  "improper_follow_up": false,
-  "last_comment_not_satisfactory": false,
-  "day_exceeded": false,
   "under_discussion": false,
   "confirm": false,
   "confirm_date": "None",

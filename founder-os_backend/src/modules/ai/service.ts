@@ -7,6 +7,8 @@ import { generateBriefPrompt } from './prompts/generateBrief';
 import { generateDailySummaryPrompt } from './prompts/generateDailySummary';
 import { answerFounderQuestionPrompt } from './prompts/answerFounderQuestion';
 import { classifyEstimatePrompt } from './prompts/classifyEstimate';
+import { classifyLatestEstimatePrompt } from './prompts/classifyLatestEstimate';
+import { summarizeEstimateJourneyPrompt } from './prompts/summarizeEstimateJourney';
 import { extractEnquiryPrompt } from './prompts/extractEnquiry';
 import { matchBusinessPrompt } from './prompts/matchBusiness';
 import { classifyMessagePrompt } from './prompts/classifyMessage';
@@ -58,8 +60,8 @@ export class AIService {
       'gemma2-9b-it'
     ];
     const openaiModels = [
-      'gpt-4o-mini',
-      'gpt-4o'
+      'groq/qwen/qwen3.6-27b',
+      'groq/qwen/qwen3-32b'
     ];
 
     for (let i = 0; i < shuffledKeys.length; i++) {
@@ -101,7 +103,7 @@ export class AIService {
           const isRateLimit = status === 429 || msg.includes('429') || msg.includes('rate limit');
           const isModelError = status === 400 || status === 404 || msg.includes('decommissioned') || msg.includes('not support') || msg.includes('not found');
 
-          if (isRateLimit || isModelError) {
+          if (isRateLimit || isModelError || finalModels.length > 1) {
             logger.warn(
               `AIService: API Key ${maskedKey} with model ${model} failed (${status || err.message}). Attempting fallback model/key...`
             );
@@ -533,11 +535,7 @@ Please let me know which of these you would like more detail on, sir.`;
       await new Promise((r) => setTimeout(r, 300));
       return {
         meaningful_update: false,
-        follow_up_missing: false,
         not_answering: false,
-        improper_follow_up: false,
-        last_comment_not_satisfactory: true,
-        day_exceeded: true,
         moving_slow: "No",
         under_discussion: "No",
         confirm: "No",
@@ -566,6 +564,93 @@ Please let me know which of these you would like more detail on, sir.`;
       return JSON.parse(cleanJson);
     } catch (err: any) {
       logger.error({ error: err.message }, 'Real LLM classification failed');
+      throw err;
+    }
+  }
+
+  /**
+   * Classifies estimate status badges using ONLY the single latest comment.
+   * Older comments must not influence any chip decision.
+   */
+  static async classifyLatestEstimateComment(
+    custName: string,
+    total: number,
+    latestComment: string,
+    estimateDate: string
+  ): Promise<any> {
+    const todayStr = new Date().toISOString().split('T')[0];
+    logger.info({ custName, isMocked: isMockLLM }, 'AIService: classifying latest estimate comment');
+
+    if (isMockLLM) {
+      await new Promise((r) => setTimeout(r, 300));
+      return {
+        meaningful_update: false,
+        not_answering: false,
+        under_discussion: 'No',
+        confirm: 'No',
+        confirm_date: 'None',
+        reasoning: 'Latest comment is older than 2 days.'
+      };
+    }
+
+    try {
+      const systemPrompt = classifyLatestEstimatePrompt.replace(/{today}/g, todayStr);
+      const userMessage = `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${estimateDate}\n\nLatest Comment:\n${latestComment}`;
+
+      const response = await this.callLLM(async (client, model) => {
+        return client.chat.completions.create({
+          model: model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0,
+        });
+      });
+
+      const cleanJson = this.cleanJsonString(response.choices[0]?.message?.content || '');
+      return JSON.parse(cleanJson);
+    } catch (err: any) {
+      logger.error({ error: err.message }, 'Real LLM latest-comment classification failed');
+      throw err;
+    }
+  }
+
+  /**
+   * Summarizes the ENTIRE comment journey and scores total sales effort.
+   * No chip/badge decisions are made here.
+   */
+  static async summarizeEstimateJourney(commentsHistory: string): Promise<any> {
+    const todayStr = new Date().toISOString().split('T')[0];
+    logger.info({ isMocked: isMockLLM }, 'AIService: summarizing estimate journey');
+
+    if (isMockLLM) {
+      await new Promise((r) => setTimeout(r, 300));
+      return {
+        summary: 'Timeline sync has basic comments history.',
+        intent_score: 2
+      };
+    }
+
+    try {
+      const systemPrompt = summarizeEstimateJourneyPrompt.replace(/{today}/g, todayStr);
+      const userMessage = `Comment History:\n${commentsHistory}`;
+
+      const response = await this.callLLM(async (client, model) => {
+        return client.chat.completions.create({
+          model: model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0,
+        });
+      });
+
+      const cleanJson = this.cleanJsonString(response.choices[0]?.message?.content || '');
+      return JSON.parse(cleanJson);
+    } catch (err: any) {
+      logger.error({ error: err.message }, 'Real LLM journey summarization failed');
       throw err;
     }
   }

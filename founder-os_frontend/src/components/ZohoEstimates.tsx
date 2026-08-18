@@ -21,6 +21,12 @@ export default function ZohoEstimates() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   };
 
+  // Count comments received on a given date (YYYY-MM-DD) for an estimate.
+  const getCommentCountForDate = (est: any, dateStr: string): number => {
+    if (!est.comments || !Array.isArray(est.comments)) return 0;
+    return est.comments.filter((c: any) => c && c.date === dateStr).length;
+  };
+
   useEffect(() => {
     setCurrentPage(1);
   }, [showClosed, filters]);
@@ -127,11 +133,7 @@ export default function ZohoEstimates() {
       "Intent Score",
       "Reasoning",
       "Meaningful Update?",
-      "Follow-up Missing?",
       "Not Answering?",
-      "Improper Follow-up?",
-      "Last Comment Unsatisfactory?",
-      "Day Exceeded?",
       "Latest Zoho Comment"
     ];
 
@@ -147,11 +149,7 @@ export default function ZohoEstimates() {
         c.intentScore || 0,
         c.reasoning || "No comments review log.",
         c.meaningfulUpdate ? "Yes" : "No",
-        c.followUpMissing || "No",
         c.notAnswering || "No",
-        c.improperFollowUp || "No",
-        c.lastCommentNotSatisfactory || "No",
-        c.dayExceeded || "No",
         commentStr
       ].map(escapeTSV).join("\t");
     });
@@ -169,31 +167,13 @@ export default function ZohoEstimates() {
       return;
     }
 
-    // Freeze baseline dynamically if copied without active filters
-    if (filters.length === 0) {
-      const todayStr = getTodayDateString();
-      const baselineData = estimates.map(e => ({
-        estimateId: e.estimateId,
-        estimateNumber: e.estimateNumber,
-        customerName: e.customerName,
-        total: e.total,
-        status: e.status
-      }));
-      localStorage.setItem(`zoho_baseline_${todayStr}`, JSON.stringify(baselineData));
-      setBaseline(baselineData);
-      setBaselineDate(todayStr);
-    }
     const estimatesText = priorityList.map(est => {
       const activeCats: string[] = [];
       const c = est.classification || {};
       
       if (c.meaningfulUpdate) activeCats.push("Meaningful Update");
       if (!c.meaningfulUpdate) activeCats.push("No Meaningful Update");
-      if (c.followUpMissing === "Yes") activeCats.push("Follow-up Missing");
       if (c.notAnswering === "Yes") activeCats.push("Not Answering");
-      if (c.improperFollowUp === "Yes") activeCats.push("Improper Follow-up");
-      if (c.lastCommentNotSatisfactory === "Yes") activeCats.push("Unsatisfactory Notes");
-      if (c.dayExceeded === "Yes") activeCats.push("Deadline Passed");
       if (est.total > 80000) activeCats.push("High Value");
       if (c.movingSlow === "Yes") activeCats.push("Moving Slow (>5d)");
       if (c.underDiscussion === "Yes") activeCats.push("Under Discussion");
@@ -247,11 +227,7 @@ export default function ZohoEstimates() {
       
       if (c.meaningfulUpdate) activeCats.push("Meaningful Update");
       if (!c.meaningfulUpdate) activeCats.push("No Meaningful Update");
-      if (c.followUpMissing === "Yes") activeCats.push("Follow-up Missing");
       if (c.notAnswering === "Yes") activeCats.push("Not Answering");
-      if (c.improperFollowUp === "Yes") activeCats.push("Improper Follow-up");
-      if (c.lastCommentNotSatisfactory === "Yes") activeCats.push("Unsatisfactory Notes");
-      if (c.dayExceeded === "Yes") activeCats.push("Deadline Passed");
       if (est.total > 80000) activeCats.push("High Value");
       if (c.movingSlow === "Yes") activeCats.push("Moving Slow (>5d)");
       if (c.underDiscussion === "Yes") activeCats.push("Under Discussion");
@@ -317,6 +293,69 @@ export default function ZohoEstimates() {
       });
   };
 
+  // Copy a snapshot of all computed analytics (KPIs, filter counts, today's comments) to clipboard
+  const handleCopyAnalytics = () => {
+    const todayStr = getTodayDateString();
+
+    const lines: string[] = [];
+    lines.push(`## Zoho Sent Estimates Analytics — ${todayStr}`);
+    lines.push("");
+
+    // Overall KPIs
+    lines.push(`## Overall KPIs`);
+    lines.push(`Total Sent Estimates: ${stats.totalCount}`);
+    lines.push(`Total Value: ₹${stats.totalValue.toLocaleString()}`);
+    lines.push(`Not Answering: ${stats.notAnsweringCount}`);
+    lines.push("");
+
+    // Filter category counts
+    lines.push(`## Category Counts`);
+    lines.push(`Meaningful Update: ${filterOptionCounts.satisfactory}`);
+    lines.push(`No Meaningful Update: ${stats.totalCount - filterOptionCounts.satisfactory}`);
+    lines.push(`Not Answering: ${filterOptionCounts.notAnswering}`);
+    lines.push(`High Value (₹80k+): ${filterOptionCounts.high_value}`);
+    lines.push(`Moving Slow (>5d): ${filterOptionCounts.movingSlow}`);
+    lines.push(`Under Discussion: ${filterOptionCounts.underDiscussion}`);
+    lines.push(`Confirmed: ${filterOptionCounts.confirm}`);
+    lines.push(`Last Comment ≤5h: ${filterOptionCounts.last_comment_within_5h}`);
+    lines.push(`Last Comment ≤10h: ${filterOptionCounts.last_comment_within_10h}`);
+    lines.push(`Last Comment >5h: ${filterOptionCounts.last_comment_older_5h}`);
+    lines.push("");
+
+    // Comments-received-today analytics
+    lines.push(`## Comments Received Today`);
+    lines.push(`Total Comments Today: ${commentTodayStats.totalToday}`);
+    lines.push(`Estimates with Comments Today: ${commentTodayStats.estimatesWithComments.length}`);
+    lines.push(`Most Active Estimates Today:`);
+    commentTodayStats.mostActive.forEach((x, i) => {
+      lines.push(`  ${i + 1}. ${x.estimate.estimateNumber} - ${x.estimate.customerName} (${x.todayCount} comments)`);
+    });
+    lines.push(`Distribution (comments per estimate):`);
+    commentTodayStats.buckets.forEach((b, i) => {
+      const label = i === 5 ? "5+" : String(i);
+      lines.push(`  ${label}: ${b.count}`);
+    });
+    lines.push("");
+
+    // Per-estimate meaningful/no-meaningful breakdown
+    const meaningfulEstimates = priorityList.filter(est => est.classification && est.classification.meaningfulUpdate);
+    const noMeaningfulEstimates = priorityList.filter(est => !(est.classification && est.classification.meaningfulUpdate));
+    lines.push(`## Meaningful Update Breakdown`);
+    lines.push(`Meaningful Updates: ${meaningfulEstimates.length}`);
+    lines.push(`No Meaningful Update: ${noMeaningfulEstimates.length}`);
+
+    const textToCopy = lines.join("\n");
+
+    navigator.clipboard.writeText(textToCopy)
+      .then(() => {
+        setCopiedAnalytics(true);
+        setTimeout(() => setCopiedAnalytics(false), 2000);
+      })
+      .catch(err => {
+        console.error("Failed to copy analytics: ", err);
+      });
+  };
+
   const toggleCardComments = (estId: string) => {
     setExpandedCards(prev => ({
       ...prev,
@@ -368,10 +407,7 @@ export default function ZohoEstimates() {
             intentScore: 0,
             reasoning: "Classification pending / rate-limited. Click Sync & Analyze Zoho to retry sync.",
             meaningfulUpdate: false,
-            followUpMissing: "No",
             notAnswering: "No",
-            improperFollowUp: "No",
-            dayExceeded: "No",
             movingSlow: "No",
             underDiscussion: "No",
             confirm: "No"
@@ -448,6 +484,7 @@ export default function ZohoEstimates() {
   const [isPromptOpen, setIsPromptOpen] = useState<boolean>(false);
   const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
   const [copiedEstimates, setCopiedEstimates] = useState<boolean>(false);
+  const [copiedAnalytics, setCopiedAnalytics] = useState<boolean>(false);
 
   const defaultPromptTemplate = `## Role
 You are a senior sales operations analyst reviewing Zoho CRM/Books comments to build a same-day, priority-ranked call list for the sales team.
@@ -569,11 +606,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
   const filterOptionCounts = useMemo(() => {
     const counts = {
       satisfactory: 0,
-      followUpMissing: 0,
       notAnswering: 0,
-      improperFollowUp: 0,
-      lastCommentNotSatisfactory: 0,
-      dayExceeded: 0,
       high_value: 0,
       movingSlow: 0,
       underDiscussion: 0,
@@ -587,11 +620,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
       const c = est.classification || {};
       
       if (c.meaningfulUpdate === true) counts.satisfactory++;
-      if (c.followUpMissing === "Yes") counts.followUpMissing++;
       if (c.notAnswering === "Yes") counts.notAnswering++;
-      if (c.improperFollowUp === "Yes") counts.improperFollowUp++;
-      if (c.lastCommentNotSatisfactory === "Yes") counts.lastCommentNotSatisfactory++;
-      if (c.dayExceeded === "Yes") counts.dayExceeded++;
       if (est.total > 80000) counts.high_value++;
       if (c.movingSlow === "Yes") counts.movingSlow++;
       if (c.underDiscussion === "Yes") counts.underDiscussion++;
@@ -610,29 +639,56 @@ Action: (single clear objective — close order / clarify doubts / send revised 
   // Compute overall stats
   const stats = useMemo(() => {
     let totalValue = 0;
-    let followUpMissingCount = 0;
     let notAnsweringCount = 0;
-    let improperFollowUpCount = 0;
-    let dayExceededCount = 0;
 
     estimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach((e) => {
       totalValue += e.total;
       const c = e.classification;
       if (c) {
-        if (c.followUpMissing === "Yes") followUpMissingCount++;
         if (c.notAnswering === "Yes") notAnsweringCount++;
-        if (c.improperFollowUp === "Yes") improperFollowUpCount++;
-        if (c.dayExceeded === "Yes") dayExceededCount++;
       }
     });
 
     return {
       totalCount: estimates.filter(e => String(e.status).toLowerCase() === 'sent').length,
       totalValue,
-      followUpMissingCount,
-      notAnsweringCount,
-      improperFollowUpCount,
-      dayExceededCount
+      notAnsweringCount
+    };
+  }, [estimates]);
+
+  // Comments-received-today analytics: per-estimate today counts + distribution.
+  const commentTodayStats = useMemo(() => {
+    const todayStr = getTodayDateString();
+    const perEstimate = estimates.map(e => ({
+      estimate: e,
+      todayCount: getCommentCountForDate(e, todayStr)
+    }));
+
+    const totalToday = perEstimate.reduce((sum, x) => sum + x.todayCount, 0);
+    const estimatesWithComments = perEstimate.filter(x => x.todayCount > 0);
+    const mostActive = [...perEstimate].sort((a, b) => b.todayCount - a.todayCount).slice(0, 5);
+
+    // Distribution buckets: # estimates that got 0, 1, 2, 3, 4, 5+ comments today
+    const buckets: { label: string; count: number }[] = [
+      { label: "0", count: 0 },
+      { label: "1", count: 0 },
+      { label: "2", count: 0 },
+      { label: "3", count: 0 },
+      { label: "4", count: 0 },
+      { label: "5+", count: 0 }
+    ];
+    perEstimate.forEach(x => {
+      const c = x.todayCount;
+      if (c >= 5) buckets[5].count++;
+      else buckets[c].count++;
+    });
+
+    return {
+      todayStr,
+      totalToday,
+      estimatesWithComments,
+      mostActive,
+      buckets
     };
   }, [estimates]);
 
@@ -664,6 +720,12 @@ Action: (single clear objective — close order / clarify doubts / send revised 
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-sm transition-all duration-200 cursor-pointer disabled:opacity-50"
           >
             <span>📄</span> {copiedEstimates ? "Copied Estimates!" : "Copy Category Estimates"}
+          </button>
+          <button
+            onClick={handleCopyAnalytics}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-sm transition-all duration-200 cursor-pointer"
+          >
+            <span>📊</span> {copiedAnalytics ? "Analytics Copied!" : "Copy Analytics"}
           </button>
           <button
             onClick={handleDownloadTXT}
@@ -751,7 +813,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
       </div>
 
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="group relative overflow-hidden bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm hover:border-indigo-500/40 hover:shadow-lg hover:shadow-indigo-500/5 hover:-translate-y-0.5 transition-all duration-300">
           <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-indigo-500 to-violet-500" />
           <div className="flex items-start justify-between">
@@ -780,26 +842,68 @@ Action: (single clear objective — close order / clarify doubts / send revised 
           <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-rose-500 to-orange-500" />
           <div className="flex items-start justify-between">
             <div>
-              <span className="text-xs text-zinc-400 block mb-1">Follow-up Missing</span>
-              <span className="text-2xl font-bold text-rose-400 block">{stats.followUpMissingCount}</span>
+              <span className="text-xs text-zinc-400 block mb-1">Not Answering</span>
+              <span className="text-2xl font-bold text-rose-400 block">{stats.notAnsweringCount}</span>
             </div>
             <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 17l-4 4m0 0l-4-4m4 4V3" /></svg>
             </div>
           </div>
         </div>
-        <div className="group relative overflow-hidden bg-zinc-900 border border-zinc-800/80 rounded-xl p-5 shadow-sm hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5 transition-all duration-300">
-          <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-amber-500 to-yellow-500" />
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="text-xs text-zinc-400 block mb-1">Deadline Exceeded</span>
-              <span className="text-2xl font-bold text-amber-400 block">{stats.dayExceededCount}</span>
-            </div>
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            </div>
+      </div>
+
+      {/* Comments Today analytics */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-md">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-zinc-800 pb-4 mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 text-sm">💬</span>
+              Comments Received Today
+            </h3>
+            <p className="text-xs text-zinc-500 mt-1">
+              On <span className="font-semibold text-zinc-400">{commentTodayStats.todayStr}</span> — {commentTodayStats.estimatesWithComments.length} of {estimates.length} estimates got comments
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-400 bg-zinc-950/40 px-3 py-1.5 rounded-lg border border-zinc-800">
+              Total comments today: <strong className="text-cyan-400">{commentTodayStats.totalToday}</strong>
+            </span>
           </div>
         </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+          {commentTodayStats.buckets.map((b, i) => {
+            const colors = ["bg-zinc-800", "bg-cyan-500/20", "bg-emerald-500/20", "bg-amber-500/20", "bg-orange-500/20", "bg-rose-500/20"];
+            const textColors = ["text-zinc-400", "text-cyan-300", "text-emerald-300", "text-amber-300", "text-orange-300", "text-rose-300"];
+            const borders = ["border-zinc-800", "border-cyan-500/30", "border-emerald-500/30", "border-amber-500/30", "border-orange-500/30", "border-rose-500/30"];
+            const label = b.label === "0" ? "No comments" : b.label === "1" ? "1 comment" : `${b.label} comments`;
+            return (
+              <div key={b.label} className={`rounded-xl border ${borders[i]} ${colors[i]} p-4 text-center transition-transform hover:-translate-y-0.5`}>
+                <span className={`block text-2xl font-bold font-mono ${textColors[i]}`}>{b.count}</span>
+                <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider block mt-0.5">{label}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {commentTodayStats.mostActive.some(x => x.todayCount > 0) && (
+          <div className="mt-4">
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-2">Most active today</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {commentTodayStats.mostActive.filter(x => x.todayCount > 0).map(x => (
+                <div key={x.estimate.estimateId} className="flex items-center justify-between gap-2 bg-zinc-950/40 border border-zinc-800/80 rounded-lg px-3 py-2">
+                  <div className="min-w-0">
+                    <span className="block text-xs font-semibold text-zinc-200 truncate">{x.estimate.customerName}</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">{x.estimate.estimateNumber}</span>
+                  </div>
+                  <span className="text-xs font-bold text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-full shrink-0">
+                    {x.todayCount} today
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Calling Priority Checklist queue */}
@@ -993,7 +1097,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-zinc-400">Active Filters</span>
                 <button
-                  onClick={() => setFilters([...filters, { id: Date.now(), field: "followUpMissing", operator: "is" }])}
+                  onClick={() => setFilters([...filters, { id: Date.now(), field: "notAnswering", operator: "is" }])}
                   className="px-2.5 py-1 text-xs bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 font-bold rounded-lg border border-indigo-500/20 cursor-pointer"
                 >
                   ➕ Add Filter
@@ -1023,11 +1127,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
                         className="bg-zinc-900 text-zinc-200 border border-zinc-800 px-2 py-1 rounded-lg cursor-pointer"
                       >
                         <option value="satisfactory">Satisfactory (Qualified) ({filterOptionCounts.satisfactory})</option>
-                        <option value="followUpMissing">Follow Up Missing ({filterOptionCounts.followUpMissing})</option>
                         <option value="notAnswering">Not Answering ({filterOptionCounts.notAnswering})</option>
-                        <option value="improperFollowUp">Improper Follow up ({filterOptionCounts.improperFollowUp})</option>
-                        <option value="lastCommentNotSatisfactory">Unsatisfactory Notes ({filterOptionCounts.lastCommentNotSatisfactory})</option>
-                        <option value="dayExceeded">Day Exceeded ({filterOptionCounts.dayExceeded})</option>
                         <option value="high_value">High Value (&gt; ₹80k) ({filterOptionCounts.high_value})</option>
                         <option value="movingSlow">Moving Slow ({filterOptionCounts.movingSlow})</option>
                         <option value="underDiscussion">Under Discussion ({filterOptionCounts.underDiscussion})</option>
@@ -1145,6 +1245,12 @@ Action: (single clear objective — close order / clarify doubts / send revised 
                           <span className={`text-xs font-bold px-3 py-1 rounded-full ${getIntentScoreBadgeClass(c.intentScore)}`}>
                             Intent Score: {c.intentScore}/10
                           </span>
+                          <span
+                            className="text-xs font-bold px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700"
+                            title="Comments received on this estimate today"
+                          >
+                            💬 {getCommentCountForDate(e, getTodayDateString())} today
+                          </span>
                         </div>
                       </div>
 
@@ -1159,24 +1265,9 @@ Action: (single clear objective — close order / clarify doubts / send revised 
                             No Meaningful Update
                           </span>
                         )}
-                        {c.followUpMissing === "Yes" && (
-                          <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-md">
-                            Follow-up Missing
-                          </span>
-                        )}
                         {c.notAnswering === "Yes" && (
                           <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-md">
                             Not Answering
-                          </span>
-                        )}
-                        {c.improperFollowUp === "Yes" && (
-                          <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-md">
-                            Improper Follow-up
-                          </span>
-                        )}
-                        {c.dayExceeded === "Yes" && (
-                          <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-md">
-                            Deadline Passed
                           </span>
                         )}
                         {c.movingSlow === "Yes" && (

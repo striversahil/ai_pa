@@ -181,21 +181,17 @@ model Comment {
 }
 
 model Classification {
-  estimateId                 String   @id
-  meaningfulUpdate           Boolean  @default(false)
-  followUpMissing            String
-  notAnswering               String
-  improperFollowUp           String
-  lastCommentNotSatisfactory String
-  dayExceeded                String
-  movingSlow                 String
-  underDiscussion            String
-  confirm                    String
-  intentScore                Int
-  reasoning                  String
-  summary                    String   @default("")
-  processedAt                DateTime @default(now())
-  estimate                   Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+  estimateId       String   @id
+  meaningfulUpdate Boolean  @default(false)
+  notAnswering     String
+  movingSlow       String
+  underDiscussion  String
+  confirm          String
+  intentScore      Int
+  reasoning        String
+  summary          String   @default("")
+  processedAt      DateTime @default(now())
+  estimate         Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
 }
 
 model AuditLog {
