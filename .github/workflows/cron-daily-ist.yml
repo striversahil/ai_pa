@@ -15,16 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: data-retention
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/data-retention" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/data-retention" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
 
   morning-brief:
     runs-on: ubuntu-latest
     steps:
       - name: morning-brief
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/morning-brief" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/morning-brief" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
 
   eod-summary:
     runs-on: ubuntu-latest
     steps:
       - name: eod-summary
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/eod-summary" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/eod-summary" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

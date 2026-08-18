@@ -10,12 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: email-brain-index
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/email-brain-index" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/email-brain-index" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: enterprise-operations-analytics
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/enterprise-operations-analytics" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/enterprise-operations-analytics" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: telecalling-agent-analysis
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-agent-analysis" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-agent-analysis" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: dpp-prices-dashboard
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/dpp-prices-dashboard" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/dpp-prices-dashboard" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: telecalling-enquiry-to-dpp
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-enquiry-to-dpp" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-enquiry-to-dpp" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

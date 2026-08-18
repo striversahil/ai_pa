@@ -10,4 +10,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: zoho-sent-analyzer
-        run: curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/zoho-sent-analyzer" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/zoho-sent-analyzer" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
