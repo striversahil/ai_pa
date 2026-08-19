@@ -15,8 +15,6 @@ export default function FounderAssistant() {
   const [chatInput, setChatInput] = useState<string>("");
   const [isBriefingLoading, setIsBriefingLoading] = useState<boolean>(true);
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
-  const [isSyncingEmail, setIsSyncingEmail] = useState<boolean>(false);
-  const [isSyncingDigest, setIsSyncingDigest] = useState<boolean>(false);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -83,52 +81,6 @@ export default function FounderAssistant() {
     }
   }, [chatMessages]);
 
-  const handleRegenBrief = async () => {
-    setIsBriefingLoading(true);
-    try {
-      await fetch("/api/trigger/briefing", { method: "POST" });
-      fetchBriefing();
-      fetchTasks();
-      fetchDigests();
-    } catch (e) {
-      alert("Error regenerating briefing");
-    }
-  };
-
-  const handleSyncEmails = async () => {
-    setIsSyncingEmail(true);
-    try {
-      const res = await fetch("/api/trigger/email-sync", { method: "POST" });
-      const data = await res.json();
-      alert(`Email sync complete. Synced ${data.emailsSynced} new messages.`);
-      fetchTasks();
-      fetchBriefing();
-    } catch (e) {
-      alert("Failed to trigger email sync");
-    } finally {
-      setIsSyncingEmail(false);
-    }
-  };
-
-  const handleRunDigestJob = async () => {
-    setIsSyncingDigest(true);
-    try {
-      const res = await fetch("/api/trigger/digest", { method: "POST" });
-      const data = await res.json();
-      const p = data.result.processedChatsCount;
-      const f = data.result.failedChatsCount;
-      const t = data.result.tasksCreatedCount;
-      alert(`Digest process complete.\nChats Summarized: ${p}\nFailed: ${f}\nTasks Created: ${t}`);
-      fetchDigests();
-      fetchTasks();
-      fetchBriefing();
-    } catch (e) {
-      alert("Failed to trigger digest process");
-    } finally {
-      setIsSyncingDigest(false);
-    }
-  };
-
   const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const query = chatInput.trim();
@@ -171,22 +123,6 @@ export default function FounderAssistant() {
           <h1 className="text-3xl font-bold font-heading text-white">Founder AI Assistant</h1>
           <p className="text-sm text-zinc-400">Contextual briefings & AI workflow executions</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={handleSyncEmails}
-            disabled={isSyncingEmail}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-sm transition-all duration-200 cursor-pointer disabled:opacity-50"
-          >
-            <span>📧</span> {isSyncingEmail ? "Syncing..." : "Sync Emails"}
-          </button>
-          <button
-            onClick={handleRunDigestJob}
-            disabled={isSyncingDigest}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-600/25 disabled:opacity-50"
-          >
-            <span>⚡</span> {isSyncingDigest ? "Digesting..." : "Run Digest Job"}
-          </button>
-        </div>
       </div>
 
       {/* Main OS Interface Grid */}
@@ -199,14 +135,6 @@ export default function FounderAssistant() {
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <span>📅</span> Latest Morning Briefing
               </h3>
-              <button
-                onClick={handleRegenBrief}
-                disabled={isBriefingLoading}
-                className="p-2 text-zinc-400 hover:text-white bg-zinc-800 rounded-lg transition-all cursor-pointer"
-                title="Regenerate Briefing"
-              >
-                🔄
-              </button>
             </div>
             {isBriefingLoading ? (
               <div className="py-12 text-center text-zinc-500 animate-pulse">Loading briefing context...</div>

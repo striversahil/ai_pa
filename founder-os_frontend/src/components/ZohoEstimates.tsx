@@ -5,7 +5,6 @@ import React, { useState, useEffect, useMemo } from "react";
 export default function ZohoEstimates() {
   const [estimates, setEstimates] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [filters, setFilters] = useState<any[]>([]);
   const [copiedAll, setCopiedAll] = useState<boolean>(false);
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
@@ -63,48 +62,6 @@ export default function ZohoEstimates() {
       }
     }
   }, []);
-
-  const handleSyncEstimates = async () => {
-    setIsSyncing(true);
-    try {
-      const res = await fetch("/api/trigger/sales-sync?force=true", { method: "POST" });
-      if (!res.ok) {
-        const errorText = await res.text();
-        alert(`Sync failed: ${errorText}`);
-        return;
-      }
-
-      // Metadata is synced to the DB immediately on the server, before AI runs.
-      // Refresh the list right away so up-to-date numbers/statuses show while the
-      // background analysis is still filling in classifications.
-      fetchEstimates();
-
-      // Sync runs in the background on the server. Poll its status until it
-      // finishes instead of holding the request open (which times out).
-      for (let i = 0; i < 600; i++) {
-        await new Promise(r => setTimeout(r, 5000));
-        const statusRes = await fetch("/api/trigger/sales-sync/status");
-        if (!statusRes.ok) continue;
-        const status = await statusRes.json();
-        if (!status.running) {
-          if (status.lastError) {
-            alert(`Sales Copilot sync failed: ${status.lastError}`);
-          } else {
-            alert("Sales Copilot analysis completed successfully!");
-          }
-          fetchEstimates();
-          return;
-        }
-      }
-      alert("Sales Copilot sync is still running. Please refresh shortly.");
-      fetchEstimates();
-    } catch (e: any) {
-      alert(`Sync failed: ${e.message}`);
-      fetchEstimates();
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   // Helper: Intent score badge colors
   const getIntentScoreBadgeClass = (score: number) => {
@@ -802,13 +759,9 @@ Action: (single clear objective — close order / clarify doubts / send revised 
           >
             <span>📋</span> Copy TSV for Sheets
           </button>
-          <button
-            onClick={handleSyncEstimates}
-            disabled={isSyncing}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-600/25 disabled:opacity-50"
-          >
-            <span>🔄</span> {isSyncing ? "Syncing & Analyzing..." : "Sync & Analyze Zoho"}
-          </button>
+          <span className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 text-sm">
+            <span>🔄</span> Auto-syncs every 15 min via GitHub Actions
+          </span>
         </div>
       </div>
 

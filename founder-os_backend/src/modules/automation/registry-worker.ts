@@ -11,10 +11,7 @@ import { AutomationEngine } from './engine';
 
 import * as dataRetention from '../../automations/data-retention';
 import * as dppPricesDashboard from '../../automations/dpp-prices-dashboard';
-import * as emailBrainIndex from '../../automations/email-brain-index';
 import * as enterpriseOpsAnalytics from '../../automations/enterprise-operations-analytics';
-import * as eodSummary from '../../automations/eod-summary';
-import * as morningBrief from '../../automations/morning-brief';
 import * as morningQueueDrain from '../../automations/morning-queue-drain';
 import * as notificationBatcher from '../../automations/notification-batcher';
 import * as orphanedMessageRecovery from '../../automations/orphaned-message-recovery';
@@ -23,17 +20,12 @@ import * as slaMonitor from '../../automations/sla-monitor';
 import * as telecallingAgentAnalysis from '../../automations/telecalling-agent-analysis';
 import * as telecallingEnquiryToDpp from '../../automations/telecalling-enquiry-to-dpp';
 import * as waEngineMonitor from '../../automations/wa-engine-monitor';
-import * as whatsappDigest from '../../automations/whatsapp-digest';
 import * as whatsappMarketing from '../../automations/whatsapp-marketing';
-import * as zohoSentAnalyzer from '../../automations/zoho-sent-analyzer';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
   'dpp-prices-dashboard': dppPricesDashboard as AutomationModule,
-  'email-brain-index': emailBrainIndex as AutomationModule,
   'enterprise-operations-analytics': enterpriseOpsAnalytics as AutomationModule,
-  'eod-summary': eodSummary as AutomationModule,
-  'morning-brief': morningBrief as AutomationModule,
   'morning-queue-drain': morningQueueDrain as AutomationModule,
   'notification-batcher': notificationBatcher as AutomationModule,
   'orphaned-message-recovery': orphanedMessageRecovery as AutomationModule,
@@ -42,9 +34,7 @@ const MODULES: Record<string, AutomationModule> = {
   'telecalling-agent-analysis': telecallingAgentAnalysis as AutomationModule,
   'telecalling-enquiry-to-dpp': telecallingEnquiryToDpp as AutomationModule,
   'wa-engine-monitor': waEngineMonitor as AutomationModule,
-  'whatsapp-digest': whatsappDigest as AutomationModule,
   'whatsapp-marketing': whatsappMarketing as AutomationModule,
-  'zoho-sent-analyzer': zohoSentAnalyzer as AutomationModule,
 };
 
 const RULES: Record<string, Partial<AutomationDefinition>> = {
@@ -57,17 +47,11 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     condition: { all: [{ field: 'chatId', op: 'eq', value: '{{config.dppChatId}}' }] }, dedupField: 'wahaMessageId',
     actions: [{ type: 'custom:storePrices' }], config: { dppChatId: '' }, enabled: true,
   },
-  'email-brain-index': {
-    id: 'email-brain-index', name: 'Email + Brain Index', description: 'Every 30 minutes, sync emails and re-index the company brain.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, enabled: true,
-  },
   'enterprise-operations-analytics': {
     id: 'enterprise-operations-analytics', name: 'Enterprise Operations & Order Analytics', description: '18-Point Complete Enterprise Supply Chain Analysis dashboard.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, enabled: true,
   },
   'eod-summary': {
     id: 'eod-summary', name: 'Evening EOD Summary', description: 'Daily at 7:00 PM IST, generate and save the end-of-day summary.', type: 'handler', trigger: { type: 'schedule', cron: '0 19 * * *' }, enabled: true,
-  },
-  'morning-brief': {
-    id: 'morning-brief', name: 'Morning Founder Brief', description: 'Daily at 8:00 AM IST, generate and save the AI founder briefing.', type: 'handler', trigger: { type: 'schedule', cron: '0 8 * * *' }, enabled: true,
   },
   'morning-queue-drain': {
     id: 'morning-queue-drain', name: 'Morning Queue Drain', description: 'Every minute, send due deferred WhatsApp messages (drain-locked, 60/cycle cap).', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, enabled: true,
@@ -99,14 +83,8 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   'wa-engine-monitor': {
     id: 'wa-engine-monitor', name: 'WA Engine Pro Monitor', description: 'Every 5 minutes, check WA Engine Pro API connectivity and audit sustained outages.', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, config: { windowDays: 7 }, enabled: true,
   },
-  'whatsapp-digest': {
-    id: 'whatsapp-digest', name: 'WhatsApp Digest', description: 'Every 5 minutes, summarize unprocessed WhatsApp messages into per-chat digests.', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, enabled: true,
-  },
   'whatsapp-marketing': {
     id: 'whatsapp-marketing', name: 'WhatsApp Marketing', description: 'Multi-campaign WhatsApp marketing.', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, enabled: true,
-  },
-  'zoho-sent-analyzer': {
-    id: 'zoho-sent-analyzer', name: 'Zoho Sent Analyzer', description: 'Incremental Zoho estimate sync + analysis every 15 minutes.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, enabled: true,
   },
 };
 

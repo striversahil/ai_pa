@@ -233,13 +233,8 @@ app.get('/api/brief/latest', async (c) => {
 
 // ── Digests ─────────────────────────────────────────────────────────────────
 app.get('/api/digests', async (c) => {
-  const { DigestService, processMessagesToDigests } = deps();
-  let digests = await DigestService.fetchAllDigests();
-  if (digests.length === 0) {
-    await processMessagesToDigests();
-    digests = await DigestService.fetchAllDigests();
-  }
-  return c.json(digests);
+  const { DigestService } = deps();
+  return c.json(await DigestService.fetchAllDigests());
 });
 
 // ── Tasks ───────────────────────────────────────────────────────────────────
@@ -616,71 +611,6 @@ function requireSecret(c: any): boolean {
   return provided === expected;
 }
 
-app.post('/api/trigger/digest', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { processMessagesToDigests } = deps();
-  const result = await processMessagesToDigests();
-  return c.json({ message: 'Digest job triggered successfully', result });
-});
-
-app.post('/api/trigger/email-sync', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { EmailEngine } = deps();
-  const count = await new EmailEngine().runSync();
-  return c.json({ message: 'Email sync job completed', emailsSynced: count });
-});
-
-app.post('/api/trigger/briefing', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { SchedulerService } = deps();
-  const brief = await SchedulerService.generateAndSaveMorningBrief();
-  return c.json({ message: 'Morning briefing generated and saved', brief });
-});
-
-app.post('/api/trigger/summary', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { SchedulerService } = deps();
-  const summary = await SchedulerService.generateAndSaveEveningSummary();
-  return c.json({ message: 'Evening summary generated and saved', summary });
-});
-
-app.post('/api/trigger/brain-index', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { BrainService } = deps();
-  const brain = new BrainService();
-  const result = await brain.runSync();
-  return c.json({ message: 'Company Brain re-index complete', result });
-});
-
-app.get('/api/trigger/sales-sync/status', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { SalesCopilotService } = deps();
-  return c.json({
-    running: SalesCopilotService.isSyncRunning,
-    lastCompletedAt: (globalThis as any).__salesSyncLastCompletedAt ?? null,
-    lastError: (globalThis as any).__salesSyncLastError ?? null,
-  });
-});
-
-app.post('/api/trigger/sales-sync', async (c) => {
-  if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { SalesCopilotService } = deps();
-  if (SalesCopilotService.isSyncRunning) return c.json({ error: 'Sync job is already processing. Please wait.' }, 409);
-  const force = c.req.query('force') === 'true' || (await c.req.json().catch(() => ({}))).force === true;
-  c.status(202);
-  c.json({ message: 'Sales Copilot analysis started', status: 'started' });
-  (async () => {
-    try {
-      await new SalesCopilotService().runSync(force);
-      (globalThis as any).__salesSyncLastCompletedAt = new Date();
-      (globalThis as any).__salesSyncLastError = null;
-    } catch (err: any) {
-      (globalThis as any).__salesSyncLastError = err.message;
-    }
-  })();
-});
-
-// Generic automation trigger by slug: /api/trigger/:slug → AutomationEngine.scan
 app.post('/api/trigger/:slug', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
   const { AutomationEngine } = deps();

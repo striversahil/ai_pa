@@ -1,3 +1,5 @@
+import type { PagesFunction } from '@cloudflare/workers-types';
+
 // Pages Function: proxy /api/* to the founder-os worker.
 export const onRequest: PagesFunction = async ({ request, env }) => {
   const target = (env.API_WORKER_URL as string) || 'https://founder-os-worker.connect-bui2.workers.dev';

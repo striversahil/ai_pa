@@ -30,6 +30,13 @@ const tests = [
   ['GET /api/logs auth', '/api/logs', { headers: { Authorization: 'Bearer test-secret' } }],
   ['GET /api/logs no-auth', '/api/logs', { headers: { Authorization: 'Bearer wrong' } }],
   ['POST /api/trigger/briefing no-auth', '/api/trigger/briefing', { method: 'POST', headers: { Authorization: 'Bearer wrong' } }],
+  ['POST /api/trigger/briefing (moved to GHA)', '/api/trigger/briefing', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['POST /api/trigger/email-sync (moved to GHA)', '/api/trigger/email-sync', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['POST /api/trigger/digest (moved to GHA)', '/api/trigger/digest', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['POST /api/trigger/sales-sync (moved to GHA)', '/api/trigger/sales-sync', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['POST /api/trigger/summary (moved to GHA)', '/api/trigger/summary', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['POST /api/trigger/zoho-sent-analyzer (moved to GHA)', '/api/trigger/zoho-sent-analyzer', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['POST /api/trigger/email-brain-index (moved to GHA)', '/api/trigger/email-brain-index', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
   ['POST /api/trigger/nonexistent', '/api/trigger/nonexistent', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
   ['GET /api/messages/123@c.us', '/api/messages/918595563952@c.us'],
   ['GET /api/dashboard', '/dashboard'],
@@ -38,8 +45,12 @@ const tests = [
 
 for (const [name, path, opts] of tests) {
   const r = await hit(path, opts);
-  console.log(`${r.status === 200 || r.status === 401 || r.status === 404 ? 'PASS' : '???'}  ${name.padEnd(38)} -> ${r.status}`);
-  if (r.status === 'ERR' || (r.status !== 200 && r.status !== 401 && r.status !== 404)) {
+  const expects404 = name.includes('(moved to GHA)');
+  const ok = expects404
+    ? r.status === 404
+    : r.status === 200 || r.status === 401 || r.status === 404;
+  console.log(`${ok ? 'PASS' : '???'}  ${name.padEnd(38)} -> ${r.status}`);
+  if (r.status === 'ERR' || !ok) {
     console.log('     ', r.body);
   }
 }
