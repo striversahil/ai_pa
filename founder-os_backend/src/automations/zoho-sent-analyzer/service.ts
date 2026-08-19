@@ -2,11 +2,12 @@ import { AnalysisEngine } from '../../shared/engine';
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { config } from '../../config';
-import { AIService } from '../../modules/ai/service';
 import { isSystemGeneratedComment } from '../../shared/systemComment';
 import { classifyDeterministic } from '../../modules/ai/deterministicClassifier';
 import fs from 'fs';
 import path from 'path';
+
+export const PENDING_AI_MARKER = '__PENDING_AI__';
 
 export class SalesCopilotService implements AnalysisEngine {
   public name = 'Sales Copilot Analyzer';
@@ -34,52 +35,25 @@ export class SalesCopilotService implements AnalysisEngine {
 
   /**
    * Classifies the latest comment's badges. Deterministic rules run FIRST
-   * (100% repeatable for common comment patterns); the LLM is only called for
-   * comments that match no rule. This keeps results consistent run-to-run.
+   * (100% repeatable for common comment patterns); if no rule matches,
+   * returns null so the worker can mark the estimate as pending AI
+   * (the actual LLM call happens in GitHub Actions via the Cloudflare Tunnel).
    */
-  private async classifyBadges(custName: string, total: number, latestComment: string, dateVal: string): Promise<any> {
+  private classifyBadges(latestComment: string, dateVal: string): any {
     const rule = classifyDeterministic(latestComment, dateVal);
     if (rule) {
-      logger.info({ est: custName, rule: true }, 'SalesCopilotService: deterministic badge classification');
+      logger.info({ rule: true }, 'SalesCopilotService: deterministic badge classification');
       return rule;
     }
-    return AIService.classifyLatestEstimateComment(custName, total, latestComment, dateVal);
+    return null; // no LLM on worker - GitHub Actions will handle AI via Cloudflare Tunnel
   }
 
   /**
-   * Parses Zoho curl credentials from local file, or reads them from env vars
-   * (ZOHO_BOOKS_SENT_URL + ZOHO_BOOKS_AUTH_TOKEN) on the Worker where fs is
-   * unavailable. Env vars win when present.
+   * Parses the raw Zoho curl-export content into a URL + headers + orgId.
+   * Shared by the local fs path and the Worker secret path.
    */
-  private parseCurlFile(): { url: string; headers: Record<string, string>; orgId: string } | null {
-    const envUrl = (process as any)?.env?.ZOHO_BOOKS_SENT_URL || (globalThis as any)?.ZOHO_BOOKS_SENT_URL;
-    const envToken = (process as any)?.env?.ZOHO_BOOKS_AUTH_TOKEN || (globalThis as any)?.ZOHO_BOOKS_AUTH_TOKEN;
-    if (envUrl && envToken) {
-      const orgMatch = envUrl.match(/organization_id=([0-9]+)/);
-      return {
-        url: envUrl,
-        headers: {
-          Authorization: `Zoho-oauthtoken ${envToken}`,
-          'Content-Type': 'application/json',
-          'Accept-Encoding': 'gzip, deflate',
-        },
-        orgId: orgMatch ? orgMatch[1] : '',
-      };
-    }
+  private parseCurlContent(content: string): { url: string; headers: Record<string, string>; orgId: string } | null {
     try {
-      let curlFile = path.join('/app', 'zoho_sent', 'sent_estimates.txt');
-      if (!fs.existsSync(curlFile)) {
-        curlFile = path.join(__dirname, '..', '..', '..', 'zoho_sent', 'sent_estimates.txt');
-      }
-      if (!fs.existsSync(curlFile)) {
-        curlFile = path.join(__dirname, '..', '..', '..', '..', 'zoho_sent', 'sent_estimates.txt');
-      }
-      if (!fs.existsSync(curlFile)) {
-        logger.error(`SalesCopilotService: credentials file not found at: ${curlFile}`);
-        return null;
-      }
-      const content = fs.readFileSync(curlFile, 'utf-8');
-
       // Extract URL
       const urlMatch = content.match(/curl\s+'([^']+)'/) || content.match(/curl\s+"([^"]+)"/) || content.match(/curl\s+([^\s\\]+)/);
       const url = urlMatch ? urlMatch[1] : '';
@@ -109,7 +83,67 @@ export class SalesCopilotService implements AnalysisEngine {
         headers['Accept-Encoding'] = 'gzip, deflate';
       }
 
+      if (!url || Object.keys(headers).length === 0) {
+        logger.error('SalesCopilotService: could not extract URL or headers from curl content');
+        return null;
+      }
+
       return { url, headers, orgId };
+    } catch (err: any) {
+      logger.error({ error: err.message }, 'SalesCopilotService: failed to parse curl credentials');
+      return null;
+    }
+  }
+
+  /**
+   * Parses Zoho curl credentials. On the Worker (no fs), the full curl-export
+   * content is provided via the ZOHO_CURL_CONTENT secret and parsed with the
+   * same logic as the local sent_estimates.txt file. Env url+token is kept as a
+   * secondary fallback for an OAuth-token style auth.
+   */
+  private parseCurlFile(): { url: string; headers: Record<string, string>; orgId: string } | null {
+    const readSecret = (key: string): string | undefined =>
+      (globalThis as any)?.__WORKER_ENV__?.[key] ??
+      (globalThis as any)?.process?.env?.[key] ??
+      (globalThis as any)?.[key];
+
+    // 1. Full curl-export content from a Worker secret / env (cookie-based auth).
+    const envContent = readSecret('ZOHO_CURL_CONTENT');
+    if (envContent) {
+      const parsed = this.parseCurlContent(envContent);
+      if (parsed) return parsed;
+    }
+
+    // 2. OAuth-token style env vars (secondary).
+    const envUrl = readSecret('ZOHO_BOOKS_SENT_URL');
+    const envToken = readSecret('ZOHO_BOOKS_AUTH_TOKEN');
+    if (envUrl && envToken) {
+      const orgMatch = envUrl.match(/organization_id=([0-9]+)/);
+      return {
+        url: envUrl,
+        headers: {
+          Authorization: `Zoho-oauthtoken ${envToken}`,
+          'Content-Type': 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+        },
+        orgId: orgMatch ? orgMatch[1] : '',
+      };
+    }
+
+    // 3. Local fs file (dev / self-hosted).
+    try {
+      let curlFile = path.join('/app', 'zoho_sent', 'sent_estimates.txt');
+      if (!fs.existsSync(curlFile)) {
+        curlFile = path.join(__dirname, '..', '..', '..', 'zoho_sent', 'sent_estimates.txt');
+      }
+      if (!fs.existsSync(curlFile)) {
+        curlFile = path.join(__dirname, '..', '..', '..', '..', 'zoho_sent', 'sent_estimates.txt');
+      }
+      if (!fs.existsSync(curlFile)) {
+        logger.error(`SalesCopilotService: credentials file not found at: ${curlFile}`);
+        return null;
+      }
+      return this.parseCurlContent(fs.readFileSync(curlFile, 'utf-8'));
     } catch (err: any) {
       logger.error({ error: err.message }, 'SalesCopilotService: failed to parse curl credentials file');
       return null;
@@ -198,7 +232,7 @@ export class SalesCopilotService implements AnalysisEngine {
       await prisma.estimate.upsert({
         where: { estimateId: est.estimate_id },
         update: metadata,
-        create: { estimateId: est.estimate_id, ...metadata }
+        create: { estimateId: est.estimate_id, ...metadata, lastSyncTime: new Date() }
       });
       metadataUpdated++;
     }
@@ -454,56 +488,85 @@ export class SalesCopilotService implements AnalysisEngine {
       // Split concerns: badges come from ONLY the single latest comment;
       // summary + intent score come from the entire journey timeline.
       const latestComment = historyLines[0] || '';
-      const [badgeResult, journeyResult] = await Promise.all([
-        this.classifyBadges(custName, total, latestComment, dateVal),
-        AIService.summarizeEstimateJourney(commentHistory)
-      ]);
+      const badgeResult = this.classifyBadges(latestComment, dateVal);
       const createdDate = new Date(dateVal);
       const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
 
-      let finalConfirm = badgeResult.confirm ? 'Yes' : 'No';
-      if (badgeResult.confirm) {
-        const confirmDateStr = badgeResult.confirm_date;
-        if (confirmDateStr && confirmDateStr !== 'None') {
-          try {
-            const confirmDate = new Date(confirmDateStr);
-            const diffDays = Math.floor((Date.now() - confirmDate.getTime()) / (24 * 60 * 60 * 1000));
-            if (diffDays > 2) {
+      let finalConfirm = 'No';
+      let journeyResult = { summary: '', intent_score: 2 };
+
+      if (badgeResult) {
+        // Deterministic rule matched - write full classification
+        if (badgeResult.confirm) {
+          const confirmDateStr = badgeResult.confirm_date;
+          if (confirmDateStr && confirmDateStr !== 'None') {
+            try {
+              const confirmDate = new Date(confirmDateStr);
+              const diffDays = Math.floor((Date.now() - confirmDate.getTime()) / (24 * 60 * 60 * 1000));
+              if (diffDays <= 2) finalConfirm = 'Yes';
+            } catch (e) {
               finalConfirm = 'No';
             }
-          } catch (e) {
-            finalConfirm = 'No';
           }
-        } else {
-          finalConfirm = 'No';
         }
-      }
 
-      await prisma.classification.upsert({
-        where: { estimateId: estId },
-        update: {
-          meaningfulUpdate: badgeResult.meaningful_update,
-          notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
-          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
-          underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
-          confirm: finalConfirm,
-          intentScore: journeyResult.intent_score,
-          reasoning: badgeResult.reasoning,
-          summary: journeyResult.summary || '',
-          processedAt: new Date()
-        },
-        create: {
-          estimateId: estId,
-          meaningfulUpdate: badgeResult.meaningful_update,
-          notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
-          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
-          underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
-          confirm: finalConfirm,
-          intentScore: journeyResult.intent_score,
-          reasoning: badgeResult.reasoning,
-          summary: journeyResult.summary || ''
-        }
-      });
+        // Deterministic journey summary (no LLM on worker)
+        journeyResult = { summary: 'Deterministic classification.', intent_score: badgeResult.meaningful_update ? 4 : 2 };
+
+        await prisma.classification.upsert({
+          where: { estimateId: estId },
+          update: {
+            meaningfulUpdate: badgeResult.meaningful_update,
+            notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+            confirm: finalConfirm,
+            intentScore: journeyResult.intent_score,
+            reasoning: badgeResult.reasoning,
+            summary: journeyResult.summary || '',
+            processedAt: new Date()
+          },
+          create: {
+            estimateId: estId,
+            meaningfulUpdate: badgeResult.meaningful_update,
+            notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
+            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
+            confirm: finalConfirm,
+            intentScore: journeyResult.intent_score,
+            reasoning: badgeResult.reasoning,
+            summary: journeyResult.summary || ''
+          }
+        });
+      } else {
+        // No deterministic rule matched - mark as pending AI for GitHub Actions
+        await prisma.classification.upsert({
+          where: { estimateId: estId },
+          update: {
+            meaningfulUpdate: false,
+            notAnswering: 'No',
+            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            underDiscussion: 'No',
+            confirm: 'No',
+            intentScore: null,
+            reasoning: PENDING_AI_MARKER,
+            summary: '',
+            processedAt: new Date()
+          },
+          create: {
+            estimateId: estId,
+            meaningfulUpdate: false,
+            notAnswering: 'No',
+            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            underDiscussion: 'No',
+            confirm: 'No',
+            intentScore: null,
+            reasoning: PENDING_AI_MARKER,
+            summary: '',
+            processedAt: new Date()
+          }
+        });
+      }
     }
 
     // Advance the per-estimate sync watermark only after successful processing.
@@ -590,12 +653,23 @@ export class SalesCopilotService implements AnalysisEngine {
               const commentHistory = historyLines.join('\n');
 
               if (commentHistory) {
-                try {
-                  const latestComment = historyLines[0] || '';
-                  const [badgeResult, journeyResult] = await Promise.all([
-                    AIService.classifyLatestEstimateComment(est.customerName, est.total, latestComment, est.date),
-                    AIService.summarizeEstimateJourney(commentHistory)
-                  ]);
+                const latestComment = historyLines[0] || '';
+                const badgeResult = this.classifyBadges(latestComment, est.date);
+                if (badgeResult) {
+                  let finalConfirm = 'No';
+                  if (badgeResult.confirm) {
+                    const confirmDateStr = badgeResult.confirm_date;
+                    if (confirmDateStr && confirmDateStr !== 'None') {
+                      try {
+                        const confirmDate = new Date(confirmDateStr);
+                        const diffDays = Math.floor((Date.now() - confirmDate.getTime()) / (24 * 60 * 60 * 1000));
+                        if (diffDays <= 2) finalConfirm = 'Yes';
+                      } catch (e) {
+                        finalConfirm = 'No';
+                      }
+                    }
+                  }
+                  const journeyResult = { summary: 'Deterministic classification.', intent_score: badgeResult.meaningful_update ? 4 : 2 };
                   await prisma.classification.upsert({
                     where: { estimateId: est.estimateId },
                     update: {
@@ -603,7 +677,7 @@ export class SalesCopilotService implements AnalysisEngine {
                       notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
                       movingSlow: 'No',
                       underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
-                      confirm: badgeResult.confirm ? 'Yes' : 'No',
+                      confirm: finalConfirm,
                       intentScore: journeyResult.intent_score,
                       reasoning: badgeResult.reasoning,
                       summary: journeyResult.summary || '',
@@ -615,14 +689,40 @@ export class SalesCopilotService implements AnalysisEngine {
                       notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
                       movingSlow: 'No',
                       underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
-                      confirm: badgeResult.confirm ? 'Yes' : 'No',
+                      confirm: finalConfirm,
                       intentScore: journeyResult.intent_score,
                       reasoning: badgeResult.reasoning,
                       summary: journeyResult.summary || ''
                     }
                   });
-                } catch (err: any) {
-                  logger.error({ error: err.message }, `SalesCopilotService: AI classification error for closed estimate ${est.estimateNumber}`);
+                } else {
+                  // No deterministic rule - mark pending AI for GitHub Actions
+                  await prisma.classification.upsert({
+                    where: { estimateId: est.estimateId },
+                    update: {
+                      meaningfulUpdate: false,
+                      notAnswering: 'No',
+                      movingSlow: 'No',
+                      underDiscussion: 'No',
+                      confirm: 'No',
+                      intentScore: null,
+                      reasoning: PENDING_AI_MARKER,
+                      summary: '',
+                      processedAt: new Date()
+                    },
+                    create: {
+                      estimateId: est.estimateId,
+                      meaningfulUpdate: false,
+                      notAnswering: 'No',
+                      movingSlow: 'No',
+                      underDiscussion: 'No',
+                      confirm: 'No',
+                      intentScore: null,
+                      reasoning: PENDING_AI_MARKER,
+                      summary: '',
+                      processedAt: new Date()
+                    }
+                  });
                 }
               }
             }

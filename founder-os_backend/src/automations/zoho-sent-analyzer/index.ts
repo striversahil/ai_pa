@@ -5,6 +5,8 @@ export async function handler() {
   await new SalesCopilotService().runSync();
 }
 
+import { PENDING_AI_MARKER } from './service';
+
 /**
  * Dashboard data provider — `GET /api/automations/zoho-sent-analyzer/data`.
  * KPI summary of the Zoho sent-estimate pipeline. The full interactive board
@@ -13,22 +15,25 @@ export async function handler() {
  */
 export async function data() {
   const where = { OR: [{ status: 'sent' }, { status: 'accepted' }, { status: 'declined' }, { status: 'confirmed' }] };
-  const [estimates, sent, sentClassified, accepted, declined, lastCompleteSync] = await Promise.all([
+  const [estimates, sent, sentClassifiedRaw, pendingAiCount, accepted, declined, lastCompleteSync] = await Promise.all([
     prisma.estimate.findMany({ where, select: { estimateId: true, estimateNumber: true, customerName: true, total: true, status: true, lastSyncTime: true } }),
     prisma.estimate.count({ where: { status: 'sent' } }),
     prisma.estimate.count({ where: { status: 'sent', classification: { isNot: null } } }),
+    prisma.classification.count({ where: { reasoning: PENDING_AI_MARKER } }),
     prisma.estimate.count({ where: { status: { in: ['accepted', 'confirmed'] } } }),
     prisma.estimate.count({ where: { status: 'declined' } }),
     prisma.setting.findUnique({ where: { key: 'sales_copilot:last_complete_sync_at' } }),
   ]);
 
   const totalValue = estimates.filter((e) => e.status === 'sent').reduce((sum, e) => sum + e.total, 0);
+  const classifiedEstimates = Math.max(0, sentClassifiedRaw - pendingAiCount);
 
   return {
     totalEstimates: estimates.length,
     sentEstimates: sent,
-    classifiedEstimates: sentClassified,
-    unclassifiedEstimates: Math.max(0, sent - sentClassified),
+    classifiedEstimates,
+    unclassifiedEstimates: Math.max(0, sent - classifiedEstimates),
+    pendingAiEstimates: pendingAiCount,
     acceptedEstimates: accepted,
     declinedEstimates: declined,
     totalSentValue: totalValue,
