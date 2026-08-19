@@ -819,14 +819,15 @@ app.post('/api/runner/zoho/classification', async (c) => {
   const { estimateId, classification } = body;
   if (!estimateId || !classification) return c.json({ error: 'estimateId + classification required' }, 400);
   const now = new Date();
+  const toYN = (v: unknown) => (v === 'Yes' || v === 'yes' || v === true ? 'Yes' : 'No');
   await prisma.classification.upsert({
     where: { estimateId },
     update: {
       meaningfulUpdate: !!classification.meaningfulUpdate,
-      notAnswering: classification.notAnswering ? 'Yes' : 'No',
-      movingSlow: classification.movingSlow ? 'Yes' : 'No',
-      underDiscussion: classification.underDiscussion ? 'Yes' : 'No',
-      confirm: classification.confirm ? 'Yes' : 'No',
+      notAnswering: toYN(classification.notAnswering),
+      movingSlow: toYN(classification.movingSlow),
+      underDiscussion: toYN(classification.underDiscussion),
+      confirm: toYN(classification.confirm),
       intentScore: classification.intentScore ?? 2,
       reasoning: classification.reasoning || '',
       summary: classification.summary || '',
@@ -835,10 +836,10 @@ app.post('/api/runner/zoho/classification', async (c) => {
     create: {
       estimateId,
       meaningfulUpdate: !!classification.meaningfulUpdate,
-      notAnswering: classification.notAnswering ? 'Yes' : 'No',
-      movingSlow: classification.movingSlow ? 'Yes' : 'No',
-      underDiscussion: classification.underDiscussion ? 'Yes' : 'No',
-      confirm: classification.confirm ? 'Yes' : 'No',
+      notAnswering: toYN(classification.notAnswering),
+      movingSlow: toYN(classification.movingSlow),
+      underDiscussion: toYN(classification.underDiscussion),
+      confirm: toYN(classification.confirm),
       intentScore: classification.intentScore ?? 2,
       reasoning: classification.reasoning || '',
       summary: classification.summary || '',

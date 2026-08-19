@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Force reclassify ALL active estimates with the current model"
+        type: boolean
+        default: false
 
 jobs:
   zoho-sent-analyzer:
@@ -17,4 +22,5 @@ jobs:
           OMNIROUTE_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
           OMNIROUTE_MODEL: ${{ secrets.OMNIROUTE_MODEL }}
+          ZOHO_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
         run: node scripts/zoho-sent-runner.js

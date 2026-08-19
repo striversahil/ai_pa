@@ -540,7 +540,8 @@ async function main() {
     const fetched = fetchedByEst.get(estId);
     if (!fetched) { failed++; continue; }
     const hasNewComments = fetched.hasNew;
-    const needsProcessing = statusChanged || neverAnalyzed || modifiedSinceLastSync || hasNewComments;
+    const forced = process.env.ZOHO_FORCE === '1';
+    const needsProcessing = forced || statusChanged || neverAnalyzed || modifiedSinceLastSync || hasNewComments;
     if (!needsProcessing) { skipped++; continue; }
     workItems.push({ estId, custName, total, dateVal, estStatus, existingEstimate, fetched });
   }
