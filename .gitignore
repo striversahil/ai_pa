@@ -22,6 +22,7 @@ google-service-account.json
 local-runner.env
 
 # Cloudflare Worker build artifacts + wrangler local state
+.wrangler/
 founder-os_backend/dist-worker/
 founder-os_backend/.wrangler/
 waba-worker/node_modules/
