@@ -40,6 +40,9 @@ const tests = [
   ['POST /api/trigger/nonexistent', '/api/trigger/nonexistent', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
   ['GET /api/messages/123@c.us', '/api/messages/918595563952@c.us'],
   ['GET /api/dashboard', '/dashboard'],
+  ['GET /api/estimates/baseline', '/api/estimates/baseline'],
+  ['POST /api/runner/estimates/baseline no-auth', '/api/runner/estimates/baseline', { method: 'POST', headers: { Authorization: 'Bearer wrong' } }],
+  ['POST /api/runner/estimates/baseline auth', '/api/runner/estimates/baseline', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
   ['GET /nope', '/nope'],
 ];
 

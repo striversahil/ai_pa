@@ -297,6 +297,49 @@ app.get('/api/estimates', async (c) => {
   return c.json({ estimates: estimatesWithRealComments, lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null });
 });
 
+// ── Baseline snapshot (shared across all viewers, frozen daily at 9 AM IST) ──
+function kolkataDateStr(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(now).slice(0, 10);
+}
+
+// POST (GH Actions daily job at 9 AM IST) → captures the baseline for today.
+app.post('/api/runner/estimates/baseline', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const estimates = await prisma.estimate.findMany({
+    where: { status: 'sent' },
+    include: { comments: { orderBy: { commentId: 'desc' } } },
+  });
+  const baseline = estimates.map((e: any) => ({
+    estimateId: e.estimateId,
+    estimateNumber: e.estimateNumber,
+    customerName: e.customerName,
+    total: e.total,
+    status: e.status,
+  }));
+  const key = `zoho_baseline:${kolkataDateStr()}`;
+  await prisma.setting.upsert({
+    where: { key },
+    update: { value: JSON.stringify(baseline) },
+    create: { key, value: JSON.stringify(baseline) },
+  });
+  return c.json({ ok: true, key, count: baseline.length });
+});
+
+// GET → returns today's frozen baseline for all dashboard viewers.
+app.get('/api/estimates/baseline', async (c) => {
+  const { prisma } = deps();
+  const key = `zoho_baseline:${kolkataDateStr()}`;
+  const row = await prisma.setting.findUnique({ where: { key } });
+  if (!row?.value) return c.json({ date: key.split(':')[1], baseline: null });
+  try {
+    return c.json({ date: key.split(':')[1], baseline: JSON.parse(row.value) });
+  } catch {
+    return c.json({ date: key.split(':')[1], baseline: null });
+  }
+});
+
 // ── Zoho Estimate AI Classification (GitHub Actions) ──────────────────────────
 app.post('/api/estimates/classify', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);

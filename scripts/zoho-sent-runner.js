@@ -270,27 +270,23 @@ Do not include explanations or markdown outside the JSON object.`;
 }
 
 async function classifyEstimate(custName, total, latestComment, dateVal, commentHistory) {
-  const rule = classifyDeterministic(latestComment, dateVal);
   let badgeResult;
-  if (rule) {
-    badgeResult = rule;
-  } else {
-    try {
-      badgeResult = await omnirouteJson(
-        badgePrompt(),
-        `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
-        { temperature: 0 },
-      );
-    } catch (err) {
-      badgeResult = {
-        meaningful_update: false,
-        not_answering: false,
-        under_discussion: false,
-        confirm: false,
-        confirm_date: 'None',
-        reasoning: `LLM unavailable (${err.message.slice(0, 80)}). Conservative default applied.`,
-      };
-    }
+  try {
+    badgeResult = await omnirouteJson(
+      badgePrompt(),
+      `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
+      { temperature: 0 },
+    );
+  } catch (err) {
+    const rule = classifyDeterministic(latestComment, dateVal);
+    badgeResult = rule || {
+      meaningful_update: false,
+      not_answering: false,
+      under_discussion: false,
+      confirm: false,
+      confirm_date: 'None',
+      reasoning: `LLM unavailable (${err.message.slice(0, 80)}). Deterministic fallback applied.`,
+    };
   }
   let journeyResult;
   try {

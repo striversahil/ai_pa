@@ -4,6 +4,8 @@ on:
   schedule:
     # data-retention 3:00 AM IST = 21:30 UTC
     - cron: "30 21 * * *"
+    # baseline-freeze 9:00 AM IST = 03:30 UTC
+    - cron: "30 3 * * *"
     # morning-brief 8:00 AM IST = 02:30 UTC
     - cron: "30 2 * * *"
     # eod-summary 7:00 PM IST = 13:30 UTC
@@ -11,6 +13,13 @@ on:
   workflow_dispatch:
 
 jobs:
+  baseline-freeze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: baseline-freeze (capture sent-estimate snapshot for today)
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/runner/estimates/baseline" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+
   data-retention:
     runs-on: ubuntu-latest
     steps:

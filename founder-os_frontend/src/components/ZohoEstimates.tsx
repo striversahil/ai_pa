@@ -53,15 +53,21 @@ export default function ZohoEstimates() {
 
   useEffect(() => {
     fetchEstimates();
-    if (typeof window !== "undefined") {
-      const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`;
-      const savedBaseline = localStorage.getItem(`zoho_baseline_${todayStr}`);
-      if (savedBaseline) {
-        setBaseline(JSON.parse(savedBaseline));
-        setBaselineDate(todayStr);
-      }
-    }
+    fetchBaseline();
   }, []);
+
+  const fetchBaseline = async () => {
+    try {
+      const res = await fetch("/api/estimates/baseline");
+      const data = await res.json();
+      if (data.baseline && data.baseline.length > 0) {
+        setBaseline(data.baseline);
+        setBaselineDate(data.date);
+      }
+    } catch (e) {
+      console.error("Error loading shared baseline:", e);
+    }
+  };
 
   // Helper: Intent score badge colors
   const getIntentScoreBadgeClass = (score: number) => {
@@ -880,26 +886,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
                   />
                   <span>Show Closed Estimates</span>
                 </label>
-                <button 
-                  onClick={() => {
-                    const todayStr = getTodayDateString();
-                    const baselineData = estimates.map(e => ({
-                      estimateId: e.estimateId,
-                      estimateNumber: e.estimateNumber,
-                      customerName: e.customerName,
-                      total: e.total,
-                      status: e.status
-                    }));
-                  localStorage.setItem(`zoho_baseline_${todayStr}`, JSON.stringify(baselineData));
-                  setBaseline(baselineData);
-                  setBaselineDate(todayStr);
-                  alert("📸 Today's morning baseline has been successfully frozen! Subsequent status changes will be tracked.");
-                }}
-                className="px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-lg transition-colors cursor-pointer shadow-lg shadow-violet-600/20"
-              >
-                📸 Freeze Baseline
-              </button>
-            </div>
+              </div>
           </div>
 
             {/* Daily Movement Tracker */}
@@ -911,31 +898,10 @@ Action: (single clear objective — close order / clarify doubts / send revised 
                       <span>📈</span> Daily Status Movement Tracker
                     </h4>
                     <p className="text-[10px] text-zinc-500 mt-0.5">
-                      Baseline captured: <span className="font-semibold text-zinc-400">{baselineDate}</span> ({movement.baselineCount} open, value: ₹{movement.baselineValue.toLocaleString()})
+                      Baseline captured: <span className="font-semibold text-zinc-400">{baselineDate}</span> ({movement.baselineCount} open, value: ₹{movement.baselineValue.toLocaleString()}) — auto-frozen at 9:00 AM IST
                     </p>
                   </div>
-                  <button 
-                    onClick={() => {
-                      if (confirm("Reset today's baseline to the current state?")) {
-                        const todayStr = getTodayDateString();
-                        const baselineData = estimates.map(e => ({
-                          estimateId: e.estimateId,
-                          estimateNumber: e.estimateNumber,
-                          customerName: e.customerName,
-                          total: e.total,
-                          status: e.status
-                        }));
-                        localStorage.setItem(`zoho_baseline_${todayStr}`, JSON.stringify(baselineData));
-                        setBaseline(baselineData);
-                        setBaselineDate(todayStr);
-                      }
-                    }}
-                    className="px-2 py-1 text-[9px] bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white font-semibold rounded border border-zinc-800 transition-colors cursor-pointer"
-                  >
-                    🔄 Reset Baseline
-                  </button>
                 </div>
-
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="bg-zinc-900/60 border border-zinc-800 p-2.5 rounded-lg text-center">
                     <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider block">Baseline Open</span>
@@ -966,7 +932,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
                   
                   {movement.accepted.length === 0 && movement.declined.length === 0 && movement.newCreated.length === 0 ? (
                     <div className="text-xs text-zinc-500 italic py-2 text-center">
-                      No status transitions or new estimates detected today. Click "Sync & Analyze Zoho" to poll updates.
+                      No status transitions or new estimates detected today. Estimates auto-sync every 15 minutes.
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-36 overflow-y-auto divide-y divide-zinc-800/40 pr-1 scrollbar-thin">
