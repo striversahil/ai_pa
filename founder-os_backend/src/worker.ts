@@ -963,9 +963,17 @@ function parseJson(value: string | null | undefined): unknown {
 app.get('/api/automations', async (c) => {
   const { prisma, AutomationEngine } = deps();
   const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
-  const withDashboard = new Set(
-    AutomationEngine.all().filter((e: any) => typeof e.module?.data === 'function').map((e: any) => e.def.id),
-  );
+  // Deterministic dashboard capability: static slugs the frontend renders
+  // (Automations.tsx renderDashboard) + engine modules exposing a `data` fn.
+  // Independent of per-isolate boot state so the button never flickers.
+  const DASHBOARD_SLUGS = new Set([
+    'zoho-sent-analyzer', 'dpp-prices-dashboard', 'wa-engine-monitor',
+    'whatsapp-marketing', 'enterprise-operations-analytics', 'telecalling-agent-analysis',
+  ]);
+  const withDashboard = new Set([
+    ...DASHBOARD_SLUGS,
+    ...AutomationEngine.all().filter((e: any) => typeof e.module?.data === 'function').map((e: any) => e.def.id),
+  ]);
   return c.json(rows.map((r: any) => ({
     id: r.id, slug: r.slug, name: r.name, description: r.description, type: r.type,
     enabled: r.enabled, cooldownMs: r.cooldownMs, lastRunAt: r.lastRunAt, runCount: r.runCount,
