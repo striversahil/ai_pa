@@ -85,11 +85,53 @@ async function omniroute(system, user, { temperature = 0, maxRetries = 2 } = {})
   throw lastError;
 }
 
+function extractJson(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return null;
+  try {
+    return JSON.parse(str);
+  } catch { /* fall through */ }
+
+  const fenced = str.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch { /* fall through */ }
+  }
+
+  let start = str.indexOf('{');
+  if (start === -1) start = str.indexOf('[');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < str.length; i++) {
+    const ch = str[i];
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(str.slice(start, i + 1));
+        } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
 async function omnirouteJson(system, user, opts) {
   const raw = await omniroute(system, user, opts);
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error(`No JSON in omniroute response: ${raw.slice(0, 200)}`);
-  return JSON.parse(match[0]);
+  const parsed = extractJson(raw);
+  if (!parsed) throw new Error(`No JSON in omniroute response: ${raw.slice(0, 200)}`);
+  return parsed;
 }
 
 module.exports = {

@@ -275,15 +275,31 @@ async function classifyEstimate(custName, total, latestComment, dateVal, comment
   if (rule) {
     badgeResult = rule;
   } else {
-    badgeResult = await omnirouteJson(
-      badgePrompt(),
-      `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
-      { temperature: 0 },
-    );
+    try {
+      badgeResult = await omnirouteJson(
+        badgePrompt(),
+        `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
+        { temperature: 0 },
+      );
+    } catch (err) {
+      badgeResult = {
+        meaningful_update: false,
+        not_answering: false,
+        under_discussion: false,
+        confirm: false,
+        confirm_date: 'None',
+        reasoning: `LLM unavailable (${err.message.slice(0, 80)}). Conservative default applied.`,
+      };
+    }
   }
-  const journeyResult = commentHistory
-    ? await omnirouteJson(journeyPrompt(), `Comment History:\n${commentHistory}`, { temperature: 0 })
-    : { summary: 'No sales agent comment found.', intent_score: 2 };
+  let journeyResult;
+  try {
+    journeyResult = commentHistory
+      ? await omnirouteJson(journeyPrompt(), `Comment History:\n${commentHistory}`, { temperature: 0 })
+      : { summary: 'No sales agent comment found.', intent_score: 2 };
+  } catch (err) {
+    journeyResult = { summary: `LLM unavailable (${err.message.slice(0, 80)}).`, intent_score: 2 };
+  }
   return { badgeResult, journeyResult };
 }
 
