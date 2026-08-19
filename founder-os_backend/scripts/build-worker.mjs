@@ -81,8 +81,8 @@ const result = await build({
   format: 'esm',
   platform: 'browser',
   target: 'es2022',
-  minify: false,
-  sourcemap: true,
+  minify: true,
+  sourcemap: false,
   legalComments: 'none',
   external: ['__STATIC_CONTENT_MANIFEST'],
   define: {

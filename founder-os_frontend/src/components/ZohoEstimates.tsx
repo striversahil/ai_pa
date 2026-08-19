@@ -765,9 +765,6 @@ Action: (single clear objective — close order / clarify doubts / send revised 
           >
             <span>📋</span> Copy TSV for Sheets
           </button>
-          <span className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 text-sm">
-            <span>🔄</span> Auto-syncs every 15 min via GitHub Actions
-          </span>
         </div>
       </div>
 

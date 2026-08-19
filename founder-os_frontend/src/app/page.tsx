@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback } from "react";
+import dynamic from "next/dynamic";
 import { useEnquiryData } from "../hooks/useEnquiryData";
 import { useTheme } from "../hooks/useTheme";
 import { useToast } from "../hooks/useToast";
@@ -9,16 +10,18 @@ import { useHashRoute } from "../hooks/useHashRoute";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Sidebar from "../components/layout/Sidebar";
 import MobileNav from "../components/layout/MobileNav";
-import Dashboard from "../components/Dashboard";
-import EnquiryList from "../components/EnquiryList";
-import EnquiryDetail from "../components/EnquiryDetail";
 import EnquiryModal from "../components/EnquiryModal";
 import Lightbox from "../components/Lightbox";
 import ToastContainer from "../components/ToastContainer";
-import FounderAssistant from "../components/FounderAssistant";
-import WhatsAppDashboard from "../components/WhatsAppDashboard";
-import Automations from "../components/Automations";
 import type { Enquiry, Comment } from "../types";
+
+// Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
+const Dashboard = dynamic(() => import("../components/Dashboard"), { ssr: false });
+const EnquiryList = dynamic(() => import("../components/EnquiryList"), { ssr: false });
+const EnquiryDetail = dynamic(() => import("../components/EnquiryDetail"), { ssr: false });
+const FounderAssistant = dynamic(() => import("../components/FounderAssistant"), { ssr: false });
+const WhatsAppDashboard = dynamic(() => import("../components/WhatsAppDashboard"), { ssr: false });
+const Automations = dynamic(() => import("../components/Automations"), { ssr: false });
 
 type ViewType = "dashboard" | "enquiries" | "detail" | "briefing" | "whatsapp" | "automations";
 

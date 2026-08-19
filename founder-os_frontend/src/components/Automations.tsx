@@ -1,13 +1,16 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import ZohoEstimates from "./ZohoEstimates";
-import DppPricesDashboard from "./DppPricesDashboard";
-import SheetAnalysisDashboard from "./SheetAnalysisDashboard";
-import WaEngineDashboard from "./WaEngineDashboard";
-import WhatsAppMarketingDashboard from "./WhatsAppMarketingDashboard";
-import EnterpriseOperationsDashboard from "./EnterpriseOperationsDashboard";
+import dynamic from "next/dynamic";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+
+// Lazy-load each dashboard so only the opened one is fetched & parsed.
+const ZohoEstimates = dynamic(() => import("./ZohoEstimates"), { ssr: false });
+const DppPricesDashboard = dynamic(() => import("./DppPricesDashboard"), { ssr: false });
+const SheetAnalysisDashboard = dynamic(() => import("./SheetAnalysisDashboard"), { ssr: false });
+const WaEngineDashboard = dynamic(() => import("./WaEngineDashboard"), { ssr: false });
+const WhatsAppMarketingDashboard = dynamic(() => import("./WhatsAppMarketingDashboard"), { ssr: false });
+const EnterpriseOperationsDashboard = dynamic(() => import("./EnterpriseOperationsDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;

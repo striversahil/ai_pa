@@ -242,7 +242,7 @@ Worker handler (Hono)
 | State | React hooks (useState, useEffect, useMemo, useCallback) |
 | Persistence | D1 via Worker `/api/*` (shared baseline etc.); LocalStorage for UI prefs |
 | Package Manager | npm |
-| Hosting | Cloudflare Pages (static export; `functions/` excluded from typecheck) |
+| Hosting | Cloudflare Pages (`founder-os-frontend.pages.dev`) via `wrangler pages deploy out`; `functions/` = Pages Functions `/api` proxy (excluded from typecheck) |
 
 ### 3.2 Directory Structure
 ```
@@ -352,7 +352,21 @@ Views like `ZohoEstimates`, `FounderAssistant`, and `WhatsAppDashboard` manage t
 const API_BASE = '/api';
 ```
 
-`/api` is rewritten to the Worker origin in production via Pages `_redirects`/rewrites (same-origin path keeps the client code simple). Public worker endpoints are unauthenticated; runner endpoints (`/api/runner/*`) require the shared secret and are never called from the browser.
+`/api` is proxied to the Worker origin by **Pages Functions** (`functions/api/[[path]].ts`), so the client can use same-origin relative paths. The function forwards to `env.API_WORKER_URL` (falls back to `https://founder-os-worker.connect-bui2.workers.dev`) and rewrites the request to `/api/<path>` on the worker. Public worker endpoints are unauthenticated; runner endpoints (`/api/runner/*`) require the shared secret and are never called from the browser.
+
+### 3.8 Frontend Deployment (Cloudflare Pages)
+
+The frontend is a static Next.js export (`out/`) deployed to the **`founder-os-frontend`** Pages project (`https://founder-os-frontend.pages.dev`).
+
+```bash
+cd founder-os_frontend
+pnpm build            # produces ./out/ static export
+wrangler pages deploy out --project-name founder-os-frontend
+```
+
+- **Pages Functions** (`functions/api/[[path]].ts`, `functions/health/[[path]].ts`) are bundled automatically when deploying from the project root, and route `/api/*` and `/health` to the Worker.
+- The `functions/` directory is excluded from the Next.js typecheck (`tsconfig.json` `exclude`), since Pages Functions types come from `@cloudflare/workers-types`.
+- After a deploy, hard-refresh the browser to bust cached static assets.
 
 ---
 
@@ -528,12 +542,12 @@ const data = await api.get('/api/your-endpoint');
 | Component | Target | How |
 |-----------|--------|-----|
 | Backend | Cloudflare Workers | `node scripts/build-worker.mjs` (esbuild bundle) → `npx wrangler deploy` (D1 binding `DB`) |
-| Frontend | Cloudflare Pages | `pnpm build` → static export (`.next`/out) deployed to Pages |
+| Frontend | Cloudflare Pages (`founder-os-frontend`) | `pnpm build` (static export to `out/`) → `wrangler pages deploy out --project-name founder-os-frontend` (from `founder-os_frontend/`, so Pages Functions bundle is included) |
 | Cron/AI | GitHub Actions | `.github/workflows/cron-*.yml` schedules file-based runner scripts |
 | Secrets | GitHub Actions secrets + wrangler | `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_*` (GH); `SHARED_SECRET`, `DB` (wrangler) |
 
 ### Deployment Flow
 1. Backend changes: `node scripts/build-worker.mjs && node scripts/smoke-worker.mjs && npx wrangler deploy`.
-2. Frontend changes: `pnpm build` in `founder-os_frontend` → deploy the static export to Pages.
+2. Frontend changes: `pnpm build` in `founder-os_frontend`, then `wrangler pages deploy out --project-name founder-os-frontend` **from the frontend directory** so the `functions/` (Pages Functions `/api` proxy) bundle is included — deploying from the repo root silently drops the proxy.
 3. Cron changes: commit workflow YAML to `main`; GitHub Actions picks it up automatically.
-4. Verify: `scripts/smoke-worker.mjs` against the live worker URL covers public + auth paths.
+4. Verify: `scripts/smoke-worker.mjs` against the live worker URL covers public + auth paths; `curl https://founder-os-frontend.pages.dev/api/estimates/baseline` confirms the Pages `/api` proxy is live.
