@@ -339,16 +339,23 @@ class D1Model {
       const fk = rel.fk;
       const ids = [...new Set(rows.map((r) => r[ID_FIELDS[this.model]]).filter(Boolean))];
       if (!ids.length) continue;
-      const placeholders = ids.map(() => '?').join(',');
       let orderBy = '';
       if (relArgsObj.orderBy) {
         const ob = buildOrderBy(relArgsObj.orderBy);
         if (ob) orderBy = ` ORDER BY ${ob}`;
       }
       const take = relArgsObj.take !== undefined ? ` LIMIT ${Number(relArgsObj.take)}` : '';
-      const query = `SELECT * FROM ${rel.model} WHERE ${fk} IN (${placeholders})${orderBy}${take}`;
-      const { results } = await this.db.prepare(query).bind(...ids).all<Row>();
-      const relRows = results.map((r) => deserialize(rel.model, r));
+      const relRows: Row[] = [];
+      // D1 caps bound SQL variables per statement (100). Batch the IN-clause
+      // so large row sets (e.g. all Zoho estimates) don't exceed the limit.
+      const BATCH = 90;
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const chunk = ids.slice(i, i + BATCH);
+        const placeholders = chunk.map(() => '?').join(',');
+        const query = `SELECT * FROM ${rel.model} WHERE ${fk} IN (${placeholders})${orderBy}${take}`;
+        const { results } = await this.db.prepare(query).bind(...chunk).all<Row>();
+        relRows.push(...results.map((r) => deserialize(rel.model, r)));
+      }
       for (const row of rows) {
         const mine = relRows.filter((r) => r[fk] === row[ID_FIELDS[this.model]]);
         row[relName] = rel.one ? mine[0] ?? null : mine;
