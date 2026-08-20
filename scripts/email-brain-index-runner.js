@@ -44,13 +44,29 @@ function isoDay(d) {
   return isNaN(date.getTime()) ? 'None' : date.toISOString().split('T')[0];
 }
 
+async function withRetry(fn, attempts = 3, delayMs = 3000) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        console.log(`email-brain-index-runner: attempt ${i + 1} failed (${err.message}), retrying in ${delayMs / 1000}s...`);
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   console.log('email-brain-index-runner: syncing emails');
-  const emailRes = await workerRequest('/api/runner/emails', { method: 'POST', body: { emails: MOCK_EMAILS } });
+  const emailRes = await withRetry(() => workerRequest('/api/runner/emails', { method: 'POST', body: { emails: MOCK_EMAILS } }));
   console.log(`email-brain-index-runner: ${emailRes.count} emails stored`);
 
   console.log('email-brain-index-runner: fetching brain source data');
-  const sources = await workerRequest('/api/runner/brain/sources');
+  const sources = await withRetry(() => workerRequest('/api/runner/brain/sources'));
   const { messages = [], emails = [], digests = [], estimates = [], tasks = [] } = sources;
   const rows = [];
   let indexed = 0;
@@ -132,7 +148,7 @@ async function main() {
   console.log(`email-brain-index-runner: ${indexed} context entries to upsert`);
   for (let i = 0; i < rows.length; i += 100) {
     const batch = rows.slice(i, i + 100);
-    const res = await workerRequest('/api/runner/brain/context', { method: 'POST', body: { rows: batch } });
+    const res = await withRetry(() => workerRequest('/api/runner/brain/context', { method: 'POST', body: { rows: batch } }));
     console.log(`email-brain-index-runner: batch ${i / 100 + 1} upserted (${res.count})`);
   }
   console.log(`email-brain-index-runner: done — ${indexed} entries indexed`);
