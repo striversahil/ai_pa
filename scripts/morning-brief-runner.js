@@ -59,9 +59,20 @@ function isoDay(d) {
   return isNaN(date.getTime()) ? 'None' : date.toISOString().split('T')[0];
 }
 
+const CONTEXT_TOKEN_BUDGET = 5000;
+const estimateTokens = (s) => Math.ceil((s || '').length / 4);
+
+function trimContext(section, maxTokens) {
+  if (!section) return section;
+  if (estimateTokens(section) <= maxTokens) return section;
+  const maxChars = maxTokens * 4;
+  return `${section.slice(0, maxChars)}\n... (trimmed to fit model token budget)`;
+}
+
 function buildWhatsappDigestsContext(digests) {
   if (!digests || !digests.length) return 'No recent chat digests found.';
   return digests
+    .slice(0, 15)
     .map((d) => `- [${String(d.priority).toUpperCase()}] Chat: "${d.chatName}" (Category: ${d.category}) Summary: ${d.summary}`)
     .join('\n');
 }
@@ -69,7 +80,8 @@ function buildWhatsappDigestsContext(digests) {
 function buildEmailsContext(emails) {
   if (!emails || !emails.length) return 'No new/unread emails.';
   return emails
-    .map((e) => `- From: ${e.sender} | Subject: "${e.subject}" | Body Preview: ${e.body.substring(0, 80)}...`)
+    .slice(0, 15)
+    .map((e) => `- From: ${e.sender} | Subject: "${e.subject}" | Body Preview: ${e.body.substring(0, 60)}...`)
     .join('\n');
 }
 
@@ -91,7 +103,7 @@ function buildZohoContext(estimates) {
     if (scoreB !== scoreA) return scoreB - scoreA;
     return b.total - a.total;
   });
-  const lines = sorted.map((e) => {
+  const lines = sorted.slice(0, 30).map((e) => {
     const score = e.classification?.intentScore || 0;
     const reasons = e.classification?.reasoning || 'No analysis logs.';
     return `- **${e.customerName}** (Est. No: ${e.estimateNumber} | Total: ₹${Number(e.total).toLocaleString()}) - Intent Score: **${score}/10** | Reason: ${reasons}`;
@@ -136,7 +148,10 @@ async function main() {
   const whatsappDigests = buildWhatsappDigestsContext(digests);
   const emailsContext = buildEmailsContext(emails);
   const zohoContext = buildZohoContext(estimates);
-  const unreadEmails = zohoContext ? `${emailsContext}\n\n${zohoContext}` : emailsContext;
+  const unreadEmails = trimContext(
+    zohoContext ? `${emailsContext}\n\n${zohoContext}` : emailsContext,
+    Math.floor(CONTEXT_TOKEN_BUDGET * 0.6),
+  );
   const pendingTasks = buildTasksContext(tasks);
   const pendingFromFounder = buildPendingContext(pendingItems);
 
@@ -146,6 +161,12 @@ async function main() {
     .replace('{unreadEmails}', unreadEmails)
     .replace('{pendingTasks}', pendingTasks)
     .replace('{pendingFromFounder}', pendingFromFounder);
+
+  const totalTokens = estimateTokens(system);
+  console.log(`morning-brief-runner: context ~${totalTokens} tokens (budget ${CONTEXT_TOKEN_BUDGET})`);
+  if (totalTokens > CONTEXT_TOKEN_BUDGET) {
+    throw new Error(`Context too large for model TPM limit (${totalTokens} tokens > budget ${CONTEXT_TOKEN_BUDGET}). Refusing to call LLM.`);
+  }
 
   console.log('morning-brief-runner: generating brief via omniroute');
   const brief = await omniroute(system, 'Generate briefing now.', { temperature: 0.7 });
