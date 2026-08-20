@@ -278,15 +278,7 @@ async function classifyEstimate(custName, total, latestComment, dateVal, comment
       { temperature: 0 },
     );
   } catch (err) {
-    const rule = classifyDeterministic(latestComment, dateVal);
-    badgeResult = rule || {
-      meaningful_update: false,
-      not_answering: false,
-      under_discussion: false,
-      confirm: false,
-      confirm_date: 'None',
-      reasoning: `LLM unavailable (${err.message.slice(0, 80)}). Deterministic fallback applied.`,
-    };
+    throw new Error(`Omniroute badge classification failed: ${err.message}`);
   }
   let journeyResult;
   try {
@@ -294,7 +286,7 @@ async function classifyEstimate(custName, total, latestComment, dateVal, comment
       ? await omnirouteJson(journeyPrompt(), `Comment History:\n${commentHistory}`, { temperature: 0 })
       : { summary: 'No sales agent comment found.', intent_score: 2 };
   } catch (err) {
-    journeyResult = { summary: `LLM unavailable (${err.message.slice(0, 80)}).`, intent_score: 2 };
+    throw new Error(`Omniroute journey summary failed: ${err.message}`);
   }
   return { badgeResult, journeyResult };
 }
@@ -588,6 +580,11 @@ async function main() {
   }
 
   console.log(`zoho-sent-runner: done — processed ${processed}, skipped ${skipped}, failed ${failed}`);
+
+  if (failed > 0) {
+    console.error(`zoho-sent-runner: ${failed} estimate(s) failed (omniroute/LLM unreachable). Failing the run.`);
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {

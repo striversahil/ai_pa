@@ -184,6 +184,11 @@ async function main() {
   }
 
   console.log(`whatsapp-digest-runner: done — chats=${processedChats}, failed=${failedChats}, tasks=${tasksCreated}`);
+
+  if (failedChats > 0) {
+    console.error(`whatsapp-digest-runner: ${failedChats} chat(s) failed (omniroute/LLM unreachable). Failing the run.`);
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {
