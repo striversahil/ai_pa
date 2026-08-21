@@ -9,8 +9,10 @@
  * This automation is the read side only:
  *   - handler(): no-op (nothing to execute server-side)
  *   - data():    GET /api/automations/neodove-telecaller-report/data
- *                ?date=YYYY-MM-DD (default: latest stored day)
- *                → per-agent aggregates + individual KRA/KPI vs benchmarks.
+ *                ?date=YYYY-MM-DD | ?from=YYYY-MM-DD&to=YYYY-MM-DD
+ *                (default: latest stored day)
+ *                → per-agent aggregates summed across every stored day in the
+ *                  range + individual KRA/KPI vs per-day benchmarks.
  *
  * Individual KRA/KPI (benchmarks judged on today's live numbers):
  *   - ≥ 120 connected calls / agent / day
@@ -54,25 +56,40 @@ const NUMERIC_KEYS: (keyof NeodoveAgentRow)[] = [
   'leadsClosed', 'followupLeads', 'pendingScheduledLeads',
 ];
 
-async function loadReport(date?: string): Promise<{ reportDate: string; fetchedAt: string; rows: any[] } | null> {
-  let raw: string | null | undefined;
-  if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    const row = await prisma.setting.findUnique({ where: { key: `neodove_user_report:${date}` } });
-    raw = row?.value;
-  } else {
-    const rows = await prisma.setting.findMany({
-      where: { key: { startsWith: 'neodove_user_report:' } },
-      orderBy: { key: 'desc' },
-      take: 1,
-    });
-    raw = rows[0]?.value;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Load every stored user-day report between `from` and `to` (inclusive,
+ * YYYY-MM-DD lexicographic range over the Settings key). Days whose snapshot
+ * is empty (e.g. early-morning today mode) are skipped entirely so they do
+ * not dilute per-day averages.
+ */
+async function loadReportsInRange(from?: string, to?: string): Promise<{ dates: string[]; rows: any[] }> {
+  const prefix = 'neodove_user_report:';
+  const keyFilter: Record<string, unknown> = { startsWith: prefix };
+  if (from && DATE_RE.test(from)) keyFilter.gte = `${prefix}${from}`;
+  if (to && DATE_RE.test(to)) {
+    // `~` sorts right after ':' so the upper bound includes exactly this date.
+    keyFilter.lte = `${prefix}${to}~`;
   }
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
+  const settings = await prisma.setting.findMany({
+    where: { key: keyFilter },
+    orderBy: { key: 'desc' },
+  });
+  const dates: string[] = [];
+  const rows: any[] = [];
+  for (const s of settings) {
+    try {
+      const parsed = JSON.parse(s.value);
+      if (Array.isArray(parsed?.rows) && parsed.rows.length > 0) {
+        dates.push(s.key.slice(prefix.length));
+        rows.push(...parsed.rows);
+      }
+    } catch {
+      // skip malformed snapshots
+    }
   }
+  return { dates, rows };
 }
 
 function aggregate(rows: any[]): NeodoveAgentRow[] {
@@ -115,12 +132,18 @@ function lightFor(pct: number): TrafficLight {
 const ORDER: Record<TrafficLight, number> = { green: 0, amber: 1, red: 2 };
 
 export interface AgentKra {
+  /** Effective target for the whole range (daily × active days). */
   connectedTarget: number;
+  connectedDailyTarget: number;
   connected: number;
+  connectedAvgPerDay: number;
   connectedPct: number;
   connectedStatus: TrafficLight;
+  /** Effective target for the whole range (daily × active days). */
   leadsTarget: number;
+  leadsDailyTarget: number;
   leads: number;
+  leadsAvgPerDay: number;
   leadsPct: number;
   leadsStatus: TrafficLight;
   overall: TrafficLight;
@@ -191,22 +214,33 @@ export function computeAgentKra(
   connectedTarget: number,
   leadsTarget: number,
   zoho?: { estimates: number; value: number },
+  days = 1,
 ): AgentKra {
+  const d = Math.max(1, days);
   const leads = agent.leadsInProgress + agent.leadsConverted;
-  const connectedPct = Math.round((agent.callsConnected / connectedTarget) * 100);
-  const leadsPct = Math.round((leads / leadsTarget) * 100);
+  // Benchmark scales with the range: e.g. a week of data targets 7 × daily.
+  const effConnectedTarget = Math.round(connectedTarget * d);
+  const effLeadsTarget = Math.round(leadsTarget * d);
+  const connectedAvg = agent.callsConnected / d;
+  const leadsAvg = leads / d;
+  const connectedPct = Math.round((agent.callsConnected / effConnectedTarget) * 100);
+  const leadsPct = Math.round((leads / effLeadsTarget) * 100);
   const connectedStatus = lightFor(connectedPct);
   const leadsStatus = lightFor(leadsPct);
   const overall = ORDER[connectedStatus] >= ORDER[leadsStatus] ? connectedStatus : leadsStatus;
   const overallLabel =
     overall === 'green' ? 'On Target 🟢' : overall === 'amber' ? 'Partially On Target 🟡' : 'Below Target 🔴';
   return {
-    connectedTarget,
+    connectedTarget: effConnectedTarget,
+    connectedDailyTarget: connectedTarget,
     connected: agent.callsConnected,
+    connectedAvgPerDay: Number(connectedAvg.toFixed(1)),
     connectedPct,
     connectedStatus,
-    leadsTarget,
+    leadsTarget: effLeadsTarget,
+    leadsDailyTarget: leadsTarget,
     leads,
+    leadsAvgPerDay: Number(leadsAvg.toFixed(1)),
     leadsPct,
     leadsStatus,
     overall,
@@ -221,18 +255,37 @@ export async function handler(ctx: AutomationContext): Promise<void> {
 }
 
 export async function data(ctx: AutomationContext): Promise<any> {
-  const date = typeof ctx.subject?.date === 'string' ? ctx.subject.date : undefined;
+  const q = ctx.subject ?? {};
+  let from = typeof q.from === 'string' && DATE_RE.test(q.from) ? q.from : undefined;
+  let to = typeof q.to === 'string' && DATE_RE.test(q.to) ? q.to : undefined;
+  if (from && !to) to = from;
+  if (to && !from) from = to;
+  const legacyDate = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : undefined;
+  if (!from && legacyDate) from = legacyDate;
+  // No params at all → latest stored day only.
+  if (!from && !to && !legacyDate) {
+    const latest = await prisma.setting.findFirst({
+      where: { key: { startsWith: 'neodove_user_report:' } },
+      orderBy: { key: 'desc' },
+    });
+    from = latest?.key.slice('neodove_user_report:'.length);
+    to = from;
+  }
   const connectedTarget = Number(ctx.config?.connectedCallsPerDay ?? CONNECTED_CALLS_PER_DAY) || CONNECTED_CALLS_PER_DAY;
   const leadsTarget = Number(ctx.config?.leadsPerAgentPerDay ?? LEADS_PER_AGENT_PER_DAY) || LEADS_PER_AGENT_PER_DAY;
-  const report = await loadReport(date);
-  if (!report) {
+  // No params → latest stored day; explicit from/to (or date) → inclusive multi-day range.
+  const { dates, rows } = await loadReportsInRange(from, from ? (to ?? from) : undefined);
+  if (!rows.length) {
     return {
       meta: {
         analysis: 'neodove-live',
+        title: 'Telecaller Performance (NeoDove Live)',
         reportDate: null,
+        range: from ? { from, to: to ?? from, days: 0 } : null,
         configured: true,
         generatedAt: new Date().toISOString(),
-        error: 'No NeoDove report stored yet — waiting for GH Actions runner push.',
+        error:
+          'No NeoDove report stored for the requested range — waiting for GH Actions runner pushes (backfill via workflow_dispatch input neodove_backfill_days).',
       },
       agents: [],
       totals: null,
@@ -240,9 +293,10 @@ export async function data(ctx: AutomationContext): Promise<any> {
       zohoUnmapped: [],
     };
   }
+  const days = dates.length;
   const nameMap = await loadZohoNameMap();
   const { byAgent: zohoByAgent, byZohoName } = await loadZohoByAgent(nameMap);
-  const baseAgents = aggregate(report.rows ?? []);
+  const baseAgents = aggregate(rows);
   const totals = baseAgents.reduce(
     (acc, a) => {
       for (const k of NUMERIC_KEYS) {
@@ -254,7 +308,7 @@ export async function data(ctx: AutomationContext): Promise<any> {
   );
   const agents = baseAgents.map((a) => ({
     ...a,
-    kra: computeAgentKra(a, connectedTarget, leadsTarget, zohoByAgent[a.userName]),
+    kra: computeAgentKra(a, connectedTarget, leadsTarget, zohoByAgent[a.userName], days),
   }));
   agents.sort((x, y) => {
     if (ORDER[y.kra.overall] !== ORDER[x.kra.overall]) return ORDER[x.kra.overall] - ORDER[y.kra.overall];
@@ -266,13 +320,15 @@ export async function data(ctx: AutomationContext): Promise<any> {
   const zohoUnmapped = Object.entries(byZohoName)
     .filter(([name]) => !mappedZohoNames.has(name.trim().toLowerCase()))
     .map(([name, s]) => ({ zohoName: name, estimates: s.estimates, value: s.value }));
-  logger.info({ reportDate: report.reportDate, agents: agents.length }, 'NeoDove report data served');
+  logger.info({ range: from ? `${from}..${to}` : 'latest', days, agents: agents.length }, 'NeoDove report data served');
   return {
     meta: {
       analysis: 'neodove-live',
       title: 'Telecaller Performance (NeoDove Live)',
-      reportDate: report.reportDate,
-      fetchedAt: report.fetchedAt,
+      reportDate: dates[0] ?? null,
+      range: from ? { from, to: to ?? from, days } : { from: dates[0], to: dates[0], days },
+      dates,
+      fetchedAt: new Date().toISOString(),
       generatedAt: new Date().toISOString(),
       agentCount: agents.length,
     },

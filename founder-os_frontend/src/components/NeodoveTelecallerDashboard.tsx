@@ -6,11 +6,15 @@ type TrafficLight = "green" | "amber" | "red";
 
 type Kra = {
   connectedTarget: number;
+  connectedDailyTarget?: number;
   connected: number;
+  connectedAvgPerDay?: number;
   connectedPct: number;
   connectedStatus: TrafficLight;
   leadsTarget: number;
+  leadsDailyTarget?: number;
   leads: number;
+  leadsAvgPerDay?: number;
   leadsPct: number;
   leadsStatus: TrafficLight;
   overall: TrafficLight;
@@ -46,6 +50,8 @@ type DataResponse = {
   meta: {
     analysis: string;
     reportDate: string | null;
+    range?: { from: string | null; to: string | null; days: number } | null;
+    dates?: string[];
     fetchedAt?: string;
     generatedAt: string;
     agentCount?: number;
@@ -58,6 +64,76 @@ type DataResponse = {
 };
 
 const REFRESH_MS = 5 * 60 * 1000;
+
+type PresetKey =
+  | "today" | "yesterday" | "this_week" | "last_week"
+  | "this_month" | "last_month" | "last_7_days" | "last_30_days"
+  | "all_time" | "custom";
+
+const PRESETS: { key: PresetKey; label: string }[] = [
+  { key: "today", label: "Today (live)" },
+  { key: "yesterday", label: "Yesterday" },
+  { key: "this_week", label: "This Week" },
+  { key: "last_week", label: "Last Week" },
+  { key: "this_month", label: "This Month" },
+  { key: "last_month", label: "Last Month" },
+  { key: "last_7_days", label: "Last 7 Days" },
+  { key: "last_30_days", label: "Last 30 Days" },
+  { key: "all_time", label: "All Time" },
+  { key: "custom", label: "Custom Range…" },
+];
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function istToday(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date()).slice(0, 10);
+}
+
+function addDays(dateStr: string, delta: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+}
+
+function computeRange(preset: PresetKey, customFrom: string, customTo: string): { from?: string; to?: string } {
+  const today = istToday();
+  switch (preset) {
+    case "today": return { from: today, to: today };
+    case "yesterday": { const y = addDays(today, -1); return { from: y, to: y }; }
+    case "this_week": {
+      const [y, m, d] = today.split("-").map(Number);
+      const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sun
+      return { from: addDays(today, -((dow + 6) % 7)), to: today }; // Mon → today
+    }
+    case "last_week": {
+      const [y, m, d] = today.split("-").map(Number);
+      const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+      const mon = addDays(today, -((dow + 6) % 7));
+      return { from: addDays(mon, -7), to: addDays(mon, -1) };
+    }
+    case "this_month": return { from: `${today.slice(0, 8)}01`, to: today };
+    case "last_month": {
+      const firstOfThisMonth = `${today.slice(0, 8)}01`;
+      const lastOfPrev = addDays(firstOfThisMonth, -1);
+      return { from: `${lastOfPrev.slice(0, 8)}01`, to: lastOfPrev };
+    }
+    case "last_7_days": return { from: addDays(today, -6), to: today };
+    case "last_30_days": return { from: addDays(today, -29), to: today };
+    case "all_time": return { from: "2020-01-01", to: today };
+    case "custom":
+      if (DATE_RE.test(customFrom) && DATE_RE.test(customTo)) {
+        return customFrom <= customTo ? { from: customFrom, to: customTo } : { from: customTo, to: customFrom };
+      }
+      return {};
+  }
+}
+
+function fmtRangeLabel(from?: string | null, to?: string | null): string {
+  if (!from && !to) return "";
+  if (from === to) return from!;
+  return `${from} – ${to}`;
+}
 
 const LIGHT_TEXT: Record<TrafficLight, string> = {
   green: "text-emerald-400",
@@ -109,11 +185,24 @@ export default function NeodoveTelecallerDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
+  const [preset, setPreset] = useState<PresetKey>("today");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
+  // Recompute the active range whenever the preset / custom dates change.
+  const range = React.useMemo(
+    () => computeRange(preset, customFrom, customTo),
+    [preset, customFrom, customTo],
+  );
+  const rangeRef = React.useRef(range);
+  rangeRef.current = range;
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
     try {
-      const res = await fetch("/api/automations/neodove-telecaller-report/data", { cache: "no-store" });
+      const { from, to } = rangeRef.current;
+      const qs = from && to ? `?from=${from}&to=${to}` : "";
+      const res = await fetch(`/api/automations/neodove-telecaller-report/data${qs}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: DataResponse = await res.json();
       setData(json);
@@ -128,17 +217,25 @@ export default function NeodoveTelecallerDashboard() {
   }, []);
 
   useEffect(() => {
-    load();
+    load(true);
+  }, [load, range]);
+
+  useEffect(() => {
     const t = setInterval(() => load(), REFRESH_MS);
     return () => clearInterval(t);
   }, [load]);
 
   const agents = data?.agents ?? [];
   const totals = data?.totals;
-  const reportDate = data?.meta.reportDate;
   const benchmarks = data?.benchmarks ?? { connectedCallsPerDay: 120, leadsPerAgentPerDay: 5 };
   const zohoUnmapped = data?.zohoUnmapped ?? [];
   const withKra = agents.filter((a) => a.kra);
+  const days = data?.meta.range?.days ?? 1;
+  const multiDay = days > 1;
+  const rangeLabel =
+    data?.meta.range && data.meta.range.days > 0
+      ? fmtRangeLabel(data.meta.range.from, data.meta.range.to)
+      : data?.meta.reportDate ?? "";
 
   return (
     <div className="space-y-4 text-zinc-100">
@@ -148,17 +245,46 @@ export default function NeodoveTelecallerDashboard() {
           <div>
             <h2 className="text-xl font-bold">📞 Telecaller Performance — Individual KRA/KPI</h2>
             <p className="text-xs text-zinc-400 mt-1">
-              {reportDate ? (
+              {rangeLabel ? (
                 <>
-                  <span className="text-indigo-300 font-semibold">{reportDate}</span> · live vs daily benchmarks · auto-refreshes every 5 min
-                  {data?.meta.fetchedAt && <> · NeoDove fetched {new Date(data.meta.fetchedAt).toLocaleTimeString()}</>}
+                  <span className="text-indigo-300 font-semibold">{rangeLabel}</span>
+                  {multiDay && <> · <span className="text-zinc-300 font-semibold">{days} active days</span> · totals summed, benchmarks judged on avg/day</>}
+                  {!multiDay && <> · live vs daily benchmarks</>}
+                  {" "}· auto-refreshes every 5 min
                 </>
               ) : (
                 "Waiting for first report…"
               )}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={preset}
+              onChange={(e) => setPreset(e.target.value as PresetKey)}
+              className="px-3 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              aria-label="Report date range"
+            >
+              {PRESETS.map((p) => (
+                <option key={p.key} value={p.key}>{p.label}</option>
+              ))}
+            </select>
+            {preset === "custom" && (
+              <>
+                <input
+                  type="date" value={customFrom} max={istToday()}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  className="px-2 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+                  aria-label="From date"
+                />
+                <span className="text-xs text-zinc-500">→</span>
+                <input
+                  type="date" value={customTo} max={istToday()}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  className="px-2 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+                  aria-label="To date"
+                />
+              </>
+            )}
             {lastLoaded && (
               <span className="text-[11px] text-zinc-500">updated {lastLoaded.toLocaleTimeString()}</span>
             )}
@@ -173,7 +299,9 @@ export default function NeodoveTelecallerDashboard() {
         </div>
         <p className="mt-2 text-[11px] text-zinc-500">
           Benchmarks per agent/day: <span className="text-zinc-300 font-semibold">≥ {benchmarks.connectedCallsPerDay} connected calls</span> ·{" "}
-          <span className="text-zinc-300 font-semibold">≥ {benchmarks.leadsPerAgentPerDay} leads</span> (in-progress + converted). Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
+          <span className="text-zinc-300 font-semibold">≥ {benchmarks.leadsPerAgentPerDay} leads</span> (in-progress + converted)
+          {multiDay && <> — scaled to <span className="text-indigo-300 font-semibold">{benchmarks.connectedCallsPerDay * days} calls / {benchmarks.leadsPerAgentPerDay * days} leads for {days} active days</span></>}
+          . Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
         </p>
         {error && (
           <p className="mt-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{error}</p>
@@ -183,7 +311,9 @@ export default function NeodoveTelecallerDashboard() {
       {/* Individual Agent KRA/KPI cards */}
       {!loading && withKra.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-indigo-300">🎯 Individual Agent KRA — Today vs Benchmark</h3>
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-indigo-300">
+            🎯 Individual Agent KRA — {multiDay ? "Range Total vs Scaled Benchmark" : "Today vs Benchmark"}
+          </h3>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {withKra.map((a) => {
               const k = a.kra!;
@@ -202,6 +332,12 @@ export default function NeodoveTelecallerDashboard() {
                   </div>
                   <KraBar label="Connected Calls" value={k.connected} target={k.connectedTarget} pct={k.connectedPct} status={k.connectedStatus} />
                   <KraBar label="Leads Generated" value={k.leads} target={k.leadsTarget} pct={k.leadsPct} status={k.leadsStatus} />
+                  {multiDay && (
+                    <div className="flex items-center justify-between text-[10px] text-zinc-500">
+                      <span>Range avg/day</span>
+                      <span className="font-mono text-zinc-400">{k.connectedAvgPerDay ?? "—"}/{k.connectedDailyTarget ?? benchmarks.connectedCallsPerDay} calls · {k.leadsAvgPerDay ?? "—"}/{k.leadsDailyTarget ?? benchmarks.leadsPerAgentPerDay} leads</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-500">
                     <span>Zoho pipeline</span>
                     {k.zohoEstimates > 0 ? (
@@ -261,7 +397,7 @@ export default function NeodoveTelecallerDashboard() {
                   <th className="px-4 py-3">Manager</th>
                   <th className="px-4 py-3 text-right">Attempted</th>
                   <th className="px-4 py-3 text-right">Connected</th>
-                  <th className="px-4 py-3 text-right">Conn. % of 120</th>
+                  <th className="px-4 py-3 text-right">% of Target</th>
                   <th className="px-4 py-3 text-right">Leads (IP+Cv)</th>
                   <th className="px-4 py-3 text-right">Not Conn.</th>
                   <th className="px-4 py-3 text-right">Incoming</th>
