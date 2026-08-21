@@ -13,6 +13,11 @@ on:
     # neodove-report 12:30 AM IST = 19:00 UTC (reports yesterday)
     - cron: "0 19 * * *"
   workflow_dispatch:
+    inputs:
+      neodove_backfill_days:
+        description: "Neodove: backfill N past days (1 = yesterday only)"
+        required: false
+        default: ""
 
 jobs:
   baseline-freeze:
@@ -59,9 +64,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: neodove-report (yesterday's telecaller call report)
+      - name: neodove-report (yesterday's telecaller call report, or N-day backfill)
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           NEODOVE_USER_IDS: ${{ secrets.NEODOVE_USER_IDS }}
-        run: node scripts/neodove-report-runner.js
+          BACKFILL_DAYS: ${{ github.event.inputs.neodove_backfill_days }}
+        run: |
+          if [ -n "$BACKFILL_DAYS" ]; then
+            echo "backfilling last $BACKFILL_DAYS days"
+            for i in $(seq 1 "$BACKFILL_DAYS"); do
+              d=$(date -d "-$i days" +%F)
+              echo "--- $d ---"
+              node scripts/neodove-report-runner.js "$d" || echo "::warning::backfill failed for $d"
+            done
+          else
+            node scripts/neodove-report-runner.js
+          fi
