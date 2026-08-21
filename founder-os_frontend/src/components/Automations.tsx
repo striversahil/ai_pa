@@ -222,7 +222,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
   };
 
   return (
-    <div className="space-y-6 text-zinc-100 pb-12">
+    <div className="space-y-6 text-zinc-100">
       <div className="border-b border-zinc-800 pb-5">
         <h1 className="text-3xl font-bold font-heading tracking-tight">
           <span className="bg-gradient-to-r from-white via-indigo-100 to-indigo-400 bg-clip-text text-transparent">Automations</span>
