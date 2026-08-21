@@ -249,6 +249,27 @@ Many external services (NeoDove, Zoho Books, Google Sheets, etc.) require OAuth 
 
 **Why not GitHub Secrets?** Token rotation is frequent (OTP login every few days). GH Secrets require manual update; this webhook pattern is fully automated. The token is never in repo config.
 
+### 2.8 External Scheduling (cron-job.org → workflow_dispatch)
+
+GitHub Actions native `schedule` is **unreliable in practice**: measured runs show 30–40 min delays (e.g. a `*/5` cron executed only ~40×/24h instead of 288). All recurring workflows are therefore triggered externally:
+
+```
+cron-job.org (UTC schedule, POST + PAT header)
+  └─ https://api.github.com/repos/striversahil/ai_pa/actions/workflows/<wf>/dispatches
+       └─ GitHub Actions runs the workflow's jobs on demand
+```
+
+| cron-job.org job | Schedule (UTC) | Workflow |
+|------------------|----------------|----------|
+| ai_pa - every 5 min (`8293639`) | */5 | `cron-every-5min.yml` |
+| ai_pa - every 10 min (`8302513`) | */10 | `cron-every-10min.yml` — NeoDove today-refresh |
+| ai_pa - every 15 min (`8293640`) | */15 | `cron-every-15min.yml` |
+| ai_pa - every 30 min (`8293641`) | */30 | `cron-every-30min.yml` |
+| ai_pa - daily IST (`8293642`) | 02:30/03:30/13:30/21:30 | `cron-daily-ist.yml` |
+
+- Each job sends `{"ref":"main"}` with an `Authorization: Bearer <PAT>` header; workflows also keep a `schedule:` block as fallback but external dispatch is the primary trigger.
+- Manual equivalent: `GITHUB_PAT=... ./scripts/trigger-workflows.sh <every-5min|every-10min|every-15min|every-30min|daily|all>`.
+
 ---
 
 ## 3. Frontend Architecture
