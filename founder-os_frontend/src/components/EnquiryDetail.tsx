@@ -134,7 +134,7 @@ export default function EnquiryDetail({
 
           <button 
             onClick={() => onDeleteEnquiry(selectedEnquiry.id)} 
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand-rose/10 border border-brand-rose/25 text-brand-rose hover:bg-brand-rose hover:text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand-rose/10 border border-brand-rose/25 text-brand-rose hover:bg-brand-rose hover:text-zinc-900 dark:hover:text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
             type="button"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -194,7 +194,7 @@ export default function EnquiryDetail({
                   {replyToCommentId && (
                     <div className="flex items-center justify-between bg-brand-indigo/10 px-3 py-1.5 rounded-lg mb-2 text-xs">
                       <span className="font-semibold text-brand-indigo">Replying to comment...</span>
-                      <button onClick={() => setReplyToCommentId(null)} className="text-zinc-400 hover:text-zinc-200 cursor-pointer font-bold bg-transparent border-0">&times;</button>
+                      <button onClick={() => setReplyToCommentId(null)} className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer font-bold bg-transparent border-0">&times;</button>
                     </div>
                   )}
                   
@@ -209,13 +209,13 @@ export default function EnquiryDetail({
                     {commentImage && (
                       <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-[var(--border-card)]">
                         <img src={commentImage} alt="Attachment preview" className="w-full h-full object-cover" />
-                        <button type="button" onClick={() => setCommentImage(null)} className="absolute top-1 right-1 bg-black/75 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs cursor-pointer font-bold border-0">&times;</button>
+                        <button type="button" onClick={() => setCommentImage(null)} className="absolute top-1 right-1 bg-black/75 text-zinc-900 dark:text-white w-5 h-5 rounded-full flex items-center justify-center text-xs cursor-pointer font-bold border-0">&times;</button>
                       </div>
                     )}
 
                     <div className="flex justify-between items-center pt-2 border-t border-[var(--border-card)]/50">
                       <div className="flex gap-2">
-                        <label className="p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer rounded-lg bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-all">
+                        <label className="p-1.5 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer rounded-lg bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-all">
                           <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                           </svg>
@@ -223,7 +223,7 @@ export default function EnquiryDetail({
                         </label>
                       </div>
 
-                      <button type="submit" className="bg-brand-indigo hover:opacity-90 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-all duration-200 cursor-pointer">
+                      <button type="submit" className="bg-brand-indigo hover:opacity-90 text-zinc-900 dark:text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-all duration-200 cursor-pointer">
                         {replyToCommentId ? "Reply" : "Comment"}
                       </button>
                     </div>

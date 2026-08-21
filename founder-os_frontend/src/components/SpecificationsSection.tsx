@@ -21,7 +21,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
       <div className="space-y-4">
         <div>
           <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">Specifications & Scope</span>
-          <p className="text-xs md:text-sm text-zinc-900 dark:text-white font-medium whitespace-pre-wrap leading-relaxed bg-[var(--bg-input)]/25 p-3.5 rounded-xl border border-[var(--border-card)]/50">
+          <p className="text-xs md:text-sm text-zinc-900 dark:text-zinc-900 dark:dark:text-white font-medium whitespace-pre-wrap leading-relaxed bg-[var(--bg-input)]/25 p-3.5 rounded-xl border border-[var(--border-card)]/50">
             {selectedEnquiry.description || "No specifications provided."}
           </p>
         </div>
@@ -32,7 +32,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
             <div className="flex flex-wrap gap-3">
               {/* Render Image 1 */}
               <div 
-                className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
+                className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-50/5 dark:bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
                 onClick={() => onOpenLightbox(selectedEnquiry.imageUrls![0], selectedEnquiry.imageUrls, 0)}
               >
                 <img 
@@ -41,7 +41,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
                   className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200" 
                 />
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-all duration-200">
-                  <svg className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <svg className="w-5 h-5 text-zinc-900 dark:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
                 </div>
@@ -50,7 +50,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
               {/* Render Image 2 */}
               {selectedEnquiry.imageUrls.length > 1 && (
                 <div 
-                  className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
+                  className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-50/5 dark:bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
                   onClick={() => onOpenLightbox(selectedEnquiry.imageUrls![1], selectedEnquiry.imageUrls, 1)}
                 >
                   <img 
@@ -59,7 +59,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
                     className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200" 
                   />
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-all duration-200">
-                    <svg className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <svg className="w-5 h-5 text-zinc-900 dark:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   </div>
@@ -69,7 +69,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
               {/* Render Image 3 (or more with overlay) */}
               {selectedEnquiry.imageUrls.length > 2 && (
                 <div 
-                  className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
+                  className="relative w-32 h-32 md:w-36 md:h-36 rounded-xl overflow-hidden border border-[var(--border-card)] group cursor-zoom-in bg-zinc-50/5 dark:bg-zinc-900/5 dark:bg-white/5 flex-shrink-0"
                   onClick={() => onOpenLightbox(selectedEnquiry.imageUrls![2], selectedEnquiry.imageUrls, 2)}
                 >
                   <img 
@@ -79,13 +79,13 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
                   />
                   {selectedEnquiry.imageUrls.length > 3 ? (
                     /* Instagram-style overlay showing remaining images count */
-                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-white transition-all duration-200 group-hover:bg-black/50 select-none">
+                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-zinc-900 dark:text-white transition-all duration-200 group-hover:bg-black/50 select-none">
                       <span className="text-xl font-extrabold tracking-tight">+{selectedEnquiry.imageUrls.length - 3}</span>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-300 mt-0.5">drawings</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300 mt-0.5">drawings</span>
                     </div>
                   ) : (
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-all duration-200">
-                      <svg className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <svg className="w-5 h-5 text-zinc-900 dark:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                       </svg>
                     </div>

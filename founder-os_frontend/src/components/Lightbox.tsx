@@ -62,7 +62,7 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
       <a 
         href={activeImage} 
         download={`drawing-${currentIndex + 1}.png`}
-        className="absolute top-4 right-16 text-white hover:text-zinc-400 p-2 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors flex items-center justify-center"
+        className="absolute top-4 right-16 text-zinc-900 dark:text-white hover:text-zinc-500 dark:hover:text-zinc-400 p-2 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors flex items-center justify-center"
         onClick={(e) => e.stopPropagation()}
         title="Download Image"
       >
@@ -73,7 +73,7 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
 
       {/* Close button */}
       <button 
-        className="absolute top-4 right-4 text-white hover:text-zinc-400 p-2 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10"
+        className="absolute top-4 right-4 text-zinc-900 dark:text-white hover:text-zinc-500 dark:hover:text-zinc-400 p-2 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10"
         onClick={onClose}
         type="button"
       >
@@ -85,7 +85,7 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
       {/* Prev button */}
       {activeImages.length > 1 && (
         <button 
-          className="absolute left-4 top-1/2 -translate-y-1/2 text-white hover:text-zinc-400 p-2.5 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors"
+          className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-900 dark:text-white hover:text-zinc-500 dark:hover:text-zinc-400 p-2.5 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors"
           onClick={handlePrev}
           type="button"
         >
@@ -98,7 +98,7 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
       {/* Next button */}
       {activeImages.length > 1 && (
         <button 
-          className="absolute right-4 top-1/2 -translate-y-1/2 text-white hover:text-zinc-400 p-2.5 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors"
+          className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-900 dark:text-white hover:text-zinc-500 dark:hover:text-zinc-400 p-2.5 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors"
           onClick={handleNext}
           type="button"
         >
@@ -119,7 +119,7 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
         
         {/* Caption/Counter */}
         {activeImages.length > 1 && (
-          <span className="mt-3 px-3 py-1 bg-black/50 border border-white/10 text-white text-xs font-semibold rounded-full select-none">
+          <span className="mt-3 px-3 py-1 bg-black/50 border border-white/10 text-zinc-900 dark:text-white text-xs font-semibold rounded-full select-none">
             {currentIndex + 1} / {activeImages.length}
           </span>
         )}

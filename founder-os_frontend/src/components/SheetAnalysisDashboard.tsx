@@ -48,11 +48,11 @@ type SheetData = {
 };
 
 const ACCENT_CLASS: Record<string, { text: string; glow: string }> = {
-  indigo: { text: "text-indigo-400", glow: "bg-indigo-500/10" },
-  emerald: { text: "text-emerald-400", glow: "bg-emerald-500/10" },
-  rose: { text: "text-rose-400", glow: "bg-rose-500/10" },
-  amber: { text: "text-amber-400", glow: "bg-amber-500/10" },
-  violet: { text: "text-violet-400", glow: "bg-violet-500/10" },
+  indigo: { text: "text-indigo-600 dark:text-indigo-indigo400", glow: "bg-indigo-500/10" },
+  emerald: { text: "text-emerald-600 dark:text-emerald-emerald400", glow: "bg-emerald-500/10" },
+  rose: { text: "text-rose-600 dark:text-rose-rose400", glow: "bg-rose-500/10" },
+  amber: { text: "text-amber-600 dark:text-amber-amber400", glow: "bg-amber-500/10" },
+  violet: { text: "text-violet-600 dark:text-violet-violet400", glow: "bg-violet-500/10" },
 };
 
 const formatIso = (d: Date) =>
@@ -157,32 +157,32 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
 
   if (!loading && !error && data && data.meta?.analysis !== "sheet") {
     return (
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-10 text-center text-sm text-zinc-500">
-        No dashboard wired for <code className="text-zinc-300">{slug}</code> yet.
+      <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-10 text-center text-sm text-zinc-600 dark:text-zinc-500">
+        No dashboard wired for <code className="text-zinc-700 dark:text-zinc-300">{slug}</code> yet.
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 text-zinc-100 pb-12">
+    <div className="space-y-6 text-zinc-900 dark:text-zinc-100 pb-12">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-zinc-800 pb-5">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
         <div>
           <h1 className="text-2xl font-bold font-heading tracking-tight flex items-center gap-2">
             <span>📊</span> {data?.meta?.title ?? "Sheet Analysis"}
           </h1>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
             {data?.meta?.rowsRead ?? "—"} rows · range {data?.meta?.range ?? "—"}
             {data?.meta?.generatedAt && ` · updated ${new Date(data.meta.generatedAt).toLocaleTimeString()}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg p-1.5 text-xs">
-            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider pl-1">Range:</span>
+          <div className="flex items-center gap-1.5 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-1.5 text-xs">
+            <span className="text-[10px] text-zinc-600 dark:text-zinc-500 font-bold uppercase tracking-wider pl-1">Range:</span>
             <select
               onChange={(e) => applyPreset(e.target.value)}
               defaultValue="all"
-              className="bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs rounded-md px-2 py-1 focus:outline-none focus:border-indigo-500 cursor-pointer"
+              className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 text-xs rounded-md px-2 py-1 focus:outline-none focus:border-indigo-500 cursor-pointer"
             >
               <option value="all">All Available</option>
               <option value="today">Today</option>
@@ -194,19 +194,19 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="bg-zinc-950 border border-zinc-800 text-white text-xs rounded-md px-2 py-1 focus:outline-none focus:border-indigo-500"
+              className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white text-xs rounded-md px-2 py-1 focus:outline-none focus:border-indigo-500"
             />
-            <span className="text-zinc-600 font-bold">➔</span>
+            <span className="text-zinc-500 dark:text-zinc-600 font-bold">➔</span>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="bg-zinc-950 border border-zinc-800 text-white text-xs rounded-md px-2 py-1 focus:outline-none focus:border-indigo-500"
+              className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white text-xs rounded-md px-2 py-1 focus:outline-none focus:border-indigo-500"
             />
           </div>
           <button
             onClick={fetchData}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition-all duration-200 cursor-pointer border-0"
+            className="text-white flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-medium text-xs transition-all duration-200 cursor-pointer border-0"
           >
             <span>🔄</span> Refresh
           </button>
@@ -216,22 +216,22 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
       {/* Not-configured / error banners */}
       {!loading && !error && data && !data.meta.configured && (
         <div className="bg-amber-950/10 border border-amber-900/30 rounded-xl p-4 text-xs text-amber-200/90 leading-relaxed">
-          ⚠️ Google Sheets is not configured. Add <code className="bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-300">google-service-account.json</code> or set <code className="bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-300">GOOGLE_SERVICE_ACCOUNT_JSON</code> to connect a live sheet.
+          ⚠️ Google Sheets is not configured. Add <code className="bg-zinc-50 dark:bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-600 dark:text-rose-rose300">google-service-account.json</code> or set <code className="bg-zinc-50 dark:bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-600 dark:text-rose-rose300">GOOGLE_SERVICE_ACCOUNT_JSON</code> to connect a live sheet.
         </div>
       )}
       {!loading && error && (
-        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-5 text-sm text-rose-300">
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-5 text-sm text-rose-600 dark:text-rose-rose300">
           {error}
         </div>
       )}
       {!loading && !error && data && data.meta.error && data.meta.configured && (
-        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 text-xs text-rose-300">
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 text-xs text-rose-600 dark:text-rose-rose300">
           ⚠️ {data.meta.error}
         </div>
       )}
 
       {loading && (
-        <div className="flex items-center justify-center py-20 text-zinc-400">
+        <div className="flex items-center justify-center py-20 text-zinc-500 dark:text-zinc-400">
           <span className="animate-pulse">Loading sheet analysis...</span>
         </div>
       )}
@@ -244,11 +244,11 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
               {data.kpis.map((kpi) => {
                 const accent = ACCENT_CLASS[kpi.accent ?? "indigo"] ?? ACCENT_CLASS.indigo;
                 return (
-                  <div key={kpi.label} className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between shadow-md relative overflow-hidden">
+                  <div key={kpi.label} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between shadow-md relative overflow-hidden">
                     <div className={`absolute top-0 right-0 p-2 text-5xl font-bold font-mono ${accent.glow}`}>•</div>
-                    <span className="text-zinc-400 text-[10px] font-semibold uppercase tracking-wider">{kpi.label}</span>
+                    <span className="text-zinc-500 dark:text-zinc-400 text-[10px] font-semibold uppercase tracking-wider">{kpi.label}</span>
                     <span className={`text-2xl font-extrabold mt-1 z-10 font-mono ${accent.text}`}>{kpi.value}</span>
-                    {kpi.sub && <span className="text-[9px] text-zinc-500 mt-0.5 font-medium">{kpi.sub}</span>}
+                    {kpi.sub && <span className="text-[9px] text-zinc-600 dark:text-zinc-500 mt-0.5 font-medium">{kpi.sub}</span>}
                   </div>
                 );
               })}
@@ -257,17 +257,17 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
 
           {/* Data quality warnings */}
           {data.warnings !== undefined && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-md space-y-3">
-              <h3 className="text-white font-bold text-base flex items-center gap-2">
+            <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 shadow-md space-y-3">
+              <h3 className="text-zinc-900 dark:text-white font-bold text-base flex items-center gap-2">
                 <span>🔍</span> Data Quality & Integrity Audit ({data.warnings.length} Warnings)
               </h3>
               {data.warnings.length === 0 ? (
-                <p className="text-xs text-emerald-400 font-bold">✓ Data is clean! Zero warnings or missing fields found in sheet range.</p>
+                <p className="text-xs text-emerald-600 dark:text-emerald-emerald400 font-bold">✓ Data is clean! Zero warnings or missing fields found in sheet range.</p>
               ) : (
-                <div className="overflow-x-auto border border-zinc-800 rounded-lg">
+                <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800 rounded-lg">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="bg-zinc-950 border-b border-zinc-800 text-zinc-400 font-bold text-[10px] uppercase">
+                      <tr className="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 font-bold text-[10px] uppercase">
                         <th className="p-3 text-center w-12">Row</th>
                         <th className="p-3 w-48">Company Name</th>
                         <th className="p-3 w-40">Field Target</th>
@@ -277,16 +277,16 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
                     </thead>
                     <tbody>
                       {data.warnings.slice(0, 20).map((warning, idx) => (
-                        <tr key={idx} className="border-b border-zinc-800/60 hover:bg-zinc-800/20 text-zinc-300">
-                          <td className="p-3 text-center font-mono font-bold text-zinc-500">{warning.sNo}</td>
-                          <td className="p-3 font-bold text-white">{warning.company}</td>
-                          <td className="p-3 text-zinc-400 font-mono text-[10px]">{warning.field}</td>
+                        <tr key={idx} className="border-b border-zinc-200/60 dark:border-zinc-800/60 hover:bg-zinc-100/20 dark:hover:bg-zinc-800/20 text-zinc-700 dark:text-zinc-300">
+                          <td className="p-3 text-center font-mono font-bold text-zinc-600 dark:text-zinc-500">{warning.sNo}</td>
+                          <td className="p-3 font-bold text-zinc-900 dark:text-white">{warning.company}</td>
+                          <td className="p-3 text-zinc-500 dark:text-zinc-400 font-mono text-[10px]">{warning.field}</td>
                           <td className="p-3 font-medium">{warning.issue}</td>
                           <td className="p-3 text-center">
                             <span className={`px-2 py-0.5 text-[9px] font-extrabold uppercase rounded ${
                               warning.severity === "critical"
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                ? "bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border border-rose-500/20"
+                                : "bg-amber-500/10 text-amber-600 dark:text-amber-amber400 border border-amber-500/20"
                             }`}>{warning.severity}</span>
                           </td>
                         </tr>
@@ -300,52 +300,52 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
 
           {/* Performance insights */}
           {data.insights && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-md space-y-4">
-              <h3 className="text-white font-bold text-base flex items-center gap-2">
+            <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 shadow-md space-y-4">
+              <h3 className="text-zinc-900 dark:text-white font-bold text-base flex items-center gap-2">
                 <span>🧠</span> AI-Driven Performance & Consistency Insights
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="bg-emerald-950/10 border border-emerald-900/20 rounded-xl p-4 space-y-3">
-                  <h4 className="text-emerald-400 font-bold text-xs flex items-center gap-2">
+                  <h4 className="text-emerald-600 dark:text-emerald-emerald400 font-bold text-xs flex items-center gap-2">
                     <span>🔥</span> Top & Consistent Performers
                   </h4>
                   {data.insights.good.length === 0 ? (
-                    <p className="text-xs text-zinc-500">No agents meet the top performer threshold in this range.</p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500">No agents meet the top performer threshold in this range.</p>
                   ) : (
                     <div className="space-y-2.5">
                       {data.insights.good.map((item) => (
-                        <div key={item.name} className="bg-zinc-950/60 p-2.5 rounded-lg border border-emerald-950/30 flex justify-between items-center gap-3">
+                        <div key={item.name} className="bg-zinc-50/60 dark:bg-zinc-950/60 p-2.5 rounded-lg border border-emerald-950/30 flex justify-between items-center gap-3">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-white font-bold text-xs">{item.name}</span>
-                              <span className="text-[8px] px-1 bg-zinc-800 text-zinc-400 rounded font-mono">{item.role}</span>
+                              <span className="text-zinc-900 dark:text-white font-bold text-xs">{item.name}</span>
+                              <span className="text-[8px] px-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 rounded font-mono">{item.role}</span>
                             </div>
-                            <span className="text-[10px] text-zinc-400">{item.desc}</span>
+                            <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{item.desc}</span>
                           </div>
-                          <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
+                          <span className="text-[9px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
                 <div className="bg-rose-950/10 border border-rose-900/20 rounded-xl p-4 space-y-3">
-                  <h4 className="text-rose-400 font-bold text-xs flex items-center gap-2">
+                  <h4 className="text-rose-600 dark:text-rose-rose400 font-bold text-xs flex items-center gap-2">
                     <span>⚠️</span> Inconsistent / Needs Training Focus
                   </h4>
                   {data.insights.inconsistent.length === 0 ? (
-                    <p className="text-xs text-zinc-500">No agents flagged for consistency issues in this range.</p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500">No agents flagged for consistency issues in this range.</p>
                   ) : (
                     <div className="space-y-2.5">
                       {data.insights.inconsistent.map((item) => (
-                        <div key={item.name} className="bg-zinc-950/60 p-2.5 rounded-lg border border-rose-950/30 flex justify-between items-center gap-3">
+                        <div key={item.name} className="bg-zinc-50/60 dark:bg-zinc-950/60 p-2.5 rounded-lg border border-rose-950/30 flex justify-between items-center gap-3">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-white font-bold text-xs">{item.name}</span>
-                              <span className="text-[8px] px-1 bg-zinc-800 text-zinc-400 rounded font-mono">{item.role}</span>
+                              <span className="text-zinc-900 dark:text-white font-bold text-xs">{item.name}</span>
+                              <span className="text-[8px] px-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 rounded font-mono">{item.role}</span>
                             </div>
-                            <span className="text-[10px] text-zinc-400">{item.desc}</span>
+                            <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{item.desc}</span>
                           </div>
-                          <span className="text-[9px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
+                          <span className="text-[9px] bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border border-rose-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
                         </div>
                       ))}
                     </div>
@@ -357,12 +357,12 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
 
           {/* Tables */}
           {data.tables && data.tables.map((table) => (
-            <div key={table.title} className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-md">
-              <h3 className="text-white font-bold text-base mb-4">{table.title}</h3>
-              <div className="overflow-x-auto border border-zinc-800 rounded-lg">
+            <div key={table.title} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-md">
+              <h3 className="text-zinc-900 dark:text-white font-bold text-base mb-4">{table.title}</h3>
+              <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800 rounded-lg">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="bg-zinc-950 border-b border-zinc-800 text-zinc-400 font-bold">
+                    <tr className="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 font-bold">
                       {table.columns.map((col) => (
                         <th key={col} className="p-3.5 whitespace-nowrap">{col}</th>
                       ))}
@@ -371,15 +371,15 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
                   <tbody>
                     {table.rows.length === 0 ? (
                       <tr>
-                        <td colSpan={table.columns.length} className="p-8 text-center text-zinc-500">
+                        <td colSpan={table.columns.length} className="p-8 text-center text-zinc-600 dark:text-zinc-500">
                           No records found in this range.
                         </td>
                       </tr>
                     ) : (
                       table.rows.slice(0, 100).map((row, idx) => (
-                        <tr key={idx} className="border-b border-zinc-800/60 hover:bg-zinc-800/20 text-zinc-300">
+                        <tr key={idx} className="border-b border-zinc-200/60 dark:border-zinc-800/60 hover:bg-zinc-100/20 dark:hover:bg-zinc-800/20 text-zinc-700 dark:text-zinc-300">
                           {row.map((cell, cIdx) => (
-                            <td key={cIdx} className={`p-3.5 whitespace-nowrap ${cIdx === 0 ? "font-mono font-bold text-zinc-400 text-center" : ""}`}>
+                            <td key={cIdx} className={`p-3.5 whitespace-nowrap ${cIdx === 0 ? "font-mono font-bold text-zinc-500 dark:text-zinc-400 text-center" : ""}`}>
                               {cell}
                             </td>
                           ))}

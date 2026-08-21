@@ -37,12 +37,12 @@ const navItems: { view: ViewType; label: string; icon: React.ReactNode }[] = [
 
 export default function Sidebar({ activeView, onNavigate, theme, onToggleTheme, currentAgent }: SidebarProps) {
   return (
-    <aside className="hidden md:flex flex-col h-screen sticky top-0 bg-[var(--bg-sidebar)] text-[#a1a1aa] p-6 border-r border-white/5 z-40">
-      <div className="flex items-center gap-3 text-white font-extrabold text-xl mb-10">
+    <aside className="hidden md:flex flex-col h-screen sticky top-0 bg-[var(--bg-sidebar)] text-[var(--text-secondary)] p-6 border-r border-[var(--border-card)] z-40">
+      <div className="flex items-center gap-3 text-[var(--text-primary)] font-extrabold text-xl mb-10">
         <svg className="w-8 h-8 text-brand-indigo" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
         </svg>
-        <span className="font-heading tracking-tight text-white">Brindavan Udyog</span>
+        <span className="font-heading tracking-tight text-[var(--text-primary)]">Brindavan Udyog</span>
       </div>
 
       <nav className="flex flex-col gap-2 flex-grow">
@@ -50,7 +50,7 @@ export default function Sidebar({ activeView, onNavigate, theme, onToggleTheme, 
           const isActive = item.view === activeView || (item.view === 'enquiries' && (activeView === 'enquiries' || activeView === 'detail'));
           return (
             <button key={item.view}
-              className={`flex items-center gap-3 px-4 py-3 rounded-lg font-semibold text-sm transition-all duration-200 text-left cursor-pointer border-0 w-full ${isActive ? 'bg-brand-indigo text-white shadow-lg shadow-indigo-600/25' : 'hover:bg-white/5 hover:text-white bg-transparent'}`}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg font-semibold text-sm transition-all duration-200 text-left cursor-pointer border-0 w-full ${isActive ? 'bg-brand-indigo text-white shadow-lg shadow-indigo-600/25' : 'hover:bg-black/5 dark:hover:bg-white/5 hover:text-[var(--text-primary)] bg-transparent'}`}
               onClick={() => onNavigate(item.view)}
               type="button"
             >
@@ -61,9 +61,9 @@ export default function Sidebar({ activeView, onNavigate, theme, onToggleTheme, 
         })}
       </nav>
 
-      <div className="flex flex-col gap-4 pt-6 border-t border-white/5 mt-auto">
+      <div className="flex flex-col gap-4 pt-6 border-t border-[var(--border-card)] mt-auto">
         <button onClick={onToggleTheme}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-white font-medium text-sm transition-all duration-200 cursor-pointer border-0">
+          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-[var(--text-primary)] font-medium text-sm transition-all duration-200 cursor-pointer border-0">
           {theme === 'dark' ? (
             <><svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg><span>Light Mode</span></>
           ) : (
@@ -76,8 +76,8 @@ export default function Sidebar({ activeView, onNavigate, theme, onToggleTheme, 
             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-brand-emerald border-2 border-[var(--bg-sidebar)]"></span>
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="font-semibold text-white text-sm truncate">{currentAgent.name}</span>
-            <span className="text-xs text-zinc-500">B2B Agent</span>
+            <span className="font-semibold text-[var(--text-primary)] text-sm truncate">{currentAgent.name}</span>
+            <span className="text-xs text-[var(--text-tertiary)]">B2B Agent</span>
           </div>
         </div>
       </div>

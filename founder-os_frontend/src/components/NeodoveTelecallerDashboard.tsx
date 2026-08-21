@@ -136,9 +136,9 @@ function fmtRangeLabel(from?: string | null, to?: string | null): string {
 }
 
 const LIGHT_TEXT: Record<TrafficLight, string> = {
-  green: "text-emerald-400",
-  amber: "text-amber-400",
-  red: "text-rose-400",
+  green: "text-emerald-600 dark:text-emerald-emerald400",
+  amber: "text-amber-600 dark:text-amber-amber400",
+  red: "text-rose-600 dark:text-rose-rose400",
 };
 const LIGHT_BG: Record<TrafficLight, string> = {
   green: "bg-emerald-500",
@@ -146,9 +146,9 @@ const LIGHT_BG: Record<TrafficLight, string> = {
   red: "bg-rose-500",
 };
 const LIGHT_CHIP: Record<TrafficLight, string> = {
-  green: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  amber: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  red: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+  green: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400 border-emerald-500/20",
+  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-amber400 border-amber-500/20",
+  red: "bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border-rose-500/20",
 };
 
 function fmtTalkTime(sec: number): string {
@@ -167,12 +167,12 @@ function KraBar({ label, value, target, pct, status }: { label: string; value: n
   return (
     <div>
       <div className="flex items-center justify-between text-[11px] mb-1">
-        <span className="text-zinc-400 font-semibold">{label}</span>
+        <span className="text-zinc-500 dark:text-zinc-400 font-semibold">{label}</span>
         <span className={`font-bold font-mono ${LIGHT_TEXT[status]}`}>
           {value}/{target} · {pct}%
         </span>
       </div>
-      <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+      <div className="h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
         <div className={`h-full rounded-full transition-all duration-500 ${LIGHT_BG[status]}`} style={{ width: `${width}%` }} />
       </div>
     </div>
@@ -238,17 +238,17 @@ export default function NeodoveTelecallerDashboard() {
       : data?.meta.reportDate ?? "";
 
   return (
-    <div className="space-y-4 text-zinc-100">
+    <div className="space-y-4 text-zinc-900 dark:text-zinc-100">
       {/* Header */}
-      <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-5">
+      <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold">📞 Telecaller Performance — Individual KRA/KPI</h2>
-            <p className="text-xs text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               {rangeLabel ? (
                 <>
-                  <span className="text-indigo-300 font-semibold">{rangeLabel}</span>
-                  {multiDay && <> · <span className="text-zinc-300 font-semibold">{days} active days</span> · totals summed, benchmarks judged on avg/day</>}
+                  <span className="text-indigo-600 dark:text-indigo-indigo300 font-semibold">{rangeLabel}</span>
+                  {multiDay && <> · <span className="text-zinc-700 dark:text-zinc-300 font-semibold">{days} active days</span> · totals summed, benchmarks judged on avg/day</>}
                   {!multiDay && <> · live vs daily benchmarks</>}
                   {" "}· auto-refreshes every 5 min
                 </>
@@ -261,7 +261,7 @@ export default function NeodoveTelecallerDashboard() {
             <select
               value={preset}
               onChange={(e) => setPreset(e.target.value as PresetKey)}
-              className="px-3 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
               aria-label="Report date range"
             >
               {PRESETS.map((p) => (
@@ -273,58 +273,58 @@ export default function NeodoveTelecallerDashboard() {
                 <input
                   type="date" value={customFrom} max={istToday()}
                   onChange={(e) => setCustomFrom(e.target.value)}
-                  className="px-2 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+                  className="px-2 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:[color-scheme:dark]"
                   aria-label="From date"
                 />
-                <span className="text-xs text-zinc-500">→</span>
+                <span className="text-xs text-zinc-600 dark:text-zinc-500">→</span>
                 <input
                   type="date" value={customTo} max={istToday()}
                   onChange={(e) => setCustomTo(e.target.value)}
-                  className="px-2 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+                  className="px-2 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:[color-scheme:dark]"
                   aria-label="To date"
                 />
               </>
             )}
             {lastLoaded && (
-              <span className="text-[11px] text-zinc-500">updated {lastLoaded.toLocaleTimeString()}</span>
+              <span className="text-[11px] text-zinc-600 dark:text-zinc-500">updated {lastLoaded.toLocaleTimeString()}</span>
             )}
             <button
               onClick={() => load(true)}
               disabled={refreshing}
-              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all duration-200 cursor-pointer border-0 disabled:opacity-50"
+              className="text-white px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 transition-all duration-200 cursor-pointer border-0 disabled:opacity-50"
             >
               {refreshing ? "Refreshing…" : "↻ Refresh now"}
             </button>
           </div>
         </div>
-        <p className="mt-2 text-[11px] text-zinc-500">
-          Benchmarks per agent/day: <span className="text-zinc-300 font-semibold">≥ {benchmarks.connectedCallsPerDay} connected calls</span> ·{" "}
-          <span className="text-zinc-300 font-semibold">≥ {benchmarks.leadsPerAgentPerDay} leads</span> (in-progress + converted)
-          {multiDay && <> — scaled to <span className="text-indigo-300 font-semibold">{benchmarks.connectedCallsPerDay * days} calls / {benchmarks.leadsPerAgentPerDay * days} leads for {days} active days</span></>}
+        <p className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-500">
+          Benchmarks per agent/day: <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {benchmarks.connectedCallsPerDay} connected calls</span> ·{" "}
+          <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {benchmarks.leadsPerAgentPerDay} leads</span> (in-progress + converted)
+          {multiDay && <> — scaled to <span className="text-indigo-600 dark:text-indigo-indigo300 font-semibold">{benchmarks.connectedCallsPerDay * days} calls / {benchmarks.leadsPerAgentPerDay * days} leads for {days} active days</span></>}
           . Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
         </p>
         {error && (
-          <p className="mt-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{error}</p>
+          <p className="mt-3 text-xs text-amber-600 dark:text-amber-amber300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{error}</p>
         )}
       </div>
 
       {/* Individual Agent KRA/KPI cards */}
       {!loading && withKra.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-indigo-300">
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-indigo300">
             🎯 Individual Agent KRA — {multiDay ? "Range Total vs Scaled Benchmark" : "Today vs Benchmark"}
           </h3>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {withKra.map((a) => {
               const k = a.kra!;
               return (
-                <div key={a.userId || a.userName} className={`rounded-xl border p-4 space-y-3 bg-zinc-900 ${
+                <div key={a.userId || a.userName} className={`rounded-xl border p-4 space-y-3 bg-zinc-50 dark:bg-zinc-900 ${
                   k.overall === "green" ? "border-emerald-500/30" : k.overall === "amber" ? "border-amber-500/30" : "border-rose-500/30"
                 }`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <span className="font-bold text-white truncate block">{a.userName}</span>
-                      <span className="text-[10px] text-zinc-500">{a.managerName ?? "—"}</span>
+                      <span className="font-bold text-zinc-900 dark:text-white truncate block">{a.userName}</span>
+                      <span className="text-[10px] text-zinc-600 dark:text-zinc-500">{a.managerName ?? "—"}</span>
                     </div>
                     <span className={`shrink-0 px-2 py-0.5 rounded-full border text-[10px] font-extrabold uppercase tracking-wide ${LIGHT_CHIP[k.overall]}`}>
                       {k.overallLabel}
@@ -333,15 +333,15 @@ export default function NeodoveTelecallerDashboard() {
                   <KraBar label="Connected Calls" value={k.connected} target={k.connectedTarget} pct={k.connectedPct} status={k.connectedStatus} />
                   <KraBar label="Leads Generated" value={k.leads} target={k.leadsTarget} pct={k.leadsPct} status={k.leadsStatus} />
                   {multiDay && (
-                    <div className="flex items-center justify-between text-[10px] text-zinc-500">
+                    <div className="flex items-center justify-between text-[10px] text-zinc-600 dark:text-zinc-500">
                       <span>Range avg/day</span>
-                      <span className="font-mono text-zinc-400">{k.connectedAvgPerDay ?? "—"}/{k.connectedDailyTarget ?? benchmarks.connectedCallsPerDay} calls · {k.leadsAvgPerDay ?? "—"}/{k.leadsDailyTarget ?? benchmarks.leadsPerAgentPerDay} leads</span>
+                      <span className="font-mono text-zinc-500 dark:text-zinc-400">{k.connectedAvgPerDay ?? "—"}/{k.connectedDailyTarget ?? benchmarks.connectedCallsPerDay} calls · {k.leadsAvgPerDay ?? "—"}/{k.leadsDailyTarget ?? benchmarks.leadsPerAgentPerDay} leads</span>
                     </div>
                   )}
-                  <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-500">
+                  <div className="flex items-center justify-between pt-1 border-t border-zinc-200/80 dark:border-zinc-800/80 text-[10px] text-zinc-600 dark:text-zinc-500">
                     <span>Zoho pipeline</span>
                     {k.zohoEstimates > 0 ? (
-                      <span className="font-semibold text-indigo-300">
+                      <span className="font-semibold text-indigo-600 dark:text-indigo-indigo300">
                         {k.zohoEstimates} sent est. · ₹{k.zohoPipelineValue.toLocaleString()}
                       </span>
                     ) : (
@@ -353,10 +353,10 @@ export default function NeodoveTelecallerDashboard() {
             })}
           </div>
           {zohoUnmapped.length > 0 && (
-            <p className="text-[10px] text-zinc-600">
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-600">
               Zoho commenters not mapped to any agent: {zohoUnmapped.map((z) => `${z.zohoName} (${z.estimates})`).join(", ")}. Set the D1 setting
               {" "}
-              <code className="text-zinc-500">kra:zoho_name_map</code> to map them.
+              <code className="text-zinc-600 dark:text-zinc-500">kra:zoho_name_map</code> to map them.
             </p>
           )}
         </div>
@@ -366,15 +366,15 @@ export default function NeodoveTelecallerDashboard() {
       {totals && (
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
           {[
-            { label: "Calls Attempted", value: fmtNum(totals.callsAttempted), accent: "text-white" },
-            { label: "Connected", value: fmtNum(totals.callsConnected), accent: "text-emerald-400" },
-            { label: "Missed (in+out)", value: fmtNum((totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)), accent: "text-rose-400" },
-            { label: "Team Talk Time", value: fmtTalkTime(totals.talkTimeSec), accent: "text-indigo-300" },
-            { label: "Converted", value: fmtNum(totals.leadsConverted), accent: "text-emerald-300" },
-            { label: "Follow-ups Due", value: fmtNum(totals.followupLeads), accent: "text-amber-300" },
+            { label: "Calls Attempted", value: fmtNum(totals.callsAttempted), accent: "text-zinc-900 dark:text-white" },
+            { label: "Connected", value: fmtNum(totals.callsConnected), accent: "text-emerald-600 dark:text-emerald-emerald400" },
+            { label: "Missed (in+out)", value: fmtNum((totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)), accent: "text-rose-600 dark:text-rose-rose400" },
+            { label: "Team Talk Time", value: fmtTalkTime(totals.talkTimeSec), accent: "text-indigo-600 dark:text-indigo-indigo300" },
+            { label: "Converted", value: fmtNum(totals.leadsConverted), accent: "text-emerald-600 dark:text-emerald-emerald300" },
+            { label: "Follow-ups Due", value: fmtNum(totals.followupLeads), accent: "text-amber-600 dark:text-amber-amber300" },
           ].map((k) => (
-            <div key={k.label} className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-4">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">{k.label}</div>
+            <div key={k.label} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-4">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">{k.label}</div>
               <div className={`text-2xl font-extrabold mt-1 ${k.accent}`}>{k.value}</div>
             </div>
           ))}
@@ -382,16 +382,16 @@ export default function NeodoveTelecallerDashboard() {
       )}
 
       {/* Agent table */}
-      <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl overflow-hidden">
+      <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl overflow-hidden">
         {loading ? (
-          <div className="py-16 text-center text-zinc-400 animate-pulse">Loading telecaller data…</div>
+          <div className="py-16 text-center text-zinc-500 dark:text-zinc-400 animate-pulse">Loading telecaller data…</div>
         ) : agents.length === 0 ? (
-          <div className="py-16 text-center text-zinc-400">No agent activity stored for this day yet.</div>
+          <div className="py-16 text-center text-zinc-500 dark:text-zinc-400">No agent activity stored for this day yet.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-500 border-b border-zinc-800">
+                <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
                   <th className="px-4 py-3">#</th>
                   <th className="px-4 py-3">Agent</th>
                   <th className="px-4 py-3">Manager</th>
@@ -413,49 +413,49 @@ export default function NeodoveTelecallerDashboard() {
               </thead>
               <tbody>
                 {agents.map((a, i) => (
-                  <tr key={a.userId || a.userName} className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
-                    <td className="px-4 py-2.5 text-zinc-600">{i + 1}</td>
-                    <td className="px-4 py-2.5 font-semibold text-white whitespace-nowrap">{a.userName}</td>
-                    <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{a.managerName ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-white">{a.callsAttempted}</td>
-                    <td className="px-4 py-2.5 text-right text-emerald-400">{a.callsConnected}</td>
-                    <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.kra ? LIGHT_TEXT[a.kra.connectedStatus] : "text-zinc-400"}`}>
+                  <tr key={a.userId || a.userName} className="border-b border-zinc-200/50 dark:border-zinc-800/50 hover:bg-zinc-100/30 dark:hover:bg-zinc-800/30 transition-colors">
+                    <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-600">{i + 1}</td>
+                    <td className="px-4 py-2.5 font-semibold text-zinc-900 dark:text-white whitespace-nowrap">{a.userName}</td>
+                    <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{a.managerName ?? "—"}</td>
+                    <td className="px-4 py-2.5 text-right font-bold text-zinc-900 dark:text-white">{a.callsAttempted}</td>
+                    <td className="px-4 py-2.5 text-right text-emerald-600 dark:text-emerald-emerald400">{a.callsConnected}</td>
+                    <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.kra ? LIGHT_TEXT[a.kra.connectedStatus] : "text-zinc-500 dark:text-zinc-400"}`}>
                       {a.kra ? `${a.kra.connectedPct}%` : "—"}
                     </td>
-                    <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.kra ? LIGHT_TEXT[a.kra.leadsStatus] : "text-zinc-400"}`}>
+                    <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.kra ? LIGHT_TEXT[a.kra.leadsStatus] : "text-zinc-500 dark:text-zinc-400"}`}>
                       {a.kra ? `${a.kra.leads}/${a.kra.leadsTarget}` : "—"}
                     </td>
-                    <td className="px-4 py-2.5 text-right text-zinc-400">{a.callsNotConnected}</td>
-                    <td className="px-4 py-2.5 text-right text-zinc-300">{a.incomingCalls}</td>
-                    <td className="px-4 py-2.5 text-right text-zinc-300">{a.outgoingCalls}</td>
-                    <td className="px-4 py-2.5 text-right text-rose-400">{a.incomingMissed + a.outgoingMissed}</td>
-                    <td className="px-4 py-2.5 text-right text-indigo-300 font-medium">{fmtTalkTime(a.talkTimeSec)}</td>
-                    <td className="px-4 py-2.5 text-right text-emerald-300 font-semibold">{a.leadsConverted}</td>
-                    <td className="px-4 py-2.5 text-right text-zinc-300">{a.leadsInProgress}</td>
-                    <td className="px-4 py-2.5 text-right text-zinc-500">{a.leadsLost}</td>
-                    <td className="px-4 py-2.5 text-right text-amber-300">{a.followupLeads}</td>
-                    <td className="px-4 py-2.5 text-right text-zinc-300">{a.pendingScheduledLeads}</td>
+                    <td className="px-4 py-2.5 text-right text-zinc-500 dark:text-zinc-400">{a.callsNotConnected}</td>
+                    <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.incomingCalls}</td>
+                    <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.outgoingCalls}</td>
+                    <td className="px-4 py-2.5 text-right text-rose-600 dark:text-rose-rose400">{a.incomingMissed + a.outgoingMissed}</td>
+                    <td className="px-4 py-2.5 text-right text-indigo-600 dark:text-indigo-indigo300 font-medium">{fmtTalkTime(a.talkTimeSec)}</td>
+                    <td className="px-4 py-2.5 text-right text-emerald-600 dark:text-emerald-emerald300 font-semibold">{a.leadsConverted}</td>
+                    <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.leadsInProgress}</td>
+                    <td className="px-4 py-2.5 text-right text-zinc-600 dark:text-zinc-500">{a.leadsLost}</td>
+                    <td className="px-4 py-2.5 text-right text-amber-600 dark:text-amber-amber300">{a.followupLeads}</td>
+                    <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.pendingScheduledLeads}</td>
                   </tr>
                 ))}
               </tbody>
               {totals && (
                 <tfoot>
-                  <tr className="bg-zinc-800/40 text-[13px] font-bold border-t border-zinc-700">
-                    <td colSpan={3} className="px-4 py-3 text-zinc-300 uppercase tracking-wide text-[10px]">Team Total</td>
-                    <td className="px-4 py-3 text-right text-white">{fmtNum(totals.callsAttempted)}</td>
-                    <td className="px-4 py-3 text-right text-emerald-400">{fmtNum(totals.callsConnected)}</td>
-                    <td className="px-4 py-3 text-right text-zinc-400">—</td>
-                    <td className="px-4 py-3 text-right text-zinc-400">—</td>
-                    <td className="px-4 py-3 text-right text-zinc-400">{fmtNum(totals.callsNotConnected)}</td>
-                    <td className="px-4 py-3 text-right text-zinc-300">{fmtNum(totals.incomingCalls)}</td>
-                    <td className="px-4 py-3 text-right text-zinc-300">{fmtNum(totals.outgoingCalls)}</td>
-                    <td className="px-4 py-3 text-right text-rose-400">{(totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)}</td>
-                    <td className="px-4 py-3 text-right text-indigo-300">{fmtTalkTime(totals.talkTimeSec)}</td>
-                    <td className="px-4 py-3 text-right text-emerald-300">{fmtNum(totals.leadsConverted)}</td>
-                    <td className="px-4 py-3 text-right text-zinc-300">{fmtNum(totals.leadsInProgress)}</td>
-                    <td className="px-4 py-3 text-right text-zinc-500">{fmtNum(totals.leadsLost)}</td>
-                    <td className="px-4 py-3 text-right text-amber-300">{fmtNum(totals.followupLeads)}</td>
-                    <td className="px-4 py-3 text-right text-zinc-300">{fmtNum(totals.pendingScheduledLeads)}</td>
+                  <tr className="bg-zinc-100/40 dark:bg-zinc-800/40 text-[13px] font-bold border-t border-zinc-300 dark:border-zinc-700">
+                    <td colSpan={3} className="px-4 py-3 text-zinc-700 dark:text-zinc-300 uppercase tracking-wide text-[10px]">Team Total</td>
+                    <td className="px-4 py-3 text-right text-zinc-900 dark:text-white">{fmtNum(totals.callsAttempted)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-emerald400">{fmtNum(totals.callsConnected)}</td>
+                    <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400">—</td>
+                    <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400">—</td>
+                    <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400">{fmtNum(totals.callsNotConnected)}</td>
+                    <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.incomingCalls)}</td>
+                    <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.outgoingCalls)}</td>
+                    <td className="px-4 py-3 text-right text-rose-600 dark:text-rose-rose400">{(totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)}</td>
+                    <td className="px-4 py-3 text-right text-indigo-600 dark:text-indigo-indigo300">{fmtTalkTime(totals.talkTimeSec)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-emerald300">{fmtNum(totals.leadsConverted)}</td>
+                    <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.leadsInProgress)}</td>
+                    <td className="px-4 py-3 text-right text-zinc-600 dark:text-zinc-500">{fmtNum(totals.leadsLost)}</td>
+                    <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-amber300">{fmtNum(totals.followupLeads)}</td>
+                    <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.pendingScheduledLeads)}</td>
                   </tr>
                 </tfoot>
               )}

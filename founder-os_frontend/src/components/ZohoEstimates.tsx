@@ -587,7 +587,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
   }));
 
   return (
-    <div className="space-y-6 text-zinc-100">
+    <div className="space-y-6 text-zinc-900 dark:text-zinc-100">
       <ZohoEstimatesHeader
         lastSyncTimeStr={lastSyncTimeStr}
         hasEstimates={estimates.length > 0}
