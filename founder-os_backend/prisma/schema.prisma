@@ -296,6 +296,19 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+// Token storage for web authentication tokens (NeoDove, Zoho, etc.)
+// One row per token source. Updated via webhook POST.
+model Token {
+  id           String   @id @default(uuid())
+  source       String   @unique // e.g. "neodove", "zoho", "google"
+  token        String   // the actual token value
+  metadata     String?  // JSON string: extra context (expires_at, user_id, etc.)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([source])
+}
+
 // WhatsApp Marketing (whatsapp-marketing automation). One row per marketing
 // campaign. A campaign targets its own lead list (MarketingLead) at its own
 // trigger time (one-shot scheduledAt, or a recurring cron) through a provider

@@ -153,6 +153,9 @@ founder-os_backend/
 | POST | /api/runner/emails | Upsert synced emails |
 | GET | /api/runner/brain/sources | Brain source list |
 | POST | /api/runner/brain/context | Upsert brain context rows |
+| POST | /api/token/webhook | Receive token from external automation (Bearer SHARED_SECRET) |
+| GET | /api/token/:source | Retrieve stored token for runners (Bearer SHARED_SECRET) |
+| GET | /api/token | List all token sources (Bearer SHARED_SECRET) |
 
 #### Company Brain
 | Method | Path | Description |
@@ -226,6 +229,25 @@ Worker handler (Hono)
 
 - **Baseline freeze**: the daily `baseline-freeze` job snapshots `status = 'sent'` estimates into a Setting row keyed `zoho_baseline:YYYY-MM-DD` (IST date via `kolkataDateStr()`). The frontend reads it through `GET /api/estimates/baseline` so all viewers share one frozen snapshot instead of per-browser localStorage.
 - Runner state (`sales_copilot:last_complete_sync_at` watermarks, classification rows, comments) is also stored in D1.
+
+### 2.7 Token Storage (External Service Auth)
+
+Many external services (NeoDove, Zoho Books, Google Sheets, etc.) require OAuth tokens or API keys that expire. Rather than hard-coding secrets or relying on browser sessions, Founder OS uses a **centralized Token table** in D1:
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `POST /api/token/webhook` | SHARED_SECRET | External automation (Playwright, cron script) POSTs fresh token |
+| `GET /api/token/:source` | SHARED_SECRET | GH Actions runners fetch token for API calls |
+| `GET /api/token` | SHARED_SECRET | Debug: list all stored token sources |
+
+**Flow:**
+1. Automated browser script (Playwright + IMAP for OTP) runs every N days, logs into the service, extracts token from localStorage
+2. Script POSTs to `/api/token/webhook` with `{ source: "neodove", token: "...", metadata: { expires_at: "..." } }`
+3. Worker upserts into `Token` table (unique on `source`)
+4. Runner scripts GET `/api/token/neodove` → use `token` header for downstream API calls
+5. If token missing/expired, runner fails fast (alerting) instead of silently failing
+
+**Why not GitHub Secrets?** Token rotation is frequent (OTP login every few days). GH Secrets require manual update; this webhook pattern is fully automated. The token is never in repo config.
 
 ---
 
@@ -372,7 +394,7 @@ wrangler pages deploy out --project-name founder-os-frontend
 
 ## 4. Data Models
 
-### 4.1 Database Schema (D1 SQLite — 9 models)
+### 4.1 Database Schema (D1 SQLite — 10 models)
 
 ```
 Message
@@ -472,6 +494,15 @@ BrainContext
   eventDate   DateTime?
   @@unique([source, sourceId])
   @@index([source, entityName, eventDate])
+
+Token
+  id          String @id @default(uuid())
+  source      String @unique  // e.g. "neodove", "zoho", "google"
+  token       String          // the actual auth token
+  metadata    String?         // JSON: { expires_at, user_id, ... }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([source])
 ```
 
 ### 4.2 Enums

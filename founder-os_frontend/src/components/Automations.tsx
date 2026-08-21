@@ -11,6 +11,7 @@ const SheetAnalysisDashboard = dynamic(() => import("./SheetAnalysisDashboard"),
 const WaEngineDashboard = dynamic(() => import("./WaEngineDashboard"), { ssr: false });
 const WhatsAppMarketingDashboard = dynamic(() => import("./WhatsAppMarketingDashboard"), { ssr: false });
 const EnterpriseOperationsDashboard = dynamic(() => import("./EnterpriseOperationsDashboard"), { ssr: false });
+const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -134,6 +135,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "dpp-prices-dashboard") return <DppPricesDashboard />;
     if (selected === "wa-engine-monitor") return <WaEngineDashboard />;
     if (selected === "whatsapp-marketing") return <WhatsAppMarketingDashboard />;
+    if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;

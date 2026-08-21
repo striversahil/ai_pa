@@ -20,6 +20,10 @@ app.use('*', cors());
 // ── Boot: register engines + load automations on first request ─────────────
 // MUST be registered before any route so AutomationEngine is populated before
 // handlers (e.g. /api/automations/:slug/data) run.
+// Only automation-management routes wait for full boot; every other endpoint
+// (estimates, token store, runner reads/writes…) proceeds immediately, which
+// removes the cold-start automation-sync tax from hot public paths.
+const BOOT_PATH_RE = /^\/api\/(trigger|automations)(\/|$)/;
 let booted = false;
 let bootPromise: Promise<void> | null = null;
 app.use('*', async (c, next) => {
@@ -35,7 +39,7 @@ app.use('*', async (c, next) => {
       }
     })();
   }
-  await bootPromise;
+  if (BOOT_PATH_RE.test(new URL(c.req.url).pathname)) await bootPromise;
   await next();
 });
 
@@ -218,6 +222,47 @@ app.post('/api/whatsapp/webhook', async (c) => {
   return c.json({ success: true });
 });
 
+// ── Token webhook (external services POST new tokens here) ──────────────────
+// Expects: { source: "neodove", token: <any JSON>, metadata?: { expires_at?: string, ... } }
+// Protected by SHARED_SECRET via Authorization: Bearer <secret>
+// Upserts by source — repeated POSTs overwrite the token.
+app.post('/api/token/webhook', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const source = String(body?.source || '').trim().toLowerCase();
+  const token = body?.token;
+  const metadata = body?.metadata ? JSON.stringify(body.metadata) : null;
+  if (!source || token === undefined || token === null) return c.json({ error: 'source and token required' }, 400);
+  const tokenStr = JSON.stringify(token);
+  await prisma.token.upsert({
+    where: { source },
+    update: { token: tokenStr, metadata, updatedAt: new Date() },
+    create: { source, token: tokenStr, metadata },
+  });
+  return c.json({ ok: true, source, updatedAt: new Date().toISOString() });
+});
+
+// GET /api/token/:source — retrieve a stored token (for runners/reports)
+app.get('/api/token/:source', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const source = c.req.param('source').trim().toLowerCase();
+  const row = await prisma.token.findUnique({ where: { source } });
+  if (!row) return c.json({ error: 'token not found' }, 404);
+  let parsedToken: any;
+  try { parsedToken = JSON.parse(row.token); } catch { parsedToken = row.token; }
+  return c.json({ source: row.source, token: parsedToken, metadata: row.metadata ? JSON.parse(row.metadata) : null, updatedAt: row.updatedAt });
+});
+
+// List all stored token sources (for debugging)
+app.get('/api/token', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const rows = await prisma.token.findMany({ select: { source: true, metadata: true, createdAt: true, updatedAt: true } });
+  return c.json(rows.map((r: any) => ({ source: r.source, metadata: r.metadata ? JSON.parse(r.metadata) : null, createdAt: r.createdAt, updatedAt: r.updatedAt })));
+});
+
 // ── Status ──────────────────────────────────────────────────────────────────
 app.get('/api/status', (c) => {
   return c.json({ success: true, useInMemoryDb: false, isMockLLM: false });
@@ -337,6 +382,45 @@ app.get('/api/estimates/baseline', async (c) => {
     return c.json({ date: key.split(':')[1], baseline: JSON.parse(row.value) });
   } catch {
     return c.json({ date: key.split(':')[1], baseline: null });
+  }
+});
+
+// ── NeoDove daily user/call report (GH Actions runner stores it here) ────────
+// POST body: { reportDate: 'YYYY-MM-DD', report: { rows: [...] } }
+app.post('/api/runner/neodove/report', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const reportDate = String(body?.reportDate || kolkataDateStr());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return c.json({ error: 'reportDate must be YYYY-MM-DD' }, 400);
+  const rows = body?.report?.rows;
+  if (!Array.isArray(rows)) return c.json({ error: 'report.rows[] required' }, 400);
+  const key = `neodove_user_report:${reportDate}`;
+  const value = JSON.stringify({ reportDate, fetchedAt: new Date().toISOString(), rows });
+  await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+  return c.json({ ok: true, key, count: rows.length });
+});
+
+// GET /api/neodove/report?date=YYYY-MM-DD — public read for dashboards (default: latest)
+app.get('/api/neodove/report', async (c) => {
+  const { prisma } = deps();
+  const dateParam = c.req.query('date');
+  let row: any;
+  if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+    row = await prisma.setting.findUnique({ where: { key: `neodove_user_report:${dateParam}` } });
+  } else {
+    const rows = await prisma.setting.findMany({
+      where: { key: { startsWith: 'neodove_user_report:' } },
+      orderBy: { key: 'desc' },
+      take: 1,
+    });
+    row = rows[0];
+  }
+  if (!row?.value) return c.json({ error: 'no neodove report found' }, 404);
+  try {
+    return c.json(JSON.parse(row.value));
+  } catch {
+    return c.json({ error: 'corrupt report row' }, 500);
   }
 });
 

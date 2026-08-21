@@ -37,6 +37,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Classification: ['meaningfulUpdate'],
   Automation: ['enabled'],
   MarketingCampaign: ['enabled'],
+  Token: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -60,6 +61,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   MarketingCampaign: ['scheduledAt', 'lastRunAt', 'createdAt', 'updatedAt'],
   MarketingLead: ['sentAt', 'deliveredAt', 'readAt', 'createdAt'],
   MarketingCampaignRun: ['startedAt', 'finishedAt'],
+  Token: ['createdAt', 'updatedAt'],
 };
 
 const ID_FIELDS: Record<string, string> = {
@@ -84,6 +86,7 @@ const ID_FIELDS: Record<string, string> = {
   MarketingCampaign: 'id',
   MarketingLead: 'id',
   MarketingCampaignRun: 'id',
+  Token: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -595,6 +598,7 @@ export class D1PrismaClient {
   get marketingCampaign() { return this.model('MarketingCampaign'); }
   get marketingLead() { return this.model('MarketingLead'); }
   get marketingCampaignRun() { return this.model('MarketingCampaignRun'); }
+  get token() { return this.model('Token'); }
 
   $on() {}
   $disconnect() {}

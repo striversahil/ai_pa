@@ -1,0 +1,19 @@
+name: Cron - Every 10 min
+
+on:
+  schedule:
+    # neodove today-refresh every 10 minutes
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  neodove-today:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: neodove-report (today, intraday overwrite)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          NEODOVE_USER_IDS: ${{ secrets.NEODOVE_USER_IDS }}
+        run: node scripts/neodove-report-runner.js --today

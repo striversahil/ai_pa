@@ -13,6 +13,7 @@ import * as dataRetention from '../../automations/data-retention';
 import * as dppPricesDashboard from '../../automations/dpp-prices-dashboard';
 import * as enterpriseOpsAnalytics from '../../automations/enterprise-operations-analytics';
 import * as morningQueueDrain from '../../automations/morning-queue-drain';
+import * as neodoveTelecallerReport from '../../automations/neodove-telecaller-report';
 import * as notificationBatcher from '../../automations/notification-batcher';
 import * as orphanedMessageRecovery from '../../automations/orphaned-message-recovery';
 import * as outboundIntentRecovery from '../../automations/outbound-intent-recovery';
@@ -27,6 +28,7 @@ const MODULES: Record<string, AutomationModule> = {
   'dpp-prices-dashboard': dppPricesDashboard as AutomationModule,
   'enterprise-operations-analytics': enterpriseOpsAnalytics as AutomationModule,
   'morning-queue-drain': morningQueueDrain as AutomationModule,
+  'neodove-telecaller-report': neodoveTelecallerReport as AutomationModule,
   'notification-batcher': notificationBatcher as AutomationModule,
   'orphaned-message-recovery': orphanedMessageRecovery as AutomationModule,
   'outbound-intent-recovery': outboundIntentRecovery as AutomationModule,
@@ -55,6 +57,9 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'morning-queue-drain': {
     id: 'morning-queue-drain', name: 'Morning Queue Drain', description: 'Every minute, send due deferred WhatsApp messages (drain-locked, 60/cycle cap).', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, enabled: true,
+  },
+  'neodove-telecaller-report': {
+    id: 'neodove-telecaller-report', name: 'Telecaller Performance (NeoDove Live)', description: 'Per-agent daily call performance from NeoDove. GH runner refreshes TODAY every 10 min; final snapshot for yesterday at 00:30 IST.', type: 'handler', trigger: { type: 'schedule', cron: '*/10 * * * *' }, enabled: true,
   },
   'notification-batcher': {
     id: 'notification-batcher', name: 'Notification Batcher', description: 'Every 15 minutes, flush grouped alerts to WhatsApp.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, enabled: true,
@@ -90,13 +95,17 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
 
 export class AutomationRegistry {
   static async load(): Promise<void> {
-    for (const [slug, fileDef] of Object.entries(RULES)) {
-      try {
-        await this.loadOne(slug, fileDef);
-      } catch (e: any) {
-        logger.error({ slug, error: e.message }, 'Automation registry: failed to load automation');
-      }
-    }
+    // Parallel: each loadOne is an independent D1 upsert; sequential awaits
+    // serialized 12 round trips and dominated cold-start latency.
+    await Promise.all(
+      Object.entries(RULES).map(async ([slug, fileDef]) => {
+        try {
+          await this.loadOne(slug, fileDef);
+        } catch (e: any) {
+          logger.error({ slug, error: e.message }, 'Automation registry: failed to load automation');
+        }
+      }),
+    );
     logger.info({ count: Object.keys(RULES).length }, 'Automation registry loaded');
   }
 
