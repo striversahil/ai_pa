@@ -212,24 +212,27 @@ async function zohoFetch(url) {
  * yesterday's snapshot → NEODOVE_AGENT_NAMES env → empty roster.
  */
 async function fetchAgentRoster() {
+  // Env names are ADDITIVE: NeoDove call data misses agents who work Zoho-only
+  // (e.g. Muskan) — keep them listed in NEODOVE_AGENT_NAMES.
   const envNames = (process.env.NEODOVE_AGENT_NAMES || '')
     .split(',').map((s) => s.trim()).filter(Boolean);
   const fromReport = (rows) => [...new Set((rows || [])
     .map((r) => (r && typeof r.userName === 'string' ? r.userName.trim() : ''))
     .filter(Boolean))];
+  const dynamicNames = [];
   try {
     // Defaults to the LATEST stored day when no date is passed.
     const data = await workerRequest('/api/automations/neodove-telecaller-report/data');
-    const names = fromReport(data?.data);
-    if (names.length) return names;
+    dynamicNames.push(...fromReport(data?.data));
   } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch failed: ${err.message}`); }
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  try {
-    const data = await workerRequest(`/api/neodove/report?date=${yesterday}`);
-    const names = fromReport(data?.rows);
-    if (names.length) return names;
-  } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch (yesterday) failed: ${err.message}`); }
-  return envNames;
+  if (!dynamicNames.length) {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    try {
+      const data = await workerRequest(`/api/neodove/report?date=${yesterday}`);
+      dynamicNames.push(...fromReport(data?.rows));
+    } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch (yesterday) failed: ${err.message}`); }
+  }
+  return [...new Set([...dynamicNames, ...envNames])];
 }
 
 function badgePrompt(agentRoster) {
@@ -640,7 +643,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('zoho-sent-runner: fatal error:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('zoho-sent-runner: fatal error:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { classifyEstimate, buildClassification, defaultClassification, fetchAgentRoster };
