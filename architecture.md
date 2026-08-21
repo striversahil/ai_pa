@@ -262,12 +262,13 @@ cron-job.org (UTC schedule, POST + PAT header)
 | cron-job.org job | Schedule (UTC) | Workflow |
 |------------------|----------------|----------|
 | ai_pa - every 5 min (`8293639`) | */5 | `cron-every-5min.yml` |
-| ai_pa - every 10 min (`8302513`) | */10 | `cron-every-10min.yml` — NeoDove today-refresh |
+| ai_pa - every 10 min (`8302897`) | */10 | `cron-every-10min.yml` — NeoDove today-refresh |
 | ai_pa - every 15 min (`8293640`) | */15 | `cron-every-15min.yml` |
 | ai_pa - every 30 min (`8293641`) | */30 | `cron-every-30min.yml` |
 | ai_pa - daily IST (`8293642`) | 02:30/03:30/13:30/21:30 | `cron-daily-ist.yml` |
 
 - Each job sends `{"ref":"main"}` with an `Authorization: Bearer <PAT>` header; workflows also keep a `schedule:` block as fallback but external dispatch is the primary trigger.
+- ⚠️ **API gotcha:** the cron-job.org API silently ignores `requestHeaders` on job create/update — the GitHub PAT header MUST be set under `extendedData.headers` (object form), otherwise dispatches fail with status 4 and no workflow runs appear.
 - Manual equivalent: `GITHUB_PAT=... ./scripts/trigger-workflows.sh <every-5min|every-10min|every-15min|every-30min|daily|all>`.
 
 ---
