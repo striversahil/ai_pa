@@ -2,6 +2,7 @@ export interface Classification {
   intentScore?: number;
   reasoning?: string;
   summary?: string;
+  salesAgent?: string;
   meaningfulUpdate?: boolean;
   notAnswering?: string;
   movingSlow?: string;

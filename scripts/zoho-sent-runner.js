@@ -205,13 +205,51 @@ async function zohoFetch(url) {
 }
 
 // ── Prompts (ported from zoho-ai-classify.js) ────────────────────────────────
-function badgePrompt() {
+
+/**
+ * Fetches the unique NeoDove sales-agent roster so the LLM can attribute each
+ * estimate's latest comment to an agent. Order: today's live report →
+ * yesterday's snapshot → NEODOVE_AGENT_NAMES env → empty roster.
+ */
+async function fetchAgentRoster() {
+  const envNames = (process.env.NEODOVE_AGENT_NAMES || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  const fromReport = (rows) => [...new Set((rows || [])
+    .map((r) => (r && typeof r.userName === 'string' ? r.userName.trim() : ''))
+    .filter(Boolean))];
+  try {
+    // Defaults to the LATEST stored day when no date is passed.
+    const data = await workerRequest('/api/automations/neodove-telecaller-report/data');
+    const names = fromReport(data?.data);
+    if (names.length) return names;
+  } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch failed: ${err.message}`); }
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  try {
+    const data = await workerRequest(`/api/neodove/report?date=${yesterday}`);
+    const names = fromReport(data?.rows);
+    if (names.length) return names;
+  } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch (yesterday) failed: ${err.message}`); }
+  return envNames;
+}
+
+function badgePrompt(agentRoster) {
+  const rosterLine = agentRoster.length
+    ? `Sales Agent Roster (the company's callers): ${agentRoster.join(', ')}.`
+    : `No sales agent roster is available right now.`;
   return `You are a strict manager reviewing the LATEST sales comment on a work estimate.
 Today's Date is: ${new Date().toISOString().split('T')[0]} (refer to this to check if the comment is older than 2 days).
 
 You will receive exactly ONE comment, which is the most recent comment on the estimate.
 The current status of the estimate is determined SOLELY by this single latest comment.
 Do NOT consider any older comments — you do not have access to them.
+
+${rosterLine}
+Sales agents are instructed to write their own name next to the comments they leave on an
+estimate. Identify which sales agent from the roster wrote THIS comment:
+- Match the name even with minor spelling/case variations (e.g. "deepak" → "Deepak").
+- Return the name EXACTLY as written in the roster.
+- If no roster name appears in the comment (or the roster is unavailable), output "Unassigned".
+- Never invent a name that is not in the roster.
 
 Evaluate this single latest comment and output the following keys:
 1. meaningful_update: Mark as true if THIS comment contains a meaningful work update. Mark as false if it does not.
@@ -221,6 +259,7 @@ Evaluate this single latest comment and output the following keys:
    - confirm: true if THIS comment shows the order/estimate has been confirmed, final verbal approval is given, payment details are being shared, or purchase order is expected. Else false.
    - confirm_date: The date (YYYY-MM-DD format) of THIS comment if 'confirm' is true. If 'confirm' is false, output "None".
 3. reasoning: A short sentence explaining the assessment, quoting THIS single comment, and why the flags were set.
+4. sales_agent: The roster name of the agent who wrote THIS comment, or "Unassigned".
 
 Strict Decision Rules:
 - Base EVERY chip decision ONLY on the single latest comment provided. Do not infer anything from earlier history.
@@ -238,6 +277,7 @@ Return only a valid JSON object matching the JSON structure:
   "under_discussion": false,
   "confirm": false,
   "confirm_date": "None",
+  "sales_agent": "Unassigned",
   "reasoning": ""
 }
 Do not include explanations or markdown outside the JSON object.`;
@@ -269,11 +309,11 @@ Return only a valid JSON object matching the JSON structure:
 Do not include explanations or markdown outside the JSON object.`;
 }
 
-async function classifyEstimate(custName, total, latestComment, dateVal, commentHistory) {
+async function classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster) {
   let badgeResult;
   try {
     badgeResult = await omnirouteJson(
-      badgePrompt(),
+      badgePrompt(agentRoster || []),
       `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
       { temperature: 0 },
     );
@@ -321,10 +361,19 @@ function defaultClassification(dateVal, movingSlowOverride = null) {
     intentScore: 2,
     reasoning: 'No sales agent comment found.',
     summary: 'No sales agent comment found.',
+    salesAgent: 'Unassigned',
   };
 }
 
-function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOverride = null) {
+function resolveSalesAgent(badgeResult, agentRoster) {
+  const raw = String(badgeResult.sales_agent || '').trim();
+  if (!raw || /^unassigned$/i.test(raw)) return 'Unassigned';
+  if (!agentRoster || agentRoster.length === 0) return 'Unassigned';
+  const match = agentRoster.find((n) => n.toLowerCase() === raw.toLowerCase());
+  return match || 'Unassigned';
+}
+
+function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOverride = null, agentRoster = []) {
   const createdDate = new Date(dateVal);
   const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
   return {
@@ -336,6 +385,7 @@ function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOver
     intentScore: journeyResult.intent_score ?? 2,
     reasoning: badgeResult.reasoning || '',
     summary: journeyResult.summary || '',
+    salesAgent: resolveSalesAgent(badgeResult, agentRoster),
   };
 }
 
@@ -366,9 +416,8 @@ async function saveCommentsAndExtract(estId, comments, existingEstimate, doSave)
   return salesComments;
 }
 
-async function processEstimate(job) {
-  const { estId, custName, total, dateVal, estStatus, fetched } = job;
-  const comments = fetched.comments || [];
+async function processEstimate(job, agentRoster) {
+  const { estId, custName, total, dateVal, estStatus, fetched } = job;  const comments = fetched.comments || [];
   const salesComments = await saveCommentsAndExtract(estId, comments, null, true);
 
   salesComments.sort((a, b) => String(b.id).localeCompare(String(a.id)));
@@ -380,8 +429,8 @@ async function processEstimate(job) {
     classification = defaultClassification(dateVal);
   } else {
     const latestComment = historyLines[0] || '';
-    const { badgeResult, journeyResult } = await classifyEstimate(custName, total, latestComment, dateVal, commentHistory);
-    classification = buildClassification(badgeResult, journeyResult, dateVal);
+    const { badgeResult, journeyResult } = await classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster);
+    classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster);
   }
   void estStatus;
 
@@ -396,6 +445,10 @@ async function main() {
   const responseJson = await zohoFetch(ZOHO_BOOKS_SENT_URL);
   const estimates = responseJson.estimates || [];
   console.log(`zoho-sent-runner: fetched ${estimates.length} active sent estimates`);
+
+  console.log('zoho-sent-runner: fetching NeoDove sales agent roster');
+  const agentRoster = await fetchAgentRoster();
+  console.log(`zoho-sent-runner: roster (${agentRoster.length}): ${agentRoster.join(', ') || '(empty)'}`);
 
   console.log('zoho-sent-runner: fetching current DB state from worker');
   const state = await workerRequest('/api/runner/zoho/state');
@@ -460,8 +513,8 @@ async function main() {
         if (commentHistory) {
           try {
             const latestComment = historyLines[0] || '';
-            const { badgeResult, journeyResult } = await classifyEstimate(est.customerName, est.total, latestComment, est.date, commentHistory);
-            const classification = buildClassification(badgeResult, journeyResult, est.date, 'No');
+            const { badgeResult, journeyResult } = await classifyEstimate(est.customerName, est.total, latestComment, est.date, commentHistory, agentRoster);
+            const classification = buildClassification(badgeResult, journeyResult, est.date, 'No', agentRoster);
             await workerRequest('/api/runner/zoho/classification', {
               method: 'POST',
               body: { estimateId: est.estimateId, classification },
@@ -545,7 +598,7 @@ async function main() {
       while (workerIndex < items.length) {
         const job = items[workerIndex++];
         try {
-          await processEstimate(job);
+          await processEstimate(job, agentRoster);
           processed++;
         } catch (err) {
           console.error(`zoho-sent-runner: AI processing error for ${job.estId}: ${err.message}`);

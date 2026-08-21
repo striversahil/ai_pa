@@ -190,6 +190,7 @@ model Classification {
   intentScore      Int
   reasoning        String
   summary          String   @default("")
+  salesAgent       String   @default("Unassigned")
   processedAt      DateTime @default(now())
   estimate         Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
 }

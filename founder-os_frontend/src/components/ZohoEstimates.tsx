@@ -89,6 +89,7 @@ export default function ZohoEstimates() {
     const headers = [
       "Estimate Number",
       "Customer Name",
+      "Sales Agent",
       "Total Amount",
       "Created Date",
       "Intent Score",
@@ -105,6 +106,7 @@ export default function ZohoEstimates() {
       return [
         e.estimateNumber,
         e.customerName,
+        c.salesAgent || "Unassigned",
         e.total,
         e.date,
         c.intentScore || 0,
@@ -150,7 +152,7 @@ export default function ZohoEstimates() {
 
       const summary = c.summary ? c.summary.trim() : "";
 
-      let line = `${est.estimateNumber} - ${est.customerName} (₹${est.total.toLocaleString()}) - ${catString} - Created on: ${est.date || "Unknown"}`;
+      let line = `${est.estimateNumber} - ${est.customerName} [Agent: ${c.salesAgent || "Unassigned"}] (₹${est.total.toLocaleString()}) - ${catString} - Created on: ${est.date || "Unknown"}`;
       line += `\n  Last Comment [${lastCommentDate}]${lastCommentBy ? ` by ${lastCommentBy}` : ""}:`;
       line += `\n  "${lastCommentText || "No comment text"}"`;
       line += `\n  Audit: ${c.reasoning || "No review details."}`;
@@ -201,7 +203,7 @@ export default function ZohoEstimates() {
 
       const summary = c.summary ? c.summary.trim() : "";
 
-      let line = `${est.estimateNumber} - ${est.customerName} (₹${est.total.toLocaleString()}) - ${catString} - Created on: ${est.date || "Unknown"}`;
+      let line = `${est.estimateNumber} - ${est.customerName} [Agent: ${c.salesAgent || "Unassigned"}] (₹${est.total.toLocaleString()}) - ${catString} - Created on: ${est.date || "Unknown"}`;
       line += `\n  Last Comment [${lastCommentDate}]${lastCommentBy ? ` by ${lastCommentBy}` : ""}:`;
       line += `\n  "${lastCommentText || "No comment text"}"`;
       line += `\n  Audit: ${c.reasoning || "No review details."}`;

@@ -958,6 +958,7 @@ app.post('/api/runner/zoho/classification', async (c) => {
       intentScore: classification.intentScore ?? 2,
       reasoning: classification.reasoning || '',
       summary: classification.summary || '',
+      salesAgent: (classification.salesAgent || 'Unassigned').trim(),
       processedAt: now,
     },
     create: {
@@ -970,6 +971,7 @@ app.post('/api/runner/zoho/classification', async (c) => {
       intentScore: classification.intentScore ?? 2,
       reasoning: classification.reasoning || '',
       summary: classification.summary || '',
+      salesAgent: (classification.salesAgent || 'Unassigned').trim(),
       processedAt: now,
     },
   });

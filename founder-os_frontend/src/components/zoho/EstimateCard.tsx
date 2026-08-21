@@ -16,6 +16,8 @@ export default function EstimateCard({ est, expanded, onToggleComments }: Props)
   const accentClass = getEstimateAccentClass(est);
   const initials = getInitials(est.customerName);
   const todayCount = getCommentCountForDate(est, getTodayDateString());
+  const salesAgent = (c.salesAgent as string) || "Unassigned";
+  const isAssigned = salesAgent !== "Unassigned";
 
   return (
     <div
@@ -39,6 +41,12 @@ export default function EstimateCard({ est, expanded, onToggleComments }: Props)
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <span
+            className={`text-xs font-bold px-3 py-1 rounded-full border ${isAssigned ? "bg-violet-500/10 text-violet-300 border-violet-500/30" : "bg-zinc-800/60 text-zinc-500 border-zinc-700/60"}`}
+            title="Sales agent identified from the latest Zoho comment"
+          >
+            👤 {salesAgent}
+          </span>
           <span className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-md border ${getStatusBadgeClass(est.status)}`}>
             {est.status}
           </span>
