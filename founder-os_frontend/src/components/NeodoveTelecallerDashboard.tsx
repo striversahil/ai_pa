@@ -2,6 +2,23 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 
+type TrafficLight = "green" | "amber" | "red";
+
+type Kra = {
+  connectedTarget: number;
+  connected: number;
+  connectedPct: number;
+  connectedStatus: TrafficLight;
+  leadsTarget: number;
+  leads: number;
+  leadsPct: number;
+  leadsStatus: TrafficLight;
+  overall: TrafficLight;
+  overallLabel: string;
+  zohoEstimates: number;
+  zohoPipelineValue: number;
+};
+
 type AgentRow = {
   userName: string;
   userId: string;
@@ -20,6 +37,7 @@ type AgentRow = {
   leadsClosed: number;
   followupLeads: number;
   pendingScheduledLeads: number;
+  kra?: Kra;
 };
 
 type Totals = Record<string, number>;
@@ -33,11 +51,29 @@ type DataResponse = {
     agentCount?: number;
     error?: string;
   };
+  benchmarks?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number };
   agents: AgentRow[];
   totals: Totals | null;
+  zohoUnmapped?: { zohoName: string; estimates: number; value: number }[];
 };
 
 const REFRESH_MS = 5 * 60 * 1000;
+
+const LIGHT_TEXT: Record<TrafficLight, string> = {
+  green: "text-emerald-400",
+  amber: "text-amber-400",
+  red: "text-rose-400",
+};
+const LIGHT_BG: Record<TrafficLight, string> = {
+  green: "bg-emerald-500",
+  amber: "bg-amber-500",
+  red: "bg-rose-500",
+};
+const LIGHT_CHIP: Record<TrafficLight, string> = {
+  green: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  amber: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  red: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+};
 
 function fmtTalkTime(sec: number): string {
   if (!sec) return "—";
@@ -48,6 +84,23 @@ function fmtTalkTime(sec: number): string {
 
 function fmtNum(n: number | undefined): string {
   return n === undefined || n === null ? "—" : String(n);
+}
+
+function KraBar({ label, value, target, pct, status }: { label: string; value: number; target: number; pct: number; status: TrafficLight }) {
+  const width = Math.min(100, pct);
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[11px] mb-1">
+        <span className="text-zinc-400 font-semibold">{label}</span>
+        <span className={`font-bold font-mono ${LIGHT_TEXT[status]}`}>
+          {value}/{target} · {pct}%
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${LIGHT_BG[status]}`} style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
 }
 
 export default function NeodoveTelecallerDashboard() {
@@ -83,6 +136,9 @@ export default function NeodoveTelecallerDashboard() {
   const agents = data?.agents ?? [];
   const totals = data?.totals;
   const reportDate = data?.meta.reportDate;
+  const benchmarks = data?.benchmarks ?? { connectedCallsPerDay: 120, leadsPerAgentPerDay: 5 };
+  const zohoUnmapped = data?.zohoUnmapped ?? [];
+  const withKra = agents.filter((a) => a.kra);
 
   return (
     <div className="space-y-4 text-zinc-100">
@@ -90,11 +146,11 @@ export default function NeodoveTelecallerDashboard() {
       <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold">📞 Telecaller Performance — Live</h2>
+            <h2 className="text-xl font-bold">📞 Telecaller Performance — Individual KRA/KPI</h2>
             <p className="text-xs text-zinc-400 mt-1">
               {reportDate ? (
                 <>
-                  <span className="text-indigo-300 font-semibold">{reportDate}</span> · auto-refreshes every 5 min · runner overwrites every 10 min
+                  <span className="text-indigo-300 font-semibold">{reportDate}</span> · live vs daily benchmarks · auto-refreshes every 5 min
                   {data?.meta.fetchedAt && <> · NeoDove fetched {new Date(data.meta.fetchedAt).toLocaleTimeString()}</>}
                 </>
               ) : (
@@ -115,12 +171,62 @@ export default function NeodoveTelecallerDashboard() {
             </button>
           </div>
         </div>
+        <p className="mt-2 text-[11px] text-zinc-500">
+          Benchmarks per agent/day: <span className="text-zinc-300 font-semibold">≥ {benchmarks.connectedCallsPerDay} connected calls</span> ·{" "}
+          <span className="text-zinc-300 font-semibold">≥ {benchmarks.leadsPerAgentPerDay} leads</span> (in-progress + converted). Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
+        </p>
         {error && (
           <p className="mt-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{error}</p>
         )}
       </div>
 
-      {/* KPI strip */}
+      {/* Individual Agent KRA/KPI cards */}
+      {!loading && withKra.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-indigo-300">🎯 Individual Agent KRA — Today vs Benchmark</h3>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {withKra.map((a) => {
+              const k = a.kra!;
+              return (
+                <div key={a.userId || a.userName} className={`rounded-xl border p-4 space-y-3 bg-zinc-900 ${
+                  k.overall === "green" ? "border-emerald-500/30" : k.overall === "amber" ? "border-amber-500/30" : "border-rose-500/30"
+                }`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-bold text-white truncate block">{a.userName}</span>
+                      <span className="text-[10px] text-zinc-500">{a.managerName ?? "—"}</span>
+                    </div>
+                    <span className={`shrink-0 px-2 py-0.5 rounded-full border text-[10px] font-extrabold uppercase tracking-wide ${LIGHT_CHIP[k.overall]}`}>
+                      {k.overallLabel}
+                    </span>
+                  </div>
+                  <KraBar label="Connected Calls" value={k.connected} target={k.connectedTarget} pct={k.connectedPct} status={k.connectedStatus} />
+                  <KraBar label="Leads Generated" value={k.leads} target={k.leadsTarget} pct={k.leadsPct} status={k.leadsStatus} />
+                  <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-500">
+                    <span>Zoho pipeline</span>
+                    {k.zohoEstimates > 0 ? (
+                      <span className="font-semibold text-indigo-300">
+                        {k.zohoEstimates} sent est. · ₹{k.zohoPipelineValue.toLocaleString()}
+                      </span>
+                    ) : (
+                      <span className="italic">not mapped</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {zohoUnmapped.length > 0 && (
+            <p className="text-[10px] text-zinc-600">
+              Zoho commenters not mapped to any agent: {zohoUnmapped.map((z) => `${z.zohoName} (${z.estimates})`).join(", ")}. Set the D1 setting
+              {" "}
+              <code className="text-zinc-500">kra:zoho_name_map</code> to map them.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Team KPI strip */}
       {totals && (
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
           {[
@@ -155,6 +261,8 @@ export default function NeodoveTelecallerDashboard() {
                   <th className="px-4 py-3">Manager</th>
                   <th className="px-4 py-3 text-right">Attempted</th>
                   <th className="px-4 py-3 text-right">Connected</th>
+                  <th className="px-4 py-3 text-right">Conn. % of 120</th>
+                  <th className="px-4 py-3 text-right">Leads (IP+Cv)</th>
                   <th className="px-4 py-3 text-right">Not Conn.</th>
                   <th className="px-4 py-3 text-right">Incoming</th>
                   <th className="px-4 py-3 text-right">Outgoing</th>
@@ -175,6 +283,12 @@ export default function NeodoveTelecallerDashboard() {
                     <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{a.managerName ?? "—"}</td>
                     <td className="px-4 py-2.5 text-right font-bold text-white">{a.callsAttempted}</td>
                     <td className="px-4 py-2.5 text-right text-emerald-400">{a.callsConnected}</td>
+                    <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.kra ? LIGHT_TEXT[a.kra.connectedStatus] : "text-zinc-400"}`}>
+                      {a.kra ? `${a.kra.connectedPct}%` : "—"}
+                    </td>
+                    <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.kra ? LIGHT_TEXT[a.kra.leadsStatus] : "text-zinc-400"}`}>
+                      {a.kra ? `${a.kra.leads}/${a.kra.leadsTarget}` : "—"}
+                    </td>
                     <td className="px-4 py-2.5 text-right text-zinc-400">{a.callsNotConnected}</td>
                     <td className="px-4 py-2.5 text-right text-zinc-300">{a.incomingCalls}</td>
                     <td className="px-4 py-2.5 text-right text-zinc-300">{a.outgoingCalls}</td>
@@ -194,6 +308,8 @@ export default function NeodoveTelecallerDashboard() {
                     <td colSpan={3} className="px-4 py-3 text-zinc-300 uppercase tracking-wide text-[10px]">Team Total</td>
                     <td className="px-4 py-3 text-right text-white">{fmtNum(totals.callsAttempted)}</td>
                     <td className="px-4 py-3 text-right text-emerald-400">{fmtNum(totals.callsConnected)}</td>
+                    <td className="px-4 py-3 text-right text-zinc-400">—</td>
+                    <td className="px-4 py-3 text-right text-zinc-400">—</td>
                     <td className="px-4 py-3 text-right text-zinc-400">{fmtNum(totals.callsNotConnected)}</td>
                     <td className="px-4 py-3 text-right text-zinc-300">{fmtNum(totals.incomingCalls)}</td>
                     <td className="px-4 py-3 text-right text-zinc-300">{fmtNum(totals.outgoingCalls)}</td>
