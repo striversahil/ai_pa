@@ -368,15 +368,23 @@ function defaultClassification(dateVal, movingSlowOverride = null) {
   };
 }
 
-function resolveSalesAgent(badgeResult, agentRoster) {
+function resolveSalesAgent(badgeResult, agentRoster, commentText = '') {
   const raw = String(badgeResult.sales_agent || '').trim();
-  if (!raw || /^unassigned$/i.test(raw)) return 'Unassigned';
-  if (!agentRoster || agentRoster.length === 0) return 'Unassigned';
-  const match = agentRoster.find((n) => n.toLowerCase() === raw.toLowerCase());
-  return match || 'Unassigned';
+  if (raw && !/^unassigned$/i.test(raw) && agentRoster && agentRoster.length) {
+    const match = agentRoster.find((n) => n.toLowerCase() === raw.toLowerCase());
+    if (match) return match;
+  }
+  // Safety net: the LLM sometimes overlooks signatures like "... - Muskan".
+  // Scan the raw comment for a roster name (word-bounded) before giving up.
+  if (agentRoster && agentRoster.length && commentText) {
+    const hit = agentRoster.find((n) =>
+      new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(commentText));
+    if (hit) return hit;
+  }
+  return 'Unassigned';
 }
 
-function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOverride = null, agentRoster = []) {
+function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOverride = null, agentRoster = [], latestComment = '') {
   const createdDate = new Date(dateVal);
   const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
   return {
@@ -388,7 +396,7 @@ function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOver
     intentScore: journeyResult.intent_score ?? 2,
     reasoning: badgeResult.reasoning || '',
     summary: journeyResult.summary || '',
-    salesAgent: resolveSalesAgent(badgeResult, agentRoster),
+    salesAgent: resolveSalesAgent(badgeResult, agentRoster, latestComment),
   };
 }
 
@@ -433,7 +441,7 @@ async function processEstimate(job, agentRoster) {
   } else {
     const latestComment = historyLines[0] || '';
     const { badgeResult, journeyResult } = await classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster);
-    classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster);
+    classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster, latestComment);
   }
   void estStatus;
 
@@ -517,7 +525,7 @@ async function main() {
           try {
             const latestComment = historyLines[0] || '';
             const { badgeResult, journeyResult } = await classifyEstimate(est.customerName, est.total, latestComment, est.date, commentHistory, agentRoster);
-            const classification = buildClassification(badgeResult, journeyResult, est.date, 'No', agentRoster);
+            const classification = buildClassification(badgeResult, journeyResult, est.date, 'No', agentRoster, latestComment);
             await workerRequest('/api/runner/zoho/classification', {
               method: 'POST',
               body: { estimateId: est.estimateId, classification },
