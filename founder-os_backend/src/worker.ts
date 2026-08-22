@@ -23,23 +23,59 @@ app.use('*', cors());
 // Only automation-management routes wait for full boot; every other endpoint
 // (estimates, token store, runner reads/writes…) proceeds immediately, which
 // removes the cold-start automation-sync tax from hot public paths.
+//
+// Root-cause hardening (recurring daily dashboards-down episodes): previously a
+// failed or hung SchedulerService.init() was swallowed ONCE and `booted` stayed
+// true — the isolate kept an EMPTY AutomationEngine for hours (404s on all
+// /api/automations/*) until Cloudflare happened to recycle it. Now:
+//   - init races an 8s timeout so a hung D1 cannot stall requests forever,
+//   - a failed/timed-out boot becomes RETRYABLE by the next request
+//     (capped at BOOT_MAX_ATTEMPTS consecutive failures),
+//   - automation routes self-heal: if the registry is still empty they force
+//     another attempt instead of serving 404s indefinitely.
 const BOOT_PATH_RE = /^\/api\/(trigger|automations)(\/|$)/;
-let booted = false;
+const BOOT_TIMEOUT_MS = 8000;
+const BOOT_WAIT_MS = 5000;
+const BOOT_MAX_ATTEMPTS = 5;
+let bootAttempts = 0;
+let bootSucceeded = false;
 let bootPromise: Promise<void> | null = null;
+
+function ensureBoot(): Promise<void> {
+  if (bootPromise) return bootPromise;
+  const attempt = ++bootAttempts;
+  bootPromise = (async () => {
+    const { SchedulerService } = deps();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`boot timeout after ${BOOT_TIMEOUT_MS}ms`)), BOOT_TIMEOUT_MS);
+      });
+      await Promise.race([SchedulerService.init(), timeout]);
+      bootSucceeded = true;
+    } catch (e: any) {
+      console.log(`Boot automation load failed (attempt ${attempt}):`, e?.message);
+      bootPromise = null; // retryable — next automations request re-kicks boot
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  })();
+  return bootPromise;
+}
+
 app.use('*', async (c, next) => {
   bootstrapEnv(c.env);
-  if (!booted) {
-    booted = true;
-    bootPromise = (async () => {
-      const { SchedulerService } = deps();
+  if (BOOT_PATH_RE.test(new URL(c.req.url).pathname)) {
+    if (!bootPromise && bootAttempts >= BOOT_MAX_ATTEMPTS) {
       try {
-        await SchedulerService.init();
-      } catch (e: any) {
-        console.log('Boot automation load failed:', e?.message);
-      }
-    })();
+        if ((deps().AutomationEngine.all() as unknown[]).length === 0) bootAttempts = 0;
+      } catch { /* deps not ready yet */ }
+    }
+    if (!bootPromise && bootAttempts < BOOT_MAX_ATTEMPTS) void ensureBoot();
+    if (bootPromise) await Promise.race([bootPromise, new Promise((r) => setTimeout(r, BOOT_WAIT_MS))]);
+  } else if (!bootPromise && bootAttempts < BOOT_MAX_ATTEMPTS) {
+    void ensureBoot(); // opportunistic warm-up on any other request
   }
-  if (BOOT_PATH_RE.test(new URL(c.req.url).pathname)) await bootPromise;
   await next();
 });
 
@@ -265,7 +301,14 @@ app.get('/api/token', async (c) => {
 
 // ── Status ──────────────────────────────────────────────────────────────────
 app.get('/api/status', (c) => {
-  return c.json({ success: true, useInMemoryDb: false, isMockLLM: false });
+  let boot: Record<string, unknown>;
+  try {
+    const loaded = bootPromise ? (deps().AutomationEngine.all() as unknown[]).length : 0;
+    boot = { attempts: bootAttempts, automationsLoaded: loaded, healthy: bootSucceeded && loaded > 0 };
+  } catch {
+    boot = { attempts: bootAttempts, automationsLoaded: 0, healthy: false };
+  }
+  return c.json({ success: true, useInMemoryDb: false, isMockLLM: false, boot });
 });
 
 // ── Brief ───────────────────────────────────────────────────────────────────
