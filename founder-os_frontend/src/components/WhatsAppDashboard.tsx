@@ -418,7 +418,7 @@ export default function WhatsAppDashboard() {
               <h2 className="font-bold text-zinc-900 dark:text-white text-sm flex items-center gap-2">
                 <span>⏳</span> What I Owe
               </h2>
-              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-amber400 border border-amber-500/30">
+              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
                 {pendingChats.reduce((n, c) => n + c.openCount, 0)} open
               </span>
             </div>
@@ -435,7 +435,7 @@ export default function WhatsAppDashboard() {
                     <div className="flex items-center justify-between gap-2">
                       <button
                         onClick={() => setSelectedContactUid(chat.chatId)}
-                        className="text-xs font-bold text-indigo-600 dark:text-indigo-indigo300 hover:text-indigo-200 cursor-pointer border-0 bg-transparent p-0 text-left"
+                        className="text-xs font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer border-0 bg-transparent p-0 text-left"
                       >
                         {chat.chatName}
                       </button>
@@ -449,7 +449,7 @@ export default function WhatsAppDashboard() {
                             <div className="space-y-0.5 min-w-0">
                               <p className={`text-xs leading-relaxed ${isOverdue ? "text-rose-200" : "text-zinc-800 dark:text-zinc-200"}`}>{item.description}</p>
                               {item.dueDate && (
-                                <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-600 dark:text-rose-rose400" : "text-zinc-600 dark:text-zinc-500"}`}>
+                                <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-400" : "text-zinc-600 dark:text-zinc-500"}`}>
                                   {isOverdue ? "⚠️ Overdue" : "Due"}: {new Date(item.dueDate).toLocaleDateString()}
                                 </span>
                               )}
@@ -457,7 +457,7 @@ export default function WhatsAppDashboard() {
                             <button
                               onClick={() => resolvePendingItem(item.id)}
                               title="Mark as done"
-                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-emerald400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
+                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
                             >
                               ✓ Done
                             </button>
@@ -516,7 +516,7 @@ export default function WhatsAppDashboard() {
                         {pendingCountForChat[c.uid] > 0 && (
                           <span
                             title={`${pendingCountForChat[c.uid]} pending from you`}
-                            className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-amber400 border border-amber-500/30"
+                            className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30"
                           >
                             {pendingCountForChat[c.uid]} ⏳
                           </span>
@@ -529,7 +529,7 @@ export default function WhatsAppDashboard() {
                         <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2 leading-relaxed">{digest.summary}</p>
                         <div className="flex flex-wrap items-center gap-1.5 pt-1">
                           <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded ${digest.priority === "urgent" || digest.priority === "high"
-                            ? "bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border border-rose-500/20"
+                            ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
                             : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700"
                             }`}>
                             {digest.priority}
@@ -565,7 +565,7 @@ export default function WhatsAppDashboard() {
                 <button
                   onClick={() => generateContactSummary(selectedContactUid)}
                   disabled={isSummarizing}
-                  className="px-2.5 py-1 text-[10px] bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-600 dark:text-indigo-indigo400 font-extrabold rounded border border-indigo-500/30 cursor-pointer"
+                  className="px-2.5 py-1 text-[10px] bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 font-extrabold rounded border border-indigo-500/30 cursor-pointer"
                 >
                   {isSummarizing ? "Auditing..." : "Re-Audit Summary"}
                 </button>
@@ -589,7 +589,7 @@ export default function WhatsAppDashboard() {
                           : "bg-zinc-100/90 dark:bg-zinc-800/90 text-zinc-900 dark:text-zinc-100 rounded-bl-none border border-zinc-300/50 dark:border-zinc-700/50"
                           }`}>
                           {senderLabel && (
-                            <span className="text-[9px] font-extrabold text-indigo-600 dark:text-indigo-indigo400 block mb-1 uppercase tracking-wider">
+                            <span className="text-[9px] font-extrabold text-indigo-400 block mb-1 uppercase tracking-wider">
                               {senderLabel}
                             </span>
                           )}
@@ -664,13 +664,13 @@ export default function WhatsAppDashboard() {
                   className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 text-xs placeholder-zinc-600 focus:outline-none focus:border-indigo-500 resize-none"
                 />
                 <div className="flex items-center justify-between">
-                  <span className={`text-[9px] font-bold ${noteStatus === "saved" ? "text-emerald-600 dark:text-emerald-emerald400" : noteStatus === "error" ? "text-rose-600 dark:text-rose-rose400" : noteStatus === "saving" ? "text-amber-600 dark:text-amber-amber400" : "text-transparent"}`}>
+                  <span className={`text-[9px] font-bold ${noteStatus === "saved" ? "text-emerald-400" : noteStatus === "error" ? "text-rose-400" : noteStatus === "saving" ? "text-amber-400" : "text-transparent"}`}>
                     {noteStatus === "saved" ? "✓ Saved" : noteStatus === "saving" ? "Saving..." : noteStatus === "error" ? "Failed to save" : "·"}
                   </span>
                   <button
                     onClick={saveNote}
                     disabled={noteStatus === "saving"}
-                    className="px-2.5 py-1 text-[9px] bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-600 dark:text-indigo-indigo400 font-extrabold rounded border border-indigo-500/30 cursor-pointer disabled:opacity-40"
+                    className="px-2.5 py-1 text-[9px] bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 font-extrabold rounded border border-indigo-500/30 cursor-pointer disabled:opacity-40"
                   >
                     Save
                   </button>
@@ -682,7 +682,7 @@ export default function WhatsAppDashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-zinc-600 dark:text-zinc-500 font-bold uppercase block">⏳ What I Owe</span>
                   {activePendingItems.length > 0 && (
-                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-amber400 border border-amber-500/30">
+                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
                       {activePendingItems.length} open
                     </span>
                   )}
@@ -704,13 +704,13 @@ export default function WhatsAppDashboard() {
                             <button
                               onClick={() => resolvePendingItem(item.id)}
                               title="Mark as done"
-                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-emerald400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
+                              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 cursor-pointer shrink-0"
                             >
                               ✓ Done
                             </button>
                           </div>
                           {item.dueDate && (
-                            <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-600 dark:text-rose-rose400" : "text-zinc-600 dark:text-zinc-500"}`}>
+                            <span className={`text-[9px] font-bold uppercase ${isOverdue ? "text-rose-400" : "text-zinc-600 dark:text-zinc-500"}`}>
                               {isOverdue ? "⚠️ Overdue" : "Due"}: {new Date(item.dueDate).toLocaleDateString()}
                             </span>
                           )}
@@ -732,9 +732,9 @@ export default function WhatsAppDashboard() {
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] text-zinc-600 dark:text-zinc-500 font-bold uppercase">Sentiment</span>
                       <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${activeDigest.sentiment === "positive"
-                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400"
+                        ? "bg-emerald-500/10 text-emerald-400"
                         : activeDigest.sentiment === "negative"
-                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-rose400"
+                          ? "bg-rose-500/10 text-rose-400"
                           : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
                         }`}>
                         {activeDigest.sentiment}

@@ -47,19 +47,19 @@ type DashboardData = {
 };
 
 const statusColor: Record<string, string> = {
-  active: "text-emerald-600 dark:text-emerald-emerald300 bg-emerald-500/10 border-emerald-500/30",
+  active: "text-emerald-300 bg-emerald-500/10 border-emerald-500/30",
   draft: "text-zinc-700 dark:text-zinc-300 bg-zinc-500/10 border-zinc-500/30",
-  paused: "text-amber-600 dark:text-amber-amber300 bg-amber-500/10 border-amber-500/30",
-  completed: "text-sky-600 dark:text-sky-sky300 bg-sky-500/10 border-sky-500/30",
+  paused: "text-amber-300 bg-amber-500/10 border-amber-500/30",
+  completed: "text-sky-300 bg-sky-500/10 border-sky-500/30",
   archived: "text-zinc-600 dark:text-zinc-500 bg-zinc-500/5 border-zinc-500/20",
 };
 
 const leadStatusColor: Record<string, string> = {
   pending: "text-zinc-500 dark:text-zinc-400",
-  sent: "text-sky-600 dark:text-sky-sky300",
-  delivered: "text-emerald-600 dark:text-emerald-emerald300",
-  read: "text-emerald-600 dark:text-emerald-emerald400",
-  failed: "text-rose-600 dark:text-rose-rose400",
+  sent: "text-sky-300",
+  delivered: "text-emerald-300",
+  read: "text-emerald-400",
+  failed: "text-rose-400",
 };
 
 export default function WhatsAppMarketingDashboard() {
@@ -242,7 +242,7 @@ export default function WhatsAppMarketingDashboard() {
   };
 
   if (loading) return <div className="p-8 text-zinc-500 dark:text-zinc-400">Loading marketing dashboard…</div>;
-  if (error && !data) return <div className="p-8 text-rose-600 dark:text-rose-rose400">{error}</div>;
+  if (error && !data) return <div className="p-8 text-rose-400">{error}</div>;
 
   const k = data?.kpis;
 
@@ -252,7 +252,7 @@ export default function WhatsAppMarketingDashboard() {
   return (
     <div className="p-6 space-y-6">
       {toast && (
-        <div className="fixed top-4 right-4 z-50 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-600 dark:text-emerald-emerald300">
+        <div className="fixed top-4 right-4 z-50 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
           {toast}
         </div>
       )}
@@ -278,11 +278,11 @@ export default function WhatsAppMarketingDashboard() {
       {k && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           <Kpi label="Campaigns" value={k.campaigns} />
-          <Kpi label="Active" value={k.active} accent="text-emerald-600 dark:text-emerald-emerald300" />
+          <Kpi label="Active" value={k.active} accent="text-emerald-300" />
           <Kpi label="Draft" value={k.draft} accent="text-zinc-700 dark:text-zinc-300" />
-          <Kpi label="Paused" value={k.paused} accent="text-amber-600 dark:text-amber-amber300" />
-          <Kpi label="Completed" value={k.completed} accent="text-sky-600 dark:text-sky-sky300" />
-          <Kpi label="Total Leads" value={k.totalLeads} accent="text-violet-600 dark:text-violet-violet300" />
+          <Kpi label="Paused" value={k.paused} accent="text-amber-300" />
+          <Kpi label="Completed" value={k.completed} accent="text-sky-300" />
+          <Kpi label="Total Leads" value={k.totalLeads} accent="text-violet-300" />
         </div>
       )}
 
@@ -395,23 +395,23 @@ export default function WhatsAppMarketingDashboard() {
                 </div>
               </button>
               <div className="flex items-center gap-2 shrink-0">
-                <button onClick={() => handleRun(c.id)} disabled={runningId === c.id} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-sky300 disabled:opacity-50">
+                <button onClick={() => handleRun(c.id)} disabled={runningId === c.id} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:border-sky-500 hover:text-sky-300 disabled:opacity-50">
                   {runningId === c.id ? "Running…" : "Run Now"}
                 </button>
-                <button onClick={() => handleToggleStatus(c)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:border-amber-500 hover:text-amber-600 dark:hover:text-amber-amber300">
+                <button onClick={() => handleToggleStatus(c)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:border-amber-500 hover:text-amber-300">
                   {c.status === "active" ? "Pause" : "Activate"}
                 </button>
-                <button onClick={() => handleDelete(c)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-500 dark:text-zinc-400 hover:border-rose-500 hover:text-rose-600 dark:hover:text-rose-rose300">
+                <button onClick={() => handleDelete(c)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-500 dark:text-zinc-400 hover:border-rose-500 hover:text-rose-300">
                   Delete
                 </button>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-6 gap-2 text-center">
               <MiniStat label="Total" value={c.stats.total} />
-              <MiniStat label="Sent" value={c.stats.sent} cls="text-sky-600 dark:text-sky-sky300" />
-              <MiniStat label="Delivered" value={c.stats.delivered} cls="text-emerald-600 dark:text-emerald-emerald300" />
-              <MiniStat label="Read" value={c.stats.read} cls="text-emerald-600 dark:text-emerald-emerald400" />
-              <MiniStat label="Failed" value={c.stats.failed} cls="text-rose-600 dark:text-rose-rose400" />
+              <MiniStat label="Sent" value={c.stats.sent} cls="text-sky-300" />
+              <MiniStat label="Delivered" value={c.stats.delivered} cls="text-emerald-300" />
+              <MiniStat label="Read" value={c.stats.read} cls="text-emerald-400" />
+              <MiniStat label="Failed" value={c.stats.failed} cls="text-rose-400" />
               <MiniStat label="Pending" value={c.stats.pending} cls="text-zinc-500 dark:text-zinc-400" />
             </div>
           </div>
@@ -491,10 +491,10 @@ export default function WhatsAppMarketingDashboard() {
               {data.recentRuns.map((r) => (
                 <tr key={r.id} className="border-t border-zinc-200/50 dark:border-zinc-800/50">
                   <td className="py-2 text-zinc-500 dark:text-zinc-400">{new Date(r.startedAt).toLocaleString()}</td>
-                  <td className={`py-2 ${r.status === "failed" ? "text-rose-600 dark:text-rose-rose400" : r.status === "completed" ? "text-emerald-600 dark:text-emerald-emerald300" : "text-zinc-700 dark:text-zinc-300"}`}>{r.status}</td>
+                  <td className={`py-2 ${r.status === "failed" ? "text-rose-400" : r.status === "completed" ? "text-emerald-300" : "text-zinc-700 dark:text-zinc-300"}`}>{r.status}</td>
                   <td className="py-2 text-zinc-500 dark:text-zinc-400">{r.total}</td>
-                  <td className="py-2 text-sky-600 dark:text-sky-sky300">{r.sent}</td>
-                  <td className="py-2 text-rose-600 dark:text-rose-rose400">{r.failed}</td>
+                  <td className="py-2 text-sky-300">{r.sent}</td>
+                  <td className="py-2 text-rose-400">{r.failed}</td>
                 </tr>
               ))}
             </tbody>

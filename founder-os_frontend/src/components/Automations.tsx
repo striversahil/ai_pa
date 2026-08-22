@@ -160,7 +160,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-bold text-zinc-900 dark:text-white truncate">{a.name}</h3>
-            <code className="text-[11px] text-indigo-600 dark:text-indigo-indigo400 font-mono">{a.slug}</code>
+            <code className="text-[11px] text-indigo-400 font-mono">{a.slug}</code>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {isDraggable && (
@@ -170,7 +170,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
               onClick={() => togglePin(a.slug)}
               title={pinned.includes(a.slug) ? "Unpin" : "Pin for quick access"}
               className={`px-2 py-0.5 text-xs rounded-full border transition-all duration-200 cursor-pointer ${pinned.includes(a.slug)
-                  ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-indigo300 border-indigo-500/30"
+                  ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
                   : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-500 border-zinc-300 dark:border-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-600"
                 }`}
             >
@@ -178,7 +178,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
             </button>
             <span
               className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border ${a.enabled
-                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400 border-emerald-500/20"
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                   : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-500 border-zinc-300 dark:border-zinc-700"
                 }`}
             >
@@ -245,7 +245,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
             <button
               onClick={() => togglePin(selected)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-0 ${pinned.includes(selected)
-                  ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-indigo300 border border-indigo-500/30"
+                  ? "bg-indigo-500/10 text-indigo-300 border border-indigo-500/30"
                   : "bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-900 dark:text-white"
                 }`}
             >
@@ -262,7 +262,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
         <>
           {pinnedList.length > 0 && (
             <div className="space-y-4">
-              <h2 className="text-xs font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-indigo300">
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-indigo-300">
                 📌 Pinned <span className="text-zinc-600 dark:text-zinc-500 normal-case font-medium">— drag to reorder</span>
               </h2>
               <div className="grid gap-4 md:grid-cols-2">

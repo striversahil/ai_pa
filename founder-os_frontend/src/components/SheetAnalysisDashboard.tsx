@@ -48,11 +48,11 @@ type SheetData = {
 };
 
 const ACCENT_CLASS: Record<string, { text: string; glow: string }> = {
-  indigo: { text: "text-indigo-600 dark:text-indigo-indigo400", glow: "bg-indigo-500/10" },
-  emerald: { text: "text-emerald-600 dark:text-emerald-emerald400", glow: "bg-emerald-500/10" },
-  rose: { text: "text-rose-600 dark:text-rose-rose400", glow: "bg-rose-500/10" },
-  amber: { text: "text-amber-600 dark:text-amber-amber400", glow: "bg-amber-500/10" },
-  violet: { text: "text-violet-600 dark:text-violet-violet400", glow: "bg-violet-500/10" },
+  indigo: { text: "text-indigo-400", glow: "bg-indigo-500/10" },
+  emerald: { text: "text-emerald-400", glow: "bg-emerald-500/10" },
+  rose: { text: "text-rose-400", glow: "bg-rose-500/10" },
+  amber: { text: "text-amber-400", glow: "bg-amber-500/10" },
+  violet: { text: "text-violet-400", glow: "bg-violet-500/10" },
 };
 
 const formatIso = (d: Date) =>
@@ -216,16 +216,16 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
       {/* Not-configured / error banners */}
       {!loading && !error && data && !data.meta.configured && (
         <div className="bg-amber-950/10 border border-amber-900/30 rounded-xl p-4 text-xs text-amber-200/90 leading-relaxed">
-          ⚠️ Google Sheets is not configured. Add <code className="bg-zinc-50 dark:bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-600 dark:text-rose-rose300">google-service-account.json</code> or set <code className="bg-zinc-50 dark:bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-600 dark:text-rose-rose300">GOOGLE_SERVICE_ACCOUNT_JSON</code> to connect a live sheet.
+          ⚠️ Google Sheets is not configured. Add <code className="bg-zinc-50 dark:bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-300">google-service-account.json</code> or set <code className="bg-zinc-50 dark:bg-zinc-950 px-1 py-0.5 rounded font-mono text-rose-300">GOOGLE_SERVICE_ACCOUNT_JSON</code> to connect a live sheet.
         </div>
       )}
       {!loading && error && (
-        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-5 text-sm text-rose-600 dark:text-rose-rose300">
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-5 text-sm text-rose-300">
           {error}
         </div>
       )}
       {!loading && !error && data && data.meta.error && data.meta.configured && (
-        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 text-xs text-rose-600 dark:text-rose-rose300">
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 text-xs text-rose-300">
           ⚠️ {data.meta.error}
         </div>
       )}
@@ -262,7 +262,7 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
                 <span>🔍</span> Data Quality & Integrity Audit ({data.warnings.length} Warnings)
               </h3>
               {data.warnings.length === 0 ? (
-                <p className="text-xs text-emerald-600 dark:text-emerald-emerald400 font-bold">✓ Data is clean! Zero warnings or missing fields found in sheet range.</p>
+                <p className="text-xs text-emerald-400 font-bold">✓ Data is clean! Zero warnings or missing fields found in sheet range.</p>
               ) : (
                 <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800 rounded-lg">
                   <table className="w-full text-left text-xs border-collapse">
@@ -285,8 +285,8 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
                           <td className="p-3 text-center">
                             <span className={`px-2 py-0.5 text-[9px] font-extrabold uppercase rounded ${
                               warning.severity === "critical"
-                                ? "bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border border-rose-500/20"
-                                : "bg-amber-500/10 text-amber-600 dark:text-amber-amber400 border border-amber-500/20"
+                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                             }`}>{warning.severity}</span>
                           </td>
                         </tr>
@@ -306,7 +306,7 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="bg-emerald-950/10 border border-emerald-900/20 rounded-xl p-4 space-y-3">
-                  <h4 className="text-emerald-600 dark:text-emerald-emerald400 font-bold text-xs flex items-center gap-2">
+                  <h4 className="text-emerald-400 font-bold text-xs flex items-center gap-2">
                     <span>🔥</span> Top & Consistent Performers
                   </h4>
                   {data.insights.good.length === 0 ? (
@@ -322,14 +322,14 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
                             </div>
                             <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{item.desc}</span>
                           </div>
-                          <span className="text-[9px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
+                          <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
                 <div className="bg-rose-950/10 border border-rose-900/20 rounded-xl p-4 space-y-3">
-                  <h4 className="text-rose-600 dark:text-rose-rose400 font-bold text-xs flex items-center gap-2">
+                  <h4 className="text-rose-400 font-bold text-xs flex items-center gap-2">
                     <span>⚠️</span> Inconsistent / Needs Training Focus
                   </h4>
                   {data.insights.inconsistent.length === 0 ? (
@@ -345,7 +345,7 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
                             </div>
                             <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{item.desc}</span>
                           </div>
-                          <span className="text-[9px] bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border border-rose-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
+                          <span className="text-[9px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded-full font-bold">{item.badge}</span>
                         </div>
                       ))}
                     </div>

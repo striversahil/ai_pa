@@ -45,7 +45,7 @@ export default function ZohoEstimatesHeader({
     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
       <div className="flex items-start gap-3">
         <div className="hidden sm:flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 shadow-lg shadow-indigo-500/10">
-          <svg className="w-5 h-5 text-indigo-600 dark:text-indigo-indigo300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17h6m-6-4h6m-6-4h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zm0 8V5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2v-8z" /></svg>
+          <svg className="w-5 h-5 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17h6m-6-4h6m-6-4h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zm0 8V5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2v-8z" /></svg>
         </div>
         <div>
           <h1 className="text-3xl font-bold font-heading tracking-tight">
@@ -96,7 +96,7 @@ export default function ZohoEstimatesHeader({
             onClick={onTogglePrompt}
             disabled={!hasPriority}
             className={`flex items-center justify-center px-3 py-2 rounded-r-lg text-sm border-0 bg-transparent cursor-pointer disabled:opacity-50 ${
-              isPromptOpen ? "text-indigo-600 dark:text-indigo-indigo400 bg-zinc-200/50 dark:bg-zinc-700/50" : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/30 dark:hover:bg-zinc-700/30"
+              isPromptOpen ? "text-indigo-400 bg-zinc-200/50 dark:bg-zinc-700/50" : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/30 dark:hover:bg-zinc-700/30"
             }`}
             title="Edit AI Prompt Template"
           >
@@ -109,7 +109,7 @@ export default function ZohoEstimatesHeader({
                 <span className="font-bold text-xs text-zinc-900 dark:text-white uppercase tracking-wider">Edit AI Prompt Template</span>
                 <button
                   onClick={onResetPrompt}
-                  className="text-[10px] text-indigo-600 dark:text-indigo-indigo400 hover:text-indigo-600 dark:hover:text-indigo-indigo300 font-extrabold transition-all border-0 bg-transparent cursor-pointer"
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 font-extrabold transition-all border-0 bg-transparent cursor-pointer"
                 >
                   Reset to Default
                 </button>

@@ -63,11 +63,11 @@ type WaEngineData = {
 };
 
 const ACCENT_CLASS: Record<string, { text: string; glow: string }> = {
-  indigo: { text: "text-indigo-600 dark:text-indigo-indigo400", glow: "bg-indigo-500/10" },
-  emerald: { text: "text-emerald-600 dark:text-emerald-emerald400", glow: "bg-emerald-500/10" },
-  rose: { text: "text-rose-600 dark:text-rose-rose400", glow: "bg-rose-500/10" },
-  amber: { text: "text-amber-600 dark:text-amber-amber400", glow: "bg-amber-500/10" },
-  violet: { text: "text-violet-600 dark:text-violet-violet400", glow: "bg-violet-500/10" },
+  indigo: { text: "text-indigo-400", glow: "bg-indigo-500/10" },
+  emerald: { text: "text-emerald-400", glow: "bg-emerald-500/10" },
+  rose: { text: "text-rose-400", glow: "bg-rose-500/10" },
+  amber: { text: "text-amber-400", glow: "bg-amber-500/10" },
+  violet: { text: "text-violet-400", glow: "bg-violet-500/10" },
 };
 
 export default function WaEngineDashboard() {
@@ -166,7 +166,7 @@ export default function WaEngineDashboard() {
 
       {/* Live status banner */}
       {!loading && !error && data && (
-        <div className={`flex flex-wrap items-center gap-3 rounded-xl border p-4 text-sm ${liveOk ? "bg-emerald-950/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-emerald300" : "bg-rose-950/10 border-rose-500/30 text-rose-600 dark:text-rose-rose300"}`}>
+        <div className={`flex flex-wrap items-center gap-3 rounded-xl border p-4 text-sm ${liveOk ? "bg-emerald-950/10 border-emerald-500/20 text-emerald-300" : "bg-rose-950/10 border-rose-500/30 text-rose-300"}`}>
           <span className={`w-2.5 h-2.5 rounded-full ${liveOk ? "bg-emerald-400" : "bg-rose-400"} animate-pulse`}></span>
           <span className="font-bold uppercase tracking-wide text-xs">
             {liveOk ? "Session healthy — WORKING" : `Session ${data.live.status}`}
@@ -184,7 +184,7 @@ export default function WaEngineDashboard() {
 
       {/* Error */}
       {!loading && error && (
-        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-5 text-sm text-rose-600 dark:text-rose-rose300">
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-5 text-sm text-rose-300">
           {error}
         </div>
       )}
@@ -202,7 +202,7 @@ export default function WaEngineDashboard() {
             <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-md">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-zinc-900 dark:text-white font-bold text-base">Connected Account & Engine</h3>
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${liveOk ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald300" : "bg-rose-500/10 text-rose-600 dark:text-rose-rose300"}`}>
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${liveOk ? "bg-emerald-500/10 text-emerald-300" : "bg-rose-500/10 text-rose-300"}`}>
                   {data.diagnostics.connectionState ?? data.live.status}
                 </span>
               </div>
@@ -249,7 +249,7 @@ export default function WaEngineDashboard() {
             <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-md">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-zinc-900 dark:text-white font-bold text-base">Platform Health</h3>
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${data.health.status === "healthy" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald300" : "bg-rose-500/10 text-rose-600 dark:text-rose-rose300"}`}>
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${data.health.status === "healthy" ? "bg-emerald-500/10 text-emerald-300" : "bg-rose-500/10 text-rose-300"}`}>
                   {data.health.status}
                 </span>
               </div>

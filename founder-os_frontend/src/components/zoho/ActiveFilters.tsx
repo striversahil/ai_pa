@@ -20,7 +20,7 @@ export default function ActiveFilters({ filters, counts, resultCount, onAdd, onU
         <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">Active Filters</span>
         <button
           onClick={onAdd}
-          className="px-2.5 py-1 text-xs bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-indigo400 font-bold rounded-lg border border-indigo-500/20 cursor-pointer"
+          className="px-2.5 py-1 text-xs bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 font-bold rounded-lg border border-indigo-500/20 cursor-pointer"
         >
           ➕ Add Filter
         </button>
@@ -71,7 +71,7 @@ export default function ActiveFilters({ filters, counts, resultCount, onAdd, onU
 
               <button
                 onClick={() => onRemove(rule.id)}
-                className="p-1 hover:text-rose-600 dark:hover:text-rose-rose400 text-zinc-600 dark:text-zinc-500 transition-colors ml-auto bg-transparent border-0 cursor-pointer"
+                className="p-1 hover:text-rose-400 text-zinc-600 dark:text-zinc-500 transition-colors ml-auto bg-transparent border-0 cursor-pointer"
                 title="Remove rule"
               >
                 ❌

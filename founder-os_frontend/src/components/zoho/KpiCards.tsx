@@ -69,7 +69,7 @@ export default function KpiCards({
               <span className="text-xs text-zinc-500 dark:text-zinc-400 block mb-1">Active Sent Estimates</span>
               <span className="text-2xl font-bold text-zinc-900 dark:text-white block">{totalCount}</span>
             </div>
-            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-indigo400">
+            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             </div>
           </div>
@@ -81,7 +81,7 @@ export default function KpiCards({
               <span className="text-xs text-zinc-500 dark:text-zinc-400 block mb-1">Cumulative Value</span>
               <span className="text-2xl font-bold text-zinc-900 dark:text-white block">₹{totalValue.toLocaleString()}</span>
             </div>
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-emerald400">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             </div>
           </div>
@@ -91,9 +91,9 @@ export default function KpiCards({
           <div className="flex items-start justify-between">
             <div>
               <span className="text-xs text-zinc-500 dark:text-zinc-400 block mb-1">Not Answering</span>
-              <span className="text-2xl font-bold text-rose-600 dark:text-rose-rose400 block">{notAnsweringCount}</span>
+              <span className="text-2xl font-bold text-rose-400 block">{notAnsweringCount}</span>
             </div>
-            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-600 dark:text-rose-rose400">
+            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16 17l-4 4m0 0l-4-4m4 4V3" /></svg>
             </div>
           </div>
@@ -116,7 +116,7 @@ export default function KpiCards({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-base font-bold text-zinc-900 dark:text-white leading-none">{k.count}</span>
-                {active && <span className="text-[8px] font-extrabold uppercase tracking-wide text-indigo-600 dark:text-indigo-indigo300 bg-indigo-500/10 border border-indigo-500/30 rounded px-1 py-0.5">Active</span>}
+                {active && <span className="text-[8px] font-extrabold uppercase tracking-wide text-indigo-300 bg-indigo-500/10 border border-indigo-500/30 rounded px-1 py-0.5">Active</span>}
               </div>
               <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-semibold mt-1 leading-tight">
                 {isInverted ? k.negLabel : k.label}

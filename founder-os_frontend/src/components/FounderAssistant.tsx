@@ -24,11 +24,11 @@ export default function FounderAssistant() {
     return md
       .replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-6 mb-4 text-zinc-900 dark:text-white">$1</h1>')
       .replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold mt-5 mb-3 text-zinc-900 dark:text-white border-b border-white/10 pb-2">$1</h2>')
-      .replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-4 mb-2 text-indigo-600 dark:text-indigo-indigo300">$1</h3>')
+      .replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-4 mb-2 text-indigo-300">$1</h3>')
       .replace(/^\- (.*$)/gim, '<li class="ml-4 list-disc text-zinc-700 dark:text-zinc-300 mb-1">$1</li>')
       .replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-900 dark:text-white font-semibold">$1</strong>')
-      .replace(/\[x\] (.*?)(?:<br>|$)/gim, '<span class="text-emerald-600 dark:text-emerald-emerald500 font-bold mr-2">✔</span> <span class="text-zinc-500 dark:text-zinc-400">$1</span><br>')
-      .replace(/\[ \] (.*?)(?:<br>|$)/gim, '<span class="text-amber-600 dark:text-amber-amber500 font-bold mr-2">⏱</span> <span class="text-zinc-700 dark:text-zinc-300">$1</span><br>')
+      .replace(/\[x\] (.*?)(?:<br>|$)/gim, '<span class="text-emerald-500 font-bold mr-2">✔</span> <span class="text-zinc-500 dark:text-zinc-400">$1</span><br>')
+      .replace(/\[ \] (.*?)(?:<br>|$)/gim, '<span class="text-amber-500 font-bold mr-2">⏱</span> <span class="text-zinc-700 dark:text-zinc-300">$1</span><br>')
       .replace(/\n/g, "<br>");
   };
 
@@ -110,9 +110,9 @@ export default function FounderAssistant() {
 
   const getPriorityBadgeClass = (p: string) => {
     p = (p || "").toLowerCase();
-    if (p === "urgent" || p === "high") return "bg-red-500/10 text-red-600 dark:text-red-red400 border border-red-500/20";
-    if (p === "medium") return "bg-amber-500/10 text-amber-600 dark:text-amber-amber400 border border-amber-500/20";
-    return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400 border border-emerald-500/20";
+    if (p === "urgent" || p === "high") return "bg-red-500/10 text-red-400 border border-red-500/20";
+    if (p === "medium") return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
+    return "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
   };
 
   return (
@@ -267,7 +267,7 @@ export default function FounderAssistant() {
                       {d.summary}
                     </p>
                     {d.requiresFounder && (
-                      <span className="inline-block text-[9px] bg-amber-500/10 text-amber-600 dark:text-amber-amber400 border border-amber-500/20 px-2 py-0.5 rounded font-semibold uppercase">
+                      <span className="inline-block text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-semibold uppercase">
                         Requires Attention
                       </span>
                     )}

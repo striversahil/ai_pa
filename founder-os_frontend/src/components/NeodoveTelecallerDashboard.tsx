@@ -136,9 +136,9 @@ function fmtRangeLabel(from?: string | null, to?: string | null): string {
 }
 
 const LIGHT_TEXT: Record<TrafficLight, string> = {
-  green: "text-emerald-600 dark:text-emerald-emerald400",
-  amber: "text-amber-600 dark:text-amber-amber400",
-  red: "text-rose-600 dark:text-rose-rose400",
+  green: "text-emerald-400",
+  amber: "text-amber-400",
+  red: "text-rose-400",
 };
 const LIGHT_BG: Record<TrafficLight, string> = {
   green: "bg-emerald-500",
@@ -146,9 +146,9 @@ const LIGHT_BG: Record<TrafficLight, string> = {
   red: "bg-rose-500",
 };
 const LIGHT_CHIP: Record<TrafficLight, string> = {
-  green: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400 border-emerald-500/20",
-  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-amber400 border-amber-500/20",
-  red: "bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border-rose-500/20",
+  green: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  amber: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  red: "bg-rose-500/10 text-rose-400 border-rose-500/20",
 };
 
 function fmtTalkTime(sec: number): string {
@@ -247,7 +247,7 @@ export default function NeodoveTelecallerDashboard() {
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               {rangeLabel ? (
                 <>
-                  <span className="text-indigo-600 dark:text-indigo-indigo300 font-semibold">{rangeLabel}</span>
+                  <span className="text-indigo-300 font-semibold">{rangeLabel}</span>
                   {multiDay && <> · <span className="text-zinc-700 dark:text-zinc-300 font-semibold">{days} active days</span> · totals summed, benchmarks judged on avg/day</>}
                   {!multiDay && <> · live vs daily benchmarks</>}
                   {" "}· auto-refreshes every 5 min
@@ -300,18 +300,18 @@ export default function NeodoveTelecallerDashboard() {
         <p className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-500">
           Benchmarks per agent/day: <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {benchmarks.connectedCallsPerDay} connected calls</span> ·{" "}
           <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {benchmarks.leadsPerAgentPerDay} leads</span> (in-progress + converted)
-          {multiDay && <> — scaled to <span className="text-indigo-600 dark:text-indigo-indigo300 font-semibold">{benchmarks.connectedCallsPerDay * days} calls / {benchmarks.leadsPerAgentPerDay * days} leads for {days} active days</span></>}
+          {multiDay && <> — scaled to <span className="text-indigo-300 font-semibold">{benchmarks.connectedCallsPerDay * days} calls / {benchmarks.leadsPerAgentPerDay * days} leads for {days} active days</span></>}
           . Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
         </p>
         {error && (
-          <p className="mt-3 text-xs text-amber-600 dark:text-amber-amber300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{error}</p>
+          <p className="mt-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{error}</p>
         )}
       </div>
 
       {/* Individual Agent KRA/KPI cards */}
       {!loading && withKra.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-indigo300">
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-indigo-300">
             🎯 Individual Agent KRA — {multiDay ? "Range Total vs Scaled Benchmark" : "Today vs Benchmark"}
           </h3>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -341,7 +341,7 @@ export default function NeodoveTelecallerDashboard() {
                   <div className="flex items-center justify-between pt-1 border-t border-zinc-200/80 dark:border-zinc-800/80 text-[10px] text-zinc-600 dark:text-zinc-500">
                     <span>Zoho pipeline</span>
                     {k.zohoEstimates > 0 ? (
-                      <span className="font-semibold text-indigo-600 dark:text-indigo-indigo300">
+                      <span className="font-semibold text-indigo-300">
                         {k.zohoEstimates} sent est. · ₹{k.zohoPipelineValue.toLocaleString()}
                       </span>
                     ) : (
@@ -367,11 +367,11 @@ export default function NeodoveTelecallerDashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
           {[
             { label: "Calls Attempted", value: fmtNum(totals.callsAttempted), accent: "text-zinc-900 dark:text-white" },
-            { label: "Connected", value: fmtNum(totals.callsConnected), accent: "text-emerald-600 dark:text-emerald-emerald400" },
-            { label: "Missed (in+out)", value: fmtNum((totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)), accent: "text-rose-600 dark:text-rose-rose400" },
-            { label: "Team Talk Time", value: fmtTalkTime(totals.talkTimeSec), accent: "text-indigo-600 dark:text-indigo-indigo300" },
-            { label: "Converted", value: fmtNum(totals.leadsConverted), accent: "text-emerald-600 dark:text-emerald-emerald300" },
-            { label: "Follow-ups Due", value: fmtNum(totals.followupLeads), accent: "text-amber-600 dark:text-amber-amber300" },
+            { label: "Connected", value: fmtNum(totals.callsConnected), accent: "text-emerald-400" },
+            { label: "Missed (in+out)", value: fmtNum((totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)), accent: "text-rose-400" },
+            { label: "Team Talk Time", value: fmtTalkTime(totals.talkTimeSec), accent: "text-indigo-300" },
+            { label: "Converted", value: fmtNum(totals.leadsConverted), accent: "text-emerald-300" },
+            { label: "Follow-ups Due", value: fmtNum(totals.followupLeads), accent: "text-amber-300" },
           ].map((k) => (
             <div key={k.label} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-4">
               <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">{k.label}</div>
@@ -418,7 +418,7 @@ export default function NeodoveTelecallerDashboard() {
                     <td className="px-4 py-2.5 font-semibold text-zinc-900 dark:text-white whitespace-nowrap">{a.userName}</td>
                     <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{a.managerName ?? "—"}</td>
                     <td className="px-4 py-2.5 text-right font-bold text-zinc-900 dark:text-white">{a.callsAttempted}</td>
-                    <td className="px-4 py-2.5 text-right text-emerald-600 dark:text-emerald-emerald400">{a.callsConnected}</td>
+                    <td className="px-4 py-2.5 text-right text-emerald-400">{a.callsConnected}</td>
                     <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.kra ? LIGHT_TEXT[a.kra.connectedStatus] : "text-zinc-500 dark:text-zinc-400"}`}>
                       {a.kra ? `${a.kra.connectedPct}%` : "—"}
                     </td>
@@ -428,12 +428,12 @@ export default function NeodoveTelecallerDashboard() {
                     <td className="px-4 py-2.5 text-right text-zinc-500 dark:text-zinc-400">{a.callsNotConnected}</td>
                     <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.incomingCalls}</td>
                     <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.outgoingCalls}</td>
-                    <td className="px-4 py-2.5 text-right text-rose-600 dark:text-rose-rose400">{a.incomingMissed + a.outgoingMissed}</td>
-                    <td className="px-4 py-2.5 text-right text-indigo-600 dark:text-indigo-indigo300 font-medium">{fmtTalkTime(a.talkTimeSec)}</td>
-                    <td className="px-4 py-2.5 text-right text-emerald-600 dark:text-emerald-emerald300 font-semibold">{a.leadsConverted}</td>
+                    <td className="px-4 py-2.5 text-right text-rose-400">{a.incomingMissed + a.outgoingMissed}</td>
+                    <td className="px-4 py-2.5 text-right text-indigo-300 font-medium">{fmtTalkTime(a.talkTimeSec)}</td>
+                    <td className="px-4 py-2.5 text-right text-emerald-300 font-semibold">{a.leadsConverted}</td>
                     <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.leadsInProgress}</td>
                     <td className="px-4 py-2.5 text-right text-zinc-600 dark:text-zinc-500">{a.leadsLost}</td>
-                    <td className="px-4 py-2.5 text-right text-amber-600 dark:text-amber-amber300">{a.followupLeads}</td>
+                    <td className="px-4 py-2.5 text-right text-amber-300">{a.followupLeads}</td>
                     <td className="px-4 py-2.5 text-right text-zinc-700 dark:text-zinc-300">{a.pendingScheduledLeads}</td>
                   </tr>
                 ))}
@@ -443,18 +443,18 @@ export default function NeodoveTelecallerDashboard() {
                   <tr className="bg-zinc-100/40 dark:bg-zinc-800/40 text-[13px] font-bold border-t border-zinc-300 dark:border-zinc-700">
                     <td colSpan={3} className="px-4 py-3 text-zinc-700 dark:text-zinc-300 uppercase tracking-wide text-[10px]">Team Total</td>
                     <td className="px-4 py-3 text-right text-zinc-900 dark:text-white">{fmtNum(totals.callsAttempted)}</td>
-                    <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-emerald400">{fmtNum(totals.callsConnected)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-400">{fmtNum(totals.callsConnected)}</td>
                     <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400">—</td>
                     <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400">—</td>
                     <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400">{fmtNum(totals.callsNotConnected)}</td>
                     <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.incomingCalls)}</td>
                     <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.outgoingCalls)}</td>
-                    <td className="px-4 py-3 text-right text-rose-600 dark:text-rose-rose400">{(totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)}</td>
-                    <td className="px-4 py-3 text-right text-indigo-600 dark:text-indigo-indigo300">{fmtTalkTime(totals.talkTimeSec)}</td>
-                    <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-emerald300">{fmtNum(totals.leadsConverted)}</td>
+                    <td className="px-4 py-3 text-right text-rose-400">{(totals.incomingMissed ?? 0) + (totals.outgoingMissed ?? 0)}</td>
+                    <td className="px-4 py-3 text-right text-indigo-300">{fmtTalkTime(totals.talkTimeSec)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-300">{fmtNum(totals.leadsConverted)}</td>
                     <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.leadsInProgress)}</td>
                     <td className="px-4 py-3 text-right text-zinc-600 dark:text-zinc-500">{fmtNum(totals.leadsLost)}</td>
-                    <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-amber300">{fmtNum(totals.followupLeads)}</td>
+                    <td className="px-4 py-3 text-right text-amber-300">{fmtNum(totals.followupLeads)}</td>
                     <td className="px-4 py-3 text-right text-zinc-700 dark:text-zinc-300">{fmtNum(totals.pendingScheduledLeads)}</td>
                   </tr>
                 </tfoot>

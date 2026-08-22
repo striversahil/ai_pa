@@ -73,7 +73,7 @@ export default function DppPricesDashboard() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
         <div className="flex items-start gap-3">
           <div className="hidden sm:flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
-            <svg className="w-5 h-5 text-emerald-600 dark:text-emerald-emerald300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <svg className="w-5 h-5 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           </div>
           <div>
             <h1 className="text-3xl font-bold font-heading tracking-tight">
@@ -97,7 +97,7 @@ export default function DppPricesDashboard() {
       )}
 
       {error && (
-        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-5 text-sm text-amber-600 dark:text-amber-amber300">
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-5 text-sm text-amber-300">
           {error}
         </div>
       )}
@@ -115,7 +115,7 @@ export default function DppPricesDashboard() {
             </div>
             <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-5">
               <span className="text-xs text-zinc-500 dark:text-zinc-400 block mb-1">Latest Quote</span>
-              <span className="text-2xl font-bold text-emerald-600 dark:text-emerald-emerald400 block">
+              <span className="text-2xl font-bold text-emerald-400 block">
                 {data.lastQuote ? `₹${data.lastQuote.price.toLocaleString()}` : "—"}
               </span>
               {data.lastQuote && <span className="text-xs text-zinc-600 dark:text-zinc-500 block mt-1">{data.lastQuote.item}</span>}
@@ -151,7 +151,7 @@ export default function DppPricesDashboard() {
                     <tr key={item.itemName} className="hover:bg-zinc-100/30 dark:hover:bg-zinc-800/30 transition-colors">
                       <td className="px-5 py-3 font-semibold text-zinc-800 dark:text-zinc-200">{item.itemName}</td>
                       <td className="px-5 py-3 text-zinc-500 dark:text-zinc-400">{item.timesQuoted}</td>
-                      <td className="px-5 py-3 text-right font-mono text-emerald-600 dark:text-emerald-emerald400">
+                      <td className="px-5 py-3 text-right font-mono text-emerald-400">
                         ₹{item.avgPrice ? item.avgPrice.toLocaleString() : "—"}
                       </td>
                     </tr>

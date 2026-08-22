@@ -29,20 +29,20 @@ export default function DailyMovementTracker({ baselineCount, baselineValue, bas
           <span className="text-base font-bold text-zinc-700 dark:text-zinc-300 font-mono mt-0.5 block">{baselineCount}</span>
         </div>
         <div className="bg-emerald-950/10 border border-emerald-900/20 p-2.5 rounded-lg text-center">
-          <span className="text-[9px] text-emerald-600 dark:text-emerald-emerald500 font-bold uppercase tracking-wider block">Accepted Today</span>
-          <span className="text-base font-bold text-emerald-600 dark:text-emerald-emerald400 font-mono mt-0.5 block">
+          <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-wider block">Accepted Today</span>
+          <span className="text-base font-bold text-emerald-400 font-mono mt-0.5 block">
             {movement.accepted.length} <span className="text-[10px] text-zinc-600 dark:text-zinc-500">(₹{movement.accepted.reduce((sum: number, x: any) => sum + x.total, 0).toLocaleString()})</span>
           </span>
         </div>
         <div className="bg-rose-950/10 border border-rose-900/20 p-2.5 rounded-lg text-center">
-          <span className="text-[9px] text-rose-600 dark:text-rose-rose500 font-bold uppercase tracking-wider block">Declined Today</span>
-          <span className="text-base font-bold text-rose-600 dark:text-rose-rose400 font-mono mt-0.5 block">
+          <span className="text-[9px] text-rose-500 font-bold uppercase tracking-wider block">Declined Today</span>
+          <span className="text-base font-bold text-rose-400 font-mono mt-0.5 block">
             {movement.declined.length} <span className="text-[10px] text-zinc-600 dark:text-zinc-500">(₹{movement.declined.reduce((sum: number, x: any) => sum + x.total, 0).toLocaleString()})</span>
           </span>
         </div>
         <div className="bg-indigo-950/10 border border-indigo-900/20 p-2.5 rounded-lg text-center">
-          <span className="text-[9px] text-indigo-600 dark:text-indigo-indigo500 font-bold uppercase tracking-wider block">New Estimates</span>
-          <span className="text-base font-bold text-indigo-600 dark:text-indigo-indigo400 font-mono mt-0.5 block">
+          <span className="text-[9px] text-indigo-500 font-bold uppercase tracking-wider block">New Estimates</span>
+          <span className="text-base font-bold text-indigo-400 font-mono mt-0.5 block">
             {movement.newCreated.length} <span className="text-[10px] text-zinc-600 dark:text-zinc-500">(₹{movement.newCreated.reduce((sum: number, x: any) => sum + x.total, 0).toLocaleString()})</span>
           </span>
         </div>
@@ -61,10 +61,10 @@ export default function DailyMovementTracker({ baselineCount, baselineValue, bas
               const c = est.classification || {};
               const badge =
                 kind === "accepted"
-                  ? { text: "Accepted", cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-emerald400 border-emerald-500/20" }
+                  ? { text: "Accepted", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" }
                   : kind === "declined"
-                  ? { text: "Declined", cls: "bg-rose-500/10 text-rose-600 dark:text-rose-rose400 border-rose-500/20" }
-                  : { text: "New Created", cls: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-indigo400 border-indigo-500/20" };
+                  ? { text: "Declined", cls: "bg-rose-500/10 text-rose-400 border-rose-500/20" }
+                  : { text: "New Created", cls: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20" };
               return (
                 <div key={est.estimateId} className="py-2 border-b border-zinc-200/40 dark:border-zinc-800/40 text-[11px] space-y-1 text-left">
                   <div className="flex items-center gap-2">
