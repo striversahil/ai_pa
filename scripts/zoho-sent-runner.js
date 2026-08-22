@@ -368,15 +368,40 @@ function defaultClassification(dateVal, movingSlowOverride = null) {
   };
 }
 
-function resolveSalesAgent(badgeResult, agentRoster) {
-  const raw = String(badgeResult.sales_agent || '').trim();
-  if (!raw || /^unassigned$/i.test(raw)) return 'Unassigned';
-  if (!agentRoster || agentRoster.length === 0) return 'Unassigned';
-  const match = agentRoster.find((n) => n.toLowerCase() === raw.toLowerCase());
-  return match || 'Unassigned';
+function resolveSalesAgent(badgeResult, agentRoster, commentText = '') {
+  if (!agentRoster || !agentRoster.length) return 'Unassigned';
+  const lower = (s) => String(s || '').toLowerCase();
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // 1. LLM answer → exact roster name, else unambiguous prefix (e.g. "Samar" → "Samarjeet").
+  const raw = lower(String(badgeResult.sales_agent || '').trim());
+  if (raw && !/^unassigned$/.test(raw)) {
+    const exact = agentRoster.find((n) => lower(n) === raw);
+    if (exact) return exact;
+    const pref = agentRoster.find((n) => lower(n).startsWith(raw) && raw.length >= 4);
+    if (pref) return pref;
+  }
+
+  // 2. Safety net: scan the raw comment — the LLM sometimes overlooks signatures.
+  if (!commentText) return 'Unassigned';
+  //    a) full roster name present word-bounded anywhere in the comment.
+  const full = agentRoster.find((n) => new RegExp(`\\b${esc(n)}\\b`, 'i').test(commentText));
+  if (full) return full;
+  //    b) signed short form: a standalone word that uniquely prefixes exactly
+  //       one roster name (min 4 chars; ambiguous prefixes like "deepa" for
+  //       Deepak/Deepanshu are rejected).
+  const words = [...new Set(lower(commentText).match(/[a-z]{4,}/g) || [])];
+  for (const w of words) {
+    const matches = agentRoster.filter((n) => {
+      const ln = lower(n);
+      return ln !== w && ln.startsWith(w);
+    });
+    if (matches.length === 1) return matches[0];
+  }
+  return 'Unassigned';
 }
 
-function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOverride = null, agentRoster = []) {
+function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOverride = null, agentRoster = [], latestComment = '') {
   const createdDate = new Date(dateVal);
   const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
   return {
@@ -388,7 +413,7 @@ function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOver
     intentScore: journeyResult.intent_score ?? 2,
     reasoning: badgeResult.reasoning || '',
     summary: journeyResult.summary || '',
-    salesAgent: resolveSalesAgent(badgeResult, agentRoster),
+    salesAgent: resolveSalesAgent(badgeResult, agentRoster, latestComment),
   };
 }
 
@@ -433,7 +458,7 @@ async function processEstimate(job, agentRoster) {
   } else {
     const latestComment = historyLines[0] || '';
     const { badgeResult, journeyResult } = await classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster);
-    classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster);
+    classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster, latestComment);
   }
   void estStatus;
 
@@ -517,7 +542,7 @@ async function main() {
           try {
             const latestComment = historyLines[0] || '';
             const { badgeResult, journeyResult } = await classifyEstimate(est.customerName, est.total, latestComment, est.date, commentHistory, agentRoster);
-            const classification = buildClassification(badgeResult, journeyResult, est.date, 'No', agentRoster);
+            const classification = buildClassification(badgeResult, journeyResult, est.date, 'No', agentRoster, latestComment);
             await workerRequest('/api/runner/zoho/classification', {
               method: 'POST',
               body: { estimateId: est.estimateId, classification },
