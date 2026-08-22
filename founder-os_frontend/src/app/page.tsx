@@ -49,9 +49,9 @@ export default function Home() {
   const activeView: ViewType =
     route.view === "enquiries" && route.sub
       ? "detail"
-      : (["dashboard", "enquiries", "briefing", "whatsapp", "automations"] as ViewType[]).includes(route.view as ViewType)
-        ? (route.view as ViewType)
-        : "automations";
+        : (["dashboard", "enquiries", "briefing", "whatsapp", "automations"] as ViewType[]).includes(route.view as ViewType)
+          ? (route.view as ViewType)
+          : "dashboard";
   const selectedEnquiryId = route.view === "enquiries" ? route.sub : null;
   const selectedEnquiry = enquiries.find(e => e.id === selectedEnquiryId) || null;
 
@@ -154,26 +154,26 @@ export default function Home() {
   if (!loaded) return null;
 
   return (
-    <div className="flex flex-col md:grid md:grid-cols-[260px_1fr] min-h-screen relative font-sans antialiased text-[var(--text-primary)]">
+    <div className="min-h-screen font-sans antialiased text-[var(--text-primary)]">
       <Sidebar activeView={activeView} onNavigate={navigateTo} theme={theme} onToggleTheme={toggleTheme} currentAgent={currentAgent} />
 
-      <header className="md:hidden flex justify-between items-center px-4 py-3 bg-[var(--bg-card)] border-b border-[var(--border-card)] z-30 sticky top-0">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs text-white" style={{ backgroundColor: currentAgent.color }}>{currentAgent.initials}</div>
-          <span className="font-heading font-extrabold text-base tracking-tight">Brindavan Udyog</span>
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border-card)] bg-[var(--bg-card)]/85 px-4 py-3 backdrop-blur md:hidden">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white" style={{ backgroundColor: currentAgent.color }}>{currentAgent.initials}</div>
+          <span className="font-heading text-base font-extrabold tracking-tight">Brindavan Udyog</span>
         </div>
-        <button onClick={toggleTheme} className="p-2 rounded-lg bg-[var(--bg-input)] hover:opacity-80 transition-all duration-200 border-0 cursor-pointer">
+        <button onClick={toggleTheme} className="rounded-lg p-2 text-[var(--text-secondary)] transition hover:bg-[var(--bg-input)]">
           {theme === "dark" ? (
-            <svg className="w-5 h-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg>
+            <svg className="h-5 w-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg>
           ) : (
-            <svg className="w-5 h-5 text-indigo-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+            <svg className="h-5 w-5 text-indigo-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
           )}
         </button>
       </header>
 
       <MobileNav activeView={activeView} onNavigate={navigateTo} />
 
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto mb-16 md:mb-0 max-w-full">
+      <main className="mx-auto w-full max-w-[1480px] px-4 py-6 md:px-8 md:py-8 md:pl-[284px] mb-16 md:mb-0">
         <ErrorBoundary>
           {activeView === "dashboard" && (
             <Dashboard enquiries={enquiries} agents={agents} currentAgent={currentAgent}

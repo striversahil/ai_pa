@@ -7,10 +7,10 @@ export interface HashRoute {
 }
 
 function parseHash(): HashRoute {
-  if (typeof window === "undefined") return { view: "automations", sub: null };
+  if (typeof window === "undefined") return { view: "dashboard", sub: null };
   const raw = window.location.hash.replace(/^#\/?/, "");
   const [first, ...rest] = raw.split("/").filter(Boolean);
-  if (!first) return { view: "automations", sub: null };
+  if (!first) return { view: "dashboard", sub: null };
   const sub = rest.length ? decodeURIComponent(rest.join("/")) : null;
   return { view: first, sub };
 }
@@ -22,7 +22,7 @@ export function useHashRoute(): { route: HashRoute; navigate: (path: string) => 
     const onHashChange = () => setRoute(parseHash());
     window.addEventListener("hashchange", onHashChange);
     if (!window.location.hash) {
-      window.location.hash = "#/automations";
+      window.location.hash = "#/dashboard";
     }
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);

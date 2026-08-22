@@ -13,6 +13,12 @@ interface TrendChartProps {
   chartPoints: ChartPoint[];
 }
 
+function cssVar(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
 export default function TrendChart({ chartPoints }: TrendChartProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chartInstanceRef = useRef<Chart | null>(null);
@@ -27,12 +33,20 @@ export default function TrendChart({ chartPoints }: TrendChartProps) {
     const ctx = canvasRef.current.getContext("2d");
     if (!ctx) return;
 
-    const labels = chartPoints.map(p => p.label);
-    const dataValues = chartPoints.map(p => p.value);
+    const brand = cssVar("--color-brand-indigo", "#5b5ef0");
+    const tick = cssVar("--text-tertiary", "#8b92a1");
+    const grid = cssVar("--border-card", "#e7e9ee");
+    const tooltipBg = cssVar("--bg-card", "#ffffff");
+    const tooltipTitle = cssVar("--text-primary", "#13151c");
+    const tooltipBody = cssVar("--text-secondary", "#565d6b");
+    const tooltipBorder = cssVar("--border-card", "#e7e9ee");
 
-    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-    gradient.addColorStop(0, "rgba(88, 101, 242, 0.25)");
-    gradient.addColorStop(1, "rgba(88, 101, 242, 0.0)");
+    const labels = chartPoints.map((p) => p.label);
+    const dataValues = chartPoints.map((p) => p.value);
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 240);
+    gradient.addColorStop(0, brand + "40");
+    gradient.addColorStop(1, brand + "00");
 
     chartInstanceRef.current = new Chart(ctx, {
       type: "line",
@@ -42,81 +56,66 @@ export default function TrendChart({ chartPoints }: TrendChartProps) {
           {
             label: "Pipeline Value (INR)",
             data: dataValues,
-            borderColor: "#5865f2",
+            borderColor: brand,
             borderWidth: 2.5,
             backgroundColor: gradient,
             fill: true,
             tension: 0.4,
-            pointBackgroundColor: "#ffffff",
-            pointBorderColor: "#5865f2",
+            pointBackgroundColor: tooltipBg,
+            pointBorderColor: brand,
             pointBorderWidth: 2,
             pointRadius: 4,
             pointHoverRadius: 6,
-          }
-        ]
+          },
+        ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: {
-            display: false
-          },
+          legend: { display: false },
           tooltip: {
-            backgroundColor: "#2b2d31",
-            titleColor: "#f2f3f5",
-            bodyColor: "#dbdee1",
-            borderColor: "#3f4248",
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTitle,
+            bodyColor: tooltipBody,
+            borderColor: tooltipBorder,
             borderWidth: 1,
             padding: 10,
             cornerRadius: 8,
             callbacks: {
-              label: function(context) {
+              label: function (context) {
                 let label = context.dataset.label || "";
-                if (label) {
-                  label += ": ";
-                }
+                if (label) label += ": ";
                 if (context.parsed.y !== null) {
-                  label += new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(context.parsed.y);
+                  label += new Intl.NumberFormat("en-IN", {
+                    style: "currency",
+                    currency: "INR",
+                    maximumFractionDigits: 0,
+                  }).format(context.parsed.y);
                 }
                 return label;
-              }
-            }
-          }
+              },
+            },
+          },
         },
         scales: {
           x: {
-            grid: {
-              display: false
-            },
-            ticks: {
-              color: "#949ba4",
-              font: {
-                size: 10,
-                weight: "bold"
-              }
-            }
+            grid: { display: false },
+            ticks: { color: tick, font: { size: 10, weight: "bold" as const } },
           },
           y: {
-            grid: {
-              color: "rgba(148, 155, 164, 0.08)",
-            },
+            grid: { color: grid + "55" },
             ticks: {
-              color: "#949ba4",
-              font: {
-                size: 9,
-                weight: "bold"
-              },
-              callback: function(value) {
-                if (Number(value) >= 1000) {
-                  return "₹" + Math.round(Number(value) / 1000) + "k";
-                }
+              color: tick,
+              font: { size: 9, weight: "bold" as const },
+              callback: function (value) {
+                if (Number(value) >= 1000) return "₹" + Math.round(Number(value) / 1000) + "k";
                 return "₹" + value;
-              }
-            }
-          }
-        }
-      }
+              },
+            },
+          },
+        },
+      },
     });
 
     return () => {

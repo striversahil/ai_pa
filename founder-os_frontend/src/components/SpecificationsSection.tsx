@@ -21,7 +21,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox 
       <div className="space-y-4">
         <div>
           <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">Specifications & Scope</span>
-          <p className="text-xs md:text-sm text-zinc-900 dark:text-zinc-900 dark:dark:text-white font-medium whitespace-pre-wrap leading-relaxed bg-[var(--bg-input)]/25 p-3.5 rounded-xl border border-[var(--border-card)]/50">
+          <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed bg-[var(--bg-input)]/25 p-3.5 rounded-xl border border-[var(--border-card)]/50">
             {selectedEnquiry.description || "No specifications provided."}
           </p>
         </div>

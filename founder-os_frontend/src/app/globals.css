@@ -1,40 +1,105 @@
+@import "@fortawesome/fontawesome-free/css/all.css";
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --color-brand-indigo: #5865f2;
-  --color-brand-emerald: #248046;
-  --color-brand-amber: #f0b232;
-  --color-brand-rose: #f04747;
+  /* Brand + semantic palette (single source of truth) */
+  --color-brand-indigo: #5b5ef0;
+  --color-brand-violet: #8b5cf6;
+  --color-brand-emerald: #15a34a;
+  --color-brand-amber: #d97706;
+  --color-brand-rose: #e11d48;
+
+  --color-accent: var(--color-brand-indigo);
+  --color-accent-soft: color-mix(in srgb, var(--color-brand-indigo) 12%, transparent);
+
+  --color-success: #15a34a;
+  --color-warning: #d97706;
+  --color-danger: #e11d48;
+  --color-info: #2563eb;
+  --color-sky: #0ea5e9;
+  --color-cyan: #06b6d4;
+  --color-purple: #8b5cf6;
 
   --font-heading: var(--font-geist-sans), "Inter", sans-serif;
   --font-sans: var(--font-geist-sans), "Inter", sans-serif;
   --font-mono: var(--font-geist-mono), monospace;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 16px rgba(16, 24, 40, 0.06);
+  --shadow-card-hover: 0 2px 4px rgba(16, 24, 40, 0.06), 0 12px 28px rgba(16, 24, 40, 0.10);
+  --shadow-pop: 0 12px 32px rgba(16, 24, 40, 0.18);
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+
+  /* Unified neutral scale — zinc & slate resolve to the same modern cool-gray
+     so every dashboard shares one cohesive palette. */
+  --color-zinc-50: #f8fafc;
+  --color-zinc-100: #f1f5f9;
+  --color-zinc-200: #e2e8f0;
+  --color-zinc-300: #cbd5e1;
+  --color-zinc-400: #94a3b8;
+  --color-zinc-500: #64748b;
+  --color-zinc-600: #475569;
+  --color-zinc-700: #334155;
+  --color-zinc-750: #2a3543;
+  --color-zinc-800: #1e293b;
+  --color-zinc-850: #16202e;
+  --color-zinc-900: #0f172a;
+  --color-zinc-950: #060b14;
+  --color-zinc-955: #050a12;
+
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-750: #2a3543;
+  --color-slate-800: #1e293b;
+  --color-slate-850: #16202e;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #060b14;
+
+  --color-indigo-650: #4f46e5;
 }
 
 :root {
-  --bg-app: #ffffff;
-  --bg-card: #f2f3f5;
-  --bg-sidebar: #e3e5e8;
-  --border-card: #e3e5e8;
-  --text-primary: #060607;
-  --text-secondary: #2e3338;
-  --text-tertiary: #5c6370;
-  --border-thread: #e3e5e8;
-  --bg-input: #e3e5e8;
+  --bg-app: #f4f5f8;
+  --bg-card: #ffffff;
+  --bg-sidebar: #0e1014;
+  --border-card: #e7e9ee;
+  --text-primary: #13151c;
+  --text-secondary: #565d6b;
+  --text-tertiary: #8b92a1;
+  --border-thread: #e7e9ee;
+  --bg-input: #f1f2f6;
+
+  --surface-raised: #ffffff;
+  --surface-sunken: #f7f8fb;
+  --ring-color: rgba(91, 94, 240, 0.45);
 }
 
 .dark {
-  --bg-app: #1e1f22;
-  --bg-card: #2b2d31;
-  --bg-sidebar: #111214;
-  --border-card: #3f4248;
-  --text-primary: #f2f3f5;
-  --text-secondary: #dbdee1;
-  --text-tertiary: #949ba4;
-  --border-thread: #3f4248;
-  --bg-input: #111214;
+  --bg-app: #0a0c10;
+  --bg-card: #15181f;
+  --bg-sidebar: #0b0d11;
+  --border-card: #262b34;
+  --text-primary: #eef0f4;
+  --text-secondary: #aab1bf;
+  --text-tertiary: #6b7280;
+  --border-thread: #262b34;
+  --bg-input: #1c2027;
+
+  --surface-raised: #1b1f27;
+  --surface-sunken: #101319;
+  --ring-color: rgba(91, 94, 240, 0.55);
+}
+
+* {
+  border-color: var(--border-card);
 }
 
 body {
@@ -43,39 +108,47 @@ body {
   transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Custom scrollbar styling to match Discord */
+:where(a, button, input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring-color);
+  border-radius: 0.5rem;
+}
+
+/* Custom scrollbar (Discord-like, theme aware) */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-app);
-}
-
-.dark ::-webkit-scrollbar-track {
-  background: #2e3035;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c4c9ce;
-  border-radius: 4px;
-}
-
-.dark ::-webkit-scrollbar-thumb {
-  background: #1a1b1e;
-  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-tertiary) 45%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a2a8ae;
+  background: color-mix(in srgb, var(--text-tertiary) 70%, transparent);
+  background-clip: padding-box;
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #111214;
+/* Thin variant for dense panes */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-tertiary) 40%, transparent);
+  border-radius: 999px;
+  border: 0;
+  background-clip: padding-box;
 }
 
-/* Vertical Thread Connector Lines for Twitter Thread */
+/* Vertical thread connector lines (comment threads) */
 .comment-node-container {
   position: relative;
 }
@@ -83,7 +156,7 @@ body {
 .comment-node-container::before {
   content: '';
   position: absolute;
-  left: 20px; /* Center of a 40px avatar */
+  left: 20px;
   top: 40px;
   bottom: 0;
   width: 2px;
@@ -112,23 +185,17 @@ body {
 }
 
 @keyframes scale-up {
-  from {
-    transform: scale(0.95);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
+  from { transform: scale(0.97); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 @keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
 }
 
 .animate-scale-up {
@@ -136,5 +203,25 @@ body {
 }
 
 .animate-fade-in {
-  animation: fade-in 0.2s ease-out forwards;
+  animation: fade-in 0.25s ease-out forwards;
+}
+
+/* Skeleton shimmer */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-tertiary) 12%, transparent);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--text-tertiary) 18%, transparent),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
 }
