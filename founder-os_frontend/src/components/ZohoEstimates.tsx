@@ -504,9 +504,12 @@ Action: (single clear objective — close order / clarify doubts / send revised 
             stillPending.push(est);
           }
         }
-      } else {
+      } else if (String(est.status).toLowerCase() === "sent") {
+        // Genuinely created/sent after the baseline froze.
         newCreated.push(est);
       }
+      // else: historical accepted/declined estimates were never part of any
+      // baseline snapshot — they are NOT today's movement, skip them.
     });
 
     return {
