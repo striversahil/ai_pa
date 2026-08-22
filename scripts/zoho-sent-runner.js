@@ -369,17 +369,34 @@ function defaultClassification(dateVal, movingSlowOverride = null) {
 }
 
 function resolveSalesAgent(badgeResult, agentRoster, commentText = '') {
-  const raw = String(badgeResult.sales_agent || '').trim();
-  if (raw && !/^unassigned$/i.test(raw) && agentRoster && agentRoster.length) {
-    const match = agentRoster.find((n) => n.toLowerCase() === raw.toLowerCase());
-    if (match) return match;
+  if (!agentRoster || !agentRoster.length) return 'Unassigned';
+  const lower = (s) => String(s || '').toLowerCase();
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // 1. LLM answer → exact roster name, else unambiguous prefix (e.g. "Samar" → "Samarjeet").
+  const raw = lower(String(badgeResult.sales_agent || '').trim());
+  if (raw && !/^unassigned$/.test(raw)) {
+    const exact = agentRoster.find((n) => lower(n) === raw);
+    if (exact) return exact;
+    const pref = agentRoster.find((n) => lower(n).startsWith(raw) && raw.length >= 4);
+    if (pref) return pref;
   }
-  // Safety net: the LLM sometimes overlooks signatures like "... - Muskan".
-  // Scan the raw comment for a roster name (word-bounded) before giving up.
-  if (agentRoster && agentRoster.length && commentText) {
-    const hit = agentRoster.find((n) =>
-      new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(commentText));
-    if (hit) return hit;
+
+  // 2. Safety net: scan the raw comment — the LLM sometimes overlooks signatures.
+  if (!commentText) return 'Unassigned';
+  //    a) full roster name present word-bounded anywhere in the comment.
+  const full = agentRoster.find((n) => new RegExp(`\\b${esc(n)}\\b`, 'i').test(commentText));
+  if (full) return full;
+  //    b) signed short form: a standalone word that uniquely prefixes exactly
+  //       one roster name (min 4 chars; ambiguous prefixes like "deepa" for
+  //       Deepak/Deepanshu are rejected).
+  const words = [...new Set(lower(commentText).match(/[a-z]{4,}/g) || [])];
+  for (const w of words) {
+    const matches = agentRoster.filter((n) => {
+      const ln = lower(n);
+      return ln !== w && ln.startsWith(w);
+    });
+    if (matches.length === 1) return matches[0];
   }
   return 'Unassigned';
 }
