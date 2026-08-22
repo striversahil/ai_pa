@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { useLiveRefresh } from "@/hooks/useLiveEvents";
 
 type TrafficLight = "green" | "amber" | "red";
 
@@ -224,6 +225,8 @@ export default function NeodoveTelecallerDashboard() {
     const t = setInterval(() => load(), REFRESH_MS);
     return () => clearInterval(t);
   }, [load]);
+
+  useLiveRefresh((event) => event.type === "neodove", load);
 
   const agents = data?.agents ?? [];
   const totals = data?.totals;

@@ -173,8 +173,9 @@ export default function Home() {
 
       <MobileNav activeView={activeView} onNavigate={navigateTo} />
 
-      <main className="mx-auto w-full max-w-[1480px] px-4 py-6 md:px-8 md:py-8 md:pl-[284px] mb-16 md:mb-0">
+      <main className="md:pl-[284px] p-4 md:p-6 lg:p-8 mb-16 md:mb-0">
         <ErrorBoundary>
+          <div className="mx-auto w-full max-w-[1600px]">
           {activeView === "dashboard" && (
             <Dashboard enquiries={enquiries} agents={agents} currentAgent={currentAgent}
               onOpenCreate={handleOpenCreate}
@@ -208,6 +209,7 @@ export default function Home() {
           {activeView === "automations" && (
             <Automations slug={route.view === "automations" ? route.sub : null} onNavigate={navigate} />
           )}
+          </div>
         </ErrorBoundary>
       </main>
 

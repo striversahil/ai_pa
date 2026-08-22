@@ -118,13 +118,13 @@ export default function ZohoEstimatesHeader({
                 rows={10}
                 value={customPrompt}
                 onChange={(e) => onPromptChange(e.target.value)}
-                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-850 rounded-lg p-2.5 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-indigo-500 font-mono leading-relaxed resize-y"
+                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-[var(--border-card)] dark:border-zinc-700 rounded-lg p-2.5 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-indigo-500 font-mono leading-relaxed resize-y"
                 placeholder="Customize the prompt rules here..."
               />
-              <div className="flex justify-end gap-2 pt-1 border-t border-zinc-850">
+              <div className="flex justify-end gap-2 pt-1 border-t border-[var(--border-card)] dark:border-zinc-700">
                 <button
                   onClick={onClosePrompt}
-                  className="px-3 py-1.5 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-750 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer border-0"
+                  className="px-3 py-1.5 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-[var(--bg-input)] dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer border-0"
                 >
                   Close
                 </button>

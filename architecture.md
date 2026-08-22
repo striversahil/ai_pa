@@ -1,606 +1,478 @@
 # Founder OS — Architecture Document
 
+> **Status of this doc:** rewritten against the current code on `main` (Aug 2026).
+> The platform is no longer a single Cloudflare Worker — it is a **multi-runtime
+> system** where a Cloudflare Worker/D1 API is the live data plane and **all heavy
+> AI + cron is executed by GitHub Actions** (`scripts/*-runner.js`). An Express/
+> PostgreSQL server shares the same modules as an alternate/local runtime, plus a
+> separate WhatsApp ingress worker (`waba-worker`) and a GitHub-Actions-driven AI layer.
+
 ## 1. System Overview
 
-Founder OS is a modular executive assistant platform for Brindavan Udyog (India), a B2B industrial manufacturing company. It comprises a **Cloudflare Worker backend** (D1 SQLite) with a **Next.js static frontend** on Cloudflare Pages, a **WhatsApp automation layer**, and supporting AI proxy tooling.
+Founder OS is a modular executive-assistant platform for **Brindavan Udyog (India)**, a
+B2B industrial manufacturing company. It unifies WhatsApp conversations, Zoho Books
+estimates, telecalling/CRM data, Google Sheets, and an LLM-powered "Company Brain"
+behind a single Next.js dashboard.
 
-### Key Principles
-- **Separation of concerns**: Routes, services, storage, and middleware are decoupled.
-- **Instant API, heavy AI on CI**: The Cloudflare Worker serves only fast D1 reads/writes; all heavy AI and cron processing runs as file-based Node scripts inside GitHub Actions.
-- **Strategy pattern for storage**: Storage operations delegate to interchangeable providers (Prisma/D1 or in-memory).
-- **Pluggable engines**: Domain modules (WhatsApp, Email, Sales, Brain) implement the `AnalysisEngine` interface.
-- **Graceful degradation**: Falls back to in-memory mock data when the database is unavailable.
+### Operational model (what actually runs in production)
 
-### Repository Structure
+**All heavy AI, cron, and scheduled processing is executed by GitHub Actions**
+(`scripts/*-runner.js` jobs) that call the Cloudflare Worker's `/api/runner/*`
+endpoints for D1 reads/writes and call the LLM directly. The Worker itself is a
+**thin JSON API over D1** — it does not run heavy loops or its own scheduler in
+production. The Express/PostgreSQL server is an alternative runtime that shares the
+same `src/modules/*` and `src/automations/*` code and *can* run those jobs
+in-process via `node-cron`, but in the live deployment the operational path is
+Worker + GitHub Actions.
+
+```
+   WA Engine Pro (cloud)  ──┐
+   (WhatsApp gateway)       │   (A) webhook-relay/relay.js  ──► Express /api/whatsapp/webhook
+                            │       (disk WAL buffer, retries)   (alt/local runtime)
+                            │
+                            └──► (B) waba-worker (CF Worker, D1) ──► drained by ──┐
+                                    raw payloads stored in D1 queue    local-runner │
+                                                                      (polls /api/logs)│
+    GitHub Actions (cron, external dispatch)                              │          │
+   node scripts/*-runner.js ──► founder-os-worker ◄─────────────────────┘          │
+   (ALL heavy AI + cron: digest, brief, summary, zoho, email, neodove)              │
+                                          │                                        │
+                        ┌─────────────────┴──────────┐             ┌──────────────┴──────┐
+                        │ founder-os-worker (CF D1)  │             │ Express (PostgreSQL) │ ◄── SSE /api/whatsapp/events
+                        │ LIVE API (thin; GH-Actions │             │ ALT/LOCAL runtime    │
+                        │  does the heavy + cron work)│             │ (node-cron in code)  │
+                        └────────────┬───────────────┘             └──────────┬───────────┘
+                                     └───────────────┬────────────────────────┘
+                                                     │
+                                    Next.js static dashboard
+                                    (Cloudflare Pages, Pages Functions /api proxy)
+```
+
+| Runtime | Entry | DB | Role |
+|---------|-------|----|------|
+| **Cloudflare Worker** (`founder-os_backend/src/worker.ts`) | `wrangler deploy` → `founder-os-worker` | D1 (SQLite) | **Live API.** Thin JSON API over D1; heavy AI/cron delegated to GH Actions runners via `/api/runner/*`. |
+| **GitHub Actions runners** (`scripts/*-runner.js`) | `.github/workflows/cron-*.yml` (external dispatch) | — (call Worker) | **Where all heavy processing & cron actually happens** (digest, brief, summary, zoho, email, neodove). |
+| **waba-worker** (`waba-worker/src/index.ts`) | `wrangler deploy` → `waba-worker` | D1 (`waba-worker`) | Dedicated WhatsApp webhook ingress + durable processing queue. Raw payloads stored in D1, drained by `local-runner.js` (polls `/api/logs`, writes `/api/update`). |
+| **Express server** (`founder-os_backend/src/server.ts`) | `pnpm dev` / `node dist/server.js` | PostgreSQL (Prisma) | Alternate/local runtime. Same route surface + modules; *can* run automations in-process via `node-cron` + BullMQ/Redis, but not the live operational path. |
+| **webhook-relay** (`webhook-relay/relay.js`) | `node relay.js` | disk WAL | Zero-dep buffer between WA Engine Pro and the Express backend; acks instantly, forwards with backoff. |
+| **local-runner.js** | `node local-runner.js` | (reads waba-worker D1) | Local AI processing loop: polls the waba-worker queue, classifies each message (deterministic rules + LLM fallback), writes results back. |
+| **Frontend** (`founder-os_frontend`) | `next build` → Cloudflare Pages | — | Static Next.js dashboard; talks to the Worker/Express API via Pages Functions `/api` proxy. |
+
+### Key principles
+- **Dual runtime, shared modules:** `founder-os_backend/src/modules/*` and `src/automations/*`
+  are imported by both the Express server and the Cloudflare Worker. The Worker build
+  (`scripts/build-worker.mjs`) bundles `worker.ts`; the server runs `server.ts` via ts-node.
+- **Strategy pattern for storage:** `src/storage/*` defines a `StorageProvider` interface with
+  `prisma-provider` (Postgres), `d1-provider` (D1), and `in-memory-provider` (fallback).
+- **Pluggable automations:** Each automation is a folder under `src/automations/<slug>/` with an
+  `index.ts` (and required `README.md`). An `AutomationEngine` runs rule/handler automations.
+- **Heavy AI / cron off the request path — done by GitHub Actions:** All heavy jobs run as
+  standalone `scripts/*-runner.js` scripts in GH Actions (external cron-job.org dispatch),
+  calling the Worker's `/api/runner/*`. The Express server *can* run the same automations
+  in-process via `node-cron`, but that is not the live operational path.
+- **Graceful degradation:** Falls back to in-memory mock data when the DB / LLM is unavailable.
+
+### Repository structure (actual)
 ```
 /ai_pa
-├── architecture.md
-├── docker-compose.yml
-├── founder-os_backend/          # Cloudflare Worker (Hono + D1) — built from src/worker.ts
-├── founder-os_frontend/         # Next.js 16 static dashboard (Cloudflare Pages)
-├── scripts/                     # GH Actions file-based runners (heavy AI runs HERE)
-│   ├── runner-lib.js            # Shared helpers (workerRequest, omniroute, extractJson)
+├── architecture.md                     # this file
+├── Dockerfile / docker-compose.yml     # Express backend container (alt/local deploy)
+├── docker-compose.local-runner.yml     # Express + local-runner compose
+├── start.sh / deploy.sh                # local dev / Docker deploy helpers
+├── founder-os_backend/                 # backend monorepo (Express + Worker + waba-worker share code)
+│   ├── prisma/schema.prisma            # 22-model PostgreSQL schema (source of truth)
+│   ├── src/
+│   │   ├── server.ts                   # Express 5 entrypoint (alt/local runtime)
+│   │   ├── worker.ts                    # Cloudflare Worker entrypoint (Hono + D1) — LIVE
+│   │   ├── config/ config-worker.ts    # env validation (server / worker variants)
+│   │   ├── routes/                      # Express routers (whatsapp-webhook, health, triggers, ...)
+│   │   ├── modules/                     # ai, automation, brain, whatsapp, waba, email, ...
+│   │   ├── automations/                 # 18 automation folders + _template
+│   │   ├── storage/ shared/ middleware/ durable/ utils/ types/
+│   │   └── scripts/                     # build-worker.mjs, smoke-worker.mjs, d1-mock.mjs
+│   ├── wrangler.toml                    # founder-os-worker config (D1 + EventHub DO)
+│   └── dist-worker/ dist/               # build outputs
+├── waba-worker/                        # separate Cloudflare Worker (WhatsApp ingress + D1 queue)
+│   ├── src/index.ts  schema.sql  wrangler.toml
+├── webhook-relay/relay.js              # Node WAL buffer → Express backend
+├── local-runner.js                     # local AI classification loop (drains waba-worker)
+├── scripts/                            # GH Actions file-based runners (heavy AI runs HERE)
+│   ├── runner-lib.js                   # shared helpers (workerRequest, omnirouteJson, extractJson)
 │   ├── whatsapp-digest-runner.js
 │   ├── morning-brief-runner.js
 │   ├── eod-summary-runner.js
-│   ├── zoho-sent-runner.js      # Zoho sync + LLM classification + comments
-│   └── email-brain-index-runner.js
-├── whatsapp_receiver/           # WhatsApp bot + React PA dashboard
-├── prospect_research/           # ProspectAI Pro lead enrichment
-├── zoho_sent/                   # Zoho Books cURL credentials (sent_estimates.txt)
-├── random_dump/                 # Design docs, n8n workflows
-├── litellm-config.yaml          # LiteLLM proxy config
-├── ttft_fallback.py             # TTFT-based LLM fallback
-├── ttft_proxy.py                # FastAPI TTFT proxy
-├── test_ttft_fallback.py        # TTFT test suite
-├── Dockerfile                   # Multi-stage Docker build
-├── deploy.sh                    # Docker deployment script
-└── start.sh                     # Local dev startup
+│   ├── zoho-sent-runner.js             # Zoho sync + LLM classification + comments
+│   ├── email-brain-index-runner.js
+│   ├── neodove-report-runner.js        # NeoDove telecaller report (today + backfill)
+│   └── trigger-workflows.sh            # manual cron-job.org dispatch helper
+├── founder-os_frontend/               # Next.js 16 static dashboard (Cloudflare Pages)
+├── .github/workflows/                 # cron-every-{5,10,15,30}min.yml + cron-daily-ist.yml
+├── zoho_sent/                         # Zoho Books cURL export (sent_estimates.txt)
+├── random_dump/                       # design docs, n8n workflows
+└── WA_Engine_Pro_API_Documentation.md / WHATSAPP_FLOW.md / whatsapp_plan.md / whatsapp-business-autopilot-architecture.md / whatsapp_context.md   # reference docs
 ```
 
----
 
-## 2. Backend Architecture
+## 2. Alternate / Local Runtime — Express / PostgreSQL
 
-### 2.1 Tech Stack
+> This runtime shares all `src/modules/*` and `src/automations/*` with the Cloudflare
+> Worker but runs on Node + PostgreSQL. In the **live deployment**, heavy AI and cron are
+> driven by **GitHub Actions**, not by this server's in-process `node-cron`. The section
+> below documents the server's capabilities; treat GitHub Actions + the Worker as the
+> operational execution engine (see §3 and §5).
+
+### 2.1 Tech stack
 | Component | Technology |
 |-----------|-----------|
-| Runtime | Cloudflare Workers (V8 isolates, global edge) |
-| Framework | Hono |
-| ORM | Prisma-style D1 adapter (`shared/prisma-d1.ts`) |
-| Database | Cloudflare D1 (SQLite, single-region for consistency) |
-| LLM | Omniroute (OpenAI-compatible) — called from GH Actions runners, not the Worker |
-| Embeddings | HuggingFace Router API (384-dim), stored as JSON in D1 |
+| Runtime | Node.js (ts-node in dev, compiled `dist/server.js` in prod) |
+| Framework | Express 5 |
+| ORM | Prisma 6 (PostgreSQL datasource) |
+| Database | PostgreSQL (external; `DATABASE_URL`) |
+| Scheduler | `node-cron` (in-process) + `cron-parser` |
+| Queue | BullMQ + Redis (ioredis) — message processing queue |
+| LLM | OpenAI-compatible client (`openai`) → Omniroute endpoint |
+| Embeddings | HuggingFace Router API (384-dim), stored as JSON |
 | Validation | Zod 4 |
-| Logging | Pino (`pino/worker`) |
-| Scheduler | GitHub Actions cron (5/15/30 min + daily IST) |
-| Package Manager | pnpm 10 |
-| Deploy | `wrangler deploy` (wrangler.toml + secrets) |
+| Logging | Pino (+ pino-pretty) |
+| Rate limiting | express-rate-limit, ipaddr.js |
+| Package manager | pnpm 10 |
 
-### 2.2 The Shift: Monolith → Worker + GH Actions
+### 2.2 `src/server.ts` route surface
+Express routers are mounted and a set of direct `app.get/post` handlers cover the
+public API. Auth: `requireSecret` guards `/api/trigger/*` and `/api/automations/*`
+(Bearer `SHARED_SECRET`); public GETs are open for the dashboard.
 
-All heavy AI work and cron jobs were moved **off the request path** onto GitHub Actions runners, which run standalone Node scripts (`scripts/*-runner.js`) that call the Worker only for instant D1 reads/writes:
+| Method | Path | Source |
+|--------|------|--------|
+| GET | `/api/status` | server.ts — DB & LLM diagnostics |
+| GET | `/api/brief/latest` | server.ts — latest morning brief / EOD |
+| GET | `/api/digests` | server.ts |
+| GET | `/api/tasks` | server.ts |
+| GET | `/api/messages/:chatId` | server.ts |
+| GET | `/api/sheet-data` | server.ts |
+| POST | `/api/ask-founder-ai` | server.ts — Brain RAG alias |
+| POST | `/api/trigger/digest` / `email-sync` / `briefing` / `summary` | server.ts |
+| GET/POST | `/api/trigger/sales-sync[/status]` | server.ts |
+| POST | `/api/brain/query` | server.ts |
+| GET | `/api/brain/stats` | server.ts |
+| POST | `/api/trigger/brain-index` | server.ts |
+| GET | `/api/audit`, `/api/audit/pending`, `/api/audit/sla-breaches` | server.ts |
+| POST | `/api/whatsapp/send` | server.ts |
+| GET | `/api/whatsapp/contacts`, `/contacts/:contactUid/messages`, `/note` (GET/PUT), `/summarize` | server.ts |
+| GET | `/api/whatsapp/events` | server.ts — SSE stream |
+| `*` | `/api/whatsapp/webhook` | routes/whatsapp-webhook |
+| `*` | `/health`, `/api/health` | routes/health |
+| `*` | `/api/automations*` | modules/automation (router) |
+| `*` | `/api/whatsapp-marketing*` | routes/whatsapp-marketing |
+| `*` | `/api/pending-items*` | routes/pending-items |
 
-```
-GitHub Actions (cron)                    Cloudflare Worker (public API)
-─────────────────────                    ─────────────────────────────
-node scripts/whatsapp-digest-runner ─┐   GET  /api/runner/messages/unprocessed
-node scripts/zoho-sent-runner ───────┼→  GET  /api/runner/zoho/state
-node scripts/morning-brief-runner ───┤   POST /api/runner/zoho/classification
-node scripts/eod-summary-runner ─────┤   POST /api/runner/zoho/comments
-node scripts/email-brain-index ──────┘   POST /api/runner/brain/context
-    │                                       │
-    │  LLM calls (Omniroute)                │  D1 SQLite
-    ▼                                       ▼
-  omniRoute API                          Cloudflare D1
-```
+`routes/index.ts` also exposes `/api/estimates`, `/api/tasks`, `/api/messages`,
+`/api/digests`, `/api/brief`, `/api/sheet-data`, `/api/status`.
 
-- **Worker** = thin JSON API over D1. Every heavy route was removed: `/api/trigger/digest`, `email-sync`, `briefing`, `summary`, `brain-index`, `sales-sync`, and the heavy automations (whatsapp-digest, email-brain-index, morning-brief, eod-summary, zoho-sent-analyzer) were dropped from the worker automation registry so `/api/trigger/:slug` 404s them.
-- **Runners** = the source of truth for processing. They own change detection, watermarks (`sales_copilot:last_complete_sync_at`), comment extraction, deterministic + LLM classification, and brain indexing.
-- Secrets for the runner live in GitHub Actions (`WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_BASE_URL`, `OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`). Zoho credentials are inferred at runtime from `zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets are stored.
+### 2.3 Internal module layout (`src/modules/*`)
+| Module | Responsibility |
+|--------|---------------|
+| `ai` | LLM service + `deterministicClassifier.ts` + prompt templates (`prompts/`) |
+| `aisensy` | AiSensy campaign client |
+| `audit` | Audit log writes/reads (`AuditLog`) |
+| `automation` | `engine.ts`, `registry.ts` (fs glob + node-cron), `registry-worker.ts` (static imports, no cron), `routes.ts`, `actions.ts`, `conditions.ts`, `template.ts`, `types.ts` |
+| `brain` | `embedder.ts`, `indexer.ts`, `service.ts` — Company Brain RAG |
+| `classification` | `heuristics.ts`, `service.ts` — Zoho estimate classification |
+| `digest` | `service.ts` — WhatsApp conversation digests |
+| `email` | `engine.ts`, `service.ts` — email sync + brain indexing |
+| `google_sheets` | `service.ts` (server) + `service-worker.ts` (Worker) |
+| `monitoring` | `alerter.ts` (Slack), `health.ts` |
+| `queue` | `service.ts` (BullMQ) + `service-worker.ts` (D1/DO fallback) |
+| `scheduler` | `service.ts` (node-cron boot) + `service-worker.ts` |
+| `storage` | `repository.ts` — `StorageRepository` over the active provider |
+| `tasks` | `service.ts` — action items |
+| `waba` | `client.ts` — Meta/WABA Cloud API client |
+| `whatsapp` | `controller.ts` (server) + `controller-worker.ts`, `engine.ts`, `service.ts`, `outbound.ts`, `message-buffer.ts`, `session-status.ts`, `wa-engine-cache.ts`, `rate-limit-store*.ts` |
 
-### 2.2b Directory Structure
-```
-founder-os_backend/
-├── prisma/
-│   └── schema.prisma              # Database schema (9 models) — D1-compatible DDL
-├── src/
-│   ├── worker.ts                  # Entry point — Hono Worker: routes, auth, D1 writes
-│   ├── config-worker.ts           # Zod env validation for the Worker
-│   ├── modules/
-│   │   ├── automation/
-│   │   │   ├── engine.ts          # AutomationEngine — /api/trigger/:slug dispatch
-│   │   │   └── registry-worker.ts # Worker-side automation registry (light automations only)
-│   │   ├── brain/
-│   │   │   └── service.ts         # Company Brain RAG (query reads via Worker /api/brain/*)
-│   │   └── ...
-│   ├── shared/
-│   │   ├── prisma-d1.ts           # Prisma-client-compatible adapter over D1
-│   │   ├── sse-worker.ts          # SSE for /api/whatsapp/events
-│   │   └── ...
-│   └── automations/               # Light automations kept on the Worker (curl-triggered)
-│       ├── wa-engine-monitor.ts
-│       ├── sla-monitor.ts
-│       ├── notification-batcher.ts
-│       ├── data-retention.ts
-│       ├── morning-queue-drain.ts
-│       ├── orphaned-message-recovery.ts
-│       ├── outbound-intent-recovery.ts
-│       ├── whatsapp-marketing.ts
-│       ├── telecalling-agent-analysis.ts
-│       ├── telecalling-enquiry-to-dpp.ts
-│       ├── dpp-prices-dashboard.ts
-│       └── enterprise-operations-analytics.ts
-├── scripts/
-│   ├── build-worker.mjs           # esbuild bundle → dist-worker/worker.js
-│   ├── smoke-worker.mjs           # Local smoke tests against the bundle
-│   └── (backend runner helpers not needed — runners live at repo /scripts)
-├── wrangler.toml                  # Worker name, D1 binding, routes
-└── dist-worker/                   # Build output (esbuild bundle)
-```
+### 2.4 Storage providers (`src/storage/*`)
+`interfaces.ts` defines `StorageProvider`. Implementations: `prisma-provider.ts`
+(Postgres, used by the Express runtime), `d1-provider.ts` (D1, for the Worker), `in-memory-provider.ts`
+(graceful fallback). `index.ts` selects the provider from env. All higher-level code
+goes through `modules/storage/repository.ts`.
 
-### 2.3 API Endpoints
+### 2.5 Scheduler & automations (in-process)
+On boot, `SchedulerService.init()` → `AutomationRegistry.load()` reads every folder
+in `src/automations/` (requires `README.md`), upserts an `Automation` row, and wires
+`node-cron` triggers. `AutomationEngine` evaluates conditions/actions. Cooldowns and
+runtime config (`enabled`, `configJson`) persist in the `Automation` table across
+redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 
-#### System & Data
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/status | DB & LLM connection diagnostics |
-| GET | /api/brief/latest | Latest morning brief / EOD summary |
-| GET | /api/digests | WhatsApp conversation digests (read-only — no lazy AI trigger) |
-| GET | /api/tasks | Extracted action items |
-| GET | /api/messages/:chatId | Raw WhatsApp messages for a chat |
-| GET | /api/sheet-data | Google Sheet data |
-| GET | /api/estimates | Zoho estimates with classifications & comments |
-| GET | /api/estimates/baseline | Today's frozen baseline snapshot (shared by all viewers) |
-| POST | /api/runner/estimates/baseline | Freeze today's baseline (auth; called by daily GH job) |
+| Automation (slug) | Type | Trigger (node-cron) | Purpose |
+|-------------------|------|---------------------|---------|
+| `data-retention` | handler | `0 3 * * *` | Delete WhatsApp messages > 90 days |
+| `dpp-prices-dashboard` | rule (event+scan) | `*` (fallback) | Parse DPP price messages → `PriceQuote` |
+| `enterprise-operations-analytics` | handler | `*/30 * * * *` | 18-point supply-chain analytics dashboard |
+| `eod-summary` | handler | `0 19 * * *` (7 PM IST) | End-of-day summary |
+| `morning-queue-drain` | handler | `*` | Send due deferred WhatsApp messages (Redis) |
+| `neodove-telecaller-report` | handler | `*/10 * * * *` | Per-agent NeoDove call perf (GH runner refreshes TODAY) |
+| `notification-batcher` | handler | `*/15 * * * *` | Flush grouped alerts to WhatsApp |
+| `orphaned-message-recovery` | handler | `*/2 * * * *` | Re-enqueue saved-but-unclassified messages |
+| `outbound-intent-recovery` | handler | `*` | Re-defer persisted outbound intents once Redis back |
+| `sla-monitor` | handler | `*` | Flag SLA breaches → Slack |
+| `telecalling-agent-analysis` | handler | `*/30 * * * *` | Read Telecalling Agents sheet → per-agent metrics |
+| `telecalling-enquiry-to-dpp` | rule | event+scan | Enquiry messages → DPP |
+| `wa-engine-monitor` | handler | `*` | WA Engine session/health monitor + dashboard |
+| `whatsapp-digest` | handler | event+scan | WhatsApp → AI digest (`process.ts`) |
+| `whatsapp-marketing` | handler | scheduled/recurring | Campaign send via WABA/AiSensy |
+| `zoho-sent-analyzer` | handler | `*/15` (GH) | Zoho sync + AI classification |
+| `email-brain-index` | handler | `*/30` (GH) | Email sync + brain index |
+| `morning-brief` | handler | daily IST (GH) | Morning briefing |
+| `_template` | — | — | Scaffold for new automations |
 
-#### Runner API (D1 reads/writes consumed by GH Actions scripts — all Bearer SHARED_SECRET)
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/runner/messages/unprocessed | Unprocessed WhatsApp messages for digest runner |
-| GET | /api/runner/digests/latest | Latest digest per chat |
-| GET | /api/runner/chat-notes | Chat notes for briefing context |
-| POST | /api/runner/digests | Persist generated digests |
-| POST | /api/runner/tasks | Persist extracted action items |
-| POST | /api/runner/pending-items | Persist founder pending items |
-| POST | /api/runner/messages/mark-processed | Mark messages processed |
-| GET | /api/runner/brief-data | Brief context data (aggregate reads) |
-| POST | /api/runner/founder-notes | Save founder note |
-| GET | /api/runner/zoho/state | Estimates + max comment id + watermark |
-| POST | /api/runner/zoho/comments | Upsert Zoho comments |
-| POST | /api/runner/zoho/status | Sync closed estimate statuses |
-| POST | /api/runner/zoho/classification | Upsert AI classification (flags via toYN()) |
-| POST | /api/runner/emails | Upsert synced emails |
-| GET | /api/runner/brain/sources | Brain source list |
-| POST | /api/runner/brain/context | Upsert brain context rows |
-| POST | /api/token/webhook | Receive token from external automation (Bearer SHARED_SECRET) |
-| GET | /api/token/:source | Retrieve stored token for runners (Bearer SHARED_SECRET) |
-| GET | /api/token | List all token sources (Bearer SHARED_SECRET) |
+> On the **Worker** deployment, `registry-worker.ts` statically imports the same
+> folders but does **not** wire node-cron — scheduled execution is driven by GitHub
+> Actions calling `/api/trigger/:slug`.
 
-#### Company Brain
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /api/brain/query | RAG query across all indexed data |
-| POST | /api/ask-founder-ai | Backward-compatible alias for /api/brain/query |
-| GET | /api/brain/stats | Brain indexing statistics |
+### 2.6 Queue & SSE
+- **BullMQ/Redis** (`modules/queue`): inbound WhatsApp messages are enqueued for
+  classification/processing; `morning-queue-drain` and `outbound-intent-recovery`
+  handle deferred sends. If Redis is unavailable, intents persist as `OutboundIntent`
+  rows and are recovered when Redis returns.
+- **SSE** (`/api/whatsapp/events`): real-time push to the dashboard; backed by the
+  `durable/event-hub.ts` EventHub Durable Object on the Worker, in-memory on Express.
 
-#### Manual Triggers
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /api/trigger/digest | Process unread WhatsApp messages |
-| POST | /api/trigger/email-sync | Sync unread emails |
-| POST | /api/trigger/briefing | Generate morning briefing |
-| POST | /api/trigger/summary | Generate EOD summary |
-| POST | /api/trigger/sales-sync | Sales Copilot analysis (backward-compatible alias) |
-| POST | /api/trigger/brain-index | Re-index all data into Company Brain |
 
-#### WhatsApp
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /api/whatsapp/webhook | Webhook receiver from WhatsApp bot |
-| GET | /api/whatsapp/events | SSE stream for real-time UI updates |
-| GET | /api/whatsapp/contacts | WA Engine contacts list |
-| GET | /api/whatsapp/campaigns | Campaign list |
-| POST | /api/whatsapp/campaigns/create | Create campaign |
-| GET | /api/whatsapp/groups | Contact groups |
-| POST | /api/whatsapp/groups/create | Create group |
-| GET | /api/whatsapp/templates | Approved message templates |
-| POST | /api/whatsapp/send | Send text message |
-| GET | /api/whatsapp/contacts/:uid/messages | Merged local + cloud message history |
-| POST | /api/whatsapp/contacts/:uid/summarize | On-demand AI digest |
+## 3. Edge Backend — Cloudflare Worker (Hono + D1)
 
-### 2.4 Worker Middleware Stack
+`founder-os_backend/src/worker.ts` is bundled by `scripts/build-worker.mjs` →
+`dist-worker/worker.js` and deployed as `founder-os-worker` (D1 binding `DB`,
+`EVENT_HUB` Durable Object). It mirrors the Express route surface but keeps handlers
+thin — heavy AI is performed by GH Actions runners that call `/api/runner/*`.
 
-```
-Request
-  -> CORS (hono/cors)
-  -> Boot middleware (load automations, init D1 adapter)
-  -> requireSecret guard on /api/runner/* and /api/trigger/* (Bearer SHARED_SECRET)
-  -> Route Handler
-    -> D1 read/write via prisma-d1 adapter
-```
+### 3.1 Public & system endpoints (subset; full list mirrors §2.2)
+- `/health`, `/api/health`, `/api/health/whatsapp`, `/webhook`, `/dashboard`
+- `/api/status`, `/api/brief/latest`, `/api/digests`, `/api/tasks`,
+  `/api/messages/:chatId`, `/api/sheet-data`, `/api/estimates`, `/api/estimates/baseline`
+- `/api/brain/query`, `/api/ask-founder-ai`, `/api/brain/stats`
+- `/api/whatsapp/send`, `/api/whatsapp-proxy/send`, `/api/whatsapp/contacts*`,
+  `/api/whatsapp/events`, `/api/whatsapp/summarize`
+- `/api/pending-items*`, `/api/automations*`, `/api/whatsapp-marketing*`
+- `/api/neodove/report`, `/api/estimates/classify`, `/api/estimates/bulk-upsert`
+- `/api/audit*`, `/api/events` (SSE)
 
-- **requireSecret**: Any runner/trigger endpoint without a valid `Authorization: Bearer <SHARED_SECRET>` returns 401. Public GETs (`/api/estimates`, `/api/brief/latest`, etc.) are open for the static frontend.
+### 3.2 Runner API (Bearer `SHARED_SECRET`) — consumed by `scripts/*-runner.js`
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/runner/messages/unprocessed` | Unprocessed WhatsApp messages |
+| GET | `/api/runner/digests/latest` | Latest digest per chat |
+| GET | `/api/runner/chat-notes` | Chat notes for briefing |
+| POST | `/api/runner/digests` | Persist digests |
+| POST | `/api/runner/tasks` | Persist action items |
+| POST | `/api/runner/pending-items` | Persist founder pending items |
+| POST | `/api/runner/messages/mark-processed` | Mark processed |
+| GET | `/api/runner/brief-data` | Brief aggregate reads |
+| POST | `/api/runner/founder-notes` | Save founder note |
+| GET | `/api/runner/zoho/state` | Estimates + max comment id + watermark |
+| POST | `/api/runner/zoho/comments` | Upsert Zoho comments |
+| POST | `/api/runner/zoho/status` | Sync closed estimate statuses |
+| POST | `/api/runner/zoho/classification` | Upsert AI classification |
+| POST | `/api/runner/emails` | Upsert synced emails |
+| GET | `/api/runner/brain/sources` | Brain source list |
+| POST | `/api/runner/brain/context` | Upsert brain context rows |
+| POST | `/api/runner/estimates/baseline` | Freeze today's baseline |
+| POST | `/api/runner/neodove/report` | Upsert NeoDove report |
 
-### 2.5 Execution Model (replaces the old scheduler/Express service layer)
+### 3.3 Trigger dispatch
+`POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
+cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.
 
-There is no in-process cron anymore. Every recurring job is a GitHub Actions workflow that runs a standalone Node script:
+## 4. WhatsApp ingestion paths
 
-| Workflow | Cadence | Jobs |
-|----------|---------|------|
-| `cron-every-5min.yml` | every 5 min | whatsapp-digest (runner), light-triggers (curls) |
-| `cron-every-15min.yml` | every 15 min | zoho-sent-analyzer (runner) |
-| `cron-every-30min.yml` | every 30 min | email-brain-index (runner), light-triggers (curls) |
-| `cron-daily-ist.yml` | daily IST | data-retention (curl), morning-brief (runner), eod-summary (runner), baseline-freeze (curl) |
+There are **two** ingestion routes from WA Engine Pro (the WhatsApp gateway):
 
-- Heavy jobs (`node scripts/*-runner.js`) pass `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_*` via workflow env and call the Worker's `/api/runner/*` endpoints to read/write D1.
-- Light automations (monitors, drainers, batchers, dashboards) run as `curl /api/trigger/:slug` and stay on the Worker.
-- The 15-min workflow accepts a `force` dispatch input that reclassifies all active estimates with the current `OMNIROUTE_MODEL`.
+ 1. **Relay → Express:** WA Engine Pro → `webhook-relay/relay.js` →
+    `POST /api/whatsapp/webhook` on the Express backend (default `http://127.0.0.1:5000`).
+    The relay acks WA Engine Pro immediately, writes a disk write-ahead log, and forwards
+    with backoff so a backend outage never drops messages (backend dedupes by
+    `wahaMessageId`).
+ 2. **Edge/queue (waba-worker):** WA Engine Pro → `waba-worker` (`/webhook`) stores raw
+    payloads in its D1 `waba_payloads` table (UNIQUE `whatsapp_id`). `local-runner.js`
+    polls `/api/logs?mode=cron`, classifies each (deterministic rules + LLM fallback),
+    and writes back via `/api/update`. Idempotent by `whatsapp_id`.
+    (Note: the GitHub Actions cron workflows do **not** drain waba-worker — they call
+    `founder-os-worker`'s `/api/runner/*` instead. waba-worker + local-runner is the
+    local/dev classification path.)
 
-### 2.6 Storage
+`local-runner.js` ports `deterministicClassifier.ts` rules and calls Omniroute for
+ambiguous messages; it naturally drains backlog accumulated while the machine was off.
 
-D1 is a single SQLite database (`founder-os`) bound to the Worker as `DB`. The `prisma-d1.ts` adapter exposes a Prisma-client-compatible API over D1's `prepare/run/first/all` so existing data-access code ports with minimal change.
+## 5. GitHub Actions — AI processing & scheduling
 
-```
-Worker handler (Hono)
-  -> prisma-d1 adapter (D1 binding `DB`)
-       -> D1 SQLite (single region, strong consistency)
-```
+Heavy jobs are standalone Node scripts in repo-root `scripts/` that call the Worker's
+`/api/runner/*` (D1 reads/writes) and make LLM calls via Omniroute directly.
 
-- **Baseline freeze**: the daily `baseline-freeze` job snapshots `status = 'sent'` estimates into a Setting row keyed `zoho_baseline:YYYY-MM-DD` (IST date via `kolkataDateStr()`). The frontend reads it through `GET /api/estimates/baseline` so all viewers share one frozen snapshot instead of per-browser localStorage.
-- Runner state (`sales_copilot:last_complete_sync_at` watermarks, classification rows, comments) is also stored in D1.
+| Workflow | Cadence (UTC) | Jobs |
+|----------|---------------|------|
+| `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI) |
+| `cron-every-10min.yml` | `*/10` | `neodove-report-runner.js` (today, intraday overwrite) |
+| `cron-every-15min.yml` | `*/15` | `zoho-sent-runner.js` (full sync + AI; `force` dispatch reclassifies all active) |
+| `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |
+| `cron-daily-ist.yml` | `30 19` (baseline-freeze 01:00 IST), `30 21` (data-retention 03:00 IST) | baseline-freeze (curl), data-retention (curl), `morning-brief-runner.js`, `eod-summary-runner.js`, `neodove-report-runner.js` (yesterday + N-day backfill) |
 
-### 2.7 Token Storage (External Service Auth)
+Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_BASE_URL`,
+`OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`. Zoho creds are inferred at runtime from
+`zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets.
 
-Many external services (NeoDove, Zoho Books, Google Sheets, etc.) require OAuth tokens or API keys that expire. Rather than hard-coding secrets or relying on browser sessions, Founder OS uses a **centralized Token table** in D1:
-
-| Endpoint | Auth | Purpose |
-|----------|------|---------|
-| `POST /api/token/webhook` | SHARED_SECRET | External automation (Playwright, cron script) POSTs fresh token |
-| `GET /api/token/:source` | SHARED_SECRET | GH Actions runners fetch token for API calls |
-| `GET /api/token` | SHARED_SECRET | Debug: list all stored token sources |
-
-**Flow:**
-1. Automated browser script (Playwright + IMAP for OTP) runs every N days, logs into the service, extracts token from localStorage
-2. Script POSTs to `/api/token/webhook` with `{ source: "neodove", token: "...", metadata: { expires_at: "..." } }`
-3. Worker upserts into `Token` table (unique on `source`)
-4. Runner scripts GET `/api/token/neodove` → use `token` header for downstream API calls
-5. If token missing/expired, runner fails fast (alerting) instead of silently failing
-
-**Why not GitHub Secrets?** Token rotation is frequent (OTP login every few days). GH Secrets require manual update; this webhook pattern is fully automated. The token is never in repo config.
-
-### 2.8 External Scheduling (cron-job.org → workflow_dispatch)
-
-GitHub Actions native `schedule` is **unreliable in practice**: measured runs show 30–40 min delays (e.g. a `*/5` cron executed only ~40×/24h instead of 288). All recurring workflows are therefore triggered externally:
+### 5.1 External dispatch (cron-job.org → workflow_dispatch)
+GitHub's native `schedule:` is unreliable (observed 30–40 min drift), so all workflows
+are triggered externally:
 
 ```
-cron-job.org (UTC schedule, POST + PAT header)
+cron-job.org (UTC schedule, POST + PAT)
   └─ https://api.github.com/repos/striversahil/ai_pa/actions/workflows/<wf>/dispatches
-       └─ GitHub Actions runs the workflow's jobs on demand
+       └─ GitHub Actions runs the workflow on demand
 ```
 
-| cron-job.org job | Schedule (UTC) | Workflow |
-|------------------|----------------|----------|
-| ai_pa - every 5 min (`8293639`) | */5 | `cron-every-5min.yml` |
-| ai_pa - every 10 min (`8302897`) | */10 | `cron-every-10min.yml` — NeoDove today-refresh |
-| ai_pa - every 15 min (`8293640`) | */15 | `cron-every-15min.yml` |
-| ai_pa - every 30 min (`8293641`) | */30 | `cron-every-30min.yml` |
-| ai_pa - daily IST (`8293642`) | 02:30/03:30/13:30/21:30 | `cron-daily-ist.yml` |
+⚠️ The cron-job.org API silently ignores `requestHeaders` — the GitHub PAT must be set
+under `extendedData.headers` (object form). Manual equivalent:
+`GITHUB_PAT=... ./scripts/trigger-workflows.sh <every-5min|every-10min|every-15min|every-30min|daily|all>`.
 
-- Each job sends `{"ref":"main"}` with an `Authorization: Bearer <PAT>` header; workflows also keep a `schedule:` block as fallback but external dispatch is the primary trigger.
-- ⚠️ **API gotcha:** the cron-job.org API silently ignores `requestHeaders` on job create/update — the GitHub PAT header MUST be set under `extendedData.headers` (object form), otherwise dispatches fail with status 4 and no workflow runs appear.
-- Manual equivalent: `GITHUB_PAT=... ./scripts/trigger-workflows.sh <every-5min|every-10min|every-15min|every-30min|daily|all>`.
 
----
+## 6. Data Models (PostgreSQL via Prisma — 22 models)
 
-## 3. Frontend Architecture
+`founder-os_backend/prisma/schema.prisma` is the source of truth. The Worker uses a
+D1-compatible subset. Migrations live in `prisma/` (`0001_create_token_table.sql`,
+`0002_add_sales_agent.sql`).
 
-### 3.1 Tech Stack
+- **Contact** — WhatsApp contact/chat: `chatId` (unique), `name`, `phoneNumber`, `isGroup`, `unreadCount`, `hasInbound`, `lastMessage*`.
+- **Message** — `wahaMessageId` (unique), `chatId`, `sender`, `body`, `timestamp`, `processed`, `isHistorical`, quote fields, `classification`, `classificationReason`, `classifiedAt`, `slaDeadline`.
+- **OutboundIntent** — deferred sends persisted when Redis is down (`status` PENDING/ENQUEUED).
+- **Email** — `subject`, `sender`, `body`, `processed`.
+- **Digest** — `chatId`, `chatName`, `summary`, `priority` (enum), `category`, `sentiment`, `requiresFounder`, `suggestedReply`.
+- **Task** — `title`, `owner`, `status` (enum), `deadline`, `source`, `sourceId`.
+- **ChatPendingItem** — per-chat "pending from me" ledger (`status` OPEN/DONE/CANCELLED, `resolvedBy`).
+- **ChatNote** — founder's private per-chat note (`chatId` PK).
+- **FounderNote** — free founder notes.
+- **Estimate** — `estimateId` (PK), `estimateNumber`, `customerName`, `total`, `date` (String), `status`, `lastSyncTime`, `skipMatching`.
+- **Comment** — `commentId` (PK), `estimateId` FK, `description`, `commentedBy`, `date`, `dateDescription`, `dateFormatted`.
+- **Classification** — `estimateId` PK; flags `meaningfulUpdate`, `notAnswering`, `movingSlow`, `underDiscussion`, `confirm` (String), `intentScore` (Int), `reasoning`, `summary`, `salesAgent` (default "Unassigned"), `processedAt`.
+- **AuditLog** — `action`, `entityType`, `entityId`, `metadata` (JSON).
+- **BrainContext** — normalized searchable index: `source`, `sourceId` (unique pair), `entityName`, `content`, `metadata`, `eventDate`, `indexedAt`.
+- **Automation** — runtime registry: `slug` (unique), `name`, `type` (rule|handler), `triggerJson`, `conditionJson`, `actionsJson`, `configJson`, `enabled`, `cooldownMs`, `lastRunAt`, `runCount`.
+- **AutomationRun** — one fire: `automationId` FK, `dedupKey` (unique pair), `status`, `payloadJson`, `error`.
+- **PriceQuote** — parsed DPP price lines: `messageId` (unique), `dppChatId`, `itemName`, `unitPrice`, `currency`, `rawLine`, `quotedAt`.
+- **Setting** — generic key/value (`key` PK, `value`) e.g. `zoho_baseline:YYYY-MM-DD`, `sales_copilot:last_complete_sync_at`.
+- **Token** — external auth tokens: `source` (unique), `token`, `metadata` (JSON).
+- **MarketingCampaign** — `name`, `type`, `provider` (waba|aisensy), `status`, `scheduleType`, `scheduledAt`, `cron`, `template*`, `mediaUrl`, `statsJson`.
+- **MarketingLead** — `campaignId` FK, `phoneNumber`, `name`, `attributes` (JSON), `status`, message/error timestamps.
+- **MarketingCampaignRun** — per-campaign execution: `total`, `sent`, `failed`, `skipped`, `status`.
+
+Enums: `Priority` (low|medium|high|urgent), `TaskStatus` (PENDING|IN_PROGRESS|COMPLETED|CANCELLED).
+
+## 7. Token storage (external service auth)
+
+Many services (NeoDove, Zoho, Google) need rotating tokens. A central `Token` table
+holds them:
+
+1. A Playwright/IMAP script logs in, extracts the token, `POST /api/token/webhook`
+   (`{ source, token, metadata }`, Bearer `SHARED_SECRET`).
+2. Worker upserts by `source`.
+3. Runners `GET /api/token/:source` → use it for downstream API calls.
+4. Missing/expired → runner fails fast (alert) instead of silently breaking.
+
+This avoids manual GitHub Secret rotation for frequently-expiring tokens.
+
+## 8. Frontend (Next.js 16 static dashboard)
+
 | Component | Technology |
 |-----------|-----------|
 | Framework | Next.js 16 (App Router, Static Export) |
 | Language | TypeScript 5 |
-| Styling | Tailwind CSS v4 (PostCSS) |
+| Styling | Tailwind CSS v4 (PostCSS), CSS custom properties (dark/light) |
 | Charts | Chart.js 4 |
-| Fonts | Geist (GeistSans + GeistMono) |
-| State | React hooks (useState, useEffect, useMemo, useCallback) |
-| Persistence | D1 via Worker `/api/*` (shared baseline etc.); LocalStorage for UI prefs |
-| Package Manager | npm |
-| Hosting | Cloudflare Pages (`founder-os-frontend.pages.dev`) via `wrangler pages deploy out`; `functions/` = Pages Functions `/api` proxy (excluded from typecheck) |
+| Fonts | Geist |
+| State | React hooks (`useState/useEffect/useMemo/useCallback`); data via `/api` |
+| Persistence | LocalStorage (UI prefs) + Worker D1 (shared baseline) |
+| Package manager | npm or pnpm (both `package-lock.json` and `pnpm-lock.yaml` present; no `packageManager` field) |
+| Hosting | Cloudflare Pages (`founder-os-frontend`), `functions/` = Pages Functions `/api` proxy |
 
-### 3.2 Directory Structure
+### 8.1 Structure
 ```
-founder-os_frontend/
-├── public/                          # Static assets (images, icons)
-├── src/
-│   ├── app/
-│   │   ├── globals.css              # Tailwind v4 + CSS custom properties (dark/light)
-│   │   ├── layout.tsx               # Root layout (Geist fonts, metadata)
-│   │   └── page.tsx                 # Main application shell (refactored — uses hooks + layout components)
-│   ├── api/
-│   │   └── client.ts                # Centralized fetch wrapper with error handling
-│   ├── hooks/
-│   │   ├── useEnquiryData.ts        # Enquiry/comment/agent state management + LocalStorage
-│   │   ├── useTheme.ts              # Dark/light theme toggle with LocalStorage persistence
-│   │   ├── useToast.ts              # Toast notification queue
-│   │   ├── useCSV.ts                # CSV export/import logic
-│   │   └── useLocalStorage.ts       # Generic LocalStorage hook
-│   ├── types/
-│   │   └── index.ts                 # All TypeScript interfaces + initial mock data
-│   ├── mockData.ts                  # Backward-compatible re-exports from types/
-│   ├── mockDataSheets.ts            # Mock Google Sheets datasets
-│   └── components/
-│       ├── ErrorBoundary.tsx        # React error boundary wrapper
-│       ├── layout/
-│       │   ├── Sidebar.tsx          # Desktop sidebar navigation
-│       │   └── MobileNav.tsx        # Mobile bottom navigation bar
-│       ├── Dashboard.tsx            # Main dashboard with KPI cards + charts
-│       ├── EnquiryList.tsx          # Filterable enquiry table
-│       ├── EnquiryDetail.tsx        # Per-enquiry deep-dive (comments, timeline, specs)
-│       ├── EnquiryModal.tsx         # Add/Edit enquiry form
-│       ├── EnquiryRowItem.tsx       # Single enquiry row card
-│       ├── ClientProfile.tsx        # Client snapshot panel
-│       ├── CommentNode.tsx          # Recursive thread-style comment renderer
-│       ├── FilterControls.tsx       # Filter chip bar
-│       ├── CalendarRibbon.tsx       # Weekly calendar strip
-│       ├── ActivityTimeline.tsx     # Chronological activity feed
-│       ├── KpiCard.tsx              # Metric card widget
-│       ├── PipelineFunnel.tsx       # Sales pipeline funnel chart
-│       ├── TrendChart.tsx           # Chart.js wrapper
-│       ├── SpecificationsSection.tsx
-│       ├── Lightbox.tsx             # Image lightbox overlay
-│       ├── ToastContainer.tsx       # Toast notification display
-│       ├── FounderAssistant.tsx     # AI chat interface
-│       ├── ZohoEstimates.tsx        # Zoho estimates review queue
-│       ├── GoogleSheetsDashboard.tsx
-│       ├── CrmTrackerDashboard.tsx
-│       ├── PipelineDashboard.tsx
-│       ├── TelecallerDashboard.tsx
-│       └── WhatsAppDashboard.tsx    # WhatsApp automation hub
+founder-os_frontend/src/
+├── app/{layout.tsx, page.tsx, globals.css, favicon.ico}
+├── api/client.ts                     # fetch wrapper (API_BASE = '/api')
+├── hooks/{useEnquiryData, useTheme, useToast, useCSV, useLocalStorage, useHashRoute}.ts
+├── types/index.ts  mockData.ts
+└── components/
+    ├── layout/{Sidebar, MobileNav}.tsx
+    ├── Dashboard, Enquiry{List,Detail,Modal,RowItem}, ClientProfile, CommentNode,
+    │   FilterControls, CalendarRibbon, ActivityTimeline, KpiCard, PipelineFunnel,
+    │   TrendChart, SpecificationsSection, Lightbox, ToastContainer, ErrorBoundary
+    ├── FounderAssistant                 # AI chat (Brain RAG)
+    ├── ZohoEstimates + zoho/{EstimateCard, CommentsTimeline, DailyMovementTracker,
+    │   CallingPriorityChecklist, ActiveFilters, KpiCards, ZohoEstimatesHeader, types, utils}
+    ├── WhatsAppDashboard, WhatsAppMarketingDashboard
+    ├── WaEngineDashboard, NeodoveTelecallerDashboard
+    ├── DppPricesDashboard, EnterpriseOperationsDashboard, SheetAnalysisDashboard
+    └── Automations                      # automation registry viewer
 ```
 
-### 3.3 Component Hierarchy
+`page.tsx` is the shell: `<Sidebar>|<MobileNav>` + view switch wrapped in
+`<ErrorBoundary>`, with `<EnquiryModal>`, `<Lightbox>`, `<ToastContainer>` overlays.
+Views like `ZohoEstimates`, `FounderAssistant`, `WhatsAppDashboard` call the API
+directly via `fetch()`. The Pages Functions proxy (`functions/api/[[path]].ts`) forwards
+`/api/*` to `env.API_WORKER_URL`; runner endpoints are never called from the browser.
+
+### 8.2 Build & deploy
 ```
-<Layout> (app/layout.tsx)
-  <Home> (app/page.tsx)
-    <Sidebar> | <MobileNav>      # Navigation
-    <main>
-      <ErrorBoundary>
-        {view === "dashboard" && <Dashboard>}
-        {view === "enquiries" && <EnquiryList>}
-        {view === "detail" && <EnquiryDetail>}
-        {view === "briefing" && <FounderAssistant>}
-        {view === "zoho" && <ZohoEstimates>}
-        {view === "sheets" && <GoogleSheetsDashboard>}
-        {view === "whatsapp" && <WhatsAppDashboard>}
-      </ErrorBoundary>
-    </main>
-    <EnquiryModal>               # Overlay
-    <Lightbox>                   # Overlay
-    <ToastContainer>
-```
-
-### 3.4 State Management
-
-State is decentralized into custom hooks:
-
-| Hook | Manages | Persistence |
-|------|---------|-------------|
-| `useEnquiryData` | Enquiries, comments, agents, CRUD operations, currentAgent | LocalStorage |
-| `useTheme` | Theme (dark/light) | LocalStorage |
-| `useToast` | Toast notification queue | In-memory (ephemeral) |
-| `useCSV` | CSV export/import logic | None (pure functions) |
-
-The `page.tsx` shell owns only view-routing state (`activeView`, `selectedEnquiryId`, modal visibility). All data CRUD is delegated to hooks.
-
-### 3.5 Data Flow
-```
-User Action
-  -> page.tsx handler (calls hook method or updates view state)
-    -> Hook updates state + persists to LocalStorage
-    -> React re-renders affected components via prop changes
-```
-
-Views like `ZohoEstimates`, `FounderAssistant`, and `WhatsAppDashboard` manage their own state internally and call the Cloudflare Worker API directly via `fetch()` (the frontend is served on Cloudflare Pages and hits the Worker origin with CORS enabled).
-
-### 3.6 Styling Patterns
-- **Tailwind CSS v4** with `@theme` tokens: `brand-indigo`, `brand-emerald`, `brand-amber`, `brand-rose`
-- **CSS custom properties** for dark/light mode: `--bg-primary`, `--text-primary`, `--bg-card`, `--border-card`, etc.
-- **Dark mode**: Toggled by adding/removing `.dark` class on `<html>`
-- **Animation utilities**: `animate-fade-in`, `animate-scale-up`
-- **Glassmorphism**: Dark theme uses semi-transparent backgrounds with backdrop blur
-
-### 3.7 API Client
-```typescript
-// src/api/client.ts
-const API_BASE = '/api';
-```
-
-`/api` is proxied to the Worker origin by **Pages Functions** (`functions/api/[[path]].ts`), so the client can use same-origin relative paths. The function forwards to `env.API_WORKER_URL` (falls back to `https://founder-os-worker.connect-bui2.workers.dev`) and rewrites the request to `/api/<path>` on the worker. Public worker endpoints are unauthenticated; runner endpoints (`/api/runner/*`) require the shared secret and are never called from the browser.
-
-### 3.8 Frontend Deployment (Cloudflare Pages)
-
-The frontend is a static Next.js export (`out/`) deployed to the **`founder-os-frontend`** Pages project (`https://founder-os-frontend.pages.dev`).
-
-```bash
 cd founder-os_frontend
-pnpm build            # produces ./out/ static export
+npm run build                  # static export → out/
 wrangler pages deploy out --project-name founder-os-frontend
 ```
+The `functions/` dir is excluded from Next typecheck (Pages Functions types come from
+`@cloudflare/workers-types`).
 
-- **Pages Functions** (`functions/api/[[path]].ts`, `functions/health/[[path]].ts`) are bundled automatically when deploying from the project root, and route `/api/*` and `/health` to the Worker.
-- The `functions/` directory is excluded from the Next.js typecheck (`tsconfig.json` `exclude`), since Pages Functions types come from `@cloudflare/workers-types`.
-- After a deploy, hard-refresh the browser to bust cached static assets.
-
----
-
-## 4. Data Models
-
-### 4.1 Database Schema (D1 SQLite — 10 models)
-
-```
-Message
-  id          String @id @default(uuid())
-  chatId      String
-  sender      String
-  body        String
-  timestamp   DateTime
-  processed   Boolean @default(false)
-  createdAt   DateTime @default(now())
-  @@index([chatId, processed])
-
-Email
-  id          String @id @default(uuid())
-  subject     String
-  sender      String
-  body        String
-  processed   Boolean @default(false)
-  createdAt   DateTime @default(now())
-  @@index([processed])
-
-Digest
-  id              String @id @default(uuid())
-  chatId          String
-  chatName        String
-  summary         String
-  priority        Priority
-  category        String
-  sentiment       String
-  requiresFounder Boolean @default(false)
-  suggestedReply  String?
-  createdAt       DateTime @default(now())
-
-Task
-  id          String @id @default(uuid())
-  title       String
-  owner       String
-  status      TaskStatus @default(PENDING)
-  deadline    DateTime?
-  source      String
-  sourceId    String?
-  createdAt   DateTime @default(now())
-
-FounderNote
-  id          String @id @default(uuid())
-  content     String
-  createdAt   DateTime @default(now())
-
-Estimate
-  estimateId      String @id
-  estimateNumber  String
-  customerName    String
-  total           Float
-  date            DateTime?
-  status          String
-  lastSyncTime    DateTime?
-  skipMatching    Boolean @default(false)
-  classification  Classification?
-  comments        Comment[]
-
-Comment
-  commentId       String @id
-  estimateId      String
-  description     String
-  commentedBy     String
-  date            DateTime?
-  dateDescription String?
-  dateFormatted   String?
-  estimate        Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
-
-Classification
-  estimateId              String @id
-  meaningfulUpdate        Boolean?
-  followUpMissing         Boolean?
-  notAnswering            Boolean?
-  improperFollowUp        Boolean?
-  lastCommentNotSatisfactory Boolean?
-  dayExceeded             Boolean?
-  movingSlow              Boolean?
-  underDiscussion         Boolean?
-  confirm                 Boolean?
-  intentScore             Int?
-  reasoning               String?
-  summary                 String?
-  processedAt             DateTime?
-  estimate                Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
-
-BrainContext
-  id          String @id @default(uuid())
-  source      String     // WHATSAPP | EMAIL | DIGEST | ESTIMATE | TASK | COMMENT
-  sourceId    String
-  entityName  String
-  content     String
-  metadata    String?    // JSON string
-  embedding   String?      // JSON array of 384 floats (no pgvector on D1)
-  indexedAt   DateTime @default(now())
-  eventDate   DateTime?
-  @@unique([source, sourceId])
-  @@index([source, entityName, eventDate])
-
-Token
-  id          String @id @default(uuid())
-  source      String @unique  // e.g. "neodove", "zoho", "google"
-  token       String          // the actual auth token
-  metadata    String?         // JSON: { expires_at, user_id, ... }
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  @@index([source])
-```
-
-### 4.2 Enums
-```
-Priority: low | medium | high | urgent
-TaskStatus: PENDING | IN_PROGRESS | COMPLETED | CANCELLED
-```
-
-### 4.3 Frontend Types (TypeScript)
-```typescript
-Agent { id, name, initials, color, status }
-Activity { id, type: 'creation'|'assignment'|'status_change', text, timestamp, agentId? }
-Enquiry { id, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, assignedAgentId, estimatedValue, createdAt, activities, imageUrls? }
-Comment { id, enquiryId, agentId, content, createdAt, parentId, replies?, imageUrl? }
-StoredData { enquiries, comments, agents }
-```
-
----
-
-## 5. Extension Guidelines
-
-### 5.1 Adding a New Heavy/Cron Job
-
-1. Create a standalone runner `scripts/<name>-runner.js` (see `runner-lib.js` for shared helpers).
-2. Call the Worker's `/api/runner/*` endpoints for D1 reads/writes; make LLM calls via Omniroute directly.
-3. Add a job to the matching workflow (`.github/workflows/cron-*.yml`) with `env: { WORKER_URL, SHARED_SECRET, OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY, OMNIROUTE_MODEL }`.
-
-### 5.2 Adding a New Worker Endpoint (D1 read/write)
-
-1. Add the route in `src/worker.ts` with `c.post('/api/runner/<name>', requireSecret, async (c) => {...})`.
-2. Keep it instant — no LLM, no long loops; heavy processing belongs in runners.
-3. Run `node scripts/build-worker.mjs` then `node scripts/smoke-worker.mjs` to verify.
-
-### 5.3 Adding a New Frontend View
-
-1. Create `<name>.tsx` in `src/components/`
-2. Add route to `ViewType` union in `Sidebar.tsx`
-3. Add nav item to `navItems` array in `Sidebar.tsx` and `MobileNav.tsx`
-4. Add view rendering block in `page.tsx`
-5. For API-backed views, use `api.client.ts`:
-```typescript
-import { api } from '@/api/client';
-const data = await api.get('/api/your-endpoint');
-```
-
-### 5.4 Adding a New LLM Provider
-
-1. Update `OMNIROUTE_MODEL` / `OMNIROUTE_BASE_URL` in the GitHub Actions secrets/variables.
-2. Runners call the OpenAI-compatible Omniroute API via `omnirouteJson()` in `runner-lib.js`.
-
-### 5.5 Code Quality Conventions
-
-- **Runners**: One script per heavy job. Pure Node (ESM), no build step, use `runner-lib.js`.
-- **Worker**: One route per domain. Keep handlers thin; throw errors that map to JSON responses.
-- **Frontend**: One component per file. Props interfaces co-located. Use `@/` path alias.
-- **Types**: Shared types in `types/`. Component-local types at the top of the file.
-
-### 5.6 Testing Strategy
-
-- Worker: `scripts/smoke-worker.mjs` hits the bundled worker and asserts status codes (heavy slugs → 404, auth-protected runner routes → 401 without secret).
-- Frontend: `pnpm build` (static export) + `npx tsc --noEmit`.
-- Runners: `node --check` on each script before commit.
-
----
-
-## 6. Deployment
+## 9. Deployment
 
 | Component | Target | How |
 |-----------|--------|-----|
-| Backend | Cloudflare Workers | `node scripts/build-worker.mjs` (esbuild bundle) → `npx wrangler deploy` (D1 binding `DB`) |
-| Frontend | Cloudflare Pages (`founder-os-frontend`) | `pnpm build` (static export to `out/`) → `wrangler pages deploy out --project-name founder-os-frontend` (from `founder-os_frontend/`, so Pages Functions bundle is included) |
-| Cron/AI | GitHub Actions | `.github/workflows/cron-*.yml` schedules file-based runner scripts |
-| Secrets | GitHub Actions secrets + wrangler | `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_*` (GH); `SHARED_SECRET`, `DB` (wrangler) |
+| founder-os-worker | Cloudflare Workers (**live API**) | `node scripts/build-worker.mjs` → `npx wrangler deploy` (D1 `DB`, `EVENT_HUB` DO) |
+| Cron/AI | GitHub Actions (**live execution**) | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` |
+| waba-worker | Cloudflare Workers | `cd waba-worker && wrangler deploy` (D1 `waba-worker`) |
+| Express backend | Docker / host (alt/local) | `pnpm build` (tsc) → `node dist/server.js`; `Dockerfile` + `docker-compose.yml` |
+| Frontend | Cloudflare Pages | `npm run build` → `wrangler pages deploy out` |
+| webhook-relay / local-runner | host/process | `node webhook-relay/relay.js`, `node local-runner.js` |
 
-### Deployment Flow
-1. Backend changes: `node scripts/build-worker.mjs && node scripts/smoke-worker.mjs && npx wrangler deploy`.
-2. Frontend changes: `pnpm build` in `founder-os_frontend`, then `wrangler pages deploy out --project-name founder-os-frontend` **from the frontend directory** so the `functions/` (Pages Functions `/api` proxy) bundle is included — deploying from the repo root silently drops the proxy.
-3. Cron changes: commit workflow YAML to `main`; GitHub Actions picks it up automatically.
-4. Verify: `scripts/smoke-worker.mjs` against the live worker URL covers public + auth paths; `curl https://founder-os-frontend.pages.dev/api/estimates/baseline` confirms the Pages `/api` proxy is live.
+Secrets: `SHARED_SECRET` (Worker + GH Actions + waba-worker), `DATABASE_URL` (Express),
+`WA_ENGINE_API_KEY`, `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` (Omniroute),
+`GOOGLE_SERVICE_ACCOUNT_JSON`.
+
+### 9.1 Verification
+- Worker: `node scripts/smoke-worker.mjs` (asserts public 200s, auth 401s, heavy-slug behaviour).
+- Express: `node dist/server.js` + `curl /api/status`.
+- Frontend: `curl https://<pages>/api/estimates/baseline` confirms the Pages `/api` proxy.
+
+## 10. Extension guidelines
+
+### 10.1 New automation
+1. Copy `src/automations/_template/` → `src/automations/<slug>/` with `README.md` + `index.ts`.
+2. Export an `AutomationModule` (`register`/`handler`). For rules, add `rule.json`.
+3. Express: auto-discovered by `AutomationRegistry` (node-cron wired on boot).
+   Worker: add the static import to `registry-worker.ts`.
+
+### 10.2 New GH Actions runner
+1. Add `scripts/<name>-runner.js`, reuse `runner-lib.js` (`workerRequest`, `omnirouteJson`).
+2. Add a job to the matching workflow with `env: { WORKER_URL, SHARED_SECRET, OMNIROUTE_* }`.
+
+### 10.3 New Worker/Express endpoint
+- Express: add a handler in `server.ts` or a router in `src/routes/`.
+- Worker: add to `worker.ts` (mirror the Express route). Keep handlers thin; heavy work → runner.
+- Build/verify: `node scripts/build-worker.mjs && node scripts/smoke-worker.mjs`.
+
+### 10.4 New model
+1. Edit `prisma/schema.prisma`, run `prisma migrate` / add a `migrations/*.sql`.
+2. Add the corresponding storage access via `modules/storage/repository.ts`.
+
+### 10.5 Conventions
+- One component / automation / module per folder. Props/interfaces co-located.
+- Shared types in `types/`. Use `@/` alias in the frontend.
+- Runners: pure ESM Node, no build step. Worker: one route per domain, instant only.
+- `node --check` on every script before commit; `pnpm build` + `tsc --noEmit` for backend/frontend.
+
+
+

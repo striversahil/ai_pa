@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useLiveRefresh } from "@/hooks/useLiveEvents";
 import ZohoEstimatesHeader from "./zoho/ZohoEstimatesHeader";
 import KpiCards, { type KpiCardConfig } from "./zoho/KpiCards";
 import DailyMovementTracker from "./zoho/DailyMovementTracker";
@@ -61,10 +62,15 @@ export default function ZohoEstimates() {
   useEffect(() => {
     fetchEstimates();
     fetchBaseline();
-    // Keep both in sync so an open tab sees the 01:00 AM IST reset without reloading.
-    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); }, 5 * 60 * 1000);
+    // Safety-net poll; primary freshness comes from useLiveEvents below.
+    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); }, 15 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
+
+  useLiveRefresh(
+    (event) => event.type === "estimates" || event.type === "baseline" || event.type === "automation",
+    () => { fetchEstimates(); fetchBaseline(); },
+  );
 
   const fetchBaseline = async () => {
     try {

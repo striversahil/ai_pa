@@ -8,6 +8,13 @@ binding = "DB"
 database_name = "founder-os"
 database_id = "45619af3-feab-48d3-b442-df18f4eadc9b"
 
+[durable_objects]
+bindings = [{ name = "EVENT_HUB", class_name = "EventHub" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EventHub"]
+
 [observability]
 enabled = true
 

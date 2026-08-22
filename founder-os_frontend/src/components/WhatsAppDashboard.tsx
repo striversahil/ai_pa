@@ -476,7 +476,7 @@ export default function WhatsAppDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[800px]">
         {/* Left panel: Contacts */}
         <div className="lg:col-span-4 bg-zinc-50/30 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden">
-          <div className="flex border-b border-zinc-850 p-2 overflow-x-auto gap-1 select-none">
+          <div className="flex border-b border-[var(--border-card)] dark:border-zinc-800 p-2 overflow-x-auto gap-1 select-none">
             {(["all", "urgent", "leads", "support"] as const).map((cat) => (
               <button
                 key={cat}
@@ -491,7 +491,7 @@ export default function WhatsAppDashboard() {
             ))}
           </div>
 
-          <div className="flex-1 overflow-y-auto divide-y divide-zinc-850 scrollbar-thin">
+          <div className="flex-1 overflow-y-auto divide-y divide-[var(--border-card)] dark:divide-zinc-800 scrollbar-thin">
             {isLoadingContacts ? (
               <div className="p-8 text-center text-zinc-600 dark:text-zinc-500 animate-pulse text-xs">Loading contacts...</div>
             ) : filteredContacts.length === 0 ? (
@@ -504,7 +504,7 @@ export default function WhatsAppDashboard() {
                   <div
                     key={c.uid || index}
                     onClick={() => setSelectedContactUid(c.uid)}
-                    className={`p-4 cursor-pointer hover:bg-zinc-850/50 transition-all space-y-2 border-l-4 ${isSelected ? "bg-zinc-850/60 border-l-indigo-500" : "border-l-transparent"
+                    className={`p-4 cursor-pointer hover:bg-[var(--bg-input)] dark:hover:bg-zinc-800/50 transition-all space-y-2 border-l-4 ${isSelected ? "bg-[var(--bg-input)] dark:bg-zinc-800/60 border-l-indigo-500" : "border-l-transparent"
                       }`}
                   >
                     <div className="flex justify-between items-center">
@@ -534,7 +534,7 @@ export default function WhatsAppDashboard() {
                             }`}>
                             {digest.priority}
                           </span>
-                          <span className="bg-zinc-850 text-zinc-500 dark:text-zinc-400 text-[9px] font-semibold px-2 py-0.5 rounded border border-zinc-850">
+                          <span className="bg-[var(--bg-input)] text-[var(--text-tertiary)] dark:bg-zinc-800 dark:text-zinc-400 text-[9px] font-semibold px-2 py-0.5 rounded border border-[var(--border-card)] dark:border-zinc-700">
                             {digest.category}
                           </span>
                           <span className="text-xs">{digest.sentiment === "positive" ? "😊" : digest.sentiment === "negative" ? "😠" : "😐"}</span>
