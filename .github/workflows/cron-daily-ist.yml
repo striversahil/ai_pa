@@ -4,8 +4,8 @@ on:
   schedule:
     # data-retention 3:00 AM IST = 21:30 UTC
     - cron: "30 21 * * *"
-    # baseline-freeze 9:00 AM IST = 03:30 UTC
-    - cron: "30 3 * * *"
+    # baseline-freeze 1:00 AM IST = 19:30 UTC (daily reset anchor)
+    - cron: "30 19 * * *"
     # morning-brief 8:00 AM IST = 02:30 UTC
     - cron: "30 2 * * *"
     # eod-summary 7:00 PM IST = 13:30 UTC
@@ -19,8 +19,11 @@ on:
         required: false
         default: ""
 
+# Each job only runs at its own scheduled slot — GH triggers ALL jobs on EVERY cron,
+# so without these guards the baseline would re-freeze at random times of day.
 jobs:
   baseline-freeze:
+    if: github.event.schedule == '30 19 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: baseline-freeze (capture sent-estimate snapshot for today)
@@ -28,6 +31,7 @@ jobs:
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/runner/estimates/baseline" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
 
   data-retention:
+    if: github.event.schedule == '30 21 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: data-retention
@@ -35,6 +39,7 @@ jobs:
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/data-retention" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
 
   morning-brief:
+    if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +53,7 @@ jobs:
         run: node scripts/morning-brief-runner.js
 
   eod-summary:
+    if: github.event.schedule == '30 13 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +67,7 @@ jobs:
         run: node scripts/eod-summary-runner.js
 
   neodove-report:
+    if: github.event.schedule == '0 19 * * *' || (github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

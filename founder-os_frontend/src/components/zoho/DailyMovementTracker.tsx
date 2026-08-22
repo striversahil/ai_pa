@@ -8,9 +8,10 @@ interface Props {
   baselineValue: number;
   baselineDate: string;
   movement: Movement;
+  pending?: boolean;
 }
 
-export default function DailyMovementTracker({ baselineCount, baselineValue, baselineDate, movement }: Props) {
+export default function DailyMovementTracker({ baselineCount, baselineValue, baselineDate, movement, pending }: Props) {
   return (
     <div className="bg-zinc-50/30 dark:bg-zinc-950/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-4 space-y-4 mb-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-zinc-200/60 dark:border-zinc-800/60 pb-3">
@@ -18,9 +19,15 @@ export default function DailyMovementTracker({ baselineCount, baselineValue, bas
           <h4 className="text-xs font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
             <span>📈</span> Daily Status Movement Tracker
           </h4>
-          <p className="text-[10px] text-zinc-600 dark:text-zinc-500 mt-0.5">
-            Baseline captured: <span className="font-semibold text-zinc-500 dark:text-zinc-400">{baselineDate}</span> ({baselineCount} open, value: ₹{baselineValue.toLocaleString()}) — auto-frozen at 9:00 AM IST
-          </p>
+          {pending ? (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 font-semibold">
+              ⏳ New day started — waiting for the 01:00 AM IST baseline freeze. Counters reset to 0 then.
+            </p>
+          ) : (
+            <p className="text-[10px] text-zinc-600 dark:text-zinc-500 mt-0.5">
+              Baseline captured: <span className="font-semibold text-zinc-500 dark:text-zinc-400">{baselineDate}</span> ({baselineCount} open, value: ₹{baselineValue.toLocaleString()}) — auto-frozen at 01:00 AM IST
+            </p>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

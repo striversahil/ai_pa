@@ -342,13 +342,13 @@ app.get('/api/estimates', async (c) => {
   return c.json({ estimates: estimatesWithRealComments, lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null });
 });
 
-// ── Baseline snapshot (shared across all viewers, frozen daily at 9 AM IST) ──
+// ── Baseline snapshot (shared across all viewers, frozen daily at 1 AM IST) ──
 function kolkataDateStr(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
     .format(now).slice(0, 10);
 }
 
-// POST (GH Actions daily job at 9 AM IST) → captures the baseline for today.
+// POST (GH Actions daily job at 1 AM IST) → captures the baseline for today.
 app.post('/api/runner/estimates/baseline', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
   const { prisma } = deps();
@@ -372,16 +372,27 @@ app.post('/api/runner/estimates/baseline', async (c) => {
   return c.json({ ok: true, key, count: baseline.length });
 });
 
-// GET → returns today's frozen baseline for all dashboard viewers.
+// GET → returns TODAY's frozen baseline; before the 01:00 AM IST freeze has run,
+// falls back to the most recent snapshot flagged `isStale` so viewers can show a
+// clean "day not started" state instead of yesterday's movement.
 app.get('/api/estimates/baseline', async (c) => {
   const { prisma } = deps();
-  const key = `zoho_baseline:${kolkataDateStr()}`;
-  const row = await prisma.setting.findUnique({ where: { key } });
-  if (!row?.value) return c.json({ date: key.split(':')[1], baseline: null });
+  const prefix = 'zoho_baseline:';
+  const todayKey = `${prefix}${kolkataDateStr()}`;
+  let row = await prisma.setting.findUnique({ where: { key: todayKey } });
+  let isStale = false;
+  if (!row?.value) {
+    row = await prisma.setting.findFirst({
+      where: { key: { startsWith: prefix } },
+      orderBy: { key: 'desc' },
+    });
+    isStale = true;
+  }
+  const date = row?.key.slice(prefix.length) ?? null;
   try {
-    return c.json({ date: key.split(':')[1], baseline: JSON.parse(row.value) });
+    return c.json({ date, isStale, baseline: row?.value ? JSON.parse(row.value) : null });
   } catch {
-    return c.json({ date: key.split(':')[1], baseline: null });
+    return c.json({ date, isStale: true, baseline: null });
   }
 });
 

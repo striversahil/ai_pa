@@ -30,6 +30,7 @@ export default function ZohoEstimates() {
 
   const [baseline, setBaseline] = useState<any[]>([]);
   const [baselineDate, setBaselineDate] = useState<string>("");
+  const [baselineStale, setBaselineStale] = useState(false);
   const [showClosed, setShowClosed] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [lastCompleteSyncAt, setLastCompleteSyncAt] = useState<string | null>(null);
@@ -60,14 +61,24 @@ export default function ZohoEstimates() {
   useEffect(() => {
     fetchEstimates();
     fetchBaseline();
+    // Keep both in sync so an open tab sees the 01:00 AM IST reset without reloading.
+    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); }, 5 * 60 * 1000);
+    return () => clearInterval(t);
   }, []);
 
   const fetchBaseline = async () => {
     try {
       const res = await fetch("/api/estimates/baseline");
       const data = await res.json();
-      if (data.baseline && data.baseline.length > 0) {
+      if (data.isStale) {
+        // Today's freeze hasn't run yet (before 01:00 AM IST) — show a clean day-start
+        // state instead of yesterday's accumulated movement.
+        setBaseline([]);
+        setBaselineStale(true);
+        setBaselineDate(data.date ?? "");
+      } else if (data.baseline && data.baseline.length > 0) {
         setBaseline(data.baseline);
+        setBaselineStale(false);
         setBaselineDate(data.date);
       }
     } catch (e) {
@@ -466,6 +477,9 @@ Action: (single clear objective — close order / clarify doubts / send revised 
   };
 
   const movement = useMemo(() => {
+    if (baselineStale) {
+      return { accepted: [], declined: [], stillPending: [], newCreated: [], baselineCount: 0, baselineValue: 0, pending: true };
+    }
     if (baseline.length === 0) return null;
 
     const accepted: any[] = [];
@@ -501,9 +515,10 @@ Action: (single clear objective — close order / clarify doubts / send revised 
       stillPending,
       newCreated,
       baselineCount: baseline.length,
-      baselineValue: baseline.reduce((sum, item) => sum + item.total, 0)
+      baselineValue: baseline.reduce((sum, item) => sum + item.total, 0),
+      pending: false
     };
-  }, [estimates, baseline]);
+  }, [estimates, baseline, baselineStale]);
 
   const filterOptionCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -619,12 +634,13 @@ Action: (single clear objective — close order / clarify doubts / send revised 
         onCardDoubleClick={handleKpiDoubleClick}
       />
 
-      {baseline.length > 0 && movement && (
+      {(baseline.length > 0 || baselineStale) && movement && (
         <DailyMovementTracker
           baselineCount={movement.baselineCount}
           baselineValue={movement.baselineValue}
           baselineDate={baselineDate}
           movement={movement}
+          pending={movement.pending}
         />
       )}
 

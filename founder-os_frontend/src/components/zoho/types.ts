@@ -46,4 +46,5 @@ export interface Movement {
   newCreated: Estimate[];
   baselineCount: number;
   baselineValue: number;
+  pending?: boolean;
 }
