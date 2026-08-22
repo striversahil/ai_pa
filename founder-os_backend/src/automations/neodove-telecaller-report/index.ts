@@ -79,11 +79,23 @@ async function loadReportsInRange(from?: string, to?: string): Promise<{ dates: 
   const dates: string[] = [];
   const rows: any[] = [];
   for (const s of settings) {
+    const keyDate = s.key.slice(prefix.length);
     try {
       const parsed = JSON.parse(s.value);
-      if (Array.isArray(parsed?.rows) && parsed.rows.length > 0) {
-        dates.push(s.key.slice(prefix.length));
-        rows.push(...parsed.rows);
+      if (!Array.isArray(parsed?.rows)) continue;
+      // Defence-in-depth: some stored snapshots contain rows dated outside
+      // their key's day (NeoDove API ignores range params). Trust the ROW's
+      // own date over the key when it is present.
+      const inRange = parsed.rows.filter((r: any) => {
+        const d = typeof r?.date === 'string' ? r.date.slice(0, 10) : null;
+        if (!d || !DATE_RE.test(d)) return true;
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      });
+      if (inRange.length > 0) {
+        dates.push(keyDate);
+        rows.push(...inRange);
       }
     } catch {
       // skip malformed snapshots

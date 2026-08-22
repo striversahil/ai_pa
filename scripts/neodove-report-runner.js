@@ -67,6 +67,12 @@ function jwtExpiry(token) {
   }
 }
 
+function rowDateStr(r) {
+  const raw = r.dateString || r.date || '';
+  // dateString → "YYYY-MM-DD"; raw date → ISO "YYYY-MM-DDTHH:mm:ss.sssZ"
+  return String(raw).slice(0, 10);
+}
+
 async function fetchReportRows(token, dateStr) {
   const { startDate, endDate } = istRangeStrings(dateStr);
   const userIds = process.env.NEODOVE_USER_IDS || DEFAULT_USER_IDS;
@@ -88,7 +94,15 @@ async function fetchReportRows(token, dateStr) {
   if (res.status === 401) throw new Error('NeoDove rejected the token (401) — refresh it via POST /api/token/webhook');
   if (!res.ok) throw new Error(`neodove call-log-report HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const json = await res.json();
-  return Array.isArray(json?.data?.data) ? json.data.data : [];
+  const all = Array.isArray(json?.data?.data) ? json.data.data : [];
+  // NeoDove returns rows spanning neighbouring days regardless of the
+  // requested range — keep ONLY rows whose own date matches the requested
+  // IST day so snapshots never mix days.
+  const filtered = all.filter((r) => rowDateStr(r) === dateStr);
+  if (all.length !== filtered.length) {
+    console.log(`[neodove] dropped ${all.length - filtered.length} row(s) outside ${dateStr} (API ignores range params)`);
+  }
+  return filtered;
 }
 
 function normalizeRow(r) {
