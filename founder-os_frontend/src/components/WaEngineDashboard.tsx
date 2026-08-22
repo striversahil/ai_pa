@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useLiveRefresh } from "@/hooks/useLiveEvents";
 
 type Kpi = {
   label: string;
@@ -95,8 +96,7 @@ export default function WaEngineDashboard() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+    let cancelled = false;    const load = async () => {
       setLoading(true);
       setError(null);
       try {
@@ -122,6 +122,11 @@ export default function WaEngineDashboard() {
       clearInterval(timer);
     };
   }, [windowDays]);
+
+  useLiveRefresh(
+    (event) => event.type === "automation" && event.slug === "wa-engine-monitor",
+    () => fetchData(windowDays),
+  );
 
   const liveOk = data?.live?.reachable && data?.live?.status === "WORKING";
 

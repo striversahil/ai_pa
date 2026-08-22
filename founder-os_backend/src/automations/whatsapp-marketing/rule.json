@@ -1,7 +1,7 @@
 {
   "id": "whatsapp-marketing",
   "name": "WhatsApp Marketing",
-  "description": "Multi-campaign WhatsApp marketing: each campaign has its own trigger time, lead list, provider (WABA / AiSensy) and template.",
+  "description": "Multi-campaign WhatsApp marketing: each campaign has its own trigger time, lead list, provider (WABA / WhatsApp Business API) and template.",
   "type": "handler",
   "trigger": {
     "type": "schedule",

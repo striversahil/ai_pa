@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useLiveRefresh } from "@/hooks/useLiveEvents";
 
 type LeadStats = {
   total: number;
@@ -40,7 +41,7 @@ type DashboardData = {
     paused: number;
     completed: number;
     totalLeads: number;
-    providers: { waba: { configured: boolean }; aisensy: { configured: boolean } };
+    providers: { waba: { configured: boolean } };
   };
   campaigns: Campaign[];
   recentRuns: { id: string; status: string; total: number; sent: number; failed: number; startedAt: string }[];
@@ -85,7 +86,6 @@ export default function WhatsAppMarketingDashboard() {
     templateParams: "",
     messageBody: "",
     mediaUrl: "",
-    aisensyCampaignName: "",
     status: "draft",
   });
 
@@ -110,6 +110,11 @@ export default function WhatsAppMarketingDashboard() {
     const id = setInterval(fetchDashboard, 60000);
     return () => clearInterval(id);
   }, [fetchDashboard]);
+
+  useLiveRefresh(
+    (event) => event.type === "automation" && event.slug === "whatsapp-marketing",
+    fetchDashboard,
+  );
 
   const loadLeads = async (campaignId: string) => {
     setLeadsLoading(true);
@@ -154,8 +159,6 @@ export default function WhatsAppMarketingDashboard() {
         body.messageBody = form.messageBody;
       }
       if (form.mediaUrl) body.mediaUrl = form.mediaUrl;
-    } else {
-      body.aisensyCampaignName = form.aisensyCampaignName;
     }
     if (!body.name) { showToast("Campaign name is required"); return; }
     try {
@@ -262,8 +265,6 @@ export default function WhatsAppMarketingDashboard() {
           <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">WhatsApp Marketing</h1>
           <p className="text-sm text-zinc-600 dark:text-zinc-500">
             {data?.kpis.providers.waba.configured ? "WABA connected" : "WABA not configured"}
-            {" · "}
-            {data?.kpis.providers.aisensy.configured ? "AiSensy connected" : "AiSensy not configured"}
           </p>
         </div>
         <button
@@ -305,13 +306,6 @@ export default function WhatsAppMarketingDashboard() {
               </select>
             </div>
             <div>
-              <label className={labelCls}>Provider</label>
-              <select className={inputCls} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
-                <option value="waba">WABA (Meta Cloud API)</option>
-                <option value="aisensy">AiSensy</option>
-              </select>
-            </div>
-            <div>
               <label className={labelCls}>Schedule</label>
               <select className={inputCls} value={form.scheduleType} onChange={(e) => setForm({ ...form, scheduleType: e.target.value })}>
                 <option value="one_shot">One-shot</option>
@@ -337,31 +331,24 @@ export default function WhatsAppMarketingDashboard() {
               </select>
             </div>
 
-            {form.provider === "waba" ? (
-              <>
-                <div>
-                  <label className={labelCls}>Template name (or leave empty for text)</label>
-                  <input className={inputCls} value={form.templateName} onChange={(e) => setForm({ ...form, templateName: e.target.value })} placeholder="summer_promo_2026" />
-                </div>
-                <div>
-                  <label className={labelCls}>Template params (pipe | separated, supports {'{{lead.name}}'})</label>
-                  <input className={inputCls} value={form.templateParams} onChange={(e) => setForm({ ...form, templateParams: e.target.value })} placeholder="John | {{lead.name}}" />
-                </div>
-                <div>
-                  <label className={labelCls}>Free-text body (if no template)</label>
-                  <input className={inputCls} value={form.messageBody} onChange={(e) => setForm({ ...form, messageBody: e.target.value })} placeholder="Hi {{lead.name}}, your estimate is ready…" />
-                </div>
-                <div>
-                  <label className={labelCls}>Media URL (optional)</label>
-                  <input className={inputCls} value={form.mediaUrl} onChange={(e) => setForm({ ...form, mediaUrl: e.target.value })} placeholder="https://…/invoice.pdf" />
-                </div>
-              </>
-            ) : (
+            <>
               <div>
-                <label className={labelCls}>AiSensy campaign name</label>
-                <input className={inputCls} value={form.aisensyCampaignName} onChange={(e) => setForm({ ...form, aisensyCampaignName: e.target.value })} placeholder="Live campaign name in AiSensy" />
+                <label className={labelCls}>Template name (or leave empty for text)</label>
+                <input className={inputCls} value={form.templateName} onChange={(e) => setForm({ ...form, templateName: e.target.value })} placeholder="summer_promo_2026" />
               </div>
-            )}
+              <div>
+                <label className={labelCls}>Template params (pipe | separated, supports {'{{lead.name}}'})</label>
+                <input className={inputCls} value={form.templateParams} onChange={(e) => setForm({ ...form, templateParams: e.target.value })} placeholder="John | {{lead.name}}" />
+              </div>
+              <div>
+                <label className={labelCls}>Free-text body (if no template)</label>
+                <input className={inputCls} value={form.messageBody} onChange={(e) => setForm({ ...form, messageBody: e.target.value })} placeholder="Hi {{lead.name}}, your estimate is ready…" />
+              </div>
+              <div>
+                <label className={labelCls}>Media URL (optional)</label>
+                <input className={inputCls} value={form.mediaUrl} onChange={(e) => setForm({ ...form, mediaUrl: e.target.value })} placeholder="https://…/invoice.pdf" />
+              </div>
+            </>
           </div>
           <button onClick={handleCreate} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500">
             Create Campaign

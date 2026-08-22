@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useLiveRefresh } from "@/hooks/useLiveEvents";
 
 type QuoteItem = {
   itemName: string;
@@ -67,6 +68,11 @@ export default function DppPricesDashboard() {
       clearInterval(timer);
     };
   }, []);
+
+  useLiveRefresh(
+    (event) => event.type === "automation" && event.slug === "dpp-prices-dashboard",
+    fetchData,
+  );
 
   return (
     <div className="space-y-6 text-zinc-900 dark:text-zinc-100 pb-12">

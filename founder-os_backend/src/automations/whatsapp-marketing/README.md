@@ -2,8 +2,8 @@
 
 Multi-campaign WhatsApp marketing. Each campaign has its **own trigger time**
 (one-shot datetime or recurring cron), its **own lead list** (uploaded via
-CSV/JSON), its own **provider** (`waba` = Meta Cloud API, `aisensy` = AiSensy
-campaign API), and its own template/body. A single framework cron ticks every
+CSV/JSON), its own **provider** (`waba` = Meta Cloud / WhatsApp Business API),
+and its own template/body. A single framework cron ticks every
 minute and fires whichever campaigns are due.
 
 ## What it does
@@ -45,12 +45,10 @@ minute and fires whichever campaigns are due.
 | Provider | What it sends | Requires |
 |---|---|---|
 | `waba` | Approved template (`templateName` + `bodyParams`) OR free-text body (24h session) OR media (invoice PDF) | `WHATSAPP_CLOUD_ACCESS_TOKEN`, `WHATSAPP_CLOUD_PHONE_NUMBER_ID` |
-| `aisensy` | A live campaign name (`aisensyCampaignName`) + `templateParams` | `AISENSY_API_KEY` |
 
-Leads are sent through `WabaClient` (`src/modules/waba/client.ts`) or
-`AisensyClient` (`src/modules/aisensy/client.ts`). Message bodies and template
-params support `{{lead.name}}`, `{{lead.phone}}`, and any key in the lead's
-`attributes` JSON (`{{lead.attributes.<key>}}` / `{{lead.<key>}}`).
+Leads are sent through `WabaClient` (`src/modules/waba/client.ts`). Message bodies
+and template params support `{{lead.name}}`, `{{lead.phone}}`, and any key in the
+lead's `attributes` JSON (`{{lead.attributes.<key>}}` / `{{lead.<key>}}`).
 
 ## API (campaign management)
 
@@ -69,8 +67,6 @@ params support `{{lead.name}}`, `{{lead.phone}}`, and any key in the lead's
 | `WHATSAPP_CLOUD_ACCESS_TOKEN` | Meta Cloud API token |
 | `WHATSAPP_CLOUD_PHONE_NUMBER_ID` | WABA phone number ID to send from |
 | `WHATSAPP_CLOUD_API_VERSION` | Graph API version (default `v21.0`) |
-| `AISENSY_API_KEY` | AiSensy dashboard API key |
-| `AISENSY_BASE_URL` | AiSensy base (default `https://backend.aisensy.com`) |
 
 ## Runbook / troubleshooting
 

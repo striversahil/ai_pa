@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { EventHub } from './durable/event-hub';
 
 type Bindings = {
   DB: D1Database;
+  EVENT_HUB?: DurableObjectNamespace;
   SHARED_SECRET?: string;
   WA_ENGINE_API_KEY?: string;
   LLM_API_KEY?: string;
@@ -412,6 +414,7 @@ app.post('/api/runner/estimates/baseline', async (c) => {
     update: { value: JSON.stringify(baseline) },
     create: { key, value: JSON.stringify(baseline) },
   });
+  notifyLive(c, { type: 'baseline', date: key.slice('zoho_baseline:'.length) });
   return c.json({ ok: true, key, count: baseline.length });
 });
 
@@ -452,6 +455,7 @@ app.post('/api/runner/neodove/report', async (c) => {
   const key = `neodove_user_report:${reportDate}`;
   const value = JSON.stringify({ reportDate, fetchedAt: new Date().toISOString(), rows });
   await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+  notifyLive(c, { type: 'neodove', date: reportDate });
   return c.json({ ok: true, key, count: rows.length });
 });
 
@@ -513,6 +517,7 @@ app.post('/api/estimates/classify', async (c) => {
     },
   });
   await prisma.estimate.update({ where: { estimateId }, data: { lastSyncTime: new Date() } });
+  notifyLive(c, { type: 'estimates' });
   return c.json({ ok: true });
 });
 
@@ -555,6 +560,7 @@ app.post('/api/estimates/bulk-upsert', async (c) => {
       create: { key: 'sales_copilot:last_complete_sync_at', value: lastSyncAt },
     });
   }
+  notifyLive(c, { type: 'estimates' });
   return c.json({ ok: true, count: upserted });
 });
 
@@ -799,6 +805,7 @@ app.post('/api/trigger/:slug', async (c) => {
   const entry = AutomationEngine.get(slug);
   if (!entry) return c.json({ error: `automation '${slug}' not loaded` }, 404);
   await AutomationEngine.scan(slug);
+  notifyLive(c, { type: 'automation', slug });
   return c.json({ message: `Automation '${slug}' triggered`, ok: true });
 });
 
@@ -973,6 +980,7 @@ app.post('/api/runner/zoho/comments', async (c) => {
     });
     upserted++;
   }
+  notifyLive(c, { type: 'estimates' });
   return c.json({ ok: true, count: upserted });
 });
 
@@ -990,6 +998,7 @@ app.post('/api/runner/zoho/status', async (c) => {
     });
     updated++;
   }
+  notifyLive(c, { type: 'estimates' });
   return c.json({ ok: true, count: updated });
 });
 
@@ -1030,6 +1039,7 @@ app.post('/api/runner/zoho/classification', async (c) => {
     },
   });
   await prisma.estimate.update({ where: { estimateId }, data: { lastSyncTime: now } });
+  notifyLive(c, { type: 'estimates' });
   return c.json({ ok: true });
 });
 
@@ -1225,7 +1235,6 @@ function buildCampaignData(body: any): Record<string, any> {
   if (body.mediaUrl !== undefined) data.mediaUrl = body.mediaUrl ? String(body.mediaUrl) : null;
   if (body.mediaFilename !== undefined) data.mediaFilename = body.mediaFilename ? String(body.mediaFilename) : null;
   if (body.senderPhoneNumberId !== undefined) data.senderPhoneNumberId = body.senderPhoneNumberId ? String(body.senderPhoneNumberId) : null;
-  if (body.aisensyCampaignName !== undefined) data.aisensyCampaignName = body.aisensyCampaignName ? String(body.aisensyCampaignName) : null;
   if (body.enabled !== undefined) data.enabled = Boolean(body.enabled);
   return data;
 }
@@ -1345,3 +1354,24 @@ app.get('/api/whatsapp-marketing/leads/:campaignId', async (c) => {
 });
 
 export default app;
+export { EventHub };
+
+// ── Live events (WebSocket fan-out via EventHub Durable Object) ──────────────
+// Fire-and-forget broadcast; never blocks or fails the calling write path.
+function notifyLive(c: any, event: Record<string, unknown>) {
+  try {
+    const ns = c.env.EVENT_HUB;
+    if (!ns) return;
+    const stub = ns.get(ns.idFromName('global'));
+    c.executionCtx.waitUntil(
+      stub.fetch(new Request('https://hub/broadcast', { method: 'POST', body: JSON.stringify(event) })).catch(() => {})
+    );
+  } catch {}
+}
+
+app.get('/api/events', (c) => {
+  const ns = c.env.EVENT_HUB;
+  if (!ns) return c.text('EVENT_HUB not bound', 500);
+  const stub = ns.get(ns.idFromName('global'));
+  return stub.fetch(new Request('https://hub/stream', c.req.raw));
+});

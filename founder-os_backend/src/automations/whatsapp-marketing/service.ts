@@ -2,7 +2,6 @@ import { CronExpressionParser } from 'cron-parser';
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { WabaClient } from '../../modules/waba/client';
-import { AisensyClient } from '../../modules/aisensy/client';
 
 const LOG_PREFIX = 'WhatsAppMarketing';
 
@@ -81,25 +80,7 @@ async function sendToLead(campaign: any, lead: any) {
     return { ok: false as const, error: 'invalid phone number' };
   }
 
-  if (campaign.provider === 'aisensy') {
-    if (!campaign.aisensyCampaignName) {
-      return { ok: false as const, error: 'aisensyCampaignName not set' };
-    }
-    const params = JSON.parse(campaign.templateParams || '[]');
-    const renderedParams = params.map((p: any) => renderLeadTemplate(String(p), lead));
-    const res = await AisensyClient.sendCampaign({
-      campaignName: campaign.aisensyCampaignName,
-      destination: `+${phone}`,
-      userName: lead.name || undefined,
-      source: 'whatsapp-marketing',
-      templateParams: renderedParams,
-      media: campaign.mediaUrl ? { url: campaign.mediaUrl, filename: campaign.mediaFilename } : undefined,
-      attributes: parseAttributes(lead.attributes) || undefined,
-    });
-    return res.ok ? { ok: true as const } : { ok: false as const, error: res.error };
-  }
-
-  // provider: waba
+  // provider: waba (WhatsApp Business API / Meta Cloud API)
   if (!WabaClient.isConfigured()) {
     return { ok: false as const, error: 'WABA not configured' };
   }

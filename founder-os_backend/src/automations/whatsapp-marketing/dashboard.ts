@@ -2,7 +2,6 @@ import { prisma } from '../../shared/prisma';
 import type { AutomationContext } from '../../modules/automation/types';
 import { getCampaignStats, normalizePhone } from './service';
 import { WabaClient } from '../../modules/waba/client';
-import { AisensyClient } from '../../modules/aisensy/client';
 
 // GET /api/automations/whatsapp-marketing/data
 export async function getMarketingDashboardData(ctx: AutomationContext): Promise<any> {
@@ -56,7 +55,6 @@ export async function getMarketingDashboardData(ctx: AutomationContext): Promise
       totalLeads,
       providers: {
         waba: { configured: WabaClient.isConfigured() },
-        aisensy: { configured: AisensyClient.isConfigured() },
       },
     },
     campaigns: campaignRows,

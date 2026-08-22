@@ -23,7 +23,6 @@ type CampaignInput = {
   mediaUrl?: string | null;
   mediaFilename?: string | null;
   senderPhoneNumberId?: string | null;
-  aisensyCampaignName?: string | null;
   enabled?: boolean;
 };
 
@@ -45,7 +44,6 @@ function buildData(body: CampaignInput) {
   if (body.mediaUrl !== undefined) data.mediaUrl = body.mediaUrl ? String(body.mediaUrl) : null;
   if (body.mediaFilename !== undefined) data.mediaFilename = body.mediaFilename ? String(body.mediaFilename) : null;
   if (body.senderPhoneNumberId !== undefined) data.senderPhoneNumberId = body.senderPhoneNumberId ? String(body.senderPhoneNumberId) : null;
-  if (body.aisensyCampaignName !== undefined) data.aisensyCampaignName = body.aisensyCampaignName ? String(body.aisensyCampaignName) : null;
   if (body.enabled !== undefined) data.enabled = Boolean(body.enabled);
   return data;
 }

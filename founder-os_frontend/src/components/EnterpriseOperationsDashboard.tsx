@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useLiveRefresh } from "@/hooks/useLiveEvents";
 import { Chart, registerables } from "chart.js";
 
 Chart.register(...registerables);
@@ -72,6 +73,11 @@ export default function EnterpriseOperationsDashboard() {
             clearInterval(timer);
         };
     }, []);
+
+    useLiveRefresh(
+        (event) => event.type === "automation" && event.slug === "enterprise-operations-analytics" && !customDataRef.current,
+        fetchData,
+    );
 
     // Theme detection
     useEffect(() => {

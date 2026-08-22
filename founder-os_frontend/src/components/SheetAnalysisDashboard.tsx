@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useLiveRefresh } from "@/hooks/useLiveEvents";
 
 type Kpi = {
   label: string;
@@ -119,6 +120,11 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
       clearInterval(timer);
     };
   }, [slug, startDate, endDate]);
+
+  useLiveRefresh(
+    (event) => event.type === "automation" && event.slug === slug,
+    fetchData,
+  );
 
   const applyPreset = (preset: string) => {
     const base = new Date();
