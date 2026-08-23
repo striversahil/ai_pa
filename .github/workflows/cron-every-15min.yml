@@ -10,6 +10,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: cron-every-15min
+  cancel-in-progress: true
+
 jobs:
   zoho-sent-analyzer:
     runs-on: ubuntu-latest

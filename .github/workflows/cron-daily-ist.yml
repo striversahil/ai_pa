@@ -21,6 +21,10 @@ on:
 
 # Each job only runs at its own scheduled slot — GH triggers ALL jobs on EVERY cron,
 # so without these guards the baseline would re-freeze at random times of day.
+concurrency:
+  group: cron-daily-ist
+  cancel-in-progress: true
+
 jobs:
   baseline-freeze:
     if: github.event.schedule == '30 19 * * *' || github.event_name == 'workflow_dispatch'

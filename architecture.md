@@ -233,8 +233,12 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
   classification/processing; `morning-queue-drain` and `outbound-intent-recovery`
   handle deferred sends. If Redis is unavailable, intents persist as `OutboundIntent`
   rows and are recovered when Redis returns.
-- **SSE** (`/api/whatsapp/events`): real-time push to the dashboard; backed by the
-  `durable/event-hub.ts` EventHub Durable Object on the Worker, in-memory on Express.
+ - **SSE** (`/api/whatsapp/events`): real-time push for WhatsApp activity; in-memory on
+   Express. (Distinct from the general live-update hub below.)
+ - **Live-update hub** (`/api/events`): a **WebSocket** fan-out backed by the
+   `durable/event-hub.ts` EventHub Durable Object (singleton, `idFromName('global')`).
+   Every data-write endpoint broadcasts a typed event; all dashboards subscribe and
+   refetch instantly. See **§11 Real-time live updates**.
 
 
 ## 3. Edge Backend — Cloudflare Worker (Hono + D1)
@@ -253,7 +257,7 @@ thin — heavy AI is performed by GH Actions runners that call `/api/runner/*`.
   `/api/whatsapp/events`, `/api/whatsapp/summarize`
 - `/api/pending-items*`, `/api/automations*`, `/api/whatsapp-marketing*`
 - `/api/neodove/report`, `/api/estimates/classify`, `/api/estimates/bulk-upsert`
-- `/api/audit*`, `/api/events` (SSE)
+ - `/api/audit*`, `/api/events` (WebSocket live hub; see §11)
 
 ### 3.2 Runner API (Bearer `SHARED_SECRET`) — consumed by `scripts/*-runner.js`
 | Method | Path | Purpose |
@@ -396,7 +400,7 @@ This avoids manual GitHub Secret rotation for frequently-expiring tokens.
 founder-os_frontend/src/
 ├── app/{layout.tsx, page.tsx, globals.css, favicon.ico}
 ├── api/client.ts                     # fetch wrapper (API_BASE = '/api')
-├── hooks/{useEnquiryData, useTheme, useToast, useCSV, useLocalStorage, useHashRoute}.ts
+ ├── hooks/{useEnquiryData, useTheme, useToast, useCSV, useLocalStorage, useHashRoute, useLiveEvents}.ts
 ├── types/index.ts  mockData.ts
 └── components/
     ├── layout/{Sidebar, MobileNav}.tsx
@@ -462,6 +466,8 @@ Secrets: `SHARED_SECRET` (Worker + GH Actions + waba-worker), `DATABASE_URL` (Ex
 ### 10.3 New Worker/Express endpoint
 - Express: add a handler in `server.ts` or a router in `src/routes/`.
 - Worker: add to `worker.ts` (mirror the Express route). Keep handlers thin; heavy work → runner.
+- If the endpoint **writes dashboard data**, call `notifyLive(c, { type: "<name>" })` so
+  open tabs refresh live (see §11). Add a `useLiveRefresh` wiring in the relevant component.
 - Build/verify: `node scripts/build-worker.mjs && node scripts/smoke-worker.mjs`.
 
 ### 10.4 New model
@@ -473,6 +479,59 @@ Secrets: `SHARED_SECRET` (Worker + GH Actions + waba-worker), `DATABASE_URL` (Ex
 - Shared types in `types/`. Use `@/` alias in the frontend.
 - Runners: pure ESM Node, no build step. Worker: one route per domain, instant only.
 - `node --check` on every script before commit; `pnpm build` + `tsc --noEmit` for backend/frontend.
+
+## 11. Real-time live updates (WebSocket EventHub)
+
+Dashboards update **without a manual refresh** the moment backend data changes. This
+replaces the old per-dashboard `setInterval` polling (those loops are kept only as slow
+safety nets).
+
+### 11.1 Backend — EventHub Durable Object
+- `src/durable/event-hub.ts` (`EventHub`): a single global instance keyed by
+  `EVENT_HUB.idFromName('global')`. Clients open a **WebSocket** upgrade on
+  `GET /api/events`; the Worker route forwards the upgrade straight to the DO.
+- Uses the **WebSocket Hibernation API**: between messages the runtime evicts the
+  object from memory, so idle connections cost ~0 duration on the Workers Free plan
+  (no SSE idle-timeout risk). Clients send a `ping` every 60s to keep NAT/proxies open;
+  the DO replies `pong`.
+- `/broadcast` (internal, POST): iterates `state.getWebSockets()` and sends the JSON
+  event to every connected client, then hibernates again.
+
+### 11.2 Broadcast contract
+Every data-write endpoint calls the `notifyLive(c, event)` helper, which fire-and-forgets
+a `c.executionCtx.waitUntil(...)` POST to the hub. Event shapes:
+
+| Event | Emitted from |
+|-------|--------------|
+| `{ type: "estimates" }` | `/api/estimates/bulk-upsert`, `/api/estimates/classify`, `/api/runner/zoho/status`, `/api/runner/zoho/comments`, `/api/runner/zoho/classification` |
+| `{ type: "neodove" }` | `/api/runner/neodove/report` |
+| `{ type: "baseline" }` | `/api/runner/estimates/baseline` (the 01:00 AM IST daily freeze) |
+| `{ type: "automation", slug }` | `POST /api/trigger/:slug` (after the automation scan completes) |
+
+### 11.3 Frontend — `useLiveEvents` / `useLiveRefresh`
+- `src/hooks/useLiveEvents.ts`: opens one WebSocket to `/api/events` (same-origin, so it
+  flows through the Pages Functions `/api` proxy), auto-reconnects with exponential
+  backoff, dispatches non-`hello` events to the consumer.
+- `useLiveRefresh(shouldRefresh, refresh, delayMs=2000)`: debounces bursts (syncs often
+  broadcast several events back-to-back) and calls `refresh()` — the dashboard's existing
+  data loader.
+- Wired dashboards (each listens for its relevant event):
+  - `ZohoEstimates` → `estimates` / `baseline` / `automation`
+  - `NeodoveTelecallerDashboard` → `neodove`
+  - `DppPricesDashboard` → `automation: dpp-prices-dashboard`
+  - `EnterpriseOperationsDashboard` → `automation: enterprise-operations-analytics`
+  - `WaEngineDashboard` → `automation: wa-engine-monitor`
+  - `WhatsAppMarketingDashboard` → `automation: whatsapp-marketing`
+  - `SheetAnalysisDashboard` → `automation: <its slug>`
+
+### 11.4 Cost & limits
+- **Free tier:** one EventHub instance held 24/7 ≈ 10,800 GB-s/day vs the 13,000 GB-s/day
+  free quota (hibernation keeps it near-zero in practice); 100k DO requests/day is nowhere
+  near hit for an internal dashboard. Workers Paid ($5/mo) includes 400k GB-s/month.
+- Data still only *changes* on the upstream Zoho/NeoDove sync cadence (every 5–10 min via
+  GH Actions); the hub delivers those changes to open tabs within ~2s instead of on a
+  poll tick. True sub-minute freshness would require Zoho webhooks → worker.
+
 
 
 

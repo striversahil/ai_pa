@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { EventHub } from './durable/event-hub';
+import { AsyncTaskRunner } from './durable/async-task-runner';
 
 type Bindings = {
   DB: D1Database;
   EVENT_HUB?: DurableObjectNamespace;
+  ASYNC_RUNNER?: DurableObjectNamespace;
   SHARED_SECRET?: string;
   WA_ENGINE_API_KEY?: string;
   LLM_API_KEY?: string;
@@ -804,9 +806,34 @@ app.post('/api/trigger/:slug', async (c) => {
   const slug = c.req.param('slug');
   const entry = AutomationEngine.get(slug);
   if (!entry) return c.json({ error: `automation '${slug}' not loaded` }, 404);
+  // Async mode (?async=1): schedule the scan on a Durable Object alarm so the
+  // caller (GitHub Actions) returns immediately while the (possibly long) scan
+  // runs to completion server-side. The live event still fires when it's done.
+  if (c.req.query('async') === '1' && c.env.ASYNC_RUNNER) {
+    const origin = new URL(c.req.url).origin;
+    const stub = c.env.ASYNC_RUNNER.get(c.env.ASYNC_RUNNER.idFromName(slug));
+    c.executionCtx.waitUntil(
+      stub.fetch(new Request(`https://do/schedule?slug=${encodeURIComponent(slug)}&origin=${encodeURIComponent(origin)}`)).catch(() => {})
+    );
+    return c.json({ ok: true, async: true, message: `Automation '${slug}' scheduled` });
+  }
   await AutomationEngine.scan(slug);
   notifyLive(c, { type: 'automation', slug });
   return c.json({ message: `Automation '${slug}' triggered`, ok: true });
+});
+
+// Internal: runs an automation scan synchronously (called by AsyncTaskRunner's
+// alarm). The request stays open for the full scan duration. Notifies on
+// completion so dashboards refresh live.
+app.post('/api/internal/run-automation', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { AutomationEngine } = deps();
+  const slug = c.req.query('slug') || '';
+  const entry = AutomationEngine.get(slug);
+  if (!entry) return c.json({ error: `automation '${slug}' not loaded` }, 404);
+  await AutomationEngine.scan(slug);
+  notifyLive(c, { type: 'automation', slug });
+  return c.json({ ok: true });
 });
 
 // ── Runner API (GitHub Actions heavy processing) ──────────────────────────────
@@ -1354,7 +1381,7 @@ app.get('/api/whatsapp-marketing/leads/:campaignId', async (c) => {
 });
 
 export default app;
-export { EventHub };
+export { EventHub, AsyncTaskRunner };
 
 // ── Live events (WebSocket fan-out via EventHub Durable Object) ──────────────
 // Fire-and-forget broadcast; never blocks or fails the calling write path.

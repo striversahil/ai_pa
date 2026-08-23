@@ -5,6 +5,11 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 
+# Only one run at a time; cancel a stale in-progress run when a new one starts.
+concurrency:
+  group: cron-every-30min
+  cancel-in-progress: true
+
 jobs:
   email-brain-index:
     runs-on: ubuntu-latest
@@ -21,13 +26,13 @@ jobs:
     steps:
       - name: enterprise-operations-analytics
         run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/enterprise-operations-analytics" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/enterprise-operations-analytics?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: telecalling-agent-analysis
         run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-agent-analysis" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-agent-analysis?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: dpp-prices-dashboard
         run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/dpp-prices-dashboard" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/dpp-prices-dashboard?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: telecalling-enquiry-to-dpp
         run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-enquiry-to-dpp" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-enquiry-to-dpp?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
