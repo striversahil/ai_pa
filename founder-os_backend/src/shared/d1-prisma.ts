@@ -66,6 +66,11 @@ const DATE_FIELDS: Record<string, string[]> = {
   Token: ['createdAt', 'updatedAt'],
   Telecaller: ['createdAt'],
   EstimateAssignment: ['assignedAt'],
+  WaTask: ['lastInboundAt', 'lastOutboundAt', 'waitingSince', 'waitTimeoutAt', 'followUpDueAt', 'createdAt', 'updatedAt'],
+  MessageLineage: ['createdAt'],
+  WaTaskHistory: ['occurredAt'],
+  WaAction: ['createdAt', 'executedAt'],
+  OverrideLog: ['overriddenAt'],
 };
 
 const ID_FIELDS: Record<string, string> = {
@@ -93,6 +98,11 @@ const ID_FIELDS: Record<string, string> = {
   Token: 'id',
   Telecaller: 'id',
   EstimateAssignment: 'id',
+  WaTask: 'id',
+  MessageLineage: 'id',
+  WaTaskHistory: 'id',
+  WaAction: 'id',
+  OverrideLog: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -103,11 +113,15 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   AutomationRun: ['automationId', 'dedupKey'],
   MarketingLead: ['campaignId', 'phoneNumber'],
   PriceQuote: ['messageId'],
+  MessageLineage: ['waMessageId'],
 };
 
 const FLOAT_FIELDS: Record<string, string[]> = {
   Estimate: ['total'],
   PriceQuote: ['unitPrice'],
+  MessageLineage: ['confidence'],
+  WaTaskHistory: ['confidence'],
+  OverrideLog: ['systemConfidence'],
 };
 
 const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?: boolean }>> = {
@@ -129,6 +143,22 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   EstimateAssignment: {
     telecaller: { model: 'Telecaller', fk: 'telecallerId', one: true },
     estimate: { model: 'Estimate', fk: 'estimateId', one: true },
+  },
+  WaTask: {
+    history: { model: 'WaTaskHistory', fk: 'taskId' },
+    actions: { model: 'WaAction', fk: 'taskId' },
+  },
+  MessageLineage: {
+    task: { model: 'WaTask', fk: 'taskId', one: true },
+  },
+  WaTaskHistory: {
+    task: { model: 'WaTask', fk: 'taskId', one: true },
+  },
+  WaAction: {
+    task: { model: 'WaTask', fk: 'taskId', one: true },
+  },
+  OverrideLog: {
+    task: { model: 'WaTask', fk: 'taskId', one: true },
   },
 };
 
@@ -632,6 +662,11 @@ export class D1PrismaClient {
   get token() { return this.model('Token'); }
   get telecaller() { return this.model('Telecaller'); }
   get estimateAssignment() { return this.model('EstimateAssignment'); }
+  get waTask() { return this.model('WaTask'); }
+  get messageLineage() { return this.model('MessageLineage'); }
+  get waTaskHistory() { return this.model('WaTaskHistory'); }
+  get waAction() { return this.model('WaAction'); }
+  get overrideLog() { return this.model('OverrideLog'); }
 
   $on() {}
   $disconnect() {}
