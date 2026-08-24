@@ -7,6 +7,7 @@ import * as AuthRoutes from './modules/auth/routes';
 import { createAuthStore } from './modules/auth/store';
 import { authEnabled, getMe } from './modules/auth/service';
 import { readSessionCookie } from './modules/auth/session';
+import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from './automations/neodove-refresh';
 
 type Bindings = {
   DB: D1Database;
@@ -111,6 +112,12 @@ const AUTH_EXEMPT = [
   // cookie is host-scoped, so preview subdomains would otherwise see 401).
   '/api/automations/telecalling/data',
   '/api/automations/neodove-telecaller-report/data',
+  // GH Actions runners authenticate with SHARED_SECRET, not a session cookie.
+  // These endpoints already enforce requireSecret() in their handlers, so the
+  // OAuth gate must skip them or every runner→worker call 401s.
+  '/api/token/',
+  '/api/estimates/bulk-upsert',
+  '/api/neodove/report',
 ];
 function isAuthExempt(path: string): boolean {
   return AUTH_EXEMPT.some((p) => path.startsWith(p));
@@ -539,6 +546,21 @@ function kolkataDateStr(now = new Date()) {
     .format(now).slice(0, 10);
 }
 
+// POST → server-side NeoDove USER_REPORT refresh (today, IST).
+// Runs inside the Worker because GitHub Actions egress IPs are blocked by
+// connect.neodove.com (the 10-min GH workflow failed ~90% of runs). Also
+// invoked natively every 10 min via the [triggers] cron in wrangler.toml.
+app.post('/api/runner/neodove-refresh', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const result = await refreshNeodoveReport(typeof body?.date === 'string' ? body.date : undefined);
+    return c.json(result, result.ok ? 200 : 502);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
 // POST (GH Actions daily job at 1 AM IST) → captures the baseline for today.
 app.post('/api/runner/estimates/baseline', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
@@ -607,6 +629,7 @@ app.post('/api/runner/neodove/report', async (c) => {
 
 // GET /api/neodove/report?date=YYYY-MM-DD — public read for dashboards (default: latest)
 app.get('/api/neodove/report', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
   const { prisma } = deps();
   const dateParam = c.req.query('date');
   let row: any;
@@ -1537,7 +1560,23 @@ app.get('/api/whatsapp-marketing/leads/:campaignId', async (c) => {
   return c.json({ leads, total, offset: skip, limit: take });
 });
 
-export default app;
+// ── Native cron triggers (wrangler.toml [triggers]) ──────────────────────────
+// Every 10 min: refresh today's NeoDove USER_REPORT snapshot. This replaces
+// the GH Actions 10-min workflow whose egress IPs are blocked by NeoDove.
+const scheduled: ExportedHandlerScheduledHandler<Bindings, unknown> = async (event, env, ctx) => {
+  bootstrapEnv(env);
+  try {
+    const r = await refreshNeodoveReport(neodoveTodayIst(0));
+    console.log(`[cron] neodove-refresh ${r.reportDate}: ok=${r.ok} stored=${r.stored} ${r.error ?? ''}`);
+  } catch (e: any) {
+    console.error('[cron] neodove-refresh failed:', e?.message);
+  }
+};
+
+export default {
+  fetch: app.fetch,
+  scheduled,
+};
 export { EventHub, AsyncTaskRunner };
 
 // ── Live events (WebSocket fan-out via EventHub Durable Object) ──────────────

@@ -3,6 +3,9 @@ main = "dist-worker/worker.js"
 compatibility_date = "2024-09-01"
 compatibility_flags = ["nodejs_compat"]
 
+[triggers]
+crons = ["*/10 * * * *"]  # neodove-refresh (server-side; GH egress is blocked by NeoDove)
+
 [[d1_databases]]
 binding = "DB"
 database_name = "founder-os"

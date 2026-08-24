@@ -65,7 +65,7 @@ app.use((req, res, next) => {
 });
 
 // ── Google auth login gate (Express = local/alt runtime) ────────────────────
-const AUTH_EXEMPT = ['/api/auth/', '/api/runner/', '/api/trigger/', '/api/health', '/health', '/api/status', '/webhook', '/dashboard'];
+const AUTH_EXEMPT = ['/api/auth/', '/api/runner/', '/api/trigger/', '/api/health', '/health', '/api/status', '/webhook', '/dashboard', '/api/token/', '/api/estimates/bulk-upsert', '/api/neodove/report'];
 app.use((req, res, next) => {
   if (!authEnabled(config)) return next();
   const path = req.path;
