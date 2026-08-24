@@ -1663,6 +1663,7 @@ app.post('/api/runner/autopilot/sync-contacts', async (c) => {
     try {
       const res = await fetch(`https://waengine.pro/api/v1/conversations?page=${page}&limit=100`, {
         headers: { 'X-API-Key': env.WA_ENGINE_API_KEY },
+        signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) break;
       const json: any = await res.json();

@@ -33,7 +33,7 @@ function requireEnv() {
   }
 }
 
-async function workerRequest(path, { method = 'GET', body } = {}) {
+async function workerRequest(path, { method = 'GET', body, timeoutMs = 90000 } = {}) {
   const res = await fetch(`${WORKER_URL}${path}`, {
     method,
     headers: {
@@ -41,6 +41,7 @@ async function workerRequest(path, { method = 'GET', body } = {}) {
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`worker ${method} ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`);
   const text = await res.text();
