@@ -222,15 +222,17 @@ async function fetchAgentRoster() {
   const dynamicNames = [];
   try {
     // Defaults to the LATEST stored day when no date is passed.
+    // Response shape: { meta, agents: [...] } (older builds exposed .data).
     const data = await workerRequest('/api/automations/neodove-telecaller-report/data');
-    dynamicNames.push(...fromReport(data?.data));
+    dynamicNames.push(...fromReport(data?.agents ?? data?.data));
   } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch failed: ${err.message}`); }
   if (!dynamicNames.length) {
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     try {
-      const data = await workerRequest(`/api/neodove/report?date=${yesterday}`);
+      // No date param → endpoint serves the latest stored day automatically,
+      // so a missing yesterday-snapshot can't leave us rosterless.
+      const data = await workerRequest(`/api/neodove/report`);
       dynamicNames.push(...fromReport(data?.rows));
-    } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch (yesterday) failed: ${err.message}`); }
+    } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch (latest) failed: ${err.message}`); }
   }
   return [...new Set([...dynamicNames, ...envNames])];
 }
