@@ -38,6 +38,8 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Automation: ['enabled'],
   MarketingCampaign: ['enabled'],
   Token: [],
+  Telecaller: ['active'],
+  EstimateAssignment: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -62,6 +64,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   MarketingLead: ['sentAt', 'deliveredAt', 'readAt', 'createdAt'],
   MarketingCampaignRun: ['startedAt', 'finishedAt'],
   Token: ['createdAt', 'updatedAt'],
+  Telecaller: ['createdAt'],
+  EstimateAssignment: ['assignedAt'],
 };
 
 const ID_FIELDS: Record<string, string> = {
@@ -87,6 +91,8 @@ const ID_FIELDS: Record<string, string> = {
   MarketingLead: 'id',
   MarketingCampaignRun: 'id',
   Token: 'id',
+  Telecaller: 'id',
+  EstimateAssignment: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -119,6 +125,11 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   MarketingLead: { campaign: { model: 'MarketingCampaign', fk: 'campaignId', one: true } },
   MarketingCampaignRun: { campaign: { model: 'MarketingCampaign', fk: 'campaignId', one: true } },
+  Telecaller: { assignments: { model: 'EstimateAssignment', fk: 'telecallerId' } },
+  EstimateAssignment: {
+    telecaller: { model: 'Telecaller', fk: 'telecallerId', one: true },
+    estimate: { model: 'Estimate', fk: 'estimateId', one: true },
+  },
 };
 
 function serialize(v: any): any {
@@ -161,6 +172,13 @@ interface WhereOperand {
   is?: any;
 }
 
+// Quote an SQL identifier (column/table/alias), splitting on '.' so qualified
+// names like "EstimateAssignment.id" are quoted per-part. SQLite reserves words
+// such as `order`, so identifiers MUST be quoted.
+function qid(s: string): string {
+  return '"' + String(s).split('.').map((p) => p.replace(/"/g, '""')).join('"."') + '"';
+}
+
 function buildWhere(model: string, where: any): { sql: string; params: any[] } {
   if (!where || Object.keys(where).length === 0) return { sql: '1 = 1', params: [] };
   const clauses: string[] = [];
@@ -179,7 +197,7 @@ function buildWhere(model: string, where: any): { sql: string; params: any[] } {
     if (rel) {
       const op: WhereOperand = cond as WhereOperand;
       if (op.isNot === null || op.is === null) {
-        const exists = `EXISTS (SELECT 1 FROM ${rel.model} WHERE ${rel.fk} = ${rel.one ? `${model}.${ID_FIELDS[model]}` : ''})`;
+        const exists = `EXISTS (SELECT 1 FROM ${qid(rel.model)} WHERE ${qid(rel.fk)} = ${rel.one ? `${qid(model)}.${qid(ID_FIELDS[model])}` : ''})`;
         clauses.push(op.isNot === null ? exists : `NOT ${exists}`);
       }
       continue;
@@ -189,22 +207,22 @@ function buildWhere(model: string, where: any): { sql: string; params: any[] } {
       for (const [opName, val] of Object.entries(op)) {
         if (val === undefined) continue;
         if (opName === 'equals') {
-          if (val === null) clauses.push(`${key} IS NULL`);
-          else { clauses.push(`${key} = ?`); params.push(serialize(val)); }
+          if (val === null) clauses.push(`${qid(key)} IS NULL`);
+          else { clauses.push(`${qid(key)} = ?`); params.push(serialize(val)); }
         } else if (opName === 'not') {
-          if (val === null) clauses.push(`${key} IS NOT NULL`);
-          else { clauses.push(`${key} != ?`); params.push(serialize(val)); }
+          if (val === null) clauses.push(`${qid(key)} IS NOT NULL`);
+          else { clauses.push(`${qid(key)} != ?`); params.push(serialize(val)); }
         } else if (opName === 'in') {
           if (!val || val.length === 0) { clauses.push('1 = 0'); }
           else {
             const placeholders = val.map((x: any) => { params.push(serialize(x)); return '?'; }).join(',');
-            clauses.push(`${key} IN (${placeholders})`);
+            clauses.push(`${qid(key)} IN (${placeholders})`);
           }
         } else if (opName === 'notIn') {
           if (!val || val.length === 0) { clauses.push('1 = 1'); }
           else {
             const placeholders = val.map((x: any) => { params.push(serialize(x)); return '?'; }).join(',');
-            clauses.push(`${key} NOT IN (${placeholders})`);
+            clauses.push(`${qid(key)} NOT IN (${placeholders})`);
           }
         } else if (opName === 'contains' || opName === 'startsWith' || opName === 'endsWith') {
           let pattern = String(val);
@@ -212,25 +230,25 @@ function buildWhere(model: string, where: any): { sql: string; params: any[] } {
           else if (opName === 'startsWith') pattern = `${pattern}%`;
           else pattern = `%${pattern}`;
           if (op.mode === 'insensitive') {
-            clauses.push(`LOWER(${key}) LIKE LOWER(?)`);
+            clauses.push(`LOWER(${qid(key)}) LIKE LOWER(?)`);
           } else {
-            clauses.push(`${key} LIKE ?`);
+            clauses.push(`${qid(key)} LIKE ?`);
           }
           params.push(pattern);
         } else if (['lt', 'lte', 'gt', 'gte'].includes(opName)) {
           const sym = { lt: '<', lte: '<=', gt: '>', gte: '>=' }[opName];
-          clauses.push(`${key} ${sym} ?`);
+          clauses.push(`${qid(key)} ${sym} ?`);
           params.push(serialize(val));
         } else if (opName === 'isNot') {
-          if (val === null) clauses.push(`${key} IS NOT NULL`);
-          else { clauses.push(`${key} != ?`); params.push(serialize(val)); }
+          if (val === null) clauses.push(`${qid(key)} IS NOT NULL`);
+          else { clauses.push(`${qid(key)} != ?`); params.push(serialize(val)); }
         } else if (opName === 'is') {
-          if (val === null) clauses.push(`${key} IS NULL`);
-          else { clauses.push(`${key} = ?`); params.push(serialize(val)); }
+          if (val === null) clauses.push(`${qid(key)} IS NULL`);
+          else { clauses.push(`${qid(key)} = ?`); params.push(serialize(val)); }
         }
       }
     } else {
-      clauses.push(`${key} = ?`);
+      clauses.push(`${qid(key)} = ?`);
       params.push(serialize(cond));
     }
   }
@@ -242,11 +260,11 @@ function buildOrderBy(orderBy: any): string {
   const arr = Array.isArray(orderBy) ? orderBy : [orderBy];
   return arr
     .map((o: any) => {
-      if (typeof o === 'string') return `${o} ASC`;
+      if (typeof o === 'string') return `${qid(o)} ASC`;
       const entries = Object.entries(o);
       if (entries.length === 0) return '';
       const [field, dir] = entries[0];
-      return `${field} ${String(dir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`;
+      return `${qid(field)} ${String(dir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`;
     })
     .filter(Boolean)
     .join(', ');
@@ -257,7 +275,7 @@ function buildSelect(model: string, select?: any): { sql: string; isSelect: bool
   const cols = Object.entries(select)
     .filter(([, v]) => !!v)
     .map(([k]) => k);
-  return { sql: cols.length ? cols.join(', ') : '*', isSelect: true };
+  return { sql: cols.length ? cols.map(qid).join(', ') : '*', isSelect: true };
 }
 
 function buildData(model: string, data: any): { cols: string[]; params: any[] } {
@@ -281,11 +299,11 @@ function buildSet(model: string, data: any): { sql: string; params: any[] } {
   for (const [k, v] of Object.entries(data)) {
     if (v === undefined) continue;
     if (v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v) && 'increment' in v) {
-      sets.push(`${k} = ${k} + ?`);
+      sets.push(`${qid(k)} = ${qid(k)} + ?`);
       params.push(Number(v.increment));
       continue;
     }
-    sets.push(`${k} = ?`);
+    sets.push(`${qid(k)} = ?`);
     params.push(serialize(v));
   }
   return { sql: sets.join(', '), params };
@@ -298,7 +316,7 @@ function resolveUniqueWhere(model: string, where: any): { sql: string; params: a
       const parts = Object.keys(val);
       if (parts.length === 2 && UNIQUE_FIELDS[model]?.length === 2) {
         const params: any[] = [];
-        const clauses = parts.map((p) => { params.push(serialize((val as any)[p])); return `${p} = ?`; });
+        const clauses = parts.map((p) => { params.push(serialize((val as any)[p])); return `${qid(p)} = ?`; });
         return { sql: clauses.join(' AND '), params };
       }
     }
@@ -312,7 +330,7 @@ class D1Model {
   constructor(private db: D1DatabaseLike, private model: string) {}
 
   private table() {
-    return this.model;
+    return qid(this.model);
   }
 
   async findMany(args: any = {}): Promise<Row[]> {
@@ -340,7 +358,20 @@ class D1Model {
       if (!rel) continue;
       const relArgsObj = (relArgs && typeof relArgs === 'object') ? relArgs as Record<string, any> : {};
       const fk = rel.fk;
-      const ids = [...new Set(rows.map((r) => r[ID_FIELDS[this.model]]).filter(Boolean))];
+      let parentKey: string;
+      let childKey: string;
+      if (rel.one) {
+        // to-one relation: the parent row holds the foreign key (e.g.
+        // EstimateAssignment.telecallerId). Match child PK against parent FK.
+        parentKey = rel.fk;
+        childKey = ID_FIELDS[rel.model];
+      } else {
+        // to-many relation: the child row holds the foreign key (e.g.
+        // Estimate.comments -> Comment.estimateId). Match child FK to parent PK.
+        parentKey = ID_FIELDS[this.model];
+        childKey = rel.fk;
+      }
+      const ids = [...new Set(rows.map((r) => r[parentKey]).filter(Boolean))];
       if (!ids.length) continue;
       let orderBy = '';
       if (relArgsObj.orderBy) {
@@ -355,12 +386,12 @@ class D1Model {
       for (let i = 0; i < ids.length; i += BATCH) {
         const chunk = ids.slice(i, i + BATCH);
         const placeholders = chunk.map(() => '?').join(',');
-        const query = `SELECT * FROM ${rel.model} WHERE ${fk} IN (${placeholders})${orderBy}${take}`;
+        const query = `SELECT * FROM ${qid(rel.model)} WHERE ${qid(childKey)} IN (${placeholders})${orderBy}${take}`;
         const { results } = await this.db.prepare(query).bind(...chunk).all<Row>();
         relRows.push(...results.map((r) => deserialize(rel.model, r)));
       }
       for (const row of rows) {
-        const mine = relRows.filter((r) => r[fk] === row[ID_FIELDS[this.model]]);
+        const mine = relRows.filter((r) => r[childKey] === row[parentKey]);
         row[relName] = rel.one ? mine[0] ?? null : mine;
       }
     }
@@ -392,9 +423,9 @@ class D1Model {
     if (data.updatedAt === undefined && DATE_FIELDS[this.model]?.includes('updatedAt')) data.updatedAt = new Date();
     const { cols, params } = buildData(this.model, data);
     const placeholders = cols.map(() => '?').join(', ');
-    const query = `INSERT INTO ${this.table()} (${cols.join(', ')}) VALUES (${placeholders})`;
+    const query = `INSERT INTO ${this.table()} (${cols.map(qid).join(', ')}) VALUES (${placeholders})`;
     await this.db.prepare(query).bind(...params).run();
-    const sel = await this.db.prepare(`SELECT * FROM ${this.table()} WHERE ${ID_FIELDS[this.model]} = ?`).bind(data[ID_FIELDS[this.model]]).first<Row>();
+    const sel = await this.db.prepare(`SELECT * FROM ${this.table()} WHERE ${qid(ID_FIELDS[this.model])} = ?`).bind(data[ID_FIELDS[this.model]]).first<Row>();
     return deserialize(this.model, sel as Row);
   }
 
@@ -407,7 +438,7 @@ class D1Model {
     for (const r of rows) {
       for (const c of cols) params.push(serialize(r[c]));
     }
-    const query = `INSERT INTO ${this.table()} (${cols.join(', ')}) VALUES ${placeholders}`;
+    const query = `INSERT INTO ${this.table()} (${cols.map(qid).join(', ')}) VALUES ${placeholders}`;
     const { meta } = await this.db.prepare(query).bind(...params).run();
     return { count: meta.changes };
   }
@@ -430,14 +461,14 @@ class D1Model {
       for (const c of cols) params.push(serialize((r as any)[c]));
     }
     const conflict = args.skipDuplicates && UNIQUE_FIELDS[model]?.length === 1
-      ? ` ON CONFLICT (${UNIQUE_FIELDS[model][0]}) DO NOTHING`
+      ? ` ON CONFLICT (${qid(UNIQUE_FIELDS[model][0])}) DO NOTHING`
       : '';
-    const query = `INSERT INTO ${this.table()} (${cols.join(', ')}) VALUES ${placeholders}${conflict}`;
+    const query = `INSERT INTO ${this.table()} (${cols.map(qid).join(', ')}) VALUES ${placeholders}${conflict}`;
     await this.db.prepare(query).bind(...params).run();
     const ids = enriched.map((r: any) => r[ID_FIELDS[model]]).filter(Boolean);
     if (!ids.length) return [];
     const placeholders2 = ids.map(() => '?').join(',');
-    const { results } = await this.db.prepare(`SELECT * FROM ${this.table()} WHERE ${ID_FIELDS[model]} IN (${placeholders2})`).bind(...ids).all<Row>();
+    const { results } = await this.db.prepare(`SELECT * FROM ${this.table()} WHERE ${qid(ID_FIELDS[model])} IN (${placeholders2})`).bind(...ids).all<Row>();
     return results.map((r) => deserialize(model, r));
   }
 
@@ -506,23 +537,23 @@ class D1Model {
 
   async groupBy(args: any = {}): Promise<Row[]> {
     const by = args.by || [];
-    const selectParts = [...by];
+    const selectParts = by.map(qid);
     const aggParts: { alias: string; sql: string }[] = [];
     const counts: Record<string, string> = args._count || {};
     for (const field of Object.keys(counts)) {
       const col = field === '_all' ? '*' : field;
       const alias = `_count_${field}`;
-      aggParts.push({ alias, sql: `COUNT(${col}) AS ${alias}` });
+      aggParts.push({ alias, sql: `COUNT(${col === '*' ? '*' : qid(col)}) AS ${alias}` });
     }
     const avgs = args._avg || {};
     for (const field of Object.keys(avgs)) {
       const alias = `_avg_${field}`;
-      aggParts.push({ alias, sql: `AVG(${field}) AS ${alias}` });
+      aggParts.push({ alias, sql: `AVG(${qid(field)}) AS ${alias}` });
     }
     const maxs = args._max || {};
     for (const field of Object.keys(maxs)) {
       const alias = `_max_${field}`;
-      aggParts.push({ alias, sql: `MAX(${field}) AS ${alias}` });
+      aggParts.push({ alias, sql: `MAX(${qid(field)}) AS ${alias}` });
     }
     const { sql: whereSql, params } = buildWhere(this.model, args.where);
     let orderBy = '';
@@ -542,13 +573,13 @@ class D1Model {
           }
           parts.push(`${alias} ${String(dir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`);
         } else {
-          parts.push(`${k} ${String(v).toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`);
+          parts.push(`${qid(k)} ${String(v).toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`);
         }
       }
       orderBy = ` ORDER BY ${parts.join(', ')}`;
     }
     const take = args.take !== undefined ? ` LIMIT ${Number(args.take)}` : '';
-    const query = `SELECT ${[...selectParts, ...aggParts.map((a) => a.sql)].join(', ')} FROM ${this.table()} WHERE ${whereSql} GROUP BY ${by.join(', ')}${orderBy}${take}`;
+    const query = `SELECT ${[...selectParts, ...aggParts.map((a) => a.sql)].join(', ')} FROM ${this.table()} WHERE ${whereSql} GROUP BY ${by.map(qid).join(', ')}${orderBy}${take}`;
     const { results } = await this.db.prepare(query).bind(...params).all<Row>();
     return results.map((r) => {
       const out: Record<string, any> = {};
@@ -599,6 +630,8 @@ export class D1PrismaClient {
   get marketingLead() { return this.model('MarketingLead'); }
   get marketingCampaignRun() { return this.model('MarketingCampaignRun'); }
   get token() { return this.model('Token'); }
+  get telecaller() { return this.model('Telecaller'); }
+  get estimateAssignment() { return this.model('EstimateAssignment'); }
 
   $on() {}
   $disconnect() {}

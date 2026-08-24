@@ -24,10 +24,27 @@ import webhookRouter from './routes/whatsapp-webhook';
 import healthRouter from './routes/health';
 import whatsappMarketingRouter from './routes/whatsapp-marketing';
 import pendingItemsRouter from './routes/pending-items';
+import telecallersRouter from './routes/telecallers';
 import { automationRouter } from './modules/automation';
+import * as AuthRoutes from './modules/auth/routes';
+import { PrismaAuthStore } from './modules/auth/store-prisma';
+import { createAuthStore } from './modules/auth/store';
+import { authEnabled, getMe } from './modules/auth/service';
+import { readSessionCookie } from './modules/auth/session';
 
 
 const app = express();
+
+// Auth store (Postgres via Prisma; in-memory fallback when DB is off) + helpers.
+const authStore = useInMemoryDb ? createAuthStore({}) : new PrismaAuthStore(prisma);
+function publicOriginOf(req: Request): string {
+  return process.env.AUTH_PUBLIC_ORIGIN || `${req.protocol}://${req.get('host')}`;
+}
+function sendAuth(res: Response, r: any) {
+  if (r.setCookie) res.setHeader('Set-Cookie', r.setCookie);
+  if (r.redirect) return res.redirect(r.redirect);
+  return res.status(r.status).json(r.body);
+}
 
 process.on('unhandledRejection', (reason, promise) => {
   logger.error({ error: (reason as Error)?.message, stack: (reason as Error)?.stack }, 'UNHANDLED REJECTION');
@@ -47,6 +64,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Google auth login gate (Express = local/alt runtime) ────────────────────
+const AUTH_EXEMPT = ['/api/auth/', '/api/runner/', '/api/trigger/', '/api/health', '/health', '/api/status', '/webhook', '/dashboard'];
+app.use((req, res, next) => {
+  if (!authEnabled(config)) return next();
+  const path = req.path;
+  if (AUTH_EXEMPT.some((p) => path.startsWith(p))) return next();
+  const me = getMe(authStore, req.headers.cookie || null);
+  if (!me) {
+    if ((req.headers['upgrade'] || '').toLowerCase() === 'websocket') return res.sendStatus(401);
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  next();
+});
+
 // --- WhatsApp webhook endpoint (secured: IP allowlist + rate limit) ---
 app.use('/api/whatsapp/webhook', webhookRouter);
 
@@ -62,6 +93,22 @@ app.use('/api/whatsapp-marketing', whatsappMarketingRouter);
 
 // --- Pending From Me (founder "What I Owe" view) ---
 app.use('/api/pending-items', pendingItemsRouter);
+
+// --- Telecaller roster (estimate auto-assignment) ---
+app.use('/api/telecallers', telecallersRouter);
+
+// --- Google Auth (routes + root user management) ---
+app.get('/api/auth/google', (req, res) => sendAuth(res, AuthRoutes.authLogin(config, publicOriginOf(req))));
+app.get('/api/auth/google/callback', async (req, res) =>
+  sendAuth(res, await AuthRoutes.authCallback(config, authStore, (req.query.code as string) || null, publicOriginOf(req), req.secure)),
+);
+app.get('/api/auth/me', async (req, res) => sendAuth(res, await AuthRoutes.authMe(authStore, req.headers.cookie || null)));
+app.post('/api/auth/logout', async (req, res) => sendAuth(res, await AuthRoutes.authLogout(authStore, req.headers.cookie || null, req.secure)));
+app.get('/api/auth/users', async (req, res) => sendAuth(res, await AuthRoutes.authListUsers(authStore, req.headers.cookie || null)));
+app.get('/api/auth/scopes', async (req, res) => sendAuth(res, await AuthRoutes.authListScopes(authStore, req.headers.cookie || null)));
+app.post('/api/auth/scopes', async (req, res) => sendAuth(res, await AuthRoutes.authCreateScope(authStore, req.headers.cookie || null, req.body || {})));
+app.delete('/api/auth/scopes/:key', async (req, res) => sendAuth(res, await AuthRoutes.authDeleteScope(authStore, req.headers.cookie || null, req.params.key)));
+app.put('/api/auth/users/:id/scopes', async (req, res) => sendAuth(res, await AuthRoutes.authSetUserScopes(authStore, req.headers.cookie || null, req.params.id, req.body?.keys || [])));
 
 // --- REST API Endpoints ---
 

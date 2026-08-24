@@ -11,15 +11,15 @@ import type { FilterRule } from "./zoho/types";
 import { getCommentAgeHours, getTodayDateString } from "./zoho/utils";
 
 const KPI_FILTERS: Omit<KpiCardConfig, "count">[] = [
-  { field: "satisfactory", label: "Satisfactory", negLabel: "Unsatisfactory", accent: "emerald" },
-  { field: "notAnswering", label: "Not Answering", negLabel: "Answering", accent: "rose" },
-  { field: "high_value", label: "High Value", negLabel: "Low Value", accent: "amber" },
-  { field: "movingSlow", label: "Moving Slow", negLabel: "Moving Fast", accent: "orange" },
-  { field: "underDiscussion", label: "Under Discussion", negLabel: "Not Discussed", accent: "indigo" },
-  { field: "confirm", label: "Confirm Expected", negLabel: "No Confirm", accent: "violet" },
-  { field: "last_comment_within_5h", label: "Comment ≤5h", negLabel: "Comment >5h", accent: "cyan" },
-  { field: "last_comment_within_10h", label: "Comment ≤10h", negLabel: "Comment >10h", accent: "blue" },
-  { field: "last_comment_older_5h", label: "Comment >5h", negLabel: "Comment ≤5h", accent: "teal" },
+  { field: "satisfactory", label: "Satisfactory", negLabel: "Unsatisfactory", accent: "emerald", polarity: "good" },
+  { field: "notAnswering", label: "Not Answering", negLabel: "Answering", accent: "rose", polarity: "bad" },
+  { field: "high_value", label: "High Value", negLabel: "Low Value", accent: "amber", polarity: "good" },
+  { field: "movingSlow", label: "Moving Slow", negLabel: "Moving Fast", accent: "orange", polarity: "bad" },
+  { field: "underDiscussion", label: "Under Discussion", negLabel: "Not Discussed", accent: "indigo", polarity: "bad" },
+  { field: "confirm", label: "Confirm Expected", negLabel: "No Confirm", accent: "violet", polarity: "good" },
+  { field: "last_comment_within_5h", label: "Comment ≤5h", negLabel: "Comment >5h", accent: "cyan", polarity: "good" },
+  { field: "last_comment_within_10h", label: "Comment ≤10h", negLabel: "Comment >10h", accent: "blue", polarity: "good" },
+  { field: "last_comment_older_5h", label: "Comment >5h", negLabel: "Comment ≤5h", accent: "teal", polarity: "bad" },
 ];
 
 export default function ZohoEstimates() {
@@ -595,14 +595,20 @@ Action: (single clear objective — close order / clarify doubts / send revised 
     });
   };
 
+  // Single-click cycle: inactive → active (normal) → active (reversed) → inactive.
   const handleKpiClick = (field: string) => {
-    applyKpiFilter(field, !!kpiInverted[field]);
-  };
-
-  const handleKpiDoubleClick = (field: string) => {
-    const inverted = !kpiInverted[field];
-    setKpiInverted(prev => ({ ...prev, [field]: inverted }));
-    applyKpiFilter(field, inverted);
+    const isActive = filters.some((f) => f.field === field);
+    const inv = !!kpiInverted[field];
+    if (!isActive) {
+      setKpiInverted((prev) => ({ ...prev, [field]: false }));
+      applyKpiFilter(field, false);
+    } else if (!inv) {
+      setKpiInverted((prev) => ({ ...prev, [field]: true }));
+      applyKpiFilter(field, true);
+    } else {
+      setKpiInverted((prev) => ({ ...prev, [field]: false }));
+      applyKpiFilter(field, true); // operator matches → removes the filter
+    }
   };
 
   const kpiCards: KpiCardConfig[] = KPI_FILTERS.map(k => ({
@@ -640,7 +646,6 @@ Action: (single clear objective — close order / clarify doubts / send revised 
         filters={filters}
         inverted={kpiInverted}
         onCardClick={handleKpiClick}
-        onCardDoubleClick={handleKpiDoubleClick}
       />
 
       {(baseline.length > 0 || baselineStale) && movement && (
@@ -655,7 +660,6 @@ Action: (single clear objective — close order / clarify doubts / send revised 
 
       <ActiveFilters
         filters={filters}
-        counts={filterOptionCounts}
         resultCount={priorityList.length}
         onAdd={() => setFilters([...filters, { id: Date.now(), field: "notAnswering", operator: "is" }])}
         onUpdate={(id, patch) => setFilters(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)))}

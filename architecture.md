@@ -508,29 +508,103 @@ a `c.executionCtx.waitUntil(...)` POST to the hub. Event shapes:
 | `{ type: "baseline" }` | `/api/runner/estimates/baseline` (the 01:00 AM IST daily freeze) |
 | `{ type: "automation", slug }` | `POST /api/trigger/:slug` (after the automation scan completes) |
 
-### 11.3 Frontend — `useLiveEvents` / `useLiveRefresh`
-- `src/hooks/useLiveEvents.ts`: opens one WebSocket to `/api/events` (same-origin, so it
-  flows through the Pages Functions `/api` proxy), auto-reconnects with exponential
-  backoff, dispatches non-`hello` events to the consumer.
-- `useLiveRefresh(shouldRefresh, refresh, delayMs=2000)`: debounces bursts (syncs often
-  broadcast several events back-to-back) and calls `refresh()` — the dashboard's existing
-  data loader.
-- Wired dashboards (each listens for its relevant event):
-  - `ZohoEstimates` → `estimates` / `baseline` / `automation`
-  - `NeodoveTelecallerDashboard` → `neodove`
-  - `DppPricesDashboard` → `automation: dpp-prices-dashboard`
-  - `EnterpriseOperationsDashboard` → `automation: enterprise-operations-analytics`
-  - `WaEngineDashboard` → `automation: wa-engine-monitor`
-  - `WhatsAppMarketingDashboard` → `automation: whatsapp-marketing`
-  - `SheetAnalysisDashboard` → `automation: <its slug>`
+### 11.3 Frontend — one modular live-data layer
+There is a **single** shared layer that makes every dashboard number live. It opens **one**
+WebSocket to `/api/events` for the whole app (module-level singleton in the hook) and fans
+events out to every component via an in-process event bus — no per-dashboard sockets.
+
+- `src/hooks/useLiveData.ts` (the common modular file):
+  - `useLiveQuery<T>(fetcher, { events?, deps?, pollMs? })` — fetches on mount + whenever a
+    matching `LiveEvent` arrives (debounced ~1.5s), plus an optional slow `pollMs` safety net.
+  - `useLiveEvent(handler)` — imperative subscription for components with their own local
+    state (e.g. the WhatsApp chat window).
+- Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
+  extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
+  runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,
+  `founder-notes`, `emails`, `brain/context`), interactive writes (`/api/whatsapp/send`, the
+  inbound `/api/whatsapp/webhook`, contact-note PUT, pending-item resolve/cancel), and the
+  existing `estimates` / `baseline` / `neodove` / `automation` paths.
+
+**Live coverage (every number updates without a refresh):**
+- `FounderAssistant` → `briefing` (via `founder-notes`/`digests`/`tasks`/`estimates`/`neodove`), `digests`, `tasks`
+- `ZohoEstimates` → `estimates` / `baseline` / `automation`
+- `NeodoveTelecallerDashboard` → `neodove`
+- `DppPricesDashboard` → `automation: dpp-prices-dashboard`
+- `EnterpriseOperationsDashboard` → `automation: enterprise-operations-analytics`
+- `WaEngineDashboard` → `automation: wa-engine-monitor`
+- `WhatsAppMarketingDashboard` → `automation: whatsapp-marketing`
+- `SheetAnalysisDashboard` → `automation: <its slug>`
+- `WhatsAppDashboard` → `messages` / `contacts` / `digests` / `pending-items` (also SSE for live chat append)
+- `Automations` → `automation` (runs) — registry list re-fetches on every run
+
+**Known gap:** the main **Dashboard + Enquiries** views are **local-only** (`mockData` +
+`useLocalStorage`); they have no backend API and therefore cannot be live. A `LiveEvent.Enquiries`
+type exists for when an enquiries API is added.
 
 ### 11.4 Cost & limits
 - **Free tier:** one EventHub instance held 24/7 ≈ 10,800 GB-s/day vs the 13,000 GB-s/day
   free quota (hibernation keeps it near-zero in practice); 100k DO requests/day is nowhere
   near hit for an internal dashboard. Workers Paid ($5/mo) includes 400k GB-s/month.
-- Data still only *changes* on the upstream Zoho/NeoDove sync cadence (every 5–10 min via
-  GH Actions); the hub delivers those changes to open tabs within ~2s instead of on a
-  poll tick. True sub-minute freshness would require Zoho webhooks → worker.
+ - Data still only *changes* on the upstream Zoho/NeoDove sync cadence (every 5–10 min via
+   GH Actions); the hub delivers those changes to open tabs within ~2s instead of on a
+   poll tick. True sub-minute freshness would require Zoho webhooks → worker.
+
+## 12. Authentication & granular permissions (Google OAuth)
+
+Founder OS uses **Google Sign-In** with one root account (`striversahil@gmail.com`) and
+**open signup** for any Google user. Access to each view/category is gated by assignable
+**permission categories (scopes)** managed by the root from an in-app Admin panel. Sessions
+are persisted in an **HttpOnly cookie valid for 30 days**.
+
+### 12.1 Design decisions
+- **Root:** `striversahil@gmail.com` (matched by email) gets `isRoot` + the `admin` scope
+  (which implicitly grants every view/category). Root is not a stored flag per se — it is
+  derived from the email at login and the `admin` scope is granted on first login.
+- **Open signup + later assignment:** anyone with a Google account can log in; a new user
+  has no categories until root grants them. Views the user lacks show an "Access pending"
+  panel rather than a redirect loop.
+- **Category/role-based permissions:** a *category* (e.g. `enquiries`, `whatsapp`,
+  `automations`, `zoho`, `dpp`, `wa-engine`, `neodove`, `enterprise-ops`, `whatsapp-marketing`,
+  `sheet-analysis`, `founder-ai`, `brain`) maps to one or more UI views. A user holding a
+  category can open every view that requires it. This is the "role" abstraction — root forms
+  categories and assigns them per user from the Admin UI.
+- **Persistent 30-day cookie:** `fos_session` is HttpOnly, `SameSite=Lax`, `Path=/`, max-age
+  30 days, `Secure` when served over HTTPS. No token is ever exposed to the browser JS.
+
+### 12.2 Modules (`src/modules/auth/`)
+- `types.ts` — `AuthUser`, `AuthScope`, `Session`, `MeResponse`, `AuthError`, `ROOT_EMAIL`.
+- `store.ts` — `AuthStore` interface + `MemoryAuthStore` (dev fallback) + `D1AuthStore`
+  (Cloudflare D1, used by the Worker). `createAuthStore(env)` picks D1 when `env.DB` exists.
+- `store-prisma.ts` — `PrismaAuthStore` (Postgres via Prisma, used by the Express runtime).
+  Kept in a separate file so the Prisma client never enters the Worker bundle.
+- `google.ts` — `buildGoogleAuthUrl` + `exchangeGoogleCode` (pure `fetch`, no Node deps).
+- `session.ts` — `SESSION_COOKIE`, `SESSION_MAX_AGE` (30d), cookie header builders/reader.
+- `service.ts` — core logic: `DEFAULT_SCOPES`, `authEnabled`, `startLogin`, `completeLogin`,
+  `getMe`, `requireUser`, `requireScope`, `listUsers`, `listScopes`, `createScope`,
+  `deleteScope`, `setUserScopes`. `ensureScopesSeeded` creates the default categories on login.
+- `routes.ts` — framework-agnostic handlers returning `AuthResult {status, body?, setCookie?,
+  redirect?}`: `authLogin`, `authCallback`, `authMe`, `authLogout`, `authListUsers`,
+  `authListScopes`, `authCreateScope`, `authDeleteScope`, `authSetUserScopes`. Management
+  endpoints are root-only (email/`isRoot` check inside the service).
+
+### 12.3 Runtime wiring
+- **Worker (prod):** `authStore(c)` (D1), login-gate `app.use('*')` middleware protects all
+  `/api/*` except `AUTH_EXEMPT` (`/api/auth/`, `/api/runner/`, `/api/trigger/`, health,
+  `/webhook`, `/dashboard`). WebSocket `/api/events` is protected. Google redirect URI =
+  `${AUTH_PUBLIC_ORIGIN}/api/auth/google/callback` (env `AUTH_PUBLIC_ORIGIN` required in prod
+  because the Pages proxy origin differs from the worker origin; falls back to request origin
+  locally).
+- **Express (local):** same routes/store (Postgres) + same gate middleware via `authEnabled`.
+- **Frontend:** `src/auth/permissions.ts` (`VIEW_SCOPE` map: nav view / automation slug →
+  required category, `canView()`), `src/auth/AuthContext.tsx` (`useAuth` — fetches
+  `/api/auth/me`, `login()`, `logout()`, `canView`, `refresh`), `src/components/LoginScreen.tsx`
+  (Google sign-in), `src/components/UserAdmin.tsx` (root panel: list users, create/delete
+  categories, assign categories). `src/app/page.tsx` wraps the app in `AuthProvider`, shows
+  the login screen when unauthenticated, filters `Sidebar`/`MobileNav` by `canView`, renders
+  `UserAdmin` at `#/admin` for root, and shows an "Access pending" panel for denied views.
+- **Pages proxy** (`founder-os_frontend/functions/api/[[path]].ts`) forwards the `Cookie`
+  header and preserves `Set-Cookie`, so the session cookie works same-origin through the proxy.
+
 
 
 

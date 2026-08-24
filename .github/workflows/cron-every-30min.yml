@@ -36,3 +36,6 @@ jobs:
       - name: telecalling-enquiry-to-dpp
         run: |
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-enquiry-to-dpp?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      - name: telecalling
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

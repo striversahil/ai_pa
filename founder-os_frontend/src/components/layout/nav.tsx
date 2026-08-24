@@ -1,7 +1,14 @@
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, ClipboardList, Sparkles, MessageCircle, Workflow } from "lucide-react";
+import { LayoutDashboard, ClipboardList, Sparkles, MessageCircle, Workflow, ShieldCheck } from "lucide-react";
 
-export type ViewType = "dashboard" | "enquiries" | "detail" | "briefing" | "whatsapp" | "automations";
+export type ViewType =
+  | "dashboard"
+  | "enquiries"
+  | "detail"
+  | "briefing"
+  | "whatsapp"
+  | "automations"
+  | "admin";
 
 export interface NavItem {
   view: ViewType;
@@ -17,6 +24,7 @@ export const NAV_ITEMS: NavItem[] = [
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
   { view: "briefing", label: "Founder AI", icon: Sparkles, mobile: true },
   { view: "whatsapp", label: "WhatsApp", icon: MessageCircle, mobile: true },
+  { view: "admin", label: "Admin", icon: ShieldCheck },
 ];
 
 export const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((i) => i.mobile);

@@ -13,6 +13,10 @@ import MobileNav from "../components/layout/MobileNav";
 import EnquiryModal from "../components/EnquiryModal";
 import Lightbox from "../components/Lightbox";
 import ToastContainer from "../components/ToastContainer";
+import { AuthProvider, useAuth } from "@/auth/AuthContext";
+import LoginScreen from "@/components/LoginScreen";
+import UserAdmin from "@/components/UserAdmin";
+import type { ViewType } from "@/components/layout/nav";
 import type { Enquiry, Comment } from "../types";
 
 // Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
@@ -23,9 +27,16 @@ const FounderAssistant = dynamic(() => import("../components/FounderAssistant"),
 const WhatsAppDashboard = dynamic(() => import("../components/WhatsAppDashboard"), { ssr: false });
 const Automations = dynamic(() => import("../components/Automations"), { ssr: false });
 
-type ViewType = "dashboard" | "enquiries" | "detail" | "briefing" | "whatsapp" | "automations";
-
 export default function Home() {
+  return (
+    <AuthProvider>
+      <AppInner />
+    </AuthProvider>
+  );
+}
+
+function AppInner() {
+  const { me, loading, logout, canView } = useAuth();
   const {
     enquiries, setEnquiries,
     comments, setComments,
@@ -49,9 +60,11 @@ export default function Home() {
   const activeView: ViewType =
     route.view === "enquiries" && route.sub
       ? "detail"
-        : (["dashboard", "enquiries", "briefing", "whatsapp", "automations"] as ViewType[]).includes(route.view as ViewType)
+        : (["dashboard", "enquiries", "briefing", "whatsapp", "automations", "admin"] as ViewType[]).includes(route.view as ViewType)
           ? (route.view as ViewType)
           : "dashboard";
+
+  const viewDenied = activeView !== "admin" && !canView(activeView);
   const selectedEnquiryId = route.view === "enquiries" ? route.sub : null;
   const selectedEnquiry = enquiries.find(e => e.id === selectedEnquiryId) || null;
 
@@ -63,6 +76,7 @@ export default function Home() {
       briefing: "#/briefing",
       whatsapp: "#/whatsapp",
       automations: "#/automations",
+      admin: "#/admin",
     };
     navigate(paths[view]);
   }, [navigate]);
@@ -152,11 +166,16 @@ export default function Home() {
   const handleExportCSV = useCallback(() => exportCSV(enquiries), [exportCSV, enquiries]);
 
   if (!loaded) return null;
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center text-zinc-400">Loading session…</div>;
+  }
+  if (!me) return <LoginScreen />;
 
   return (
-    <div className="min-h-screen font-sans antialiased text-[var(--text-primary)]">
-      <Sidebar activeView={activeView} onNavigate={navigateTo} theme={theme} onToggleTheme={toggleTheme} currentAgent={currentAgent} />
+    <div className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
+      <Sidebar activeView={activeView} onNavigate={navigateTo} theme={theme} onToggleTheme={toggleTheme} me={me ? me.user : null} onLogout={logout} canView={canView} />
 
+      <div className="flex min-w-0 flex-1 flex-col">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border-card)] bg-[var(--bg-card)]/85 px-4 py-3 backdrop-blur md:hidden">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white" style={{ backgroundColor: currentAgent.color }}>{currentAgent.initials}</div>
@@ -171,11 +190,22 @@ export default function Home() {
         </button>
       </header>
 
-      <MobileNav activeView={activeView} onNavigate={navigateTo} />
+      <MobileNav activeView={activeView} onNavigate={navigateTo} canView={canView} />
 
-      <main className="md:pl-[284px] p-4 md:p-6 lg:p-8 mb-16 md:mb-0">
+      <main className="flex-1 p-4 md:p-6 lg:p-8 mb-16 md:mb-0">
         <ErrorBoundary>
           <div className="mx-auto w-full max-w-[1600px]">
+          {viewDenied ? (
+            <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
+              <div className="text-5xl">🔒</div>
+              <h2 className="text-2xl font-bold">Access pending</h2>
+              <p className="max-w-md text-zinc-500">Your account doesn't have permission for this section yet. Ask the administrator to grant access.</p>
+              <button onClick={() => navigate("#/dashboard")} className="mt-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Go to Dashboard</button>
+            </div>
+          ) : activeView === "admin" ? (
+            <UserAdmin />
+          ) : (
+          <>
           {activeView === "dashboard" && (
             <Dashboard enquiries={enquiries} agents={agents} currentAgent={currentAgent}
               onOpenCreate={handleOpenCreate}
@@ -209,6 +239,8 @@ export default function Home() {
           {activeView === "automations" && (
             <Automations slug={route.view === "automations" ? route.sub : null} onNavigate={navigate} />
           )}
+          </>
+          )}
           </div>
         </ErrorBoundary>
       </main>
@@ -229,6 +261,7 @@ export default function Home() {
       )}
 
       <ToastContainer toasts={toasts} />
+      </div>
     </div>
   );
 }

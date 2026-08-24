@@ -28,6 +28,9 @@ const configSchema = z.object({
   REDIS_HOST: z.string().default('localhost'),
   REDIS_PORT: z.coerce.number().default(6379),
   SLACK_WEBHOOK_URL: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
+  AUTH_PUBLIC_ORIGIN: z.string().optional().default(''),
   SHARED_SECRET: z.string().optional().default(''),
 });
 

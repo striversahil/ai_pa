@@ -2,6 +2,11 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { EventHub } from './durable/event-hub';
 import { AsyncTaskRunner } from './durable/async-task-runner';
+import { broadcastLive, LiveEvent } from './live';
+import * as AuthRoutes from './modules/auth/routes';
+import { createAuthStore } from './modules/auth/store';
+import { authEnabled, getMe } from './modules/auth/service';
+import { readSessionCookie } from './modules/auth/session';
 
 type Bindings = {
   DB: D1Database;
@@ -81,6 +86,88 @@ app.use('*', async (c, next) => {
     void ensureBoot(); // opportunistic warm-up on any other request
   }
   await next();
+});
+
+// ── Google auth: routes + login gate (Worker = live runtime) ─────────────────
+function authStore(c: any) {
+  return createAuthStore(c.env);
+}
+function publicOrigin(c: any): string {
+  return (c.env.AUTH_PUBLIC_ORIGIN as string) || new URL(c.req.url).origin;
+}
+function isSecure(c: any): boolean {
+  return new URL(c.req.url).protocol === 'https:';
+}
+const AUTH_EXEMPT = [
+  '/api/auth/',
+  '/api/runner/',
+  '/api/trigger/',
+  '/api/health',
+  '/health',
+  '/api/status',
+  '/webhook',
+  '/dashboard',
+  // Team-performance dashboards are safe to view without a session (the login
+  // cookie is host-scoped, so preview subdomains would otherwise see 401).
+  '/api/automations/telecalling/data',
+  '/api/automations/neodove-telecaller-report/data',
+];
+function isAuthExempt(path: string): boolean {
+  return AUTH_EXEMPT.some((p) => path.startsWith(p));
+}
+
+app.use('*', async (c, next) => {
+  if (!authEnabled(c.env)) return next();
+  const path = new URL(c.req.url).pathname;
+  if (isAuthExempt(path)) return next();
+  const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  if (!me) {
+    if (c.req.header('upgrade')?.toLowerCase() === 'websocket') return c.body(null, 401);
+    return c.json({ error: 'Authentication required' }, 401);
+  }
+  await next();
+});
+
+app.get('/api/auth/google', async (c) => {
+  const r = await AuthRoutes.authLogin(c.env, publicOrigin(c));
+  if (r.redirect) return c.redirect(r.redirect);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/auth/google/callback', async (c) => {
+  const r = await AuthRoutes.authCallback(c.env, authStore(c), c.req.query('code') ?? null, publicOrigin(c), isSecure(c));
+  if (r.setCookie) c.header('Set-Cookie', r.setCookie);
+  if (r.redirect) return c.redirect(r.redirect);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/auth/me', async (c) => {
+  const r = await AuthRoutes.authMe(authStore(c), c.req.header('cookie') ?? null);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/auth/logout', async (c) => {
+  const r = await AuthRoutes.authLogout(authStore(c), c.req.header('cookie') ?? null, isSecure(c));
+  if (r.setCookie) c.header('Set-Cookie', r.setCookie);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/auth/users', async (c) => {
+  const r = await AuthRoutes.authListUsers(authStore(c), c.req.header('cookie') ?? null);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/auth/scopes', async (c) => {
+  const r = await AuthRoutes.authListScopes(authStore(c), c.req.header('cookie') ?? null);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/auth/scopes', async (c) => {
+  const r = await AuthRoutes.authCreateScope(authStore(c), c.req.header('cookie') ?? null, await c.req.json().catch(() => ({})));
+  return c.json(r.body, r.status as any);
+});
+app.delete('/api/auth/scopes/:key', async (c) => {
+  const r = await AuthRoutes.authDeleteScope(authStore(c), c.req.header('cookie') ?? null, c.req.param('key') ?? null);
+  return c.json(r.body, r.status as any);
+});
+app.put('/api/auth/users/:id/scopes', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const r = await AuthRoutes.authSetUserScopes(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);
+  return c.json(r.body, r.status as any);
 });
 
 // ── Env bootstrap (must run before any module import is exercised) ──────────
@@ -259,6 +346,10 @@ app.post('/api/whatsapp/webhook', async (c) => {
   const { WhatsAppController } = deps();
   const body = await c.req.json().catch(() => ({}));
   await WhatsAppController.handleWebhook(body);
+  broadcastLive(c, LiveEvent.Messages);
+  broadcastLive(c, LiveEvent.Contacts);
+  broadcastLive(c, LiveEvent.Digests);
+  broadcastLive(c, LiveEvent.PendingItems);
   return c.json({ success: true });
 });
 
@@ -387,6 +478,59 @@ app.get('/api/estimates', async (c) => {
     comments: (e.comments || []).filter((cm: any) => !isSystemGeneratedComment(cm.description, cm.commentedBy)),
   }));
   return c.json({ estimates: estimatesWithRealComments, lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null });
+});
+
+// ── Telecaller roster (estimate auto-assignment) ──────────────────────────────
+app.get('/api/telecallers', async (c) => {
+  const { prisma } = deps();
+  const tcs = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+  const withCounts = await Promise.all(
+    tcs.map(async (t: any) => {
+      const [totalAssigned, activeAssigned] = await Promise.all([
+        prisma.estimateAssignment.count({ where: { telecallerId: t.id } }),
+        prisma.estimateAssignment.count({ where: { telecallerId: t.id, status: 'assigned' } }),
+      ]);
+      return { ...t, totalAssigned, activeAssigned };
+    }),
+  );
+  return c.json({ telecallers: withCounts });
+});
+
+app.post('/api/telecallers', async (c) => {
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  if (!body?.name) return c.json({ error: 'name required' }, 400);
+  const tc = await prisma.telecaller.create({
+    data: {
+      name: String(body.name).trim(),
+      email: body.email ?? null,
+      active: body.active ?? true,
+      order: body.order ?? 0,
+      neodoveUserId: body.neodoveUserId ?? null,
+      neodoveUserName: body.neodoveUserName ?? null,
+    },
+  });
+  return c.json(tc, 201);
+});
+
+app.put('/api/telecallers/:id', async (c) => {
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const data: Record<string, unknown> = {};
+  if (body.name !== undefined) data.name = String(body.name).trim();
+  if (body.email !== undefined) data.email = body.email;
+  if (body.active !== undefined) data.active = body.active;
+  if (body.order !== undefined) data.order = body.order;
+  if (body.neodoveUserId !== undefined) data.neodoveUserId = body.neodoveUserId;
+  if (body.neodoveUserName !== undefined) data.neodoveUserName = body.neodoveUserName;
+  const tc = await prisma.telecaller.update({ where: { id: c.req.param('id') }, data });
+  return c.json(tc);
+});
+
+app.delete('/api/telecallers/:id', async (c) => {
+  const { prisma } = deps();
+  await prisma.telecaller.delete({ where: { id: c.req.param('id') } });
+  return c.json({ ok: true });
 });
 
 // ── Baseline snapshot (shared across all viewers, frozen daily at 1 AM IST) ──
@@ -632,6 +776,9 @@ app.post('/api/whatsapp/send', async (c) => {
   } else if (result === 'outside_hours') {
     await MessageQueueService.enqueueDelayedMorning(trimmed, message_body);
   }
+  broadcastLive(c, LiveEvent.Messages, { chatId: trimmed });
+  broadcastLive(c, LiveEvent.Contacts, { chatId: trimmed });
+  broadcastLive(c, LiveEvent.PendingItems, { chatId: trimmed });
   return c.json({ success: true, result });
 });
 
@@ -687,6 +834,7 @@ app.put('/api/whatsapp/contacts/:contactUid/note', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const content = String(body?.content ?? '').trim();
   const note = await StorageRepository.upsertChatNote(chatId, content);
+  broadcastLive(c, LiveEvent.Contacts, { chatId });
   return c.json({ chatId, content: note.content });
 });
 
@@ -781,6 +929,7 @@ app.post('/api/pending-items/:id/resolve', async (c) => {
   const { StorageRepository } = deps();
   const item = await StorageRepository.resolveChatPendingItem(c.req.param('id'), 'MANUAL');
   if (!item) return c.json({ error: 'Pending item not found or already resolved' }, 404);
+  broadcastLive(c, LiveEvent.PendingItems, { chatId: item.chatId });
   return c.json(item);
 });
 
@@ -788,6 +937,7 @@ app.post('/api/pending-items/:id/cancel', async (c) => {
   const { StorageRepository } = deps();
   const item = await StorageRepository.cancelChatPendingItem(c.req.param('id'));
   if (!item) return c.json({ error: 'Pending item not found or already resolved' }, 404);
+  broadcastLive(c, LiveEvent.PendingItems, { chatId: item.chatId });
   return c.json(item);
 });
 
@@ -887,6 +1037,7 @@ app.post('/api/runner/digests', async (c) => {
     requiresFounder: !!body.requiresFounder,
     suggestedReply: body.suggestedReply || undefined,
   });
+  broadcastLive(c, LiveEvent.Digests, { chatId: body.chatId });
   return c.json({ ok: true, id: digest.id });
 });
 
@@ -905,6 +1056,7 @@ app.post('/api/runner/tasks', async (c) => {
     source: body.source || 'WHATSAPP',
     sourceId: body.sourceId || null,
   });
+  broadcastLive(c, LiveEvent.Tasks);
   return c.json({ ok: true, id: task.id });
 });
 
@@ -921,6 +1073,7 @@ app.post('/api/runner/pending-items', async (c) => {
     description: body.description,
     dueDate,
   });
+  broadcastLive(c, LiveEvent.PendingItems, { chatId: body.chatId });
   return c.json({ ok: true, id: item.id });
 });
 
@@ -931,6 +1084,7 @@ app.post('/api/runner/messages/mark-processed', async (c) => {
   const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
   if (!ids.length) return c.json({ ok: true, count: 0 });
   await StorageRepository.markMessagesProcessed(ids);
+  broadcastLive(c, LiveEvent.Messages, { count: ids.length });
   return c.json({ ok: true, count: ids.length });
 });
 
@@ -954,6 +1108,7 @@ app.post('/api/runner/founder-notes', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.content) return c.json({ error: 'content required' }, 400);
   const note = await StorageRepository.saveFounderNote(String(body.content));
+  broadcastLive(c, LiveEvent.FounderNotes);
   return c.json({ ok: true, id: note.id, createdAt: note.createdAt });
 });
 
@@ -1082,6 +1237,7 @@ app.post('/api/runner/emails', async (c) => {
     await StorageRepository.storeEmail({ subject: e.subject, sender: e.sender, body: e.body });
     saved++;
   }
+  if (saved > 0) broadcastLive(c, LiveEvent.Email);
   return c.json({ ok: true, count: saved });
 });
 
@@ -1128,6 +1284,7 @@ app.post('/api/runner/brain/context', async (c) => {
     });
     upserted++;
   }
+  if (upserted > 0) broadcastLive(c, LiveEvent.Brain);
   return c.json({ ok: true, count: upserted });
 });
 
@@ -1386,14 +1543,7 @@ export { EventHub, AsyncTaskRunner };
 // ── Live events (WebSocket fan-out via EventHub Durable Object) ──────────────
 // Fire-and-forget broadcast; never blocks or fails the calling write path.
 function notifyLive(c: any, event: Record<string, unknown>) {
-  try {
-    const ns = c.env.EVENT_HUB;
-    if (!ns) return;
-    const stub = ns.get(ns.idFromName('global'));
-    c.executionCtx.waitUntil(
-      stub.fetch(new Request('https://hub/broadcast', { method: 'POST', body: JSON.stringify(event) })).catch(() => {})
-    );
-  } catch {}
+  broadcastLive(c, String(event.type ?? 'automation'), event);
 }
 
 app.get('/api/events', (c) => {

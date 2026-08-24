@@ -22,6 +22,7 @@ import * as telecallingAgentAnalysis from '../../automations/telecalling-agent-a
 import * as telecallingEnquiryToDpp from '../../automations/telecalling-enquiry-to-dpp';
 import * as waEngineMonitor from '../../automations/wa-engine-monitor';
 import * as whatsappMarketing from '../../automations/whatsapp-marketing';
+import * as telecalling from '../../automations/telecalling';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
@@ -37,6 +38,7 @@ const MODULES: Record<string, AutomationModule> = {
   'telecalling-enquiry-to-dpp': telecallingEnquiryToDpp as AutomationModule,
   'wa-engine-monitor': waEngineMonitor as AutomationModule,
   'whatsapp-marketing': whatsappMarketing as AutomationModule,
+  'telecalling': telecalling as AutomationModule,
 };
 
 const RULES: Record<string, Partial<AutomationDefinition>> = {
@@ -90,6 +92,9 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'whatsapp-marketing': {
     id: 'whatsapp-marketing', name: 'WhatsApp Marketing', description: 'Multi-campaign WhatsApp marketing.', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, enabled: true,
+  },
+  'telecalling': {
+    id: 'telecalling', name: 'Telecalling', description: 'Unified daily telecaller performance: Lead Conversion (estimate assignment) + Lead Generation (NeoDove calls/leads, live), with KPIs and leaderboard.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, enabled: true,
   },
 };
 

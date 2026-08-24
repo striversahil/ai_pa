@@ -457,14 +457,14 @@ export class SalesCopilotService implements AnalysisEngine {
       // No comments found: default values directly (no LLM call needed)
       const createdDate = new Date(dateVal);
       const diffDays = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000));
-      const isOlderThan5Days = diffDays > 5;
+      const isOlderThan3Days = diffDays > 3;
 
       await prisma.classification.upsert({
         where: { estimateId: estId },
         update: {
           meaningfulUpdate: false,
           notAnswering: 'No',
-          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+          movingSlow: isOlderThan3Days ? 'Yes' : 'No',
           underDiscussion: 'No',
           confirm: 'No',
           intentScore: 2,
@@ -476,7 +476,7 @@ export class SalesCopilotService implements AnalysisEngine {
           estimateId: estId,
           meaningfulUpdate: false,
           notAnswering: 'No',
-          movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+          movingSlow: isOlderThan3Days ? 'Yes' : 'No',
           underDiscussion: 'No',
           confirm: 'No',
           intentScore: 2,
@@ -490,7 +490,7 @@ export class SalesCopilotService implements AnalysisEngine {
       const latestComment = historyLines[0] || '';
       const badgeResult = this.classifyBadges(latestComment, dateVal);
       const createdDate = new Date(dateVal);
-      const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
+      const isOlderThan3Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 3;
 
       let finalConfirm = 'No';
       let journeyResult = { summary: '', intent_score: 2 };
@@ -518,7 +518,7 @@ export class SalesCopilotService implements AnalysisEngine {
           update: {
             meaningfulUpdate: badgeResult.meaningful_update,
             notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
-            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            movingSlow: isOlderThan3Days ? 'Yes' : 'No',
             underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
             confirm: finalConfirm,
             intentScore: journeyResult.intent_score,
@@ -530,7 +530,7 @@ export class SalesCopilotService implements AnalysisEngine {
             estimateId: estId,
             meaningfulUpdate: badgeResult.meaningful_update,
             notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
-            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            movingSlow: isOlderThan3Days ? 'Yes' : 'No',
             underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
             confirm: finalConfirm,
             intentScore: journeyResult.intent_score,
@@ -545,7 +545,7 @@ export class SalesCopilotService implements AnalysisEngine {
           update: {
             meaningfulUpdate: false,
             notAnswering: 'No',
-            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            movingSlow: isOlderThan3Days ? 'Yes' : 'No',
             underDiscussion: 'No',
             confirm: 'No',
             intentScore: null,
@@ -557,7 +557,7 @@ export class SalesCopilotService implements AnalysisEngine {
             estimateId: estId,
             meaningfulUpdate: false,
             notAnswering: 'No',
-            movingSlow: isOlderThan5Days ? 'Yes' : 'No',
+            movingSlow: isOlderThan3Days ? 'Yes' : 'No',
             underDiscussion: 'No',
             confirm: 'No',
             intentScore: null,

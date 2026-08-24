@@ -1,11 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useLiveQuery } from "@/hooks/useLiveData";
 
 export default function FounderAssistant() {
-  const [briefing, setBriefing] = useState<string>("");
-  const [digests, setDigests] = useState<any[]>([]);
-  const [tasks, setTasks] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "assistant"; text: string }>>([
     {
       sender: "assistant",
@@ -13,7 +11,6 @@ export default function FounderAssistant() {
     },
   ]);
   const [chatInput, setChatInput] = useState<string>("");
-  const [isBriefingLoading, setIsBriefingLoading] = useState<boolean>(true);
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -32,48 +29,34 @@ export default function FounderAssistant() {
       .replace(/\n/g, "<br>");
   };
 
-  const fetchBriefing = async () => {
-    setIsBriefingLoading(true);
-    try {
+  const briefing = useLiveQuery<string>(
+    async () => {
       const res = await fetch("/api/brief/latest");
-      if (res.status === 404) {
-        setBriefing("No briefings generated yet. Click 'Regenerate Briefing' to create one.");
-        return;
-      }
+      if (res.status === 404) return "No briefings generated yet. Click 'Regenerate Briefing' to create one.";
+      if (!res.ok) throw new Error("load failed");
       const data = await res.json();
-      setBriefing(data.content);
-    } catch (e) {
-      setBriefing("Error loading briefing logs.");
-    } finally {
-      setIsBriefingLoading(false);
-    }
-  };
+      return data.content ?? "";
+    },
+    { events: ["founder-notes", "digests", "tasks", "estimates", "neodove"] },
+  );
 
-  const fetchDigests = async () => {
-    try {
+  const digests = useLiveQuery<any[]>(
+    async () => {
       const res = await fetch("/api/digests");
-      const data = await res.json();
-      setDigests(data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+      if (!res.ok) throw new Error("load failed");
+      return res.json();
+    },
+    { events: ["digests"] },
+  );
 
-  const fetchTasks = async () => {
-    try {
+  const tasks = useLiveQuery<any[]>(
+    async () => {
       const res = await fetch("/api/tasks");
-      const data = await res.json();
-      setTasks(data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  useEffect(() => {
-    fetchBriefing();
-    fetchDigests();
-    fetchTasks();
-  }, []);
+      if (!res.ok) throw new Error("load failed");
+      return res.json();
+    },
+    { events: ["tasks"] },
+  );
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -136,12 +119,12 @@ export default function FounderAssistant() {
                 <span>📅</span> Latest Morning Briefing
               </h3>
             </div>
-            {isBriefingLoading ? (
+            {briefing.loading ? (
               <div className="py-12 text-center text-zinc-600 dark:text-zinc-500 animate-pulse">Loading briefing context...</div>
             ) : (
               <div
                 className="text-zinc-700 dark:text-zinc-300 leading-relaxed text-sm overflow-x-auto space-y-2"
-                dangerouslySetInnerHTML={{ __html: parseMarkdown(briefing) }}
+                dangerouslySetInnerHTML={{ __html: parseMarkdown(briefing.data ?? "") }}
               />
             )}
           </section>
@@ -205,10 +188,10 @@ export default function FounderAssistant() {
               <span>📋</span> Active Task Backlog
             </h3>
             <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-              {tasks.length === 0 ? (
+              {(tasks.data ?? []).length === 0 ? (
                 <div className="text-center py-6 text-zinc-600 dark:text-zinc-500 text-sm">No pending action items found.</div>
               ) : (
-                tasks.slice(0, 8).map((task) => (
+                (tasks.data ?? []).slice(0, 8).map((task) => (
                   <div
                     key={task.id}
                     className={`flex items-start gap-3 p-3 rounded-lg border transition-all ${
@@ -247,12 +230,12 @@ export default function FounderAssistant() {
               <span>🚨</span> Chat Summaries
             </h3>
             <div className="space-y-4 max-h-[450px] overflow-y-auto pr-1">
-              {digests.length === 0 ? (
+              {(digests.data ?? []).length === 0 ? (
                 <div className="text-center py-6 text-zinc-600 dark:text-zinc-500 text-sm">
                   No digests compiled. Run a WhatsApp digest job to scan conversations!
                 </div>
               ) : (
-                digests.slice(0, 4).map((d) => (
+                (digests.data ?? []).slice(0, 4).map((d) => (
                   <div
                     key={d.id}
                     className="p-4 bg-zinc-50/40 dark:bg-zinc-950/40 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl space-y-2 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all"

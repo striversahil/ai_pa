@@ -128,9 +128,50 @@ function aggregate(rows: any[]): NeodoveAgentRow[] {
       const v = Number(r[k] ?? 0);
       if (Number.isFinite(v)) (agg as any)[k] += v;
     }
+    // Always prefer a real userName over the sliced-id fallback so that any
+    // day's report (even one where userName is missing) merges correctly.
+    if (r.userName) agg.userName = r.userName;
+    if (r.userId) agg.userId = r.userId;
     if (!agg.managerName && r.managerName) agg.managerName = r.managerName;
   }
   return [...byUser.values()].sort((a, b) => b.callsAttempted - a.callsAttempted);
+}
+
+/**
+ * Load the per-agent NeoDove aggregates for a single day (default: latest stored
+ * day) keyed by agent userName. Used by the unified telecalling dashboard to
+ * merge Lead Generation (calls connected / leads generated) with Lead
+ * Conversion (estimate assignments) per telecaller.
+ */
+export async function getNeodoveAgentMap(date?: string): Promise<Record<string, NeodoveAgentRow>> {
+  const d = date && DATE_RE.test(date) ? date : undefined;
+  const { rows } = await loadReportsInRange(d, d);
+  const aggregated = aggregate(rows);
+  const map: Record<string, NeodoveAgentRow> = {};
+  for (const a of aggregated) {
+    if (a.userName) map[a.userName] = a;
+    if (a.userId) map[a.userId] = a;
+  }
+  return map;
+}
+
+/**
+ * Unique NeoDove agents across every stored day. Used to seed the Telecaller
+ * roster — a telecaller is considered active once they appear in any NeoDove
+ * report (including previous days), so the roster is built from the full
+ * history, not just today's (possibly empty) snapshot.
+ */
+export async function getAllNeodoveAgents(): Promise<NeodoveAgentRow[]> {
+  const { rows } = await loadReportsInRange(undefined, undefined);
+  return aggregate(rows);
+}
+
+/** Latest stored NeoDove report day that actually has agent rows (YYYY-MM-DD),
+ * or null if none stored. Skips empty snapshots (e.g. early-morning "today"
+ * that hasn't been pushed yet) so callers fall back to real data. */
+export async function getLatestNeodoveDay(): Promise<string | null> {
+  const { dates } = await loadReportsInRange(undefined, undefined);
+  return dates.length ? dates[0] : null;
 }
 
 type TrafficLight = 'green' | 'amber' | 'red';

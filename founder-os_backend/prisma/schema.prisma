@@ -157,16 +157,18 @@ model FounderNote {
 }
 
 model Estimate {
-  estimateId     String          @id
-  estimateNumber String
-  customerName   String
-  total          Float
-  date           String
-  status         String
-  lastSyncTime   DateTime        @default(now())
-  skipMatching   Boolean         @default(false)
-  comments       Comment[]
-  classification Classification?
+  estimateId            String          @id
+  estimateNumber        String
+  customerName          String
+  total                 Float
+  date                  String
+  status                String
+  lastSyncTime          DateTime        @default(now())
+  skipMatching          Boolean         @default(false)
+  assignedTelecallerId  String?
+  comments              Comment[]
+  classification        Classification?
+  assignments           EstimateAssignment[]
 }
 
 model Comment {
@@ -193,6 +195,42 @@ model Classification {
   salesAgent       String   @default("Unassigned")
   processedAt      DateTime @default(now())
   estimate         Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+}
+
+// Telecaller / closing-team roster. Estimates are auto-assigned (round-robin)
+// to active telecallers; the `order` field sequences the rotation.
+model Telecaller {
+  id               String   @id @default(uuid())
+  name             String
+  email            String?
+  active           Boolean  @default(true)
+  order            Int      @default(0)
+  // Optional link to the telecaller's NeoDove agent identity so Lead Generation
+  // (calls connected / leads generated) can be merged with Lead Conversion.
+  neodoveUserId    String?
+  neodoveUserName  String?
+  createdAt        DateTime @default(now())
+  assignments      EstimateAssignment[]
+}
+
+// History of which estimate was assigned to which telecaller, and when. The
+// latest row for an estimate (by assignedAt) is its current owner. End-of-day
+// reassignment of "unsatisfactory" estimates appends a new row (reassignedFromId
+// links to the previous one) and flips the previous row to status 'reassigned'.
+model EstimateAssignment {
+  id                String     @id @default(uuid())
+  estimateId        String
+  telecallerId      String
+  assignedAt        DateTime   @default(now())
+  day               String // YYYY-MM-DD the assignment was made
+  reassignedFromId  String? // previous EstimateAssignment id (reassignment chain)
+  status            String     @default("assigned") // assigned | reassigned | resolved
+  estimate          Estimate   @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+  telecaller        Telecaller @relation(fields: [telecallerId], references: [id], onDelete: Cascade)
+
+  @@index([estimateId])
+  @@index([telecallerId])
+  @@index([day])
 }
 
 model AuditLog {
@@ -382,4 +420,44 @@ model MarketingCampaignRun {
   finishedAt  DateTime?
 
   @@index([campaignId, startedAt])
+}
+
+// ── Auth: Google-login users, sessions, and category-based permissions ──────
+// striversahil@gmail.com is root (isRoot). Root can create scopes (categories)
+// and grant them to users; each dashboard view requires a scope.
+model AuthUser {
+  id         String          @id @default(uuid())
+  email      String          @unique
+  name       String
+  picture    String?
+  isRoot     Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+  sessions   AuthSession[]
+  userScopes AuthUserScope[]
+}
+
+model AuthSession {
+  id        String   @id @default(uuid())
+  userId    String
+  user      AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AuthScope {
+  key        String          @id
+  label      String
+  description String?
+  userScopes AuthUserScope[]
+}
+
+model AuthUserScope {
+  userId    String
+  user      AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scopeKey  String
+  scope     AuthScope @relation(fields: [scopeKey], references: [key], onDelete: Cascade)
+
+  @@id([userId, scopeKey])
 }

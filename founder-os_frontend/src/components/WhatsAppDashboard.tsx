@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useLiveEvent } from "@/hooks/useLiveData";
 
 interface Digest {
   id: string;
@@ -236,6 +237,16 @@ export default function WhatsAppDashboard() {
     fetchDigests();
     fetchPendingItems();
   }, []);
+
+  // Live refresh of aggregate numbers (contacts / digests / pending items) whenever
+  // the backend broadcasts a change from any write path — not just inbound messages.
+  useLiveEvent((e) => {
+    if (["messages", "contacts", "digests", "pending-items"].includes(e.type)) {
+      fetchContacts();
+      fetchDigests();
+      fetchPendingItems();
+    }
+  });
 
   useEffect(() => {
     if (selectedContactUid) {

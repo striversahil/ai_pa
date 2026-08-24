@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React from "react";
 import type { FilterRule } from "./types";
 
 export interface KpiCardConfig {
@@ -9,6 +9,7 @@ export interface KpiCardConfig {
   negLabel: string;
   count: number;
   accent: string; // tailwind color token base e.g. "indigo"
+  polarity: "good" | "bad"; // drives green/orange when active
 }
 
 interface Props {
@@ -19,20 +20,17 @@ interface Props {
   filters: FilterRule[];
   inverted: Record<string, boolean>;
   onCardClick: (field: string) => void;
-  onCardDoubleClick: (field: string) => void;
 }
 
-const ACCENT_RINGS: Record<string, string> = {
-  emerald: "border-emerald-500/60 ring-2 ring-emerald-500/30",
-  rose: "border-rose-500/60 ring-2 ring-rose-500/30",
-  amber: "border-amber-500/60 ring-2 ring-amber-500/30",
-  orange: "border-orange-500/60 ring-2 ring-orange-500/30",
-  indigo: "border-indigo-500/60 ring-2 ring-indigo-500/30",
-  violet: "border-violet-500/60 ring-2 ring-violet-500/30",
-  cyan: "border-cyan-500/60 ring-2 ring-cyan-500/30",
-  blue: "border-blue-500/60 ring-2 ring-blue-500/30",
-  teal: "border-teal-500/60 ring-2 ring-teal-500/30",
-};
+const ACTIVE_RING = {
+  good: "border-emerald-500/70 ring-2 ring-emerald-500/40",
+  bad: "border-orange-500/70 ring-2 ring-orange-500/40",
+} as const;
+
+const BADGE = {
+  good: "text-emerald-300 bg-emerald-500/10 border-emerald-500/30",
+  bad: "text-orange-300 bg-orange-500/10 border-orange-500/30",
+} as const;
 
 export default function KpiCards({
   totalCount,
@@ -42,21 +40,7 @@ export default function KpiCards({
   filters,
   inverted,
   onCardClick,
-  onCardDoubleClick,
 }: Props) {
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleClick = (field: string) => {
-    if (clickTimer.current) clearTimeout(clickTimer.current);
-    clickTimer.current = setTimeout(() => onCardClick(field), 260);
-  };
-
-  const handleDoubleClick = (field: string) => {
-    if (clickTimer.current) clearTimeout(clickTimer.current);
-    clickTimer.current = null;
-    onCardDoubleClick(field);
-  };
-
   const isActive = (field: string) => filters.some((f) => f.field === field);
 
   return (
@@ -104,25 +88,39 @@ export default function KpiCards({
         {kpiCards.map((k) => {
           const active = isActive(k.field);
           const isInverted = !!inverted[k.field];
-          const ring = active ? ACCENT_RINGS[k.accent] || ACCENT_RINGS.indigo : "border-zinc-200/80 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700";
+          // When reversed the card shows the complement of its category count
+          // (e.g. Not Answering 20 of 50 → Answering 30).
+          const effectiveCount = isInverted
+            ? Math.max(0, totalCount - k.count)
+            : k.count;
+          // Effective polarity flips when reversed: a good card shown reversed
+          // means "filter the bad ones" → orange, and vice-versa.
+          const effectiveGood = isInverted ? k.polarity === "bad" : k.polarity === "good";
+          const tone = effectiveGood ? "good" : "bad";
+          const ring = active
+            ? ACTIVE_RING[tone]
+            : "border-zinc-200/80 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700";
           return (
             <button
               key={k.field}
               type="button"
-              onClick={() => handleClick(k.field)}
-              onDoubleClick={() => handleDoubleClick(k.field)}
-              title={`Click: filter ${k.label}. Double-click: ${k.negLabel}.`}
-              className={`group relative overflow-hidden bg-zinc-50 dark:bg-zinc-900 border rounded-xl p-2.5 text-left shadow-sm transition-all duration-200 cursor-pointer ${ring} ${active ? "bg-zinc-50 dark:bg-zinc-900" : "hover:-translate-y-0.5"}`}
+              onClick={() => onCardClick(k.field)}
+              title={`Click: filter ${k.label}. Click again: reverse (${k.negLabel}). Click a third time: clear.`}
+              className={`group relative overflow-hidden bg-zinc-50 dark:bg-zinc-900 border rounded-xl p-2.5 text-left shadow-sm transition-all duration-200 cursor-pointer ${ring} ${active ? "" : "hover:-translate-y-0.5"}`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-base font-bold text-zinc-900 dark:text-white leading-none">{k.count}</span>
-                {active && <span className="text-[8px] font-extrabold uppercase tracking-wide text-indigo-300 bg-indigo-500/10 border border-indigo-500/30 rounded px-1 py-0.5">Active</span>}
+                <span className="text-base font-bold text-zinc-900 dark:text-white leading-none tabular-nums">{effectiveCount}</span>
+                {active && (
+                  <span className={`text-[8px] font-extrabold uppercase tracking-wide rounded px-1 py-0.5 border ${BADGE[tone]}`}>
+                    {isInverted ? "Reversed" : "Active"}
+                  </span>
+                )}
               </div>
               <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-semibold mt-1 leading-tight">
                 {isInverted ? k.negLabel : k.label}
               </span>
-              <span className="block text-[9px] text-zinc-500 dark:text-zinc-600 mt-0.5 font-medium">
-                {isInverted ? "double-click for " + k.label : "double-click for " + k.negLabel}
+              <span className={`block text-[9px] mt-0.5 font-medium ${active ? (effectiveGood ? "text-emerald-500/80 dark:text-emerald-400/80" : "text-orange-500/80 dark:text-orange-400/80") : "text-zinc-500 dark:text-zinc-600"}`}>
+                {active ? (isInverted ? "click to clear" : "click to reverse") : "click to filter"}
               </span>
             </button>
           );

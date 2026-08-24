@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useLiveQuery } from "@/hooks/useLiveData";
 
 // Lazy-load each dashboard so only the opened one is fetched & parsed.
 const ZohoEstimates = dynamic(() => import("./ZohoEstimates"), { ssr: false });
@@ -12,6 +13,7 @@ const WaEngineDashboard = dynamic(() => import("./WaEngineDashboard"), { ssr: fa
 const WhatsAppMarketingDashboard = dynamic(() => import("./WhatsAppMarketingDashboard"), { ssr: false });
 const EnterpriseOperationsDashboard = dynamic(() => import("./EnterpriseOperationsDashboard"), { ssr: false });
 const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDashboard"), { ssr: false });
+const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -48,8 +50,14 @@ interface AutomationsProps {
 }
 
 export default function Automations({ slug, onNavigate }: AutomationsProps) {
-  const [automations, setAutomations] = useState<Automation[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const automations = useLiveQuery<Automation[]>(
+    async () => {
+      const res = await fetch("/api/automations");
+      if (!res.ok) throw new Error("load failed");
+      return res.json();
+    },
+    { events: ["automation", "automations"] },
+  );
   const [toggling, setToggling] = useState<string | null>(null);
   const [pinned, setPinned] = useLocalStorage<string[]>("pinned_automations", []);
 
@@ -77,34 +85,6 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     setDropTarget(null);
   };
 
-  const fetchList = async () => {
-    try {
-      const res = await fetch("/api/automations");
-      if (res.ok) setAutomations(await res.json());
-    } catch (e) {
-      console.error("Failed to load automations", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/automations");
-        if (res.ok && !cancelled) setAutomations(await res.json());
-      } catch (e) {
-        console.error("Failed to load automations", e);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const toggleEnabled = async (a: Automation) => {
     setToggling(a.slug);
     try {
@@ -113,7 +93,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: !a.enabled }),
       });
-      fetchList();
+      automations.refresh();
     } catch (e) {
       console.error(e);
     } finally {
@@ -122,12 +102,12 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
   };
 
   const { pinnedList, restList } = useMemo(() => {
-    const bySlug = new Map(automations.map(a => [a.slug, a]));
+    const bySlug = new Map((automations.data ?? []).map(a => [a.slug, a]));
     return {
       pinnedList: pinned.map(slug => bySlug.get(slug)).filter(Boolean) as Automation[],
-      restList: automations.filter(a => !pinned.includes(a.slug)),
+      restList: (automations.data ?? []).filter(a => !pinned.includes(a.slug)),
     };
-  }, [automations, pinned]);
+  }, [(automations.data ?? []), pinned]);
 
   const renderDashboard = () => {
     if (selected === "enterprise-operations-analytics") return <EnterpriseOperationsDashboard />;
@@ -136,6 +116,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "wa-engine-monitor") return <WaEngineDashboard />;
     if (selected === "whatsapp-marketing") return <WhatsAppMarketingDashboard />;
     if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
+    if (selected === "telecalling") return <TelecallingDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;
@@ -223,15 +204,13 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
 
   return (
     <div className="space-y-6 text-zinc-900 dark:text-zinc-100">
-      <div className="border-b border-zinc-200 dark:border-zinc-800 pb-5">
-        <h1 className="text-3xl font-bold font-heading tracking-tight">
-          <span className="bg-gradient-to-r from-white via-indigo-100 to-indigo-400 bg-clip-text text-transparent">Automations</span>
-        </h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-          Every scheduled & event-driven job in the system. Each lives in its own folder under{" "}
-          <code className="text-zinc-700 dark:text-zinc-300">src/automations/&lt;slug&gt;/</code>. Pin your favourite dashboards for quick access.
-        </p>
-      </div>
+      {!selected && (
+        <div className="border-b border-zinc-200 dark:border-zinc-800 pb-5">
+          <h1 className="text-3xl font-bold font-heading tracking-tight">
+            <span className="bg-gradient-to-r from-white via-indigo-100 to-indigo-400 bg-clip-text text-transparent">Automations</span>
+          </h1>
+        </div>
+      )}
 
       {selected ? (
         <div className="space-y-4">
@@ -254,7 +233,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
           </div>
           {renderDashboard()}
         </div>
-      ) : loading ? (
+          ) : automations.loading ? (
         <div className="flex items-center justify-center py-20 text-zinc-500 dark:text-zinc-400">
           <span className="animate-pulse">Loading automations...</span>
         </div>

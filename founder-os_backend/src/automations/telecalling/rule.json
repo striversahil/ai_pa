@@ -1,0 +1,6 @@
+{
+  "name": "Telecalling",
+  "description": "Unified daily telecaller performance: Lead Conversion (programmatic estimate assignment) + Lead Generation (NeoDove calls/leads, live), with team KPIs and a leaderboard.",
+  "type": "handler",
+  "trigger": { "type": "schedule", "cron": "*/30 * * * *" }
+}

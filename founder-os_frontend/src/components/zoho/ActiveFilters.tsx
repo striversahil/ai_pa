@@ -5,7 +5,6 @@ import type { FilterRule } from "./types";
 
 interface Props {
   filters: FilterRule[];
-  counts: Record<string, number>;
   resultCount: number;
   onAdd: () => void;
   onUpdate: (id: number, patch: Partial<FilterRule>) => void;
@@ -13,7 +12,7 @@ interface Props {
   onClear: () => void;
 }
 
-export default function ActiveFilters({ filters, counts, resultCount, onAdd, onUpdate, onRemove, onClear }: Props) {
+export default function ActiveFilters({ filters, resultCount, onAdd, onUpdate, onRemove, onClear }: Props) {
   return (
     <div className="mb-6 space-y-3 bg-zinc-50/40 dark:bg-zinc-950/40 p-4 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl">
       <div className="flex items-center justify-between">
@@ -32,8 +31,12 @@ export default function ActiveFilters({ filters, counts, resultCount, onAdd, onU
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="text-xs text-zinc-600 dark:text-zinc-500 mb-1">
-            Showing filtered queue: <strong>{resultCount} estimates</strong>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Filtered queue</span>
+            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-extrabold text-sm tabular-nums">
+              {resultCount} estimates
+            </span>
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-600">matching active KPI filters</span>
           </div>
           {filters.map((rule, idx) => (
             <div key={rule.id} className="flex flex-wrap items-center gap-2 text-xs">
@@ -45,15 +48,15 @@ export default function ActiveFilters({ filters, counts, resultCount, onAdd, onU
                 onChange={(e) => onUpdate(rule.id, { field: e.target.value })}
                 className="bg-zinc-50 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-800 px-2 py-1 rounded-lg cursor-pointer"
               >
-                <option value="satisfactory">Satisfactory (Qualified) ({counts.satisfactory})</option>
-                <option value="notAnswering">Not Answering ({counts.notAnswering})</option>
-                <option value="high_value">High Value (&gt; ₹80k) ({counts.high_value})</option>
-                <option value="movingSlow">Moving Slow ({counts.movingSlow})</option>
-                <option value="underDiscussion">Under Discussion ({counts.underDiscussion})</option>
-                <option value="confirm">Confirm Expected ({counts.confirm})</option>
-                <option value="last_comment_within_5h">Last Comment within 5 Hours ({counts.last_comment_within_5h})</option>
-                <option value="last_comment_within_10h">Last Comment within 10 Hours ({counts.last_comment_within_10h})</option>
-                <option value="last_comment_older_5h">Last Comment older than 5 Hours ({counts.last_comment_older_5h})</option>
+                <option value="satisfactory">Satisfactory (Qualified)</option>
+                <option value="notAnswering">Not Answering</option>
+                <option value="high_value">High Value (&gt; ₹80k)</option>
+                <option value="movingSlow">Moving Slow</option>
+                <option value="underDiscussion">Under Discussion</option>
+                <option value="confirm">Confirm Expected</option>
+                <option value="last_comment_within_5h">Last Comment within 5 Hours</option>
+                <option value="last_comment_within_10h">Last Comment within 10 Hours</option>
+                <option value="last_comment_older_5h">Last Comment older than 5 Hours</option>
               </select>
 
               <select
