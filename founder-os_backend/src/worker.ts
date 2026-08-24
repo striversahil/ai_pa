@@ -294,14 +294,21 @@ app.post('/webhook', async (c) => {
           normalized = {
             event,
             timestamp: payload.timestamp,
-            data: { message, contact: { phone_number: d.phone } },
+            // keep waengine ids on data — media enrichment matches via
+            // conversation_id against GET /messages.
+            data: { ...d, message, contact: { phone_number: d.phone } },
           };
         }
-        void c.executionCtx.waitUntil(
-          WhatsAppController.handleWebhook(normalized).catch((err: any) => {
-            console.log('Founder-os pipeline webhook processing failed:', err?.message);
-          })
-        );
+        void c.executionCtx.waitUntil((async () => {
+          try {
+            await enrichWaEngineMedia(normalized, c.env);
+          } catch (err: any) {
+            console.log('waengine media enrichment failed:', err?.message);
+          }
+          await WhatsAppController.handleWebhook(normalized);
+        })().catch((err: any) => {
+          console.log('Founder-os pipeline webhook processing failed:', err?.message);
+        }));
       }
     }
     return c.text('EVENT_RECEIVED', 200);
@@ -313,6 +320,53 @@ app.post('/webhook', async (c) => {
 function isAuthorized(c: any): boolean {
   const auth = c.req.header('Authorization') || '';
   return auth === `Bearer ${c.env.SHARED_SECRET}`;
+}
+
+// ── waengine.pro media enrichment ────────────────────────────────────────────
+// Inbound webhooks carry only { phone, type, text } — no media URL, caption or
+// filename. Those live behind GET /messages?conversation_id=… (media.url etc).
+// For media messages we fetch the recent conversation once (60s in-isolate
+// cache absorbs bursts), match the webhook to the API row by type + nearest
+// createdAt, and attach media info so the pipeline stores it on the Message.
+const MEDIA_ENRICH_TYPES = new Set(['image', 'video', 'audio', 'document', 'sticker']);
+const MEDIA_MATCH_TOLERANCE_MS = 10 * 60 * 1000;
+const convCache = new Map<string, { msgs: any[]; at: number }>();
+
+async function enrichWaEngineMedia(normalized: any, env: any): Promise<void> {
+  const d = normalized?.data;
+  const msg = d?.message;
+  if (!msg || !MEDIA_ENRICH_TYPES.has(String(d.type)) || msg.media?.url) return;
+  if (!d.conversation_id || !env.WA_ENGINE_API_KEY) return;
+
+  let entry = convCache.get(d.conversation_id);
+  if (!entry || Date.now() - entry.at > 60_000) {
+    const base = String(env.WA_ENGINE_BASE_URL || 'https://waengine.pro/api/v1').replace(/\/$/, '');
+    const res = await fetch(`${base}/messages?conversation_id=${encodeURIComponent(d.conversation_id)}&limit=50`, {
+      headers: { 'X-API-Key': env.WA_ENGINE_API_KEY },
+    });
+    if (!res.ok) throw new Error(`waengine /messages ${res.status}`);
+    const json: any = await res.json();
+    entry = { msgs: Array.isArray(json.data) ? json.data : [], at: Date.now() };
+    convCache.set(d.conversation_id, entry);
+  }
+
+  const target = new Date(normalized.timestamp || Date.now()).getTime();
+  let best: any = null;
+  let bestDelta = Infinity;
+  for (const m of entry.msgs) {
+    if (m.direction !== 'inbound' || m.type !== d.type) continue;
+    const delta = Math.abs(new Date(m.createdAt).getTime() - target);
+    if (delta < bestDelta) { bestDelta = delta; best = m; }
+  }
+  if (!best || bestDelta > MEDIA_MATCH_TOLERANCE_MS) return;
+
+  const media = best.media || {};
+  msg.media = {
+    url: media.url || null,
+    mimeType: media.mimeType || null,
+    caption: media.caption || null,
+    filename: media.filename || null,
+  };
 }
 
 app.get('/api/logs', async (c) => {

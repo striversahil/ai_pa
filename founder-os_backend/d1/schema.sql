@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS Message (
   quotedMessageId TEXT,
   quotedBody TEXT,
   quotedSender TEXT,
+  mediaUrl TEXT,
   classification TEXT,
   classificationReason TEXT,
   classifiedAt TEXT,

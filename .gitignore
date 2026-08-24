@@ -31,3 +31,4 @@ waba-worker/package-lock.json
 
 # Frontend build artifact (accidentally committed before)
 founder-os_frontend/tsconfig.tsbuildinfo
+.dev.vars

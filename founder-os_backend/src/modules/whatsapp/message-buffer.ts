@@ -11,6 +11,7 @@ export interface BufferedMessage {
   wahaMessageId?: string | null;
   isHistorical?: boolean;
   mediaType?: string | null;
+  mediaUrl?: string | null;
   quotedMessageId?: string | null;
   quotedBody?: string | null;
   quotedSender?: string | null;
@@ -77,6 +78,7 @@ class MessageBuffer {
           timestamp: m.timestamp,
           isHistorical: m.isHistorical || false,
           wahaMessageId: m.wahaMessageId || null,
+          mediaUrl: m.mediaUrl || null,
           quotedMessageId: m.quotedMessageId || null,
           quotedBody: m.quotedBody || null,
           quotedSender: m.quotedSender || null,

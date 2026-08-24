@@ -31,7 +31,6 @@ function noteRecentMessageId(id: string): boolean {
 function extractMessageBody(message: any): string {
   if (message.body) return message.body;
   if (message.text) return typeof message.text === 'string' ? message.text : (message.text.body || JSON.stringify(message.text));
-  if (message.caption) return message.caption;
   const type = message.type || message.media_type;
   const typeLabels: Record<string, string> = {
     image: '[Image]',
@@ -45,7 +44,11 @@ function extractMessageBody(message: any): string {
     buttons: '[Button Reply]',
     list: '[List Selection]',
   };
-  return typeLabels[type] || '[Media/System Message]';
+  const label = typeLabels[type];
+  // Media captions are shown WITH their type label ("[Image] the catalogue, sir")
+  // so downstream LLMs keep the media context instead of a bare sentence.
+  if (message.caption) return label ? `${label} ${message.caption}` : String(message.caption);
+  return label || '[Media/System Message]';
 }
 
 // WA Engine Pro exposes the replied-to message on the inbound message. Returns
@@ -190,6 +193,7 @@ async function processInboundMessage(message: any, contact?: any): Promise<void>
   const body = extractMessageBody(message);
   const timestamp = new Date((message.timestamp || Date.now() / 1000) * 1000);
   const mediaType = message.type && message.type !== 'text' ? message.type : null;
+  const mediaUrl = typeof message.media?.url === 'string' && message.media.url ? message.media.url : null;
   const historical = isHistorical(timestamp);
   const quoted = extractQuotedMessage(message);
 
@@ -202,7 +206,7 @@ async function processInboundMessage(message: any, contact?: any): Promise<void>
   }).catch(() => {});
   await upsertContactFromMessage(from, message, contact, { skipUnreadIncrement: historical });
   emitInboundEvents(from, sender, body, messageId ?? undefined, timestamp);
-  messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId: messageId, isHistorical: historical, mediaType, ...quoted });
+  messageBuffer.push({ chatId: from, sender, body, timestamp, wahaMessageId: messageId, isHistorical: historical, mediaType, mediaUrl, ...quoted });
 }
 
 /**
