@@ -279,24 +279,29 @@ app.post('/webhook', async (c) => {
       // serves the local-runner AI queue.
       if (event === 'message.received') {
         const { WhatsAppController } = deps();
-        // waengine.pro flat shape: { event, timestamp, data: { phone, type, text, message_id } }.
-        // Normalize to the nested form the founder-os pipeline expects.
-        const normalized = d.message
-          ? payload
-          : {
-              event,
-              timestamp: payload.timestamp,
-              data: {
-                message: {
-                  id: d.message_id,
-                  phone: d.phone,
-                  type: d.type || 'text',
-                  text: { body: d.text || '' },
-                  timestamp: payload.timestamp,
-                },
-                contact: { phone_number: d.phone },
+        // waengine.pro flat shape: { event, timestamp, data: { phone, type, text, message_id? } }.
+        // Real payloads carry NO message_id (only conversation_id/contact_id) and an
+        // ISO-8601 timestamp, while the pipeline expects a message id plus epoch
+        // SECONDS. Normalize both or the Message insert dies on "Invalid time value".
+        let normalized = payload;
+        if (!d.message) {
+          const epochSec = Math.floor(new Date(payload.timestamp || Date.now()).getTime() / 1000) || Math.floor(Date.now() / 1000);
+          const messageId = d.message_id || d.id || `${d.phone || 'unknown'}-${payload.timestamp || Date.now()}`;
+          normalized = {
+            event,
+            timestamp: payload.timestamp,
+            data: {
+              message: {
+                id: messageId,
+                phone: d.phone,
+                type: d.type || 'text',
+                text: { body: d.text || '' },
+                timestamp: epochSec,
               },
-            };
+              contact: { phone_number: d.phone },
+            },
+          };
+        }
         void c.executionCtx.waitUntil(
           WhatsAppController.handleWebhook(normalized).catch((err: any) => {
             console.log('Founder-os pipeline webhook processing failed:', err?.message);
