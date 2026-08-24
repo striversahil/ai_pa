@@ -14,6 +14,7 @@ const WhatsAppMarketingDashboard = dynamic(() => import("./WhatsAppMarketingDash
 const EnterpriseOperationsDashboard = dynamic(() => import("./EnterpriseOperationsDashboard"), { ssr: false });
 const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDashboard"), { ssr: false });
 const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
+const AutopilotDashboard = dynamic(() => import("./AutopilotDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -117,6 +118,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "whatsapp-marketing") return <WhatsAppMarketingDashboard />;
     if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
     if (selected === "telecalling") return <TelecallingDashboard />;
+    if (selected === "whatsapp-autopilot") return <AutopilotDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;

@@ -23,6 +23,7 @@ export const LiveEvent = {
   Marketing: "marketing",
   Sheet: "sheet",
   Enquiries: "enquiries",
+  Autopilot: "autopilot",
 } as const;
 
 export type LiveEventType = (typeof LiveEvent)[keyof typeof LiveEvent];

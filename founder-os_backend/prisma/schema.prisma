@@ -461,3 +461,119 @@ model AuthUserScope {
 
   @@id([userId, scopeKey])
 }
+
+// ── WhatsApp Business Autopilot ──────────────────────────────────────────────
+// Structured business-operating layer under the WhatsApp conversation flow
+// (see whatsapp-business-autopilot-architecture.md). The core loop runs on the
+// GH Actions runner (scripts/whatsapp-autopilot-runner.js); these tables are
+// its source of truth. Phase 0 (shadow mode): transitions are recorded and the
+// task queue is populated, but no tool/action ever sends a customer message.
+
+// One trackable piece of business work inside one chat (a price enquiry, an
+// order, a complaint...). A group chat with four things going on is four
+// independent rows instead of one blurred feed.
+model WaTask {
+  id             String    @id @default(uuid())
+  chatId         String
+  chatName       String
+  taskType       String    @default("general") // price_enquiry | order | complaint | support | general | ...
+  item           String?   // the concrete subject (e.g. "Item B, size 6 inch")
+  status         String    @default("open") // open | waiting | needs_clarification | needs_review | completed | cancelled
+  priority       String?
+  assignedTo     String?
+  rootMessageId  String?   // wa_message_id that opened this task (lineage root)
+  summary        String?
+  // Optimistic concurrency (§4.10): every transition write is conditioned on
+  // version; a conflicting writer re-reads and re-runs against fresh state.
+  version        Int       @default(1)
+  lastInboundAt  DateTime?
+  lastOutboundAt DateTime?
+  waitingSince   DateTime?
+  waitTimeoutAt  DateTime?
+  followUpDueAt  DateTime?
+  followUpCount  Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  history  WaTaskHistory[]
+  actions  WaAction[]
+  overrides OverrideLog[]
+
+  @@index([chatId, status])
+  @@index([status])
+  @@index([followUpDueAt])
+  @@index([waitTimeoutAt])
+  @@index([createdAt])
+}
+
+// message → parent → root lineage + task association per message. Keyed by the
+// WhatsApp message id (stable across environments), unique for idempotency.
+model MessageLineage {
+  id                String  @id @default(uuid())
+  waMessageId       String  @unique
+  parentWaMessageId String?
+  rootWaMessageId   String?
+  taskId            String?
+  associationMethod String  @default("llm") // deterministic | llm | human
+  confidence        Float?
+  resolutionStatus  String  @default("resolved") // resolved | pending (parent not yet seen)
+  createdAt         DateTime @default(now())
+
+  @@index([taskId])
+  @@index([rootWaMessageId])
+}
+
+// Full audit trail of every transition on a task — makes every decision
+// reconstructable and thresholds tunable from real data (§8).
+model WaTaskHistory {
+  id          String   @id @default(uuid())
+  taskId      String
+  task        WaTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  transition  String   // create | update | complete | reopen | wait | clarify | review | action
+  triggeredBy String   @default("llm") // llm | human | system
+  messageId   String?  // triggering WhatsApp message id
+  notes       String?
+  confidence  Float?   // transition-confidence at decision time
+  occurredAt  DateTime @default(now())
+
+  @@index([taskId, occurredAt])
+}
+
+// Proposed/executed business actions (tools). In shadow mode every row stays
+// `pending` — nothing is ever sent; the review UI approves/rejects them.
+model WaAction {
+  id          String   @id @default(uuid())
+  taskId      String?
+  task        WaTask?  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  toolName    String   // send_reply | forward_message | check_inventory | schedule_follow_up | escalate_to_human | request_clarification | broadcast_to_vendors
+  inputJson   String?  // JSON args the LLM proposed
+  outputJson  String?  // JSON result (null in shadow mode)
+  status      String   @default("pending") // pending | approved | rejected | executed_manual | success | failed
+  requestedBy String   @default("llm") // llm | human | system
+  reason      String?
+  error       String?
+  createdAt   DateTime @default(now())
+  executedAt  DateTime?
+
+  @@index([taskId])
+  @@index([status, createdAt])
+}
+
+// Every time a human overrides the system's association/transition decision,
+// log it next to the system's original call + confidence — the data that tells
+// you whether a threshold should move (§8).
+model OverrideLog {
+  id               String   @id @default(uuid())
+  taskId           String?
+  task             WaTask?  @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  messageId        String?
+  decisionType     String   // association | transition
+  systemDecision   String?
+  systemConfidence Float?
+  humanDecision    String
+  reviewer         String?
+  overriddenAt     DateTime @default(now())
+
+  @@index([taskId])
+  @@index([decisionType])
+}

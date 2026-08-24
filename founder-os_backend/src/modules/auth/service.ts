@@ -18,6 +18,7 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "whatsapp-marketing", label: "WhatsApp Marketing", description: "Marketing campaigns" },
   { key: "sheet-analysis", label: "Sheet Analysis", description: "Sheet analysis dashboard" },
   { key: "brain", label: "Brain", description: "Company Brain search" },
+  { key: "autopilot", label: "WhatsApp Autopilot", description: "Autopilot task queue and review dashboard" },
 ];
 
 export function getGoogleConfig(env: any): GoogleConfig | null {

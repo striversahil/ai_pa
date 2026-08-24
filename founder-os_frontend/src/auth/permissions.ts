@@ -19,6 +19,7 @@ export const VIEW_SCOPE: Record<string, string> = {
   "whatsapp-marketing": "whatsapp-marketing",
   "sheet-analysis": "sheet-analysis",
   "telecalling": "automations",
+  "whatsapp-autopilot": "autopilot",
 };
 
 export interface AuthUserMe {

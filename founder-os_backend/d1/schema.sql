@@ -339,3 +339,90 @@ CREATE TABLE IF NOT EXISTS waba_payloads (
 );
 CREATE INDEX IF NOT EXISTS idx_waba_payloads_processed ON waba_payloads (processed, id);
 CREATE INDEX IF NOT EXISTS idx_waba_payloads_direction ON waba_payloads (direction);
+
+-- ── WhatsApp Business Autopilot (shadow mode) ───────────────────────────────
+-- Core loop runs on the GH Actions runner; these tables are its source of truth.
+CREATE TABLE IF NOT EXISTS WaTask (
+  id TEXT PRIMARY KEY,
+  chatId TEXT NOT NULL,
+  chatName TEXT NOT NULL,
+  taskType TEXT NOT NULL DEFAULT 'general',
+  item TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','waiting','needs_clarification','needs_review','completed','cancelled')),
+  priority TEXT,
+  assignedTo TEXT,
+  rootMessageId TEXT,
+  summary TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  lastInboundAt TEXT,
+  lastOutboundAt TEXT,
+  waitingSince TEXT,
+  waitTimeoutAt TEXT,
+  followUpDueAt TEXT,
+  followUpCount INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_watask_chat_status ON WaTask(chatId, status);
+CREATE INDEX IF NOT EXISTS idx_watask_status ON WaTask(status);
+CREATE INDEX IF NOT EXISTS idx_watask_followUpDueAt ON WaTask(followUpDueAt);
+CREATE INDEX IF NOT EXISTS idx_watask_waitTimeoutAt ON WaTask(waitTimeoutAt);
+CREATE INDEX IF NOT EXISTS idx_watask_createdAt ON WaTask(createdAt);
+
+CREATE TABLE IF NOT EXISTS MessageLineage (
+  id TEXT PRIMARY KEY,
+  waMessageId TEXT NOT NULL UNIQUE,
+  parentWaMessageId TEXT,
+  rootWaMessageId TEXT,
+  taskId TEXT,
+  associationMethod TEXT NOT NULL DEFAULT 'llm',
+  confidence REAL,
+  resolutionStatus TEXT NOT NULL DEFAULT 'resolved',
+  createdAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lineage_task ON MessageLineage(taskId);
+CREATE INDEX IF NOT EXISTS idx_lineage_root ON MessageLineage(rootWaMessageId);
+
+CREATE TABLE IF NOT EXISTS WaTaskHistory (
+  id TEXT PRIMARY KEY,
+  taskId TEXT NOT NULL,
+  transition TEXT NOT NULL,
+  triggeredBy TEXT NOT NULL DEFAULT 'llm',
+  messageId TEXT,
+  notes TEXT,
+  confidence REAL,
+  occurredAt TEXT NOT NULL,
+  FOREIGN KEY (taskId) REFERENCES WaTask(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_wathistory_task ON WaTaskHistory(taskId, occurredAt);
+
+CREATE TABLE IF NOT EXISTS WaAction (
+  id TEXT PRIMARY KEY,
+  taskId TEXT,
+  toolName TEXT NOT NULL,
+  inputJson TEXT,
+  outputJson TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  requestedBy TEXT NOT NULL DEFAULT 'llm',
+  reason TEXT,
+  error TEXT,
+  createdAt TEXT NOT NULL,
+  executedAt TEXT,
+  FOREIGN KEY (taskId) REFERENCES WaTask(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_waaction_task ON WaAction(taskId);
+CREATE INDEX IF NOT EXISTS idx_waaction_status ON WaAction(status, createdAt);
+
+CREATE TABLE IF NOT EXISTS OverrideLog (
+  id TEXT PRIMARY KEY,
+  taskId TEXT,
+  messageId TEXT,
+  decisionType TEXT NOT NULL,
+  systemDecision TEXT,
+  systemConfidence REAL,
+  humanDecision TEXT NOT NULL,
+  reviewer TEXT,
+  overriddenAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_overridelog_task ON OverrideLog(taskId);
+CREATE INDEX IF NOT EXISTS idx_overridelog_type ON OverrideLog(decisionType);
