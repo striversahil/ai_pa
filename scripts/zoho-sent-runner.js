@@ -375,13 +375,31 @@ function resolveSalesAgent(badgeResult, agentRoster, commentText = '') {
   const lower = (s) => String(s || '').toLowerCase();
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  // 1. LLM answer → exact roster name, else unambiguous prefix (e.g. "Samar" → "Samarjeet").
+  // A roster name is only "present" in the text if the text contains the full
+  // name (word-bounded) or a unique roster prefix of it. Used to verify both
+  // LLM answers and safety-net scans against hallucinations.
+  const presentInText = (name) => {
+    if (!commentText) return false;
+    if (new RegExp(`\\b${esc(name)}\\b`, 'i').test(commentText)) return true;
+    const ln = lower(name);
+    for (const w of new Set(lower(commentText).match(/[a-z]{4,}/g) || [])) {
+      if (ln !== w && ln.startsWith(w)) {
+        const rivals = agentRoster.filter((n) => lower(n).startsWith(w));
+        if (rivals.length === 1) return true; // unique short form
+      }
+    }
+    return false;
+  };
+
+  // 1. LLM answer → exact roster name, else unambiguous prefix — BUT only if
+  //    some form of that name actually appears in the comment. Guards against
+  //    the model guessing an unsigned comment (e.g. EST-023091 → "Muskan").
   const raw = lower(String(badgeResult.sales_agent || '').trim());
   if (raw && !/^unassigned$/.test(raw)) {
     const exact = agentRoster.find((n) => lower(n) === raw);
-    if (exact) return exact;
+    if (exact && presentInText(exact)) return exact;
     const pref = agentRoster.find((n) => lower(n).startsWith(raw) && raw.length >= 4);
-    if (pref) return pref;
+    if (pref && presentInText(pref)) return pref;
   }
 
   // 2. Safety net: scan the raw comment — the LLM sometimes overlooks signatures.
