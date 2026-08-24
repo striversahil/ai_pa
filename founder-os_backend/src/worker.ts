@@ -287,19 +287,14 @@ app.post('/webhook', async (c) => {
         if (!d.message) {
           const epochSec = Math.floor(new Date(payload.timestamp || Date.now()).getTime() / 1000) || Math.floor(Date.now() / 1000);
           const messageId = d.message_id || d.id || `${d.phone || 'unknown'}-${payload.timestamp || Date.now()}`;
+          const message: any = { id: messageId, phone: d.phone, type: d.type || 'text', timestamp: epochSec };
+          // Only attach text when present — an empty text object would bypass
+          // extractMessageBody's [Image]/[Video] type-label fallback.
+          if (d.text) message.text = { body: String(d.text) };
           normalized = {
             event,
             timestamp: payload.timestamp,
-            data: {
-              message: {
-                id: messageId,
-                phone: d.phone,
-                type: d.type || 'text',
-                text: { body: d.text || '' },
-                timestamp: epochSec,
-              },
-              contact: { phone_number: d.phone },
-            },
+            data: { message, contact: { phone_number: d.phone } },
           };
         }
         void c.executionCtx.waitUntil(
