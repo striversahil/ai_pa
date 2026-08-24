@@ -1647,6 +1647,49 @@ app.get('/api/runner/autopilot/followups', async (c) => {
   });
 });
 
+// Contact names are not part of waengine webhooks, so rows start as the
+// generic 'Client'. This pulls real display names from the conversations
+// API and backfills them (only where still placeholder).
+app.post('/api/runner/autopilot/sync-contacts', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { prisma } = deps();
+  const env = c.env as { WA_ENGINE_API_KEY?: string };
+  if (!env.WA_ENGINE_API_KEY) return c.json({ error: 'WA_ENGINE_API_KEY not configured' }, 500);
+  const placeholders = new Set(['', 'Client']);
+  let scanned = 0;
+  let updated = 0;
+  for (let page = 1; page <= 20; page++) {
+    let convs: any[];
+    try {
+      const res = await fetch(`https://waengine.pro/api/v1/conversations?page=${page}&limit=100`, {
+        headers: { 'X-API-Key': env.WA_ENGINE_API_KEY },
+      });
+      if (!res.ok) break;
+      const json: any = await res.json();
+      convs = Array.isArray(json?.data) ? json.data : [];
+    } catch {
+      break;
+    }
+    if (!convs.length) break;
+    for (const conv of convs) {
+      const phone = String(conv?.contact?.phone || '').replace(/\D/g, '');
+      const name = String(conv?.contact?.name || '').trim();
+      if (!phone || !name || placeholders.has(name)) continue;
+      scanned++;
+      try {
+        const r = await (prisma as any).contact.updateMany({
+          where: { chatId: `${phone}@c.us`, name: { in: ['Client', ''] } },
+          data: { name },
+        });
+        updated += Number(r?.count) || 0;
+      } catch { /* skip bad row */ }
+    }
+    if (convs.length < 100) break;
+  }
+  return c.json({ ok: true, scanned, updated });
+});
+
+
 // ── whatsapp-autopilot human review API (dashboard, session-gated) ───────────
 
 app.post('/api/autopilot/tasks/:id/review', async (c) => {

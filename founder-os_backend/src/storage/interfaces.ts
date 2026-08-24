@@ -46,6 +46,7 @@ export interface StoredMessage {
   processed: boolean;
   wahaMessageId: string | null;
   isHistorical: boolean;
+  mediaUrl?: string | null;
   quotedMessageId: string | null;
   quotedBody: string | null;
   quotedSender: string | null;

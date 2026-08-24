@@ -61,6 +61,7 @@ function messageFromRow(r: Row): StoredMessage {
     processed: toBool(r.processed as number),
     wahaMessageId: (r.wahaMessageId as string) ?? null,
     isHistorical: toBool(r.isHistorical as number),
+    mediaUrl: (r.mediaUrl as string) ?? null,
     quotedMessageId: (r.quotedMessageId as string) ?? null,
     quotedBody: (r.quotedBody as string) ?? null,
     quotedSender: (r.quotedSender as string) ?? null,

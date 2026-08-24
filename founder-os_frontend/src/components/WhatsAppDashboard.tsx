@@ -34,6 +34,7 @@ interface RawMessage {
   quotedMessageId?: string | null;
   quotedBody?: string | null;
   quotedSender?: string | null;
+  mediaUrl?: string | null;
 }
 
 interface PendingItem {
@@ -295,6 +296,7 @@ export default function WhatsAppDashboard() {
                   quotedMessageId: msg.quotedMessageId || null,
                   quotedBody: msg.quotedBody || null,
                   quotedSender: msg.quotedSender || null,
+                  mediaUrl: msg.mediaUrl || null,
                 }
               ];
             });
@@ -617,7 +619,34 @@ export default function WhatsAppDashboard() {
                               <span className="italic">{msg.quotedBody}</span>
                             </div>
                           )}
-                          <p className="whitespace-pre-wrap">{msg.body}</p>
+                          {(() => {
+                            const url = msg.mediaUrl;
+                            const caption = msg.body.replace(/^\s*\[[^\]]*\]\s*/, "").trim();
+                            const isImg = !!url && /\.(jpe?g|png|webp|gif)(\?|#|$)/i.test(url);
+                            if (isImg) {
+                              return (
+                                <>
+                                  <a href={url!} target="_blank" rel="noreferrer" className="block">
+                                    <img src={url!} alt="Media" loading="lazy" className="rounded-xl max-h-64 w-auto border border-black/10 dark:border-white/10 mb-1" />
+                                  </a>
+                                  {caption && <p className="whitespace-pre-wrap">{caption}</p>}
+                                </>
+                              );
+                            }
+                            if (url) {
+                              const ext = (url.split("?")[0].split("#")[0].split(".").pop() || "file").toUpperCase();
+                              return (
+                                <>
+                                  <a href={url!} target="_blank" rel="noreferrer"
+                                    className={`inline-flex items-center gap-1.5 mb-1 rounded-lg px-2.5 py-1.5 text-[11px] font-extrabold underline underline-offset-2 ${isMe ? "bg-indigo-500/25 text-white hover:bg-indigo-500/40" : "bg-zinc-900/5 dark:bg-white/10 text-zinc-800 dark:text-zinc-100 hover:bg-zinc-900/10 dark:hover:bg-white/20"}`}>
+                                    Attachment · {ext}
+                                  </a>
+                                  {caption && <p className="whitespace-pre-wrap">{caption}</p>}
+                                </>
+                              );
+                            }
+                            return <p className="whitespace-pre-wrap">{msg.body}</p>;
+                          })()}
                           <span className="text-[9px] text-zinc-500 dark:text-zinc-400 block mt-1.5 text-right font-mono">
                             {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>

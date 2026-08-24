@@ -413,6 +413,15 @@ async function main() {
   const fuActed = await followupsPass();
   if (fuActed) console.log(`whatsapp-autopilot-runner: followup pass — ${fuActed} task(s) updated`);
 
+  // Refresh display names from the provider (webhooks carry none). Cheap,
+  // best-effort: a failure here must never block the loop.
+  try {
+    const sc = await workerRequest('/api/runner/autopilot/sync-contacts', { method: 'POST' });
+    if (sc?.updated) console.log(`whatsapp-autopilot-runner: contact sync — ${sc.updated} name(s) updated`);
+  } catch (e) {
+    console.warn(`whatsapp-autopilot-runner: contact sync skipped (${e.message})`);
+  }
+
   const messages = inbox.messages || [];
   if (!messages.length) {
     console.log('whatsapp-autopilot-runner: no new messages');
