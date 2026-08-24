@@ -1,4 +1,4 @@
-rdo-- founder-os D1 schema (SQLite) — port of Prisma models.
+-- founder-os D1 schema (SQLite) — port of Prisma models.
 -- Enums → TEXT with CHECK, booleans → INTEGER 0/1, DateTime → TEXT (ISO 8601),
 -- pgvector BrainContext.embedding dropped (D1 has no vector extension).
 
