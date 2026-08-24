@@ -134,6 +134,17 @@ function aggregate(rows: any[]): NeodoveAgentRow[] {
     if (r.userId) agg.userId = r.userId;
     if (!agg.managerName && r.managerName) agg.managerName = r.managerName;
   }
+  // Match the NeoDove portal's USER_REPORT headline, which reports COMBINED
+  // outgoing + incoming activity. The API's totalCallAttempted /
+  // totalCallConnected fields describe a narrower dialer-only subset and
+  // understate what managers see (e.g. Rani: app 178/56 vs those fields
+  // 146/37). All four component fields are already summed above, so derive:
+  for (const a of byUser.values()) {
+    a.callsAttempted = a.outgoingCalls + a.incomingCalls;
+    a.callsConnected =
+      (a.outgoingCalls - a.outgoingMissed) + (a.incomingCalls - a.incomingMissed);
+    a.callsNotConnected = a.outgoingMissed + a.incomingMissed;
+  }
   return [...byUser.values()].sort((a, b) => b.callsAttempted - a.callsAttempted);
 }
 
