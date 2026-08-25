@@ -276,6 +276,12 @@ export interface TelecallerDayMetrics {
     leadsLost: number;
     leadsGenerated: number;
     followupLeads: number;
+    connectedTarget: number;
+    connectedPct: number;
+    connectedStatus: 'green' | 'amber' | 'red';
+    leadsTarget: number;
+    leadsPct: number;
+    leadsStatus: 'green' | 'amber' | 'red';
   };
   score: number;
 }

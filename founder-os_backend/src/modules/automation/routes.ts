@@ -11,6 +11,7 @@ import { Router } from 'express';
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { AutomationEngine } from './engine';
+import { DASHBOARD_SLUGS } from './dashboardSlugs';
 import { asyncHandler } from '../../middleware/asyncHandler';
 
 const router = Router();
@@ -26,11 +27,8 @@ function parseJson(value: string | null | undefined): unknown {
 
 router.get('/', asyncHandler(async (_req, res) => {
   const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
-  const withDashboard = new Set(
-    AutomationEngine.all()
-      .filter((e) => typeof e.module?.data === 'function')
-      .map((e) => e.def.id),
-  );
+  // Static + boot-independent so the "View Dashboard" button never flickers.
+  const withDashboard = DASHBOARD_SLUGS;
   res.json(rows.map((r) => ({
     id: r.id,
     slug: r.slug,

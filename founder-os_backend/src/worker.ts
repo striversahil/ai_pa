@@ -8,6 +8,7 @@ import { createAuthStore } from './modules/auth/store';
 import { authEnabled, getMe } from './modules/auth/service';
 import { readSessionCookie } from './modules/auth/session';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from './automations/neodove-refresh';
+import { DASHBOARD_SLUGS } from './modules/automation/dashboardSlugs';
 
 type Bindings = {
   DB: D1Database;
@@ -1772,20 +1773,12 @@ function parseJson(value: string | null | undefined): unknown {
 }
 
 app.get('/api/automations', async (c) => {
-  const { prisma, AutomationEngine } = deps();
+  const { prisma } = deps();
   const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
-  // Deterministic dashboard capability: static slugs the frontend renders
-  // (Automations.tsx renderDashboard) + engine modules exposing a `data` fn.
-  // Independent of per-isolate boot state so the button never flickers.
-  const DASHBOARD_SLUGS = new Set([
-    'zoho-sent-analyzer', 'dpp-prices-dashboard', 'wa-engine-monitor',
-    'whatsapp-marketing', 'enterprise-operations-analytics', 'telecalling-agent-analysis',
-    'whatsapp-autopilot',
-  ]);
-  const withDashboard = new Set([
-    ...DASHBOARD_SLUGS,
-    ...AutomationEngine.all().filter((e: any) => typeof e.module?.data === 'function').map((e: any) => e.def.id),
-  ]);
+  // Dashboard capability is STATIC (see dashboardSlugs.ts) and must not depend
+  // on engine boot state — otherwise the "View Dashboard" button flickers on
+  // cold-start isolates where modules are not yet registered.
+  const withDashboard = DASHBOARD_SLUGS;
   return c.json(rows.map((r: any) => ({
     id: r.id, slug: r.slug, name: r.name, description: r.description, type: r.type,
     enabled: r.enabled, cooldownMs: r.cooldownMs, lastRunAt: r.lastRunAt, runCount: r.runCount,
