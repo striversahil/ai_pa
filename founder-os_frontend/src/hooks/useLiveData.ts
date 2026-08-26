@@ -24,7 +24,9 @@ let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let pingTimer: ReturnType<typeof setInterval> | undefined;
 
 function connect() {
-  if (typeof WebSocket === "undefined") return;
+  // SSR-safe: Node ≥22 exposes a global WebSocket, so the old guard passed and
+  // `window.location` threw during static export. Guard on window instead.
+  if (typeof window === "undefined" || typeof WebSocket === "undefined") return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   try {

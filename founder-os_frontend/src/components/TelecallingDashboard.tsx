@@ -454,21 +454,42 @@ export default function TelecallingDashboard() {
             <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
               <h3 className="text-lg font-bold mb-1">📨 Lead Conversion</h3>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
-                Sent estimates are distributed evenly across telecallers. Pick an agent to see their follow-up list.
+                Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates.
               </p>
 
-              <div className="flex items-center gap-2 mb-4">
-                <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Agent:</label>
-                <select
-                  value={agentFilter ?? ""}
-                  onChange={(e) => setAgentFilter(e.target.value || null)}
-                  className="px-3 py-1.5 text-sm bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none"
+              {/* Horizontal agent tabs */}
+              <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-1 px-1">
+                <button
+                  onClick={() => setAgentFilter(null)}
+                  className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
+                    !agentFilter
+                      ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                      : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-indigo-400 dark:hover:border-indigo-500"
+                  }`}
                 >
-                  <option value="">All agents</option>
-                  {(dash.data?.meta?.agents ?? activeBoard).map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                  All
+                </button>
+                {(dash.data?.meta?.agents ?? activeBoard).filter((a) => a.active).map((t) => {
+                  const board = activeBoard.find((b) => b.id === t.id);
+                  const count = board?.conversion.assigned ?? 0;
+                  const active = agentFilter === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setAgentFilter(active ? null : t.id)}
+                      className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
+                        active
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                          : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-indigo-400 dark:hover:border-indigo-500"
+                      }`}
+                    >
+                      {t.name}
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${active ? "bg-white/20" : "bg-zinc-100 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400"}`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               {!agentFilter && (
