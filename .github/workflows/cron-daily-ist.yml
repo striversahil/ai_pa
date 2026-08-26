@@ -42,6 +42,17 @@ jobs:
         run: |
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/data-retention" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
 
+  telecalling-distribution:
+    # 8:00 AM IST distribution of Zoho "sent" estimates to active telecallers.
+    # Uses the async path so the work runs server-side and the job returns quickly.
+    # The every-30-min cron-every-30min.yml run is kept as a freshness fallback.
+    if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: telecalling distribution (even-split sent estimates to active telecallers)
+        run: |
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+
   morning-brief:
     if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

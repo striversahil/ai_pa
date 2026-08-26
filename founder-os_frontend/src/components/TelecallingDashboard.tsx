@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { Fragment, useState, useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
 
 interface LeaderRow {
@@ -32,10 +32,27 @@ interface LeaderRow {
 }
 
 interface DashData {
-  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number } };
+  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[] };
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
+}
+
+interface FollowUp {
+  estimateId: string;
+  estimateNumber: string | null;
+  customerName: string | null;
+  status: string | null;
+  total: number | null;
+  day: string;
+  assignedAt: any;
+  assignmentStatus: string;
+}
+
+interface AgentViewData {
+  meta: { analysis: string; title: string; day: string; requestedDay?: string; usingLatestAvailable?: boolean; agents?: { id: string; name: string; active: boolean }[]; generatedAt: string; error?: string };
+  agent: { id: string; name: string; active: boolean; conversion: any; generation: any; score: number; followUpCount: number };
+  followUps: FollowUp[];
 }
 
 interface RosterRow {
@@ -143,6 +160,32 @@ export default function TelecallingDashboard() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+
+  // Per-agent assigned-estimates dropdown (inline in the leaderboard). Toggle on
+  // an agent's row → fetch that agent's open assigned estimates via ?agent=.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const agentDetail = useLiveQuery<AgentViewData | null>(
+    async () => {
+      if (!expandedId) return null;
+      const res = await fetch(`/api/automations/telecalling/data?agent=${encodeURIComponent(expandedId)}`);
+      if (!res.ok) throw new Error("load failed");
+      return res.json();
+    },
+    { events: ["automation", "telecalling"], deps: [expandedId] },
+  );
+
+  // Per-agent follow-up list (dropdown). Re-fetches whenever the selected agent
+  // changes; backend returns that agent's open assigned estimates.
+  const agentView = useLiveQuery<AgentViewData | null>(
+    async () => {
+      if (!agentFilter) return null;
+      const res = await fetch(`/api/automations/telecalling/data?agent=${encodeURIComponent(agentFilter)}`);
+      if (!res.ok) throw new Error("load failed");
+      return res.json();
+    },
+    { events: ["automation", "telecalling"], deps: [agentFilter] },
+  );
 
   const refreshAll = useCallback(() => {
     dash.refresh();
@@ -317,19 +360,74 @@ export default function TelecallingDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {sorted.map((t, i) => (
-                        <tr key={t.id} className="border-b border-zinc-100 dark:border-zinc-800/60">
-                          <td className="py-2 pr-4 text-zinc-500 dark:text-zinc-600 font-bold">{i + 1}</td>
-                          <td className="py-2 pr-4 font-semibold text-zinc-900 dark:text-white">{t.name}</td>
-                          <td className="py-2 pr-4 text-right font-mono">{t.conversion.assigned}</td>
-                          <td className="py-2 pr-4 text-right text-emerald-400 font-mono">{t.conversion.won}</td>
-                          <td className="py-2 pr-4 text-right font-mono">{t.conversion.conversionRate}%</td>
-                          <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.callsConnected)}</td>
-                          <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.leadsGenerated)}</td>
-                          <td className="py-2 pr-4 text-right font-mono text-indigo-300">{fmtTalk(t.generation.talkTimeSec)}</td>
-                          <td className="py-2 text-right font-extrabold text-indigo-300 font-mono">{t.score}</td>
-                        </tr>
-                      ))}
+                      {sorted.map((t, i) => {
+                        const open = expandedId === t.id;
+                        const view = agentDetail.data?.agent?.id === t.id ? agentDetail.data : null;
+                        return (
+                          <Fragment key={t.id}>
+                            <tr className={`border-b border-zinc-100 dark:border-zinc-800/60 ${open ? "bg-indigo-50/40 dark:bg-indigo-500/5" : ""}`}>
+                              <td className="py-2 pr-4 text-zinc-500 dark:text-zinc-600 font-bold">{i + 1}</td>
+                              <td className="py-2 pr-4">
+                                <button
+                                  onClick={() => setExpandedId(open ? null : t.id)}
+                                  className="inline-flex items-center gap-1.5 font-semibold text-zinc-900 dark:text-white hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+                                  title={open ? "Hide assigned estimates" : "Show assigned estimates"}
+                                >
+                                  {t.name}
+                                  <span className={`text-[10px] text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+                                </button>
+                              </td>
+                              <td className="py-2 pr-4 text-right font-mono">{t.conversion.assigned}</td>
+                              <td className="py-2 pr-4 text-right text-emerald-400 font-mono">{t.conversion.won}</td>
+                              <td className="py-2 pr-4 text-right font-mono">{t.conversion.conversionRate}%</td>
+                              <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.callsConnected)}</td>
+                              <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.leadsGenerated)}</td>
+                              <td className="py-2 pr-4 text-right font-mono text-indigo-300">{fmtTalk(t.generation.talkTimeSec)}</td>
+                              <td className="py-2 text-right font-extrabold text-indigo-300 font-mono">{t.score}</td>
+                            </tr>
+                            {open && (
+                              <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
+                                <td colSpan={9} className="py-2 pr-4">
+                                  <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
+                                        {t.name} — assigned estimates
+                                        <span className="ml-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                                          ({view?.agent?.followUpCount ?? t.conversion.assigned})
+                                        </span>
+                                      </h4>
+                                      {view && (
+                                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                          {view.agent.conversion?.assigned ?? 0} assigned · {view.agent.conversion?.won ?? 0} won ·{" "}
+                                          {view.agent.conversion?.conversionRate ?? 0}% conv
+                                        </span>
+                                      )}
+                                    </div>
+                                    {agentDetail.loading && <p className="text-xs text-zinc-500">Loading assigned estimates…</p>}
+                                    {!agentDetail.loading && (view?.followUps?.length ?? 0) === 0 && (
+                                      <p className="text-xs text-zinc-500">No assigned estimates for this agent.</p>
+                                    )}
+                                    <div className="grid gap-1.5 sm:grid-cols-2">
+                                      {(view?.followUps ?? []).map((f) => (
+                                        <div key={f.estimateId} className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 dark:border-zinc-800 px-2.5 py-1.5">
+                                          <div className="min-w-0">
+                                            <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
+                                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
+                                          </div>
+                                          <div className="text-right shrink-0">
+                                            <div className="text-[11px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
+                                            <div className="text-[11px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                       {sorted.length === 0 && (
                         <tr><td colSpan={9} className="py-4 text-center text-zinc-500">No active telecallers yet.</td></tr>
                       )}
@@ -355,18 +453,66 @@ export default function TelecallingDashboard() {
           {view === "conversion" && (
             <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
               <h3 className="text-lg font-bold mb-1">📨 Lead Conversion</h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">Zoho estimates assigned to each telecaller (today).</p>
-              <div className="space-y-2">
-                {activeBoard.length === 0 && <p className="text-sm text-zinc-500">No active telecallers.</p>}
-                {activeBoard.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
-                    <span className="font-semibold text-zinc-900 dark:text-white">{t.name}</span>
-                    <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono">
-                      {t.conversion.assigned} assigned · {t.conversion.won} won · {t.conversion.conversionRate}% · ₹{fmtNum(t.conversion.pipelineValue)}
-                    </span>
-                  </div>
-                ))}
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+                Sent estimates are distributed evenly across telecallers. Pick an agent to see their follow-up list.
+              </p>
+
+              <div className="flex items-center gap-2 mb-4">
+                <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Agent:</label>
+                <select
+                  value={agentFilter ?? ""}
+                  onChange={(e) => setAgentFilter(e.target.value || null)}
+                  className="px-3 py-1.5 text-sm bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none"
+                >
+                  <option value="">All agents</option>
+                  {(dash.data?.meta?.agents ?? activeBoard).map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
               </div>
+
+              {!agentFilter && (
+                <div className="space-y-2">
+                  {activeBoard.length === 0 && <p className="text-sm text-zinc-500">No active telecallers.</p>}
+                  {activeBoard.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
+                      <span className="font-semibold text-zinc-900 dark:text-white">{t.name}</span>
+                      <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono">
+                        {t.conversion.assigned} assigned · {t.conversion.won} won · {t.conversion.conversionRate}% · ₹{fmtNum(t.conversion.pipelineValue)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {agentFilter && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold text-zinc-900 dark:text-white">
+                      {agentView.data?.agent?.name ?? "…"} — follow-ups ({agentView.data?.agent?.followUpCount ?? 0})
+                    </h4>
+                    <button onClick={() => setAgentFilter(null)} className="text-xs text-indigo-400 hover:underline">Back to all</button>
+                  </div>
+                  {agentView.loading && <p className="text-sm text-zinc-500">Loading…</p>}
+                  {!agentView.loading && (agentView.data?.followUps?.length ?? 0) === 0 && (
+                    <p className="text-sm text-zinc-500">No follow-up estimates assigned to this agent.</p>
+                  )}
+                  <div className="space-y-2">
+                    {agentView.data?.followUps?.map((f) => (
+                      <div key={f.estimateId} className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">{f.estimateNumber ?? f.estimateId}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-xs text-zinc-700 dark:text-zinc-300">{f.status ?? "—"}</div>
+                          <div className="text-xs font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           )}
 
@@ -411,6 +557,41 @@ export default function TelecallingDashboard() {
                           {t.conversion.won} won / {t.conversion.assigned} assigned
                         </span>
                       </div>
+                      {(() => {
+                        const open = expandedId === t.id;
+                        const view = agentDetail.data?.agent?.id === t.id ? agentDetail.data : null;
+                        return (
+                          <div className="pt-1 border-t border-zinc-200/80 dark:border-zinc-800/80">
+                            <button
+                              onClick={() => setExpandedId(open ? null : t.id)}
+                              className="w-full inline-flex items-center justify-between gap-2 text-xs font-semibold text-indigo-500 dark:text-indigo-400 hover:text-indigo-400 dark:hover:text-indigo-300 transition-colors"
+                            >
+                              <span>Assigned estimates ({view?.agent?.followUpCount ?? t.conversion.assigned})</span>
+                              <span className={`text-[10px] text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+                            </button>
+                            {open && (
+                              <div className="mt-2 space-y-1.5">
+                                {agentDetail.loading && <p className="text-[11px] text-zinc-500">Loading…</p>}
+                                {!agentDetail.loading && (view?.followUps?.length ?? 0) === 0 && (
+                                  <p className="text-[11px] text-zinc-500">No assigned estimates.</p>
+                                )}
+                                {(view?.followUps ?? []).map((f) => (
+                                  <div key={f.estimateId} className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 dark:border-zinc-800 px-2 py-1.5 bg-white dark:bg-zinc-950">
+                                    <div className="min-w-0">
+                                      <div className="text-[11px] font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
+                                      <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                      <div className="text-[10px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
+                                      <div className="text-[10px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
