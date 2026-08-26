@@ -74,6 +74,25 @@ function ensureBoot(): Promise<void> {
   return bootPromise;
 }
 
+// Self-heal: if this isolate's registry is missing a slug (partial boot —
+// registry load() swallows per-slug failures inside an otherwise-successful
+// boot), force one synchronous registry reload and retry. load() is idempotent
+// (D1 upserts + map overwrite), so it is cheap when already loaded and cures
+// stray "automation not loaded" 404s without waiting for Cloudflare to recycle
+// the isolate.
+async function getEntryOrReload(slug: string) {
+  const { AutomationEngine, AutomationRegistry } = deps();
+  const existing = AutomationEngine.get(slug);
+  if (existing) return existing;
+  try {
+    await AutomationRegistry.load();
+    console.log(`Registry self-heal: reloaded automations for missing slug '${slug}'`);
+  } catch (e: any) {
+    console.log(`Registry self-heal reload failed for '${slug}':`, e?.message);
+  }
+  return AutomationEngine.get(slug);
+}
+
 app.use('*', async (c, next) => {
   bootstrapEnv(c.env);
   if (BOOT_PATH_RE.test(new URL(c.req.url).pathname)) {
@@ -175,6 +194,23 @@ app.delete('/api/auth/scopes/:key', async (c) => {
 app.put('/api/auth/users/:id/scopes', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const r = await AuthRoutes.authSetUserScopes(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/auth/roles', async (c) => {
+  const r = await AuthRoutes.authListRoles(authStore(c), c.req.header('cookie') ?? null);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/auth/roles', async (c) => {
+  const r = await AuthRoutes.authCreateRole(authStore(c), c.req.header('cookie') ?? null, await c.req.json().catch(() => ({})));
+  return c.json(r.body, r.status as any);
+});
+app.delete('/api/auth/roles/:key', async (c) => {
+  const r = await AuthRoutes.authDeleteRole(authStore(c), c.req.header('cookie') ?? null, c.req.param('key') ?? null);
+  return c.json(r.body, r.status as any);
+});
+app.put('/api/auth/users/:id/roles', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const r = await AuthRoutes.authSetUserRoles(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);
   return c.json(r.body, r.status as any);
 });
 
@@ -1032,7 +1068,7 @@ app.post('/api/trigger/:slug', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
   const { AutomationEngine } = deps();
   const slug = c.req.param('slug');
-  const entry = AutomationEngine.get(slug);
+  const entry = await getEntryOrReload(slug);
   if (!entry) return c.json({ error: `automation '${slug}' not loaded` }, 404);
   // Async mode (?async=1): schedule the scan on a Durable Object alarm so the
   // caller (GitHub Actions) returns immediately while the (possibly long) scan
@@ -1057,7 +1093,7 @@ app.post('/api/internal/run-automation', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
   const { AutomationEngine } = deps();
   const slug = c.req.query('slug') || '';
-  const entry = AutomationEngine.get(slug);
+  const entry = await getEntryOrReload(slug);
   if (!entry) return c.json({ error: `automation '${slug}' not loaded` }, 404);
   await AutomationEngine.scan(slug);
   notifyLive(c, { type: 'automation', slug });
@@ -1817,6 +1853,7 @@ app.patch('/api/automations/:slug', async (c) => {
 app.get('/api/automations/:slug/data', async (c) => {
   const { AutomationEngine } = deps();
   try {
+    if (!AutomationEngine.get(c.req.param('slug'))) await getEntryOrReload(c.req.param('slug'));
     const data = await AutomationEngine.getData(c.req.param('slug'), c.req.query());
     return c.json(data);
   } catch (e: any) {
