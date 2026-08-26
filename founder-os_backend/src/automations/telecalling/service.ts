@@ -375,6 +375,10 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
           status: true,
           total: true,
         },
+        // 15-min Zoho analyzer verdict — drives the Satisfactory/Unsatisfactory
+        // chip. Note: D1PrismaClient resolves relations via `include`, not a
+        // nested relation under `select`.
+        include: { classification: true },
       })
     ).map((e) => ({
       estimateId: e.estimateId,
@@ -384,6 +388,9 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       total: e.total,
       day,
       assignmentStatus: 'assigned',
+      satisfactory: e.classification ? !!e.classification.meaningfulUpdate : null,
+      intentScore: e.classification?.intentScore ?? null,
+      analysisSummary: e.classification?.summary ?? null,
     }));
     const lb = leaderboard.find((l) => l.id === tc.id);
     return {

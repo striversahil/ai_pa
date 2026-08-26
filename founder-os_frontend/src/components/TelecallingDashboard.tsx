@@ -47,6 +47,32 @@ interface FollowUp {
   day: string;
   assignedAt: any;
   assignmentStatus: string;
+  /** Verdict from the 15-min Zoho analyzer (Classification.meaningfulUpdate). */
+  satisfactory?: boolean | null;
+  intentScore?: number | null;
+  analysisSummary?: string | null;
+}
+
+/** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
+function SatChip({ value, compact = false }: { value: boolean | null | undefined; compact?: boolean }) {
+  const base = `inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold ${compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]"}`;
+  if (value === true)
+    return (
+      <span title="Zoho analyzer found a meaningful update" className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>
+        ✓{compact ? "" : " Satisfactory"}
+      </span>
+    );
+  if (value === false)
+    return (
+      <span title="No meaningful update yet — needs another call" className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+        ✕{compact ? "" : " Unsatisfactory"}
+      </span>
+    );
+  return (
+    <span title="Awaiting the next Zoho analyzer pass" className={`${base} bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border-zinc-400/40`}>
+      …{compact ? "" : " Pending"}
+    </span>
+  );
 }
 
 interface AgentViewData {
@@ -520,14 +546,17 @@ export default function TelecallingDashboard() {
                   )}
                   <div className="space-y-2">
                     {agentView.data?.followUps?.map((f) => (
-                      <div key={f.estimateId} className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
-                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">{f.estimateNumber ?? f.estimateId}</div>
+                      <div key={f.estimateId} className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 space-y-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="font-semibold text-sm text-zinc-900 dark:text-white truncate min-w-0">{f.customerName ?? "—"}</div>
+                          <SatChip value={f.satisfactory} />
                         </div>
-                        <div className="text-right shrink-0">
-                          <div className="text-xs text-zinc-700 dark:text-zinc-300">{f.status ?? "—"}</div>
-                          <div className="text-xs font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-zinc-700 dark:text-zinc-300">{f.status ?? "—"}</span>
+                            <span className="text-xs font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -602,7 +631,8 @@ export default function TelecallingDashboard() {
                                       <div className="text-[11px] font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
                                       <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
                                     </div>
-                                    <div className="text-right shrink-0">
+                                    <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
+                                      <SatChip value={f.satisfactory} compact />
                                       <div className="text-[10px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
                                       <div className="text-[10px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
                                     </div>
