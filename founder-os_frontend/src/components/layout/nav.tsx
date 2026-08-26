@@ -28,3 +28,22 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 export const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((i) => i.mobile);
+
+// Navigation targets: a main view or an automation dashboard slug.
+export type NavTarget =
+  | { type: "view"; view: ViewType }
+  | { type: "dashboard"; slug: string };
+
+export function navTargetPath(t: NavTarget): string {
+  if (t.type === "dashboard") return `/automations/${t.slug}`;
+  const paths: Record<ViewType, string> = {
+    dashboard: "/dashboard",
+    enquiries: "/enquiries",
+    detail: "/enquiries",
+    briefing: "/briefing",
+    whatsapp: "/whatsapp",
+    automations: "/automations",
+    admin: "/admin",
+  };
+  return paths[t.view];
+}

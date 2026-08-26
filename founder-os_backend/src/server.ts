@@ -109,6 +109,10 @@ app.get('/api/auth/scopes', async (req, res) => sendAuth(res, await AuthRoutes.a
 app.post('/api/auth/scopes', async (req, res) => sendAuth(res, await AuthRoutes.authCreateScope(authStore, req.headers.cookie || null, req.body || {})));
 app.delete('/api/auth/scopes/:key', async (req, res) => sendAuth(res, await AuthRoutes.authDeleteScope(authStore, req.headers.cookie || null, req.params.key)));
 app.put('/api/auth/users/:id/scopes', async (req, res) => sendAuth(res, await AuthRoutes.authSetUserScopes(authStore, req.headers.cookie || null, req.params.id, req.body?.keys || [])));
+app.get('/api/auth/roles', async (req, res) => sendAuth(res, await AuthRoutes.authListRoles(authStore, req.headers.cookie || null)));
+app.post('/api/auth/roles', async (req, res) => sendAuth(res, await AuthRoutes.authCreateRole(authStore, req.headers.cookie || null, req.body || {})));
+app.delete('/api/auth/roles/:key', async (req, res) => sendAuth(res, await AuthRoutes.authDeleteRole(authStore, req.headers.cookie || null, req.params.key)));
+app.put('/api/auth/users/:id/roles', async (req, res) => sendAuth(res, await AuthRoutes.authSetUserRoles(authStore, req.headers.cookie || null, req.params.id, req.body?.keys || [])));
 
 // --- REST API Endpoints ---
 
@@ -670,6 +674,13 @@ async function waitForWaEngine(timeoutMs = 60_000): Promise<boolean> {
   logger.warn('Timed out waiting for WA Engine Pro API; starting background services anyway');
   return false;
 }
+
+// ── SPA fallback (clean frontend paths) ──────────────────────────────────────
+// Registered AFTER every /api route: any non-API GET serves the app shell so
+// deep links like /enquiries or /briefing resolve without hash routing.
+app.get(/^(?!\/api(\/|$)).*/, (_req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
 
 async function startServer() {
   // Test connection to PostgreSQL at boot

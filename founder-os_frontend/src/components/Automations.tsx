@@ -218,7 +218,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <button
-              onClick={() => onNavigate("#/automations")}
+              onClick={() => onNavigate("/automations")}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium text-sm transition-all duration-200 cursor-pointer border-0"
             >
               ← Back to all automations

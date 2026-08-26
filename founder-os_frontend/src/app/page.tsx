@@ -16,7 +16,7 @@ import ToastContainer from "../components/ToastContainer";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import LoginScreen from "@/components/LoginScreen";
 import UserAdmin from "@/components/UserAdmin";
-import type { ViewType } from "@/components/layout/nav";
+import { navTargetPath, type NavTarget, type ViewType } from "@/components/layout/nav";
 import type { Enquiry, Comment } from "../types";
 
 // Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
@@ -57,6 +57,7 @@ function AppInner() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { route, navigate } = useHashRoute();
+  const sub = route.view === "automations" ? route.sub : null;
   const activeView: ViewType =
     route.view === "enquiries" && route.sub
       ? "detail"
@@ -64,21 +65,12 @@ function AppInner() {
           ? (route.view as ViewType)
           : "dashboard";
 
-  const viewDenied = activeView !== "admin" && !canView(activeView);
+  const viewDenied = activeView !== "admin" && !(activeView === "automations" && sub ? canView(sub) : canView(activeView));
   const selectedEnquiryId = route.view === "enquiries" ? route.sub : null;
   const selectedEnquiry = enquiries.find(e => e.id === selectedEnquiryId) || null;
 
-  const navigateTo = useCallback((view: ViewType) => {
-    const paths: Record<ViewType, string> = {
-      dashboard: "#/dashboard",
-      enquiries: "#/enquiries",
-      detail: "#/enquiries",
-      briefing: "#/briefing",
-      whatsapp: "#/whatsapp",
-      automations: "#/automations",
-      admin: "#/admin",
-    };
-    navigate(paths[view]);
+  const navigateTo = useCallback((target: NavTarget) => {
+    navigate(navTargetPath(target));
   }, [navigate]);
 
   const handleOpenLightbox = useCallback((url: string, list?: string[], idx = 0) => {
@@ -128,7 +120,7 @@ function AppInner() {
     if (confirm("Are you sure you want to delete this enquiry and all nested comments?")) {
       syncState(enquiries.filter(e => e.id !== enquiryId), comments.filter(c => c.enquiryId !== enquiryId), agents);
       showToast("Enquiry deleted", "danger");
-      navigate("#/enquiries");
+      navigate("/enquiries");
     }
   }, [enquiries, comments, agents, syncState, showToast, navigate]);
 
@@ -173,7 +165,7 @@ function AppInner() {
 
   return (
     <div className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
-      <Sidebar activeView={activeView} onNavigate={navigateTo} theme={theme} onToggleTheme={toggleTheme} me={me ? me.user : null} onLogout={logout} canView={canView} />
+      <Sidebar activeView={activeView} activeSlug={sub} onNavigate={navigateTo} theme={theme} onToggleTheme={toggleTheme} me={me ? me.user : null} onLogout={logout} canView={canView} />
 
       <div className="flex min-w-0 flex-1 flex-col">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border-card)] bg-[var(--bg-card)]/85 px-4 py-3 backdrop-blur md:hidden">
@@ -190,7 +182,7 @@ function AppInner() {
         </button>
       </header>
 
-      <MobileNav activeView={activeView} onNavigate={navigateTo} canView={canView} />
+      <MobileNav activeView={activeView} onNavigate={(v) => navigateTo({ type: "view", view: v })} canView={canView} />
 
       <main className="flex-1 p-4 md:p-6 lg:p-8 mb-16 md:mb-0">
         <ErrorBoundary>
@@ -200,7 +192,7 @@ function AppInner() {
               <div className="text-5xl">🔒</div>
               <h2 className="text-2xl font-bold">Access pending</h2>
               <p className="max-w-md text-zinc-500">Your account doesn't have permission for this section yet. Ask the administrator to grant access.</p>
-              <button onClick={() => navigate("#/dashboard")} className="mt-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Go to Dashboard</button>
+              <button onClick={() => navigate("/dashboard")} className="mt-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Go to Dashboard</button>
             </div>
           ) : activeView === "admin" ? (
             <UserAdmin />
@@ -210,7 +202,7 @@ function AppInner() {
             <Dashboard enquiries={enquiries} agents={agents} currentAgent={currentAgent}
               onOpenCreate={handleOpenCreate}
               onViewDetail={(id) => navigate(`#/enquiries/${encodeURIComponent(id)}`)}
-              onViewAllEnquiries={() => navigate("#/enquiries")}
+              onViewAllEnquiries={() => navigate("/enquiries")}
             />
           )}
           {activeView === "enquiries" && (
@@ -230,14 +222,14 @@ function AppInner() {
               onAddComment={handleAddComment}
               onDeleteEnquiry={handleDeleteEnquiry}
               onOpenEdit={handleOpenEdit}
-              onBack={() => navigate("#/enquiries")}
+              onBack={() => navigate("/enquiries")}
               onOpenLightbox={handleOpenLightbox}
             />
           )}
           {activeView === "briefing" && <FounderAssistant />}
           {activeView === "whatsapp" && <WhatsAppDashboard />}
           {activeView === "automations" && (
-            <Automations slug={route.view === "automations" ? route.sub : null} onNavigate={navigate} />
+            <Automations slug={sub} onNavigate={navigate} />
           )}
           </>
           )}
