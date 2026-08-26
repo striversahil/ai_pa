@@ -15,12 +15,10 @@
  */
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
-import type { Telecaller, EstimateAssignment } from '@prisma/client';
+import type { Telecaller } from '@prisma/client';
 import type { AutomationContext } from '../../modules/automation/types';
 import { getNeodoveAgentMap, getAllNeodoveAgents, getLatestNeodoveDay, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from '../neodove-telecaller-report';
 
-const ROTATION_KEY = 'estimate_assignment:last_telecaller_id';
-const CLOSED_STATES = ['accepted', 'confirmed', 'declined'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function istDate(d: Date = new Date()): string {
@@ -30,12 +28,6 @@ function istDate(d: Date = new Date()): string {
     month: '2-digit',
     day: '2-digit',
   }).format(d);
-}
-
-function tomorrowIST(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return istDate(d);
 }
 
 /**
@@ -110,152 +102,71 @@ async function getActiveTelecallers(): Promise<Telecaller[]> {
   return prisma.telecaller.findMany({ where: { active: true }, orderBy: { order: 'asc' } });
 }
 
-async function getRotationPointer(): Promise<string | null> {
-  const row = await prisma.setting.findUnique({ where: { key: ROTATION_KEY } });
-  return row?.value ?? null;
+// ── Round-robin rotation ─────────────────────────────────────────────────────
+// Single source of truth: `Estimate.assignedTelecallerId`. No history table —
+// every morning the whole active `sent` pool is re-dealt across the active
+// roster, continuing from the previous rotation's stop point so consecutive
+// mornings stay fair even when the sent-pool size changes.
+
+const ROTATION_POINTER_KEY = 'telecalling_rotation:pointer';
+
+async function getRotationPointer(): Promise<string> {
+  const row = await prisma.setting.findUnique({ where: { key: ROTATION_POINTER_KEY } });
+  return row ? String(row.value ?? '') : '';
 }
 
-async function setRotationPointer(id: string): Promise<void> {
+async function setRotationPointer(telecallerId: string): Promise<void> {
   await prisma.setting.upsert({
-    where: { key: ROTATION_KEY },
-    update: { value: id },
-    create: { key: ROTATION_KEY, value: id },
+    where: { key: ROTATION_POINTER_KEY },
+    update: { value: telecallerId },
+    create: { key: ROTATION_POINTER_KEY, value: telecallerId },
   });
 }
 
 /**
- * Round-robin assign unassigned 'sent' estimates to active telecallers.
- * (Assignment policy is centralized here so it can be refined later.)
+ * Deal every active `sent` estimate round-robin across active telecallers.
+ * Runs once each morning (08:00 IST cron → POST /api/trigger/telecalling).
  */
-export async function assignUnassignedEstimates(): Promise<{ assigned: number }> {
+export async function rotateEstimatesRoundRobin(): Promise<{ assigned: number }> {
   const telecallers = await getActiveTelecallers();
   if (telecallers.length === 0) return { assigned: 0 };
 
-  const unassigned = await prisma.estimate.findMany({
-    where: { status: 'sent', assignedTelecallerId: null },
-    orderBy: [{ date: 'asc' }],
+  const sent = await prisma.estimate.findMany({
+    where: { status: 'sent' },
+    orderBy: [{ date: 'asc' }, { estimateId: 'asc' }],
+    select: { estimateId: true },
   });
-  if (unassigned.length === 0) return { assigned: 0 };
+  if (sent.length === 0) return { assigned: 0 };
 
   const lastId = await getRotationPointer();
-  let idx = 0;
-  if (lastId) {
-    const i = telecallers.findIndex((t) => t.id === lastId);
-    if (i >= 0) idx = (i + 1) % telecallers.length;
-  }
+  let idx = telecallers.findIndex((t) => t.id === lastId);
+  idx = idx >= 0 ? (idx + 1) % telecallers.length : 0;
 
-  const today = istDate();
   let assigned = 0;
-  for (const est of unassigned) {
+  let lastUsed = '';
+  for (const est of sent) {
     const tc = telecallers[idx];
+    lastUsed = tc.id;
     idx = (idx + 1) % telecallers.length;
-    await prisma.$transaction([
-      prisma.estimateAssignment.create({
-        data: { estimateId: est.estimateId, telecallerId: tc.id, day: today, status: 'assigned' },
-      }),
-      prisma.estimate.update({
-        where: { estimateId: est.estimateId },
-        data: { assignedTelecallerId: tc.id },
-      }),
-    ]);
+    await prisma.estimate.update({
+      where: { estimateId: est.estimateId },
+      data: { assignedTelecallerId: tc.id },
+    });
     assigned++;
   }
-  if (assigned > 0) {
-    const lastTc = telecallers[(idx - 1 + telecallers.length) % telecallers.length];
-    await setRotationPointer(lastTc.id);
-  }
+
+  if (lastUsed) await setRotationPointer(lastUsed);
+  logger.info(
+    { assigned, estimates: sent.length, telecallers: telecallers.length },
+    'Round-robin estimate rotation complete',
+  );
   return { assigned };
 }
 
-/**
- * Rank active telecallers by performance (best first), excluding `excludeId`.
- * Score = satisfied − bounced; ties broken by fewer active assignments, then order.
- */
-async function rankTelecallers(excludeId?: string): Promise<(Telecaller & { score: number })[]> {
-  const telecallers = await getActiveTelecallers();
-  const withStats = await Promise.all(
-    telecallers.map(async (tc) => {
-      const assignments = await prisma.estimateAssignment.findMany({
-        where: { telecallerId: tc.id },
-        include: { estimate: { include: { classification: true } } },
-      });
-      let satisfied = 0;
-      let bounced = 0;
-      for (const a of assignments as (EstimateAssignment & { estimate: any })[]) {
-        if (a.status === 'reassigned') bounced++;
-        const est = a.estimate;
-        const isSatisfied =
-          est?.status === 'accepted' ||
-          est?.status === 'confirmed' ||
-          (est?.classification?.meaningfulUpdate ?? false) === true;
-        if (isSatisfied) satisfied++;
-      }
-      return { ...tc, score: satisfied - bounced };
-    }),
-  );
-  return withStats
-    .filter((t) => t.id !== excludeId)
-    .sort((a, b) => b.score - a.score || a.order - b.order);
-}
-
-/**
- * End-of-day reassignment: assignments made today that are still
- * "unsatisfactory" (classification has no meaningful update) are passed to the
- * next best performing telecaller for the following day. Closed estimates are
- * marked resolved.
- */
-export async function reassignUnsatisfactory(): Promise<{ reassigned: number; resolved: number }> {
-  const today = istDate();
-  const assignments = await prisma.estimateAssignment.findMany({
-    where: { day: today, status: 'assigned' },
-    include: { estimate: { include: { classification: true } } },
-  });
-
-  let reassigned = 0;
-  let resolved = 0;
-  for (const a of assignments as (EstimateAssignment & { estimate: any })[]) {
-    const est = a.estimate;
-    if (!est) continue;
-    if (CLOSED_STATES.includes(est.status)) {
-      await prisma.estimateAssignment.update({ where: { id: a.id }, data: { status: 'resolved' } });
-      resolved++;
-      continue;
-    }
-    const unsatisfactory = (est.classification?.meaningfulUpdate ?? false) === false;
-    if (!unsatisfactory) continue;
-
-    const ranked = await rankTelecallers(a.telecallerId);
-    const next = ranked[0];
-    if (!next) continue;
-
-    await prisma.$transaction([
-      prisma.estimateAssignment.update({ where: { id: a.id }, data: { status: 'reassigned' } }),
-      prisma.estimateAssignment.create({
-        data: {
-          estimateId: est.estimateId,
-          telecallerId: next.id,
-          day: tomorrowIST(),
-          reassignedFromId: a.id,
-          status: 'assigned',
-        },
-      }),
-      prisma.estimate.update({
-        where: { estimateId: est.estimateId },
-        data: { assignedTelecallerId: next.id },
-      }),
-    ]);
-    reassigned++;
-  }
-  return { reassigned, resolved };
-}
-
-/** Lead Conversion engine: assign unassigned + reassign unsatisfactory. */
-export async function runLeadConversion(): Promise<{ assigned: number; reassigned: number; resolved: number }> {
-  // Keep the Telecaller roster in sync with NeoDove before assigning.
+/** Daily engine: refresh the roster from NeoDove, then deal the sent pool. */
+export async function runLeadConversion(): Promise<{ assigned: number }> {
   await syncTelecallersFromNeodove();
-  const { assigned } = await assignUnassignedEstimates();
-  const { reassigned, resolved } = await reassignUnsatisfactory();
-  return { assigned, reassigned, resolved };
+  return rotateEstimatesRoundRobin();
 }
 
 export interface TelecallerDayMetrics {
@@ -316,6 +227,26 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
 
   const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
 
+  // Single source of truth: Estimate.assignedTelecallerId — one query, grouped
+  // in memory. No assignment-history table involved.
+  const owned = await prisma.estimate.findMany({
+    where: { assignedTelecallerId: { not: null } },
+    select: { estimateId: true, assignedTelecallerId: true, status: true, total: true },
+  });
+  const openByOwner = new Map<string, { count: number; value: number }>();
+  const wonByOwner = new Map<string, number>();
+  for (const e of owned) {
+    const owner = String(e.assignedTelecallerId);
+    if (e.status === 'sent') {
+      const cur = openByOwner.get(owner) ?? { count: 0, value: 0 };
+      cur.count += 1;
+      cur.value += Number(e.total ?? 0) || 0;
+      openByOwner.set(owner, cur);
+    } else if (e.status === 'accepted' || e.status === 'confirmed') {
+      wonByOwner.set(owner, (wonByOwner.get(owner) ?? 0) + 1);
+    }
+  }
+
   const leaderboard: TelecallerDayMetrics[] = [];
   const kpiAcc = {
     assigned: 0,
@@ -327,19 +258,12 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   };
 
   for (const tc of telecallers as (Telecaller & { neodoveUserName: string | null })[]) {
-    const assignments = await prisma.estimateAssignment.findMany({
-      where: { telecallerId: tc.id, day },
-      include: { estimate: true },
-    });
-    let won = 0;
-    let pipelineValue = 0;
-    for (const a of assignments as (EstimateAssignment & { estimate: any })[]) {
-      const est = a.estimate;
-      if (est?.status === 'accepted' || est?.status === 'confirmed') won++;
-      pipelineValue += Number(est?.total ?? 0) || 0;
-    }
-    const assignedToday = assignments.length;
-    const conversionRate = assignedToday > 0 ? Math.round((won / assignedToday) * 100) : 0;
+    // Current workload straight off the single assignment field.
+    const open = openByOwner.get(tc.id) ?? { count: 0, value: 0 };
+    const won = wonByOwner.get(tc.id) ?? 0;
+    const assignedToday = open.count;
+    const pipelineValue = open.value;
+    const conversionRate = assignedToday + won > 0 ? Math.round((won / (assignedToday + won)) * 100) : 0;
 
     // Lead Generation: copy this telecaller's live NeoDove metrics (matched by
     // the linked NeoDove user name) into the dashboard.
@@ -357,7 +281,11 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     const leadsInProgress = nd?.leadsInProgress ?? 0;
     const leadsLost = nd?.leadsLost ?? 0;
     const followupLeads = nd?.followupLeads ?? 0;
-    const leadsGenerated = leadsInProgress + leadsConverted;
+    // True "leads generated" count from the get-leads API (stored on the
+    // NeoDove agent row). Fall back to the legacy leadsInProgress +
+    // leadsConverted for snapshots predating the field.
+    const leadsGenerated =
+      typeof nd?.leadsGenerated === 'number' ? nd.leadsGenerated : leadsInProgress + leadsConverted;
 
     // Lead Generation KRA vs NeoDove daily benchmarks (exact same interface as
     // the NeoDove telecaller report): traffic light 🟢 ≥100% · 🟡 60–99% · 🔴 <60%.
@@ -413,15 +341,96 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
 
   leaderboard.sort((a, b) => b.score - a.score);
 
+  // Self-contained agent list so the dashboard can build the per-agent dropdown
+  // without a second round-trip.
+  const agentList = telecallers.map((t) => ({ id: t.id, name: t.name, active: t.active }));
+
+  // Agent dropdown: ?agent=<id|name> returns that agent's open follow-up
+  // estimates (what they must call) plus their own metrics.
+  const agentFilter = typeof q.agent === 'string' && q.agent ? q.agent : undefined;
+  if (agentFilter) {
+    const tc = telecallers.find(
+      (t) => t.id === agentFilter || t.name === agentFilter || (t.neodoveUserName ?? '') === agentFilter,
+    );
+    if (!tc) {
+      return {
+        meta: {
+          analysis: 'telecalling',
+          title: 'Telecalling — Daily Performance',
+          day,
+          agents: agentList,
+          generatedAt: new Date().toISOString(),
+          error: 'agent not found',
+        },
+      };
+    }
+    const followUps = (
+      await prisma.estimate.findMany({
+        where: { assignedTelecallerId: tc.id, status: 'sent' },
+        orderBy: [{ date: 'asc' }],
+        select: {
+          estimateId: true,
+          estimateNumber: true,
+          customerName: true,
+          status: true,
+          total: true,
+        },
+      })
+    ).map((e) => ({
+      estimateId: e.estimateId,
+      estimateNumber: e.estimateNumber,
+      customerName: e.customerName,
+      status: e.status,
+      total: e.total,
+      day,
+      assignmentStatus: 'assigned',
+    }));
+    const lb = leaderboard.find((l) => l.id === tc.id);
+    return {
+      meta: {
+        analysis: 'telecalling-agent',
+        title: `Telecalling — ${tc.name}`,
+        day,
+        requestedDay,
+        usingLatestAvailable,
+        agents: agentList,
+        generatedAt: new Date().toISOString(),
+      },
+      agent: {
+        id: tc.id,
+        name: tc.name,
+        active: tc.active,
+        conversion: lb?.conversion ?? null,
+        generation: lb?.generation ?? null,
+        score: lb?.score ?? 0,
+        followUpCount: followUps.length,
+      },
+      followUps,
+    };
+  }
+
   const unassignedSent = await prisma.estimate.count({
     where: { status: 'sent', assignedTelecallerId: null },
   });
 
-  const recent = await prisma.estimateAssignment.findMany({
-    orderBy: { assignedAt: 'desc' },
+  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+  const recentRows = await prisma.estimate.findMany({
+    where: { assignedTelecallerId: { not: null } },
+    orderBy: { lastSyncTime: 'desc' },
     take: 25,
-    include: { telecaller: true, estimate: { select: { estimateNumber: true, customerName: true, status: true } } },
+    select: {
+      estimateNumber: true,
+      customerName: true,
+      status: true,
+      assignedTelecallerId: true,
+    },
   });
+  const recent = recentRows.map((e) => ({
+    estimateNumber: e.estimateNumber,
+    customerName: e.customerName,
+    status: e.status,
+    telecallerName: nameById.get(String(e.assignedTelecallerId)) ?? null,
+  }));
 
   const activeCount = telecallers.filter((t) => t.active).length;
 
@@ -436,6 +445,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       unassignedSent,
       telecallerCount: telecallers.length,
       activeCount,
+      agents: agentList,
       targets: {
         connectedCallsPerDay: CONNECTED_CALLS_PER_DAY,
         leadsPerAgentPerDay: LEADS_PER_AGENT_PER_DAY,

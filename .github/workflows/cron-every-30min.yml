@@ -36,6 +36,6 @@ jobs:
       - name: telecalling-enquiry-to-dpp
         run: |
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-enquiry-to-dpp?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
-      - name: telecalling
-        run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
+      # NOTE: no `telecalling` step here any more — estimate assignment rotates
+      # ONCE daily at 08:00 IST via cron-daily-ist.yml (round-robin). Running it
+      # every 30 minutes would needlessly re-deal the whole sent pool.
