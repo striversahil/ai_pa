@@ -145,17 +145,17 @@ async function main() {
   const { digests = [], tasks = [], pendingItems = [], emails = [], estimates = [] } = data;
 
   const meetings = 'No calendar meetings integration configured yet.';
-  const whatsappDigests = buildWhatsappDigestsContext(digests);
+  const whatsappDigests = trimContext(buildWhatsappDigestsContext(digests), Math.floor(CONTEXT_TOKEN_BUDGET * 0.25));
   const emailsContext = buildEmailsContext(emails);
   const zohoContext = buildZohoContext(estimates);
   const unreadEmails = trimContext(
     zohoContext ? `${emailsContext}\n\n${zohoContext}` : emailsContext,
-    Math.floor(CONTEXT_TOKEN_BUDGET * 0.6),
+    Math.floor(CONTEXT_TOKEN_BUDGET * 0.4),
   );
-  const pendingTasks = buildTasksContext(tasks);
-  const pendingFromFounder = buildPendingContext(pendingItems);
+  const pendingTasks = trimContext(buildTasksContext(tasks), Math.floor(CONTEXT_TOKEN_BUDGET * 0.15));
+  const pendingFromFounder = trimContext(buildPendingContext(pendingItems), Math.floor(CONTEXT_TOKEN_BUDGET * 0.15));
 
-  const system = BRIEF_SYSTEM
+  let system = BRIEF_SYSTEM
     .replace('{meetings}', meetings)
     .replace('{whatsappDigests}', whatsappDigests)
     .replace('{unreadEmails}', unreadEmails)
@@ -164,8 +164,10 @@ async function main() {
 
   const totalTokens = estimateTokens(system);
   console.log(`morning-brief-runner: context ~${totalTokens} tokens (budget ${CONTEXT_TOKEN_BUDGET})`);
+  // Never hard-fail the daily brief on context size — trim sections to fit.
   if (totalTokens > CONTEXT_TOKEN_BUDGET) {
-    throw new Error(`Context too large for model TPM limit (${totalTokens} tokens > budget ${CONTEXT_TOKEN_BUDGET}). Refusing to call LLM.`);
+    system = system.slice(0, CONTEXT_TOKEN_BUDGET * 4) + '\n... (trimmed to fit model token budget)';
+    console.log(`morning-brief-runner: context trimmed to fit (${estimateTokens(system)} tokens)`);
   }
 
   console.log('morning-brief-runner: generating brief via omniroute');
