@@ -671,6 +671,17 @@ export class D1PrismaClient {
   $on() {}
   $disconnect() {}
 
+  /** D1 has no interactive transactions; run the batch sequentially in order. */
+  async $transaction(queries: any[] | any): Promise<any> {
+    const list = Array.isArray(queries) ? queries : [queries];
+    const results: any[] = [];
+    for (const q of list) {
+      if (q && typeof q.then === 'function') results.push(await q);
+      else results.push(q);
+    }
+    return Array.isArray(queries) ? results : results[0];
+  }
+
   async $queryRawUnsafe<T = any>(query: string, ...values: any[]): Promise<T[]> {
     const { sql, params } = this.translateRaw(query, values);
     const { results } = await this.db.prepare(sql).bind(...params).all<Row>();

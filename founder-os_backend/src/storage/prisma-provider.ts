@@ -55,6 +55,10 @@ export class PrismaStorageProvider implements StorageProvider {
     }
   }
 
+  async updateContactPicture(chatId: string, picture: string | null): Promise<void> {
+    await prisma.contact.update({ where: { chatId }, data: { picture } });
+  }
+
   async saveMessage(data: MessageData): Promise<StoredMessage> {
     logger.info({ chatId: data.chatId, sender: data.sender }, 'Saving raw message to storage');
     const msg = await prisma.message.create({
@@ -79,8 +83,12 @@ export class PrismaStorageProvider implements StorageProvider {
     await prisma.message.updateMany({ where: { id: { in: messageIds } }, data: { processed: true } });
   }
 
-  async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
-    return prisma.message.findMany({ where: { chatId }, orderBy: { timestamp: 'desc' }, take: limit }) as Promise<StoredMessage[]>;
+  async fetchMessagesByChatId(chatId: string, limit = 50, before?: Date | null): Promise<StoredMessage[]> {
+    return prisma.message.findMany({
+      where: { chatId, ...(before ? { timestamp: { lt: before } } : {}) },
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+    }) as Promise<StoredMessage[]>;
   }
 
   async hasInboundMessages(chatId: string): Promise<boolean> {

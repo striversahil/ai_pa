@@ -104,7 +104,7 @@ export default function ZohoEstimatesHeader({
           </button>
 
           {isPromptOpen && (
-            <div className="absolute right-0 top-full mt-2 w-96 max-w-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl z-50 p-4 space-y-3">
+            <div className="absolute right-0 top-full mt-2 w-[90vw] max-w-lg sm:w-96 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl z-50 p-4 space-y-3">
               <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
                 <span className="font-bold text-xs text-zinc-900 dark:text-white uppercase tracking-wider">Edit AI Prompt Template</span>
                 <button

@@ -44,7 +44,88 @@ function rowDateStr(r: any): string {
   return String(raw).slice(0, 10);
 }
 
-function normalizeRow(r: any) {
+// IST day → epoch-ms range (NeoDove get-leads expects lead_date_created in ms).
+// IST midnight = 18:30 UTC of the previous day; span a full 24h window.
+function istDayEpochRange(dateStr: string): { start: number; end: number } {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const start = Date.UTC(y, m - 1, d - 1, 18, 30, 0);
+  return { start, end: start + 24 * 3600 * 1000 - 1 };
+}
+
+const NEODOVE_PIPELINE_ID = '6960ffd81688fef4bc4df09a';
+
+/**
+ * True "leads generated" (created) per telecaller on a given IST day, via the
+ * `get-leads` API. Replaces the buggy `leadsInProgress + leadsConverted`
+ * heuristic. We query once per telecaller (filtering by `user_id_list`) over
+ * the day's created-date range and count returned leads. Returns a
+ * userId→count map; on failure returns an empty map (caller stores 0).
+ */
+async function fetchLeadsGenerated(token: string, dateStr: string, userIds: string[]): Promise<Record<string, number>> {
+  const { start, end } = istDayEpochRange(dateStr);
+  const counts: Record<string, number> = {};
+  for (const uid of userIds) {
+    let offset = 0;
+    let count = 0;
+    let pages = 0;
+    while (true) {
+      const body = {
+        campaign_id: null,
+        pipeline_id: NEODOVE_PIPELINE_ID,
+        campaign_name: null,
+        timezone_offset: 330,
+        view_lead_filter: {
+          basic_search: {},
+          lead_status: null,
+          customFollowupFilterSelected: null,
+          lead_stage_list: [],
+          tag_list: [],
+          user_id_list: [uid],
+          lead_date_created: { start_date: start, end_date: end, is_date_changed: true },
+          next_followup_date: {},
+          contact_source: [],
+          contact_list_ids: [],
+          campaign_ids_list: [],
+          show_historical_leads: false,
+          isFilterApplied: true,
+          customfilterSelected: 'today',
+        },
+        pagination: { limit: 50, offset },
+        sort_by: { sorting_type: 0 },
+        selected_contact_source: [],
+        selected_uploaded_files: [],
+        fetch_purpose: 'VIEW_LEADS',
+      };
+      const res = await fetch(`${NEODOVE_API}/lead/get-leads?application_type=PORTAL`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/plain, */*',
+          'Content-Type': 'application/json',
+          Referer: `https://connect.neodove.com/leads/${NEODOVE_PIPELINE_ID}`,
+          loaderDivId: 'LEAD_SUMMARY_PAGE_LOADER',
+          token,
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) {
+        throw new Error('NeoDove rejected the token (401)');
+      }
+      if (!res.ok) {
+        throw new Error(`neodove get-leads HTTP ${res.status}`);
+      }
+      const json: any = await res.json().catch(() => null);
+      const arr: any[] = json?.data?.data || json?.data?.leads || (Array.isArray(json?.data) ? json.data : []);
+      count += Array.isArray(arr) ? arr.length : 0;
+      pages++;
+      if (!Array.isArray(arr) || arr.length < 50 || pages > 50) break;
+      offset += 50;
+    }
+    counts[uid] = count;
+  }
+  return counts;
+}
+
+function normalizeRow(r: any, leadsGenerated = 0) {
   return {
     userId: r.userId,
     userName: r.userName || null,
@@ -66,6 +147,7 @@ function normalizeRow(r: any) {
     leadsClosed: r.totalClosedLead ?? 0,
     followupLeads: r.totalFollowupLeads ?? 0,
     pendingScheduledLeads: r.totalPendingScheduledLeads ?? 0,
+    leadsGenerated,
   };
 }
 
@@ -144,10 +226,21 @@ export async function refreshNeodoveReport(dateStr?: string): Promise<{
   const all = Array.isArray(json?.data?.data) ? json.data.data : [];
   const filtered = all.filter((r: any) => rowDateStr(r) === reportDate);
 
+  // 3b. true "leads generated" per telecaller via get-leads (replaces the
+  // buggy leadsInProgress + leadsConverted heuristic). Degrades to 0 on error.
+  let leadsByUser: Record<string, number> = {};
+  try {
+    leadsByUser = await fetchLeadsGenerated(token, reportDate, userIds);
+    const total = Object.values(leadsByUser).reduce((a, b) => a + b, 0);
+    logger.info({ reportDate, total, telecallers: Object.keys(leadsByUser).length }, 'neodove leads-generated fetched');
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'neodove leads-generated fetch failed');
+  }
+
   // 4. store snapshot (overwrite semantics — same as the GH runner)
   const key = `neodove_user_report:${reportDate}`;
   const payload = JSON.stringify({
-    rows: filtered.map(normalizeRow),
+    rows: filtered.map((r: any) => normalizeRow(r, leadsByUser[r.userId] ?? 0)),
     fetchedAt: new Date().toISOString(),
   });
   const existing = await prisma.setting.findUnique({ where: { key } });

@@ -27,3 +27,22 @@ CREATE TABLE IF NOT EXISTS auth_user_scope (
   FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE,
   FOREIGN KEY (scopeKey) REFERENCES auth_scope(key) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS auth_role (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  description TEXT
+);
+CREATE TABLE IF NOT EXISTS auth_role_scope (
+  roleKey TEXT NOT NULL,
+  scopeKey TEXT NOT NULL,
+  PRIMARY KEY (roleKey, scopeKey),
+  FOREIGN KEY (roleKey) REFERENCES auth_role(key) ON DELETE CASCADE,
+  FOREIGN KEY (scopeKey) REFERENCES auth_scope(key) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS auth_user_role (
+  userId TEXT NOT NULL,
+  roleKey TEXT NOT NULL,
+  PRIMARY KEY (userId, roleKey),
+  FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE,
+  FOREIGN KEY (roleKey) REFERENCES auth_role(key) ON DELETE CASCADE
+);

@@ -183,7 +183,7 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-1.5 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-1.5 text-xs">
             <span className="text-[10px] text-zinc-600 dark:text-zinc-500 font-bold uppercase tracking-wider pl-1">Range:</span>
             <select
               onChange={(e) => applyPreset(e.target.value)}

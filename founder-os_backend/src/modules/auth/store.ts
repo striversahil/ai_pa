@@ -1,4 +1,4 @@
-import { AuthScope, AuthUser, ROOT_EMAIL } from "./types";
+import { AuthScope, AuthRole, AuthUser, ROOT_EMAIL } from "./types";
 
 // ── AuthStore: persistence-agnostic user/session/scope storage ───────────────
 // Three implementations: D1 (Cloudflare Worker), Prisma (Express/Postgres),
@@ -19,7 +19,12 @@ export interface AuthStore {
   deleteScope(key: string): Promise<void>;
   getUserScopeKeys(userId: string): Promise<string[]>;
   setUserScopes(userId: string, keys: string[]): Promise<void>;
-  listUsers(): Promise<Array<AuthUser & { scopes: string[] }>>;
+  listUsers(): Promise<Array<AuthUser & { scopes: string[]; roles: string[] }>>;
+  listRoles(): Promise<AuthRole[]>;
+  createRole(key: string, label: string, description: string | null, scopeKeys: string[]): Promise<AuthRole>;
+  deleteRole(key: string): Promise<void>;
+  getUserRoleKeys(userId: string): Promise<string[]>;
+  setUserRoles(userId: string, keys: string[]): Promise<void>;
 }
 
 const newId = () =>
@@ -33,6 +38,8 @@ class MemoryAuthStore implements AuthStore {
   sessions = new Map<string, { userId: string; expiresAt: number }>();
   scopes = new Map<string, AuthScope>();
   userScopes = new Map<string, Set<string>>();
+  roles = new Map<string, AuthRole>();
+  userRoles = new Map<string, Set<string>>();
 
   async getUserByEmail(email: string) {
     for (const u of this.users.values()) if (u.email === email) return u;
@@ -98,17 +105,58 @@ class MemoryAuthStore implements AuthStore {
     this.userScopes.set(userId, new Set(keys));
   }
   async listUsers() {
-    const out: Array<AuthUser & { scopes: string[] }> = [];
+    const out: Array<AuthUser & { scopes: string[]; roles: string[] }> = [];
     for (const u of this.users.values()) {
-      out.push({ ...u, scopes: await this.getUserScopeKeys(u.id) });
+      out.push({ ...u, scopes: await this.getUserScopeKeys(u.id), roles: await this.getUserRoleKeys(u.id) });
     }
     return out;
+  }
+  async listRoles() {
+    return [...this.roles.values()];
+  }
+  async createRole(key: string, label: string, description: string | null, scopeKeys: string[]) {
+    const role: AuthRole = { key, label, description, scopeKeys };
+    this.roles.set(key, role);
+    return role;
+  }
+  async deleteRole(key: string) {
+    this.roles.delete(key);
+    for (const set of this.userRoles.values()) set.delete(key);
+  }
+  async getUserRoleKeys(userId: string) {
+    return [...(this.userRoles.get(userId) ?? [])];
+  }
+  async setUserRoles(userId: string, keys: string[]) {
+    this.userRoles.set(userId, new Set(keys));
   }
 }
 
 // ── D1 (Cloudflare Worker) ───────────────────────────────────────────────────
 class D1AuthStore implements AuthStore {
   constructor(private db: any) {}
+
+  /** Ensure the auth_role tables exist. Creates them on first use if the
+   *  migration hasn't been applied yet — idempotent (CREATE TABLE IF NOT EXISTS). */
+  private async ensureRoleTables(): Promise<boolean> {
+    const row = await this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_role'")
+      .first();
+    if (row) return true;
+    try {
+      await this.db.batch([
+        this.db.prepare("CREATE TABLE IF NOT EXISTS auth_role (key TEXT PRIMARY KEY, label TEXT NOT NULL, description TEXT)"),
+        this.db.prepare(
+          "CREATE TABLE IF NOT EXISTS auth_role_scope (roleKey TEXT NOT NULL, scopeKey TEXT NOT NULL, PRIMARY KEY (roleKey, scopeKey), FOREIGN KEY (roleKey) REFERENCES auth_role(key) ON DELETE CASCADE, FOREIGN KEY (scopeKey) REFERENCES auth_scope(key) ON DELETE CASCADE)",
+        ),
+        this.db.prepare(
+          "CREATE TABLE IF NOT EXISTS auth_user_role (userId TEXT NOT NULL, roleKey TEXT NOT NULL, PRIMARY KEY (userId, roleKey), FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE, FOREIGN KEY (roleKey) REFERENCES auth_role(key) ON DELETE CASCADE)",
+        ),
+      ]);
+    } catch {
+      return false;
+    }
+    return true;
+  }
 
   private mapUser(row: any): AuthUser | null {
     if (!row) return null;
@@ -207,7 +255,51 @@ class D1AuthStore implements AuthStore {
   async listUsers() {
     const rows = await this.db.prepare("SELECT * FROM auth_user ORDER BY createdAt").all();
     const users = (rows.results || []).map((r: any) => this.mapUser(r)!);
-    return Promise.all(users.map(async (u) => ({ ...u, scopes: await this.getUserScopeKeys(u.id) })));
+    return Promise.all(
+      users.map(async (u) => ({
+        ...u,
+        scopes: await this.getUserScopeKeys(u.id),
+        roles: await this.getUserRoleKeys(u.id),
+      })),
+    );
+  }
+  async listRoles() {
+    if (!(await this.ensureRoleTables())) return [];
+    const rows = await this.db.prepare("SELECT * FROM auth_role ORDER BY key").all();
+    const roles = (rows.results || []) as Array<{ key: string; label: string; description: string | null }>;
+    return Promise.all(
+      roles.map(async (r) => {
+        const sc = await this.db.prepare("SELECT scopeKey FROM auth_role_scope WHERE roleKey = ?").bind(r.key).all();
+        return { ...r, scopeKeys: (sc.results || []).map((x: any) => x.scopeKey) };
+      }),
+    );
+  }
+  async createRole(key: string, label: string, description: string | null, scopeKeys: string[]) {
+    if (!(await this.ensureRoleTables())) return { key, label, description, scopeKeys };
+    await this.db.prepare("INSERT OR REPLACE INTO auth_role (key, label, description) VALUES (?, ?, ?)").bind(key, label, description).run();
+    await this.db.prepare("DELETE FROM auth_role_scope WHERE roleKey = ?").bind(key).run();
+    for (const s of scopeKeys) {
+      await this.db.prepare("INSERT OR IGNORE INTO auth_role_scope (roleKey, scopeKey) VALUES (?, ?)").bind(key, s).run();
+    }
+    return { key, label, description, scopeKeys };
+  }
+  async deleteRole(key: string) {
+    if (!(await this.ensureRoleTables())) return;
+    await this.db.prepare("DELETE FROM auth_role_scope WHERE roleKey = ?").bind(key).run();
+    await this.db.prepare("DELETE FROM auth_user_role WHERE roleKey = ?").bind(key).run();
+    await this.db.prepare("DELETE FROM auth_role WHERE key = ?").bind(key).run();
+  }
+  async getUserRoleKeys(userId: string) {
+    if (!(await this.ensureRoleTables())) return [];
+    const rows = await this.db.prepare("SELECT roleKey FROM auth_user_role WHERE userId = ?").bind(userId).all();
+    return (rows.results || []).map((r: any) => r.roleKey);
+  }
+  async setUserRoles(userId: string, keys: string[]) {
+    if (!(await this.ensureRoleTables())) return;
+    await this.db.prepare("DELETE FROM auth_user_role WHERE userId = ?").bind(userId).run();
+    for (const k of keys) {
+      await this.db.prepare("INSERT OR IGNORE INTO auth_user_role (userId, roleKey) VALUES (?, ?)").bind(userId, k).run();
+    }
   }
 }
 

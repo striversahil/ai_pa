@@ -42,6 +42,7 @@ function contactFromRow(r: Row): StoredContact {
     pushName: (r.pushName as string) ?? null,
     phoneNumber: r.phoneNumber as string,
     isGroup: toBool(r.isGroup as number),
+    picture: (r.picture as string) ?? null,
     lastMessageAt: parseDate(r.lastMessageAt as string),
     lastMessageBody: (r.lastMessageBody as string) ?? null,
     unreadCount: (r.unreadCount as number) ?? 0,
@@ -237,9 +238,17 @@ export class D1StorageProvider implements StorageProvider {
     await this.db.prepare(`UPDATE Message SET processed = 1 WHERE id IN (${placeholders})`).bind(...messageIds).run();
   }
 
-  async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
-    const { results } = await this.db.prepare('SELECT * FROM Message WHERE chatId = ? ORDER BY timestamp DESC LIMIT ?').bind(chatId, limit).all();
+  async fetchMessagesByChatId(chatId: string, limit = 50, before?: Date | null): Promise<StoredMessage[]> {
+    const stmt = before
+      ? this.db.prepare('SELECT * FROM Message WHERE chatId = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?').bind(chatId, iso(before), limit)
+      : this.db.prepare('SELECT * FROM Message WHERE chatId = ? ORDER BY timestamp DESC LIMIT ?').bind(chatId, limit);
+    const { results } = await stmt.all();
     return results.map(messageFromRow);
+  }
+
+  async updateContactPicture(chatId: string, picture: string | null): Promise<void> {
+    await this.db.prepare('UPDATE Contact SET picture = ?, updatedAt = ? WHERE chatId = ?')
+      .bind(picture, new Date().toISOString(), chatId).run();
   }
 
   async hasInboundMessages(chatId: string): Promise<boolean> {

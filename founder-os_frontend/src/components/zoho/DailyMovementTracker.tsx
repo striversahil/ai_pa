@@ -74,10 +74,10 @@ export default function DailyMovementTracker({ baselineCount, baselineValue, bas
                   : { text: "New Created", cls: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20" };
               return (
                 <div key={est.estimateId} className="py-2 border-b border-zinc-200/40 dark:border-zinc-800/40 text-[11px] space-y-1 text-left">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className={`px-1.5 py-0.5 text-[8px] rounded font-extrabold uppercase tracking-wide border ${badge.cls}`}>{badge.text}</span>
                     <span className="text-zinc-500 dark:text-zinc-400 font-mono font-bold">{est.estimateNumber}</span>
-                    <span className="text-zinc-800 dark:text-zinc-200 font-semibold truncate max-w-[180px]">{est.customerName}</span>
+                    <span className="text-zinc-800 dark:text-zinc-200 font-semibold truncate max-w-[140px] sm:max-w-[180px]">{est.customerName}</span>
                     <span className="text-zinc-500 dark:text-zinc-400 font-mono ml-auto">₹{est.total.toLocaleString()}</span>
                   </div>
                   {c.summary && (

@@ -557,13 +557,13 @@ export default function EnterpriseOperationsDashboard() {
                         <h2 className="text-lg font-bold text-slate-900 dark:text-white">Master Sales Orders Table</h2>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         <input
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder="Search SO, Estimate, Customer, Reason..."
-                            className="px-3 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 dark:text-slate-100 min-w-[240px]"
+                            className="w-full sm:w-auto px-3 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 dark:text-slate-100 sm:min-w-[240px]"
                         />
                         <select
                             value={riskFilter}

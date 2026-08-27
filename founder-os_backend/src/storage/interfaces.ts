@@ -8,6 +8,7 @@ export interface ContactData {
   lastMessageBody?: string | null;
   unreadCount?: number;
   hasInbound?: boolean;
+  picture?: string | null;
 }
 
 export interface StoredContact {
@@ -17,6 +18,7 @@ export interface StoredContact {
   pushName: string | null;
   phoneNumber: string;
   isGroup: boolean;
+  picture: string | null;
   lastMessageAt: Date | null;
   lastMessageBody: string | null;
   unreadCount: number;
@@ -158,10 +160,11 @@ export interface StorageProvider {
   fetchContactByChatId(chatId: string): Promise<StoredContact | null>;
   fetchContactByPhoneNumber(phoneNumber: string): Promise<StoredContact | null>;
   updateContactUnread(chatId: string, delta: number): Promise<void>;
+  updateContactPicture(chatId: string, picture: string | null): Promise<void>;
   saveMessage(data: MessageData): Promise<StoredMessage>;
   fetchUnprocessedMessages(): Promise<StoredMessage[]>;
   markMessagesProcessed(messageIds: string[]): Promise<void>;
-  fetchMessagesByChatId(chatId: string, limit?: number): Promise<StoredMessage[]>;
+  fetchMessagesByChatId(chatId: string, limit?: number, before?: Date | null): Promise<StoredMessage[]>;
   hasInboundMessages(chatId: string): Promise<boolean>;
   updateMessageClassification(messageId: string, classification: string, reason: string, classifiedAt: Date, slaDeadline: Date): Promise<void>;
   storeEmail(data: EmailData): Promise<StoredEmail>;

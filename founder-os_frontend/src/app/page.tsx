@@ -1,22 +1,24 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useEnquiryData } from "../hooks/useEnquiryData";
 import { useTheme } from "../hooks/useTheme";
 import { useToast } from "../hooks/useToast";
 import { useCSV } from "../hooks/useCSV";
 import { useHashRoute } from "../hooks/useHashRoute";
+import { useDashboardNav } from "@/hooks/useDashboardNav";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Sidebar from "../components/layout/Sidebar";
 import MobileNav from "../components/layout/MobileNav";
+import MobileDrawer from "../components/layout/MobileDrawer";
 import EnquiryModal from "../components/EnquiryModal";
 import Lightbox from "../components/Lightbox";
 import ToastContainer from "../components/ToastContainer";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import LoginScreen from "@/components/LoginScreen";
 import UserAdmin from "@/components/UserAdmin";
-import { navTargetPath, type NavTarget, type ViewType } from "@/components/layout/nav";
+import { NAV_ITEMS, navTargetPath, type NavTarget, type ViewType } from "@/components/layout/nav";
 import type { Enquiry, Comment } from "../types";
 
 // Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
@@ -26,6 +28,7 @@ const EnquiryDetail = dynamic(() => import("../components/EnquiryDetail"), { ssr
 const FounderAssistant = dynamic(() => import("../components/FounderAssistant"), { ssr: false });
 const WhatsAppDashboard = dynamic(() => import("../components/WhatsAppDashboard"), { ssr: false });
 const Automations = dynamic(() => import("../components/Automations"), { ssr: false });
+const ChatRoom = dynamic(() => import("../components/ChatRoom"), { ssr: false });
 
 export default function Home() {
   return (
@@ -53,6 +56,7 @@ function AppInner() {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxImages, setLightboxImages] = useState<string[] | undefined>(undefined);
   const [lightboxIndex, setLightboxIndex] = useState<number>(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,13 +65,32 @@ function AppInner() {
   const activeView: ViewType =
     route.view === "enquiries" && route.sub
       ? "detail"
-        : (["dashboard", "enquiries", "briefing", "whatsapp", "automations", "admin"] as ViewType[]).includes(route.view as ViewType)
+        : (["dashboard", "enquiries", "briefing", "whatsapp", "automations", "chat", "admin"] as ViewType[]).includes(route.view as ViewType)
           ? (route.view as ViewType)
           : "dashboard";
 
   const viewDenied = activeView !== "admin" && !(activeView === "automations" && sub ? canView(sub) : canView(activeView));
   const selectedEnquiryId = route.view === "enquiries" ? route.sub : null;
   const selectedEnquiry = enquiries.find(e => e.id === selectedEnquiryId) || null;
+
+  // Views this user can actually reach: accessible main nav views + role-granted dashboards.
+  const accessibleMain = useMemo(() => NAV_ITEMS.filter((i) => canView(i.view)), [canView]);
+  const dashboards = useDashboardNav();
+
+  // If the current view is denied but the user has SOMETHING they can access,
+  // auto-route them to it (e.g. a role user landing on #/dashboard → first dashboard).
+  // Only users with literally nothing granted keep seeing the "Access pending" panel.
+  useEffect(() => {
+    if (loading || !me) return;
+    if (!viewDenied) return;
+    const first: NavTarget | null =
+      accessibleMain[0]
+        ? { type: "view", view: accessibleMain[0].view }
+        : dashboards[0]
+          ? { type: "dashboard", slug: dashboards[0].slug }
+          : null;
+    if (first) navigate(navTargetPath(first));
+  }, [viewDenied, loading, me, accessibleMain, dashboards, navigate]);
 
   const navigateTo = useCallback((target: NavTarget) => {
     navigate(navTargetPath(target));
@@ -170,6 +193,12 @@ function AppInner() {
       <div className="flex min-w-0 flex-1 flex-col">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border-card)] bg-[var(--bg-card)]/85 px-4 py-3 backdrop-blur md:hidden">
         <div className="flex items-center gap-2.5">
+          <button onClick={() => setMobileMenuOpen(true)} aria-label="Open menu" title="Menu"
+            className="rounded-lg p-1.5 text-[var(--text-secondary)] transition hover:bg-[var(--bg-input)] md:hidden">
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
           <div className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white" style={{ backgroundColor: currentAgent.color }}>{currentAgent.initials}</div>
           <span className="font-heading text-base font-extrabold tracking-tight">Brindavan Udyog</span>
         </div>
@@ -181,6 +210,19 @@ function AppInner() {
           )}
         </button>
       </header>
+
+      <MobileDrawer
+        open={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        activeView={activeView}
+        activeSlug={sub}
+        onNavigate={navigateTo}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        me={me ? me.user : null}
+        onLogout={logout}
+        canView={canView}
+      />
 
       <MobileNav activeView={activeView} onNavigate={(v) => navigateTo({ type: "view", view: v })} canView={canView} />
 
@@ -228,6 +270,7 @@ function AppInner() {
           )}
           {activeView === "briefing" && <FounderAssistant />}
           {activeView === "whatsapp" && <WhatsAppDashboard />}
+          {activeView === "chat" && <ChatRoom />}
           {activeView === "automations" && (
             <Automations slug={sub} onNavigate={navigate} />
           )}

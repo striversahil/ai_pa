@@ -38,9 +38,9 @@ export class WhatsAppService {
   /**
    * Fetch messages for a specific chat ID from local storage
    */
-  static async fetchMessagesByChatId(chatId: string) {
-    logger.debug({ chatId }, 'WhatsAppService: fetching messages for chat');
-    return StorageRepository.fetchMessagesByChatId(chatId);
+  static async fetchMessagesByChatId(chatId: string, limit?: number, before?: Date | null) {
+    logger.debug({ chatId, limit }, 'WhatsAppService: fetching messages for chat');
+    return StorageRepository.fetchMessagesByChatId(chatId, limit, before);
   }
 }
 export default WhatsAppService;

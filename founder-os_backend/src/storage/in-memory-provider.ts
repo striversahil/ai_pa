@@ -26,8 +26,8 @@ export class InMemoryStorageProvider implements StorageProvider {
     const chatOps = '120363023032@g.us';
 
     this.contacts = [
-      { id: 'contact-1', chatId: chatRahul, name: 'Rahul (Investor)', pushName: 'Rahul', phoneNumber: '918595563952', isGroup: false, lastMessageAt: new Date(now.getTime() - 18 * 60 * 1000), lastMessageBody: 'Also need the pitch deck updated with the latest revenue run-rate.', unreadCount: 0, createdAt: now, updatedAt: now },
-      { id: 'contact-2', chatId: chatOps, name: 'Amit (Ops Manager)', pushName: 'Amit', phoneNumber: '120363023032', isGroup: true, lastMessageAt: new Date(now.getTime() - 14 * 60 * 1000), lastMessageBody: 'Yes, the database migrations are failing because of a locked connection.', unreadCount: 2, createdAt: now, updatedAt: now },
+      { id: 'contact-1', chatId: chatRahul, name: 'Rahul (Investor)', pushName: 'Rahul', phoneNumber: '918595563952', isGroup: false, picture: null, lastMessageAt: new Date(now.getTime() - 18 * 60 * 1000), lastMessageBody: 'Also need the pitch deck updated with the latest revenue run-rate.', unreadCount: 0, createdAt: now, updatedAt: now },
+      { id: 'contact-2', chatId: chatOps, name: 'Amit (Ops Manager)', pushName: 'Amit', phoneNumber: '120363023032', isGroup: true, picture: null, lastMessageAt: new Date(now.getTime() - 14 * 60 * 1000), lastMessageBody: 'Yes, the database migrations are failing because of a locked connection.', unreadCount: 2, createdAt: now, updatedAt: now },
     ];
 
     this.messages = [
@@ -87,6 +87,7 @@ export class InMemoryStorageProvider implements StorageProvider {
       lastMessageBody: data.lastMessageBody || null,
       unreadCount: data.unreadCount || 1,
       hasInbound: data.hasInbound === true,
+      picture: data.picture || null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -118,6 +119,11 @@ export class InMemoryStorageProvider implements StorageProvider {
     }
   }
 
+  async updateContactPicture(chatId: string, picture: string | null): Promise<void> {
+    const contact = this.contacts.find((c: any) => c.chatId === chatId);
+    if (contact) contact.picture = picture;
+  }
+
   async saveMessage(data: MessageData): Promise<StoredMessage> {
     const newMsg = {
       id: generateId('msg'), wahaMessageId: data.wahaMessageId || null, chatId: data.chatId, sender: data.sender, body: data.body,
@@ -137,8 +143,11 @@ export class InMemoryStorageProvider implements StorageProvider {
     this.messages = this.messages.map((m: any) => messageIds.includes(m.id) ? { ...m, processed: true } : m);
   }
 
-  async fetchMessagesByChatId(chatId: string, limit = 50): Promise<StoredMessage[]> {
-    return this.messages.filter((m: any) => m.chatId === chatId).sort((a: any, b: any) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, limit);
+  async fetchMessagesByChatId(chatId: string, limit = 50, before?: Date | null): Promise<StoredMessage[]> {
+    const filtered = this.messages.filter(
+      (m: any) => m.chatId === chatId && (!before || new Date(m.timestamp).getTime() < before.getTime())
+    );
+    return filtered.sort((a: any, b: any) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, limit);
   }
 
   async hasInboundMessages(chatId: string): Promise<boolean> {

@@ -47,9 +47,13 @@ export class StorageRepository {
     return getProvider().markMessagesProcessed(messageIds);
   }
 
-  static async fetchMessagesByChatId(chatId: string, limit = 50) {
+  static async fetchMessagesByChatId(chatId: string, limit = 50, before?: Date | null) {
     logger.debug({ chatId, limit }, 'Fetching messages for chat');
-    return getProvider().fetchMessagesByChatId(chatId, limit);
+    return getProvider().fetchMessagesByChatId(chatId, limit, before);
+  }
+
+  static async updateContactPicture(chatId: string, picture: string | null) {
+    return getProvider().updateContactPicture(chatId, picture);
   }
 
   static async hasInboundMessages(chatId: string): Promise<boolean> {

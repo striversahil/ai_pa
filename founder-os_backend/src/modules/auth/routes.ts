@@ -2,13 +2,18 @@ import { AuthStore } from "./store";
 import {
   authEnabled,
   completeLogin,
+  ensureRolesSeeded,
   ensureScopesSeeded,
   getGoogleConfig,
   getMe,
+  listRoles,
   listScopes,
   listUsers,
+  createRole as svcCreateRole,
   createScope as svcCreateScope,
+  deleteRole as svcDeleteRole,
   deleteScope as svcDeleteScope,
+  setUserRoles as svcSetUserRoles,
   setUserScopes as svcSetUserScopes,
   requireUser,
   startLogin,
@@ -48,6 +53,7 @@ export async function authCallback(
   try {
     const { sessionId } = await completeLogin(env, store, code, publicOrigin);
     await ensureScopesSeeded(store);
+    await ensureRolesSeeded(store);
     return { status: 302, redirect: "/", setCookie: sessionCookieHeader(sessionId, secure) };
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("OAUTH_FAILED", e?.message || "login failed");
@@ -137,6 +143,65 @@ export async function authSetUserScopes(
     await asRoot(store, cookieHeader);
     if (!Array.isArray(keys)) return json(400, { error: "keys must be an array" });
     await svcSetUserScopes(store, userId, keys);
+    return json(200, { ok: true });
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+export async function authListRoles(store: AuthStore, cookieHeader: string | null): Promise<AuthResult> {
+  try {
+    await requireUser(store, cookieHeader);
+    return json(200, await listRoles(store));
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+export async function authCreateRole(
+  store: AuthStore,
+  cookieHeader: string | null,
+  payload: { key?: string; label?: string; description?: string | null; scopeKeys?: string[] },
+): Promise<AuthResult> {
+  try {
+    await asRoot(store, cookieHeader);
+    if (!payload.key || !payload.label) return json(400, { error: "key and label required" });
+    const role = await svcCreateRole(store, payload.key, payload.label, payload.description ?? null, payload.scopeKeys ?? []);
+    return json(201, role);
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+export async function authDeleteRole(
+  store: AuthStore,
+  cookieHeader: string | null,
+  key: string,
+): Promise<AuthResult> {
+  try {
+    await asRoot(store, cookieHeader);
+    if (key === "admin") return json(400, { error: "Cannot delete the admin role" });
+    await svcDeleteRole(store, key);
+    return json(200, { ok: true });
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+export async function authSetUserRoles(
+  store: AuthStore,
+  cookieHeader: string | null,
+  userId: string,
+  keys: string[],
+): Promise<AuthResult> {
+  try {
+    await asRoot(store, cookieHeader);
+    if (!Array.isArray(keys)) return json(400, { error: "keys must be an array" });
+    await svcSetUserRoles(store, userId, keys);
     return json(200, { ok: true });
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);

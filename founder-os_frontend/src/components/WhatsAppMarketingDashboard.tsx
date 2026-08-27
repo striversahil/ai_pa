@@ -393,7 +393,7 @@ export default function WhatsAppMarketingDashboard() {
                 </button>
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-6 gap-2 text-center">
+            <div className="mt-3 grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
               <MiniStat label="Total" value={c.stats.total} />
               <MiniStat label="Sent" value={c.stats.sent} cls="text-sky-300" />
               <MiniStat label="Delivered" value={c.stats.delivered} cls="text-emerald-300" />

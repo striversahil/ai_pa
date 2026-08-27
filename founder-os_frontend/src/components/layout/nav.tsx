@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, ClipboardList, Sparkles, MessageCircle, Workflow, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, ClipboardList, Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare } from "lucide-react";
 
 export type ViewType =
   | "dashboard"
@@ -8,6 +8,7 @@ export type ViewType =
   | "briefing"
   | "whatsapp"
   | "automations"
+  | "chat"
   | "admin";
 
 export interface NavItem {
@@ -22,6 +23,7 @@ export const NAV_ITEMS: NavItem[] = [
   { view: "dashboard", label: "Dashboard", icon: LayoutDashboard, mobile: true },
   { view: "enquiries", label: "Enquiries", icon: ClipboardList, mobile: true },
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
+  { view: "chat", label: "Chat", icon: MessagesSquare, mobile: true },
   { view: "briefing", label: "Founder AI", icon: Sparkles, mobile: true },
   { view: "whatsapp", label: "WhatsApp", icon: MessageCircle, mobile: true },
   { view: "admin", label: "Admin", icon: ShieldCheck },
@@ -35,15 +37,16 @@ export type NavTarget =
   | { type: "dashboard"; slug: string };
 
 export function navTargetPath(t: NavTarget): string {
-  if (t.type === "dashboard") return `/automations/${t.slug}`;
+  if (t.type === "dashboard") return `#/automations/${t.slug}`;
   const paths: Record<ViewType, string> = {
-    dashboard: "/dashboard",
-    enquiries: "/enquiries",
-    detail: "/enquiries",
-    briefing: "/briefing",
-    whatsapp: "/whatsapp",
-    automations: "/automations",
-    admin: "/admin",
+    dashboard: "#/dashboard",
+    enquiries: "#/enquiries",
+    detail: "#/enquiries",
+    briefing: "#/briefing",
+    whatsapp: "#/whatsapp",
+    automations: "#/automations",
+    chat: "#/chat",
+    admin: "#/admin",
   };
   return paths[t.view];
 }

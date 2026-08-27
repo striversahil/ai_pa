@@ -22,6 +22,7 @@ interface Contact {
   phone_number: string;
   email?: string;
   isGroup?: boolean;
+  picture?: string | null;
 }
 
 interface RawMessage {
@@ -79,7 +80,41 @@ export default function WhatsAppDashboard() {
   const [noteText, setNoteText] = useState("");
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
+  const [pictureInputOpen, setPictureInputOpen] = useState(false);
+  const [pictureUrl, setPictureUrl] = useState("");
+
+  const updatePicture = async (contactUid: string, picture: string | null) => {
+    try {
+      const res = await fetch(`/api/whatsapp/contacts/${encodeURIComponent(contactUid)}/picture`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ picture }),
+      });
+      if (res.ok) {
+        setContacts((prev) => {
+          const list = Array.isArray(prev) ? prev : [];
+          return list.map((c) => (c.uid === contactUid ? { ...c, picture: picture || null } : c));
+        });
+        setPictureInputOpen(false);
+        setPictureUrl("");
+      }
+    } catch (err) {
+      console.error("Failed to update picture:", err);
+    }
+  };
+
+  const [uploadingPicture, setUploadingPicture] = useState(false);
+  const pictureInputRef = useRef<HTMLInputElement | null>(null);
+
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Per-chat message cache so switching between recent chats is instant (no
+  // round trip on every click). Keyed by contact uid; `hasMore` per chat tells
+  // the scroll-up handler whether older history exists.
+  const messagesCache = useRef<Map<string, RawMessage[]>>(new Map());
+  const hasMoreCache = useRef<Map<string, boolean>>(new Map());
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
 
   const contactList = useMemo<Contact[]>(() => {
     if (Array.isArray(contacts)) return contacts;
@@ -143,10 +178,27 @@ export default function WhatsAppDashboard() {
       setIsLoadingMessages(true);
     }
     try {
-      const res = await fetch(`/api/whatsapp/contacts/${contactUid}/messages`);
+      const cached = messagesCache.current.get(contactUid);
+      if (cached && cached.length > 0) {
+        // Instant render from cache; refresh silently in background so the
+        // latest messages (new inbound, sent replies) are reconciled.
+        setChatMessages(cached);
+        setIsLoadingMessages(false);
+        if (!isSilent) {
+          void fetchMessages(contactUid, true).then(() => setIsLoadingMessages(false));
+          setIsLoadingMessages(false);
+        }
+        return;
+      }
+      const res = await fetch(`/api/whatsapp/contacts/${encodeURIComponent(contactUid)}/messages?limit=50`);
       if (res.ok) {
         const data = await res.json();
-        setChatMessages(data);
+        const list = Array.isArray(data) ? data : Array.isArray(data?.messages) ? data.messages : [];
+        const sorted = [...list].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        messagesCache.current.set(contactUid, sorted);
+        hasMoreCache.current.set(contactUid, list.length >= 50);
+        setHasMore(list.length >= 50);
+        setChatMessages(sorted);
       }
     } catch (err) {
       console.error("Failed to fetch messages:", err);
@@ -154,6 +206,50 @@ export default function WhatsAppDashboard() {
       if (!isSilent) {
         setIsLoadingMessages(false);
       }
+    }
+  };
+
+  // Load one older page (50) and prepend it — called when the user scrolls to
+  // the top of the thread.
+  const loadOlderMessages = async (contactUid: string) => {
+    if (loadingOlder || !contactUid) return;
+    const cached = messagesCache.current.get(contactUid) || [];
+    if (cached.length === 0) return;
+    if (!hasMoreCache.current.get(contactUid)) return;
+    setLoadingOlder(true);
+    try {
+      const oldest = [...cached].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())[0];
+      const before = encodeURIComponent(oldest.timestamp);
+      const res = await fetch(`/api/whatsapp/contacts/${encodeURIComponent(contactUid)}/messages?limit=50&before=${before}`);
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : Array.isArray(data?.messages) ? data.messages : [];
+        if (list.length === 0) {
+          hasMoreCache.current.set(contactUid, false);
+          setHasMore(false);
+          return;
+        }
+        const merged = [...list, ...cached];
+        const byId = new Map<string, RawMessage>();
+        for (const m of merged) byId.set(m.id || `${m.chatId}-${m.timestamp}`, m);
+        const sorted = [...byId.values()].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        messagesCache.current.set(contactUid, sorted);
+        hasMoreCache.current.set(contactUid, list.length >= 50);
+        setHasMore(list.length >= 50);
+        setChatMessages(sorted);
+      }
+    } catch (err) {
+      console.error("Failed to load older messages:", err);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  const handleChatScroll = () => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    if (el.scrollTop <= 24 && selectedContactUid) {
+      void loadOlderMessages(selectedContactUid);
     }
   };
 
@@ -264,7 +360,8 @@ export default function WhatsAppDashboard() {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [messageList, isLoadingMessages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedContactUid, isLoadingMessages, messageList.length]);
 
   useEffect(() => {
     const eventSource = new EventSource("/api/whatsapp/events");
@@ -279,26 +376,26 @@ export default function WhatsAppDashboard() {
             msg.chatId.replace(/[^0-9]/g, '') === selectedContactUid.replace(/[^0-9]/g, '')
           );
           if (isActive) {
+            const newMsg: RawMessage = {
+              id: msg.id || String(Math.random()),
+              chatId: selectedContactUid,
+              sender: msg.sender === 'Founder' || msg.sender === 'You' ? 'You' : 'Client',
+              body: msg.body,
+              timestamp: msg.timestamp,
+              processed: false,
+              quotedMessageId: msg.quotedMessageId || null,
+              quotedBody: msg.quotedBody || null,
+              quotedSender: msg.quotedSender || null,
+              mediaUrl: msg.mediaUrl || null,
+            };
+            const cur = messagesCache.current.get(selectedContactUid) || [];
+            messagesCache.current.set(selectedContactUid, [...cur, newMsg]);
             setChatMessages((prev) => {
               const list = Array.isArray(prev) ? prev : [];
               if (list.some((m) => m.body === msg.body && m.timestamp === msg.timestamp)) {
                 return list;
               }
-              return [
-                ...list,
-                {
-                  id: msg.id || String(Math.random()),
-                  chatId: selectedContactUid,
-                  sender: msg.sender === 'Founder' || msg.sender === 'You' ? 'You' : 'Client',
-                  body: msg.body,
-                  timestamp: msg.timestamp,
-                  processed: false,
-                  quotedMessageId: msg.quotedMessageId || null,
-                  quotedBody: msg.quotedBody || null,
-                  quotedSender: msg.quotedSender || null,
-                  mediaUrl: msg.mediaUrl || null,
-                }
-              ];
+              return [...list, newMsg];
             });
           }
           fetchDigests();
@@ -341,7 +438,20 @@ export default function WhatsAppDashboard() {
       });
 
       if (res.ok) {
-        await fetchMessages(selectedContactUid);
+        // Optimistic append to the active thread + cache so the sent message
+        // shows instantly; a silent refresh reconciles the server copy.
+        const sent: RawMessage = {
+          id: `local-${Date.now()}`,
+          chatId: selectedContactUid,
+          sender: "You",
+          body: bodyText,
+          timestamp: new Date().toISOString(),
+          processed: true,
+        };
+        const cur = messagesCache.current.get(selectedContactUid) || [];
+        messagesCache.current.set(selectedContactUid, [...cur, sent]);
+        setChatMessages((prev) => [...(Array.isArray(prev) ? prev : []), sent]);
+        void fetchMessages(selectedContactUid, true);
         fetchPendingItems();
       } else {
         alert("Failed to send message.");
@@ -486,9 +596,9 @@ export default function WhatsAppDashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[800px]">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:h-[800px]">
         {/* Left panel: Contacts */}
-        <div className="lg:col-span-4 bg-zinc-50/30 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden">
+        <div className="h-[45vh] lg:h-auto lg:col-span-4 bg-zinc-50/30 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden">
           <div className="flex border-b border-[var(--border-card)] dark:border-zinc-800 p-2 overflow-x-auto gap-1 select-none">
             {(["all", "urgent", "leads", "support"] as const).map((cat) => (
               <button
@@ -520,8 +630,17 @@ export default function WhatsAppDashboard() {
                     className={`p-4 cursor-pointer hover:bg-[var(--bg-input)] dark:hover:bg-zinc-800/50 transition-all space-y-2 border-l-4 ${isSelected ? "bg-[var(--bg-input)] dark:bg-zinc-800/60 border-l-indigo-500" : "border-l-transparent"
                       }`}
                   >
+                    <div className="flex items-center gap-3">
+                      {c.picture ? (
+                        <img src={c.picture} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 text-xs font-bold text-indigo-400">
+                          {(c.name || c.phone_number || "?").charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
                     <div className="flex justify-between items-center">
-                      <span className="font-bold text-sm text-zinc-900 dark:text-zinc-100 block flex items-center gap-1.5">
+                      <span className="font-bold text-sm text-zinc-900 dark:text-zinc-100 block flex items-center gap-1.5 truncate">
                         {c.isGroup && <span title="Group" className="text-[11px]">👥</span>}
                         {c.name || c.phone_number}
                       </span>
@@ -557,6 +676,8 @@ export default function WhatsAppDashboard() {
                       <p className="text-xs text-zinc-600 dark:text-zinc-500 italic">Click to generate AI summary...</p>
                     )}
                   </div>
+                </div>
+                </div>
                 );
               })
             )}
@@ -564,16 +685,38 @@ export default function WhatsAppDashboard() {
         </div>
 
         {/* Center panel: Chat */}
-        <div className="lg:col-span-5 bg-zinc-50/30 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden h-full">
+        <div className="h-[60vh] lg:h-auto lg:col-span-5 bg-zinc-50/30 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden">
           {selectedContactUid ? (
             <>
               <div className="p-4 border-b border-zinc-850 flex items-center justify-between bg-zinc-50/20 dark:bg-zinc-950/20">
-                <div>
-                  <h3 className="font-extrabold text-zinc-900 dark:text-white text-sm flex items-center gap-1.5">
-                    {contactList.find(c => c.uid === selectedContactUid)?.isGroup && <span className="text-[14px]">👥</span>}
-                    {contactList.find(c => c.uid === selectedContactUid)?.name || selectedContactUid}
-                  </h3>
-                  <p className="text-[10px] text-zinc-600 dark:text-zinc-500 mt-0.5">Contact: <span className="font-mono text-[9px]">{selectedContactUid}</span></p>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative shrink-0">
+                    {contactList.find(c => c.uid === selectedContactUid)?.picture ? (
+                      <img
+                        src={contactList.find(c => c.uid === selectedContactUid)!.picture!}
+                        alt=""
+                        className="h-10 w-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600/20 text-sm font-bold text-indigo-400">
+                        {(contactList.find(c => c.uid === selectedContactUid)?.name || selectedContactUid || "?").charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setPictureInputOpen((v) => !v)}
+                      title="Change chat picture"
+                      className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-indigo-600 text-white text-[9px] leading-none border-2 border-zinc-900 dark:border-zinc-100 cursor-pointer flex items-center justify-center"
+                    >
+                      ✎
+                    </button>
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-extrabold text-zinc-900 dark:text-white text-sm flex items-center gap-1.5 truncate">
+                      {contactList.find(c => c.uid === selectedContactUid)?.isGroup && <span className="text-[14px]">👥</span>}
+                      {contactList.find(c => c.uid === selectedContactUid)?.name || selectedContactUid}
+                    </h3>
+                    <p className="text-[10px] text-zinc-600 dark:text-zinc-500 mt-0.5">Contact: <span className="font-mono text-[9px]">{selectedContactUid}</span></p>
+                  </div>
                 </div>
                 <button
                   onClick={() => generateContactSummary(selectedContactUid)}
@@ -584,7 +727,44 @@ export default function WhatsAppDashboard() {
                 </button>
               </div>
 
-              <div ref={chatContainerRef} className="flex-1 p-4 overflow-y-auto space-y-4 bg-zinc-955/10 scrollbar-thin">
+              {pictureInputOpen && (
+                <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-2">
+                  <input
+                    type="text"
+                    value={pictureUrl}
+                    onChange={(e) => setPictureUrl(e.target.value)}
+                    placeholder="Paste image URL…"
+                    className="flex-1 text-xs bg-[var(--bg-input)] border border-[var(--border-card)] dark:border-zinc-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    onClick={() => selectedContactUid && void updatePicture(selectedContactUid, pictureUrl.trim() || null)}
+                    className="text-[10px] bg-indigo-600 text-white font-bold px-3 py-1.5 rounded-lg cursor-pointer"
+                  >
+                    Set
+                  </button>
+                  {contactList.find(c => c.uid === selectedContactUid)?.picture && (
+                    <button
+                      onClick={() => selectedContactUid && void updatePicture(selectedContactUid, null)}
+                      className="text-[10px] bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 font-bold px-3 py-1.5 rounded-lg cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div ref={chatContainerRef} onScroll={handleChatScroll} className="flex-1 p-4 overflow-y-auto space-y-4 bg-zinc-955/10 scrollbar-thin">
+                {hasMore && (
+                  <div className="text-center">
+                    <button
+                      onClick={() => selectedContactUid && void loadOlderMessages(selectedContactUid)}
+                      disabled={loadingOlder}
+                      className="text-[10px] bg-[var(--bg-input)] hover:bg-zinc-200 dark:hover:bg-zinc-800 text-[var(--text-tertiary)] dark:text-zinc-400 px-3 py-1 rounded-full border border-[var(--border-card)] dark:border-zinc-700 disabled:opacity-50"
+                    >
+                      {loadingOlder ? "Loading…" : "↑ Load older messages"}
+                    </button>
+                  </div>
+                )}
                 {isLoadingMessages ? (
                   <div className="h-full flex items-center justify-center text-zinc-600 dark:text-zinc-500 text-xs animate-pulse">Loading messages...</div>
                 ) : messageList.length === 0 ? (
@@ -680,7 +860,7 @@ export default function WhatsAppDashboard() {
         </div>
 
         {/* Right panel: AI Summary */}
-        <div className="lg:col-span-3 bg-zinc-50/30 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl p-5 flex flex-col space-y-5 overflow-y-auto scrollbar-thin">
+        <div className="h-[45vh] lg:h-auto lg:col-span-3 bg-zinc-50/30 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl p-5 flex flex-col space-y-5 overflow-y-auto scrollbar-thin">
           {selectedContactUid ? (
             <>
               <div>

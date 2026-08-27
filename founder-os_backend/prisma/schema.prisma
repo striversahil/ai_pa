@@ -28,6 +28,7 @@ model Contact {
   pushName        String?
   phoneNumber     String
   isGroup         Boolean    @default(false)
+  picture         String?
   lastMessageAt   DateTime?
   lastMessageBody String?
   unreadCount     Int        @default(0)
@@ -435,6 +436,9 @@ model AuthUser {
   createdAt  DateTime        @default(now())
   sessions   AuthSession[]
   userScopes AuthUserScope[]
+  userRoles  AuthUserRole[]
+  chatMessages ChatMessage[]
+  chatMembers   ChatMember[]
 }
 
 model AuthSession {
@@ -452,6 +456,7 @@ model AuthScope {
   label      String
   description String?
   userScopes AuthUserScope[]
+  roleScopes AuthRoleScope[]
 }
 
 model AuthUserScope {
@@ -461,6 +466,73 @@ model AuthUserScope {
   scope     AuthScope @relation(fields: [scopeKey], references: [key], onDelete: Cascade)
 
   @@id([userId, scopeKey])
+}
+
+// Roles bundle automation-dashboard scopes. A user's effective scopes =
+// direct scopes (auth_user_scope) ∪ scopes of their roles (auth_role_scope).
+model AuthRole {
+  key         String          @id
+  label       String
+  description String?
+  roleScopes  AuthRoleScope[]
+  userRoles   AuthUserRole[]
+}
+
+model AuthRoleScope {
+  roleKey   String
+  role      AuthRole @relation(fields: [roleKey], references: [key], onDelete: Cascade)
+  scopeKey  String
+  scope     AuthScope @relation(fields: [scopeKey], references: [key], onDelete: Cascade)
+
+  @@id([roleKey, scopeKey])
+}
+
+model AuthUserRole {
+  userId   String
+  user     AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleKey  String
+  role     AuthRole @relation(fields: [roleKey], references: [key], onDelete: Cascade)
+
+  @@id([userId, roleKey])
+}
+
+// ── Team chat (Discord-style channels + messages) ─────────────────────────────
+// Channels are visible to every approved member; message ids are sequential
+// Ints for cheap "load older" pagination (id < before).
+model ChatChannel {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  category    String?
+  type        String  @default("channel") // "channel" (public) | "dm" (two users)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  messages    ChatMessage[]
+  members     ChatMember[]
+}
+
+model ChatMessage {
+  id          Int      @id @default(autoincrement())
+  channelId   String
+  channel     ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      AuthUser @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body        String
+  createdAt   DateTime @default(now())
+  editedAt    DateTime?
+  deletedAt   DateTime?
+  attachments String?
+
+  @@index([channelId, id])
+}
+
+model ChatMember {
+  channelId String
+  channel   ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
 }
 
 // ── WhatsApp Business Autopilot ──────────────────────────────────────────────

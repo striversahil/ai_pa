@@ -5,13 +5,16 @@ import { AsyncTaskRunner } from './durable/async-task-runner';
 import { broadcastLive, LiveEvent } from './live';
 import * as AuthRoutes from './modules/auth/routes';
 import { createAuthStore } from './modules/auth/store';
-import { authEnabled, getMe } from './modules/auth/service';
+import { authEnabled, getMe, isApproved } from './modules/auth/service';
 import { readSessionCookie } from './modules/auth/session';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from './automations/neodove-refresh';
 import { DASHBOARD_SLUGS } from './modules/automation/dashboardSlugs';
+import * as ChatRoutes from './modules/chat/routes';
+import { createChatStore } from './modules/chat/store';
 
 type Bindings = {
   DB: D1Database;
+  CHAT_FILES?: KVNamespace;
   EVENT_HUB?: DurableObjectNamespace;
   ASYNC_RUNNER?: DurableObjectNamespace;
   SHARED_SECRET?: string;
@@ -212,6 +215,108 @@ app.put('/api/auth/users/:id/roles', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const r = await AuthRoutes.authSetUserRoles(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);
   return c.json(r.body, r.status as any);
+});
+
+// ── Team chat (Discord-style channels) ────────────────────────────────────────
+async function chatMe(c: any) {
+  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+}
+function chatSend(c: any, r: any) {
+  if (r.live) broadcastLive(c, r.live.type, r.live.extra);
+}
+app.get('/api/chat/channels', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatListChannels(createChatStore(c.env), me);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/chat/users', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatListUsers(createChatStore(c.env), me);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/chat/dm', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  const r = await ChatRoutes.chatCreateDm(createChatStore(c.env), me, body.userId);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/chat/channels', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatCreateChannel(createChatStore(c.env), me, await c.req.json().catch(() => ({})));
+  chatSend(c, r);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/chat/channels/:id/messages', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatListMessages(createChatStore(c.env), me, c.req.param('id') ?? '', c.req.query('before') ?? null, c.req.query('limit') ?? null);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/chat/channels/:id/messages', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatSendMessage(createChatStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+  chatSend(c, r);
+  return c.json(r.body, r.status as any);
+});
+app.patch('/api/chat/messages/:id', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatUpdateMessage(createChatStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+  chatSend(c, r);
+  return c.json(r.body, r.status as any);
+});
+app.delete('/api/chat/messages/:id', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatDeleteMessage(createChatStore(c.env), me, c.req.param('id') ?? '');
+  chatSend(c, r);
+  return c.json(r.body, r.status as any);
+});
+
+// ── Chat file attachments (Workers KV) ───────────────────────────────────────
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // KV allows 25MB; keep headroom
+
+app.post('/api/chat/files', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  if (!isApproved(me)) return c.json({ error: 'Approval required' }, 403);
+  if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ error: 'Expected multipart/form-data' }, 400);
+  }
+  const file = form.get('file');
+  if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
+  if (file.size > MAX_ATTACHMENT_BYTES) return c.json({ error: 'File too large (max 20MB)' }, 413);
+  const ext = (file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+  const key = `${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
+  const data = await file.arrayBuffer();
+  await c.env.CHAT_FILES.put(key, data, { metadata: { name: file.name, type: file.type || 'application/octet-stream' } });
+  return c.json({ key, name: file.name, size: file.size, type: file.type || 'application/octet-stream', url: `/api/chat/files/${key}` }, 201);
+});
+
+app.get('/api/chat/files/:key', async (c) => {
+  if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+  const key = c.req.param('key') ?? '';
+  const obj = await c.env.CHAT_FILES.getWithMetadata(key, 'arrayBuffer');
+  if (obj.value === null) return c.json({ error: 'File not found' }, 404);
+  const meta = (obj.metadata || {}) as { name?: string; type?: string };
+  const type = meta.type || 'application/octet-stream';
+  const name = meta.name || key;
+  const headers = new Headers();
+  headers.set('Content-Type', type);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  // Images, PDFs, audio, video and plain text render/play inline; other documents download.
+  const inline = /^image\/|^video\/|^audio\/|^text\/|^application\/pdf$/.test(type);
+  if (!inline) headers.set('Content-Disposition', `attachment; filename="${name.replace(/["\\]/g, '')}"`);
+  return new Response(obj.value, { headers });
 });
 
 // ── Env bootstrap (must run before any module import is exercised) ──────────
@@ -923,16 +1028,28 @@ app.get('/api/whatsapp/contacts', async (c) => {
   const dbContacts = await StorageRepository.fetchContacts();
   const contacts = dbContacts.map((cc: any) => ({
     uid: cc.chatId, name: cc.name, phone_number: cc.phoneNumber, pushName: cc.pushName,
-    isGroup: cc.isGroup, lastMessageAt: cc.lastMessageAt, lastMessageBody: cc.lastMessageBody, unreadCount: cc.unreadCount,
+    isGroup: cc.isGroup, picture: cc.picture || null, lastMessageAt: cc.lastMessageAt, lastMessageBody: cc.lastMessageBody, unreadCount: cc.unreadCount,
   }));
   return c.json({ contacts });
 });
 
 app.get('/api/whatsapp/contacts/:contactUid/messages', async (c) => {
-  const { WhatsAppService } = deps();
+  const { StorageRepository } = deps();
   const chatId = c.req.param('contactUid');
-  const messages = await WhatsAppService.fetchMessagesByChatId(chatId);
+  const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50', 10) || 50, 1), 200);
+  const before = c.req.query('before') ? new Date(c.req.query('before') as string) : null;
+  const messages = await StorageRepository.fetchMessagesByChatId(chatId, limit, before);
   return c.json(messages.sort((a: any, b: any) => a.timestamp.getTime() - b.timestamp.getTime()));
+});
+
+app.put('/api/whatsapp/contacts/:contactUid/picture', async (c) => {
+  const { StorageRepository } = deps();
+  const chatId = c.req.param('contactUid');
+  const body = await c.req.json().catch(() => ({}));
+  const picture = String(body?.picture ?? '').trim() || null;
+  await StorageRepository.updateContactPicture(chatId, picture);
+  broadcastLive(c, LiveEvent.Contacts, { chatId });
+  return c.json({ ok: true, chatId, picture });
 });
 
 app.get('/api/whatsapp/contacts/:contactUid/note', async (c) => {
@@ -1371,32 +1488,43 @@ app.get('/api/runner/brain/sources', async (c) => {
 
 app.post('/api/runner/brain/context', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
-  const { prisma } = deps();
   const body = await c.req.json().catch(() => ({}));
   const rows = Array.isArray(body.rows) ? body.rows : [];
+  const db = c.env.DB;
+  if (!db || !db.batch) return c.json({ ok: true, count: 0 });
   let upserted = 0;
+  const stmts: any[] = [];
   for (const row of rows) {
     if (!row.source || !row.sourceId || !row.content) continue;
-    await prisma.brainContext.upsert({
-      where: { source_sourceId: { source: row.source, sourceId: row.sourceId } },
-      update: {
-        entityName: row.entityName || null,
-        content: row.content,
-        metadata: row.metadata || null,
-        eventDate: row.eventDate ? new Date(row.eventDate) : new Date(),
-        indexedAt: new Date(),
-      },
-      create: {
-        source: row.source,
-        sourceId: row.sourceId,
-        entityName: row.entityName || null,
-        content: row.content,
-        metadata: row.metadata || null,
-        eventDate: row.eventDate ? new Date(row.eventDate) : new Date(),
-        indexedAt: new Date(),
-      },
-    });
+    const now = new Date();
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO "BrainContext" (id, source, sourceId, entityName, content, metadata, indexedAt, eventDate)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(source, sourceId) DO UPDATE SET
+             entityName = excluded.entityName,
+             content = excluded.content,
+             metadata = excluded.metadata,
+             indexedAt = excluded.indexedAt,
+             eventDate = excluded.eventDate`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          row.source,
+          row.sourceId,
+          row.entityName || null,
+          row.content,
+          row.metadata || null,
+          now.toISOString(),
+          row.eventDate ? new Date(row.eventDate).toISOString() : now.toISOString(),
+        ),
+    );
     upserted++;
+  }
+  // D1 batch() accepts up to 100 statements per call — chunk to be safe.
+  for (let i = 0; i < stmts.length; i += 100) {
+    await db.batch(stmts.slice(i, i + 100));
   }
   if (upserted > 0) broadcastLive(c, LiveEvent.Brain);
   return c.json({ ok: true, count: upserted });
@@ -1578,6 +1706,7 @@ app.post('/api/runner/autopilot/tasks/create', async (c) => {
       messageId: body.wahaMessageId ? String(body.wahaMessageId) : null,
       notes: body.notes ? String(body.notes) : null,
       confidence: typeof body.confidence === 'number' ? body.confidence : null,
+      occurredAt: new Date(),
     },
   });
   broadcastLive(c, LiveEvent.Autopilot, { chatId: task.chatId });
@@ -1626,6 +1755,7 @@ app.post('/api/runner/autopilot/tasks/transition', async (c) => {
       messageId: body.wahaMessageId ? String(body.wahaMessageId) : null,
       notes: body.notes ? String(body.notes) : null,
       confidence: typeof body.confidence === 'number' ? body.confidence : null,
+      occurredAt: new Date(),
     },
   });
   const updated = await prisma.waTask.findUnique({ where: { id: String(taskId) } });
@@ -1746,16 +1876,17 @@ app.post('/api/autopilot/tasks/:id/review', async (c) => {
   });
   if (res.count === 0) return c.json({ error: 'version_conflict' }, 409);
   const wasAuto = task.status === 'needs_review';
-  await prisma.$transaction([
-    prisma.waTaskHistory.create({
-      data: {
-        taskId,
-        transition: resolution === 'completed' ? 'complete' : resolution === 'cancelled' ? 'update' : 'update',
-        triggeredBy: 'human',
-        notes: `[review:${resolution}] ${body.notes || ''}`.trim(),
-      },
-    }),
-    ...(wasAuto ? [prisma.overrideLog.create({
+  await prisma.waTaskHistory.create({
+    data: {
+      taskId,
+      transition: resolution === 'completed' ? 'complete' : resolution === 'cancelled' ? 'update' : 'update',
+      triggeredBy: 'human',
+      notes: `[review:${resolution}] ${body.notes || ''}`.trim(),
+      occurredAt: new Date(),
+    },
+  });
+  if (wasAuto) {
+    await prisma.overrideLog.create({
       data: {
         taskId,
         decisionType: 'transition',
@@ -1764,8 +1895,8 @@ app.post('/api/autopilot/tasks/:id/review', async (c) => {
         humanDecision: resolution,
         reviewer,
       },
-    })] : []),
-  ]);
+    });
+  }
   broadcastLive(c, LiveEvent.Autopilot, { taskId, review: resolution });
   return c.json({ ok: true });
 });
@@ -1789,12 +1920,13 @@ app.post('/api/autopilot/actions/:id/decide', async (c) => {
     },
   });
   if (action.taskId) {
-    await prisma.waTaskHistory.create({
+await prisma.waTaskHistory.create({
       data: {
         taskId: action.taskId,
         transition: 'action',
         triggeredBy: 'human',
         notes: `[${decision}] ${action.toolName}${body.notes ? `: ${body.notes}` : ''}`.trim(),
+        occurredAt: new Date(),
       },
     });
   }

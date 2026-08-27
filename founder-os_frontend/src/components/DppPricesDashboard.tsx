@@ -144,26 +144,28 @@ export default function DppPricesDashboard() {
                 No quotes yet. When DPP sends <code>item — price</code> messages, they appear here automatically.
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-zinc-600 dark:text-zinc-500 uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-800">
-                    <th className="px-5 py-3 font-bold">Item</th>
-                    <th className="px-5 py-3 font-bold">Times Quoted</th>
-                    <th className="px-5 py-3 font-bold text-right">Avg Unit Price</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60">
-                  {data.items.map((item) => (
-                    <tr key={item.itemName} className="hover:bg-zinc-100/30 dark:hover:bg-zinc-800/30 transition-colors">
-                      <td className="px-5 py-3 font-semibold text-zinc-800 dark:text-zinc-200">{item.itemName}</td>
-                      <td className="px-5 py-3 text-zinc-500 dark:text-zinc-400">{item.timesQuoted}</td>
-                      <td className="px-5 py-3 text-right font-mono text-emerald-400">
-                        ₹{item.avgPrice ? item.avgPrice.toLocaleString() : "—"}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-zinc-600 dark:text-zinc-500 uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-800">
+                      <th className="px-5 py-3 font-bold">Item</th>
+                      <th className="px-5 py-3 font-bold">Times Quoted</th>
+                      <th className="px-5 py-3 font-bold text-right">Avg Unit Price</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60">
+                    {data.items.map((item) => (
+                      <tr key={item.itemName} className="hover:bg-zinc-100/30 dark:hover:bg-zinc-800/30 transition-colors">
+                        <td className="px-5 py-3 font-semibold text-zinc-800 dark:text-zinc-200">{item.itemName}</td>
+                        <td className="px-5 py-3 text-zinc-500 dark:text-zinc-400">{item.timesQuoted}</td>
+                        <td className="px-5 py-3 text-right font-mono text-emerald-400">
+                          ₹{item.avgPrice ? item.avgPrice.toLocaleString() : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </>

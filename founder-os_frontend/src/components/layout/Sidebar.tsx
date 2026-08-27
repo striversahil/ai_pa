@@ -1,11 +1,41 @@
 "use client";
 import React from "react";
-import { NAV_ITEMS, type ViewType } from "./nav";
+import {
+  NAV_ITEMS,
+  type ViewType,
+  type NavTarget,
+} from "./nav";
+import { useDashboardNav } from "@/hooks/useDashboardNav";
+import {
+  LayoutGrid,
+  FileText,
+  Tag,
+  PhoneCall,
+  Radio,
+  Factory,
+  Megaphone,
+  Table2,
+  Bot,
+  type LucideIcon,
+} from "lucide-react";
 export type { ViewType } from "./nav";
+
+const DASH_ICONS: Record<string, LucideIcon> = {
+  "zoho-sent-analyzer": FileText,
+  "dpp-prices-dashboard": Tag,
+  "neodove-telecaller-report": PhoneCall,
+  "wa-engine-monitor": Radio,
+  "enterprise-operations-analytics": Factory,
+  "whatsapp-marketing": Megaphone,
+  "whatsapp-autopilot": Bot,
+  "sheet-analysis": Table2,
+  telecalling: PhoneCall,
+};
 
 interface SidebarProps {
   activeView: ViewType;
-  onNavigate: (view: ViewType) => void;
+  activeSlug: string | null;
+  onNavigate: (target: NavTarget) => void;
   theme: "dark" | "light";
   onToggleTheme: () => void;
   me: { email: string; name: string; picture: string | null } | null;
@@ -13,8 +43,20 @@ interface SidebarProps {
   canView: (view: string) => boolean;
 }
 
-export default function Sidebar({ activeView, onNavigate, theme, onToggleTheme, me, onLogout, canView }: SidebarProps) {
+export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onToggleTheme, me, onLogout, canView }: SidebarProps) {
   const visible = NAV_ITEMS.filter((i) => canView(i.view));
+  const dashboards = useDashboardNav();
+
+  const itemClass = (isActive: boolean) =>
+    `group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 ${
+      isActive ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/5 hover:text-white"
+    }`;
+
+  const activeBar = (isActive: boolean) =>
+    isActive && (
+      <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
+    );
+
   return (
     <aside className="sticky top-0 z-40 hidden h-screen w-[260px] shrink-0 self-start flex-col bg-[var(--bg-sidebar)] px-4 py-6 md:flex">
       <div className="mb-8 flex items-center gap-3 px-2">
@@ -38,21 +80,40 @@ export default function Sidebar({ activeView, onNavigate, theme, onToggleTheme, 
             <button
               key={item.view}
               type="button"
-              onClick={() => onNavigate(item.view)}
-              className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 ${
-                isActive
-                  ? "bg-white/10 text-white"
-                  : "text-white/55 hover:bg-white/5 hover:text-white"
-              }`}
+              onClick={() => onNavigate({ type: "view", view: item.view })}
+              className={itemClass(isActive)}
             >
-              {isActive && (
-                <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
-              )}
+              {activeBar(isActive)}
               <Icon className="h-5 w-5" strokeWidth={2} />
               <span>{item.label}</span>
             </button>
           );
         })}
+
+        {dashboards.length > 0 && (
+          <div className="mt-3">
+            <div className="px-3 pb-1.5 text-[10px] font-extrabold uppercase tracking-wider text-white/35">Dashboards</div>
+            <div className="flex flex-col gap-1">
+              {dashboards.map((d) => {
+                const Icon = DASH_ICONS[d.slug] ?? LayoutGrid;
+                const isActive = d.slug === activeSlug;
+                return (
+                  <button
+                    key={d.slug}
+                    type="button"
+                    onClick={() => onNavigate({ type: "dashboard", slug: d.slug })}
+                    className={itemClass(isActive)}
+                    title={d.name}
+                  >
+                    {activeBar(isActive)}
+                    <Icon className="h-5 w-5" strokeWidth={2} />
+                    <span className="truncate">{d.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </nav>
 
       <div className="mt-auto flex flex-col gap-3 border-t border-white/10 pt-4">

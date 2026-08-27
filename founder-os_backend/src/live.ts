@@ -24,6 +24,7 @@ export const LiveEvent = {
   Sheet: "sheet",
   Enquiries: "enquiries",
   Autopilot: "autopilot",
+  Chat: "chat",
 } as const;
 
 export type LiveEventType = (typeof LiveEvent)[keyof typeof LiveEvent];

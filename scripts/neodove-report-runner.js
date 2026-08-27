@@ -58,6 +58,85 @@ function istRangeStrings(dateStr) {
   return { startDate: `${prefix} 00:00:00 ${tz}`, endDate: `${prefix} 23:59:59 ${tz}` };
 }
 
+// IST day → epoch-ms range (NeoDove get-leads expects lead_date_created in ms).
+// IST midnight = 18:30 UTC of the previous day; span a full 24h window.
+function istDayEpochRange(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const start = Date.UTC(y, m - 1, d - 1, 18, 30, 0);
+  return { start, end: start + 24 * 3600 * 1000 - 1 };
+}
+
+/**
+ * Number of leads GENERATED (created) per telecaller on a given IST day.
+ *
+ * This replaces the previous buggy `leadsInProgress + leadsConverted` heuristic
+ * from the USER_REPORT call-log snapshot. We query NeoDove's `get-leads` API
+ * per telecaller (filtering by `user_id_list`) over the day's created-date
+ * range and count the returned leads — that is the true "leads generated"
+ * figure. Network failures degrade to 0 (the live path runs from Cloudflare/
+ * local egress where NeoDove is reachable; GH Actions egress is blocked).
+ */
+const NEODOVE_PIPELINE_ID = '6960ffd81688fef4bc4df09a';
+async function fetchLeadsGenerated(token, dateStr, userIds) {
+  const { start, end } = istDayEpochRange(dateStr);
+  const counts = {};
+  for (const uid of userIds) {
+    let offset = 0;
+    let count = 0;
+    let pages = 0;
+    while (true) {
+      const body = {
+        campaign_id: null,
+        pipeline_id: NEODOVE_PIPELINE_ID,
+        campaign_name: null,
+        timezone_offset: 330,
+        view_lead_filter: {
+          basic_search: {},
+          lead_status: null,
+          customFollowupFilterSelected: null,
+          lead_stage_list: [],
+          tag_list: [],
+          user_id_list: [uid],
+          lead_date_created: { start_date: start, end_date: end, is_date_changed: true },
+          next_followup_date: {},
+          contact_source: [],
+          contact_list_ids: [],
+          campaign_ids_list: [],
+          show_historical_leads: false,
+          isFilterApplied: true,
+          customfilterSelected: 'today',
+        },
+        pagination: { limit: 50, offset },
+        sort_by: { sorting_type: 0 },
+        selected_contact_source: [],
+        selected_uploaded_files: [],
+        fetch_purpose: 'VIEW_LEADS',
+      };
+      const res = await fetch(`${NEODOVE_API}/lead/get-leads?application_type=PORTAL`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/plain, */*',
+          'Content-Type': 'application/json',
+          Referer: `https://connect.neodove.com/leads/${NEODOVE_PIPELINE_ID}`,
+          loaderDivId: 'LEAD_SUMMARY_PAGE_LOADER',
+          token,
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) throw new Error('NeoDove rejected the token (401) — refresh it via POST /api/token/webhook');
+      if (!res.ok) throw new Error(`neodove get-leads HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const json = await res.json();
+      const arr = json?.data?.data || json?.data?.leads || (Array.isArray(json?.data) ? json.data : []);
+      count += Array.isArray(arr) ? arr.length : 0;
+      pages++;
+      if (!Array.isArray(arr) || arr.length < 50 || pages > 50) break;
+      offset += 50;
+    }
+    counts[uid] = count;
+  }
+  return counts;
+}
+
 function jwtExpiry(token) {
   try {
     const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
@@ -127,6 +206,7 @@ function normalizeRow(r) {
     leadsClosed: r.totalClosedLead ?? 0,
     followupLeads: r.totalFollowupLeads ?? 0,
     pendingScheduledLeads: r.totalPendingScheduledLeads ?? 0,
+    leadsGenerated: r.leadsGenerated ?? 0,
   };
 }
 
@@ -165,7 +245,25 @@ function normalizeRow(r) {
     console.error(`[neodove] empty report for ${reportDate} — aborting without overwrite`);
     process.exit(1);
   }
-  const rows = rawRows.map(normalizeRow);
+
+  // 2b. true "leads generated" per telecaller via the get-leads API (replaces
+  // the buggy leadsInProgress + leadsConverted heuristic). Degrades to 0 on
+  // network failure so the rest of the snapshot still stores.
+  const userIds = (process.env.NEODOVE_USER_IDS || DEFAULT_USER_IDS).split(',').map((s) => s.trim()).filter(Boolean);
+  let leadsByUser = {};
+  try {
+    leadsByUser = await fetchLeadsGenerated(token, reportDate, userIds);
+    const total = Object.values(leadsByUser).reduce((a, b) => a + b, 0);
+    console.log(`[neodove] leads generated today (get-leads): ${total} across ${Object.keys(leadsByUser).length} telecallers`);
+  } catch (e) {
+    console.warn(`[neodove] leads-generated fetch failed (storing 0): ${e.message}`);
+  }
+
+  const rows = rawRows.map((r) => {
+    const n = normalizeRow(r);
+    n.leadsGenerated = leadsByUser[r.userId] ?? 0;
+    return n;
+  });
   console.log(`[neodove] fetched ${rows.length} user-day rows${rows.length === 0 ? ' (empty — early-morning today mode, storing empty day)' : ''}`);
 
   // 3. store in D1

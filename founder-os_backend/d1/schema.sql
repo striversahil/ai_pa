@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS Contact (
   pushName TEXT,
   phoneNumber TEXT NOT NULL,
   isGroup INTEGER NOT NULL DEFAULT 0,
+  picture TEXT,
   lastMessageAt TEXT,
   lastMessageBody TEXT,
   unreadCount INTEGER NOT NULL DEFAULT 0,
@@ -326,6 +327,57 @@ CREATE TABLE IF NOT EXISTS auth_user_scope (
   FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE,
   FOREIGN KEY (scopeKey) REFERENCES auth_scope(key) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS auth_role (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  description TEXT
+);
+CREATE TABLE IF NOT EXISTS auth_role_scope (
+  roleKey TEXT NOT NULL,
+  scopeKey TEXT NOT NULL,
+  PRIMARY KEY (roleKey, scopeKey),
+  FOREIGN KEY (roleKey) REFERENCES auth_role(key) ON DELETE CASCADE,
+  FOREIGN KEY (scopeKey) REFERENCES auth_scope(key) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS auth_user_role (
+  userId TEXT NOT NULL,
+  roleKey TEXT NOT NULL,
+  PRIMARY KEY (userId, roleKey),
+  FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE,
+  FOREIGN KEY (roleKey) REFERENCES auth_role(key) ON DELETE CASCADE
+);
+
+-- Team chat (Discord-style channels + messages)
+CREATE TABLE IF NOT EXISTS chat_channel (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  category TEXT,
+  type TEXT NOT NULL DEFAULT 'channel',
+  createdBy TEXT NOT NULL,
+  createdAt TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_message (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channelId TEXT NOT NULL,
+  senderId TEXT NOT NULL,
+  body TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  editedAt TEXT,
+  deletedAt TEXT,
+  attachments TEXT,
+  FOREIGN KEY (channelId) REFERENCES chat_channel(id) ON DELETE CASCADE,
+  FOREIGN KEY (senderId) REFERENCES auth_user(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_chat_message_channel ON chat_message(channelId, id);
+CREATE TABLE IF NOT EXISTS chat_member (
+  channelId TEXT NOT NULL,
+  userId TEXT NOT NULL,
+  PRIMARY KEY (channelId, userId),
+  FOREIGN KEY (channelId) REFERENCES chat_channel(id) ON DELETE CASCADE,
+  FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_chat_member_user ON chat_member(userId);
 
 -- waba-worker merged: raw webhook payloads (waengine.pro ingress)
 CREATE TABLE IF NOT EXISTS waba_payloads (
@@ -427,3 +479,78 @@ CREATE TABLE IF NOT EXISTS OverrideLog (
 );
 CREATE INDEX IF NOT EXISTS idx_overridelog_task ON OverrideLog(taskId);
 CREATE INDEX IF NOT EXISTS idx_overridelog_type ON OverrideLog(decisionType);
+
+-- ── Telecaller roster + Estimate assignment + Token storage ────────────────
+CREATE TABLE IF NOT EXISTS Telecaller (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  "order" INTEGER NOT NULL DEFAULT 0,
+  neodoveUserId TEXT,
+  neodoveUserName TEXT,
+  createdAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS EstimateAssignment (
+  id TEXT PRIMARY KEY,
+  estimateId TEXT NOT NULL,
+  telecallerId TEXT NOT NULL,
+  assignedAt TEXT NOT NULL,
+  day TEXT NOT NULL,
+  reassignedFromId TEXT,
+  status TEXT NOT NULL DEFAULT 'assigned',
+  FOREIGN KEY (estimateId) REFERENCES Estimate(estimateId) ON DELETE CASCADE,
+  FOREIGN KEY (telecallerId) REFERENCES Telecaller(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_estassign_estimate ON EstimateAssignment(estimateId);
+CREATE INDEX IF NOT EXISTS idx_estassign_telecaller ON EstimateAssignment(telecallerId);
+CREATE INDEX IF NOT EXISTS idx_estassign_day ON EstimateAssignment(day);
+
+CREATE TABLE IF NOT EXISTS Token (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL UNIQUE,
+  token TEXT NOT NULL,
+  metadata TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_token_source ON Token(source);
+
+-- ── Telecaller / estimate assignment (synced from Prisma; missing from initial D1 schema) ──
+CREATE TABLE IF NOT EXISTS Telecaller (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  "order" INTEGER NOT NULL DEFAULT 0,
+  neodoveUserId TEXT,
+  neodoveUserName TEXT,
+  createdAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS EstimateAssignment (
+  id TEXT PRIMARY KEY,
+  estimateId TEXT NOT NULL,
+  telecallerId TEXT NOT NULL,
+  assignedAt TEXT NOT NULL,
+  day TEXT NOT NULL,
+  reassignedFromId TEXT,
+  status TEXT NOT NULL DEFAULT 'assigned',
+  FOREIGN KEY (estimateId) REFERENCES Estimate(estimateId) ON DELETE CASCADE,
+  FOREIGN KEY (telecallerId) REFERENCES Telecaller(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_estassign_estimate ON EstimateAssignment(estimateId);
+CREATE INDEX IF NOT EXISTS idx_estassign_telecaller ON EstimateAssignment(telecallerId);
+CREATE INDEX IF NOT EXISTS idx_estassign_day ON EstimateAssignment(day);
+
+-- ── Token storage (external auth tokens for NeoDove, Zoho, etc.) ──────────
+CREATE TABLE IF NOT EXISTS Token (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL UNIQUE,
+  token TEXT NOT NULL,
+  metadata TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_token_source ON Token(source);

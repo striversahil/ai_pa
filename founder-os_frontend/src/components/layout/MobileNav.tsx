@@ -25,8 +25,8 @@ export default function MobileNav({ activeView, onNavigate, canView }: MobileNav
               isActive ? "text-[var(--color-brand-indigo)]" : "text-[var(--text-tertiary)]"
             }`}
           >
-            <Icon className="h-5 w-5" strokeWidth={isActive ? 2.4 : 2} />
-            <span>{item.label}</span>
+            <Icon className="h-5 w-5 shrink-0" strokeWidth={isActive ? 2.4 : 2} />
+            <span className="max-w-full truncate px-0.5">{item.label}</span>
           </button>
         );
       })}

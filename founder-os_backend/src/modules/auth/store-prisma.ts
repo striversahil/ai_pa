@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { AuthScope, AuthUser, ROOT_EMAIL } from "./types";
+import { AuthRole, AuthScope, AuthUser, ROOT_EMAIL } from "./types";
 import { AuthStore } from "./store";
 
 // Prisma-backed AuthStore for the Express / Postgres runtime. Kept in a separate
@@ -88,8 +88,55 @@ export class PrismaAuthStore implements AuthStore {
   async listUsers() {
     const users = await this.prisma.authUser.findMany({ orderBy: { createdAt: "asc" } });
     return Promise.all(
-      users.map(async (u) => ({ ...this.mapUser(u)!, scopes: await this.getUserScopeKeys(u.id) })),
+      users.map(async (u) => ({
+        ...this.mapUser(u)!,
+        scopes: await this.getUserScopeKeys(u.id),
+        roles: await this.getUserRoleKeys(u.id),
+      })),
     );
+  }
+  async listRoles(): Promise<AuthRole[]> {
+    const roles = await this.prisma.authRole.findMany({
+      orderBy: { key: "asc" },
+      include: { roleScopes: true },
+    });
+    return roles.map((r) => ({
+      key: r.key,
+      label: r.label,
+      description: r.description,
+      scopeKeys: r.roleScopes.map((rs) => rs.scopeKey),
+    }));
+  }
+  async createRole(key: string, label: string, description: string | null, scopeKeys: string[]) {
+    await this.prisma.$transaction([
+      this.prisma.authRole.upsert({
+        where: { key },
+        update: { label, description },
+        create: { key, label, description },
+      }),
+      this.prisma.authRoleScope.deleteMany({ where: { roleKey: key } }),
+      this.prisma.authRoleScope.createMany({
+        data: scopeKeys.map((scopeKey) => ({ roleKey: key, scopeKey })),
+        skipDuplicates: true,
+      }),
+    ]);
+    return { key, label, description, scopeKeys };
+  }
+  async deleteRole(key: string) {
+    await this.prisma.authRole.delete({ where: { key } }).catch(() => {});
+  }
+  async getUserRoleKeys(userId: string) {
+    const rows = await this.prisma.authUserRole.findMany({ where: { userId }, select: { roleKey: true } });
+    return rows.map((r) => r.roleKey);
+  }
+  async setUserRoles(userId: string, keys: string[]) {
+    await this.prisma.$transaction([
+      this.prisma.authUserRole.deleteMany({ where: { userId } }),
+      this.prisma.authUserRole.createMany({
+        data: keys.map((roleKey) => ({ userId, roleKey })),
+        skipDuplicates: true,
+      }),
+    ]);
   }
 }
 

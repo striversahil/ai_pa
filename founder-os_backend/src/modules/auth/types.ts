@@ -17,6 +17,15 @@ export interface AuthScope {
   description: string | null;
 }
 
+export interface AuthRole {
+  key: string; // e.g. "mis", "operations"
+  label: string;
+  description: string | null;
+  /** Automation-dashboard scope keys granted by this role. Roles may ONLY
+   *  contain dashboard scopes — never main-platform views. */
+  scopeKeys: string[];
+}
+
 export interface Session {
   id: string;
   userId: string;
@@ -26,7 +35,8 @@ export interface Session {
 
 export interface MeResponse {
   user: AuthUser;
-  scopes: string[]; // scope keys held by the user
+  scopes: string[]; // resolved scope keys (direct scopes + role scopes)
+  roles: string[]; // role keys the user holds
   isRoot: boolean;
   /** Convenience: true if user holds `admin` scope or is root. */
   isAdmin: boolean;

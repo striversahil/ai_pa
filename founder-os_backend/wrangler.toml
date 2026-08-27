@@ -11,6 +11,10 @@ binding = "DB"
 database_name = "waba-worker"
 database_id = "45619af3-feab-48d3-b442-df18f4eadc9b"
 
+[[kv_namespaces]]
+binding = "CHAT_FILES"
+id = "233eb9aa540f48a9a2e21b993252f1aa"
+
 [durable_objects]
 bindings = [
   { name = "EVENT_HUB", class_name = "EventHub" },

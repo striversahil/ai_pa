@@ -31,12 +31,16 @@ import { PrismaAuthStore } from './modules/auth/store-prisma';
 import { createAuthStore } from './modules/auth/store';
 import { authEnabled, getMe } from './modules/auth/service';
 import { readSessionCookie } from './modules/auth/session';
+import * as ChatRoutes from './modules/chat/routes';
+import { PrismaChatStore } from './modules/chat/store-prisma';
+import { createChatStore } from './modules/chat/store';
 
 
 const app = express();
 
 // Auth store (Postgres via Prisma; in-memory fallback when DB is off) + helpers.
 const authStore = useInMemoryDb ? createAuthStore({}) : new PrismaAuthStore(prisma);
+const chatStore = useInMemoryDb ? createChatStore({}) : new PrismaChatStore(prisma);
 function publicOriginOf(req: Request): string {
   return process.env.AUTH_PUBLIC_ORIGIN || `${req.protocol}://${req.get('host')}`;
 }
@@ -113,6 +117,63 @@ app.get('/api/auth/roles', async (req, res) => sendAuth(res, await AuthRoutes.au
 app.post('/api/auth/roles', async (req, res) => sendAuth(res, await AuthRoutes.authCreateRole(authStore, req.headers.cookie || null, req.body || {})));
 app.delete('/api/auth/roles/:key', async (req, res) => sendAuth(res, await AuthRoutes.authDeleteRole(authStore, req.headers.cookie || null, req.params.key)));
 app.put('/api/auth/users/:id/roles', async (req, res) => sendAuth(res, await AuthRoutes.authSetUserRoles(authStore, req.headers.cookie || null, req.params.id, req.body?.keys || [])));
+
+// --- Team chat (Discord-style channels) ---
+async function chatMe(req: Request) {
+  return getMe(authStore, req.headers.cookie || null);
+}
+app.get('/api/chat/channels', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatListChannels(chatStore, me);
+  res.status(r.status).json(r.body);
+});
+app.get('/api/chat/users', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatListUsers(chatStore, me);
+  res.status(r.status).json(r.body);
+});
+app.post('/api/chat/dm', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatCreateDm(chatStore, me, req.body?.userId);
+  res.status(r.status).json(r.body);
+});
+app.post('/api/chat/channels', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatCreateChannel(chatStore, me, req.body || {});
+  res.status(r.status).json(r.body);
+});
+app.get('/api/chat/channels/:id/messages', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatListMessages(chatStore, me, req.params.id, (req.query.before as string) || null, (req.query.limit as string) || null);
+  res.status(r.status).json(r.body);
+});
+app.post('/api/chat/channels/:id/messages', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatSendMessage(chatStore, me, req.params.id, req.body || {});
+  res.status(r.status).json(r.body);
+});
+app.patch('/api/chat/messages/:id', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatUpdateMessage(chatStore, me, req.params.id, req.body || {});
+  res.status(r.status).json(r.body);
+});
+app.delete('/api/chat/messages/:id', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatDeleteMessage(chatStore, me, req.params.id);
+  res.status(r.status).json(r.body);
+});
+// File attachments are stored in Workers KV (worker runtime only); the
+// Express/alt runtime is the local/dev path without KV.
+app.post('/api/chat/files', (req, res) => res.status(501).json({ error: 'File upload is only available on the Cloudflare Worker runtime' }));
+app.get('/api/chat/files/:key', (req, res) => res.status(501).json({ error: 'File serving is only available on the Cloudflare Worker runtime' }));
 
 // --- REST API Endpoints ---
 
@@ -519,9 +580,18 @@ app.get('/api/whatsapp/contacts', asyncHandler(async (req, res) => {
  */
 app.get('/api/whatsapp/contacts/:contactUid/messages', asyncHandler(async (req, res) => {
   const chatId = String(req.params.contactUid);
-  const messages = await WhatsAppService.fetchMessagesByChatId(chatId);
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10) || 50, 1), 200);
+  const before = req.query.before ? new Date(String(req.query.before)) : null;
+  const messages = await WhatsAppService.fetchMessagesByChatId(chatId, limit, before);
   const sorted = messages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   return res.status(200).json(sorted);
+}));
+
+app.put('/api/whatsapp/contacts/:contactUid/picture', asyncHandler(async (req, res) => {
+  const chatId = String(req.params.contactUid);
+  const picture = String(req.body?.picture ?? '').trim() || null;
+  await StorageRepository.updateContactPicture(chatId, picture);
+  return res.status(200).json({ ok: true, chatId, picture });
 }));
 
 /**

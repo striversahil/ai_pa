@@ -40,7 +40,7 @@ export default function EstimateCard({ est, expanded, onToggleComments }: Props)
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span
             className={`text-xs font-bold px-3 py-1 rounded-full border ${isAssigned ? "bg-violet-500/10 text-violet-300 border-violet-500/30" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-500 border-zinc-300/60 dark:border-zinc-700/60"}`}
             title="Sales agent identified from the latest Zoho comment"

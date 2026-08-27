@@ -16,7 +16,9 @@
  *
  * Individual KRA/KPI (benchmarks judged on today's live numbers):
  *   - ≥ 120 connected calls / agent / day
- *   - ≥ 5 leads (leadsInProgress + leadsConverted) / agent / day
+ *   - ≥ 5 leads generated / agent / day (true "leads generated" count from
+ *     the get-leads API, see neodove-refresh / neodove-report-runner; older
+ *     snapshots fall back to leadsInProgress + leadsConverted)
  *   - Zoho sent-estimates pipeline attributed per agent via an optional
  *     name mapping (Setting key `kra:zoho_name_map`, JSON:
  *     { "Zoho Commenter": "NeoDove UserName", ... }).
@@ -47,13 +49,15 @@ export interface NeodoveAgentRow {
   leadsClosed: number;
   followupLeads: number;
   pendingScheduledLeads: number;
+  /** True "leads generated" (created) count from the get-leads API. */
+  leadsGenerated: number;
 }
 
 const NUMERIC_KEYS: (keyof NeodoveAgentRow)[] = [
   'callsAttempted', 'callsConnected', 'callsNotConnected',
   'incomingCalls', 'outgoingCalls', 'incomingMissed', 'outgoingMissed',
   'talkTimeSec', 'leadsConverted', 'leadsInProgress', 'leadsLost',
-  'leadsClosed', 'followupLeads', 'pendingScheduledLeads',
+  'leadsClosed', 'followupLeads', 'pendingScheduledLeads', 'leadsGenerated',
 ];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -120,7 +124,7 @@ function aggregate(rows: any[]): NeodoveAgentRow[] {
         callsAttempted: 0, callsConnected: 0, callsNotConnected: 0,
         incomingCalls: 0, outgoingCalls: 0, incomingMissed: 0, outgoingMissed: 0,
         talkTimeSec: 0, leadsConverted: 0, leadsInProgress: 0, leadsLost: 0,
-        leadsClosed: 0, followupLeads: 0, pendingScheduledLeads: 0,
+        leadsClosed: 0, followupLeads: 0, pendingScheduledLeads: 0, leadsGenerated: 0,
       };
       byUser.set(key, agg);
     }
@@ -281,7 +285,11 @@ export function computeAgentKra(
   days = 1,
 ): AgentKra {
   const d = Math.max(1, days);
-  const leads = agent.leadsInProgress + agent.leadsConverted;
+  // Prefer the true "leads generated" count from the get-leads API; fall back
+  // to the legacy leadsInProgress + leadsConverted for snapshots that predate
+  // it (the field is absent → undefined → old formula).
+  const leads =
+    typeof agent.leadsGenerated === 'number' ? agent.leadsGenerated : agent.leadsInProgress + agent.leadsConverted;
   // Benchmark scales with the range: e.g. a week of data targets 7 × daily.
   const effConnectedTarget = Math.round(connectedTarget * d);
   const effLeadsTarget = Math.round(leadsTarget * d);

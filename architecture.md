@@ -51,12 +51,13 @@ Worker + GitHub Actions.
 | Runtime | Entry | DB | Role |
 |---------|-------|----|------|
 | **Cloudflare Worker** (`founder-os_backend/src/worker.ts`) | `wrangler deploy` → `founder-os-worker` | D1 (SQLite) | **Live API.** Thin JSON API over D1; heavy AI/cron delegated to GH Actions runners via `/api/runner/*`. |
-| **GitHub Actions runners** (`scripts/*-runner.js`) | `.github/workflows/cron-*.yml` (external dispatch) | — (call Worker) | **Where all heavy processing & cron actually happens** (digest, brief, summary, zoho, email, neodove). |
+| **GitHub Actions runners** (`scripts/*-runner.js`) | `.github/workflows/cron-*.yml` (cPanel cron dispatch) | — (call Worker) | **Where all heavy processing & cron actually happens** (digest, brief, summary, zoho, email, neodove). |
 | **waba-worker** (`waba-worker/src/index.ts`) | `wrangler deploy` → `waba-worker` | D1 (`waba-worker`) | Dedicated WhatsApp webhook ingress + durable processing queue. Raw payloads stored in D1, drained by `local-runner.js` (polls `/api/logs`, writes `/api/update`). |
 | **Express server** (`founder-os_backend/src/server.ts`) | `pnpm dev` / `node dist/server.js` | PostgreSQL (Prisma) | Alternate/local runtime. Same route surface + modules; *can* run automations in-process via `node-cron` + BullMQ/Redis, but not the live operational path. |
 | **webhook-relay** (`webhook-relay/relay.js`) | `node relay.js` | disk WAL | Zero-dep buffer between WA Engine Pro and the Express backend; acks instantly, forwards with backoff. |
 | **local-runner.js** | `node local-runner.js` | (reads waba-worker D1) | Local AI processing loop: polls the waba-worker queue, classifies each message (deterministic rules + LLM fallback), writes results back. |
-| **Frontend** (`founder-os_frontend`) | `next build` → Cloudflare Pages | — | Static Next.js dashboard; talks to the Worker/Express API via Pages Functions `/api` proxy. |
+| **Frontend** (`founder-os_frontend`) | `next build` → Cloudflare Pages | — | Static Next.js dashboard; talks to the Worker/Express API via Pages Functions `/api` proxy. **PWA**: manifest + `sw.js` (build-time precache of all assets) for "Add to Home Screen" + offline shell. |
+| **cPanel cron dispatcher** (`216.10.246.39`, user `brindwqj`) | user crontab → `~/gh-trigger.sh` | — | Replaces cron-job.org: fires `workflow_dispatch` to GitHub Actions on schedule (no Node needed). |
 
 ### Key principles
 - **Dual runtime, shared modules:** `founder-os_backend/src/modules/*` and `src/automations/*`
@@ -67,9 +68,9 @@ Worker + GitHub Actions.
 - **Pluggable automations:** Each automation is a folder under `src/automations/<slug>/` with an
   `index.ts` (and required `README.md`). An `AutomationEngine` runs rule/handler automations.
 - **Heavy AI / cron off the request path — done by GitHub Actions:** All heavy jobs run as
-  standalone `scripts/*-runner.js` scripts in GH Actions (external cron-job.org dispatch),
-  calling the Worker's `/api/runner/*`. The Express server *can* run the same automations
-  in-process via `node-cron`, but that is not the live operational path.
+  standalone `scripts/*-runner.js` scripts in GH Actions (fired on schedule by a cPanel cron
+  dispatcher — see §5.1), calling the Worker's `/api/runner/*`. The Express server *can* run
+  the same automations in-process via `node-cron`, but that is not the live operational path.
 - **Graceful degradation:** Falls back to in-memory mock data when the DB / LLM is unavailable.
 
 ### Repository structure (actual)
@@ -86,9 +87,10 @@ Worker + GitHub Actions.
 │   │   ├── worker.ts                    # Cloudflare Worker entrypoint (Hono + D1) — LIVE
 │   │   ├── config/ config-worker.ts    # env validation (server / worker variants)
 │   │   ├── routes/                      # Express routers (whatsapp-webhook, health, triggers, ...)
-│   │   ├── modules/                     # ai, automation, brain, whatsapp, waba, email, ...
+│   │   ├── modules/                     # ai, automation, brain, whatsapp, waba, email, auth, chat, ...
 │   │   ├── automations/                 # 18 automation folders + _template
 │   │   ├── storage/ shared/ middleware/ durable/ utils/ types/
+│   │   ├── live.ts                      # canonical LiveEvent catalog + broadcastLive helper
 │   │   └── scripts/                     # build-worker.mjs, smoke-worker.mjs, d1-mock.mjs
 │   ├── wrangler.toml                    # founder-os-worker config (D1 + EventHub DO)
 │   └── dist-worker/ dist/               # build outputs
@@ -104,7 +106,7 @@ Worker + GitHub Actions.
 │   ├── zoho-sent-runner.js             # Zoho sync + LLM classification + comments
 │   ├── email-brain-index-runner.js
 │   ├── neodove-report-runner.js        # NeoDove telecaller report (today + backfill)
-│   └── trigger-workflows.sh            # manual cron-job.org dispatch helper
+│   └── trigger-workflows.sh            # manual workflow_dispatch helper (cron dispatcher)
 ├── founder-os_frontend/               # Next.js 16 static dashboard (Cloudflare Pages)
 ├── .github/workflows/                 # cron-every-{5,10,15,30}min.yml + cron-daily-ist.yml
 ├── zoho_sent/                         # Zoho Books cURL export (sent_estimates.txt)
@@ -186,6 +188,8 @@ public API. Auth: `requireSecret` guards `/api/trigger/*` and `/api/automations/
 | `scheduler` | `service.ts` (node-cron boot) + `service-worker.ts` |
 | `storage` | `repository.ts` — `StorageRepository` over the active provider |
 | `tasks` | `service.ts` — action items |
+| `auth` | `types/service/store/…` — Google OAuth + session + **role-based** permissions |
+| `chat` | `store.ts` / `store-prisma.ts` / `routes.ts` — team chat (channels + DMs + messages + KV attachments) |
 | `waba` | `client.ts` — Meta/WABA Cloud API client |
 | `whatsapp` | `controller.ts` (server) + `controller-worker.ts`, `engine.ts`, `service.ts`, `outbound.ts`, `message-buffer.ts`, `session-status.ts`, `wa-engine-cache.ts`, `rate-limit-store*.ts` |
 
@@ -322,29 +326,61 @@ Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_BASE_URL`,
 `OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`. Zoho creds are inferred at runtime from
 `zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets.
 
-### 5.1 External dispatch (cron-job.org → workflow_dispatch)
-GitHub's native `schedule:` is unreliable (observed 30–40 min drift), so all workflows
-are triggered externally:
+### 5.1 External dispatch (cPanel cron → workflow_dispatch)
+GitHub's native `schedule:` is unreliable (observed 1–6 h drift, far worse than the
+30–40 min originally seen), so all workflows are triggered externally. cron-job.org
+was the original dispatcher but **stopped firing** (silent; the PAT must live under
+`extendedData.headers`, which the API ignores if set as `requestHeaders`). It has been
+**replaced by a cPanel cron job** on the team's shared host (`216.10.246.39`):
 
 ```
-cron-job.org (UTC schedule, POST + PAT)
-  └─ https://api.github.com/repos/striversahil/ai_pa/actions/workflows/<wf>/dispatches
-       └─ GitHub Actions runs the workflow on demand
+cPanel crontab (user brindwqj) every 5/10/15/30 min + daily
+  └─ ~/gh-trigger.sh <every-5min|every-10min|every-15min|every-30min|daily>
+       └─ curl POST https://api.github.com/repos/striversahil/ai_pa/actions/workflows/<wf>/dispatches
+            └─ GitHub Actions runs the workflow on demand
 ```
 
-⚠️ The cron-job.org API silently ignores `requestHeaders` — the GitHub PAT must be set
-under `extendedData.headers` (object form). Manual equivalent:
-`GITHUB_PAT=... ./scripts/trigger-workflows.sh <every-5min|every-10min|every-15min|every-30min|daily|all>`.
+- `~/gh-trigger.sh` embeds the GitHub PAT (from `GITHUB_ACCESS_TOKEN` in `.env`) and
+  fires `workflow_dispatch`; it logs HTTP codes to `~/gh-trigger.log`.
+- Schedules: every-5min `*/5`, every-10min `*/10`, every-15min `*/15` (body
+  `{"ref":"main","inputs":{"force":"true"}}`), every-30min `*/30`, daily
+  `30 2,3,13,21 * * *` (UTC; IST 08:00/08:30/18:30/03:00).
+- Manual equivalent: `GITHUB_PAT=... ./scripts/trigger-workflows.sh <target>`.
+
+### 5.2 Runner / worker hardening (Aug 2026)
+Several runner failures were diagnosed and fixed; runs that previously failed now
+succeed end-to-end (verified via `workflow_dispatch`):
+
+| Workflow | Symptom | Root cause | Fix |
+|----------|---------|-----------|-----|
+| every-5min (`whatsapp-autopilot`) | `tasks/create` → HTTP 500, "200 failures, processed=0" | `WaTaskHistory.occurredAt` is `NOT NULL` in D1 but no create set it; the D1 shim only auto-fills `createdAt`/`updatedAt` | pass `occurredAt` in all `waTaskHistory.create` calls; add `$transaction` to the D1 shim |
+| every-30min (`email-brain-index`) | `brain/context` → HTTP 503, CF 1102 "exceeded resource limits" | per-row D1 `upsert` loop (find→write × rows) blew the CPU budget | rewrite with a single `DB.batch()` of `INSERT … ON CONFLICT(source, sourceId) DO UPDATE` |
+| daily (`morning-brief`) | "Context too large (14,752 > 5000)" → exit 1 | runner **threw** when context exceeded the token budget instead of trimming | trim every context section; never hard-fail |
+
+Operational notes:
+- The autopilot worker was failing for days, so its `autopilot:message_watermark`
+  (a `Setting` row) never advanced — the runner re-fetched the same old backlog and,
+  once the 500 was fixed, ground through the 582-message history one LLM call at a
+  time (a run stayed `in_progress` for hours). Fix: cancel the stuck run and set the
+  watermark to "now" so only new messages are processed. Drain the historical backlog
+  in batches by temporarily rewinding the watermark if ever needed.
+- Automation boot is **lazy** in the worker (only kicked on `/api/automations` /
+  `/api/trigger`); `/api/status` reporting `automationsLoaded: 0` before such a
+  request is expected, not an error.
+- Secrets used by the cron dispatcher and runners: `GITHUB_ACCESS_TOKEN`, `WORKER_URL`,
+  `SHARED_SECRET`, `OMNIROUTE_BASE_URL`, `OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`.
+  Zoho creds are inferred at runtime from `zoho_sent/sent_estimates.txt`.
 
 
-## 6. Data Models (PostgreSQL via Prisma — 22 models)
+## 6. Data Models (PostgreSQL via Prisma — 22+ models)
 
 `founder-os_backend/prisma/schema.prisma` is the source of truth. The Worker uses a
-D1-compatible subset. Migrations live in `prisma/` (`0001_create_token_table.sql`,
-`0002_add_sales_agent.sql`).
+D1-compatible subset. Migrations live in `prisma/` and `d1/schema.sql` /
+`migrations/*.sql` (0003 auth, 0004 chat, 0005 chat attachments, 0006 chat DMs,
+0007 contact picture).
 
-- **Contact** — WhatsApp contact/chat: `chatId` (unique), `name`, `phoneNumber`, `isGroup`, `unreadCount`, `hasInbound`, `lastMessage*`.
-- **Message** — `wahaMessageId` (unique), `chatId`, `sender`, `body`, `timestamp`, `processed`, `isHistorical`, quote fields, `classification`, `classificationReason`, `classifiedAt`, `slaDeadline`.
+- **Contact** — WhatsApp contact/chat: `chatId` (unique), `name`, `phoneNumber`, `isGroup`, `picture`, `unreadCount`, `hasInbound`, `lastMessage*`. `picture` (set via `PUT /api/whatsapp/contacts/:uid/picture`) drives the chat/contact avatar.
+- **Message** — `wahaMessageId` (unique), `chatId`, `sender`, `body`, `timestamp`, `processed`, `isHistorical`, quote fields, `classification`, `classificationReason`, `classifiedAt`, `slaDeadline`. Fetched with **cursor pagination** (`?limit=50&before=<timestamp>`); the WhatsApp frontend caches each chat locally and loads older pages on scroll-up.
 - **OutboundIntent** — deferred sends persisted when Redis is down (`status` PENDING/ENQUEUED).
 - **Email** — `subject`, `sender`, `body`, `processed`.
 - **Digest** — `chatId`, `chatName`, `summary`, `priority` (enum), `category`, `sentiment`, `requiresFounder`, `suggestedReply`.
@@ -365,6 +401,19 @@ D1-compatible subset. Migrations live in `prisma/` (`0001_create_token_table.sql
 - **MarketingCampaign** — `name`, `type`, `provider` (waba|aisensy), `status`, `scheduleType`, `scheduledAt`, `cron`, `template*`, `mediaUrl`, `statsJson`.
 - **MarketingLead** — `campaignId` FK, `phoneNumber`, `name`, `attributes` (JSON), `status`, message/error timestamps.
 - **MarketingCampaignRun** — per-campaign execution: `total`, `sent`, `failed`, `skipped`, `status`.
+
+**Auth (Google OAuth + roles):**
+- **AuthUser** — `email` (unique), `name`, `picture`, `isRoot` (derived from `striversahil@gmail.com`).
+- **AuthSession** — 30-day HttpOnly cookie session.
+- **AuthScope** — assignable permission categories (`dashboard`, `whatsapp`, `automations`, `zoho`, …).
+- **AuthRole** — **bundles automation-dashboard scopes only** (`DASHBOARD_SCOPES` allowlist): `key`, `label`, `description`, `scopeKeys`. A user's effective scopes = direct scopes ∪ their roles' scopes. Roles are the primary way founders grant access (e.g. `mis` → `zoho`); the admin panel assigns roles to users instead of ticking every scope checkbox.
+- **AuthUserRole / AuthRoleScope** — join tables.
+
+**Team chat (Discord-style):**
+- **ChatChannel** — `name`, `description`, `category`, `type` (`channel` | `dm`), `createdBy`.
+- **ChatMessage** — `channelId` FK, `senderId` FK, `body`, `attachments` (JSON), `editedAt`, `deletedAt`; sequential integer `id` for cheap cursor pagination (`before=<id>&limit=50`).
+- **ChatMember** — per-DM membership (`channelId`+`userId`); public channels are visible to every approved member.
+- **ChatAttachment metadata** — files live in Workers **KV** (`CHAT_FILES`, up to 20 MB); the message stores `{ key, name, size, type }` JSON and files are served at `GET /api/chat/files/:key` behind the auth gate (images/PDF/audio/video inline, others download).
 
 Enums: `Priority` (low|medium|high|urgent), `TaskStatus` (PENDING|IN_PROGRESS|COMPLETED|CANCELLED).
 
@@ -435,16 +484,18 @@ The `functions/` dir is excluded from Next typecheck (Pages Functions types come
 
 | Component | Target | How |
 |-----------|--------|-----|
-| founder-os-worker | Cloudflare Workers (**live API**) | `node scripts/build-worker.mjs` → `npx wrangler deploy` (D1 `DB`, `EVENT_HUB` DO) |
+| founder-os-worker | Cloudflare Workers (**live API**) | `node scripts/build-worker.mjs` → `npx wrangler deploy` (D1 `DB`, `EVENT_HUB` DO, `CHAT_FILES` KV) |
+| Cron/AI dispatch | cPanel cron (`216.10.246.39`) | user crontab → `~/gh-trigger.sh` → `workflow_dispatch` |
 | Cron/AI | GitHub Actions (**live execution**) | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` |
 | waba-worker | Cloudflare Workers | `cd waba-worker && wrangler deploy` (D1 `waba-worker`) |
 | Express backend | Docker / host (alt/local) | `pnpm build` (tsc) → `node dist/server.js`; `Dockerfile` + `docker-compose.yml` |
-| Frontend | Cloudflare Pages | `npm run build` → `wrangler pages deploy out` |
+| Frontend (+ PWA) | Cloudflare Pages | `npm run build` → `wrangler pages deploy out` |
 | webhook-relay / local-runner | host/process | `node webhook-relay/relay.js`, `node local-runner.js` |
 
 Secrets: `SHARED_SECRET` (Worker + GH Actions + waba-worker), `DATABASE_URL` (Express),
 `WA_ENGINE_API_KEY`, `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` (Omniroute),
-`GOOGLE_SERVICE_ACCOUNT_JSON`.
+`GOOGLE_SERVICE_ACCOUNT_JSON`, `GITHUB_ACCESS_TOKEN` (cron dispatch; also `SSH_*` for the
+cPanel host in the root `.env`).
 
 ### 9.1 Verification
 - Worker: `node scripts/smoke-worker.mjs` (asserts public 200s, auth 401s, heavy-slug behaviour).
@@ -579,13 +630,19 @@ are persisted in an **HttpOnly cookie valid for 30 days**.
   Kept in a separate file so the Prisma client never enters the Worker bundle.
 - `google.ts` — `buildGoogleAuthUrl` + `exchangeGoogleCode` (pure `fetch`, no Node deps).
 - `session.ts` — `SESSION_COOKIE`, `SESSION_MAX_AGE` (30d), cookie header builders/reader.
-- `service.ts` — core logic: `DEFAULT_SCOPES`, `authEnabled`, `startLogin`, `completeLogin`,
-  `getMe`, `requireUser`, `requireScope`, `listUsers`, `listScopes`, `createScope`,
-  `deleteScope`, `setUserScopes`. `ensureScopesSeeded` creates the default categories on login.
+- `service.ts` — core logic: `DEFAULT_SCOPES`, `DEFAULT_ROLES`, `DASHBOARD_SCOPES`
+  (roles may only grant automation-dashboard scopes), `authEnabled`, `startLogin`,
+  `completeLogin`, `getMe`, `requireUser`, `requireScope`, `isApproved`, `listUsers`,
+  `listScopes`, `listRoles`, `createScope`, `createRole`, `deleteScope`, `deleteRole`,
+  `setUserScopes`, `setUserRoles`. `ensureScopesSeeded` / `ensureRolesSeeded` create the
+  defaults on login. `getMe` resolves effective scopes = direct scopes ∪ role scopes.
 - `routes.ts` — framework-agnostic handlers returning `AuthResult {status, body?, setCookie?,
   redirect?}`: `authLogin`, `authCallback`, `authMe`, `authLogout`, `authListUsers`,
-  `authListScopes`, `authCreateScope`, `authDeleteScope`, `authSetUserScopes`. Management
-  endpoints are root-only (email/`isRoot` check inside the service).
+  `authListScopes`, `authCreateScope`, `authDeleteScope`, `authSetUserScopes`, plus
+  `authListRoles`, `authCreateRole`, `authDeleteRole`, `authSetUserRoles`. Management
+  endpoints are root-only (email/`isRoot` check inside the service). Role endpoints:
+  `GET/POST /api/auth/roles`, `DELETE /api/auth/roles/:key`,
+  `PUT /api/auth/users/:id/roles`.
 
 ### 12.3 Runtime wiring
 - **Worker (prod):** `authStore(c)` (D1), login-gate `app.use('*')` middleware protects all
@@ -596,14 +653,66 @@ are persisted in an **HttpOnly cookie valid for 30 days**.
   locally).
 - **Express (local):** same routes/store (Postgres) + same gate middleware via `authEnabled`.
 - **Frontend:** `src/auth/permissions.ts` (`VIEW_SCOPE` map: nav view / automation slug →
-  required category, `canView()`), `src/auth/AuthContext.tsx` (`useAuth` — fetches
+  required category, `canView()` — **fail-closed**: unrecognized views are denied; the `chat`
+  view is available to every approved member), `src/auth/AuthContext.tsx` (`useAuth` — fetches
   `/api/auth/me`, `login()`, `logout()`, `canView`, `refresh`), `src/components/LoginScreen.tsx`
-  (Google sign-in), `src/components/UserAdmin.tsx` (root panel: list users, create/delete
-  categories, assign categories). `src/app/page.tsx` wraps the app in `AuthProvider`, shows
-  the login screen when unauthenticated, filters `Sidebar`/`MobileNav` by `canView`, renders
-  `UserAdmin` at `#/admin` for root, and shows an "Access pending" panel for denied views.
+  (Google sign-in), `src/components/UserAdmin.tsx` (root panel: define **roles** + assign them
+  to users, create/delete categories). `src/app/page.tsx` wraps the app in `AuthProvider`, shows
+  the login screen when unauthenticated, filters `Sidebar`/`MobileNav`/`MobileDrawer` by
+  `canView`, auto-redirects a denied user to their first accessible view, renders `UserAdmin`
+  at `#/admin` for root, and shows an "Access pending" panel only when the user has no access.
 - **Pages proxy** (`founder-os_frontend/functions/api/[[path]].ts`) forwards the `Cookie`
   header and preserves `Set-Cookie`, so the session cookie works same-origin through the proxy.
+
+## 13. Team chat (Discord-style)
+
+Added for internal team collaboration, visible in the sidebar (main nav + mobile drawer)
+for every approved member — not an automation.
+
+- **Data:** `ChatChannel` (public, grouped by `category`) and DM channels (`type: 'dm'`,
+  private to `ChatMember` pairs); `ChatMessage` with sequential integer ids for cursor
+  pagination (`GET /api/chat/channels/:id/messages?limit=50&before=<id>`).
+- **API** (all behind the login gate, approved members): list/create channels (create is
+  admin-only), `GET/POST` messages, `PATCH/DELETE` messages (author or admin),
+  `GET /api/chat/users`, `POST /api/chat/dm` (find-or-create). `chatSendMessage` /
+  `chatListMessages` enforce channel membership for DMs.
+- **Attachments:** files upload to Workers **KV** (`CHAT_FILES`) via `POST /api/chat/files`
+  (multipart, ≤ 20 MB) and are served at `GET /api/chat/files/:key` behind auth — images /
+  PDF / audio / video render or play inline (served `inline`), other documents download.
+  The ChatRoom UI has drag-and-drop, inline image/video/audio renderers, a fullscreen PDF
+  viewer (iframe) and image Lightbox, plus a mobile channel drawer.
+- **Real-time:** every write calls `broadcastLive(c, LiveEvent.Chat, {action, channelId,
+  message})` → the existing EventHub WebSocket; the frontend applies creates/updates/deletes
+  instantly. Per-channel message cache makes switching chats instant (no refetch per click);
+  older pages load on scroll-up.
+
+## 14. PWA & mobile
+
+- **PWA:** `public/manifest.webmanifest` + `public/icons/*` (generated by
+  `scripts/gen-icons.mjs`) and a build-time service worker (`scripts/postbuild.mjs` scans
+  `out/` and emits `out/sw.js` precaching every asset; `PwaRegister` registers `/sw.js`).
+  App can be "Added to Home Screen" with an offline shell (API calls stay network-only).
+- **Mobile:** responsive grids/scroll containers across all dashboards; a mobile drawer
+  (`MobileDrawer.tsx`) gives the full sidebar (nav + dashboards + profile/logout) via a
+  hamburger in the mobile header, complementing the bottom `MobileNav`.
+- **WhatsApp chat UX:** per-chat local cache (instant switch), scroll-up cursor pagination
+  (50 at a time), and contact/group profile pictures (`picture` column + `PUT …/picture`).
+
+## 15. Deployment map (current)
+
+| Component | Target | How |
+|-----------|--------|-----|
+| founder-os-worker | Cloudflare Workers (**live API**) | `node scripts/build-worker.mjs` → `npx wrangler deploy` (D1 `DB`, `EVENT_HUB`/`ASYNC_RUNNER` DOs, `CHAT_FILES` KV) |
+| Cron/AI dispatch | cPanel cron (`216.10.246.39`) | user crontab → `~/gh-trigger.sh` → `workflow_dispatch` |
+| Cron/AI execution | GitHub Actions | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` |
+| waba-worker | Cloudflare Workers | `cd waba-worker && wrangler deploy` (D1 `waba-worker`) |
+| Express backend | Docker / host (alt/local) | `pnpm build` → `node dist/server.js`; `Dockerfile` + `docker-compose.yml` |
+| Frontend (+ PWA) | Cloudflare Pages | `npm run build` → `npx wrangler pages deploy out --project-name founder-os-frontend` |
+| webhook-relay / local-runner | host/process | `node webhook-relay/relay.js`, `node local-runner.js` |
+
+Secrets: `SHARED_SECRET`, `DATABASE_URL`, `WA_ENGINE_API_KEY`, `LLM_API_KEY`/`LLM_BASE_URL`/
+`LLM_MODEL`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GITHUB_ACCESS_TOKEN` (+ `SSH_HOST`/`SSH_USER`/
+`SSH_PASSWORD` for the cPanel host, stored in root `.env`).
 
 
 
