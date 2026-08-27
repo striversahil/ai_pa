@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { EventHub } from './durable/event-hub';
 import { AsyncTaskRunner } from './durable/async-task-runner';
+import { ChatRoomDO } from './durable/chat-room';
 import { broadcastLive, LiveEvent } from './live';
 import * as AuthRoutes from './modules/auth/routes';
 import { createAuthStore } from './modules/auth/store';
@@ -17,6 +18,7 @@ type Bindings = {
   CHAT_FILES?: KVNamespace;
   EVENT_HUB?: DurableObjectNamespace;
   ASYNC_RUNNER?: DurableObjectNamespace;
+  CHAT_ROOM?: DurableObjectNamespace;
   SHARED_SECRET?: string;
   WA_ENGINE_API_KEY?: string;
   LLM_API_KEY?: string;
@@ -30,6 +32,37 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>();
 app.use('*', cors());
+
+// Edge/browser response caching.
+// - PUBLIC: shared (edge) cache via s-maxage — safe only for non-user data.
+// - PRIVATE: browser cache only (cookie-aware) — safe for authenticated reads.
+const PUBLIC_CACHE_PATHS = ['/api/status', '/api/health', '/health'];
+const PRIVATE_CACHE_PREFIXES = [
+  '/api/automations',       // registry is the same for every user
+  '/api/whatsapp/contacts', // per-user but browser-cached w/ cookies
+  '/api/digests',
+  '/api/tasks',
+  '/api/pending-items',
+  '/api/chat/channels',
+  '/api/estimates',
+  '/api/brain/stats',
+  '/api/neodove/report',
+];
+app.use('*', async (c, next) => {
+  await next();
+  if (c.req.method !== 'GET') return;
+  const path = new URL(c.req.url).pathname;
+  const res = c.res;
+  if (res && !res.headers.has('Cache-Control')) {
+    if (PUBLIC_CACHE_PATHS.some((p) => path.startsWith(p))) {
+      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120');
+    } else if (PRIVATE_CACHE_PREFIXES.some((p) => path.startsWith(p))) {
+      res.headers.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=30');
+    } else {
+      res.headers.set('Cache-Control', 'no-store');
+    }
+  }
+});
 
 // ── Boot: register engines + load automations on first request ─────────────
 // MUST be registered before any route so AutomationEngine is populated before
@@ -253,14 +286,74 @@ app.post('/api/chat/channels', async (c) => {
 app.get('/api/chat/channels/:id/messages', async (c) => {
   const me = await chatMe(c);
   if (!me) return c.json({ error: 'Authentication required' }, 401);
+  // Fast path: serve from the channel's ChatRoom Durable Object (in-memory).
+  if (c.env.CHAT_ROOM) {
+    const doId = c.env.CHAT_ROOM.idFromName(c.req.param('id') ?? '');
+    const stub = c.env.CHAT_ROOM.get(doId);
+    const doUrl = `https://room/messages?channelId=${encodeURIComponent(c.req.param('id') ?? '')}&limit=${encodeURIComponent(c.req.query('limit') || '50')}${c.req.query('before') ? `&before=${encodeURIComponent(c.req.query('before') || '')}` : ''}`;
+    const r = await stub.fetch(new Request(doUrl, { method: 'GET' }));
+    if (r.ok) return c.json(await r.json());
+  }
+  // Fallback to D1 (DO unavailable / dev).
   const r = await ChatRoutes.chatListMessages(createChatStore(c.env), me, c.req.param('id') ?? '', c.req.query('before') ?? null, c.req.query('limit') ?? null);
   return c.json(r.body, r.status as any);
 });
 app.post('/api/chat/channels/:id/messages', async (c) => {
   const me = await chatMe(c);
   if (!me) return c.json({ error: 'Authentication required' }, 401);
-  const r = await ChatRoutes.chatSendMessage(createChatStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+  const body = await c.req.json().catch(() => ({}));
+  const channelId = c.req.param('id') ?? '';
+  const text = String(body.body || '').trim();
+  const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+  if (!text && attachments.length === 0) return c.json({ error: 'body or attachment required' }, 400);
+
+  // Fast path: write through the ChatRoom DO (in-memory + durable D1).
+  if (c.env.CHAT_ROOM) {
+    const doId = c.env.CHAT_ROOM.idFromName(channelId);
+    const stub = c.env.CHAT_ROOM.get(doId);
+    const payload = {
+      channelId, senderId: me.user.id, senderName: me.user.name || me.user.email,
+      senderPicture: me.user.picture ?? null, body: text, attachments,
+      replyToId: body.replyToId ? Number(body.replyToId) : null,
+    };
+    const r = await stub.fetch(new Request(`https://room/messages?channelId=${encodeURIComponent(channelId)}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+    }));
+    if (r.ok) {
+      const msg = await r.json();
+      broadcastLive(c, LiveEvent.Chat, { action: 'created', channelId, message: msg });
+      return c.json(msg, 201);
+    }
+  }
+  // Fallback to the store (DO unavailable / dev).
+  const r = await ChatRoutes.chatSendMessage(createChatStore(c.env), me, channelId, body);
   chatSend(c, r);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/chat/channels/:id/read', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  const r = await ChatRoutes.chatMarkRead(createChatStore(c.env), me, c.req.param('id') ?? '', body.lastReadId ? Number(body.lastReadId) : null);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/chat/channels/:id/members', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatListChannelMembers(createChatStore(c.env), me, c.req.param('id') ?? '');
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/chat/channels/:id/members', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  const r = await ChatRoutes.chatAddChannelMembers(createChatStore(c.env), me, c.req.param('id') ?? '', body.userIds || []);
+  return c.json(r.body, r.status as any);
+});
+app.delete('/api/chat/channels/:id/members/:userId', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatRemoveChannelMember(createChatStore(c.env), me, c.req.param('id') ?? '', c.req.param('userId') ?? '');
   return c.json(r.body, r.status as any);
 });
 app.patch('/api/chat/messages/:id', async (c) => {
@@ -276,6 +369,23 @@ app.delete('/api/chat/messages/:id', async (c) => {
   const r = await ChatRoutes.chatDeleteMessage(createChatStore(c.env), me, c.req.param('id') ?? '');
   chatSend(c, r);
   return c.json(r.body, r.status as any);
+});
+
+// Typing indicator — fire-and-forget, no persistence. Broadcasts to everyone
+// in the channel so open tabs show "Name is typing…" (frontend auto-clears ~3s).
+app.post('/api/chat/typing', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  const channelId = String(body.channelId || '');
+  if (!channelId) return c.json({ error: 'channelId required' }, 400);
+  broadcastLive(c, LiveEvent.Chat, {
+    action: 'typing',
+    channelId,
+    userId: me.user.id,
+    userName: me.user.name || me.user.email,
+  });
+  return c.json({ ok: true });
 });
 
 // ── Chat file attachments (Workers KV) ───────────────────────────────────────
@@ -2194,7 +2304,7 @@ export default {
   fetch: app.fetch,
   scheduled,
 };
-export { EventHub, AsyncTaskRunner };
+export { EventHub, AsyncTaskRunner, ChatRoomDO };
 
 // ── Live events (WebSocket fan-out via EventHub Durable Object) ──────────────
 // Fire-and-forget broadcast; never blocks or fails the calling write path.

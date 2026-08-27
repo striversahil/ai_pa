@@ -25,6 +25,9 @@ export interface AuthStore {
   deleteRole(key: string): Promise<void>;
   getUserRoleKeys(userId: string): Promise<string[]>;
   setUserRoles(userId: string, keys: string[]): Promise<void>;
+  /** One-shot auth snapshot: user + scopes + roles + role→scopes, in as few
+   *  D1 round-trips as possible (the hot path runs on every API request). */
+  getAuthSnapshot(userId: string): Promise<{ user: AuthUser | null; scopes: string[]; roles: string[]; roleScopes: Record<string, string[]> }>;
 }
 
 const newId = () =>
@@ -128,6 +131,14 @@ class MemoryAuthStore implements AuthStore {
   }
   async setUserRoles(userId: string, keys: string[]) {
     this.userRoles.set(userId, new Set(keys));
+  }
+  async getAuthSnapshot(userId: string) {
+    return {
+      user: this.users.get(userId) ?? null,
+      scopes: await this.getUserScopeKeys(userId),
+      roles: await this.getUserRoleKeys(userId),
+      roleScopes: Object.fromEntries([...this.roles.entries()].map(([k, r]) => [k, r.scopeKeys])),
+    };
   }
 }
 
@@ -300,6 +311,28 @@ class D1AuthStore implements AuthStore {
     for (const k of keys) {
       await this.db.prepare("INSERT OR IGNORE INTO auth_user_role (userId, roleKey) VALUES (?, ?)").bind(userId, k).run();
     }
+  }
+  async getAuthSnapshot(userId: string) {
+    const rolesReady = await this.ensureRoleTables();
+    const [userR, scopesR, rolesR, roleScopesR] = await this.db.batch([
+      this.db.prepare("SELECT * FROM auth_user WHERE id = ?").bind(userId),
+      this.db.prepare("SELECT scopeKey FROM auth_user_scope WHERE userId = ?").bind(userId),
+      rolesReady
+        ? this.db.prepare("SELECT roleKey FROM auth_user_role WHERE userId = ?").bind(userId)
+        : this.db.prepare("SELECT 'none' AS roleKey WHERE 1 = 0"),
+      rolesReady
+        ? this.db.prepare("SELECT r.key AS roleKey, r.label, r.description, rs.scopeKey FROM auth_role r LEFT JOIN auth_role_scope rs ON rs.roleKey = r.key").all()
+        : this.db.prepare("SELECT 'none' AS roleKey, 'x' AS label, NULL AS description, NULL AS scopeKey WHERE 1 = 0").all(),
+    ]);
+    const user = this.mapUser((userR as any)?.results?.[0] ?? (userR as any) ?? null);
+    const scopes = ((scopesR as any).results || []).map((r: any) => r.scopeKey);
+    const roles = ((rolesR as any).results || []).map((r: any) => r.roleKey);
+    const roleScopes: Record<string, string[]> = {};
+    for (const r of ((roleScopesR as any).results || []) as any[]) {
+      if (!roleScopes[r.roleKey]) roleScopes[r.roleKey] = [];
+      if (r.scopeKey) roleScopes[r.roleKey].push(r.scopeKey);
+    }
+    return { user, scopes, roles, roleScopes };
   }
 }
 

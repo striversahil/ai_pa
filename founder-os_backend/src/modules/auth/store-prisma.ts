@@ -95,6 +95,14 @@ export class PrismaAuthStore implements AuthStore {
       })),
     );
   }
+  async getAuthSnapshot(userId: string) {
+    const user = this.mapUser(await this.prisma.authUser.findUnique({ where: { id: userId } }));
+    const scopes = await this.getUserScopeKeys(userId);
+    const roles = await this.getUserRoleKeys(userId);
+    const roleScopes: Record<string, string[]> = {};
+    for (const r of await this.listRoles()) roleScopes[r.key] = r.scopeKeys;
+    return { user, scopes, roles, roleScopes };
+  }
   async listRoles(): Promise<AuthRole[]> {
     const roles = await this.prisma.authRole.findMany({
       orderBy: { key: "asc" },

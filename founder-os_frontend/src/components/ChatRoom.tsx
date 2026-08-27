@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useLiveQuery, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import { Hash, Plus, Send, Pencil, Trash2, MessagesSquare, Paperclip, FileText, X } from "lucide-react";
+import { Hash, Plus, Send, Pencil, Trash2, MessagesSquare, Paperclip, FileText, X, CornerDownRight, Users } from "lucide-react";
 import Lightbox from "@/components/Lightbox";
 
 interface Channel {
@@ -14,6 +14,7 @@ interface Channel {
   type: "channel" | "dm";
   createdAt: string;
   otherUser?: { id: string; name: string; picture: string | null } | null;
+  unread?: number;
 }
 
 interface ChatUser {
@@ -40,9 +41,11 @@ interface ChatMessage {
   editedAt: string | null;
   deletedAt: string | null;
   attachments: ChatAttachment[];
+  replyToId?: number | null;
+  replyTo?: { id: number; senderName: string; body: string } | null;
 }
 
-type LiveChatEvent = { type: string; action?: string; channelId?: string; message?: ChatMessage; id?: number };
+type LiveChatEvent = { type: string; action?: string; channelId?: string; message?: ChatMessage; id?: number; userId?: string; userName?: string };
 
 function upsert(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   const i = list.findIndex((m) => m.id === msg.id);
@@ -83,7 +86,9 @@ export default function ChatRoom() {
       if (!res.ok) throw new Error("load channels failed");
       return res.json();
     },
-    { events: ["chat"] },
+    // Only refresh the rail on channel-created (new DM/channel); message and
+    // typing events must NOT trigger a full list + unread recount.
+    { events: (e) => e.type === "chat" && e.action === "channel-created" },
   );
 
   const [channelId, setChannelId] = useState<string | null>(null);
@@ -127,6 +132,20 @@ export default function ChatRoom() {
     return list;
   };
 
+  const markChannelRead = (channelId: string) => {
+    const all = msgsCache.current.get(channelId) || [];
+    const maxId = all.reduce((m, x) => Math.max(m, x.id), 0);
+    if (maxId <= 0) return;
+    // Fire-and-forget; no list refresh here (opening a channel already
+    // refreshes via the selectedId effect, and the local badge is zeroed by
+    // the re-render since unread derives from the fetched list).
+    fetch(`/api/chat/channels/${channelId}/read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lastReadId: maxId }),
+    }).catch(() => {});
+  };
+
   // Switch channel: render cached instantly, then silently refresh.
   useEffect(() => {
     if (!selectedId) return;
@@ -139,6 +158,11 @@ export default function ChatRoom() {
       setMsgsLoading(true);
     }
     fetchChannelMessages(selectedId, { silent: true })
+      .then(() => {
+        markChannelRead(selectedId);
+        // Clear this channel's unread badge in the rail once.
+        channels.refresh();
+      })
       .catch(() => {})
       .finally(() => setMsgsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -153,6 +177,10 @@ export default function ChatRoom() {
       if (ev.action === "created" && ev.message) {
         setMsgs((prev) => upsert(prev, ev.message!));
         msgsCache.current.set(selectedId, upsert(msgsCache.current.get(selectedId) || [], ev.message!));
+        // Sender stopped typing once their message lands.
+        expireTyping(selectedId, ev.message.senderId);
+        // We're viewing this channel — keep it marked as seen.
+        markChannelRead(selectedId);
       } else if (ev.action === "updated" && ev.message) {
         setMsgs((prev) => upsert(prev, ev.message!));
         msgsCache.current.set(selectedId, upsert(msgsCache.current.get(selectedId) || [], ev.message!));
@@ -160,10 +188,24 @@ export default function ChatRoom() {
         const mark = (m: ChatMessage) => (m.id === ev.id ? { ...m, deletedAt: new Date().toISOString() } : m);
         setMsgs((prev) => prev.map(mark));
         msgsCache.current.set(selectedId, (msgsCache.current.get(selectedId) || []).map(mark));
+      } else if (ev.action === "typing" && ev.userId && ev.userId !== me?.user.id && ev.userName) {
+        const uid = ev.userId;
+        setTypingUsers((prev) => {
+          const map = { ...(prev[selectedId] || {}) };
+          map[uid] = { name: ev.userName!, until: Date.now() + 3000 };
+          return { ...prev, [selectedId]: map };
+        });
+        if (typingTimers.current[uid]) clearTimeout(typingTimers.current[uid]);
+        typingTimers.current[uid] = setTimeout(() => expireTyping(selectedId, uid), 3200);
       } else if (ev.action === "created") {
         void fetchChannelMessages(selectedId, { silent: true }).catch(() => {});
       }
     } else if (ev.action === "channel-created") {
+      channels.refresh();
+    }
+    // New message in a NON-active channel → bump its unread badge. Active
+    // channel is already marked read by markChannelRead, so no refresh needed.
+    if (ev.action === "created" && ev.message && ev.channelId !== selectedId) {
       channels.refresh();
     }
   });
@@ -172,6 +214,34 @@ export default function ChatRoom() {
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLInputElement>(null);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+
+  // ── Typing indicators ──────────────────────────────────────────────────────
+  // typingUsers: channelId → Map<userId, {name, until}> (auto-expires ~3s).
+  const [typingUsers, setTypingUsers] = useState<Record<string, Record<string, { name: string; until: number }>>>({});
+  const lastTypingSent = useRef<Record<string, number>>({});
+  const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const notifyTyping = () => {
+    if (!selectedId) return;
+    const now = Date.now();
+    if (now - (lastTypingSent.current[selectedId] || 0) < 2000) return; // throttle
+    lastTypingSent.current[selectedId] = now;
+    fetch("/api/chat/typing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channelId: selectedId }),
+    }).catch(() => {});
+  };
+
+  const expireTyping = (channelId: string, userId: string) => {
+    setTypingUsers((prev) => {
+      const map = { ...(prev[channelId] || {}) };
+      delete map[userId];
+      return { ...prev, [channelId]: map };
+    });
+  };
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState("");
@@ -182,12 +252,17 @@ export default function ChatRoom() {
   const [creating, setCreating] = useState(false);
   const [showDmPicker, setShowDmPicker] = useState(false);
   const [dmUsers, setDmUsers] = useState<ChatUser[]>([]);
+  const [newMemberIds, setNewMemberIds] = useState<string[]>([]);
+  const [manageChannel, setManageChannel] = useState<Channel | null>(null);
+  const [channelMembers, setChannelMembers] = useState<ChatUser[]>([]);
   const [railOpen, setRailOpen] = useState(false);
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [viewer, setViewer] = useState<{ url: string; type: string; name: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const touchStartX = useRef<number | null>(null);
+  const touchMoveX = useRef<number | null>(null);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -224,7 +299,13 @@ export default function ChatRoom() {
 
   useEffect(() => { scrollToBottom(); }, [msgs.length, selectedId, scrollToBottom]);
 
-  const active = (channels.data ?? []).find((c) => c.id === selectedId) || null;
+  // Newly created channels (DM/new) that may not be in channels.data yet —
+  // keeps the header + list responsive immediately after creation.
+  const freshChannel = useRef<Channel | null>(null);
+
+  const active = freshChannel.current?.id === selectedId
+    ? freshChannel.current
+    : (channels.data ?? []).find((c) => c.id === selectedId) || null;
 
   const grouped = useMemo(() => {
     const map = new Map<string, Channel[]>();
@@ -238,6 +319,14 @@ export default function ChatRoom() {
   }, [channels.data]);
 
   const dms = (channels.data ?? []).filter((c) => c.type === "dm");
+
+  // Once the refreshed list includes the freshly-created channel, stop
+  // special-casing it so the header uses the canonical list entry.
+  useEffect(() => {
+    if (freshChannel.current && (channels.data ?? []).some((c) => c.id === freshChannel.current!.id)) {
+      freshChannel.current = null;
+    }
+  }, [channels.data]);
 
   const send = async () => {
     const body = composer.trim();
@@ -274,10 +363,11 @@ export default function ChatRoom() {
       const res = await fetch(`/api/chat/channels/${selectedId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body, attachments }),
+        body: JSON.stringify({ body, attachments, replyToId: replyTo?.id ?? null }),
       });
       const real = await res.json();
       if (!res.ok) throw new Error(real.error || "send failed");
+      setReplyTo(null);
       setMsgs((prev) => prev.filter((m) => m.id !== tempId).concat([real]));
       msgsCache.current.set(selectedId, (msgsCache.current.get(selectedId) || []).filter((m) => m.id !== tempId).concat([real]));
     } catch {
@@ -346,12 +436,13 @@ export default function ChatRoom() {
       const res = await fetch("/api/chat/channels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, category: newCategory.trim() || null, description: newDesc.trim() || null }),
+        body: JSON.stringify({ name, category: newCategory.trim() || null, description: newDesc.trim() || null, memberIds: newMemberIds }),
       });
       const ch = await res.json();
       if (!res.ok) throw new Error(ch.error || "create failed");
-      setNewName(""); setNewCategory(""); setNewDesc("");
+      setNewName(""); setNewCategory(""); setNewDesc(""); setNewMemberIds([]);
       setShowNewChannel(false);
+      freshChannel.current = ch;
       setChannelId(ch.id);
       setMsgs([]);
     } catch { /* ignore */ }
@@ -376,8 +467,46 @@ export default function ChatRoom() {
       const ch = await res.json();
       if (!res.ok) throw new Error(ch.error || "failed to start DM");
       setShowDmPicker(false);
+      freshChannel.current = ch;
       setChannelId(ch.id);
       setMsgs([]);
+      // No explicit refresh here: the `channel-created` live event re-fetches the
+      // rail, and messages load via the selectedId effect. Avoids duplicate work.
+    } catch { /* ignore */ }
+  };
+
+  const openManageMembers = async (ch: Channel) => {
+    setManageChannel(ch);
+    try {
+      const [m, u] = await Promise.all([
+        fetch(`/api/chat/channels/${ch.id}/members`).then((r) => r.json()),
+        fetch("/api/chat/users").then((r) => r.json()),
+      ]);
+      setChannelMembers(Array.isArray(m) ? m : []);
+      setDmUsers(Array.isArray(u) ? u : []);
+    } catch { /* ignore */ }
+  };
+
+  const addMember = async (userId: string) => {
+    if (!manageChannel) return;
+    try {
+      const res = await fetch(`/api/chat/channels/${manageChannel.id}/members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: [userId] }),
+      });
+      if (res.ok) {
+        const user = dmUsers.find((x) => x.id === userId);
+        if (user) setChannelMembers((prev) => [...prev, user]);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const removeMember = async (userId: string) => {
+    if (!manageChannel) return;
+    try {
+      const res = await fetch(`/api/chat/channels/${manageChannel.id}/members/${userId}`, { method: "DELETE" });
+      if (res.ok) setChannelMembers((prev) => prev.filter((x) => x.id !== userId));
     } catch { /* ignore */ }
   };
 
@@ -399,13 +528,15 @@ export default function ChatRoom() {
       <aside className={`${
           railOpen ? "flex" : "hidden"
         } absolute inset-y-0 left-0 z-20 w-64 flex-col border-r border-zinc-200 bg-zinc-100/95 shadow-xl dark:border-zinc-800 dark:bg-zinc-950/95 md:static md:z-auto md:flex md:w-60 md:shadow-none md:bg-zinc-100/70 dark:md:bg-zinc-950/50`}>
-        <div className="flex items-center justify-between px-4 py-3">
+        <div className="px-3 pt-3 pb-2">
+          <button onClick={() => void openDmPicker()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-bold text-white shadow-md shadow-indigo-600/30 transition hover:bg-indigo-500 cursor-pointer">
+            <Plus className="h-4 w-4" /> New chat
+          </button>
+        </div>
+        <div className="flex items-center justify-between px-4 py-2">
           <span className="text-xs font-extrabold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Channels</span>
           <div className="flex items-center gap-1">
-            <button onClick={() => void openDmPicker()} title="New direct message"
-              className="rounded-md p-1 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white">
-              <MessagesSquare className="h-4 w-4" />
-            </button>
             {isAdmin && (
               <button onClick={() => setShowNewChannel((v) => !v)} title="New channel"
                 className="rounded-md p-1 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white">
@@ -427,6 +558,23 @@ export default function ChatRoom() {
               className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-2 py-1.5 text-sm" />
             <input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Description (optional)"
               className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-2 py-1.5 text-sm" />
+            <div className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-2">
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add members</div>
+              <div className="max-h-24 space-y-1 overflow-y-auto">
+                {dmUsers.length === 0 ? (
+                  <p className="text-xs text-zinc-500">Loading members…</p>
+                ) : (
+                  dmUsers.map((u) => (
+                    <label key={u.id} className="flex items-center gap-2 py-0.5 text-xs cursor-pointer">
+                      <input type="checkbox" checked={newMemberIds.includes(u.id)}
+                        onChange={() => setNewMemberIds((prev) => prev.includes(u.id) ? prev.filter((x) => x !== u.id) : [...prev, u.id])}
+                        className="accent-indigo-500" />
+                      <span className="truncate">{u.name}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
             <button onClick={createChannel} disabled={creating}
               className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60">
               Create
@@ -440,7 +588,7 @@ export default function ChatRoom() {
               <div className="px-1 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Direct Messages</div>
               {dms.map((c) => (
                 <button key={c.id} onClick={() => { setChannelId(c.id); setMsgs([]); setRailOpen(false); }}
-                  className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium transition ${
+                  className={`mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium transition ${
                     selectedId === c.id
                       ? "bg-indigo-600/15 text-indigo-700 dark:text-indigo-300"
                       : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
@@ -453,6 +601,11 @@ export default function ChatRoom() {
                     </div>
                   )}
                   <span className="truncate">{c.otherUser?.name || c.name}</span>
+                  {!!c.unread && (
+                    <span className="ml-auto shrink-0 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                      {c.unread > 99 ? "99+" : c.unread}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -462,13 +615,24 @@ export default function ChatRoom() {
               <div className="px-1 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">{cat}</div>
               {list.map((c) => (
                 <button key={c.id} onClick={() => { setChannelId(c.id); setMsgs([]); setRailOpen(false); }}
-                  className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium transition ${
+                  className={`mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium transition ${
                     channelId === c.id || selectedId === c.id
                       ? "bg-indigo-600/15 text-indigo-700 dark:text-indigo-300"
                       : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
                   }`}>
                   <Hash className="h-4 w-4 shrink-0 opacity-60" />
                   <span className="truncate">{c.name}</span>
+                  {!!c.unread && (
+                    <span className="ml-auto shrink-0 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                      {c.unread > 99 ? "99+" : c.unread}
+                    </span>
+                  )}
+                  {isAdmin && (
+                    <button onClick={(e) => { e.stopPropagation(); void openManageMembers(c); }}
+                      className="shrink-0 rounded p-0.5 text-zinc-400 hover:text-indigo-400" title="Manage members">
+                      <Users className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </button>
               ))}
             </div>
@@ -528,7 +692,18 @@ export default function ChatRoom() {
             {msgs.map((m) => {
               const own = m.senderId === me?.user.id;
               return (
-                <div key={m.id} className={`group flex gap-3 ${own ? "justify-end" : ""}`}>
+                <div key={m.id}
+                  className={`group relative flex gap-3 ${own ? "justify-end" : ""}`}
+                  onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+                  onTouchMove={(e) => { touchMoveX.current = e.touches[0].clientX; }}
+                  onTouchEnd={() => {
+                    const dx = (touchMoveX.current ?? 0) - (touchStartX.current ?? 0);
+                    touchStartX.current = null;
+                    touchMoveX.current = null;
+                    // Right-swipe (~60px) = reply to this message (mobile).
+                    if (dx > 60) { setReplyTo(m); composerRef.current?.focus(); }
+                  }}
+                >
                   {!own && (
                     m.senderPicture ? (
                       <img src={m.senderPicture} alt="" className="h-9 w-9 shrink-0 rounded-full" />
@@ -538,7 +713,7 @@ export default function ChatRoom() {
                       </div>
                     )
                   )}
-                  <div className={`max-w-[70%] ${own ? "text-right" : ""}`}>
+                  <div className={`relative max-w-[70%] ${own ? "text-right" : ""}`}>
                     {!own && (
                       <div className="mb-0.5 text-xs font-semibold text-zinc-600 dark:text-zinc-300">{m.senderName}</div>
                     )}
@@ -626,6 +801,14 @@ export default function ChatRoom() {
                         <span className="italic opacity-70">(message deleted)</span>
                       ) : (
                         <>
+                          {m.replyTo && (
+                            <div className={`mb-1.5 rounded-lg border-l-4 px-2.5 py-1.5 text-xs ${
+                              own ? "border-white/40 bg-white/10" : "border-indigo-400 bg-zinc-300/40 dark:bg-zinc-700/40"
+                            }`}>
+                              <div className={`font-bold ${own ? "text-white/80" : "text-indigo-500 dark:text-indigo-300"}`}>{m.replyTo.senderName}</div>
+                              <div className={`truncate ${own ? "text-white/70" : "text-zinc-500 dark:text-zinc-400"}`}>{m.replyTo.body || "(attachment)"}</div>
+                            </div>
+                          )}
                           {m.body}
                           {m.editedAt && <span className={`ml-1 text-[10px] opacity-60 ${own ? "text-white/70" : ""}`}>(edited)</span>}
                         </>
@@ -633,6 +816,10 @@ export default function ChatRoom() {
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-400">
                       <span>{timeLabel(m.createdAt)}</span>
+                      <button onClick={() => { setReplyTo(m); composerRef.current?.focus(); }}
+                        className="opacity-0 transition group-hover:opacity-100 hover:text-indigo-400" title="Reply">
+                        <CornerDownRight className="h-3 w-3" />
+                      </button>
                       {canModify(m) && !m.deletedAt && (
                         <>
                           <button onClick={() => { setEditing(m); setEditText(m.body); }}
@@ -665,6 +852,25 @@ export default function ChatRoom() {
             </div>
           ) : (
             <>
+              {(() => {
+                const typers = Object.values(typingUsers[selectedId || ""] || {})
+                  .filter((t) => t.until > Date.now());
+                if (typers.length === 0) return null;
+                const names = typers.map((t) => t.name);
+                const label = names.length === 1
+                  ? `${names[0]} is typing`
+                  : `${names.slice(0, 2).join(", ")}${names.length > 2 ? ` +${names.length - 2}` : ""} are typing`;
+                return (
+                  <div className="mb-1.5 flex items-center gap-2 px-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    <span className="flex gap-0.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:120ms]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:240ms]" />
+                    </span>
+                    <span className="italic">{label}…</span>
+                  </div>
+                );
+              })()}
               {files.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-2">
                   {files.map((f, i) => (
@@ -678,6 +884,18 @@ export default function ChatRoom() {
                       </button>
                     </div>
                   ))}
+                </div>
+              )}
+              {replyTo && (
+                <div className="mb-1.5 flex items-center gap-2 rounded-lg border-l-4 border-indigo-400 bg-indigo-500/10 px-2.5 py-1.5 text-xs text-zinc-700 dark:text-zinc-200">
+                  <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
+                  <span className="min-w-0">
+                    <span className="font-bold text-indigo-500 dark:text-indigo-300">Replying to {replyTo.senderName}:</span>{" "}
+                    <span className="truncate">{replyTo.body || "(attachment)"}</span>
+                  </span>
+                  <button onClick={() => setReplyTo(null)} className="ml-auto shrink-0 text-zinc-400 hover:text-rose-400" title="Cancel reply">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               )}
               <div className="flex items-center gap-2">
@@ -698,8 +916,9 @@ export default function ChatRoom() {
                   <Paperclip className="h-4 w-4" />
                 </button>
                 <input
+                  ref={composerRef}
                   value={composer}
-                  onChange={(e) => setComposer(e.target.value)}
+                  onChange={(e) => { setComposer(e.target.value); notifyTyping(); }}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
                   placeholder={active ? `Message #${active.name}` : "Select a channel to chat"}
                   disabled={!selectedId}
@@ -792,6 +1011,46 @@ export default function ChatRoom() {
               ))}
               {dmUsers.length === 0 && (
                 <p className="px-3 py-2 text-sm text-zinc-500">No other members yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manageChannel && isAdmin && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={() => setManageChannel(null)}>
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Manage #{manageChannel.name}</h3>
+              <button onClick={() => setManageChannel(null)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200" title="Close">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Members ({channelMembers.length})</p>
+            <div className="mb-3 max-h-48 space-y-1 overflow-y-auto">
+              {channelMembers.map((u) => (
+                <div key={u.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm">
+                  <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">{u.name}</span>
+                  <button onClick={() => void removeMember(u.id)}
+                    className="ml-auto shrink-0 rounded p-0.5 text-zinc-400 hover:text-rose-400" title="Remove">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {channelMembers.length === 0 && <p className="px-2 text-sm text-zinc-500">No members yet.</p>}
+            </div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Add members</p>
+            <div className="max-h-40 space-y-1 overflow-y-auto">
+              {dmUsers.filter((u) => !channelMembers.some((m) => m.id === u.id)).map((u) => (
+                <button key={u.id} onClick={() => void addMember(u.id)}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                  <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">{u.name}</span>
+                  <Plus className="ml-auto h-3.5 w-3.5 shrink-0 text-indigo-400" />
+                </button>
+              ))}
+              {dmUsers.filter((u) => !channelMembers.some((m) => m.id === u.id)).length === 0 && (
+                <p className="px-2 text-sm text-zinc-500">Everyone is a member.</p>
               )}
             </div>
           </div>

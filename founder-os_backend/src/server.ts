@@ -158,6 +158,30 @@ app.post('/api/chat/channels/:id/messages', async (req, res) => {
   const r = await ChatRoutes.chatSendMessage(chatStore, me, req.params.id, req.body || {});
   res.status(r.status).json(r.body);
 });
+app.post('/api/chat/channels/:id/read', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatMarkRead(chatStore, me, req.params.id, req.body?.lastReadId ? Number(req.body.lastReadId) : null);
+  res.status(r.status).json(r.body);
+});
+app.get('/api/chat/channels/:id/members', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatListChannelMembers(chatStore, me, req.params.id);
+  res.status(r.status).json(r.body);
+});
+app.post('/api/chat/channels/:id/members', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatAddChannelMembers(chatStore, me, req.params.id, req.body?.userIds || []);
+  res.status(r.status).json(r.body);
+});
+app.delete('/api/chat/channels/:id/members/:userId', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await ChatRoutes.chatRemoveChannelMember(chatStore, me, req.params.id, req.params.userId);
+  res.status(r.status).json(r.body);
+});
 app.patch('/api/chat/messages/:id', async (req, res) => {
   const me = await chatMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
@@ -169,6 +193,11 @@ app.delete('/api/chat/messages/:id', async (req, res) => {
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const r = await ChatRoutes.chatDeleteMessage(chatStore, me, req.params.id);
   res.status(r.status).json(r.body);
+});
+app.post('/api/chat/typing', async (req, res) => {
+  const me = await chatMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  res.status(200).json({ ok: true });
 });
 // File attachments are stored in Workers KV (worker runtime only); the
 // Express/alt runtime is the local/dev path without KV.

@@ -15,6 +15,9 @@ function parseAttachments(raw: string | null): ChatAttachment[] {
 }
 
 function mapMessage(row: any): ChatMessage {
+  const replyTo = row.replyToId
+    ? { id: row.replyToId, senderName: row.replyTo?.sender?.name || "Unknown", body: row.replyTo?.body || "" }
+    : null;
   return {
     id: row.id,
     channelId: row.channelId,
@@ -26,6 +29,8 @@ function mapMessage(row: any): ChatMessage {
     editedAt: row.editedAt ? row.editedAt.toISOString() : null,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     attachments: parseAttachments(row.attachments),
+    replyToId: row.replyToId ?? null,
+    replyTo,
   };
 }
 
@@ -45,14 +50,11 @@ function mapChannel(row: any, other: ChatUser | null): ChatChannel {
 export class PrismaChatStore implements ChatStore {
   constructor(private prisma: PrismaClient) {}
 
-  async listChannels(userId: string) {
+  async listChannels(userId: string, isAdmin = false) {
     const channels = await this.prisma.chatChannel.findMany({
-      where: {
-        OR: [
-          { type: "channel" },
-          { type: "dm", members: { some: { userId } } },
-        ],
-      },
+      where: isAdmin
+        ? {}
+        : { members: { some: { userId } } },
       orderBy: { createdAt: "asc" },
       include: { members: { include: { user: { select: { id: true, name: true, picture: true } } } } },
     });
@@ -61,9 +63,16 @@ export class PrismaChatStore implements ChatStore {
       return mapChannel(c, other);
     });
   }
-  async createChannel(input: { name: string; description: string | null; category: string | null; createdBy: string }) {
+  async createChannel(input: { name: string; description: string | null; category: string | null; createdBy: string; memberIds?: string[] }) {
     const r = await this.prisma.chatChannel.create({
-      data: { name: input.name, description: input.description, category: input.category, type: "channel", createdBy: input.createdBy },
+      data: {
+        name: input.name,
+        description: input.description,
+        category: input.category,
+        type: "channel",
+        createdBy: input.createdBy,
+        members: { create: [...new Set([input.createdBy, ...(input.memberIds || [])])].map((userId) => ({ userId })) },
+      },
     });
     return mapChannel(r, null);
   }
@@ -89,11 +98,28 @@ export class PrismaChatStore implements ChatStore {
     });
     return mapChannel(r, otherUser ? { id: otherUser.id, name: otherUser.name, picture: otherUser.picture } : null);
   }
-  async canAccessChannel(channelId: string, userId: string) {
+  async listChannelMembers(channelId: string) {
+    const rows = await this.prisma.chatMember.findMany({
+      where: { channelId },
+      include: { user: { select: { id: true, name: true, picture: true } } },
+      orderBy: { user: { name: "asc" } },
+    });
+    return rows.map((m) => ({ id: m.user.id, name: m.user.name, picture: m.user.picture }));
+  }
+  async addChannelMembers(channelId: string, userIds: string[]) {
+    await this.prisma.chatMember.createMany({
+      data: userIds.map((userId) => ({ channelId, userId })),
+      skipDuplicates: true,
+    });
+  }
+  async removeChannelMember(channelId: string, userId: string) {
+    await this.prisma.chatMember.deleteMany({ where: { channelId, userId } });
+  }
+  async canAccessChannel(channelId: string, userId: string, isAdmin = false) {
     const c = await this.prisma.chatChannel.findFirst({
       where: {
         id: channelId,
-        OR: [{ type: "channel" }, { type: "dm", members: { some: { userId } } }],
+        ...(isAdmin ? {} : { members: { some: { userId } } }),
       },
       select: { id: true },
     });
@@ -108,21 +134,67 @@ export class PrismaChatStore implements ChatStore {
       where: { channelId, ...(before ? { id: { lt: before } } : {}) },
       orderBy: { id: "desc" },
       take: limit,
-      include: { sender: { select: { name: true, picture: true } } },
+      include: {
+        sender: { select: { name: true, picture: true } },
+        replyTo: { include: { sender: { select: { name: true } } } },
+      },
     });
     return rows.reverse().map(mapMessage);
   }
   async getMessage(id: number) {
     const row = await this.prisma.chatMessage.findUnique({
       where: { id },
-      include: { sender: { select: { name: true, picture: true } } },
+      include: {
+        sender: { select: { name: true, picture: true } },
+        replyTo: { include: { sender: { select: { name: true } } } },
+      },
     });
     return row ? mapMessage(row) : null;
   }
-  async createMessage(input: { channelId: string; senderId: string; body: string; attachments?: ChatAttachment[] }) {
+  async getUnreadCounts(userId: string) {
+    const states = await this.prisma.chatReadState.findMany({ where: { userId } });
+    const byChannel = new Map(states.map((s) => [s.channelId, s.lastReadId]));
+    const channels = await this.prisma.chatChannel.findMany({
+      where: {
+        OR: [{ type: "channel" }, { type: "dm", members: { some: { userId } } }],
+      },
+      select: { id: true },
+    });
+    const out: Record<string, number> = {};
+    for (const c of channels) {
+      const lastRead = byChannel.get(c.id) ?? 0;
+      const cnt = await this.prisma.chatMessage.count({
+        where: { channelId: c.id, id: { gt: lastRead }, deletedAt: null },
+      });
+      if (cnt > 0) out[c.id] = cnt;
+    }
+    return out;
+  }
+  async listChannelsWithUnread(userId: string, isAdmin = false) {
+    const channels = await this.listChannels(userId, isAdmin);
+    const unread = await this.getUnreadCounts(userId);
+    return channels.map((c) => ({ ...c, unread: unread[c.id] || 0 }));
+  }
+  async markChannelRead(userId: string, channelId: string, lastReadId: number) {
+    await this.prisma.chatReadState.upsert({
+      where: { userId_channelId: { userId, channelId } },
+      update: { lastReadId },
+      create: { userId, channelId, lastReadId },
+    });
+  }
+  async createMessage(input: { channelId: string; senderId: string; body: string; attachments?: ChatAttachment[]; replyToId?: number | null }) {
     const row = await this.prisma.chatMessage.create({
-      data: { channelId: input.channelId, senderId: input.senderId, body: input.body, attachments: JSON.stringify(input.attachments ?? []) },
-      include: { sender: { select: { name: true, picture: true } } },
+      data: {
+        channelId: input.channelId,
+        senderId: input.senderId,
+        body: input.body,
+        attachments: JSON.stringify(input.attachments ?? []),
+        replyToId: input.replyToId ?? null,
+      },
+      include: {
+        sender: { select: { name: true, picture: true } },
+        replyTo: { include: { sender: { select: { name: true } } } },
+      },
     });
     return mapMessage(row);
   }

@@ -439,6 +439,7 @@ model AuthUser {
   userRoles  AuthUserRole[]
   chatMessages ChatMessage[]
   chatMembers   ChatMember[]
+  chatReadStates ChatReadState[]
 }
 
 model AuthSession {
@@ -509,6 +510,7 @@ model ChatChannel {
   createdAt   DateTime @default(now())
   messages    ChatMessage[]
   members     ChatMember[]
+  readStates  ChatReadState[]
 }
 
 model ChatMessage {
@@ -522,8 +524,21 @@ model ChatMessage {
   editedAt    DateTime?
   deletedAt   DateTime?
   attachments String?
+  replyToId   Int?
+  replyTo     ChatMessage? @relation("ChatReply", fields: [replyToId], references: [id])
+  replies     ChatMessage[] @relation("ChatReply")
 
   @@index([channelId, id])
+}
+
+model ChatReadState {
+  userId    String
+  user      AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId String
+  channel   ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  lastReadId Int @default(0)
+
+  @@id([userId, channelId])
 }
 
 model ChatMember {

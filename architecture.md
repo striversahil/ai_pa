@@ -57,7 +57,7 @@ Worker + GitHub Actions.
 | **webhook-relay** (`webhook-relay/relay.js`) | `node relay.js` | disk WAL | Zero-dep buffer between WA Engine Pro and the Express backend; acks instantly, forwards with backoff. |
 | **local-runner.js** | `node local-runner.js` | (reads waba-worker D1) | Local AI processing loop: polls the waba-worker queue, classifies each message (deterministic rules + LLM fallback), writes results back. |
 | **Frontend** (`founder-os_frontend`) | `next build` → Cloudflare Pages | — | Static Next.js dashboard; talks to the Worker/Express API via Pages Functions `/api` proxy. **PWA**: manifest + `sw.js` (build-time precache of all assets) for "Add to Home Screen" + offline shell. |
-| **cPanel cron dispatcher** (`216.10.246.39`, user `brindwqj`) | user crontab → `~/gh-trigger.sh` | — | Replaces cron-job.org: fires `workflow_dispatch` to GitHub Actions on schedule (no Node needed). |
+| **cPanel cron dispatcher** (`216.10.246.39`, user `brindwqj`) | user crontab → `~/gh-trigger.sh` | — | Replaces cron-job.org: fires `workflow_dispatch` to GitHub Actions on schedule (no Node needed). Also runs the nightly D1 backup (`~/d1-backup.sh` → Cloudflare D1 export API → SQL dump in `~/d1-backups/`, 14-day retention). |
 
 ### Key principles
 - **Dual runtime, shared modules:** `founder-os_backend/src/modules/*` and `src/automations/*`
@@ -487,6 +487,7 @@ The `functions/` dir is excluded from Next typecheck (Pages Functions types come
 | founder-os-worker | Cloudflare Workers (**live API**) | `node scripts/build-worker.mjs` → `npx wrangler deploy` (D1 `DB`, `EVENT_HUB` DO, `CHAT_FILES` KV) |
 | Cron/AI dispatch | cPanel cron (`216.10.246.39`) | user crontab → `~/gh-trigger.sh` → `workflow_dispatch` |
 | Cron/AI | GitHub Actions (**live execution**) | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` |
+| **D1 nightly backup** | cPanel cron (`216.10.246.39`) | `30 2 * * *` → `~/d1-backup.sh` → Cloudflare D1 **export API** (polling) → SQL dump in `~/d1-backups/`, 14-day retention |
 | waba-worker | Cloudflare Workers | `cd waba-worker && wrangler deploy` (D1 `waba-worker`) |
 | Express backend | Docker / host (alt/local) | `pnpm build` (tsc) → `node dist/server.js`; `Dockerfile` + `docker-compose.yml` |
 | Frontend (+ PWA) | Cloudflare Pages | `npm run build` → `wrangler pages deploy out` |

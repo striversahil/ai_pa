@@ -6,6 +6,8 @@ import {
   ensureScopesSeeded,
   getGoogleConfig,
   getMe,
+  invalidateAllSessionCaches,
+  invalidateSessionCache,
   listRoles,
   listScopes,
   listUsers,
@@ -69,7 +71,10 @@ export async function authMe(store: AuthStore, cookieHeader: string | null): Pro
 
 export async function authLogout(store: AuthStore, cookieHeader: string | null, secure: boolean): Promise<AuthResult> {
   const id = readSessionCookie(cookieHeader);
-  if (id) await store.deleteSession(id);
+  if (id) {
+    await store.deleteSession(id);
+    invalidateSessionCache(id);
+  }
   return { status: 200, body: { ok: true }, setCookie: clearSessionCookieHeader(secure) };
 }
 
@@ -143,6 +148,7 @@ export async function authSetUserScopes(
     await asRoot(store, cookieHeader);
     if (!Array.isArray(keys)) return json(400, { error: "keys must be an array" });
     await svcSetUserScopes(store, userId, keys);
+    invalidateAllSessionCaches();
     return json(200, { ok: true });
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
@@ -202,6 +208,7 @@ export async function authSetUserRoles(
     await asRoot(store, cookieHeader);
     if (!Array.isArray(keys)) return json(400, { error: "keys must be an array" });
     await svcSetUserRoles(store, userId, keys);
+    invalidateAllSessionCaches();
     return json(200, { ok: true });
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);

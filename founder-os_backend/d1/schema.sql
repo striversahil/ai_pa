@@ -366,10 +366,19 @@ CREATE TABLE IF NOT EXISTS chat_message (
   editedAt TEXT,
   deletedAt TEXT,
   attachments TEXT,
+  replyToId INTEGER,
   FOREIGN KEY (channelId) REFERENCES chat_channel(id) ON DELETE CASCADE,
   FOREIGN KEY (senderId) REFERENCES auth_user(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_chat_message_channel ON chat_message(channelId, id);
+CREATE TABLE IF NOT EXISTS chat_read_state (
+  userId TEXT NOT NULL,
+  channelId TEXT NOT NULL,
+  lastReadId INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (userId, channelId),
+  FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE,
+  FOREIGN KEY (channelId) REFERENCES chat_channel(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS chat_member (
   channelId TEXT NOT NULL,
   userId TEXT NOT NULL,

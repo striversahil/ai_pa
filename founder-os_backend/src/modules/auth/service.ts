@@ -118,26 +118,44 @@ function toMe(user: AuthUser, scopes: string[], roles: string[]): MeResponse {
   };
 }
 
-/** Effective scopes = direct scopes ∪ scopes bundled into the user's roles. */
-async function resolveUserScopes(store: AuthStore, userId: string, roles: string[]): Promise<string[]> {
-  const direct = await store.getUserScopeKeys(userId);
-  if (roles.length === 0) return direct;
-  const roleScopes = new Set<string>();
-  for (const r of await store.listRoles()) {
-    if (roles.includes(r.key)) for (const s of r.scopeKeys) roleScopes.add(s);
-  }
-  return [...new Set([...direct, ...roleScopes])];
-}
-
 export async function getMe(store: AuthStore, sessionId: string | null): Promise<MeResponse | null> {
   if (!sessionId) return null;
+  const cached = getMeCache.get(sessionId);
+  if (cached) {
+    if (cached.expiresAt > Date.now()) return cached.me;
+    getMeCache.delete(sessionId);
+  }
   const sess = await store.getSession(sessionId);
   if (!sess) return null;
-  const user = await store.getUserById(sess.userId);
-  if (!user) return null;
-  const roles = await store.getUserRoleKeys(user.id);
-  const scopes = await resolveUserScopes(store, user.id, roles);
-  return toMe(user, scopes, roles);
+  // One-shot batched read (user + scopes + roles + role→scopes) — the auth
+  // gate runs on every request, so this collapses 5 D1 queries into 2.
+  const snap = await store.getAuthSnapshot(sess.userId);
+  if (!snap.user) return null;
+  const direct = snap.scopes;
+  const roleScopes = new Set<string>();
+  for (const roleKey of snap.roles) {
+    for (const s of snap.roleScopes[roleKey] || []) roleScopes.add(s);
+  }
+  const scopes = [...new Set([...direct, ...roleScopes])];
+  const me = toMe(snap.user, scopes, snap.roles);
+  getMeCache.set(sessionId, { me, expiresAt: Date.now() + GET_ME_CACHE_MS });
+  return me;
+}
+
+// Isolate-local auth cache. Purged by TTL; a separate login/scope change will be
+// reflected on the next expiry. 15s keeps chat/whatsapp snappy while admin
+// role changes propagate within a few seconds.
+const GET_ME_CACHE_MS = 15_000;
+const getMeCache = new Map<string, { me: MeResponse; expiresAt: number }>();
+
+/** Invalidate a cached session (e.g. logout, scope change). */
+export function invalidateSessionCache(sessionId: string): void {
+  getMeCache.delete(sessionId);
+}
+
+/** Clear every cached session — used after admin scope/role changes. */
+export function invalidateAllSessionCaches(): void {
+  getMeCache.clear();
 }
 
 /** Throws AuthError(UNAUTHENTICATED) when no valid session; used as a gate. */

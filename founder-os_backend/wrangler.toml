@@ -19,6 +19,7 @@ id = "233eb9aa540f48a9a2e21b993252f1aa"
 bindings = [
   { name = "EVENT_HUB", class_name = "EventHub" },
   { name = "ASYNC_RUNNER", class_name = "AsyncTaskRunner" },
+  { name = "CHAT_ROOM", class_name = "ChatRoomDO" },
 ]
 
 [[migrations]]
@@ -28,6 +29,10 @@ new_sqlite_classes = ["EventHub"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["AsyncTaskRunner"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["ChatRoomDO"]
 
 [observability]
 enabled = true

@@ -67,18 +67,23 @@ function istDayEpochRange(dateStr) {
 }
 
 /**
- * Number of leads GENERATED (created) per telecaller on a given IST day.
+ * Number of leads GENERATED per telecaller on a given IST day.
  *
- * This replaces the previous buggy `leadsInProgress + leadsConverted` heuristic
- * from the USER_REPORT call-log snapshot. We query NeoDove's `get-leads` API
- * per telecaller (filtering by `user_id_list`) over the day's created-date
- * range and count the returned leads — that is the true "leads generated"
- * figure. Network failures degrade to 0 (the live path runs from Cloudflare/
- * local egress where NeoDove is reachable; GH Actions egress is blocked).
+ * Matches NeoDove portal's lead-generation counter: leads at a specific
+ * pipeline stage whose LAST CALL falls inside the day (NOT by created date —
+ * that older `lead_date_created` heuristic produced incorrect counts).
+ * We query once per telecaller (filtering by `user_id_list`) over the day's
+ * last-call epoch window (IST midnight = 18:30 UTC of the previous day) and
+ * count the returned leads across pages. Network failures degrade to 0
+ * (the live path runs from Cloudflare/local egress where NeoDove is reachable;
+ * GH Actions egress is blocked). The JWT comes from the worker token store.
  */
 const NEODOVE_PIPELINE_ID = '6960ffd81688fef4bc4df09a';
+// Pipeline stage that defines a "generated" lead in the portal counter.
+const LEAD_STAGE_ID = '3ce47616-4c90-4564-b7a9-66e8a0d35f2d';
 async function fetchLeadsGenerated(token, dateStr, userIds) {
   const { start, end } = istDayEpochRange(dateStr);
+  const isToday = dateStr === istDateStr(0);
   const counts = {};
   for (const uid of userIds) {
     let offset = 0;
@@ -94,22 +99,34 @@ async function fetchLeadsGenerated(token, dateStr, userIds) {
           basic_search: {},
           lead_status: null,
           customFollowupFilterSelected: null,
-          lead_stage_list: [],
+          lead_stage_list: [LEAD_STAGE_ID],
           tag_list: [],
+          latest_disposition_list: [],
           user_id_list: [uid],
-          lead_date_created: { start_date: start, end_date: end, is_date_changed: true },
+          campaign_ids_list: [],
+          // Creation date intentionally NOT filtered — the counter is driven
+          // by the lead's last call landing inside the requested IST day.
+          lead_date_created: { is_date_changed: false, start_date: null, end_date: null },
           next_followup_date: {},
           contact_source: [],
           contact_list_ids: [],
-          campaign_ids_list: [],
+          call_not_connected_reason_list: [],
+          last_call_date: {
+            call_not_connected_reason_list: [],
+            start_date: start,
+            end_date: end,
+            is_filter_applied: true,
+            dispositionDateForFilter: isToday ? 'today' : undefined,
+          },
           show_historical_leads: false,
           isFilterApplied: true,
-          customfilterSelected: 'today',
         },
-        pagination: { limit: 50, offset },
-        sort_by: { sorting_type: 0 },
         selected_contact_source: [],
         selected_uploaded_files: [],
+        selected_workflow: [],
+        selected_google_sheet: [],
+        pagination: { limit: 50, offset },
+        sort_by: { sorting_type: 0 },
         fetch_purpose: 'VIEW_LEADS',
       };
       const res = await fetch(`${NEODOVE_API}/lead/get-leads?application_type=PORTAL`, {
@@ -126,7 +143,12 @@ async function fetchLeadsGenerated(token, dateStr, userIds) {
       if (res.status === 401) throw new Error('NeoDove rejected the token (401) — refresh it via POST /api/token/webhook');
       if (!res.ok) throw new Error(`neodove get-leads HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
       const json = await res.json();
-      const arr = json?.data?.data || json?.data?.leads || (Array.isArray(json?.data) ? json.data : []);
+      // The page of rows sits under data.campaign_leads for this filter shape
+      // (older response shapes kept as fallbacks). Missing this key means the
+      // count silently reads 0 even on HTTP 200.
+      const rawPage = json?.data?.campaign_leads ?? json?.data?.data ?? json?.data?.leads
+        ?? (Array.isArray(json?.data) ? json.data : null);
+      const arr = Array.isArray(rawPage) ? rawPage : [];
       count += Array.isArray(arr) ? arr.length : 0;
       pages++;
       if (!Array.isArray(arr) || arr.length < 50 || pages > 50) break;
