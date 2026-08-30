@@ -164,3 +164,34 @@ export async function chatDeleteMessage(
     live: { type: LiveEvent.Chat, extra: { action: "deleted", channelId: existing.channelId, id: msgId } },
   };
 }
+
+export async function chatListReactions(
+  store: ChatStore,
+  me: MeResponse,
+  channelId: string,
+): Promise<ChatResult> {
+  if (!(await store.canAccessChannel(channelId, me.user.id, me.isAdmin))) return err("You don't have access to this channel");
+  return json(200, await store.listReactions(channelId));
+}
+
+export async function chatToggleReaction(
+  store: ChatStore,
+  me: MeResponse,
+  id: string,
+  emoji: string,
+): Promise<ChatResult> {
+  if (!approved(me)) return err("Approval required before you can chat", 403);
+  const msgId = parseInt(id, 10);
+  if (!Number.isFinite(msgId)) return json(400, { error: "invalid id" });
+  const clean = String(emoji || "").trim().slice(0, 16);
+  if (!clean) return json(400, { error: "emoji required" });
+  const existing = await store.getMessage(msgId);
+  if (!existing) return json(404, { error: "message not found" });
+  if (!(await store.canAccessChannel(existing.channelId, me.user.id, me.isAdmin))) return err("You don't have access to this channel");
+  const result = await store.toggleReaction(msgId, me.user.id, me.user.name || me.user.email, clean);
+  return {
+    status: 200,
+    body: result,
+    live: { type: LiveEvent.Chat, extra: { action: "reactions", channelId: existing.channelId, messageId: msgId, reactions: result.reactions } },
+  };
+}

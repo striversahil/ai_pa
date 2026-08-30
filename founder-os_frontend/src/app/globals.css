@@ -98,6 +98,291 @@
   --ring-color: rgba(91, 94, 240, 0.55);
 }
 
+/* ── App theme presets ──────────────────────────────────────────────────────
+   Applied via html[data-app-theme]. Tailwind v4 utilities reference the
+   --color-* variables, so overriding the palette here re-themes every screen. */
+
+html[data-app-theme="classic"] {
+  color-scheme: dark;
+  --bg-app: #0a0c10;
+  --bg-card: #15181f;
+  --bg-sidebar: #0b0d11;
+  --border-card: #262b34;
+  --text-primary: #eef0f4;
+  --text-secondary: #aab1bf;
+  --text-tertiary: #6b7280;
+  --border-thread: #262b34;
+  --bg-input: #1c2027;
+  --surface-raised: #1b1f27;
+  --surface-sunken: #101319;
+  --ring-color: rgba(91, 94, 240, 0.55);
+
+  --color-brand-indigo: #5b5ef0;
+  --color-indigo-300: #a5b4fc;
+  --color-indigo-400: #818cf8;
+  --color-indigo-500: #6366f1;
+  --color-indigo-600: #4f46e5;
+  --color-indigo-650: #4f46e5;
+  --color-indigo-700: #4338ca;
+
+  --color-zinc-50: #f8fafc;
+  --color-zinc-100: #f1f5f9;
+  --color-zinc-200: #e2e8f0;
+  --color-zinc-300: #cbd5e1;
+  --color-zinc-400: #94a3b8;
+  --color-zinc-500: #64748b;
+  --color-zinc-600: #475569;
+  --color-zinc-700: #334155;
+  --color-zinc-750: #2a3543;
+  --color-zinc-800: #1e293b;
+  --color-zinc-850: #16202e;
+  --color-zinc-900: #0f172a;
+  --color-zinc-950: #060b14;
+  --color-zinc-955: #050a12;
+
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-750: #2a3543;
+  --color-slate-800: #1e293b;
+  --color-slate-850: #16202e;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #060b14;
+}
+
+html[data-app-theme="midnight"] {
+  color-scheme: dark;
+  --bg-app: #0e1424;
+  --bg-card: #141b2c;
+  --bg-sidebar: #0a101d;
+  --border-card: #223048;
+  --text-primary: #e6ecf6;
+  --text-secondary: #8fa0bd;
+  --text-tertiary: #5d6b8a;
+  --border-thread: #223048;
+  --bg-input: #1a2336;
+  --surface-raised: #1a2336;
+  --surface-sunken: #0f1626;
+  --ring-color: rgba(59, 130, 246, 0.45);
+
+  --color-brand-indigo: #3b82f6;
+  --color-indigo-300: #93c5fd;
+  --color-indigo-400: #60a5fa;
+  --color-indigo-500: #3b82f6;
+  --color-indigo-600: #2563eb;
+  --color-indigo-650: #1d4ed8;
+  --color-indigo-700: #1e40af;
+
+  --color-zinc-50: #f3f6fb;
+  --color-zinc-100: #e6ecf6;
+  --color-zinc-200: #c9d5ea;
+  --color-zinc-300: #9db0d0;
+  --color-zinc-400: #8093b5;
+  --color-zinc-500: #65789a;
+  --color-zinc-600: #4d5c7a;
+  --color-zinc-700: #38455d;
+  --color-zinc-750: #2e3a4f;
+  --color-zinc-800: #232e42;
+  --color-zinc-850: #1a2436;
+  --color-zinc-900: #151d2e;
+  --color-zinc-950: #101726;
+  --color-zinc-955: #0c1220;
+
+  --color-slate-50: #f3f6fb;
+  --color-slate-100: #e6ecf6;
+  --color-slate-200: #c9d5ea;
+  --color-slate-300: #9db0d0;
+  --color-slate-400: #8093b5;
+  --color-slate-500: #65789a;
+  --color-slate-600: #4d5c7a;
+  --color-slate-700: #38455d;
+  --color-slate-750: #2e3a4f;
+  --color-slate-800: #232e42;
+  --color-slate-850: #1a2436;
+  --color-slate-900: #151d2e;
+  --color-slate-950: #101726;
+}
+
+html[data-app-theme="discord"] {
+  color-scheme: dark;
+  --bg-app: #313338;
+  --bg-card: #2b2d31;
+  --bg-sidebar: #1e1f22;
+  --border-card: #3f4147;
+  --text-primary: #dbdee1;
+  --text-secondary: #b5bac1;
+  --text-tertiary: #80848e;
+  --border-thread: #3f4147;
+  --bg-input: #383a40;
+  --surface-raised: #2b2d31;
+  --surface-sunken: #232428;
+  --ring-color: rgba(88, 101, 242, 0.5);
+
+  --color-brand-indigo: #5865f2;
+  --color-indigo-300: #a5aef8;
+  --color-indigo-400: #7983f5;
+  --color-indigo-500: #5865f2;
+  --color-indigo-600: #4a54e1;
+  --color-indigo-650: #414bc9;
+  --color-indigo-700: #3c45a5;
+
+  --color-zinc-50: #f2f3f5;
+  --color-zinc-100: #e3e5e8;
+  --color-zinc-200: #b5bac1;
+  --color-zinc-300: #80848e;
+  --color-zinc-400: #6d6f78;
+  --color-zinc-500: #5c5e66;
+  --color-zinc-600: #4e5058;
+  --color-zinc-700: #3f4147;
+  --color-zinc-750: #383a40;
+  --color-zinc-800: #313338;
+  --color-zinc-850: #2b2d31;
+  --color-zinc-900: #232428;
+  --color-zinc-950: #1e1f22;
+  --color-zinc-955: #111214;
+
+  --color-slate-50: #f2f3f5;
+  --color-slate-100: #e3e5e8;
+  --color-slate-200: #b5bac1;
+  --color-slate-300: #80848e;
+  --color-slate-400: #6d6f78;
+  --color-slate-500: #5c5e66;
+  --color-slate-600: #4e5058;
+  --color-slate-700: #3f4147;
+  --color-slate-750: #383a40;
+  --color-slate-800: #313338;
+  --color-slate-850: #2b2d31;
+  --color-slate-900: #232428;
+  --color-slate-950: #1e1f22;
+}
+
+html[data-app-theme="amoled"] {
+  color-scheme: dark;
+  --bg-app: #000000;
+  --bg-card: #0a0a0a;
+  --bg-sidebar: #000000;
+  --border-card: #222222;
+  --text-primary: #e8e8e8;
+  --text-secondary: #9a9a9a;
+  --text-tertiary: #5c5c5c;
+  --border-thread: #222222;
+  --bg-input: #141414;
+  --surface-raised: #0f0f0f;
+  --surface-sunken: #000000;
+  --ring-color: rgba(88, 101, 242, 0.55);
+
+  --color-brand-indigo: #5865f2;
+  --color-indigo-300: #a5aef8;
+  --color-indigo-400: #7983f5;
+  --color-indigo-500: #5865f2;
+  --color-indigo-600: #4a54e1;
+  --color-indigo-650: #414bc9;
+  --color-indigo-700: #3c45a5;
+
+  --color-zinc-50: #fafafa;
+  --color-zinc-100: #e8e8e8;
+  --color-zinc-200: #cfcfcf;
+  --color-zinc-300: #a3a3a3;
+  --color-zinc-400: #7a7a7a;
+  --color-zinc-500: #575757;
+  --color-zinc-600: #3f3f3f;
+  --color-zinc-700: #2a2a2a;
+  --color-zinc-750: #1c1c1c;
+  --color-zinc-800: #121212;
+  --color-zinc-850: #0a0a0a;
+  --color-zinc-900: #060606;
+  --color-zinc-950: #000000;
+  --color-zinc-955: #000000;
+
+  --color-slate-50: #fafafa;
+  --color-slate-100: #e8e8e8;
+  --color-slate-200: #cfcfcf;
+  --color-slate-300: #a3a3a3;
+  --color-slate-400: #7a7a7a;
+  --color-slate-500: #575757;
+  --color-slate-600: #3f3f3f;
+  --color-slate-700: #2a2a2a;
+  --color-slate-750: #1c1c1c;
+  --color-slate-800: #121212;
+  --color-slate-850: #0a0a0a;
+  --color-slate-900: #060606;
+  --color-slate-950: #000000;
+}
+
+html[data-app-theme="nord"] {
+  color-scheme: dark;
+  --bg-app: #2e3440;
+  --bg-card: #353c4a;
+  --bg-sidebar: #272c37;
+  --border-card: #434c5e;
+  --text-primary: #eceff4;
+  --text-secondary: #b8c2d4;
+  --text-tertiary: #7b88a1;
+  --border-thread: #434c5e;
+  --bg-input: #3b4252;
+  --surface-raised: #3b4252;
+  --surface-sunken: #292f3a;
+  --ring-color: rgba(136, 192, 208, 0.45);
+
+  --color-brand-indigo: #81a1c1;
+  --color-indigo-300: #9cb8d6;
+  --color-indigo-400: #81a1c1;
+  --color-indigo-500: #5e81ac;
+  --color-indigo-600: #52709c;
+  --color-indigo-650: #4a678f;
+  --color-indigo-700: #406088;
+
+  --color-zinc-50: #eceff4;
+  --color-zinc-100: #e5e9f0;
+  --color-zinc-200: #d8dee9;
+  --color-zinc-300: #aeb9cb;
+  --color-zinc-400: #8b98ad;
+  --color-zinc-500: #6d7b94;
+  --color-zinc-600: #566079;
+  --color-zinc-700: #464f61;
+  --color-zinc-750: #40485a;
+  --color-zinc-800: #3b4252;
+  --color-zinc-850: #343b49;
+  --color-zinc-900: #2e3440;
+  --color-zinc-950: #272c37;
+  --color-zinc-955: #22262e;
+
+  --color-slate-50: #eceff4;
+  --color-slate-100: #e5e9f0;
+  --color-slate-200: #d8dee9;
+  --color-slate-300: #aeb9cb;
+  --color-slate-400: #8b98ad;
+  --color-slate-500: #6d7b94;
+  --color-slate-600: #566079;
+  --color-slate-700: #464f61;
+  --color-slate-750: #40485a;
+  --color-slate-800: #3b4252;
+  --color-slate-850: #343b49;
+  --color-slate-900: #2e3440;
+  --color-slate-950: #272c37;
+}
+
+html[data-app-theme="light"] {
+  color-scheme: light;
+  --bg-app: #f4f5f8;
+  --bg-card: #ffffff;
+  --bg-sidebar: #0e1014;
+  --border-card: #e3e6ec;
+  --text-primary: #13151c;
+  --text-secondary: #565d6b;
+  --text-tertiary: #8b92a1;
+  --border-thread: #e3e6ec;
+  --bg-input: #f1f2f6;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f7f8fb;
+  --ring-color: rgba(91, 94, 240, 0.45);
+}
+
 * {
   border-color: var(--border-card);
 }
@@ -108,10 +393,32 @@ body {
   transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-:where(a, button, input, select, textarea):focus-visible {
+:where(a, button):focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--ring-color);
   border-radius: 0.5rem;
+}
+
+:where(input, select, textarea):focus-visible {
+  outline: none;
+}
+
+/* Interactive elements are pointer-affordant everywhere (Tailwind v4 preflight
+   resets buttons to cursor: default — restore the expected production feel). */
+button:not(:disabled),
+[role="button"]:not(:disabled),
+select:not(:disabled),
+summary,
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"],
+label:has(input[type="checkbox"]),
+label:has(input[type="radio"]) {
+  cursor: pointer;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-brand-indigo) 40%, transparent);
 }
 
 /* Custom scrollbar (Discord-like, theme aware) */

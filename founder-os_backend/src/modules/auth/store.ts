@@ -321,8 +321,8 @@ class D1AuthStore implements AuthStore {
         ? this.db.prepare("SELECT roleKey FROM auth_user_role WHERE userId = ?").bind(userId)
         : this.db.prepare("SELECT 'none' AS roleKey WHERE 1 = 0"),
       rolesReady
-        ? this.db.prepare("SELECT r.key AS roleKey, r.label, r.description, rs.scopeKey FROM auth_role r LEFT JOIN auth_role_scope rs ON rs.roleKey = r.key").all()
-        : this.db.prepare("SELECT 'none' AS roleKey, 'x' AS label, NULL AS description, NULL AS scopeKey WHERE 1 = 0").all(),
+        ? this.db.prepare("SELECT r.key AS roleKey, r.label, r.description, rs.scopeKey FROM auth_role r LEFT JOIN auth_role_scope rs ON rs.roleKey = r.key")
+        : this.db.prepare("SELECT 'none' AS roleKey, 'x' AS label, NULL AS description, NULL AS scopeKey WHERE 1 = 0"),
     ]);
     const user = this.mapUser((userR as any)?.results?.[0] ?? (userR as any) ?? null);
     const scopes = ((scopesR as any).results || []).map((r: any) => r.scopeKey);

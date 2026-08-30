@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { ChatAttachment, ChatChannel, ChatMessage, ChatStore, ChatUser } from "./store";
+import { ChatAttachment, ChatChannel, ChatMessage, ChatReaction, ChatStore, ChatUser } from "./store";
 
 // Prisma-backed ChatStore for the Express / Postgres runtime. Kept in a separate
 // file so the Prisma client never enters the Cloudflare Worker bundle.
@@ -52,11 +52,14 @@ export class PrismaChatStore implements ChatStore {
 
   async listChannels(userId: string, isAdmin = false) {
     const channels = await this.prisma.chatChannel.findMany({
-      where: isAdmin
-        ? {}
-        : { members: { some: { userId } } },
+      where: {
+        OR: [
+          { type: "channel", ...(isAdmin ? {} : { members: { some: { userId } } }) },
+          { type: "dm", members: { some: { userId } } },
+        ],
+      },
       orderBy: { createdAt: "asc" },
-      include: { members: { include: { user: { select: { id: true, name: true, picture: true } } } } },
+      include: { members: { include: { user: { select: { id: true, name: true, picture: true, email: true } } } } },
     });
     return channels.map((c) => {
       const other = c.type === "dm" ? (c.members.find((m) => m.userId !== userId)?.user ?? null) : null;
@@ -79,13 +82,13 @@ export class PrismaChatStore implements ChatStore {
   async createDm(userA: string, userB: string) {
     const existing = await this.prisma.chatChannel.findFirst({
       where: { type: "dm", members: { every: { userId: { in: [userA, userB] } }, some: { userId: userA } }, AND: { members: { some: { userId: userB } } } },
-      include: { members: { include: { user: { select: { id: true, name: true, picture: true } } } } },
+      include: { members: { include: { user: { select: { id: true, name: true, picture: true, email: true } } } } },
     });
     if (existing) {
       const other = existing.members.find((m) => m.userId !== userA)?.user ?? null;
       return mapChannel(existing, other);
     }
-    const otherUser = await this.prisma.authUser.findUnique({ where: { id: userB }, select: { id: true, name: true, picture: true } });
+    const otherUser = await this.prisma.authUser.findUnique({ where: { id: userB }, select: { id: true, name: true, picture: true, email: true } });
     const r = await this.prisma.chatChannel.create({
       data: {
         name: otherUser?.name || "Direct Message",
@@ -96,12 +99,12 @@ export class PrismaChatStore implements ChatStore {
         members: { create: [{ userId: userA }, { userId: userB }] },
       },
     });
-    return mapChannel(r, otherUser ? { id: otherUser.id, name: otherUser.name, picture: otherUser.picture } : null);
+    return mapChannel(r, otherUser ? { id: otherUser.id, name: otherUser.name, picture: otherUser.picture, email: otherUser.email } : null);
   }
   async listChannelMembers(channelId: string) {
     const rows = await this.prisma.chatMember.findMany({
       where: { channelId },
-      include: { user: { select: { id: true, name: true, picture: true } } },
+      include: { user: { select: { id: true, name: true, picture: true, email: true } } },
       orderBy: { user: { name: "asc" } },
     });
     return rows.map((m) => ({ id: m.user.id, name: m.user.name, picture: m.user.picture }));
@@ -126,8 +129,8 @@ export class PrismaChatStore implements ChatStore {
     return !!c;
   }
   async listUsers(): Promise<ChatUser[]> {
-    const users = await this.prisma.authUser.findMany({ select: { id: true, name: true, picture: true }, orderBy: { name: "asc" } });
-    return users.map((u) => ({ id: u.id, name: u.name, picture: u.picture }));
+    const users = await this.prisma.authUser.findMany({ select: { id: true, name: true, picture: true, email: true }, orderBy: { name: "asc" } });
+    return users.map((u) => ({ id: u.id, name: u.name, picture: u.picture, email: u.email }));
   }
   async listMessages(channelId: string, before?: number | null, limit = 50) {
     const rows = await this.prisma.chatMessage.findMany({
@@ -208,5 +211,56 @@ export class PrismaChatStore implements ChatStore {
   }
   async deleteMessage(id: number) {
     await this.prisma.chatMessage.update({ where: { id }, data: { deletedAt: new Date() } });
+  }
+
+  private reactionsReady: Promise<void> | null = null;
+  private ensureReactionTable(): Promise<void> {
+    if (!this.reactionsReady) {
+      this.reactionsReady = this.prisma
+        .$executeRawUnsafe(
+          "CREATE TABLE IF NOT EXISTS chat_reaction (\"messageId\" INTEGER NOT NULL, \"userId\" TEXT NOT NULL, emoji TEXT NOT NULL, \"createdAt\" TEXT NOT NULL, PRIMARY KEY (\"messageId\", \"userId\", emoji))",
+        )
+        .then(() => {});
+    }
+    return this.reactionsReady;
+  }
+  async listReactions(channelId: string): Promise<Record<number, ChatReaction[]>> {
+    await this.ensureReactionTable();
+    const rows = (await this.prisma.$queryRawUnsafe(
+      `SELECT r."messageId" AS "messageId", r.emoji AS emoji, r."userId" AS "userId", u.name AS "userName"
+       FROM chat_reaction r
+       JOIN chat_message m ON m.id = r."messageId"
+       JOIN auth_user u ON u.id = r."userId"
+       WHERE m."channelId" = $1 ORDER BY r."createdAt" ASC`,
+      channelId,
+    )) as any[];
+    const out: Record<number, ChatReaction[]> = {};
+    for (const r of rows) {
+      if (!out[r.messageId]) out[r.messageId] = [];
+      out[r.messageId].push({ messageId: Number(r.messageId), emoji: r.emoji, userId: r.userId, userName: r.userName });
+    }
+    return out;
+  }
+  async toggleReaction(messageId: number, userId: string, userName: string, emoji: string) {
+    await this.ensureReactionTable();
+    const del = await this.prisma.$executeRawUnsafe(
+      'DELETE FROM chat_reaction WHERE "messageId" = $1 AND "userId" = $2 AND emoji = $3',
+      messageId, userId, emoji,
+    );
+    const removed = del > 0;
+    if (!removed) {
+      await this.prisma.$executeRawUnsafe(
+        'INSERT INTO chat_reaction ("messageId", "userId", emoji, "createdAt") VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+        messageId, userId, emoji, new Date().toISOString(),
+      );
+    }
+    const rows = (await this.prisma.$queryRawUnsafe(
+      `SELECT r.emoji AS emoji, r."userId" AS "userId", u.name AS "userName"
+       FROM chat_reaction r JOIN auth_user u ON u.id = r."userId"
+       WHERE r."messageId" = $1 ORDER BY r."createdAt" ASC`,
+      messageId,
+    )) as any[];
+    const reactions = rows.map((r) => ({ messageId, emoji: r.emoji, userId: r.userId, userName: r.userName }));
+    return { active: removed ? false : true, reactions };
   }
 }

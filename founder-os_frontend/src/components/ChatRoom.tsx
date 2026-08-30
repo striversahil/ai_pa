@@ -3,82 +3,26 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useLiveQuery, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import { Hash, Plus, Send, Pencil, Trash2, MessagesSquare, Paperclip, FileText, X, CornerDownRight, Users } from "lucide-react";
+import {
+  Hash, Plus, Send, MessagesSquare, Paperclip, FileText, X,
+  Users, Search, ChevronDown, Smile, Settings,
+} from "lucide-react";
 import Lightbox from "@/components/Lightbox";
-
-interface Channel {
-  id: string;
-  name: string;
-  description: string | null;
-  category: string | null;
-  type: "channel" | "dm";
-  createdAt: string;
-  otherUser?: { id: string; name: string; picture: string | null } | null;
-  unread?: number;
-}
-
-interface ChatUser {
-  id: string;
-  name: string;
-  picture: string | null;
-}
-
-interface ChatAttachment {
-  key: string;
-  name: string;
-  size: number;
-  type: string;
-}
-
-interface ChatMessage {
-  id: number;
-  channelId: string;
-  senderId: string;
-  senderName: string;
-  senderPicture: string | null;
-  body: string;
-  createdAt: string;
-  editedAt: string | null;
-  deletedAt: string | null;
-  attachments: ChatAttachment[];
-  replyToId?: number | null;
-  replyTo?: { id: number; senderName: string; body: string } | null;
-}
-
-type LiveChatEvent = { type: string; action?: string; channelId?: string; message?: ChatMessage; id?: number; userId?: string; userName?: string };
-
-function upsert(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
-  const i = list.findIndex((m) => m.id === msg.id);
-  if (i >= 0) {
-    const c = [...list];
-    c[i] = msg;
-    return c;
-  }
-  return [...list, msg];
-}
-
-function mergeFromServer(list: ChatMessage[], server: ChatMessage[], channelId: string): ChatMessage[] {
-  const map = new Map<number, ChatMessage>();
-  for (const m of list) if (m.channelId === channelId) map.set(m.id, m);
-  for (const m of server) map.set(m.id, m);
-  return [...map.values()].sort((a, b) => a.id - b.id);
-}
-
-function timeLabel(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
+import MessageItem, { Avatar } from "./chat/MessageItem";
+import EmojiPopover from "./chat/EmojiPopover";
+import ContextMenu, { type ContextMenuItem } from "./chat/ContextMenu";
+import ThemeSettingsPanel from "./chat/ThemeSettingsPanel";
+import { chatStyle, fontPx, useChatSettings } from "./chat/theme";
+import {
+  Channel, ChatAttachment, ChatMessage, ChatReaction, ChatUser, LiveChatEvent,
+  isPpt, mergeFromServer, upsert, userColor,
+} from "./chat/types";
 
 export default function ChatRoom() {
   const { me, canView } = useAuth();
   const isAdmin = me?.isAdmin ?? false;
   const isApproved = canView("chat");
+  const { settings, update, reset } = useChatSettings();
 
   const channels = useLiveQuery<Channel[]>(
     async () => {
@@ -86,22 +30,19 @@ export default function ChatRoom() {
       if (!res.ok) throw new Error("load channels failed");
       return res.json();
     },
-    // Only refresh the rail on channel-created (new DM/channel); message and
-    // typing events must NOT trigger a full list + unread recount.
     { events: (e) => e.type === "chat" && e.action === "channel-created" },
   );
 
   const [channelId, setChannelId] = useState<string | null>(null);
   const selectedId = channelId ?? (channels.data ?? [])[0]?.id ?? null;
 
-  // Per-channel message cache so switching between chats is instant (no fetch
-  // per click). Keyed by channel id; holds all loaded pages. `hasMore` per
-  // channel drives the load-older control.
   const msgsCache = useRef<Map<string, ChatMessage[]>>(new Map());
   const hasMoreCache = useRef<Map<string, boolean>>(new Map());
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [msgsLoading, setMsgsLoading] = useState(false);
+  const [reactions, setReactions] = useState<Record<number, ChatReaction[]>>({});
+  const [firstUnreadId, setFirstUnreadId] = useState<number | null>(null);
 
   const fetchChannelMessages = async (id: string, opts: { silent?: boolean; before?: number } = {}) => {
     const q = opts.before ? `?before=${opts.before}&limit=50` : "?limit=50";
@@ -132,21 +73,28 @@ export default function ChatRoom() {
     return list;
   };
 
-  const markChannelRead = (channelId: string) => {
-    const all = msgsCache.current.get(channelId) || [];
+  const fetchReactions = async (id: string) => {
+    try {
+      const res = await fetch(`/api/chat/channels/${id}/reactions`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const map: Record<number, ChatReaction[]> = {};
+      for (const [k, v] of Object.entries(data as Record<string, ChatReaction[]>)) map[Number(k)] = v;
+      setReactions(map);
+    } catch { /* ignore */ }
+  };
+
+  const markChannelRead = (id: string) => {
+    const all = msgsCache.current.get(id) || [];
     const maxId = all.reduce((m, x) => Math.max(m, x.id), 0);
     if (maxId <= 0) return;
-    // Fire-and-forget; no list refresh here (opening a channel already
-    // refreshes via the selectedId effect, and the local badge is zeroed by
-    // the re-render since unread derives from the fetched list).
-    fetch(`/api/chat/channels/${channelId}/read`, {
+    fetch(`/api/chat/channels/${id}/read`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lastReadId: maxId }),
     }).catch(() => {});
   };
 
-  // Switch channel: render cached instantly, then silently refresh.
   useEffect(() => {
     if (!selectedId) return;
     const cached = msgsCache.current.get(selectedId);
@@ -157,29 +105,32 @@ export default function ChatRoom() {
       setMsgs([]);
       setMsgsLoading(true);
     }
+    setReactions({});
+    setReplyTo(null);
+    setReactionPicker(null);
+    setComposerPicker(null);
+    setEditingId(null);
+    const unread = (channels.data ?? []).find((c) => c.id === selectedId)?.unread ?? 0;
+    setFirstUnreadId(unread > 0 && cached ? [...cached].sort((a, b) => a.id - b.id).slice(-unread)[0]?.id ?? null : null);
     fetchChannelMessages(selectedId, { silent: true })
       .then(() => {
         markChannelRead(selectedId);
-        // Clear this channel's unread badge in the rail once.
         channels.refresh();
       })
       .catch(() => {})
       .finally(() => setMsgsLoading(false));
+    fetchReactions(selectedId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   useLiveEvent((e) => {
     const ev = e as LiveChatEvent;
     if (ev.type !== "chat" || !selectedId) return;
-    // Debounce a background refresh when this channel changes live; cache and
-    // visible list are both reconciled from the fetch.
     if (ev.channelId === selectedId) {
       if (ev.action === "created" && ev.message) {
         setMsgs((prev) => upsert(prev, ev.message!));
         msgsCache.current.set(selectedId, upsert(msgsCache.current.get(selectedId) || [], ev.message!));
-        // Sender stopped typing once their message lands.
         expireTyping(selectedId, ev.message.senderId);
-        // We're viewing this channel — keep it marked as seen.
         markChannelRead(selectedId);
       } else if (ev.action === "updated" && ev.message) {
         setMsgs((prev) => upsert(prev, ev.message!));
@@ -188,6 +139,10 @@ export default function ChatRoom() {
         const mark = (m: ChatMessage) => (m.id === ev.id ? { ...m, deletedAt: new Date().toISOString() } : m);
         setMsgs((prev) => prev.map(mark));
         msgsCache.current.set(selectedId, (msgsCache.current.get(selectedId) || []).map(mark));
+      } else if (ev.action === "reactions" && ev.messageId != null && Array.isArray(ev.reactions)) {
+        const mid = ev.messageId;
+        const list = ev.reactions;
+        setReactions((prev) => ({ ...prev, [mid]: list }));
       } else if (ev.action === "typing" && ev.userId && ev.userId !== me?.user.id && ev.userName) {
         const uid = ev.userId;
         setTypingUsers((prev) => {
@@ -197,28 +152,62 @@ export default function ChatRoom() {
         });
         if (typingTimers.current[uid]) clearTimeout(typingTimers.current[uid]);
         typingTimers.current[uid] = setTimeout(() => expireTyping(selectedId, uid), 3200);
-      } else if (ev.action === "created") {
-        void fetchChannelMessages(selectedId, { silent: true }).catch(() => {});
       }
     } else if (ev.action === "channel-created") {
       channels.refresh();
     }
-    // New message in a NON-active channel → bump its unread badge. Active
-    // channel is already marked read by markChannelRead, so no refresh needed.
     if (ev.action === "created" && ev.message && ev.channelId !== selectedId) {
       channels.refresh();
     }
   });
 
+  const toggleReaction = async (messageId: number, emoji: string) => {
+    if (!selectedId) return;
+    try {
+      const res = await fetch(`/api/chat/messages/${messageId}/reactions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emoji }),
+      });
+      const data = await res.json();
+      if (!res.ok) return;
+      setReactions((prev) => ({ ...prev, [messageId]: data.reactions ?? [] }));
+    } catch { /* ignore */ }
+  };
+
   const [composer, setComposer] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const composerRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [composerPicker, setComposerPicker] = useState<DOMRect | null>(null);
+  const [reactionPicker, setReactionPicker] = useState<{ messageId: number; rect: DOMRect } | null>(null);
+  const [flashId, setFlashId] = useState<number | null>(null);
+  const [messageMenu, setMessageMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
+  const [channelMenu, setChannelMenu] = useState<{ x: number; y: number; channel: Channel } | null>(null);
 
-  // ── Typing indicators ──────────────────────────────────────────────────────
-  // typingUsers: channelId → Map<userId, {name, until}> (auto-expires ~3s).
+  // Linked accounts share one chat identity: both ids count as "self".
+  const [selfIds, setSelfIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!me?.user.id) return;
+    const base = [me.user.id];
+    setSelfIds(base);
+    const pair = ["connect.bui2@gmail.com", "crypticlooks@gmail.com"];
+    if (!pair.includes(me.user.email || "")) return;
+    fetch("/api/chat/users")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((users: ChatUser[]) => {
+        const ids = users.filter((u) => pair.includes(u.email || "")).map((u) => u.id);
+        if (ids.length) setSelfIds([...new Set([me.user.id, ...ids])]);
+      })
+      .catch(() => {});
+  }, [me?.user.id, me?.user.email]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [atBottom, setAtBottomState] = useState(true);
+
   const [typingUsers, setTypingUsers] = useState<Record<string, Record<string, { name: string; until: number }>>>({});
   const lastTypingSent = useRef<Record<string, number>>({});
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -226,7 +215,7 @@ export default function ChatRoom() {
   const notifyTyping = () => {
     if (!selectedId) return;
     const now = Date.now();
-    if (now - (lastTypingSent.current[selectedId] || 0) < 2000) return; // throttle
+    if (now - (lastTypingSent.current[selectedId] || 0) < 2000) return;
     lastTypingSent.current[selectedId] = now;
     fetch("/api/chat/typing", {
       method: "POST",
@@ -235,16 +224,15 @@ export default function ChatRoom() {
     }).catch(() => {});
   };
 
-  const expireTyping = (channelId: string, userId: string) => {
+  const expireTyping = (id: string, userId: string) => {
     setTypingUsers((prev) => {
-      const map = { ...(prev[channelId] || {}) };
+      const map = { ...(prev[id] || {}) };
       delete map[userId];
-      return { ...prev, [channelId]: map };
+      return { ...prev, [id]: map };
     });
   };
+
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [editing, setEditing] = useState<ChatMessage | null>(null);
-  const [editText, setEditText] = useState("");
   const [showNewChannel, setShowNewChannel] = useState(false);
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("");
@@ -256,22 +244,18 @@ export default function ChatRoom() {
   const [manageChannel, setManageChannel] = useState<Channel | null>(null);
   const [channelMembers, setChannelMembers] = useState<ChatUser[]>([]);
   const [railOpen, setRailOpen] = useState(false);
+  const [sidebarQuery, setSidebarQuery] = useState("");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [memberPanel, setMemberPanel] = useState<ChatUser[]>([]);
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [viewer, setViewer] = useState<{ url: string; type: string; name: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const touchStartX = useRef<number | null>(null);
-  const touchMoveX = useRef<number | null>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    dragCounter.current += 1;
-    setDragging(true);
-  };
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
+  const handleDragEnter = (e: React.DragEvent) => { e.preventDefault(); dragCounter.current += 1; setDragging(true); };
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     dragCounter.current = Math.max(0, dragCounter.current - 1);
@@ -291,18 +275,119 @@ export default function ChatRoom() {
     setLightbox({ images, index: index >= 0 ? index : 0 });
   };
 
-  const isPpt = (a: ChatAttachment) => /powerpoint|presentationml/.test(a.type) || /\.pptx?$/i.test(a.name);
+  const openFile = (a: ChatAttachment) => setViewer({ url: `/api/chat/files/${a.key}`, type: a.type, name: a.name });
 
-  const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  const atBottomRef = useRef(true);
+  const setAtBottom = useCallback((v: boolean) => {
+    atBottomRef.current = v;
+    setAtBottomState(v);
   }, []);
 
-  useEffect(() => { scrollToBottom(); }, [msgs.length, selectedId, scrollToBottom]);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const el = scrollerRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior });
+    setAtBottom(true);
+  }, []);
 
-  // Newly created channels (DM/new) that may not be in channels.data yet —
-  // keeps the header + list responsive immediately after creation.
+  const updateAtBottom = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120);
+  }, []);
+
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollerRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+      updateAtBottom();
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [updateAtBottom]);
+
+  const jumpToPresent = () => {
+    setFirstUnreadId(null);
+    scrollToBottom("smooth");
+  };
+
+  const markChannelReadForce = async (id: string) => {
+    try {
+      await fetch(`/api/chat/channels/${id}/read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lastReadId: 999999999 }),
+      });
+    } catch { /* ignore */ }
+    channels.refresh();
+  };
+
+  const copyText = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); } catch { /* ignore */ }
+  };
+
+  const messageMenuItems = (m: ChatMessage): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [
+      { label: "Add Reaction", onSelect: () => setReactionPicker({ messageId: m.id, rect: new DOMRect(messageMenu!.x, messageMenu!.y, 0, 0) }) },
+      { label: "Reply", onSelect: () => { setReplyTo(m); composerRef.current?.focus(); } },
+      { label: "Copy Text", disabled: !m.body, onSelect: () => void copyText(m.body) },
+    ];
+    if (canModify(m) && !m.deletedAt) {
+      items.push(
+        { label: "Edit Message", onSelect: () => startEdit(m) },
+        { label: "Delete Message", divider: true, danger: true, onSelect: () => void del(m) },
+      );
+    }
+    return items;
+  };
+
+  const channelMenuItems = (c: Channel): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [
+      { label: "Mark As Read", disabled: !c.unread, onSelect: () => void markChannelReadForce(c.id) },
+      { label: "Copy Name", onSelect: () => void copyText(c.type === "dm" ? c.otherUser?.name || c.name : c.name) },
+    ];
+    if (isAdmin && c.type !== "dm") {
+      items.push({ label: "Edit Channel", divider: true, onSelect: () => void openManageMembers(c) });
+    }
+    return items;
+  };
+
+  const jumpToMessage = async (id: number) => {
+    setAtBottom(false);
+    const exists = () => !!document.querySelector(`[data-mid="${id}"]`);
+    if (!exists() && selectedId) {
+      for (let i = 0; i < 8; i++) {
+        const cached = msgsCache.current.get(selectedId) || [];
+        const oldest = [...cached].sort((a, b) => a.id - b.id)[0];
+        if (!oldest || oldest.id <= id) break;
+        try {
+          const res = await fetch(`/api/chat/channels/${selectedId}/messages?before=${oldest.id}&limit=50`);
+          if (!res.ok) break;
+          const older = await res.json();
+          if (!Array.isArray(older) || older.length === 0) break;
+          const merged = mergeFromServer(msgsCache.current.get(selectedId) || [], older, selectedId);
+          msgsCache.current.set(selectedId, merged);
+          hasMoreCache.current.set(selectedId, older.length >= 50);
+          setMsgs(merged);
+          setHasMore(older.length >= 50);
+          await new Promise((r) => requestAnimationFrame(() => r(null)));
+          if (exists() || older.length < 50) break;
+        } catch { break; }
+      }
+    }
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    const el = document.querySelector(`[data-mid="${id}"]`) as HTMLElement | null;
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setFlashId(id);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlashId(null), 1800);
+    }
+  };
+
   const freshChannel = useRef<Channel | null>(null);
-
   const active = freshChannel.current?.id === selectedId
     ? freshChannel.current
     : (channels.data ?? []).find((c) => c.id === selectedId) || null;
@@ -315,18 +400,34 @@ export default function ChatRoom() {
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(c);
     }
-    return [...map.entries()];
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [channels.data]);
 
   const dms = (channels.data ?? []).filter((c) => c.type === "dm");
+  const q = sidebarQuery.trim().toLowerCase();
+  const filteredDms = q ? dms.filter((c) => (c.otherUser?.name || c.name).toLowerCase().includes(q)) : dms;
+  const filteredGroups = q
+    ? grouped.map(([cat, list]) => [cat, list.filter((c) => c.name.toLowerCase().includes(q))] as [string, Channel[]]).filter(([, list]) => list.length > 0)
+    : grouped;
 
-  // Once the refreshed list includes the freshly-created channel, stop
-  // special-casing it so the header uses the canonical list entry.
   useEffect(() => {
     if (freshChannel.current && (channels.data ?? []).some((c) => c.id === freshChannel.current!.id)) {
       freshChannel.current = null;
     }
   }, [channels.data]);
+
+  useEffect(() => {
+    if (!selectedId || !settings.showMembers) { setMemberPanel([]); return; }
+    if (active?.type === "dm") {
+      setMemberPanel(active.otherUser ? [active.otherUser as ChatUser] : []);
+      return;
+    }
+    fetch(`/api/chat/channels/${selectedId}/members`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setMemberPanel(Array.isArray(list) ? list : []))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, settings.showMembers, active?.type, active?.otherUser?.id]);
 
   const send = async () => {
     const body = composer.trim();
@@ -350,6 +451,8 @@ export default function ChatRoom() {
     msgsCache.current.set(selectedId, upsert(msgsCache.current.get(selectedId) || [], temp));
     setComposer("");
     setFiles([]);
+    setAtBottom(true);
+    if (composerRef.current) composerRef.current.style.height = "auto";
     try {
       const attachments: ChatAttachment[] = [];
       for (const f of pendingFiles) {
@@ -397,14 +500,20 @@ export default function ChatRoom() {
     setLoadingOlder(false);
   };
 
-  const canModify = (m: ChatMessage) => isAdmin || m.senderId === me?.user.id;
+  const canModify = (m: ChatMessage) => isAdmin || selfIds.includes(m.senderId);
+
+  const startEdit = (m: ChatMessage) => {
+    setEditingId(m.id);
+    setEditText(m.body);
+    setReactionPicker(null);
+  };
 
   const saveEdit = async () => {
-    if (!editing) return;
+    if (editingId == null) return;
     const body = editText.trim();
     if (!body) return;
     try {
-      const res = await fetch(`/api/chat/messages/${editing.id}`, {
+      const res = await fetch(`/api/chat/messages/${editingId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body }),
@@ -414,9 +523,11 @@ export default function ChatRoom() {
       setMsgs((prev) => upsert(prev, updated));
       msgsCache.current.set(selectedId, upsert(msgsCache.current.get(selectedId) || [], updated));
     } catch { /* ignore */ }
-    setEditing(null);
+    setEditingId(null);
     setEditText("");
   };
+
+  const cancelEdit = () => { setEditingId(null); setEditText(""); };
 
   const del = async (m: ChatMessage) => {
     if (!confirm("Delete this message?")) return;
@@ -470,8 +581,6 @@ export default function ChatRoom() {
       freshChannel.current = ch;
       setChannelId(ch.id);
       setMsgs([]);
-      // No explicit refresh here: the `channel-created` live event re-fetches the
-      // rail, and messages load via the selectedId effect. Avoids duplicate work.
     } catch { /* ignore */ }
   };
 
@@ -518,419 +627,423 @@ export default function ChatRoom() {
     );
   }
 
+  const typers = Object.values(typingUsers[selectedId || ""] || {}).filter((t) => t.until > Date.now());
+  const typerLabel = typers.length === 0
+    ? null
+    : typers.length === 1
+      ? `${typers[0].name} is typing`
+      : `${typers.slice(0, 2).map((t) => t.name).join(", ")}${typers.length > 2 ? ` +${typers.length - 2}` : ""} are typing`;
+
+  const railItem = (c: Channel) => {
+    const dm = c.type === "dm";
+    const label = dm ? c.otherUser?.name || "Direct Message" : c.name;
+    return (
+      <button
+        key={c.id}
+        onClick={() => { setChannelId(c.id); setMsgs([]); setRailOpen(false); }}
+        onContextMenu={(e) => { e.preventDefault(); setChannelMenu({ x: e.clientX, y: e.clientY, channel: c }); }}
+        className={`group/item mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-[7px] text-left text-[15px] font-medium transition ${
+          selectedId === c.id
+            ? "bg-[var(--chat-active)] text-[var(--chat-text)]"
+            : "text-[var(--chat-muted)] hover:bg-[var(--chat-hover)] hover:text-[var(--chat-text)]"
+        }`}
+      >
+        {dm ? (
+          <Avatar src={c.otherUser?.picture ?? null} name={c.otherUser?.name || c.name || "?"} size="h-8 w-8" color={userColor(c.otherUser?.id || c.id)} />
+        ) : (
+          <Hash className="h-5 w-5 shrink-0 text-[var(--chat-muted)]" />
+        )}
+        {dm ? (
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{label}</span>
+            {c.otherUser?.email && (
+              <span className="block truncate text-[10px] text-[var(--chat-muted)]">{c.otherUser.email}</span>
+            )}
+          </span>
+        ) : (
+          <span className="truncate">{label}</span>
+        )}
+        {!!c.unread && (
+          <span className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-bold text-white" style={{ backgroundColor: settings.accent }}>
+            {c.unread > 99 ? "99+" : c.unread}
+          </span>
+        )}
+        {isAdmin && !dm && (
+          <button
+            onClick={(e) => { e.stopPropagation(); void openManageMembers(c); }}
+            className={`shrink-0 rounded p-0.5 hover:text-[var(--chat-text)] ${c.unread ? "" : "opacity-0 group-hover/item:opacity-100"}`}
+            title="Manage members"
+          >
+            <Users className="h-4 w-4" />
+          </button>
+        )}
+      </button>
+    );
+  };
+
   return (
-    <div className="relative flex h-[calc(100vh-8rem)] min-h-[480px] overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900"
+    <div
+      className="relative flex h-[calc(100vh-8rem)] min-h-[480px] overflow-hidden rounded-xl border border-[var(--chat-border)] font-sans"
+      style={chatStyle(settings)}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
-      onDrop={handleDrop}>
-      {/* Channel rail — drawer on mobile, static column on md+ */}
-      <aside className={`${
-          railOpen ? "flex" : "hidden"
-        } absolute inset-y-0 left-0 z-20 w-64 flex-col border-r border-zinc-200 bg-zinc-100/95 shadow-xl dark:border-zinc-800 dark:bg-zinc-950/95 md:static md:z-auto md:flex md:w-60 md:shadow-none md:bg-zinc-100/70 dark:md:bg-zinc-950/50`}>
+      onDrop={handleDrop}
+    >
+      <aside
+        className={`${railOpen ? "flex" : "hidden"} absolute inset-y-0 left-0 z-20 w-64 flex-col border-r border-[var(--chat-border)] bg-[var(--chat-side)] shadow-xl md:static md:z-auto md:flex md:w-60 md:shadow-none`}
+      >
         <div className="px-3 pt-3 pb-2">
-          <button onClick={() => void openDmPicker()}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-bold text-white shadow-md shadow-indigo-600/30 transition hover:bg-indigo-500 cursor-pointer">
+          <button
+            onClick={() => void openDmPicker()}
+            className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-bold text-white shadow-md transition hover:opacity-90"
+            style={{ backgroundColor: settings.accent, boxShadow: `0 4px 14px rgba(var(--chat-accent-rgb), 0.4)` }}
+          >
             <Plus className="h-4 w-4" /> New chat
           </button>
         </div>
-        <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-xs font-extrabold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Channels</span>
-          <div className="flex items-center gap-1">
-            {isAdmin && (
-              <button onClick={() => setShowNewChannel((v) => !v)} title="New channel"
-                className="rounded-md p-1 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white">
-                <Plus className="h-4 w-4" />
+        <div className="px-3 pb-2">
+          <div className="flex items-center gap-2 rounded-md bg-[var(--chat-input)] px-2.5 py-1.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-[var(--chat-muted)]" />
+            <input
+              value={sidebarQuery}
+              onChange={(e) => setSidebarQuery(e.target.value)}
+              placeholder="Search conversations"
+              className="w-full bg-transparent text-xs text-[var(--chat-text)] outline-none placeholder:text-[var(--chat-muted)]"
+            />
+            {sidebarQuery && (
+              <button onClick={() => setSidebarQuery("")} className="text-[var(--chat-muted)] hover:text-[var(--chat-text)]">
+                <X className="h-3 w-3" />
               </button>
             )}
-            <button onClick={() => setRailOpen(false)} title="Close channel list"
-              className="rounded-md p-1 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white md:hidden">
-              <X className="h-4 w-4" />
-            </button>
           </div>
         </div>
 
-        {showNewChannel && isAdmin && (
-          <div className="mx-3 mb-3 space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 p-3">
-            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Channel name" autoFocus
-              className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-2 py-1.5 text-sm" />
-            <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="Category (e.g. Operations)"
-              className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-2 py-1.5 text-sm" />
-            <input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Description (optional)"
-              className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-2 py-1.5 text-sm" />
-            <div className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-2">
-              <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add members</div>
-              <div className="max-h-24 space-y-1 overflow-y-auto">
-                {dmUsers.length === 0 ? (
-                  <p className="text-xs text-zinc-500">Loading members…</p>
-                ) : (
-                  dmUsers.map((u) => (
-                    <label key={u.id} className="flex items-center gap-2 py-0.5 text-xs cursor-pointer">
-                      <input type="checkbox" checked={newMemberIds.includes(u.id)}
-                        onChange={() => setNewMemberIds((prev) => prev.includes(u.id) ? prev.filter((x) => x !== u.id) : [...prev, u.id])}
-                        className="accent-indigo-500" />
-                      <span className="truncate">{u.name}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-            <button onClick={createChannel} disabled={creating}
-              className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60">
-              Create
+        {isAdmin && (
+          <div className="px-3 pb-2">
+            <button
+              onClick={() => setShowNewChannel((v) => !v)}
+              className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-[var(--chat-muted)] hover:text-[var(--chat-text)]"
+            >
+              Create channel
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showNewChannel ? "rotate-180" : ""}`} />
             </button>
+            {showNewChannel && (
+              <div className="mb-2 space-y-2 rounded-lg border border-[var(--chat-border)] bg-[var(--chat-float)] p-3">
+                <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Channel name" autoFocus
+                  className="w-full rounded-md border border-[var(--chat-border)] bg-[var(--chat-input)] px-2 py-1.5 text-sm text-[var(--chat-text)] outline-none" />
+                <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="Category (e.g. Operations)"
+                  className="w-full rounded-md border border-[var(--chat-border)] bg-[var(--chat-input)] px-2 py-1.5 text-sm text-[var(--chat-text)] outline-none" />
+                <input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Description (optional)"
+                  className="w-full rounded-md border border-[var(--chat-border)] bg-[var(--chat-input)] px-2 py-1.5 text-sm text-[var(--chat-text)] outline-none" />
+                <div className="rounded-md border border-[var(--chat-border)] bg-[var(--chat-input)] p-2">
+                  <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--chat-muted)]">Add members</div>
+                  <div className="max-h-24 space-y-1 overflow-y-auto">
+                    {dmUsers.length === 0 ? (
+                      <p className="text-xs text-[var(--chat-muted)]">Loading members…</p>
+                    ) : (
+                      dmUsers.map((u) => (
+                        <label key={u.id} className="flex cursor-pointer items-center gap-2 py-0.5 text-xs text-[var(--chat-text)]">
+                          <input type="checkbox" checked={newMemberIds.includes(u.id)}
+                            onChange={() => setNewMemberIds((prev) => prev.includes(u.id) ? prev.filter((x) => x !== u.id) : [...prev, u.id])}
+                            className="accent-[var(--chat-accent)]" />
+                          <span className="truncate">{u.name}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <button onClick={createChannel} disabled={creating}
+                  className="w-full rounded-md px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60" style={{ backgroundColor: settings.accent }}>
+                  Create
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-3 pb-4">
-          {dms.length > 0 && (
+        <div className="flex-1 overflow-y-auto px-2 pb-4 scrollbar-thin">
+          {filteredDms.length > 0 && (
             <div className="mb-3">
-              <div className="px-1 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Direct Messages</div>
-              {dms.map((c) => (
-                <button key={c.id} onClick={() => { setChannelId(c.id); setMsgs([]); setRailOpen(false); }}
-                  className={`mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium transition ${
-                    selectedId === c.id
-                      ? "bg-indigo-600/15 text-indigo-700 dark:text-indigo-300"
-                      : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                  }`}>
-                  {c.otherUser?.picture ? (
-                    <img src={c.otherUser.picture} alt="" className="h-5 w-5 shrink-0 rounded-full" />
-                  ) : (
-                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600/20 text-[10px] font-bold text-emerald-400">
-                      {(c.otherUser?.name || "?").charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  <span className="truncate">{c.otherUser?.name || c.name}</span>
-                  {!!c.unread && (
-                    <span className="ml-auto shrink-0 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                      {c.unread > 99 ? "99+" : c.unread}
-                    </span>
-                  )}
-                </button>
-              ))}
+              <div className="px-2 pb-1 text-[11px] font-bold uppercase tracking-wider text-[var(--chat-muted)]">
+                Direct Messages {q ? `(filtered)` : `— ${filteredDms.length}`}
+              </div>
+              {filteredDms.map(railItem)}
             </div>
           )}
-          {grouped.map(([cat, list]) => (
-            <div key={cat} className="mb-3">
-              <div className="px-1 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">{cat}</div>
-              {list.map((c) => (
-                <button key={c.id} onClick={() => { setChannelId(c.id); setMsgs([]); setRailOpen(false); }}
-                  className={`mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium transition ${
-                    channelId === c.id || selectedId === c.id
-                      ? "bg-indigo-600/15 text-indigo-700 dark:text-indigo-300"
-                      : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                  }`}>
-                  <Hash className="h-4 w-4 shrink-0 opacity-60" />
-                  <span className="truncate">{c.name}</span>
-                  {!!c.unread && (
-                    <span className="ml-auto shrink-0 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                      {c.unread > 99 ? "99+" : c.unread}
-                    </span>
-                  )}
-                  {isAdmin && (
-                    <button onClick={(e) => { e.stopPropagation(); void openManageMembers(c); }}
-                      className="shrink-0 rounded p-0.5 text-zinc-400 hover:text-indigo-400" title="Manage members">
-                      <Users className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+          {filteredGroups.map(([cat, list]) => {
+            const isCollapsed = collapsed[cat] ?? false;
+            return (
+              <div key={cat} className="mb-3">
+                <button
+                  onClick={() => setCollapsed((p) => ({ ...p, [cat]: !isCollapsed }))}
+                  className="flex w-full items-center gap-1 px-2 pb-1 text-[11px] font-bold uppercase tracking-wider text-[var(--chat-muted)] hover:text-[var(--chat-text)]"
+                >
+                  <ChevronDown className={`h-3 w-3 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
+                  {cat}
+                  <span className="ml-1 font-normal opacity-70">— {list.length}</span>
                 </button>
-              ))}
-            </div>
-          ))}
+                {!isCollapsed && list.map(railItem)}
+              </div>
+            );
+          })}
           {(channels.data ?? []).length === 0 && (
-            <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400">No channels yet. An admin can create one.</p>
+            <p className="px-2 text-xs text-[var(--chat-muted)]">No channels yet. An admin can create one.</p>
           )}
+        </div>
+        <div className="flex items-center gap-2 border-t border-[var(--chat-border)] px-3 py-2.5">
+          <Avatar src={me?.user.picture ?? null} name={me?.user.name ?? "?"} size="h-8 w-8" color={userColor(me?.user.id ?? "me")} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-bold text-[var(--chat-text)]">{me?.user.name}</p>
+            <p className="truncate text-[10px] text-[var(--chat-muted)]">{isAdmin ? "Admin" : "Member"}</p>
+          </div>
+          <button onClick={() => setShowSettings(true)} title="Chat appearance"
+            className="rounded p-1.5 text-[var(--chat-muted)] hover:bg-[var(--chat-active)] hover:text-[var(--chat-text)]">
+            <Settings className="h-4 w-4" />
+          </button>
+          <button onClick={() => setRailOpen(false)} title="Close" className="rounded p-1.5 text-[var(--chat-muted)] hover:text-[var(--chat-text)] md:hidden">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       </aside>
 
-      {/* Main pane */}
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3">
+      <main className="flex min-w-0 flex-1 flex-col bg-[var(--chat-bg)]">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--chat-border)] px-3 shadow-sm">
           <button onClick={() => setRailOpen(true)} title="Channel list"
-            className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-2 text-zinc-500 hover:text-zinc-900 dark:hover:text-white md:hidden">
-            <Hash className="h-4 w-4" />
+            className="rounded p-1.5 text-[var(--chat-muted)] hover:text-[var(--chat-text)] md:hidden">
+            <Hash className="h-5 w-5" />
           </button>
           {active?.type === "dm" ? (
-            active.otherUser?.picture ? (
-              <img src={active.otherUser.picture} alt="" className="h-6 w-6 rounded-full" />
-            ) : (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600/20 text-xs font-bold text-emerald-400">
-                {(active.otherUser?.name || "?").charAt(0).toUpperCase()}
-              </div>
-            )
+            <Avatar src={active.otherUser?.picture ?? null} name={active.otherUser?.name || "?"} size="h-6 w-6" color={userColor(active.otherUser?.id || active.id)} />
           ) : (
-            <Hash className="h-5 w-5 text-zinc-400" />
+            <Hash className="h-5 w-5 shrink-0 text-[var(--chat-muted)]" />
           )}
-          <div className="min-w-0">
-            <div className="truncate text-sm font-bold">
-              {active ? (active.type === "dm" ? active.otherUser?.name || "Direct Message" : active.name) : "Select a channel"}
-            </div>
-            {active?.description && <div className="truncate text-xs text-zinc-500">{active.description}</div>}
+          <span className="truncate text-[15px] font-bold text-[var(--chat-text)]">
+            {active ? (active.type === "dm" ? active.otherUser?.name || "Direct Message" : active.name) : "Select a channel"}
+          </span>
+          {active?.description && (
+            <>
+              <div className="hidden h-6 w-px bg-[var(--chat-border)] lg:block" />
+              <span className="hidden truncate text-xs text-[var(--chat-muted)] lg:block">{active.description}</span>
+            </>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            {settings.showMembers && memberPanel.length > 0 && (
+              <div className="mr-1 hidden items-center xl:flex">
+                {memberPanel.slice(0, 4).map((u, i) => (
+                  <div key={u.id} className={i > 0 ? "-ml-2" : ""}>
+                    <Avatar src={u.picture} name={u.name} size="h-6 w-6" color={userColor(u.id)} />
+                  </div>
+                ))}
+                {memberPanel.length > 4 && (
+                  <span className="-ml-2 flex h-6 w-6 items-center justify-center rounded-full bg-[var(--chat-input)] text-[10px] font-bold text-[var(--chat-muted)]">
+                    +{memberPanel.length - 4}
+                  </span>
+                )}
+              </div>
+            )}
+            <button
+              onClick={() => update({ showMembers: !settings.showMembers })}
+              title={settings.showMembers ? "Hide member list" : "Show member list"}
+              className={`rounded p-1.5 transition hover:text-[var(--chat-text)] ${settings.showMembers ? "text-[var(--chat-text)]" : "text-[var(--chat-muted)]"}`}
+            >
+              <Users className="h-5 w-5" />
+            </button>
+            <button onClick={() => setShowSettings(true)} title="Chat appearance"
+              className="rounded p-1.5 text-[var(--chat-muted)] transition hover:text-[var(--chat-text)]">
+              <Settings className="h-5 w-5" />
+            </button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          {msgsLoading && msgs.length === 0 && (
-            <div className="flex h-full items-center justify-center text-sm text-zinc-500">
-              <span className="animate-pulse">Loading messages…</span>
-            </div>
-          )}
-          {hasMore && !msgsLoading && (
-            <div className="mb-3 text-center">
-              <button onClick={loadOlder} disabled={loadingOlder}
-                className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-60">
-                {loadingOlder ? "Loading…" : "Load older messages"}
-              </button>
-            </div>
-          )}
-          {msgs.length === 0 && !msgsLoading && (
-            <div className="flex h-full items-center justify-center text-sm text-zinc-500">
-              <MessagesSquare className="mr-2 h-5 w-5" /> Be the first to say something here.
-            </div>
-          )}
-          <div className="space-y-3">
-            {msgs.map((m) => {
-              const own = m.senderId === me?.user.id;
-              return (
-                <div key={m.id}
-                  className={`group relative flex gap-3 ${own ? "justify-end" : ""}`}
-                  onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
-                  onTouchMove={(e) => { touchMoveX.current = e.touches[0].clientX; }}
-                  onTouchEnd={() => {
-                    const dx = (touchMoveX.current ?? 0) - (touchStartX.current ?? 0);
-                    touchStartX.current = null;
-                    touchMoveX.current = null;
-                    // Right-swipe (~60px) = reply to this message (mobile).
-                    if (dx > 60) { setReplyTo(m); composerRef.current?.focus(); }
-                  }}
-                >
-                  {!own && (
-                    m.senderPicture ? (
-                      <img src={m.senderPicture} alt="" className="h-9 w-9 shrink-0 rounded-full" />
-                    ) : (
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 text-sm font-bold text-indigo-400">
-                        {m.senderName.charAt(0).toUpperCase()}
-                      </div>
-                    )
+        <div className="relative flex min-h-0 flex-1">
+          <div ref={scrollerRef} onScroll={updateAtBottom} className="relative flex-1 overflow-y-auto py-4 scrollbar-thin">
+            {msgsLoading && msgs.length === 0 && (
+              <div className="flex h-full items-center justify-center text-sm text-[var(--chat-muted)]">
+                <span className="animate-pulse">Loading messages…</span>
+              </div>
+            )}
+            {!msgsLoading && hasMore && (
+              <div className="mb-3 text-center">
+                <button onClick={loadOlder} disabled={loadingOlder}
+                  className="rounded-lg bg-[var(--chat-input)] px-3 py-1.5 text-xs font-semibold text-[var(--chat-muted)] hover:text-[var(--chat-text)] disabled:opacity-60">
+                  {loadingOlder ? "Loading…" : "Load older messages"}
+                </button>
+              </div>
+            )}
+            {msgs.length === 0 && !msgsLoading && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--chat-muted)]">
+                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--chat-input)]">
+                  <MessagesSquare className="h-9 w-9" />
+                </div>
+                <p className="text-lg font-bold text-[var(--chat-text)]">
+                  {active ? (active.type === "dm" ? `This is your DM with ${active.otherUser?.name}` : `Welcome to #${active.name}`) : "Pick a channel"}
+                </p>
+                <p className="text-sm">This is the beginning of the conversation.</p>
+              </div>
+            )}
+            <div ref={contentRef} style={{ fontSize: fontPx(settings) }}>
+              {msgs.map((m, i) => (
+                <React.Fragment key={m.id}>
+                  {firstUnreadId != null && m.id === firstUnreadId && (
+                    <div className="relative my-2 flex items-center px-4">
+                      <div className="h-px flex-1" style={{ backgroundColor: "#f23f43" }} />
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-white" style={{ backgroundColor: "#f23f43" }}>
+                        New
+                      </span>
+                      <div className="h-px flex-1" style={{ backgroundColor: "#f23f43" }} />
+                    </div>
                   )}
-                  <div className={`relative max-w-[70%] ${own ? "text-right" : ""}`}>
-                    {!own && (
-                      <div className="mb-0.5 text-xs font-semibold text-zinc-600 dark:text-zinc-300">{m.senderName}</div>
-                    )}
-                    {!m.deletedAt && m.attachments.length > 0 && (
-                      <div className={`mb-1.5 flex flex-col gap-1.5 ${own ? "items-end" : "items-start"}`}>
-                        {m.attachments.map((a) => {
-                          const url = `/api/chat/files/${a.key}`;
-                          if (a.type.startsWith("image/")) {
-                            return (
-                              <button key={a.key} onClick={() => openImages(m, a.key)} title={a.name}
-                                className="cursor-zoom-in rounded-lg p-0 transition hover:opacity-90">
-                                <img src={url} alt={a.name}
-                                  className="max-h-60 rounded-lg border border-zinc-200 dark:border-zinc-700" />
-                              </button>
-                            );
-                          }
-                          if (a.type === "application/pdf") {
-                            return (
-                              <button key={a.key} onClick={() => setViewer({ url, type: a.type, name: a.name })}
-                                className="cursor-zoom-in overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700 text-left transition hover:opacity-90">
-                                <iframe src={url} title={a.name} className="pointer-events-none h-64 w-full max-w-md" />
-                                <span className={`flex items-center gap-2 px-3 py-1.5 text-xs ${own ? "bg-indigo-700/40 text-white" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200"}`}>
-                                  <FileText className="h-4 w-4 shrink-0" />
-                                  <span className="truncate">{a.name}</span>
-                                  <span className={`ml-auto ${own ? "text-white/70" : "text-zinc-400"}`}>{formatBytes(a.size)} · click to view</span>
-                                </span>
-                              </button>
-                            );
-                          }
-                          if (a.type.startsWith("video/")) {
-                            return (
-                              <video key={a.key} src={url} controls preload="metadata"
-                                onClick={() => setViewer({ url, type: a.type, name: a.name })}
-                                className="max-h-80 max-w-md cursor-pointer rounded-lg border border-zinc-200 dark:border-zinc-700" />
-                            );
-                          }
-                          if (a.type.startsWith("audio/")) {
-                            return (
-                              <div key={a.key} className={`flex max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 ${
-                                own ? "border-white/25 bg-indigo-700/40" : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800"
-                              }`}>
-                                <audio controls src={url} preload="metadata" className="h-9 max-w-[220px]" />
-                                <span className={`min-w-0 text-xs ${own ? "text-white" : "text-zinc-700 dark:text-zinc-200"}`}>
-                                  <span className="block truncate">{a.name}</span>
-                                  <span className={`${own ? "text-white/70" : "text-zinc-400"}`}>{formatBytes(a.size)}</span>
-                                </span>
-                              </div>
-                            );
-                          }
-                          if (a.type.startsWith("text/") || isPpt(a)) {
-                            return (
-                              <button key={a.key} onClick={() => setViewer({ url, type: a.type, name: a.name })}
-                                className={`flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-xs transition hover:opacity-80 ${
-                                  own
-                                    ? "border-white/25 bg-indigo-700/40 text-white"
-                                    : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200"
-                                }`}>
-                                <FileText className="h-4 w-4 shrink-0 text-amber-500" />
-                                <span className="truncate">{a.name}</span>
-                                <span className={`ml-1 shrink-0 ${own ? "text-white/70" : "text-zinc-400"}`}>{formatBytes(a.size)} · view</span>
-                              </button>
-                            );
-                          }
-                          return (
-                            <a key={a.key} href={url} download={a.name}
-                              className={`flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-xs transition hover:opacity-80 ${
-                                own
-                                  ? "border-white/25 bg-indigo-700/40 text-white"
-                                  : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200"
-                              }`}>
-                              <FileText className="h-4 w-4 shrink-0" />
-                              <span className="truncate">{a.name}</span>
-                              <span className={`ml-1 shrink-0 ${own ? "text-white/70" : "text-zinc-400"}`}>{formatBytes(a.size)}</span>
-                            </a>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <div className={`inline-block rounded-2xl px-3 py-2 text-left text-sm break-words ${
-                      own
-                        ? "bg-indigo-600 text-white"
-                        : "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-                    }`}>
-                      {m.deletedAt ? (
-                        <span className="italic opacity-70">(message deleted)</span>
-                      ) : (
-                        <>
-                          {m.replyTo && (
-                            <div className={`mb-1.5 rounded-lg border-l-4 px-2.5 py-1.5 text-xs ${
-                              own ? "border-white/40 bg-white/10" : "border-indigo-400 bg-zinc-300/40 dark:bg-zinc-700/40"
-                            }`}>
-                              <div className={`font-bold ${own ? "text-white/80" : "text-indigo-500 dark:text-indigo-300"}`}>{m.replyTo.senderName}</div>
-                              <div className={`truncate ${own ? "text-white/70" : "text-zinc-500 dark:text-zinc-400"}`}>{m.replyTo.body || "(attachment)"}</div>
-                            </div>
-                          )}
-                          {m.body}
-                          {m.editedAt && <span className={`ml-1 text-[10px] opacity-60 ${own ? "text-white/70" : ""}`}>(edited)</span>}
-                        </>
-                      )}
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-400">
-                      <span>{timeLabel(m.createdAt)}</span>
-                      <button onClick={() => { setReplyTo(m); composerRef.current?.focus(); }}
-                        className="opacity-0 transition group-hover:opacity-100 hover:text-indigo-400" title="Reply">
-                        <CornerDownRight className="h-3 w-3" />
-                      </button>
-                      {canModify(m) && !m.deletedAt && (
-                        <>
-                          <button onClick={() => { setEditing(m); setEditText(m.body); }}
-                            className="opacity-0 transition group-hover:opacity-100 hover:text-indigo-400" title="Edit">
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                          <button onClick={() => del(m)} className="opacity-0 transition group-hover:opacity-100 hover:text-rose-400" title="Delete">
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </>
-                      )}
-                    </div>
+                  <MessageItem
+                    m={m}
+                    prev={i > 0 ? msgs[i - 1] : null}
+                    settings={settings}
+                    selfIds={selfIds}
+                    canModify={canModify(m)}
+                    reactions={reactions[m.id] ?? []}
+                    pickerOpen={reactionPicker?.messageId === m.id}
+                    onPickerOpen={(rect) => setReactionPicker({ messageId: m.id, rect })}
+                    editing={editingId === m.id}
+                    onEditStart={() => startEdit(m)}
+                    onEditCancel={cancelEdit}
+                    editText={editText}
+                    onEditChange={setEditText}
+                    onEditSave={() => void saveEdit()}
+                    onReply={() => { setReplyTo(m); composerRef.current?.focus(); }}
+                    onDelete={() => void del(m)}
+                    onReact={(emoji) => void toggleReaction(m.id, emoji)}
+                    onJump={(id) => void jumpToMessage(id)}
+                    onOpenImages={openImages}
+                    onOpenFile={openFile}
+                    highlight={flashId === m.id || replyTo?.id === m.id}
+                    onContext={(x, y) => setMessageMenu({ x, y, message: m })}
+                  />
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+
+          {!atBottom && msgs.length > 0 && (
+            <button
+              onClick={jumpToPresent}
+              className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--chat-border)] bg-[var(--chat-float)] px-3.5 py-1.5 text-xs font-bold text-[var(--chat-text)] shadow-xl transition hover:opacity-90"
+            >
+              <ChevronDown className="h-3.5 w-3.5" /> Jump to present
+            </button>
+          )}
+
+          {settings.showMembers && memberPanel.length > 0 && (
+            <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto border-l border-[var(--chat-border)] bg-[var(--chat-side)] px-2 py-3 scrollbar-thin xl:flex">
+              <p className="px-2 pb-2 text-[11px] font-bold uppercase tracking-wider text-[var(--chat-muted)]">
+                {active?.type === "dm" ? "In this DM" : "Members"} — {memberPanel.length}
+              </p>
+              {memberPanel.map((u) => (
+                <div key={u.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--chat-hover)]">
+                  <Avatar src={u.picture} name={u.name} size="h-8 w-8" color={userColor(u.id)} />
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] font-semibold text-[var(--chat-text)]">{u.name}</p>
+                    {isAdmin && <p className="text-[10px] text-[var(--chat-muted)]">member</p>}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-          <div ref={bottomRef} />
+              ))}
+            </aside>
+          )}
         </div>
 
-        <footer className="border-t border-zinc-200 dark:border-zinc-800 p-3">
-          {editing ? (
-            <div className="flex items-center gap-2">
-              <input value={editText} onChange={(e) => setEditText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") void saveEdit(); if (e.key === "Escape") { setEditing(null); setEditText(""); } }}
-                autoFocus
-                className="flex-1 rounded-xl border border-indigo-500/50 bg-zinc-100 dark:bg-zinc-800 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40" />
-              <button onClick={saveEdit} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500">Save</button>
-              <button onClick={() => { setEditing(null); setEditText(""); }} className="rounded-xl bg-zinc-200 dark:bg-zinc-700 px-4 py-2.5 text-sm font-semibold">Cancel</button>
+        <footer className="relative shrink-0 px-4 pb-4 pt-1">
+          {typerLabel && (
+            <div className="mb-1 flex items-center gap-2 px-1 text-xs text-[var(--chat-muted)]">
+              <span className="flex gap-0.5">
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full" style={{ backgroundColor: settings.accent }} />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:120ms]" style={{ backgroundColor: settings.accent }} />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:240ms]" style={{ backgroundColor: settings.accent }} />
+              </span>
+              <span className="italic">{typerLabel}…</span>
             </div>
-          ) : (
-            <>
-              {(() => {
-                const typers = Object.values(typingUsers[selectedId || ""] || {})
-                  .filter((t) => t.until > Date.now());
-                if (typers.length === 0) return null;
-                const names = typers.map((t) => t.name);
-                const label = names.length === 1
-                  ? `${names[0]} is typing`
-                  : `${names.slice(0, 2).join(", ")}${names.length > 2 ? ` +${names.length - 2}` : ""} are typing`;
-                return (
-                  <div className="mb-1.5 flex items-center gap-2 px-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    <span className="flex gap-0.5">
-                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:120ms]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:240ms]" />
-                    </span>
-                    <span className="italic">{label}…</span>
-                  </div>
-                );
-              })()}
-              {files.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-2">
-                  {files.map((f, i) => (
-                    <div key={`${f.name}-${i}`}
-                      className="flex items-center gap-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-700 dark:text-zinc-200">
-                      <FileText className="h-4 w-4 shrink-0 text-zinc-400" />
-                      <span className="max-w-[160px] truncate">{f.name}</span>
-                      <span className="text-zinc-400">{formatBytes(f.size)}</span>
-                      <button onClick={() => setFiles((p) => p.filter((_, x) => x !== i))} className="text-zinc-400 hover:text-rose-400" title="Remove">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {replyTo && (
-                <div className="mb-1.5 flex items-center gap-2 rounded-lg border-l-4 border-indigo-400 bg-indigo-500/10 px-2.5 py-1.5 text-xs text-zinc-700 dark:text-zinc-200">
-                  <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
-                  <span className="min-w-0">
-                    <span className="font-bold text-indigo-500 dark:text-indigo-300">Replying to {replyTo.senderName}:</span>{" "}
-                    <span className="truncate">{replyTo.body || "(attachment)"}</span>
-                  </span>
-                  <button onClick={() => setReplyTo(null)} className="ml-auto shrink-0 text-zinc-400 hover:text-rose-400" title="Cancel reply">
+          )}
+          {files.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {files.map((f, i) => (
+                <div key={`${f.name}-${i}`}
+                  className="flex items-center gap-2 rounded-lg border border-[var(--chat-border)] bg-[var(--chat-float)] px-2.5 py-1.5 text-xs text-[var(--chat-text)]">
+                  <FileText className="h-4 w-4 shrink-0 text-[var(--chat-muted)]" />
+                  <span className="max-w-[160px] truncate">{f.name}</span>
+                  <span className="text-[var(--chat-muted)]">{f.size > 1024 * 1024 ? `${(f.size / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(f.size / 1024))} KB`}</span>
+                  <button onClick={() => setFiles((p) => p.filter((_, x) => x !== i))} className="text-[var(--chat-muted)] hover:text-rose-400" title="Remove">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-              )}
-              <div className="flex items-center gap-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
-                  className="hidden"
-                  onChange={(e) => {
-                    const picked = Array.from(e.target.files ?? []);
-                    setFiles((p) => [...p, ...picked]);
-                    e.target.value = "";
-                  }}
-                />
-                <button onClick={() => fileInputRef.current?.click()} disabled={!selectedId}
-                  className="rounded-xl bg-zinc-200 dark:bg-zinc-700 p-2.5 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600 disabled:opacity-50" title="Attach image or document">
-                  <Paperclip className="h-4 w-4" />
-                </button>
-                <input
-                  ref={composerRef}
-                  value={composer}
-                  onChange={(e) => { setComposer(e.target.value); notifyTyping(); }}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
-                  placeholder={active ? `Message #${active.name}` : "Select a channel to chat"}
-                  disabled={!selectedId}
-                  className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:opacity-50"
-                />
-                <button onClick={() => void send()} disabled={!selectedId || (!composer.trim() && files.length === 0) || sending}
-                  className="rounded-xl bg-indigo-600 p-2.5 text-white hover:bg-indigo-500 disabled:opacity-50" title="Send">
-                  <Send className="h-4 w-4" />
+              ))}
+            </div>
+          )}
+          <div className="overflow-hidden rounded-xl bg-[var(--chat-input)]">
+            {replyTo && (
+              <div className="flex items-center gap-2 border-b border-[var(--chat-border)] px-3 py-2">
+                <span className="text-xs text-[var(--chat-muted)]">Replying to</span>
+                <span className="shrink-0 text-xs font-bold" style={{ color: userColor(replyTo.senderId) }}>
+                  {replyTo.senderName}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-[var(--chat-muted)]">{replyTo.body || "(attachment)"}</span>
+                <button onClick={() => setReplyTo(null)} className="shrink-0 rounded p-0.5 text-[var(--chat-muted)] hover:text-[var(--chat-text)]" title="Cancel reply">
+                  <X className="h-4 w-4" />
                 </button>
               </div>
-            </>
-          )}
+            )}
+            <div className="flex items-end gap-2 px-3 py-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+              className="hidden"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                setFiles((p) => [...p, ...picked]);
+                e.target.value = "";
+              }}
+            />
+            <button onClick={() => fileInputRef.current?.click()} disabled={!selectedId}
+              className="mb-0.5 rounded-full p-1 text-[var(--chat-muted)] transition hover:text-[var(--chat-text)] disabled:opacity-50" title="Attach image or document">
+              <Plus className="h-5 w-5" />
+            </button>
+            <textarea
+              ref={composerRef}
+              value={composer}
+              rows={1}
+              onChange={(e) => {
+                setComposer(e.target.value);
+                notifyTyping();
+                e.target.style.height = "auto";
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
+              }}
+              placeholder={active ? (active.type === "dm" ? `Message @${active.otherUser?.name ?? ""}` : `Message #${active.name}`) : "Select a channel to chat"}
+              disabled={!selectedId}
+              className="max-h-[200px] flex-1 resize-none bg-transparent py-1 text-[var(--chat-text)] outline-none placeholder:text-[var(--chat-muted)] disabled:opacity-50"
+              style={{ fontSize: fontPx(settings) }}
+            />
+            <div className="relative mb-0.5 flex items-center gap-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setComposerPicker(e.currentTarget.getBoundingClientRect());
+                }}
+                disabled={!selectedId}
+                className="rounded-full p-1 text-[var(--chat-muted)] transition hover:text-[var(--chat-text)] disabled:opacity-50" title="Emoji"
+              >
+                <Smile className="h-5 w-5" />
+              </button>
+              <button onClick={() => void send()} disabled={!selectedId || (!composer.trim() && files.length === 0) || sending}
+                className="rounded-full p-1 transition hover:opacity-80 disabled:opacity-40"
+                style={{ color: composer.trim() || files.length > 0 ? settings.accent : "var(--chat-muted)" }} title="Send">
+                <Send className={`h-5 w-5 ${composer.trim() || files.length > 0 ? "fill-current" : ""}`} />
+              </button>
+            </div>
+            </div>
+          </div>
+          <div className="h-0.5" />
         </footer>
       </main>
 
@@ -962,12 +1075,12 @@ export default function ChatRoom() {
               <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-zinc-900 p-8">
                 <audio src={viewer.url} controls autoPlay className="w-[60vw] max-w-md" />
               </div>
-            ) : /powerpoint|presentationml/.test(viewer.type) || /\.pptx?$/i.test(viewer.name) ? (
+            ) : isPpt({ key: viewer.url, name: viewer.name, size: 0, type: viewer.type }) ? (
               <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-zinc-900 p-10 text-center">
                 <FileText className="h-12 w-12 text-amber-500" />
                 <p className="font-semibold text-white">{viewer.name}</p>
                 <p className="max-w-sm text-sm text-white/60">
-                  PowerPoint preview isn't available on this platform yet — download the file to view it.
+                  PowerPoint preview isn&apos;t available on this platform yet — download the file to view it.
                 </p>
                 <a href={viewer.url} download={viewer.name}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
@@ -987,30 +1100,27 @@ export default function ChatRoom() {
 
       {showDmPicker && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowDmPicker(false)}>
-          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 shadow-2xl"
+          <div className="w-full max-w-sm rounded-2xl border border-[var(--chat-border)] bg-[var(--chat-panel)] p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-zinc-900 dark:text-white">New message</h3>
-              <button onClick={() => setShowDmPicker(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200" title="Close">
+              <h3 className="text-lg font-bold text-[var(--chat-text)]">New message</h3>
+              <button onClick={() => setShowDmPicker(false)} className="text-[var(--chat-muted)] hover:text-[var(--chat-text)]" title="Close">
                 <X className="h-5 w-5" />
               </button>
             </div>
             <div className="max-h-72 space-y-1 overflow-y-auto">
               {dmUsers.map((u) => (
                 <button key={u.id} onClick={() => void startDm(u.id)}
-                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
-                  {u.picture ? (
-                    <img src={u.picture} alt="" className="h-8 w-8 rounded-full" />
-                  ) : (
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600/20 text-sm font-bold text-emerald-400">
-                      {u.name.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">{u.name}</span>
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--chat-hover)]">
+                  <Avatar src={u.picture} name={u.name} size="h-8 w-8" color={userColor(u.id)} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-[var(--chat-text)]">{u.name}</span>
+                    {u.email && <span className="block truncate text-[11px] text-[var(--chat-muted)]">{u.email}</span>}
+                  </span>
                 </button>
               ))}
               {dmUsers.length === 0 && (
-                <p className="px-3 py-2 text-sm text-zinc-500">No other members yet.</p>
+                <p className="px-3 py-2 text-sm text-[var(--chat-muted)]">No other members yet.</p>
               )}
             </div>
           </div>
@@ -1019,38 +1129,40 @@ export default function ChatRoom() {
 
       {manageChannel && isAdmin && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={() => setManageChannel(null)}>
-          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 shadow-2xl"
+          <div className="w-full max-w-sm rounded-2xl border border-[var(--chat-border)] bg-[var(--chat-panel)] p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Manage #{manageChannel.name}</h3>
-              <button onClick={() => setManageChannel(null)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200" title="Close">
+              <h3 className="text-lg font-bold text-[var(--chat-text)]">Manage #{manageChannel.name}</h3>
+              <button onClick={() => setManageChannel(null)} className="text-[var(--chat-muted)] hover:text-[var(--chat-text)]" title="Close">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Members ({channelMembers.length})</p>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[var(--chat-muted)]">Members ({channelMembers.length})</p>
             <div className="mb-3 max-h-48 space-y-1 overflow-y-auto">
               {channelMembers.map((u) => (
                 <div key={u.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm">
-                  <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">{u.name}</span>
+                  <Avatar src={u.picture} name={u.name} size="h-6 w-6" color={userColor(u.id)} />
+                  <span className="truncate font-medium text-[var(--chat-text)]">{u.name}</span>
                   <button onClick={() => void removeMember(u.id)}
-                    className="ml-auto shrink-0 rounded p-0.5 text-zinc-400 hover:text-rose-400" title="Remove">
+                    className="ml-auto shrink-0 rounded p-0.5 text-[var(--chat-muted)] hover:text-rose-400" title="Remove">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
               ))}
-              {channelMembers.length === 0 && <p className="px-2 text-sm text-zinc-500">No members yet.</p>}
+              {channelMembers.length === 0 && <p className="px-2 text-sm text-[var(--chat-muted)]">No members yet.</p>}
             </div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Add members</p>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-[var(--chat-muted)]">Add members</p>
             <div className="max-h-40 space-y-1 overflow-y-auto">
               {dmUsers.filter((u) => !channelMembers.some((m) => m.id === u.id)).map((u) => (
                 <button key={u.id} onClick={() => void addMember(u.id)}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
-                  <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">{u.name}</span>
-                  <Plus className="ml-auto h-3.5 w-3.5 shrink-0 text-indigo-400" />
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[var(--chat-hover)]">
+                  <Avatar src={u.picture} name={u.name} size="h-6 w-6" color={userColor(u.id)} />
+                  <span className="truncate font-medium text-[var(--chat-text)]">{u.name}</span>
+                  <Plus className="ml-auto h-3.5 w-3.5 shrink-0" style={{ color: settings.accent }} />
                 </button>
               ))}
               {dmUsers.filter((u) => !channelMembers.some((m) => m.id === u.id)).length === 0 && (
-                <p className="px-2 text-sm text-zinc-500">Everyone is a member.</p>
+                <p className="px-2 text-sm text-[var(--chat-muted)]">Everyone is a member.</p>
               )}
             </div>
           </div>
@@ -1058,13 +1170,57 @@ export default function ChatRoom() {
       )}
 
       {dragging && (
-        <div className="pointer-events-none fixed inset-0 z-[95] flex items-center justify-center bg-indigo-600/10 backdrop-blur-[2px]">
-          <div className="rounded-2xl border-2 border-dashed border-indigo-500 bg-white/95 px-10 py-8 text-center shadow-2xl dark:bg-zinc-900/95">
-            <Paperclip className="mx-auto h-10 w-10 text-indigo-500" />
-            <p className="mt-2 text-lg font-bold text-zinc-900 dark:text-white">Drop files to attach</p>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">Images, PDFs, videos, documents — anything</p>
+        <div className="pointer-events-none fixed inset-0 z-[95] flex items-center justify-center bg-[rgba(var(--chat-accent-rgb),0.12)] backdrop-blur-[2px]">
+          <div className="rounded-2xl border-2 border-dashed px-10 py-8 text-center shadow-2xl"
+            style={{ borderColor: settings.accent, background: "var(--chat-panel)" }}>
+            <Paperclip className="mx-auto h-10 w-10" style={{ color: settings.accent }} />
+            <p className="mt-2 text-lg font-bold text-[var(--chat-text)]">Drop files to attach</p>
+            <p className="text-sm text-[var(--chat-muted)]">Images, PDFs, videos, documents — anything</p>
           </div>
         </div>
+      )}
+
+      {composerPicker && (
+        <EmojiPopover
+          rect={composerPicker}
+          dark={settings.theme !== "light"}
+          accent={settings.accent}
+          keepOpenOnPick
+          onPick={(e) => { setComposer((p) => p + e); composerRef.current?.focus(); }}
+          onClose={() => setComposerPicker(null)}
+        />
+      )}
+
+      {reactionPicker && (
+        <EmojiPopover
+          rect={reactionPicker.rect}
+          dark={settings.theme !== "light"}
+          accent={settings.accent}
+          onPick={(e) => { void toggleReaction(reactionPicker.messageId, e); setReactionPicker(null); }}
+          onClose={() => setReactionPicker(null)}
+        />
+      )}
+
+      {messageMenu && (
+        <ContextMenu
+          x={messageMenu.x}
+          y={messageMenu.y}
+          items={messageMenuItems(messageMenu.message)}
+          onClose={() => setMessageMenu(null)}
+        />
+      )}
+
+      {channelMenu && (
+        <ContextMenu
+          x={channelMenu.x}
+          y={channelMenu.y}
+          items={channelMenuItems(channelMenu.channel)}
+          onClose={() => setChannelMenu(null)}
+        />
+      )}
+
+      {showSettings && (
+        <ThemeSettingsPanel settings={settings} update={update} reset={reset} onClose={() => setShowSettings(false)} />
       )}
     </div>
   );

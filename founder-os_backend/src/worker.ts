@@ -11,7 +11,7 @@ import { readSessionCookie } from './modules/auth/session';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from './automations/neodove-refresh';
 import { DASHBOARD_SLUGS } from './modules/automation/dashboardSlugs';
 import * as ChatRoutes from './modules/chat/routes';
-import { createChatStore } from './modules/chat/store';
+import { createChatStore, resolveLinkedSender } from './modules/chat/store';
 
 type Bindings = {
   DB: D1Database;
@@ -309,11 +309,12 @@ app.post('/api/chat/channels/:id/messages', async (c) => {
 
   // Fast path: write through the ChatRoom DO (in-memory + durable D1).
   if (c.env.CHAT_ROOM) {
+    const sender = await resolveLinkedSender(c.env.DB, me.user);
     const doId = c.env.CHAT_ROOM.idFromName(channelId);
     const stub = c.env.CHAT_ROOM.get(doId);
     const payload = {
-      channelId, senderId: me.user.id, senderName: me.user.name || me.user.email,
-      senderPicture: me.user.picture ?? null, body: text, attachments,
+      channelId, senderId: sender.senderId, senderName: sender.senderName,
+      senderPicture: sender.senderPicture, body: text, attachments,
       replyToId: body.replyToId ? Number(body.replyToId) : null,
     };
     const r = await stub.fetch(new Request(`https://room/messages?channelId=${encodeURIComponent(channelId)}`, {
@@ -326,7 +327,9 @@ app.post('/api/chat/channels/:id/messages', async (c) => {
     }
   }
   // Fallback to the store (DO unavailable / dev).
-  const r = await ChatRoutes.chatSendMessage(createChatStore(c.env), me, channelId, body);
+  const sender = await resolveLinkedSender(c.env.DB, me.user);
+  const meAsSender = { ...me, user: { ...me.user, id: sender.senderId, name: sender.senderName, picture: sender.senderPicture } };
+  const r = await ChatRoutes.chatSendMessage(createChatStore(c.env), meAsSender, channelId, body);
   chatSend(c, r);
   return c.json(r.body, r.status as any);
 });
@@ -367,6 +370,21 @@ app.delete('/api/chat/messages/:id', async (c) => {
   const me = await chatMe(c);
   if (!me) return c.json({ error: 'Authentication required' }, 401);
   const r = await ChatRoutes.chatDeleteMessage(createChatStore(c.env), me, c.req.param('id') ?? '');
+  chatSend(c, r);
+  return c.json(r.body, r.status as any);
+});
+
+app.get('/api/chat/channels/:id/reactions', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await ChatRoutes.chatListReactions(createChatStore(c.env), me, c.req.param('id') ?? '');
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/chat/messages/:id/reactions', async (c) => {
+  const me = await chatMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  const r = await ChatRoutes.chatToggleReaction(createChatStore(c.env), me, c.req.param('id') ?? '', String(body.emoji || ''));
   chatSend(c, r);
   return c.json(r.body, r.status as any);
 });

@@ -1,11 +1,12 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import {
   NAV_ITEMS,
   type ViewType,
   type NavTarget,
 } from "./nav";
 import { useDashboardNav } from "@/hooks/useDashboardNav";
+import { APP_THEMES, APP_ACCENTS, type AppThemeId } from "@/hooks/useTheme";
 import {
   LayoutGrid,
   FileText,
@@ -16,6 +17,8 @@ import {
   Megaphone,
   Table2,
   Bot,
+  Palette,
+  Check,
   type LucideIcon,
 } from "lucide-react";
 export type { ViewType } from "./nav";
@@ -36,16 +39,19 @@ interface SidebarProps {
   activeView: ViewType;
   activeSlug: string | null;
   onNavigate: (target: NavTarget) => void;
-  theme: "dark" | "light";
-  onToggleTheme: () => void;
+  theme: AppThemeId;
+  onSetTheme: (id: AppThemeId) => void;
+  accent: string | null;
+  onSetAccent: (value: string | null) => void;
   me: { email: string; name: string; picture: string | null } | null;
   onLogout: () => void;
   canView: (view: string) => boolean;
 }
 
-export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onToggleTheme, me, onLogout, canView }: SidebarProps) {
+export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onSetTheme, accent, onSetAccent, me, onLogout, canView }: SidebarProps) {
   const visible = NAV_ITEMS.filter((i) => canView(i.view));
   const dashboards = useDashboardNav();
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
 
   const itemClass = (isActive: boolean) =>
     `group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 ${
@@ -117,27 +123,70 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onT
       </nav>
 
       <div className="mt-auto flex flex-col gap-3 border-t border-white/10 pt-4">
-        <button
-          onClick={onToggleTheme}
-          type="button"
-          className="flex items-center justify-center gap-2 rounded-xl bg-white/5 px-3 py-2.5 text-sm font-medium text-white/80 transition hover:bg-white/10"
-        >
-          {theme === "dark" ? (
-            <>
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
-              </svg>
-              <span>Light Mode</span>
-            </>
-          ) : (
-            <>
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-              </svg>
-              <span>Dark Mode</span>
-            </>
+        <div className="relative">
+          <button
+            onClick={() => setAppearanceOpen((v) => !v)}
+            type="button"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-white/5 px-3 py-2.5 text-sm font-medium text-white/80 transition hover:bg-white/10"
+          >
+            <Palette className="h-4 w-4" />
+            <span>Appearance</span>
+          </button>
+          {appearanceOpen && (
+            <div className="absolute bottom-full left-0 right-0 z-50 mb-2 rounded-xl border border-white/10 bg-[#15181f] p-3 shadow-2xl animate-scale-up">
+              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-white/50">Theme</p>
+              <div className="space-y-1">
+                {APP_THEMES.map((t) => {
+                  const active = theme === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => onSetTheme(t.id)}
+                      type="button"
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs font-semibold transition ${
+                        active ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/5 hover:text-white"
+                      }`}
+                    >
+                      <span className="h-6 w-6 shrink-0 rounded-md border border-white/15" style={{ backgroundColor: t.swatch }} />
+                      <span className="min-w-0 flex-1 truncate">{t.label}</span>
+                      {active && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mb-1.5 mt-3 text-[10px] font-bold uppercase tracking-wider text-white/50">Accent</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {APP_ACCENTS.map((a) => {
+                  const active = accent?.toLowerCase() === a.value;
+                  return (
+                    <button
+                      key={a.value}
+                      onClick={() => onSetAccent(a.value)}
+                      title={a.name}
+                      type="button"
+                      className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition ${
+                        active ? "scale-110 border-white/90" : "border-transparent hover:scale-105"
+                      }`}
+                      style={{ backgroundColor: a.value }}
+                    >
+                      {active && <Check className="h-3 w-3 text-white drop-shadow" />}
+                    </button>
+                  );
+                })}
+                {accent && (
+                  <button
+                    onClick={() => onSetAccent(null)}
+                    type="button"
+                    title="Use theme default accent"
+                    className="ml-auto rounded-lg border border-white/15 px-2 py-1 text-[10px] font-bold text-white/70 hover:bg-white/5 hover:text-white"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            </div>
           )}
-        </button>
+        </div>
         <button
           onClick={onLogout}
           type="button"

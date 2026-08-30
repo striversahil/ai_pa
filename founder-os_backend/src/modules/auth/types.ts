@@ -1,6 +1,6 @@
 // Auth domain types.
 
-export const ROOT_EMAIL = "striversahil@gmail.com";
+export const ROOT_EMAIL = "connect.bui2@gmail.com";
 
 export interface AuthUser {
   id: string;

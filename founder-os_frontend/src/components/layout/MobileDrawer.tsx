@@ -7,6 +7,7 @@ import {
   type NavTarget,
 } from "./nav";
 import { useDashboardNav } from "@/hooks/useDashboardNav";
+import { APP_THEMES, type AppThemeId } from "@/hooks/useTheme";
 import {
   LayoutGrid,
   FileText,
@@ -39,7 +40,7 @@ interface MobileDrawerProps {
   activeView: ViewType;
   activeSlug: string | null;
   onNavigate: (target: NavTarget) => void;
-  theme: "dark" | "light";
+  theme: AppThemeId;
   onToggleTheme: () => void;
   me: { email: string; name: string; picture: string | null } | null;
   onLogout: () => void;
@@ -137,7 +138,7 @@ export default function MobileDrawer({
             type="button"
             className="flex items-center justify-center gap-2 rounded-xl bg-white/5 px-3 py-2.5 text-sm font-medium text-white/80 transition hover:bg-white/10"
           >
-            {theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}
+            🎨 {APP_THEMES.find((t) => t.id === theme)?.label ?? theme}
           </button>
           <button
             onClick={onLogout}
