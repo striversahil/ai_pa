@@ -589,9 +589,11 @@ events out to every component via an in-process event bus — no per-dashboard s
 - `WhatsAppDashboard` → `messages` / `contacts` / `digests` / `pending-items` (also SSE for live chat append)
 - `Automations` → `automation` (runs) — registry list re-fetches on every run
 
-**Known gap:** the main **Dashboard + Enquiries** views are **local-only** (`mockData` +
-`useLocalStorage`); they have no backend API and therefore cannot be live. A `LiveEvent.Enquiries`
-type exists for when an enquiries API is added.
+**Live coverage note:** the **Enquiry Tracker** is now live (stored in D1/Postgres, broadcast via
+`LiveEvent.Enquiries`) and mounted as the `enquiry-tracker` automation dashboard — no more
+mockData/localStorage. Every create/edit triggers a background **Groq LLM extraction**
+(`src/modules/enquiries/extract.ts`) that auto-fills empty structured fields (title, company,
+contact, assigned sales agent) from the freeform description, keeping the client's wording verbatim.
 
 ### 11.4 Cost & limits
 - **Free tier:** one EventHub instance held 24/7 ≈ 10,800 GB-s/day vs the 13,000 GB-s/day

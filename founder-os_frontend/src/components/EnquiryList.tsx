@@ -102,7 +102,7 @@ export default function EnquiryList({
 
       const matchStatus = statusFilter === "all" || e.status === statusFilter;
       const matchPriority = priorityFilter === "all" || e.priority === priorityFilter;
-      const matchAgent = agentFilter === "all" || e.assignedAgentId.toString() === agentFilter;
+      const matchAgent = agentFilter === "all" || e.assignedAgentId === agentFilter;
       
       const matchDate = !selectedDate || new Date(e.createdAt).toISOString().split("T")[0] === selectedDate;
 

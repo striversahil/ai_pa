@@ -44,8 +44,8 @@ export default function ClientProfile({
           </div>
 
           <div>
-            <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Pipeline Value</span>
-            <span className="font-heading font-extrabold text-xl text-brand-indigo block mt-0.5">₹{selectedEnquiry.estimatedValue.toLocaleString()}</span>
+            <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">EST No.</span>
+            <span className="font-heading font-extrabold text-lg text-brand-indigo block mt-0.5">{selectedEnquiry.estNumber || "—"}</span>
           </div>
 
           <div>

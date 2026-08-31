@@ -98,7 +98,7 @@ export default function MobileDrawer({
         <nav className="flex flex-col gap-1">
           {visible.map((item) => {
             const Icon = item.icon;
-            const isActive = item.view === activeView || (item.view === "enquiries" && activeView === "detail");
+            const isActive = item.view === activeView;
             return (
               <button key={item.view} type="button" onClick={() => go({ type: "view", view: item.view })} className={itemClass(isActive)}>
                 {isActive && (

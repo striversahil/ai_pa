@@ -379,6 +379,37 @@ CREATE TABLE IF NOT EXISTS chat_read_state (
   FOREIGN KEY (userId) REFERENCES auth_user(id) ON DELETE CASCADE,
   FOREIGN KEY (channelId) REFERENCES chat_channel(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS Enquiry (
+  id TEXT PRIMARY KEY,
+  estNumber TEXT NOT NULL DEFAULT '',
+  clientCompany TEXT NOT NULL,
+  contactName TEXT NOT NULL,
+  contactEmail TEXT NOT NULL,
+  contactPhone TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'medium',
+  status TEXT NOT NULL DEFAULT 'new',
+  assignedAgentId TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  imageUrls TEXT,
+  activities TEXT,
+  additionalRequirements TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_enquiry_status ON Enquiry(status);
+CREATE INDEX IF NOT EXISTS idx_enquiry_created ON Enquiry(createdAt);
+CREATE TABLE IF NOT EXISTS EnquiryComment (
+  id TEXT PRIMARY KEY,
+  enquiryId TEXT NOT NULL,
+  agentId INTEGER NOT NULL DEFAULT 0,
+  content TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  parentId TEXT,
+  imageUrl TEXT,
+  FOREIGN KEY (enquiryId) REFERENCES Enquiry(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_enquiry_comment ON EnquiryComment(enquiryId, createdAt);
 CREATE TABLE IF NOT EXISTS chat_member (
   channelId TEXT NOT NULL,
   userId TEXT NOT NULL,

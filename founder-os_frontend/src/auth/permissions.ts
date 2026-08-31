@@ -3,9 +3,6 @@
 // the admin panel and assigned per user.
 
 export const VIEW_SCOPE: Record<string, string> = {
-  dashboard: "dashboard",
-  enquiries: "enquiries",
-  detail: "enquiries",
   briefing: "founder-ai",
   whatsapp: "whatsapp",
   automations: "automations",
@@ -20,6 +17,7 @@ export const VIEW_SCOPE: Record<string, string> = {
   "sheet-analysis": "sheet-analysis",
   "telecalling": "automations",
   "whatsapp-autopilot": "autopilot",
+  "enquiry-tracker": "enquiries",
 };
 
 // Scopes a ROLE may grant — limited to automation dashboard views. Keep in sync

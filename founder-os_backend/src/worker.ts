@@ -12,6 +12,9 @@ import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from './automatio
 import { DASHBOARD_SLUGS } from './modules/automation/dashboardSlugs';
 import * as ChatRoutes from './modules/chat/routes';
 import { createChatStore, resolveLinkedSender } from './modules/chat/store';
+import * as EnquiryRoutes from './modules/enquiries/routes';
+import { createEnquiryStore } from './modules/enquiries/store';
+import { extractEnquiryFields, pickGroqKey, EnquiryAgentRef } from './modules/enquiries/extract';
 
 type Bindings = {
   DB: D1Database;
@@ -27,6 +30,7 @@ type Bindings = {
   ZOHO_BOOKS_SENT_URL?: string;
   ZOHO_BOOKS_AUTH_TOKEN?: string;
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
+  GROQ_API_KEYS?: string;
   [key: string]: unknown;
 };
 
@@ -371,6 +375,121 @@ app.delete('/api/chat/messages/:id', async (c) => {
   if (!me) return c.json({ error: 'Authentication required' }, 401);
   const r = await ChatRoutes.chatDeleteMessage(createChatStore(c.env), me, c.req.param('id') ?? '');
   chatSend(c, r);
+  return c.json(r.body, r.status as any);
+});
+
+// ── Enquiry tracker (live sales pipeline) ────────────────────────────────────
+async function enquiryMe(c: any) {
+  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+}
+function enquirySend(c: any, r: any) {
+  if (r.live) broadcastLive(c, r.live.type, r.live.extra);
+}
+
+// Real-time LLM extraction: after an enquiry is created/edited, parse the
+// freeform description into structured fields (title/company/contact/agent).
+// Only EMPTY fields are filled; the description is never rewritten. Runs in the
+// background (waitUntil) so save latency is unaffected, then broadcasts live.
+function runEnquiryExtraction(c: any, enquiryId: string) {
+  const work = async () => {
+    try {
+      const key = pickGroqKey(c.env);
+      if (!key) return;
+      const store = createEnquiryStore(c.env);
+      const enquiry = await store.getEnquiry(enquiryId);
+      if (!enquiry) return;
+      const users = await authStore(c).listUsers();
+      const agents: EnquiryAgentRef[] = users
+        .filter((u: any) => u.isRoot || u.scopes.includes('enquiries'))
+        .map((u: any) => ({ id: u.id, name: u.name }));
+      const extracted = await extractEnquiryFields(key, {
+        description: enquiry.description,
+        title: enquiry.title,
+        company: enquiry.clientCompany,
+      }, agents);
+      if (!extracted) return;
+      const updates: Record<string, string> = {};
+      if (!enquiry.title && extracted.title) updates.title = extracted.title;
+      if (!enquiry.clientCompany && extracted.company) updates.clientCompany = extracted.company;
+      if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
+      if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
+      if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
+      if (!enquiry.assignedAgentId && extracted.agentId) updates.assignedAgentId = extracted.agentId;
+      if (Object.keys(updates).length === 0) return;
+      const saved = await store.updateEnquiry(enquiryId, updates);
+      if (saved) {
+        broadcastLive(c, LiveEvent.Enquiries, { action: 'updated', enquiry: saved });
+        console.log(`enquiry extraction: filled ${Object.keys(updates).join(', ')} for ${enquiryId}`);
+      }
+    } catch (e: any) {
+      console.log('enquiry extraction failed:', e?.message);
+    }
+  };
+  if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') c.executionCtx.waitUntil(work());
+  else void work();
+}
+app.get('/api/enquiries', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/enquiries/agents', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  // Sales agents = users holding the `enquiries` scope (granted via roles by root).
+  const users = await authStore(c).listUsers();
+  const agents = users
+    .filter((u: any) => u.isRoot || u.scopes.includes('enquiries'))
+    .map((u: any) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      picture: u.picture ?? null,
+    }));
+  return c.json(agents);
+});
+app.post('/api/enquiries', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await EnquiryRoutes.enquiryCreate(createEnquiryStore(c.env), me, await c.req.json().catch(() => ({})));
+  enquirySend(c, r);
+  if (r.body?.id) runEnquiryExtraction(c, r.body.id);
+  return c.json(r.body, r.status as any);
+});
+app.patch('/api/enquiries/:id', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await EnquiryRoutes.enquiryUpdate(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+  enquirySend(c, r);
+  if (r.body?.id) runEnquiryExtraction(c, r.body.id);
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/enquiries/:id/additional-requirements', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await EnquiryRoutes.enquiryAddRequirement(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+  enquirySend(c, r);
+  return c.json(r.body, r.status as any);
+});
+app.delete('/api/enquiries/:id', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await EnquiryRoutes.enquiryDelete(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
+  enquirySend(c, r);
+  return c.json(r.body, r.status as any);
+});
+app.get('/api/enquiries/:id/comments', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
+  return c.json(r.body, r.status as any);
+});
+app.post('/api/enquiries/:id/comments', async (c) => {
+  const me = await enquiryMe(c);
+  if (!me) return c.json({ error: 'Authentication required' }, 401);
+  const r = await EnquiryRoutes.enquiryAddComment(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+  enquirySend(c, r);
   return c.json(r.body, r.status as any);
 });
 

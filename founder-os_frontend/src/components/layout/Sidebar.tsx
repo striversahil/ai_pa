@@ -80,8 +80,7 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onS
       <nav className="flex flex-col gap-1">
         {visible.map((item) => {
           const Icon = item.icon;
-          const isActive =
-            item.view === activeView || (item.view === "enquiries" && activeView === "detail");
+          const isActive = item.view === activeView;
           return (
             <button
               key={item.view}

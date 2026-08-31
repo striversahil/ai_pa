@@ -18,6 +18,7 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'neodove-telecaller-report',
   'telecalling',
   'whatsapp-autopilot',
+  'enquiry-tracker',
   // generic sheet-analysis renderer (SheetAnalysisDashboard fallback)
   'telecalling-agent-analysis',
 ]);

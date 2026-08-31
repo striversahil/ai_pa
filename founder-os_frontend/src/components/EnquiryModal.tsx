@@ -8,19 +8,20 @@ interface EnquiryModalProps {
   agents: Agent[];
   currentAgent: Agent;
   onSave: (data: {
+    estNumber: string;
     clientCompany: string;
     title: string;
     contactName: string;
     contactEmail: string;
     contactPhone: string;
-    estimatedValue: string;
     priority: "high" | "medium" | "low";
     status: Enquiry["status"];
     assignedAgentId: string;
     description: string;
     imageUrls: string[];
-    createdAt?: string;
   }) => void;
+  isSaving?: boolean;
+  saveError?: string | null;
 }
 
 export default function EnquiryModal({
@@ -29,9 +30,12 @@ export default function EnquiryModal({
   editingEnquiry,
   agents,
   currentAgent,
-  onSave
+  onSave,
+  isSaving = false,
+  saveError = null
 }: EnquiryModalProps) {
   // Localized form states initialized directly from editingEnquiry (or defaults)
+  const [formEst, setFormEst] = useState(() => editingEnquiry?.estNumber || "");
   const [formCompany, setFormCompany] = useState(() => editingEnquiry?.clientCompany || "");
   const [formContactName, setFormContactName] = useState(() => editingEnquiry?.contactName || "");
   const [formContactEmail, setFormContactEmail] = useState(() => editingEnquiry?.contactEmail || "");
@@ -40,50 +44,26 @@ export default function EnquiryModal({
   const [formDescription, setFormDescription] = useState(() => editingEnquiry?.description || "");
   const [formPriority, setFormPriority] = useState<"high" | "medium" | "low">(() => editingEnquiry?.priority || "medium");
   const [formStatus, setFormStatus] = useState<Enquiry["status"]>(() => editingEnquiry?.status || "new");
-  const [formAgent, setFormAgent] = useState(() => editingEnquiry?.assignedAgentId.toString() || currentAgent.id.toString());
-  const [formValue, setFormValue] = useState(() => editingEnquiry?.estimatedValue.toString() || "");
+  const [formAgent, setFormAgent] = useState(() => editingEnquiry?.assignedAgentId || currentAgent.id || (agents[0]?.id || ""));
   const [formImages, setFormImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
-  const [formCreatedAt, setFormCreatedAt] = useState(() => {
-    if (editingEnquiry?.createdAt) {
-      return new Date(editingEnquiry.createdAt).toISOString().split("T")[0];
-    }
-    return new Date().toISOString().split("T")[0];
-  });
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const getSaveDateString = () => {
-      const datePart = formCreatedAt || new Date().toISOString().split("T")[0];
-      if (editingEnquiry?.createdAt) {
-        const origDate = new Date(editingEnquiry.createdAt);
-        if (!isNaN(origDate.getTime())) {
-          const [year, month, day] = datePart.split("-").map(Number);
-          origDate.setFullYear(year, month - 1, day);
-          return origDate.toISOString();
-        }
-      }
-      const now = new Date();
-      const [year, month, day] = datePart.split("-").map(Number);
-      now.setFullYear(year, month - 1, day);
-      return now.toISOString();
-    };
 
     onSave({
+      estNumber: formEst,
       clientCompany: formCompany,
       title: formTitle,
       contactName: formContactName,
       contactEmail: formContactEmail,
       contactPhone: formContactPhone,
-      estimatedValue: formValue,
       priority: formPriority,
       status: formStatus,
       assignedAgentId: formAgent,
       description: formDescription,
       imageUrls: formImages,
-      createdAt: getSaveDateString()
     });
   };
 
@@ -108,51 +88,48 @@ export default function EnquiryModal({
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           <div className="p-5 space-y-4 overflow-y-auto flex-1">
             <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Company Name *</label>
+              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Company Name</label>
               <input 
                 type="text" 
                 placeholder="e.g. Rajdhani Roller Flour Mills" 
                 value={formCompany} 
                 onChange={(e) => setFormCompany(e.target.value)} 
                 className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
-                required 
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Enquiry Title *</label>
+              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Enquiry Title</label>
               <input 
                 type="text" 
                 placeholder="e.g. Sieve Sifter Accessories procurement" 
                 value={formTitle} 
                 onChange={(e) => setFormTitle(e.target.value)} 
                 className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
-                required 
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Contact Person *</label>
+                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">EST No. *</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. EST-2026-0001" 
+                  value={formEst} 
+                  onChange={(e) => setFormEst(e.target.value)} 
+                  className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
+                  required 
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Contact Person</label>
                 <input 
                   type="text" 
                   placeholder="e.g. Sanjay Singhal" 
                   value={formContactName} 
                   onChange={(e) => setFormContactName(e.target.value)} 
                   className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
-                  required 
-                />
-              </div>
-              
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Estimated Value (INR) *</label>
-                <input 
-                  type="number" 
-                  placeholder="e.g. 185000" 
-                  value={formValue} 
-                  onChange={(e) => setFormValue(e.target.value)} 
-                  className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
-                  required 
                 />
               </div>
             </div>
@@ -221,6 +198,7 @@ export default function EnquiryModal({
                   onChange={(e) => setFormAgent(e.target.value)}
                   className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer text-[var(--text-primary)]"
                 >
+                  {agents.length === 0 && <option value="">No sales agents assigned</option>}
                   {agents.map(a => (
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
@@ -228,14 +206,10 @@ export default function EnquiryModal({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Received Date *</label>
-                <input 
-                  type="date"
-                  value={formCreatedAt}
-                  onChange={(e) => setFormCreatedAt(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
-                  required
-                />
+                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Received Date</label>
+                <div className="px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm text-[var(--text-tertiary)]">
+                  {new Date().toLocaleDateString()}
+                </div>
               </div>
             </div>
 
@@ -299,18 +273,26 @@ export default function EnquiryModal({
           </div>
 
           <div className="px-5 py-4 border-t border-[var(--border-card)] flex justify-end gap-2 bg-[var(--bg-input)]/10">
+            {saveError && <span className="text-xs text-red-500 font-semibold mr-auto">{saveError}</span>}
             <button 
               type="button" 
               onClick={onClose} 
-              className="inline-flex justify-center items-center px-4 py-2 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]"
+              disabled={isSaving}
+              className="inline-flex justify-center items-center px-4 py-2 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)] disabled:opacity-50"
             >
               Cancel
             </button>
             <button 
               type="submit" 
-              className="inline-flex justify-center items-center px-4 py-2 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer"
+              disabled={isSaving}
+              className="inline-flex justify-center items-center gap-2 px-4 py-2 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {editingEnquiry ? "Save Changes" : "Log Enquiry"}
+              {isSaving ? (
+                <>
+                  <span className="inline-block h-3 w-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  Processing with AI…
+                </>
+              ) : (editingEnquiry ? "Save Changes" : "Log Enquiry")}
             </button>
           </div>
         </form>

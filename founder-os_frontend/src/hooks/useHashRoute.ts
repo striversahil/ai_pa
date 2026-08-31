@@ -6,12 +6,12 @@ export interface HashRoute {
   sub: string | null;
 }
 
-/** Read the current view/sub from the URL path (/dashboard, /enquiries/ID…). */
+/** Read the current view/sub from the URL path (/automations, /chat…). */
 function parsePath(): HashRoute {
-  if (typeof window === "undefined") return { view: "dashboard", sub: null };
+  if (typeof window === "undefined") return { view: "automations", sub: null };
   const raw = window.location.pathname.replace(/^\/+|\/+$/g, "");
   const [first, ...rest] = raw.split("/").filter(Boolean);
-  if (!first) return { view: "dashboard", sub: null };
+  if (!first) return { view: "automations", sub: null };
   const sub = rest.length ? decodeURIComponent(rest.join("/")) : null;
   return { view: first, sub };
 }
@@ -27,10 +27,10 @@ export function useHashRoute(): { route: HashRoute; navigate: (path: string) => 
   useEffect(() => {
     const onPop = () => setRoute(parsePath());
     window.addEventListener("popstate", onPop);
-    // Root path → canonical /dashboard (no reload).
+    // Root path → canonical /automations (no reload).
     if (window.location.pathname === "/" && !window.location.hash) {
-      window.history.replaceState(null, "", "/dashboard");
-      setRoute({ view: "dashboard", sub: null });
+      window.history.replaceState(null, "", "/automations");
+      setRoute({ view: "automations", sub: null });
     }
     return () => window.removeEventListener("popstate", onPop);
   }, []);

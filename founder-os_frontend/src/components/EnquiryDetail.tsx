@@ -13,6 +13,7 @@ interface EnquiryDetailProps {
   onUpdateStatus: (id: string, newStatus: Enquiry["status"]) => void;
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
+  onAddRequirement: (id: string, text: string, imageUrl?: string) => Promise<any>;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
@@ -27,6 +28,7 @@ export default function EnquiryDetail({
   onUpdateStatus,
   onUpdateAgent,
   onAddComment,
+  onAddRequirement,
   onDeleteEnquiry,
   onOpenEdit,
   onBack,
@@ -39,6 +41,33 @@ export default function EnquiryDetail({
   const [commentInput, setCommentInput] = useState("");
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [commentImage, setCommentImage] = useState<string | null>(null);
+
+  // Additional requirement popup states
+  const [reqOpen, setReqOpen] = useState(false);
+  const [reqText, setReqText] = useState("");
+  const [reqImage, setReqImage] = useState<string | null>(null);
+  const [reqSaving, setReqSaving] = useState(false);
+
+  const handleRequirementImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => setReqImage(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAddRequirement = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reqText.trim() || reqSaving) return;
+    setReqSaving(true);
+    onAddRequirement(selectedEnquiry.id, reqText.trim(), reqImage || undefined)
+      .then(() => {
+        setReqText(""); setReqImage(null); setReqOpen(false);
+      })
+      .catch(() => {})
+      .finally(() => setReqSaving(false));
+  };
 
   // Nested comment trees calculations
   const nestedComments = useMemo(() => {
@@ -156,9 +185,23 @@ export default function EnquiryDetail({
           onUpdateAgent={onUpdateAgent}
         />
 
-        {/* Right Column with Requirements & discussion thread */}
+{/* Right Column with Requirements & discussion thread */}
         <div className="space-y-6">
-          
+
+          <div className="flex items-center justify-between">
+            <h3 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Requirements</h3>
+            <button
+              onClick={() => setReqOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
+              type="button"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Add Additional Requirement
+            </button>
+          </div>
+
           <SpecificationsSection
             selectedEnquiry={selectedEnquiry}
             onOpenLightbox={onOpenLightbox}
@@ -264,6 +307,50 @@ export default function EnquiryDetail({
           </div>
         </div>
       </div>
+
+      {/* Add Additional Requirement popup */}
+      {reqOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50" onClick={() => setReqOpen(false)}>
+          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-xl w-full max-w-md animate-fade-in flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center px-5 py-4 border-b border-[var(--border-card)]">
+              <h2 className="font-heading font-extrabold text-base">Add Additional Requirement</h2>
+              <button onClick={() => setReqOpen(false)} className="p-1 rounded-full hover:bg-[var(--bg-input)] transition-all cursor-pointer bg-transparent border-0" type="button">
+                <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={handleAddRequirement} className="p-5 space-y-4">
+              <textarea
+                rows={3}
+                value={reqText}
+                onChange={(e) => setReqText(e.target.value)}
+                placeholder="Describe the additional requirement..."
+                className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm resize-y text-[var(--text-primary)]"
+                required
+              />
+              {reqImage && (
+                <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-[var(--border-card)]">
+                  <img src={reqImage} alt="Requirement attachment" className="w-full h-full object-cover" />
+                  <button type="button" onClick={() => setReqImage(null)} className="absolute top-1 right-1 bg-black/75 text-zinc-900 dark:text-white w-5 h-5 rounded-full flex items-center justify-center text-xs cursor-pointer font-bold border-0">&times;</button>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-2 border-t border-[var(--border-card)]/50">
+                <label className="p-1.5 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer rounded-lg bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-all">
+                  <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <input type="file" onChange={handleRequirementImageUpload} accept="image/*" className="hidden" />
+                </label>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setReqOpen(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
+                  <button type="submit" disabled={reqSaving} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer disabled:opacity-50">
+                    {reqSaving ? "Adding..." : "Add Requirement"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

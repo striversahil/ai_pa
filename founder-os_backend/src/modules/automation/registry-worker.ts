@@ -10,6 +10,7 @@ import type { AutomationDefinition, AutomationModule } from './types';
 import { AutomationEngine } from './engine';
 
 import * as dataRetention from '../../automations/data-retention';
+import * as enquiryTracker from '../../automations/enquiry-tracker';
 import * as dppPricesDashboard from '../../automations/dpp-prices-dashboard';
 import * as enterpriseOpsAnalytics from '../../automations/enterprise-operations-analytics';
 import * as morningQueueDrain from '../../automations/morning-queue-drain';
@@ -27,6 +28,7 @@ import * as whatsappAutopilot from '../../automations/whatsapp-autopilot';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
+  'enquiry-tracker': enquiryTracker as AutomationModule,
   'dpp-prices-dashboard': dppPricesDashboard as AutomationModule,
   'enterprise-operations-analytics': enterpriseOpsAnalytics as AutomationModule,
   'morning-queue-drain': morningQueueDrain as AutomationModule,
@@ -46,6 +48,9 @@ const MODULES: Record<string, AutomationModule> = {
 const RULES: Record<string, Partial<AutomationDefinition>> = {
   'data-retention': {
     id: 'data-retention', name: 'Data Retention Cleanup', description: 'Daily at 3:00 AM, delete WhatsApp messages older than 90 days.', type: 'handler', trigger: { type: 'schedule', cron: '0 3 * * *' }, enabled: true,
+  },
+  'enquiry-tracker': {
+    id: 'enquiry-tracker', name: 'Enquiry Tracker', description: 'Live sales pipeline: enquiries + threaded comments, persisted and pushed to open dashboards.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, enabled: true,
   },
   'dpp-prices-dashboard': {
     id: 'dpp-prices-dashboard', name: 'DPP Prices → Dashboard', description: 'Parse DPP price messages into PriceQuote rows and compute KRA/KPI for the dashboard.', type: 'rule',

@@ -19,6 +19,8 @@ export default function EnquiryRowItem({ enq, agent, onViewDetail }: EnquiryRowI
         <div className="mt-1 flex items-center gap-2">
           <span className="text-xs font-semibold text-[var(--text-secondary)]">{enq.clientCompany}</span>
           <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
+          <span className="text-[10px] font-mono text-[var(--color-brand-indigo)]">{enq.estNumber || "—"}</span>
+          <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
           <span className="text-[10px] text-[var(--text-tertiary)]">{new Date(enq.createdAt).toDateString()}</span>
         </div>
       </div>
@@ -36,10 +38,6 @@ export default function EnquiryRowItem({ enq, agent, onViewDetail }: EnquiryRowI
           {agent?.initials || "UN"}
         </div>
         <span className="text-xs font-semibold text-[var(--text-secondary)]">{agent?.name.split(" ")[0]}</span>
-      </div>
-
-      <div className="w-full font-heading text-sm font-extrabold text-[var(--color-brand-indigo)] md:w-auto md:text-right md:text-base">
-        ₹{enq.estimatedValue.toLocaleString()}
       </div>
     </div>
   );

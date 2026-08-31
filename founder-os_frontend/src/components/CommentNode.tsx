@@ -10,7 +10,7 @@ interface CommentNodeProps {
 
 export default function CommentNode({ comment, agents, onReplyClick, onImageClick }: CommentNodeProps) {
   const authorAgent = useMemo<Agent>(() => {
-    return agents.find(a => a.id === comment.agentId) || { id: 0, name: "Agent", initials: "A", color: "#888", status: "inactive" };
+    return agents.find(a => a.id === comment.agentId) || { id: "", name: "Agent", initials: "A", color: "#888", status: "inactive" };
   }, [agents, comment.agentId]);
 
   const formatDiscordTimestamp = (dateStr: string) => {

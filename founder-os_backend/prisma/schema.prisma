@@ -550,6 +550,40 @@ model ChatMember {
   @@id([channelId, userId])
 }
 
+// ── Enquiry Tracker (live sales pipeline) ────────────────────────────────────
+model Enquiry {
+  id             String  @id @default(uuid())
+  estNumber      String
+  clientCompany  String
+  contactName    String
+  contactEmail   String
+  contactPhone   String
+  title          String
+  description    String
+  priority       String  @default("medium")
+  status         String  @default("new")
+  assignedAgentId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  imageUrls      String?
+  activities     String?
+  additionalRequirements String?
+  comments       EnquiryComment[]
+}
+
+model EnquiryComment {
+  id        String   @id @default(uuid())
+  enquiryId String
+  enquiry   Enquiry  @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  agentId   Int
+  content   String
+  createdAt DateTime @default(now())
+  parentId  String?
+  imageUrl  String?
+
+  @@index([enquiryId, createdAt])
+}
+
 // ── WhatsApp Business Autopilot ──────────────────────────────────────────────
 // Structured business-operating layer under the WhatsApp conversation flow
 // (see whatsapp-business-autopilot-architecture.md). The core loop runs on the

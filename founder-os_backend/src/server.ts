@@ -34,6 +34,10 @@ import { readSessionCookie } from './modules/auth/session';
 import * as ChatRoutes from './modules/chat/routes';
 import { PrismaChatStore } from './modules/chat/store-prisma';
 import { createChatStore } from './modules/chat/store';
+import * as EnquiryRoutes from './modules/enquiries/routes';
+import { PrismaEnquiryStore } from './modules/enquiries/store-prisma';
+import { createEnquiryStore } from './modules/enquiries/store';
+import { extractEnquiryFields, pickGroqKey, EnquiryAgentRef } from './modules/enquiries/extract';
 
 
 const app = express();
@@ -41,6 +45,7 @@ const app = express();
 // Auth store (Postgres via Prisma; in-memory fallback when DB is off) + helpers.
 const authStore = useInMemoryDb ? createAuthStore({}) : new PrismaAuthStore(prisma);
 const chatStore = useInMemoryDb ? createChatStore({}) : new PrismaChatStore(prisma);
+const enquiryStore = useInMemoryDb ? createEnquiryStore({}) : new PrismaEnquiryStore(prisma);
 function publicOriginOf(req: Request): string {
   return process.env.AUTH_PUBLIC_ORIGIN || `${req.protocol}://${req.get('host')}`;
 }
@@ -198,6 +203,92 @@ app.post('/api/chat/typing', async (req, res) => {
   const me = await chatMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   res.status(200).json({ ok: true });
+});
+
+// --- Enquiry tracker (live sales pipeline) ---
+async function enquiryMe(req: Request) {
+  return getMe(authStore, req.headers.cookie || null);
+}
+app.get('/api/enquiries', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryList(enquiryStore, me);
+  res.status(r.status).json(r.body);
+});
+app.get('/api/enquiries/agents', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const users = await authStore.listUsers();
+  res.json(users.filter((u: any) => u.isRoot || u.scopes.includes('enquiries')).map((u: any) => ({
+    id: u.id, name: u.name, email: u.email, picture: u.picture ?? null,
+  })));
+});
+async function runEnquiryExtraction(id: string) {
+  try {
+    const key = pickGroqKey(process.env as any);
+    if (!key) return;
+    const enquiry = await enquiryStore.getEnquiry(id);
+    if (!enquiry) return;
+    const users = await authStore.listUsers();
+    const agents: EnquiryAgentRef[] = users
+      .filter((u: any) => u.isRoot || u.scopes.includes('enquiries'))
+      .map((u: any) => ({ id: u.id, name: u.name }));
+    const extracted = await extractEnquiryFields(key, {
+      description: enquiry.description,
+      title: enquiry.title,
+      company: enquiry.clientCompany,
+    }, agents);
+    if (!extracted) return;
+    const updates: Record<string, string> = {};
+    if (!enquiry.title && extracted.title) updates.title = extracted.title;
+    if (!enquiry.clientCompany && extracted.company) updates.clientCompany = extracted.company;
+    if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
+    if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
+    if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
+    if (!enquiry.assignedAgentId && extracted.agentId) updates.assignedAgentId = extracted.agentId;
+    if (Object.keys(updates).length) await enquiryStore.updateEnquiry(id, updates);
+  } catch (e: any) {
+    console.error('enquiry extraction failed:', e?.message);
+  }
+}
+
+app.post('/api/enquiries', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryCreate(enquiryStore, me, req.body || {});
+  if (r.body?.id) void runEnquiryExtraction(r.body.id);
+  res.status(r.status).json(r.body);
+});
+app.patch('/api/enquiries/:id', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryUpdate(enquiryStore, me, req.params.id, req.body || {});
+  if (r.body?.id) void runEnquiryExtraction(r.body.id);
+  res.status(r.status).json(r.body);
+});
+app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryAddRequirement(enquiryStore, me, req.params.id, req.body || {});
+  res.status(r.status).json(r.body);
+});
+app.delete('/api/enquiries/:id', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryDelete(enquiryStore, me, req.params.id);
+  res.status(r.status).json(r.body);
+});
+app.get('/api/enquiries/:id/comments', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryComments(enquiryStore, me, req.params.id);
+  res.status(r.status).json(r.body);
+});
+app.post('/api/enquiries/:id/comments', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryAddComment(enquiryStore, me, req.params.id, req.body || {});
+  res.status(r.status).json(r.body);
 });
 // File attachments are stored in Workers KV (worker runtime only); the
 // Express/alt runtime is the local/dev path without KV.

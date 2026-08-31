@@ -555,7 +555,7 @@ class D1ChatStore implements ChatStore {
         .run()
         .then(() => {});
     }
-    return this.reactionsReady;
+    return this.reactionsReady as Promise<void>;
   }
 
   async listReactions(channelId: string) {

@@ -14,8 +14,7 @@ export default function MobileNav({ activeView, onNavigate, canView }: MobileNav
     <nav className="fixed inset-x-0 bottom-0 z-40 flex h-16 items-stretch border-t border-[var(--border-card)] bg-[var(--bg-card)] px-2 pb-[env(safe-area-inset-bottom)] md:hidden">
       {visible.map((item) => {
         const Icon = item.icon;
-        const isActive =
-          item.view === activeView || (item.view === "enquiries" && activeView === "detail");
+        const isActive = item.view === activeView;
         return (
           <button
             key={item.view}
