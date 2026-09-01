@@ -8,6 +8,7 @@ import * as AuthRoutes from './modules/auth/routes';
 import { createAuthStore } from './modules/auth/store';
 import { authEnabled, getMe, isApproved, requireScope } from './modules/auth/service';
 import { AuthError } from './modules/auth/types';
+import { getEstimatesPayload } from './shared/estimates-cache';
 import { readSessionCookie } from './modules/auth/session';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from './automations/neodove-refresh';
 import { DASHBOARD_SLUGS } from './modules/automation/dashboardSlugs';
@@ -797,19 +798,9 @@ app.get('/api/brain/stats', async (c) => {
 
 // ── Estimates ───────────────────────────────────────────────────────────────
 app.get('/api/estimates', async (c) => {
-  const { prisma, isSystemGeneratedComment } = deps();
-  const [estimates, lastCompleteSync] = await Promise.all([
-    prisma.estimate.findMany({
-      where: { OR: [{ status: 'sent' }, { status: 'accepted' }, { status: 'declined' }, { status: 'confirmed' }] },
-      include: { classification: true, comments: { orderBy: { commentId: 'desc' } } },
-    }),
-    prisma.setting.findUnique({ where: { key: 'sales_copilot:last_complete_sync_at' } }),
-  ]);
-  const estimatesWithRealComments = estimates.map((e: any) => ({
-    ...e,
-    comments: (e.comments || []).filter((cm: any) => !isSystemGeneratedComment(cm.description, cm.commentedBy)),
-  }));
-  return c.json({ estimates: estimatesWithRealComments, lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null });
+  // Served from the 5-min estimates cache (Setting snapshot) — the full
+  // comments timeline scan is far too expensive to run per dashboard load.
+  return c.json(await getEstimatesPayload());
 });
 
 // ── Telecaller roster (estimate auto-assignment) ──────────────────────────────
@@ -908,7 +899,8 @@ app.post('/api/runner/estimates/baseline', async (c) => {
   const { prisma } = deps();
   const estimates = await prisma.estimate.findMany({
     where: { status: 'sent' },
-    include: { comments: { orderBy: { commentId: 'desc' } } },
+    // NOTE: no comments include — the baseline snapshot only needs estimate
+    // fields; pulling every comment row here burned D1 row reads daily.
   });
   const baseline = estimates.map((e: any) => ({
     estimateId: e.estimateId,
