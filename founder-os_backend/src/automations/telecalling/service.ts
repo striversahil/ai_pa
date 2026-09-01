@@ -96,6 +96,87 @@ function classifyRisk(
   return { risk: cls.meaningfulUpdate ? 'ok' : 'red', staleHours };
 }
 
+// ── Risk cache (D1 row-read budget protection) ───────────────────────────────
+// The risk model scans all open estimates + their latest comment dates, which
+// is expensive. Dashboards refetch on every runner WebSocket broadcast (every
+// 5–15 min), so the scan is cached in a Setting key with a short TTL — the
+// same snapshot pattern the NeoDove report uses. Stale-upon-error: if the
+// cached copy is older than TTL it is still served when a refresh fails.
+const RISK_CACHE_KEY = 'telecalling:risk_cache';
+const RISK_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CachedRiskItem extends Omit<RiskItem, 'telecallerName'> {
+  telecallerName: string | null;
+}
+
+interface RiskCache {
+  items: CachedRiskItem[];
+  computedAt: string;
+}
+
+async function computeRiskCache(): Promise<RiskCache> {
+  const nowMs = Date.now();
+  const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+
+  const sentOpen = await prisma.estimate.findMany({
+    where: { status: 'sent', assignedTelecallerId: { not: null } },
+    include: { classification: true },
+  });
+  const lastComments = await latestCommentDates(sentOpen.map((e) => e.estimateId));
+
+  const items: CachedRiskItem[] = sentOpen.map((e) => {
+    const cls = (e as any).classification ?? null;
+    const lastCommentDate = lastComments.get(e.estimateId) ?? null;
+    const { risk, staleHours } = classifyRisk(cls, lastCommentDate, nowMs);
+    const owner = String(e.assignedTelecallerId);
+    return {
+      estimateId: e.estimateId,
+      estimateNumber: e.estimateNumber,
+      customerName: e.customerName,
+      telecallerId: owner,
+      telecallerName: nameById.get(owner) ?? null,
+      total: Number(e.total ?? 0) || 0,
+      risk,
+      lastCommentDate,
+      staleHours,
+      reasoning: cls?.reasoning ?? null,
+    };
+  });
+  return { items, computedAt: new Date(nowMs).toISOString() };
+}
+
+/**
+ * Risk items for the open pipeline, served from a 5-min Setting-key cache.
+ * On refresh failure, serves the stale snapshot (graceful degradation) rather
+ * than burning more D1 row reads with retry loops.
+ */
+async function getRiskItems(): Promise<CachedRiskItem[]> {
+  let cached: RiskCache | null = null;
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: RISK_CACHE_KEY } });
+    if (row?.value) cached = JSON.parse(String(row.value)) as RiskCache;
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'risk cache read failed');
+  }
+  const fresh = cached && Date.now() - Date.parse(cached.computedAt) < RISK_CACHE_TTL_MS;
+  if (fresh && cached) return cached.items;
+
+  try {
+    const computed = await computeRiskCache();
+    const payload = JSON.stringify(computed);
+    await prisma.setting.upsert({
+      where: { key: RISK_CACHE_KEY },
+      update: { value: payload, updatedAt: new Date() },
+      create: { key: RISK_CACHE_KEY, value: payload, updatedAt: new Date() },
+    });
+    return computed.items;
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'risk compute failed — serving stale cache if present');
+    return cached?.items ?? [];
+  }
+}
+
 /**
  * Idempotently seed the Telecaller roster
 
@@ -300,31 +381,11 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
   const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
 
-  // Risk model over the open pipeline (live pre-warning for founder + agents).
+  // Risk model over the open pipeline — served from the 5-min cache (D1
+  // row-read budget protection). Stale chips in the agent view read from the
+  // same snapshot, so the comment table is scanned at most once per TTL.
   const nowMs = Date.now();
-  const sentOpen = await prisma.estimate.findMany({
-    where: { status: 'sent', assignedTelecallerId: { not: null } },
-    include: { classification: true },
-  });
-  const lastComments = await latestCommentDates(sentOpen.map((e) => e.estimateId));
-  const riskItems: RiskItem[] = sentOpen.map((e) => {
-    const cls = (e as any).classification ?? null;
-    const lastCommentDate = lastComments.get(e.estimateId) ?? null;
-    const { risk, staleHours } = classifyRisk(cls, lastCommentDate, nowMs);
-    const owner = String(e.assignedTelecallerId);
-    return {
-      estimateId: e.estimateId,
-      estimateNumber: e.estimateNumber,
-      customerName: e.customerName,
-      telecallerId: owner,
-      telecallerName: nameById.get(owner) ?? null,
-      total: Number(e.total ?? 0) || 0,
-      risk,
-      lastCommentDate,
-      staleHours,
-      reasoning: cls?.reasoning ?? null,
-    };
-  });
+  const riskItems = await getRiskItems();
   const riskByOwner = new Map<string, { atRisk: number; zombie: number }>();
   for (const r of riskItems) {
     if (r.risk === 'ok' || r.risk === 'pending') continue;
@@ -480,7 +541,10 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       // nested relation under `select`.
       include: { classification: true },
     });
-    const followLastComments = await latestCommentDates(followUpEsts.map((e) => e.estimateId));
+    const followLastComments = new Map<string, string>();
+    for (const r of riskItems) {
+      if (r.lastCommentDate) followLastComments.set(r.estimateId, r.lastCommentDate);
+    }
     const followUps = followUpEsts.map((e) => {
       const lastCommentDate = followLastComments.get(e.estimateId) ?? null;
       const ts = parseCommentDateMs(lastCommentDate);

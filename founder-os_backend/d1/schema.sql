@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS Comment (
   FOREIGN KEY (estimateId) REFERENCES Estimate(estimateId) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS idx_comment_estimateId ON Comment(estimateId);
+CREATE INDEX IF NOT EXISTS idx_comment_date ON Comment(date);
+
 CREATE TABLE IF NOT EXISTS Classification (
   estimateId TEXT PRIMARY KEY,
   meaningfulUpdate INTEGER NOT NULL DEFAULT 0,
