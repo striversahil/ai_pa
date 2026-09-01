@@ -2,6 +2,7 @@
 
 import React, { Fragment, useState, useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
+import { useAuth } from "@/auth/AuthContext";
 
 interface LeaderRow {
   id: string;
@@ -142,12 +143,14 @@ interface RosterRow {
   activeAssigned: number;
 }
 
-type View = "dashboard" | "conversion" | "generation";
+type View = "dashboard" | "conversion" | "generation" | "controller";
 
 const TABS: { key: View; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "📊" },
   { key: "conversion", label: "Lead Conversion", icon: "📨" },
   { key: "generation", label: "Lead Generation", icon: "📞" },
+  // MIS-only controller tab (filtered out of the nav without the `mis` scope).
+  { key: "controller", label: "Controller", icon: "🎛️" },
 ];
 
 function fmtTalk(sec: number): string {
@@ -209,6 +212,10 @@ function KraBar({ label, value, target, pct, status }: { label: string; value: n
 
 export default function TelecallingDashboard() {
   const [view, setView] = useState<View>("dashboard");
+  const { me } = useAuth();
+  // Roster is the assignment controller — visible/editable only with the
+  // `mis` scope (root/admin always allowed).
+  const canManageRoster = !!me && (me.isAdmin || me.scopes.includes("mis"));
 
   const dash = useLiveQuery<DashData>(
     async () => {
@@ -221,6 +228,7 @@ export default function TelecallingDashboard() {
 
   const roster = useLiveQuery<{ telecallers: RosterRow[] }>(
     async () => {
+      if (!canManageRoster) return { telecallers: [] };
       const res = await fetch("/api/telecallers");
       if (!res.ok) throw new Error("load failed");
       return res.json();
@@ -362,7 +370,7 @@ export default function TelecallingDashboard() {
         {/* Sidebar */}
         <aside className="md:w-56 shrink-0">
           <nav className="flex md:flex-col gap-2">
-            {TABS.map((t) => {
+            {TABS.filter((t) => t.key !== "controller" || canManageRoster).map((t) => {
               const active = view === t.key;
               return (
                 <button
@@ -552,17 +560,7 @@ export default function TelecallingDashboard() {
                 </div>
               </section>
 
-              {/* Roster management */}
-              <RosterSection
-                rosterRows={rosterRows}
-                form={form}
-                setForm={setForm}
-                editingId={editingId}
-                busy={busy}
-                onEdit={edit}
-                onToggleActive={toggleActive}
-                onSave={save}
-              />
+              {/* Roster management has moved to the MIS-only Controller tab */}
             </div>
           )}
 
@@ -657,6 +655,36 @@ export default function TelecallingDashboard() {
                 </div>
               )}
             </section>
+          )}
+
+          {/* Controller — MIS-only: roster + all telecalling control actions */}
+          {view === "controller" && (
+            canManageRoster ? (
+              <div className="space-y-6">
+                <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+                  <h3 className="text-lg font-bold mb-1">🎛️ Controller</h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+                    MIS-level control of telecalling — the roster below drives the automatic
+                    estimate assignment and end-of-day reassignment engine. Changes apply from
+                    the next rotation.
+                  </p>
+                </section>
+                <RosterSection
+                  rosterRows={rosterRows}
+                  form={form}
+                  setForm={setForm}
+                  editingId={editingId}
+                  busy={busy}
+                  onEdit={edit}
+                  onToggleActive={toggleActive}
+                  onSave={save}
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500 dark:text-zinc-600 px-1">
+                🔒 Controller is restricted to MIS-level users.
+              </p>
+            )
           )}
 
           {view === "generation" && (

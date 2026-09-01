@@ -6,7 +6,8 @@ import { ChatRoomDO } from './durable/chat-room';
 import { broadcastLive, LiveEvent } from './live';
 import * as AuthRoutes from './modules/auth/routes';
 import { createAuthStore } from './modules/auth/store';
-import { authEnabled, getMe, isApproved } from './modules/auth/service';
+import { authEnabled, getMe, isApproved, requireScope } from './modules/auth/service';
+import { AuthError } from './modules/auth/types';
 import { readSessionCookie } from './modules/auth/session';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from './automations/neodove-refresh';
 import { DASHBOARD_SLUGS } from './modules/automation/dashboardSlugs';
@@ -812,7 +813,20 @@ app.get('/api/estimates', async (c) => {
 });
 
 // ── Telecaller roster (estimate auto-assignment) ──────────────────────────────
+// MIS-level control: every roster read/write requires the `mis` scope (or
+// root/admin). The roster is the assignment controller — regular telecallers
+// must not see or change it.
+async function requireMisScope(c: any): Promise<void> {
+  await requireScope(authStore(c), c.req.header('cookie') ?? null, 'mis');
+}
+
+function misScopeError(c: any, e: unknown) {
+  if (e instanceof AuthError) return c.json({ error: e.message }, (e as any).status ?? 403);
+  throw e;
+}
+
 app.get('/api/telecallers', async (c) => {
+  try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
   const { prisma } = deps();
   const tcs = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
   const withCounts = await Promise.all(
@@ -828,6 +842,7 @@ app.get('/api/telecallers', async (c) => {
 });
 
 app.post('/api/telecallers', async (c) => {
+  try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
   const { prisma } = deps();
   const body = await c.req.json().catch(() => ({}));
   if (!body?.name) return c.json({ error: 'name required' }, 400);
@@ -845,6 +860,7 @@ app.post('/api/telecallers', async (c) => {
 });
 
 app.put('/api/telecallers/:id', async (c) => {
+  try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
   const { prisma } = deps();
   const body = await c.req.json().catch(() => ({}));
   const data: Record<string, unknown> = {};
@@ -859,6 +875,7 @@ app.put('/api/telecallers/:id', async (c) => {
 });
 
 app.delete('/api/telecallers/:id', async (c) => {
+  try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
   const { prisma } = deps();
   await prisma.telecaller.delete({ where: { id: c.req.param('id') } });
   return c.json({ ok: true });
