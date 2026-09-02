@@ -11,6 +11,23 @@ performance, plus team KPIs and a live leaderboard.
 - **Lead Generation** — NeoDove calls connected + leads generated per day,
   refreshed live from the NeoDove backend push (every ~10 min via the GH runner).
 
+## Risk model (live pre-warning)
+
+The dashboard data also computes a real-time risk state for every open `sent`
+estimate, so trouble is visible BEFORE the end-of-day reassignment sweep:
+
+- **red** — latest AI verdict is `meaningfulUpdate=false` (the EOD snatch candidate)
+- **zombie** — no sales comment for more than 2 days (`ZOMBIE_DAYS`, matching the
+  AI rule that stale comments are never meaningful)
+- **pending** — no AI verdict yet; **ok** — latest comment was meaningful
+
+Surfaces: the main dashboard "🔥 At Risk" panel (founder view, sorted by value
+with `valueAtRisk`), a Risk column on the leaderboard (per-agent red/zombie
+counts), and `StaleChip` freshness chips on every follow-up row in the agent
+and conversion views. The anti-gaming prompt rules require a concrete next step
+(follow-up date/day/time) before a forward-looking customer promise counts as a
+meaningful update.
+
 ## KPIs & Leaderboard
 Team KPI strip (assigned / won / conversion % / connected calls / leads /
 talk time) and a per-telecaller leaderboard ranked by a composite daily score

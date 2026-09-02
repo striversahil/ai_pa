@@ -27,6 +27,7 @@ Strict Decision Rules:
 - Weigh the latest comment (at the top of the list) the most, as it represents the current active status.
 - Mark meaningful_update as false if the latest update is older than 2 days.
 - If the latest comment only records an action (calling, messaging, sending a quotation) without presenting the outcome, next step, or decision, it must be false.
+- A forward-looking PROMISE from the customer (\"will confirm\", \"will discuss with management and revert\", \"customer is positive\") counts as a meaningful update ONLY if the latest comment records a specific follow-up date, day, or time. A bare reassurance with no concrete next step must set meaningful_update=false — repeated \"he will confirm\" comments with no date are not progress.
 - If meaningful_update is true, then not_answering must be false. If meaningful_update is false, not_answering may be true or false as the comment dictates. under_discussion can be true regardless of meaningful_update status. confirm should typically be true when meaningful_update is true.
 
 Response Format:

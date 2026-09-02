@@ -2,6 +2,7 @@
 
 import React, { Fragment, useState, useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
+import { useAuth } from "@/auth/AuthContext";
 
 interface LeaderRow {
   id: string;
@@ -29,6 +30,19 @@ interface LeaderRow {
     leadsStatus: "green" | "amber" | "red";
   };
   score: number;
+  risk?: { atRisk: number; zombie: number };
+}
+
+interface RiskRow {
+  estimateId: string;
+  estimateNumber: string;
+  customerName: string;
+  telecallerName: string | null;
+  total: number;
+  risk: "ok" | "pending" | "red" | "zombie";
+  lastCommentDate: string | null;
+  staleHours: number | null;
+  reasoning: string | null;
 }
 
 interface DashData {
@@ -36,6 +50,11 @@ interface DashData {
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
+  risk?: {
+    counts: { open: number; ok: number; pending: number; red: number; zombie: number };
+    valueAtRisk: number;
+    atRisk: RiskRow[];
+  };
 }
 
 interface FollowUp {
@@ -51,6 +70,8 @@ interface FollowUp {
   satisfactory?: boolean | null;
   intentScore?: number | null;
   analysisSummary?: string | null;
+  lastCommentDate?: string | null;
+  staleHours?: number | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -75,6 +96,35 @@ function SatChip({ value, compact = false }: { value: boolean | null | undefined
   );
 }
 
+/** Time-since-last-comment chip — the "clock is ticking" signal for agents. */
+function StaleChip({ staleHours, compact = false }: { staleHours: number | null | undefined; compact?: boolean }) {
+  const base = `inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold ${compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]"}`;
+  if (staleHours === null || staleHours === undefined)
+    return (
+      <span title="No sales comment synced from Zoho yet" className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+        ∅{compact ? "" : " No comments"}
+      </span>
+    );
+  const days = Math.floor(staleHours / 24);
+  if (days >= 2)
+    return (
+      <span title={`Last comment ${days} days ago — zombie territory (silent > 2 days = reassigned)`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+        ⏰{compact ? "" : ` ${days}d stale`}
+      </span>
+    );
+  if (staleHours >= 24)
+    return (
+      <span title="Last comment was more than a day ago" className={`${base} bg-amber-500/10 text-amber-500 dark:text-amber-400 border-amber-500/30`}>
+        ⏰{compact ? "" : " 1d+"}
+      </span>
+    );
+  return (
+    <span title="Commented within the last 24 hours" className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>
+      ●{compact ? "" : " Fresh"}
+    </span>
+  );
+}
+
 interface AgentViewData {
   meta: { analysis: string; title: string; day: string; requestedDay?: string; usingLatestAvailable?: boolean; agents?: { id: string; name: string; active: boolean }[]; generatedAt: string; error?: string };
   agent: { id: string; name: string; active: boolean; conversion: any; generation: any; score: number; followUpCount: number };
@@ -93,12 +143,14 @@ interface RosterRow {
   activeAssigned: number;
 }
 
-type View = "dashboard" | "conversion" | "generation";
+type View = "dashboard" | "conversion" | "generation" | "controller";
 
 const TABS: { key: View; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "📊" },
   { key: "conversion", label: "Lead Conversion", icon: "📨" },
   { key: "generation", label: "Lead Generation", icon: "📞" },
+  // MIS-only controller tab (filtered out of the nav without the `mis` scope).
+  { key: "controller", label: "Controller", icon: "🎛️" },
 ];
 
 function fmtTalk(sec: number): string {
@@ -160,6 +212,10 @@ function KraBar({ label, value, target, pct, status }: { label: string; value: n
 
 export default function TelecallingDashboard() {
   const [view, setView] = useState<View>("dashboard");
+  const { me } = useAuth();
+  // Roster is the assignment controller — visible/editable only with the
+  // `mis` scope (root/admin always allowed).
+  const canManageRoster = !!me && (me.isAdmin || me.scopes.includes("mis"));
 
   const dash = useLiveQuery<DashData>(
     async () => {
@@ -172,6 +228,7 @@ export default function TelecallingDashboard() {
 
   const roster = useLiveQuery<{ telecallers: RosterRow[] }>(
     async () => {
+      if (!canManageRoster) return { telecallers: [] };
       const res = await fetch("/api/telecallers");
       if (!res.ok) throw new Error("load failed");
       return res.json();
@@ -313,7 +370,7 @@ export default function TelecallingDashboard() {
         {/* Sidebar */}
         <aside className="md:w-56 shrink-0">
           <nav className="flex md:flex-col gap-2">
-            {TABS.map((t) => {
+            {TABS.filter((t) => t.key !== "controller" || canManageRoster).map((t) => {
               const active = view === t.key;
               return (
                 <button
@@ -355,6 +412,37 @@ export default function TelecallingDashboard() {
                 </div>
               )}
 
+              {/* Founder pre-warning: open estimates about to be snatched at EOD */}
+              {dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
+                <section className="bg-rose-500/5 border border-rose-500/30 rounded-xl p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h3 className="text-lg font-bold text-rose-500 dark:text-rose-400">🔥 At Risk — about to be snatched at EOD</h3>
+                    <span className="text-xs text-zinc-600 dark:text-zinc-400">
+                      <span className="font-mono font-bold text-rose-400">₹{fmtNum(dash.data.risk.valueAtRisk)}</span> at risk ·{" "}
+                      <span className="font-bold text-rose-400">{dash.data.risk.counts.red} red</span> ·{" "}
+                      <span className="font-bold text-rose-400">{dash.data.risk.counts.zombie} zombie</span>
+                    </span>
+                  </div>
+                  <div className="grid gap-1.5 md:grid-cols-2">
+                    {dash.data.risk.atRisk.map((r) => (
+                      <div key={r.estimateId} className="flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-white dark:bg-zinc-950 px-2.5 py-1.5" title={r.reasoning ?? undefined}>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{r.customerName ?? "—"}</div>
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{r.estimateNumber ?? r.estimateId} · {r.telecallerName ?? "—"}</div>
+                        </div>
+                        <div className="text-right shrink-0 space-y-0.5">
+                          <div className="text-[11px] font-mono text-emerald-400">₹{fmtNum(Number(r.total ?? 0))}</div>
+                          <StaleChip compact staleHours={r.staleHours} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
+                    Red = latest AI verdict found no meaningful update (end-of-day reassignment candidate). Zombie = no comment for over 2 days.
+                  </p>
+                </section>
+              )}
+
               {/* Leaderboard */}
               <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -382,6 +470,7 @@ export default function TelecallingDashboard() {
                         <th className="text-right py-2 pr-4">Calls</th>
                         <th className="text-right py-2 pr-4">Leads</th>
                         <th className="text-right py-2 pr-4">Talk</th>
+                        <th className="text-right py-2 pr-4">Risk</th>
                         <th className="text-right py-2">Score</th>
                       </tr>
                     </thead>
@@ -409,11 +498,20 @@ export default function TelecallingDashboard() {
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.callsConnected)}</td>
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.leadsGenerated)}</td>
                               <td className="py-2 pr-4 text-right font-mono text-indigo-300">{fmtTalk(t.generation.talkTimeSec)}</td>
+                              <td className="py-2 pr-4 text-right font-mono whitespace-nowrap">
+                                {(t.risk?.atRisk ?? 0) + (t.risk?.zombie ?? 0) > 0 ? (
+                                  <span className="text-rose-400 font-bold" title="Open estimates red (no meaningful update) or zombie (silent > 2 days) — lost at EOD">
+                                    {t.risk?.atRisk ?? 0}⚠ / {t.risk?.zombie ?? 0}☠
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-400" title="No estimates at risk">✓</span>
+                                )}
+                              </td>
                               <td className="py-2 text-right font-extrabold text-indigo-300 font-mono">{t.score}</td>
                             </tr>
                             {open && (
                               <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
-                                <td colSpan={9} className="py-2 pr-4">
+                                <td colSpan={10} className="py-2 pr-4">
                                   <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3">
                                     <div className="flex items-center justify-between mb-2">
                                       <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
@@ -455,24 +553,14 @@ export default function TelecallingDashboard() {
                         );
                       })}
                       {sorted.length === 0 && (
-                        <tr><td colSpan={9} className="py-4 text-center text-zinc-500">No active telecallers yet.</td></tr>
+                        <tr><td colSpan={10} className="py-4 text-center text-zinc-500">No active telecallers yet.</td></tr>
                       )}
                     </tbody>
                   </table>
                 </div>
               </section>
 
-              {/* Roster management */}
-              <RosterSection
-                rosterRows={rosterRows}
-                form={form}
-                setForm={setForm}
-                editingId={editingId}
-                busy={busy}
-                onEdit={edit}
-                onToggleActive={toggleActive}
-                onSave={save}
-              />
+              {/* Roster management has moved to the MIS-only Controller tab */}
             </div>
           )}
 
@@ -549,7 +637,10 @@ export default function TelecallingDashboard() {
                       <div key={f.estimateId} className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 space-y-1">
                         <div className="flex items-start justify-between gap-3">
                           <div className="font-semibold text-sm text-zinc-900 dark:text-white truncate min-w-0">{f.customerName ?? "—"}</div>
-                          <SatChip value={f.satisfactory} />
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <SatChip value={f.satisfactory} />
+                            <StaleChip staleHours={f.staleHours} />
+                          </div>
                         </div>
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
@@ -564,6 +655,36 @@ export default function TelecallingDashboard() {
                 </div>
               )}
             </section>
+          )}
+
+          {/* Controller — MIS-only: roster + all telecalling control actions */}
+          {view === "controller" && (
+            canManageRoster ? (
+              <div className="space-y-6">
+                <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+                  <h3 className="text-lg font-bold mb-1">🎛️ Controller</h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+                    MIS-level control of telecalling — the roster below drives the automatic
+                    estimate assignment and end-of-day reassignment engine. Changes apply from
+                    the next rotation.
+                  </p>
+                </section>
+                <RosterSection
+                  rosterRows={rosterRows}
+                  form={form}
+                  setForm={setForm}
+                  editingId={editingId}
+                  busy={busy}
+                  onEdit={edit}
+                  onToggleActive={toggleActive}
+                  onSave={save}
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500 dark:text-zinc-600 px-1">
+                🔒 Controller is restricted to MIS-level users.
+              </p>
+            )
           )}
 
           {view === "generation" && (
@@ -633,6 +754,7 @@ export default function TelecallingDashboard() {
                                     </div>
                                     <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
                                       <SatChip value={f.satisfactory} compact />
+                                      <StaleChip staleHours={f.staleHours} compact />
                                       <div className="text-[10px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
                                       <div className="text-[10px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
                                     </div>

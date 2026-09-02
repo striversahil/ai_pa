@@ -141,31 +141,46 @@ export class AutomationRegistry {
       enabled: fileDef.enabled ?? true,
     };
 
-    const row = await prisma.automation.upsert({
-      where: { slug },
-      update: {
-        name: def.name,
-        description: def.description,
-        type: def.type,
-        triggerJson: JSON.stringify(def.trigger),
-        conditionJson: def.condition ? JSON.stringify(def.condition) : null,
-        actionsJson: JSON.stringify(def.actions ?? []),
-        dedupField: def.dedupField ?? null,
-      },
-      create: {
-        slug,
-        name: def.name,
-        description: def.description,
-        type: def.type,
-        triggerJson: JSON.stringify(def.trigger),
-        conditionJson: def.condition ? JSON.stringify(def.condition) : null,
-        actionsJson: JSON.stringify(def.actions ?? []),
-        configJson: JSON.stringify(def.config ?? {}),
-        dedupField: def.dedupField ?? null,
-        enabled: def.enabled ?? true,
-        cooldownMs: def.cooldownMs ?? 0,
-      },
-    });
+    // D1 write-budget protection: upsert on every boot burned ~100k writes/day
+    // (each isolate boot + self-heal reload rewrote all definitions). Compare
+    // the stored row first and only write when the definition actually changed.
+    const desired = {
+      name: def.name,
+      description: def.description,
+      type: def.type,
+      triggerJson: JSON.stringify(def.trigger),
+      conditionJson: def.condition ? JSON.stringify(def.condition) : null,
+      actionsJson: JSON.stringify(def.actions ?? []),
+      dedupField: def.dedupField ?? null,
+    };
+
+    let row: any;
+    const existing = await prisma.automation.findUnique({ where: { slug } });
+    const unchanged =
+      existing &&
+      existing.name === desired.name &&
+      existing.description === desired.description &&
+      existing.type === desired.type &&
+      existing.triggerJson === desired.triggerJson &&
+      existing.conditionJson === desired.conditionJson &&
+      existing.actionsJson === desired.actionsJson &&
+      (existing.dedupField ?? null) === desired.dedupField;
+
+    if (unchanged) {
+      row = existing;
+    } else {
+      row = await prisma.automation.upsert({
+        where: { slug },
+        update: desired,
+        create: {
+          slug,
+          ...desired,
+          configJson: JSON.stringify(def.config ?? {}),
+          enabled: def.enabled ?? true,
+          cooldownMs: def.cooldownMs ?? 0,
+        },
+      });
+    }
 
     const dbConfig = row.configJson ? JSON.parse(row.configJson) : {};
     def.config = { ...(def.config ?? {}), ...dbConfig };

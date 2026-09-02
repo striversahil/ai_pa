@@ -240,6 +240,24 @@ async function loadZohoByAgent(nameMap: Record<string, string>): Promise<{
   byAgent: Record<string, { estimates: number; value: number }>;
   byZohoName: Record<string, { estimates: number; value: number }>;
 }> {
+  // D1 row-read budget protection: the attribution scan reads every open
+  // estimate + every comment row. Cache the result in a Setting key for
+  // 10 min — the NeodoveTelecallerDashboard refetches on every runner
+  // broadcast, and the underlying Zoho data only changes on the 15-min sync.
+  const CACHE_KEY = 'neodove:kra_cache';
+  const TTL_MS = 10 * 60 * 1000;
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: CACHE_KEY } });
+    if (row?.value) {
+      const cached = JSON.parse(String(row.value)) as { computedAt: string } & Record<string, unknown>;
+      if (Date.now() - Date.parse(cached.computedAt) < TTL_MS) {
+        return { byAgent: cached.byAgent as any, byZohoName: cached.byZohoName as any };
+      }
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'KRA cache read failed');
+  }
+
   const byAgent: Record<string, { estimates: number; value: number }> = {};
   const byZohoName: Record<string, { estimates: number; value: number }> = {};
 
@@ -273,6 +291,15 @@ async function loadZohoByAgent(nameMap: Record<string, string>): Promise<{
     }
   } catch (err) {
     logger.warn({ err }, 'KRA: failed to attribute Zoho estimates');
+  }
+  try {
+    await prisma.setting.upsert({
+      where: { key: CACHE_KEY },
+      update: { value: JSON.stringify({ byAgent, byZohoName, computedAt: new Date().toISOString() }), updatedAt: new Date() },
+      create: { key: CACHE_KEY, value: JSON.stringify({ byAgent, byZohoName, computedAt: new Date().toISOString() }), updatedAt: new Date() },
+    });
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'KRA cache write failed');
   }
   return { byAgent, byZohoName };
 }

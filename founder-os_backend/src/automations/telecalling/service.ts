@@ -29,6 +29,156 @@ function istDate(d: Date = new Date()): string {
     day: '2-digit',
   }).format(d);
 }
+// ── Estimate risk model (live pre-warning) ───────────────────────────────────
+// Real-time risk states over the open `sent` pipeline so trouble is visible
+// BEFORE the end-of-day reassignment sweep:
+//   zombie  — no comment in > 2 days (the AI already treats stale comments as
+//             not meaningful, so these estimates are dead weight)
+//   red     — latest AI verdict has meaningfulUpdate=false (EOD snatch candidate)
+//   pending — no AI verdict yet
+//   ok      — latest comment counted as a meaningful update
+export const ZOMBIE_DAYS = 2;
+const RISK_LIST_CAP = 25;
+
+export type EstimateRisk = 'ok' | 'pending' | 'red' | 'zombie';
+
+export interface RiskItem {
+  estimateId: string;
+  estimateNumber: string;
+  customerName: string;
+  telecallerId: string;
+  telecallerName: string | null;
+  total: number;
+  risk: EstimateRisk;
+  lastCommentDate: string | null;
+  staleHours: number | null;
+  reasoning: string | null;
+}
+
+function parseCommentDateMs(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Latest comment date (raw string as stored by the Zoho sync) per estimate.
+ * Degrades to an empty map if the comment query fails — the risk model then
+ * relies on the Classification verdict alone (graceful degradation).
+ */
+async function latestCommentDates(estimateIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (estimateIds.length === 0) return out;
+  try {
+    const comments = await prisma.comment.findMany({
+      where: { estimateId: { in: estimateIds } },
+      orderBy: { date: 'desc' },
+      select: { estimateId: true, date: true },
+    });
+    for (const c of comments) {
+      if (c?.estimateId && c.date && !out.has(c.estimateId)) out.set(c.estimateId, String(c.date));
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'latestCommentDates failed — risk model degrades to classification only');
+  }
+  return out;
+}
+
+function classifyRisk(
+  cls: { meaningfulUpdate: boolean } | null | undefined,
+  lastCommentDate: string | null,
+  nowMs: number,
+): { risk: EstimateRisk; staleHours: number | null } {
+  const ts = parseCommentDateMs(lastCommentDate);
+  const staleHours = ts !== null ? (nowMs - ts) / 3600000 : null;
+  if (staleHours === null || staleHours > ZOMBIE_DAYS * 24) return { risk: 'zombie', staleHours };
+  if (!cls) return { risk: 'pending', staleHours };
+  return { risk: cls.meaningfulUpdate ? 'ok' : 'red', staleHours };
+}
+
+// ── Risk cache (D1 row-read budget protection) ───────────────────────────────
+// The risk model scans all open estimates + their latest comment dates, which
+// is expensive. Dashboards refetch on every runner WebSocket broadcast (every
+// 5–15 min), so the scan is cached in a Setting key with a short TTL — the
+// same snapshot pattern the NeoDove report uses. Stale-upon-error: if the
+// cached copy is older than TTL it is still served when a refresh fails.
+const RISK_CACHE_KEY = 'telecalling:risk_cache';
+const RISK_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CachedRiskItem extends Omit<RiskItem, 'telecallerName'> {
+  telecallerName: string | null;
+}
+
+interface RiskCache {
+  items: CachedRiskItem[];
+  computedAt: string;
+}
+
+async function computeRiskCache(): Promise<RiskCache> {
+  const nowMs = Date.now();
+  const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+
+  const sentOpen = await prisma.estimate.findMany({
+    where: { status: 'sent', assignedTelecallerId: { not: null } },
+    include: { classification: true },
+  });
+  const lastComments = await latestCommentDates(sentOpen.map((e) => e.estimateId));
+
+  const items: CachedRiskItem[] = sentOpen.map((e) => {
+    const cls = (e as any).classification ?? null;
+    const lastCommentDate = lastComments.get(e.estimateId) ?? null;
+    const { risk, staleHours } = classifyRisk(cls, lastCommentDate, nowMs);
+    const owner = String(e.assignedTelecallerId);
+    return {
+      estimateId: e.estimateId,
+      estimateNumber: e.estimateNumber,
+      customerName: e.customerName,
+      telecallerId: owner,
+      telecallerName: nameById.get(owner) ?? null,
+      total: Number(e.total ?? 0) || 0,
+      risk,
+      lastCommentDate,
+      staleHours,
+      reasoning: cls?.reasoning ?? null,
+    };
+  });
+  return { items, computedAt: new Date(nowMs).toISOString() };
+}
+
+/**
+ * Risk items for the open pipeline, served from a 5-min Setting-key cache.
+ * On refresh failure, serves the stale snapshot (graceful degradation) rather
+ * than burning more D1 row reads with retry loops.
+ */
+async function getRiskItems(): Promise<CachedRiskItem[]> {
+  let cached: RiskCache | null = null;
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: RISK_CACHE_KEY } });
+    if (row?.value) cached = JSON.parse(String(row.value)) as RiskCache;
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'risk cache read failed');
+  }
+  const fresh = cached && Date.now() - Date.parse(cached.computedAt) < RISK_CACHE_TTL_MS;
+  if (fresh && cached) return cached.items;
+
+  try {
+    const computed = await computeRiskCache();
+    const payload = JSON.stringify(computed);
+    await prisma.setting.upsert({
+      where: { key: RISK_CACHE_KEY },
+      update: { value: payload, updatedAt: new Date() },
+      create: { key: RISK_CACHE_KEY, value: payload, updatedAt: new Date() },
+    });
+    return computed.items;
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'risk compute failed — serving stale cache if present');
+    return cached?.items ?? [];
+  }
+}
+
+/**
+ * Idempotently seed the Telecaller roster
 
 /**
  * Idempotently seed the Telecaller roster from the unique NeoDove agents across
@@ -195,6 +345,9 @@ export interface TelecallerDayMetrics {
     leadsStatus: 'green' | 'amber' | 'red';
   };
   score: number;
+  // Live pipeline risk: open estimates currently red (no meaningful update) or
+  // zombie (silent > 2 days) — the EOD reassignment candidates.
+  risk: { atRisk: number; zombie: number };
 }
 
 /**
@@ -226,6 +379,21 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   }
 
   const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+
+  // Risk model over the open pipeline — served from the 5-min cache (D1
+  // row-read budget protection). Stale chips in the agent view read from the
+  // same snapshot, so the comment table is scanned at most once per TTL.
+  const nowMs = Date.now();
+  const riskItems = await getRiskItems();
+  const riskByOwner = new Map<string, { atRisk: number; zombie: number }>();
+  for (const r of riskItems) {
+    if (r.risk === 'ok' || r.risk === 'pending') continue;
+    const cur = riskByOwner.get(r.telecallerId) ?? { atRisk: 0, zombie: 0 };
+    if (r.risk === 'zombie') cur.zombie += 1;
+    else cur.atRisk += 1;
+    riskByOwner.set(r.telecallerId, cur);
+  }
 
   // Single source of truth: Estimate.assignedTelecallerId — one query, grouped
   // in memory. No assignment-history table involved.
@@ -336,6 +504,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
         leadsStatus,
       },
       score,
+      risk: riskByOwner.get(tc.id) ?? { atRisk: 0, zombie: 0 },
     });
   }
 
@@ -364,34 +533,37 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
         },
       };
     }
-    const followUps = (
-      await prisma.estimate.findMany({
-        where: { assignedTelecallerId: tc.id, status: 'sent' },
-        orderBy: [{ date: 'asc' }],
-        select: {
-          estimateId: true,
-          estimateNumber: true,
-          customerName: true,
-          status: true,
-          total: true,
-        },
-        // 15-min Zoho analyzer verdict — drives the Satisfactory/Unsatisfactory
-        // chip. Note: D1PrismaClient resolves relations via `include`, not a
-        // nested relation under `select`.
-        include: { classification: true },
-      })
-    ).map((e) => ({
-      estimateId: e.estimateId,
-      estimateNumber: e.estimateNumber,
-      customerName: e.customerName,
-      status: e.status,
-      total: e.total,
-      day,
-      assignmentStatus: 'assigned',
-      satisfactory: e.classification ? !!e.classification.meaningfulUpdate : null,
-      intentScore: e.classification?.intentScore ?? null,
-      analysisSummary: e.classification?.summary ?? null,
-    }));
+    const followUpEsts = await prisma.estimate.findMany({
+      where: { assignedTelecallerId: tc.id, status: 'sent' },
+      orderBy: [{ date: 'asc' }],
+      // 15-min Zoho analyzer verdict — drives the Satisfactory/Unsatisfactory
+      // chip. Note: D1PrismaClient resolves relations via `include`, not a
+      // nested relation under `select`.
+      include: { classification: true },
+    });
+    const followLastComments = new Map<string, string>();
+    for (const r of riskItems) {
+      if (r.lastCommentDate) followLastComments.set(r.estimateId, r.lastCommentDate);
+    }
+    const followUps = followUpEsts.map((e) => {
+      const lastCommentDate = followLastComments.get(e.estimateId) ?? null;
+      const ts = parseCommentDateMs(lastCommentDate);
+      const staleHours = ts !== null ? (nowMs - ts) / 3600000 : null;
+      return {
+        estimateId: e.estimateId,
+        estimateNumber: e.estimateNumber,
+        customerName: e.customerName,
+        status: e.status,
+        total: e.total,
+        day,
+        assignmentStatus: 'assigned',
+        satisfactory: e.classification ? !!e.classification.meaningfulUpdate : null,
+        intentScore: e.classification?.intentScore ?? null,
+        analysisSummary: e.classification?.summary ?? null,
+        lastCommentDate,
+        staleHours,
+      };
+    });
     const lb = leaderboard.find((l) => l.id === tc.id);
     return {
       meta: {
@@ -420,7 +592,6 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     where: { status: 'sent', assignedTelecallerId: null },
   });
 
-  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
   const recentRows = await prisma.estimate.findMany({
     where: { assignedTelecallerId: { not: null } },
     orderBy: { lastSyncTime: 'desc' },
@@ -461,6 +632,25 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     kpi: {
       ...kpiAcc,
       conversionRate: kpiAcc.assigned > 0 ? Math.round((kpiAcc.won / kpiAcc.assigned) * 100) : 0,
+    },
+    // Founder pre-warning: open estimates about to be snatched at EOD, sorted
+    // by value. Red = latest AI verdict found no meaningful update; zombie =
+    // silent for more than ZOMBIE_DAYS.
+    risk: {
+      counts: {
+        open: riskItems.length,
+        ok: riskItems.filter((r) => r.risk === 'ok').length,
+        pending: riskItems.filter((r) => r.risk === 'pending').length,
+        red: riskItems.filter((r) => r.risk === 'red').length,
+        zombie: riskItems.filter((r) => r.risk === 'zombie').length,
+      },
+      valueAtRisk: riskItems
+        .filter((r) => r.risk === 'red' || r.risk === 'zombie')
+        .reduce((s, r) => s + r.total, 0),
+      atRisk: riskItems
+        .filter((r) => r.risk === 'red' || r.risk === 'zombie')
+        .sort((a, b) => b.total - a.total)
+        .slice(0, RISK_LIST_CAP),
     },
     leaderboard,
     recent,
