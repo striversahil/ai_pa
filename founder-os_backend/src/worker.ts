@@ -1505,33 +1505,49 @@ app.post('/api/runner/zoho/comments', async (c) => {
   const { prisma } = deps();
   const body = await c.req.json().catch(() => ({}));
   const comments = Array.isArray(body.comments) ? body.comments : [];
+  // D1 write-budget protection: the runner re-sends every stored comment every
+  // 15 min; rewriting identical rows burned ~150k writes/day. Compare against
+  // the stored rows (PK lookup, ~1 row read each) and write only new/changed.
+  const incoming = comments.filter((cm: any) => cm?.commentId);
+  const existing = new Map<string, any>();
+  for (let i = 0; i < incoming.length; i += 80) {
+    const chunk = incoming.slice(i, i + 80).map((cm: any) => String(cm.commentId));
+    try {
+      const rows = await prisma.comment.findMany({ where: { commentId: { in: chunk } } });
+      for (const r of rows as any[]) existing.set(String(r.commentId), r);
+    } catch (e: any) {
+      console.warn({ err: e?.message }, 'zoho/comments dedupe read failed — falling back to full upsert');
+    }
+  }
   let upserted = 0;
-  for (const cm of comments) {
-    if (!cm.commentId) continue;
+  for (const cm of incoming) {
+    const prev = existing.get(String(cm.commentId));
+    const next = {
+      estimateId: cm.estimateId,
+      description: cm.description || '',
+      commentedBy: cm.commentedBy || '',
+      date: cm.date || '',
+      dateDescription: cm.dateDescription || '',
+      dateFormatted: cm.dateFormatted || null,
+    };
+    const unchanged =
+      prev &&
+      prev.estimateId === next.estimateId &&
+      prev.description === next.description &&
+      prev.commentedBy === next.commentedBy &&
+      prev.date === next.date &&
+      prev.dateDescription === next.dateDescription &&
+      (prev.dateFormatted ?? null) === next.dateFormatted;
+    if (unchanged) continue;
     await prisma.comment.upsert({
       where: { commentId: cm.commentId },
-      update: {
-        estimateId: cm.estimateId,
-        description: cm.description || '',
-        commentedBy: cm.commentedBy || '',
-        date: cm.date || '',
-        dateDescription: cm.dateDescription || '',
-        dateFormatted: cm.dateFormatted || null,
-      },
-      create: {
-        commentId: cm.commentId,
-        estimateId: cm.estimateId,
-        description: cm.description || '',
-        commentedBy: cm.commentedBy || '',
-        date: cm.date || '',
-        dateDescription: cm.dateDescription || '',
-        dateFormatted: cm.dateFormatted || null,
-      },
+      update: next,
+      create: { commentId: cm.commentId, ...next },
     });
     upserted++;
   }
   notifyLive(c, { type: 'estimates' });
-  return c.json({ ok: true, count: upserted });
+  return c.json({ ok: true, count: upserted, skipped: incoming.length - upserted });
 });
 
 app.post('/api/runner/zoho/status', async (c) => {
@@ -1629,11 +1645,40 @@ app.post('/api/runner/brain/context', async (c) => {
   const rows = Array.isArray(body.rows) ? body.rows : [];
   const db = c.env.DB;
   if (!db || !db.batch) return c.json({ ok: true, count: 0 });
+  // D1 write-budget protection: the email-brain-index runner re-sends the full
+  // corpus every 30 min; blind ON CONFLICT UPDATEs burned ~470k writes/day.
+  // Read the existing rows first (unique-index seek) and only upsert rows whose
+  // content/metadata actually changed. eventDate/indexedAt intentionally keep
+  // their old values when content is unchanged.
+  const incoming = rows.filter((r: any) => r?.source && r?.sourceId && r?.content);
+  const existing = new Map<string, any>();
+  const bySource = new Map<string, any[]>();
+  for (const r of incoming) {
+    const key = String(r.source);
+    if (!bySource.has(key)) bySource.set(key, []);
+    bySource.get(key)!.push(r);
+  }
+  for (const [source, srows] of bySource) {
+    for (let i = 0; i < srows.length; i += 80) {
+      const chunk = srows.slice(i, i + 80).map((r: any) => String(r.sourceId));
+      const ph = chunk.map(() => '?').join(',');
+      try {
+        const res = await db
+          .prepare(`SELECT source, sourceId, content, metadata FROM "BrainContext" WHERE source = ? AND sourceId IN (${ph})`)
+          .bind(source, ...chunk)
+          .all();
+        for (const r of res.results || []) existing.set(`${r.source}:${r.sourceId}`, r);
+      } catch (e: any) {
+        console.warn({ err: e?.message, source }, 'brain/context dedupe read failed — falling back to full upsert');
+      }
+    }
+  }
   let upserted = 0;
   const stmts: any[] = [];
-  for (const row of rows) {
-    if (!row.source || !row.sourceId || !row.content) continue;
+  for (const row of incoming) {
     const now = new Date();
+    const prev = existing.get(`${row.source}:${row.sourceId}`);
+    if (prev && prev.content === row.content && (prev.metadata ?? null) === (row.metadata || null)) continue;
     stmts.push(
       db
         .prepare(
@@ -1664,7 +1709,7 @@ app.post('/api/runner/brain/context', async (c) => {
     await db.batch(stmts.slice(i, i + 100));
   }
   if (upserted > 0) broadcastLive(c, LiveEvent.Brain);
-  return c.json({ ok: true, count: upserted });
+  return c.json({ ok: true, count: upserted, skipped: incoming.length - upserted });
 });
 
 // ── whatsapp-autopilot runner (GH Actions heavy loop; shadow mode) ───────────
