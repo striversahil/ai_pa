@@ -342,9 +342,9 @@ cPanel crontab (user brindwqj) every 5/10/15/30 min + daily
 
 - `~/gh-trigger.sh` embeds the GitHub PAT (from `GITHUB_ACCESS_TOKEN` in `.env`) and
   fires `workflow_dispatch`; it logs HTTP codes to `~/gh-trigger.log`.
-- Schedules: every-5min `*/5`, every-10min `*/10`, every-15min `*/15` (body
-  `{"ref":"main","inputs":{"force":"true"}}`), every-30min `*/30`, daily
-  `30 2,3,13,21 * * *` (UTC; IST 08:00/08:30/18:30/03:00).
+- Schedules: every-5min `*/5`, every-10min `*/10`, every-15min `*/15` (no
+  `force` — change-detection gates AI; force stays manual-only), every-30min
+  `*/30`, daily `30 2,3,13,21 * * *` (UTC; IST 08:00/08:30/18:30/03:00).
 - Manual equivalent: `GITHUB_PAT=... ./scripts/trigger-workflows.sh <target>`.
 
 ### 5.2 Runner / worker hardening (Aug 2026)
