@@ -48,13 +48,13 @@ TARGET="${1:-all}"
 case "$TARGET" in
   every-5min)   trigger "cron-every-5min.yml" "" ;;
   every-10min)  trigger "cron-every-10min.yml" "" ;;
-  every-15min)  trigger "cron-every-15min.yml" '{"force":"1"}' ;;
+  every-15min)  trigger "cron-every-15min.yml" "" ;;
   every-30min)  trigger "cron-every-30min.yml" "" ;;
   daily)        trigger "cron-daily-ist.yml" "" ;;
   all)
     trigger "cron-every-5min.yml" ""
     trigger "cron-every-10min.yml" ""
-    trigger "cron-every-15min.yml" '{"force":"1"}'
+    trigger "cron-every-15min.yml" ""
     trigger "cron-every-30min.yml" ""
     trigger "cron-daily-ist.yml" ""
     ;;
