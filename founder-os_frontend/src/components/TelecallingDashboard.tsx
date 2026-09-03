@@ -376,6 +376,7 @@ export default function TelecallingDashboard() {
   });
 
   const rosterRows: RosterRow[] = roster.data?.telecallers ?? [];
+  const leaderScore = sorted[0]?.score ?? 0;
 
   return (
     <div className="space-y-6">
@@ -450,7 +451,14 @@ export default function TelecallingDashboard() {
               {/* Leaderboard */}
               <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <h3 className="text-lg font-bold">🏆 Leaderboard — Today</h3>
+                  <div>
+                    <h3 className="text-lg font-bold">🏆 Leaderboard — Today</h3>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5" title="Composite score formula">
+                      1 close = <span className="font-bold text-emerald-400">+100</span> · 1 lead ={" "}
+                      <span className="font-bold text-amber-400">+15</span> · 1 connected call ={" "}
+                      <span className="font-bold text-indigo-300">+0.5</span>
+                    </p>
+                  </div>
                   <select
                     value={sortKey}
                     onChange={(e) => setSortKey(e.target.value as any)}
@@ -463,6 +471,41 @@ export default function TelecallingDashboard() {
                     <option value="leadsGenerated">Rank by Leads Generated</option>
                   </select>
                 </div>
+                {/* Chase podium — top 3 with gaps (score ranking only) */}
+                {sortKey === "score" && sorted.length >= 2 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
+                    {sorted.slice(0, 3).map((t, i) => {
+                      const medals = ["🥇", "🥈", "🥉"];
+                      const gap = i > 0 ? sorted[i - 1].score - t.score : sorted[1] ? t.score - sorted[1].score : 0;
+                      return (
+                        <div
+                          key={t.id}
+                          className={`rounded-xl border p-3 flex items-center gap-3 ${
+                            i === 0
+                              ? "border-amber-400/40 bg-amber-400/5"
+                              : i === 1
+                                ? "border-zinc-300/50 dark:border-zinc-600/40 bg-zinc-400/5"
+                                : "border-orange-400/30 bg-orange-400/5"
+                          }`}
+                        >
+                          <div className="text-2xl shrink-0">{medals[i]}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-sm text-zinc-900 dark:text-white truncate">{t.name}</div>
+                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                              {t.conversion.won} won · {fmtNum(t.generation.leadsGenerated)} leads · {fmtNum(t.generation.callsConnected)} calls
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="font-extrabold font-mono text-indigo-300">{t.score}</div>
+                            <div className={`text-[10px] font-bold ${i === 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {i === 0 ? `+${gap} ahead` : `${gap} to #${i}`}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="text-zinc-500 dark:text-zinc-400 text-xs uppercase">
@@ -525,7 +568,24 @@ export default function TelecallingDashboard() {
                                   <span className="text-emerald-400" title="No estimates at risk">✓</span>
                                 )}
                               </td>
-                              <td className="py-2 text-right font-extrabold text-indigo-300 font-mono">{t.score}</td>
+                              <td className="py-2 text-right">
+                                <div className="font-extrabold text-indigo-300 font-mono">{t.score}</div>
+                                {sortKey === "score" && leaderScore > 0 && (
+                                  <>
+                                    <div className="h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden min-w-[72px]" title={`${Math.round((t.score / leaderScore) * 100)}% of the leader's score`}>
+                                      <div
+                                        className={`h-full rounded-full ${i === 0 ? "bg-amber-400" : "bg-indigo-400"}`}
+                                        style={{ width: `${Math.max(4, Math.round((t.score / leaderScore) * 100))}%` }}
+                                      />
+                                    </div>
+                                    {i > 0 && (
+                                      <div className="text-[10px] text-zinc-500 dark:text-zinc-500 mt-0.5 whitespace-nowrap font-semibold">
+                                        {sorted[i - 1].score - t.score} to #{i}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </td>
                             </tr>
                             {open && (
                               <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
