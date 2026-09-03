@@ -237,28 +237,27 @@ async function fetchAgentRoster() {
   return [...new Set([...dynamicNames, ...envNames])];
 }
 
-function badgePrompt(agentRoster, commentHistory) {
+function badgePrompt(agentRoster) {
   const rosterLine = agentRoster.length
     ? `Sales Agent Roster (the company's callers): ${agentRoster.join(', ')}.`
     : `No sales agent roster is available right now.`;
-  const historyBlock = commentHistory
-    ? `\n\nFULL COMMENT HISTORY (up to 15, NEWEST first) — for context only, never to replace the latest comment:\n${commentHistory}`
-    : '';
   return `You are a strict manager reviewing the LATEST sales comment on a work estimate.
 Today's Date is: ${new Date().toISOString().split('T')[0]} (refer to this to check if the comment is older than 2 days).
 
-You are given the LATEST comment (the deal's current state) PLUS the full recent comment history for context. Classify the CURRENT state from the LATEST comment.
+You will receive exactly ONE comment, which is the most recent comment on the estimate.
+The current status of the estimate is determined SOLELY by this single latest comment.
+Do NOT consider any older comments — you do not have access to them.
 
 ${rosterLine}
 Sales agents are instructed to write their own name next to the comments they leave on an
 estimate. Identify which sales agent from the roster wrote THIS comment:
 - Match the name even with minor spelling/case variations (e.g. "deepak" → "Deepak").
 - Return the name EXACTLY as written in the roster.
-- If no roster name appears in the latest comment (or the roster is unavailable), output "Unassigned".
+- If no roster name appears in the comment (or the roster is unavailable), output "Unassigned".
 - Never invent a name that is not in the roster.
 
-Evaluate the latest comment and output the following keys:
-1. meaningful_update: true ONLY if the latest comment records a substantive customer outcome or a CUSTOMER-committed next step — price agreed, order/PO received or confirmed, decision given, the customer says they will confirm/place the order, or a sample/quote requested by the customer. If the latest comment merely defers ("call on Monday"), only records an agent action with no outcome, it is FALSE.
+Evaluate this single latest comment and output the following keys:
+1. meaningful_update: Mark as true if THIS comment contains a meaningful work update. Mark as false if it does not.
 2. Chip Mapping keys (true or false):
    - not_answering: true if THIS comment states the customer did not answer, is not replying, or call was not picked up. Else false.
    - under_discussion: true if THIS comment shows active discussions are ongoing (e.g. price negotiation, technical configuration review, requirement clarification, or visiting plans being finalized). Else false.
@@ -268,9 +267,10 @@ Evaluate the latest comment and output the following keys:
 4. sales_agent: The roster name of the agent who wrote THIS comment, or "Unassigned".
 
 Strict Decision Rules:
+- Base EVERY chip decision ONLY on the single latest comment provided. Do not infer anything from earlier history.
 - Mark meaningful_update as false if the latest comment is older than 2 days.
-- A follow-up date is meaningful ONLY when it is a customer-stated commitment (the customer themselves says when they will decide/confirm), never when the agent merely writes their own plan to call.
-- meaningful_update MUST be true when the latest comment records a substantive customer response or commitment that advances the deal — e.g. the customer says they will confirm, will discuss with management/partners and revert, will place the order, accepted the price, or gave a decision/pending decision ("He will confirm after discussing it with his management", "customer will revert tomorrow", "waiting for customer confirmation").
+- meaningful_update MUST be true if THIS comment clearly mentions a specific follow-up date, day, or time (e.g. "call after 15 August", "he said call after 15th", "will follow up on Monday", "call after 2 days"). A customer-stated or committed follow-up date is a meaningful next step.
+- meaningful_update MUST also be true if THIS comment records a substantive customer response or commitment that advances the deal — e.g. the customer says they will confirm, will discuss with management/partners and revert, will place the order, accepted the price, or gave a decision/pending decision ("He will confirm after discussing it with his management", "customer will revert tomorrow", "waiting for customer confirmation"). These are meaningful updates about deal status.
 - If the latest comment only records an action (calling, messaging, sending a quotation) without presenting any outcome, next step, or decision, meaningful_update must be false.
 - If meaningful_update is true, then not_answering must be false. If meaningful_update is false, not_answering may be true or false as the comment dictates. under_discussion can be true regardless. confirm should typically be true when meaningful_update is true.
 
@@ -297,20 +297,19 @@ Use the ENTIRE history to understand the conversation journey.
 
 Your ONLY job is to produce:
 1. summary: A concise summary of the estimate's journey — the main crux only, in at most 2 short sentences, maximum 250 characters total. Capture the current stage and where things stand (e.g., what was quoted, key customer response, latest follow-up date, whether it is confirmed/pending/negotiating). Do NOT list every touchpoint or comment; do NOT include critical judgments like "follow-up is missing", "what was not done", or "deadline passed". Keep it tight and to the point.
-2. intent_score: An integer between 1 and 10 measuring REAL effort the sales team invested that actually advanced the deal — NOT raw comment count:
+2. intent_score: An integer between 1 and 10 measuring the TOTAL amount of effort the sales team has invested in converting the enquiry across the entire timeline.
+   Consider these guidelines:
    - 1–2: Minimal effort; little or no follow-up.
    - 3–4: Basic engagement; initial communication only.
-   - 5–6: Moderate real effort; regular genuine follow-ups and quotation shared.
+   - 5–6: Moderate effort; regular follow-ups and quotation shared.
    - 7–8: High effort; multiple touchpoints, active negotiation, and strong customer engagement.
    - 9–10: Exceptional effort; persistent follow-ups, proactive problem-solving, decision-maker engagement, and every reasonable action taken.
-3. reasoning: One short sentence tying the intent_score to the history.
 
 Response Format:
 Return only a valid JSON object matching the JSON structure:
 {
   "summary": "",
-  "intent_score": 0,
-  "reasoning": ""
+  "intent_score": 0
 }
 Do not include explanations or markdown outside the JSON object.`;
 }
@@ -319,8 +318,8 @@ async function classifyEstimate(custName, total, latestComment, dateVal, comment
   let badgeResult;
   try {
     badgeResult = await omnirouteJson(
-      badgePrompt(agentRoster || [], commentHistory),
-      `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nFULL COMMENT HISTORY (NEWEST first):\n${commentHistory}\n\nLATEST COMMENT (classify this one):\n${latestComment}`,
+      badgePrompt(agentRoster || []),
+      `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
       { temperature: 0 },
     );
   } catch (err) {
@@ -330,7 +329,7 @@ async function classifyEstimate(custName, total, latestComment, dateVal, comment
   try {
     journeyResult = commentHistory
       ? await omnirouteJson(journeyPrompt(), `Comment History:\n${commentHistory}`, { temperature: 0 })
-      : { summary: 'No sales agent comment found.', intent_score: 2, reasoning: '' };
+      : { summary: 'No sales agent comment found.', intent_score: 2 };
   } catch (err) {
     throw new Error(`Omniroute journey summary failed: ${err.message}`);
   }
@@ -432,7 +431,7 @@ function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOver
     movingSlow: movingSlowOverride ?? (isOlderThan5Days ? 'Yes' : 'No'),
     underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
     confirm: finalConfirm(badgeResult),
-    intentScore: Number(journeyResult.intent_score) || 2,
+    intentScore: journeyResult.intent_score ?? 2,
     reasoning: badgeResult.reasoning || '',
     summary: journeyResult.summary || '',
     salesAgent: resolveSalesAgent(badgeResult, agentRoster, latestComment),
