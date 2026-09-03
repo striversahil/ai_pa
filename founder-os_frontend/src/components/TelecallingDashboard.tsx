@@ -277,31 +277,36 @@ export default function TelecallingDashboard() {
   const [busy, setBusy] = useState(false);
   const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated" | "estConv">("estConv");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
-
-  // Per-agent assigned-estimates dropdown (inline in the leaderboard). Toggle on
-  // an agent's row → fetch that agent's open assigned estimates via ?agent=.
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const agentDetail = useLiveQuery<AgentViewData | null>(
-    async () => {
-      if (!expandedId) return null;
-      const res = await fetch(`/api/automations/telecalling/data?agent=${encodeURIComponent(expandedId)}`);
-      if (!res.ok) throw new Error("load failed");
-      return res.json();
-    },
-    { events: ["automation", "telecalling"], deps: [expandedId] },
-  );
 
-  // Per-agent follow-up list (dropdown). Re-fetches whenever the selected agent
-  // changes; backend returns that agent's open assigned estimates.
-  const agentView = useLiveQuery<AgentViewData | null>(
+  // Prefetch EVERY active agent's data in parallel (one round of requests),
+  // refreshed on live events. Switching agents then reads from the local map —
+  // instant, and it never shows another agent's stale data while loading.
+  const activeAgentIds = (dash.data?.leaderboard ?? [])
+    .filter((r) => r.active)
+    .map((r) => r.id);
+  const agentIdsKey = activeAgentIds.join(",");
+  const agentViews = useLiveQuery<Record<string, AgentViewData | null>>(
     async () => {
-      if (!agentFilter) return null;
-      const res = await fetch(`/api/automations/telecalling/data?agent=${encodeURIComponent(agentFilter)}`);
-      if (!res.ok) throw new Error("load failed");
-      return res.json();
+      if (!agentIdsKey) return {};
+      const ids = agentIdsKey.split(",");
+      const entries = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const res = await fetch(`/api/automations/telecalling/data?agent=${encodeURIComponent(id)}`);
+            return [id, res.ok ? ((await res.json()) as AgentViewData) : null] as const;
+          } catch {
+            return [id, null] as const;
+          }
+        }),
+      );
+      return Object.fromEntries(entries);
     },
-    { events: ["automation", "telecalling"], deps: [agentFilter] },
+    { events: ["automation", "telecalling"], deps: [agentIdsKey] },
   );
+  const agentViewsMap = agentViews.data ?? {};
+  const getAgentView = (id: string | null): AgentViewData | null => (id ? agentViewsMap[id] ?? null : null);
+  const selectedAgentView = getAgentView(agentFilter);
 
   const refreshAll = useCallback(() => {
     dash.refresh();
@@ -526,7 +531,7 @@ export default function TelecallingDashboard() {
                     <tbody>
                       {sorted.map((t, i) => {
                         const open = expandedId === t.id;
-                        const view = agentDetail.data?.agent?.id === t.id ? agentDetail.data : null;
+                        const view = getAgentView(t.id);
                         const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
                         const podium = i < 3;
                         return (
@@ -606,8 +611,8 @@ export default function TelecallingDashboard() {
                                         </span>
                                       )}
                                     </div>
-                                    {agentDetail.loading && <p className="text-xs text-zinc-500">Loading assigned estimates…</p>}
-                                    {!agentDetail.loading && (view?.followUps?.length ?? 0) === 0 && (
+                                    {agentViews.loading && !view && <p className="text-xs text-zinc-500">Loading assigned estimates…</p>}
+                                    {!agentViews.loading && (view?.followUps?.length ?? 0) === 0 && (
                                       <p className="text-xs text-zinc-500">No assigned estimates for this agent.</p>
                                     )}
                                     <div className="grid gap-1.5 sm:grid-cols-2">
@@ -744,16 +749,16 @@ export default function TelecallingDashboard() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="font-semibold text-zinc-900 dark:text-white">
-                      {agentView.data?.agent?.name ?? "…"} — follow-ups ({agentView.data?.agent?.followUpCount ?? 0})
+                      {selectedAgentView?.agent?.name ?? "…"} — follow-ups ({selectedAgentView?.agent?.followUpCount ?? 0})
                     </h4>
                     <button onClick={() => setAgentFilter(null)} className="text-xs text-indigo-400 hover:underline">Back to all</button>
                   </div>
-                  {agentView.loading && <p className="text-sm text-zinc-500">Loading…</p>}
-                  {!agentView.loading && (agentView.data?.followUps?.length ?? 0) === 0 && (
+                  {agentViews.loading && !selectedAgentView && <p className="text-sm text-zinc-500">Loading…</p>}
+                  {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) === 0 && (
                     <p className="text-sm text-zinc-500">No follow-up estimates assigned to this agent.</p>
                   )}
                   <div className="space-y-2">
-                    {agentView.data?.followUps?.map((f) => (
+                    {selectedAgentView?.followUps?.map((f) => (
                       <div key={f.estimateId} className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 space-y-1">
                         <div className="flex items-start justify-between gap-3">
                           <div className="font-semibold text-sm text-zinc-900 dark:text-white truncate min-w-0">{f.customerName ?? "—"}</div>
@@ -856,7 +861,7 @@ export default function TelecallingDashboard() {
                       </div>
                       {(() => {
                         const open = expandedId === t.id;
-                        const view = agentDetail.data?.agent?.id === t.id ? agentDetail.data : null;
+                        const view = getAgentView(t.id);
                         return (
                           <div className="pt-1 border-t border-zinc-200/80 dark:border-zinc-800/80">
                             <button
@@ -868,8 +873,8 @@ export default function TelecallingDashboard() {
                             </button>
                             {open && (
                               <div className="mt-2 space-y-1.5">
-                                {agentDetail.loading && <p className="text-[11px] text-zinc-500">Loading…</p>}
-                                {!agentDetail.loading && (view?.followUps?.length ?? 0) === 0 && (
+                                {agentViews.loading && !view && <p className="text-[11px] text-zinc-500">Loading…</p>}
+                                {!agentViews.loading && (view?.followUps?.length ?? 0) === 0 && (
                                   <p className="text-[11px] text-zinc-500">No assigned estimates.</p>
                                 )}
                                 {(view?.followUps ?? []).map((f) => (
