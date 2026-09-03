@@ -402,8 +402,8 @@ export default function TelecallingDashboard() {
       </div>
 
       <div className="flex flex-col md:flex-row gap-6">
-        {/* Sidebar */}
-        <aside className="md:w-56 shrink-0">
+        {/* Tabs (full-width horizontal row) */}
+        <aside className="w-full shrink-0">
           <nav className="flex flex-row flex-wrap gap-2">
             {TABS.filter((t) => t.key !== "controller" || canManageRoster).map((t) => {
               const active = view === t.key;
