@@ -40,6 +40,28 @@ function istDate(d: Date = new Date()): string {
 export const ZOMBIE_DAYS = 2;
 const RISK_LIST_CAP = 25;
 
+// ── Conversion-maximising assignment tuning ──────────────────────────────────
+// Stability-first policy: healthy estimates stay put; only unassigned + at-risk
+// (red/zombie) estimates are (re)dealt. New/reassigned estimates are given to
+// proven converters balanced by current load, high-value estimates first.
+const ASSIGN_TUNING = {
+  conversionWeight: 0.6, // how much an agent's historical win rate drives routing
+  loadWeight: 0.4,       // how strongly current load balances the deal
+  baseWin: 0.2,          // floor conversion rate for new/unknown agents
+} as const;
+
+/** Per-risk close-probability factor used for estimated-conversion projection. */
+export function toCloseMultiplier(risk: EstimateRisk): number {
+  switch (risk) {
+    case 'ok': return 1.0;
+    case 'pending': return 0.7;
+    case 'red': return 0.35;
+    case 'zombie': return 0.15;
+    default: return 0.7;
+  }
+}
+
+
 export type EstimateRisk = 'ok' | 'pending' | 'red' | 'zombie';
 
 export interface RiskItem {
@@ -53,6 +75,29 @@ export interface RiskItem {
   lastCommentDate: string | null;
   staleHours: number | null;
   reasoning: string | null;
+  /** Why this estimate is about to be / was re-poached (surfaced to the agent). */
+  snatchReason: string | null;
+  /** Hours remaining until the EOD (21:00 IST) snatch sweep. */
+  snatchInHours: number | null;
+}
+
+/** Hours until the next EOD snatch sweep (21:00 IST). Null if already past. */
+export function hoursUntilEod(now: Date = new Date()): number | null {
+  try {
+    const istParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).formatToParts(now);
+    const get = (t: string) => Number(istParts.find((p) => p.type === t)?.value ?? 0);
+    const hour = get('hour') % 24;
+    const minute = get('minute');
+    const second = get('second');
+    const secsSinceMidnight = hour * 3600 + minute * 60 + second;
+    const eodSecs = 21 * 3600;
+    const diff = eodSecs - secsSinceMidnight;
+    return diff <= 0 ? null : Math.round((diff / 3600) * 10) / 10;
+  } catch {
+    return null;
+  }
 }
 
 function parseCommentDateMs(raw: string | null | undefined): number | null {
@@ -94,6 +139,25 @@ function classifyRisk(
   if (staleHours === null || staleHours > ZOMBIE_DAYS * 24) return { risk: 'zombie', staleHours };
   if (!cls) return { risk: 'pending', staleHours };
   return { risk: cls.meaningfulUpdate ? 'ok' : 'red', staleHours };
+}
+
+/**
+ * Why an estimate is being re-poached at EOD. Mirrors the AI verdict so the
+ * losing agent sees exactly what lost them the deal. Falls back to the
+ * classification reasoning when available (e.g. "customer not answering").
+ */
+function buildSnatchReason(
+  est: { estimateId: string; classification?: { meaningfulUpdate?: boolean; reasoning?: string | null } | null },
+  risk: EstimateRisk,
+): string {
+  if (risk === 'zombie') return 'No reply in over 2 days — reassigned to a better converter';
+  const reasoning = est.classification?.reasoning;
+  if (reasoning && reasoning.trim() && reasoning.trim() !== 'No sales agent comment found.') {
+    const verdict = est.classification?.meaningfulUpdate ? 'meaningful update' : 'unsatisfactory remark';
+    const clipped = reasoning.trim().slice(0, 140);
+    return `EOD snatch (${verdict}): ${clipped}`;
+  }
+  return 'Unsatisfactory remark at end of day — reassigned to a better converter';
 }
 
 // ── Risk cache (D1 row-read budget protection) ───────────────────────────────
@@ -141,6 +205,8 @@ async function computeRiskCache(): Promise<RiskCache> {
       lastCommentDate,
       staleHours,
       reasoning: cls?.reasoning ?? null,
+      snatchReason: buildSnatchReason(e, risk),
+      snatchInHours: hoursUntilEod(new Date(nowMs)),
     };
   });
   return { items, computedAt: new Date(nowMs).toISOString() };
@@ -313,10 +379,162 @@ export async function rotateEstimatesRoundRobin(): Promise<{ assigned: number }>
   return { assigned };
 }
 
+/**
+ * Stability-first, conversion-maximising assignment.
+ *
+ * Keeps the open pipeline on the agent who has momentum with it:
+ *   - healthy estimates (risk ok/pending) stay exactly where they are;
+ *   - unassigned `sent` estimates are dealt to the best-fit agent;
+ *   - at-risk (red/zombie) estimates are re-poached to a better converter.
+ *
+ * Candidates are dealt high-value-first, favouring proven converters while a
+ * load penalty keeps anyone from being buried. This maximises expected closed
+ * value without resetting live customer relationships every morning.
+ */
+export async function assignEstimatesForMaxConversion(): Promise<{ assigned: number; reassigned: number }> {
+  const telecallers = await getActiveTelecallers();
+  if (telecallers.length === 0) return { assigned: 0, reassigned: 0 };
+
+  const sent = await prisma.estimate.findMany({
+    where: { status: 'sent' },
+    include: { classification: true },
+  });
+  if (sent.length === 0) return { assigned: 0, reassigned: 0 };
+
+  // Live risk for every open estimate (served from the 5-min risk cache).
+  let riskItems: CachedRiskItem[] = [];
+  try { riskItems = await getRiskItems(); } catch (e: any) {
+    logger.warn({ err: e?.message }, 'assign: risk cache unavailable — treating all as pending');
+  }
+  const riskByEstimate = new Map<string, EstimateRisk>();
+  for (const r of riskItems) riskByEstimate.set(r.estimateId, r.risk);
+
+  // Historical win stats — conversion rate per agent.
+  const allOwned = await prisma.estimate.findMany({
+    where: { assignedTelecallerId: { not: null } },
+    select: { assignedTelecallerId: true, status: true },
+  });
+  const assignedTot = new Map<string, number>();
+  const wonTot = new Map<string, number>();
+  for (const e of allOwned) {
+    const id = String(e.assignedTelecallerId);
+    assignedTot.set(id, (assignedTot.get(id) ?? 0) + 1);
+    if (e.status === 'accepted' || e.status === 'confirmed') wonTot.set(id, (wonTot.get(id) ?? 0) + 1);
+  }
+  const conversionRate = (id: string): number => {
+    const a = assignedTot.get(id) ?? 0;
+    const w = wonTot.get(id) ?? 0;
+    return a + w > 0 ? w / (a + w) : 0;
+  };
+
+  // Current load = healthy open estimates the agent already owns (not the ones
+  // about to be re-poached). Count-normalised so the penalty is comparable.
+  const loadCount = new Map<string, number>();
+  for (const est of sent) {
+    if (!est.assignedTelecallerId) continue;
+    const risk = riskByEstimate.get(est.estimateId) ?? 'pending';
+    if (risk === 'ok' || risk === 'pending') {
+      const id = String(est.assignedTelecallerId);
+      loadCount.set(id, (loadCount.get(id) ?? 0) + 1);
+    }
+  }
+  const maxLoad = Math.max(1, ...loadCount.values());
+
+  // Candidates: unassigned OR at-risk — highest value first.
+  const candidates = sent
+    .filter((e) => {
+      if (!e.assignedTelecallerId) return true;
+      const risk = riskByEstimate.get(e.estimateId);
+      return risk === 'red' || risk === 'zombie';
+    })
+    .sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0));
+
+  let assigned = 0;
+  let reassigned = 0;
+  const { conversionWeight, loadWeight } = ASSIGN_TUNING;
+  for (const est of candidates) {
+    const wasAssigned = !!est.assignedTelecallerId;
+    const risk = riskByEstimate.get(est.estimateId) ?? 'pending';
+    // Why this estimate is being moved — surfaced to the losing agent so the
+    // snatch mechanic is instructive ("unsatisfactory remark" vs "no reply").
+    const reason = buildSnatchReason(est, risk);
+    let bestId = '';
+    let bestScore = -Infinity;
+    let bestLoad = Infinity;
+    for (const tc of telecallers) {
+      const id = tc.id;
+      const conv = conversionRate(id);
+      const load = loadCount.get(id) ?? 0;
+      const loadFactor = maxLoad > 0 ? load / maxLoad : 0;
+      const score = conversionWeight * conv - loadWeight * loadFactor;
+      if (score > bestScore || (score === bestScore && load < bestLoad)) {
+        bestScore = score;
+        bestId = id;
+        bestLoad = load;
+      }
+    }
+    if (!bestId) continue;
+    // If the current holder is being re-poached, the NEW row keeps the same
+    // snatchReason (why the estimate left the previous holder). Fresh deals get
+    // a null reason.
+    const movedFrom = est.assignedTelecallerId;
+    await prisma.estimate.update({
+      where: { estimateId: est.estimateId },
+      data: { assignedTelecallerId: bestId },
+    });
+    await recordAssignment(est.estimateId, bestId, wasAssigned ? reason : null);
+    loadCount.set(bestId, (loadCount.get(bestId) ?? 0) + 1);
+    if (wasAssigned) reassigned += 1;
+    else assigned += 1;
+    void movedFrom;
+  }
+
+  logger.info(
+    { assigned, reassigned, candidates: candidates.length, telecallers: telecallers.length },
+    'Stability-first conversion-maximising assignment complete',
+  );
+  return { assigned, reassigned };
+}
+
+/** Close-credit split for a snatch-then-close: most credit goes to the agent
+ * who originated/chased the relationship, the rest to whoever closes it. */
+const CLOSE_CREDIT = { origin: 0.6, closer:  0.4 } as const;
+
+/**
+ * Record an assignment into the EstimateAssignment chain (single source of truth
+ * for fair close-credit). Resolves the previous open row first (if any), then
+ * inserts the new holder linked via reassignedFromId. Enables co-crediting the
+ * originator of a snatch-then-close instead of crediting only thee last holder.
+ * `snatchReason` (why the previous holder lost it at EOD) is persisted so the
+ * losing agent sees exactly what cost them the deal.
+ */
+async function recordAssignment(estimateId: string, telecallerId: string, snatchReason: string | null = null): Promise<void> {
+  try {
+    const current = await prisma.estimateAssignment.findFirst({
+      where: { estimateId, status: 'assigned' },
+      orderBy: { assignedAt: 'desc' },
+    });
+    let reassignedFromId: string | null = null;
+    if (current) {
+      await prisma.estimateAssignment.update({ where: { id: current.id }, data: { status: 'resolved' } });
+      reassignedFromId = current.id;
+    }
+    await prisma.estimateAssignment.create({
+      data: {
+        estimateId, telecallerId, assignedAt: new Date(), day: istDate(), reassignedFromId, status: 'assigned',
+        snatchReason,
+      },
+    });
+  } catch (e: any) {
+    logger.warn({ err: e?.message, estimateId }, 'recordAssignment failed — continuing without history');
+  }
+}
+
+/**
 /** Daily engine: refresh the roster from NeoDove, then deal the sent pool. */
 export async function runLeadConversion(): Promise<{ assigned: number }> {
   await syncTelecallersFromNeodove();
-  return rotateEstimatesRoundRobin();
+  return assignEstimatesForMaxConversion();
 }
 
 export interface TelecallerDayMetrics {
@@ -324,7 +542,19 @@ export interface TelecallerDayMetrics {
   name: string;
   active: boolean;
   neodoveUserName: string | null;
-  conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number };
+  conversion: {
+    assigned: number;
+    won: number;
+    conversionRate: number;
+    pipelineValue: number;
+    // Forward-looking: expected closed value given the agent's win rate and the
+    // live risk of each open estimate. count = expected number of closes.
+    estimatedConversion: { count: number; value: number };
+    // Co-credited closes: a snatch-then-close splits credit between the
+    // originator (0.6) and the closer (0.4), so good agents aren't
+    // demotivated when a deal they worked gets re-poached and credited elsewhere.
+    credit: { won: number; value: number };
+  };
   generation: {
     callsAttempted: number;
     callsConnected: number;
@@ -415,6 +645,52 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     }
   }
 
+// Co-credited closes (fair outcome reward): a snatch-then-close splits
+    // credit between the originator and the closer, so a proven agent isn't
+    // robbed of a deal they worked. Walks each won estimate's assignment chain
+    // (reassignedFromId → root) — origin/first holder gets 0.6, current
+    // holder/closer gets 0.4. Without history (pre-deploy) it credits the
+    // whole close to the current holder.
+
+    const wonIds = owned.filter((e) => e.status === 'accepted' || e.status === 'confirmed').map((e) => e.estimateId);
+    const creditByAgent = new Map<string, { won: number; value: number }>();
+    let chains = new Map<string, { telecallerId: string; reassignedFromId: string | null }[]>();
+    if (wonIds.length > 0) {
+      try {
+        const rows = await prisma.estimateAssignment.findMany({
+          where: { estimateId: { in: wonIds } },
+          orderBy: { assignedAt: 'asc' },
+          select: { estimateId: true, telecallerId: true, reassignedFromId: true },
+        });
+        for (const r of rows) {
+          const arr = chains.get(r.estimateId) ?? [];
+          arr.push(r);
+          chains.set(r.estimateId, arr);
+        }
+      } catch (e: any) {
+        logger.warn({ err: e?.message }, 'close-credit chain read failed — crediting current holders only');
+      }
+    }
+    for (const e of owned) {
+      if (!(e.status === 'accepted' || e.status === 'confirmed')) continue;
+      const total = Number(e.total ?? 0) || 0;
+      const closer = String(e.assignedTelecallerId);
+      const chain = chains.get(e.estimateId) ?? [];
+      const origin = chain?.length ? chain[0].telecallerId : closer;
+      const shares = new Map<string, number>();
+      if (origin === closer) { shares.set(origin, (shares.get(origin) ?? 0) + 1); }
+      else {
+        shares.set(origin, (shares.get(origin) ?? 0) + CLOSE_CREDIT.origin);
+        shares.set(closer, (shares.get(closer) ??  0) + CLOSE_CREDIT.closer);
+      }
+      for (const [aid, share] of shares) {
+        const cur = creditByAgent.get(aid) ?? { won: 0, value: 0 };
+        cur.won += share;
+        cur.value += total * share;
+        creditByAgent.set(aid, cur);
+      }
+    }
+
   const leaderboard: TelecallerDayMetrics[] = [];
   const kpiAcc = {
     assigned: 0,
@@ -478,12 +754,28 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       kpiAcc.talkTimeSec += talkTimeSec;
     }
 
+    // Estimated conversion: expected closed value from this agent's open
+    // pipeline, weighted by their win rate and each estimate's live risk.
+    // Floored win rate so a brand-new agent isn't projected at 0.
+    const agentWinRate = assignedToday + won > 0 ? won / (assignedToday + won) : 0;
+    const baseWin = Math.max(agentWinRate, ASSIGN_TUNING.baseWin);
+    const cap = (x: number) => Math.max(0.05, Math.min(0.95, x));
+    let estCount = 0;
+    let estValue = 0;
+    for (const r of riskItems) {
+      if (r.telecallerId !== tc.id) continue;
+      const prob = cap(baseWin * toCloseMultiplier(r.risk));
+      estCount += prob;
+      estValue += r.total * prob;
+    }
+    const estimatedConversion = { count: Math.round(estCount * 10) / 10, value: Math.round(estValue) };
+
     leaderboard.push({
       id: tc.id,
       name: tc.name,
       active: tc.active,
       neodoveUserName: tc.neodoveUserName,
-      conversion: { assigned: assignedToday, won, conversionRate, pipelineValue },
+      conversion: { assigned: assignedToday, won, conversionRate, pipelineValue, estimatedConversion, credit: creditByAgent.get(tc.id) ?? { won: 0, value:  0 } },
       generation: {
         callsAttempted,
         callsConnected,
@@ -508,7 +800,13 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     });
   }
 
-  leaderboard.sort((a, b) => b.score - a.score);
+  // Rank by projected closed value first — the metric that reflects which
+  // agents are actually going to convert pipeline, not just raw activity.
+  leaderboard.sort((a, b) => {
+  const rankA = a.conversion.estimatedConversion.value + a.conversion.credit.value;
+  const rankB = b.conversion.estimatedConversion.value + b.conversion.credit.value;
+  return rankB - rankA;
+});
 
   // Self-contained agent list so the dashboard can build the per-agent dropdown
   // without a second round-trip.
@@ -549,6 +847,8 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       const lastCommentDate = followLastComments.get(e.estimateId) ?? null;
       const ts = parseCommentDateMs(lastCommentDate);
       const staleHours = ts !== null ? (nowMs - ts) / 3600000 : null;
+      const riskItem = riskItems.find((r) => r.estimateId === e.estimateId);
+      const risk = riskItem?.risk ?? 'pending';
       return {
         estimateId: e.estimateId,
         estimateNumber: e.estimateNumber,
@@ -562,6 +862,9 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
         analysisSummary: e.classification?.summary ?? null,
         lastCommentDate,
         staleHours,
+        risk,
+        snatchReason: riskItem?.snatchReason ?? (risk === 'red' || risk === 'zombie' ? buildSnatchReason(e, risk) : null),
+        snatchInHours: riskItem?.snatchInHours ?? hoursUntilEod(new Date(nowMs)),
       };
     });
     const lb = leaderboard.find((l) => l.id === tc.id);

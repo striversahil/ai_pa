@@ -9,7 +9,7 @@ interface LeaderRow {
   name: string;
   active: boolean;
   neodoveUserName: string | null;
-  conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number };
+  conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number; estimatedConversion: { count: number; value: number }; credit: { won: number; value: number } };
   generation: {
     callsAttempted: number;
     callsConnected: number;
@@ -43,6 +43,8 @@ interface RiskRow {
   lastCommentDate: string | null;
   staleHours: number | null;
   reasoning: string | null;
+  snatchReason?: string | null;
+  snatchInHours?: number | null;
 }
 
 interface DashData {
@@ -72,6 +74,9 @@ interface FollowUp {
   analysisSummary?: string | null;
   lastCommentDate?: string | null;
   staleHours?: number | null;
+  risk?: "ok" | "pending" | "red" | "zombie";
+  snatchReason?: string | null;
+  snatchInHours?: number | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -121,6 +126,34 @@ function StaleChip({ staleHours, compact = false }: { staleHours: number | null 
   return (
     <span title="Commented within the last 24 hours" className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>
       ●{compact ? "" : " Fresh"}
+    </span>
+  );
+}
+
+/** EOD snatch countdown chip — the "get a meaningful update before 9 PM" signal. */
+function SnatchChip({ risk, snatchInHours, compact = false }: { risk?: string | null; snatchInHours?: number | null; compact?: boolean }) {
+  const base = `inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold ${compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]"}`;
+  if (risk === "zombie")
+    return (
+      <span title="Silent for over 2 days — will be snatched at tonight's EOD sweep" className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+        ☠{compact ? "" : " Zombie"}
+      </span>
+    );
+  if (risk === "red")
+    return (
+      <span title={`Unsatisfactory remark — snatched at EOD${snatchInHours != null ? ` in ~${snatchInHours}h` : ""}`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+        ⚠{compact ? "" : ` Snatch in ${snatchInHours != null ? `~${snatchInHours}h` : "EOD"}`}
+      </span>
+    );
+  if (risk === "pending")
+    return (
+      <span title="Awaiting the AI verdict" className={`${base} bg-amber-500/10 text-amber-500 dark:text-amber-400 border-amber-500/30`}>
+        ⏳{compact ? "" : " Analyzing"}
+      </span>
+    );
+  return (
+    <span title="Meaningful update logged — safe from tonight's sweep" className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>
+      🛡{compact ? "" : " Safe"}
     </span>
   );
 }
@@ -242,7 +275,7 @@ export default function TelecallingDashboard() {
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
+  const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated" | "estConv">("estConv");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
 
   // Per-agent assigned-estimates dropdown (inline in the leaderboard). Toggle on
@@ -333,10 +366,12 @@ export default function TelecallingDashboard() {
   const kpi = dash.data?.kpi;
   const board = [...(dash.data?.leaderboard ?? [])];
   const activeBoard = board.filter((r) => r.active);
+  const teamEstConv = activeBoard.reduce((s, r) => s + (r.conversion.estimatedConversion?.value ?? 0), 0);
   const sorted = [...activeBoard].sort((a, b) => {
     if (sortKey === "score") return b.score - a.score;
     if (sortKey === "won") return b.conversion.won - a.conversion.won;
     if (sortKey === "callsConnected") return b.generation.callsConnected - a.generation.callsConnected;
+    if (sortKey === "estConv") return b.conversion.estimatedConversion.value - a.conversion.estimatedConversion.value;
     return b.generation.leadsGenerated - a.generation.leadsGenerated;
   });
 
@@ -399,48 +434,17 @@ export default function TelecallingDashboard() {
                   {[
                     { label: "Est. Assigned", value: fmtNum(kpi.assigned), accent: "text-zinc-900 dark:text-white" },
                     { label: "Est. Won", value: fmtNum(kpi.won), accent: "text-emerald-400" },
-                    { label: "Conv. %", value: `${kpi.conversionRate}%`, accent: "text-indigo-300" },
+                    { label: "Est. Conv ₹", value: fmtNum(teamEstConv), accent: "text-indigo-300", title: "Projected closed value across the open pipeline (agent win rate × live estimate risk)" },
                     { label: "Calls Connected", value: fmtNum(kpi.callsConnected), accent: "text-emerald-300" },
                     { label: "Leads Generated", value: fmtNum(kpi.leadsGenerated), accent: "text-amber-300" },
                     { label: "Talk Time", value: fmtTalk(kpi.talkTimeSec), accent: "text-indigo-300" },
                   ].map((k) => (
-                    <div key={k.label} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+                    <div key={k.label} title={k.title} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
                       <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">{k.label}</div>
                       <div className={`text-2xl font-extrabold mt-1 ${k.accent}`}>{k.value}</div>
                     </div>
                   ))}
                 </div>
-              )}
-
-              {/* Founder pre-warning: open estimates about to be snatched at EOD */}
-              {dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
-                <section className="bg-rose-500/5 border border-rose-500/30 rounded-xl p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <h3 className="text-lg font-bold text-rose-500 dark:text-rose-400">🔥 At Risk — about to be snatched at EOD</h3>
-                    <span className="text-xs text-zinc-600 dark:text-zinc-400">
-                      <span className="font-mono font-bold text-rose-400">₹{fmtNum(dash.data.risk.valueAtRisk)}</span> at risk ·{" "}
-                      <span className="font-bold text-rose-400">{dash.data.risk.counts.red} red</span> ·{" "}
-                      <span className="font-bold text-rose-400">{dash.data.risk.counts.zombie} zombie</span>
-                    </span>
-                  </div>
-                  <div className="grid gap-1.5 md:grid-cols-2">
-                    {dash.data.risk.atRisk.map((r) => (
-                      <div key={r.estimateId} className="flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-white dark:bg-zinc-950 px-2.5 py-1.5" title={r.reasoning ?? undefined}>
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{r.customerName ?? "—"}</div>
-                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{r.estimateNumber ?? r.estimateId} · {r.telecallerName ?? "—"}</div>
-                        </div>
-                        <div className="text-right shrink-0 space-y-0.5">
-                          <div className="text-[11px] font-mono text-emerald-400">₹{fmtNum(Number(r.total ?? 0))}</div>
-                          <StaleChip compact staleHours={r.staleHours} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
-                    Red = latest AI verdict found no meaningful update (end-of-day reassignment candidate). Zombie = no comment for over 2 days.
-                  </p>
-                </section>
               )}
 
               {/* Leaderboard */}
@@ -452,6 +456,7 @@ export default function TelecallingDashboard() {
                     onChange={(e) => setSortKey(e.target.value as any)}
                     className="px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none"
                   >
+                    <option value="estConv">Rank by Est. Conversion ₹</option>
                     <option value="score">Rank by Composite Score</option>
                     <option value="won">Rank by Estimates Won</option>
                     <option value="callsConnected">Rank by Calls Connected</option>
@@ -467,6 +472,7 @@ export default function TelecallingDashboard() {
                         <th className="text-right py-2 pr-4">Est. Assigned</th>
                         <th className="text-right py-2 pr-4">Est. Won</th>
                         <th className="text-right py-2 pr-4">Conv %</th>
+                        <th className="text-right py-2 pr-4">Est. Conv ₹</th>
                         <th className="text-right py-2 pr-4">Calls</th>
                         <th className="text-right py-2 pr-4">Leads</th>
                         <th className="text-right py-2 pr-4">Talk</th>
@@ -478,10 +484,14 @@ export default function TelecallingDashboard() {
                       {sorted.map((t, i) => {
                         const open = expandedId === t.id;
                         const view = agentDetail.data?.agent?.id === t.id ? agentDetail.data : null;
+                        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+                        const podium = i < 3;
                         return (
                           <Fragment key={t.id}>
-                            <tr className={`border-b border-zinc-100 dark:border-zinc-800/60 ${open ? "bg-indigo-50/40 dark:bg-indigo-500/5" : ""}`}>
-                              <td className="py-2 pr-4 text-zinc-500 dark:text-zinc-600 font-bold">{i + 1}</td>
+                            <tr className={`border-b border-zinc-100 dark:border-zinc-800/60 ${open ? "bg-indigo-50/40 dark:bg-indigo-500/5" : podium ? (i === 0 ? "bg-amber-500/10" : "bg-zinc-500/5") : ""}`}>
+                              <td className={`py-2 pr-4 font-bold text-lg ${podium ? "" : "text-zinc-500 dark:text-zinc-600"}`} title={podium ? `Rank #${i + 1} — projected + co-credited close value` : `Rank #${i + 1}`}>
+                                {medal ?? i + 1}
+                              </td>
                               <td className="py-2 pr-4">
                                 <button
                                   onClick={() => setExpandedId(open ? null : t.id)}
@@ -493,8 +503,16 @@ export default function TelecallingDashboard() {
                                 </button>
                               </td>
                               <td className="py-2 pr-4 text-right font-mono">{t.conversion.assigned}</td>
-                              <td className="py-2 pr-4 text-right text-emerald-400 font-mono">{t.conversion.won}</td>
+                              <td className="py-2 pr-4 text-right text-emerald-400 font-mono whitespace-nowrap">
+                                {t.conversion.won}
+                                {(t.conversion.credit?.won ?? 0) > 0 && (
+                                  <span className="ml-1 text-[10px] font-bold text-amber-500 dark:text-amber-400" title={`Co-credited closes (originator 0.6 + closer 0.4): ₹${fmtNum(t.conversion.credit?.value ?? 0)} co-credited value`}>
+                                    +🏅{t.conversion.credit?.won?.toFixed(1)}
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-2 pr-4 text-right font-mono">{t.conversion.conversionRate}%</td>
+                              <td className="py-2 pr-4 text-right font-mono text-indigo-200">{fmtNum(t.conversion.estimatedConversion?.value ?? 0)}</td>
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.callsConnected)}</td>
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.leadsGenerated)}</td>
                               <td className="py-2 pr-4 text-right font-mono text-indigo-300">{fmtTalk(t.generation.talkTimeSec)}</td>
@@ -511,7 +529,7 @@ export default function TelecallingDashboard() {
                             </tr>
                             {open && (
                               <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
-                                <td colSpan={10} className="py-2 pr-4">
+                                <td colSpan={11} className="py-2 pr-4">
                                   <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3">
                                     <div className="flex items-center justify-between mb-2">
                                       <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
@@ -523,7 +541,8 @@ export default function TelecallingDashboard() {
                                       {view && (
                                         <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
                                           {view.agent.conversion?.assigned ?? 0} assigned · {view.agent.conversion?.won ?? 0} won ·{" "}
-                                          {view.agent.conversion?.conversionRate ?? 0}% conv
+                                          {view.agent.conversion?.conversionRate ?? 0}% conv · Est. Conv ₹{" "}
+                                          {fmtNum(view.agent.conversion?.estimatedConversion?.value ?? 0)}
                                         </span>
                                       )}
                                     </div>
@@ -559,6 +578,47 @@ export default function TelecallingDashboard() {
                   </table>
                 </div>
               </section>
+
+              {/* Founder pre-warning: open estimates about to be snatched at EOD */}
+              {dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
+                <section className="bg-rose-500/5 border border-rose-500/30 rounded-xl p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h3 className="text-lg font-bold text-rose-500 dark:text-rose-400">🔥 At Risk — about to be snatched at EOD (9 PM IST)</h3>
+                    <span className="text-xs text-zinc-600 dark:text-zinc-400">
+                      <span className="font-mono font-bold text-rose-400">₹{fmtNum(dash.data.risk.valueAtRisk)}</span> at risk ·{" "}
+                      <span className="font-bold text-rose-400">{dash.data.risk.counts.red} red</span> ·{" "}
+                      <span className="font-bold text-rose-400">{dash.data.risk.counts.zombie} zombie</span>
+                    </span>
+                  </div>
+                  <div className="grid gap-1.5 md:grid-cols-2">
+                    {dash.data.risk.atRisk.map((r) => (
+                      <div key={r.estimateId} className="rounded-md border border-rose-500/20 bg-white dark:bg-zinc-950 px-2.5 py-1.5" title={r.snatchReason ?? r.reasoning ?? undefined}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{r.customerName ?? "—"}</div>
+                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{r.estimateNumber ?? r.estimateId} · {r.telecallerName ?? "—"}</div>
+                          </div>
+                          <div className="text-right shrink-0 space-y-0.5">
+                            <div className="text-[11px] font-mono text-emerald-400">₹{fmtNum(Number(r.total ?? 0))}</div>
+                            <div className="flex justify-end gap-1">
+                              <StaleChip compact staleHours={r.staleHours} />
+                              <SnatchChip compact risk={r.risk} snatchInHours={r.snatchInHours} />
+                            </div>
+                          </div>
+                        </div>
+                        {(r.snatchReason || r.reasoning) && (
+                          <p className="text-[11px] text-rose-600/80 dark:text-rose-400/70 mt-1 leading-snug line-clamp-2">
+                            {r.snatchReason ?? r.reasoning}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
+                    Red = latest AI verdict found no meaningful update · Zombie = no comment for over 2 days. Both are re-poached to a higher-converting agent at tonight's sweep.
+                  </p>
+                </section>
+              )}
 
               {/* Roster management has moved to the MIS-only Controller tab */}
             </div>
@@ -640,6 +700,7 @@ export default function TelecallingDashboard() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <SatChip value={f.satisfactory} />
                             <StaleChip staleHours={f.staleHours} />
+                            <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} />
                           </div>
                         </div>
                         <div className="flex items-center justify-between gap-3">
@@ -649,6 +710,11 @@ export default function TelecallingDashboard() {
                             <span className="text-xs font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</span>
                           </div>
                         </div>
+                        {(f.risk === "red" || f.risk === "zombie") && f.snatchReason && (
+                          <p className="text-[11px] text-rose-600/80 dark:text-rose-400/70 leading-snug line-clamp-2" title={f.snatchReason}>
+                            {f.snatchReason}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -753,8 +819,11 @@ export default function TelecallingDashboard() {
                                       <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
                                     </div>
                                     <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
-                                      <SatChip value={f.satisfactory} compact />
-                                      <StaleChip staleHours={f.staleHours} compact />
+                                      <div className="flex items-center gap-1">
+                                        <SatChip value={f.satisfactory} compact />
+                                        <StaleChip staleHours={f.staleHours} compact />
+                                      </div>
+                                      <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} compact />
                                       <div className="text-[10px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
                                       <div className="text-[10px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
                                     </div>

@@ -227,6 +227,10 @@ model EstimateAssignment {
   day               String // YYYY-MM-DD the assignment was made
   reassignedFromId  String? // previous EstimateAssignment id (reassignment chain)
   status            String     @default("assigned") // assigned | reassigned | resolved
+  // Why the previous holder lost this estimate at EOD (e.g. "unsatisfactory
+  // remark: customer not answering"). Shown to the losing agent so the
+  // snatch mechanic teaches what loses a deal.
+  snatchReason      String?
   estimate          Estimate   @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
   telecaller        Telecaller @relation(fields: [telecallerId], references: [id], onDelete: Cascade)
 
