@@ -401,7 +401,7 @@ export default function TelecallingDashboard() {
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-6">
+      <div className="flex flex-col gap-6">
         {/* Tabs (full-width horizontal row) */}
         <aside className="w-full shrink-0">
           <nav className="flex flex-row flex-wrap gap-2">
