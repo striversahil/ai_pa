@@ -85,9 +85,9 @@ estimate, so trouble is visible BEFORE the reassignment sweep:
 Surfaces: the "🔥 At Risk" panel (sorted by value with `valueAtRisk`, per-item
 `snatchReason` + `snatchInHours` countdown), a Risk column on the leaderboard
 (per-agent red/zombie counts), and `StaleChip`/`SnatchChip` chips on every
-follow-up row in the agent and conversion views. The anti-gaming prompt rules
-require a concrete next step (follow-up date/day/time) before a forward-looking
-customer promise counts as a meaningful update.
+follow-up row in the agent and conversion views. A forward-looking customer
+promise counts as a meaningful update only when it carries a concrete next step
+(follow-up date/day/time).
 
 ## Roster
 Telecallers are managed via `GET/POST/PUT/DELETE /api/telecallers`. Link each
