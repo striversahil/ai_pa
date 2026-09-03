@@ -54,7 +54,7 @@ export default function ZohoEstimatesHeader({
   onClosePrompt,
 }: Props) {
   return (
-    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-white/10 pb-5">
+    <div className="relative z-40 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-white/10 pb-5">
       <div className="flex items-start gap-3">
         <div className="hidden sm:flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 text-indigo-400 shadow-lg shadow-indigo-500/10">
           <FileText className="w-5 h-5 stroke-[2]" />
