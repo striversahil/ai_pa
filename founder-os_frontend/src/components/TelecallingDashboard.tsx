@@ -1,6 +1,8 @@
 "use client";
 
 import React, { Fragment, useState, useCallback, useEffect } from "react";
+import { Trash2 } from "lucide-react";
+import Popover from "@/components/ui/Popover";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 
@@ -246,7 +248,7 @@ function KraBar({ label, value, target, pct, status }: { label: string; value: n
 export default function TelecallingDashboard() {
   const [view, setView] = useState<View>("dashboard");
   const { me } = useAuth();
-  const [period, setPeriod] = useState<"today" | "week" | "lastweek" | "month" | "lastmonth" | "year" | "lastyear">("today");
+  const [period, setPeriod] = useState<"today" | "week" | "lastweek" | "month" | "lastmonth" | "year" | "lastyear">("week");
   const PERIOD_OPTIONS: { key: typeof period; label: string }[] = [
     { key: "today", label: "Today" },
     { key: "week", label: "This Week" },
@@ -637,23 +639,28 @@ export default function TelecallingDashboard() {
                                   <span className="text-emerald-400" title="No estimates at risk">✓</span>
                                 )}
                               </td>
-                              <td className="py-2 text-right">
-                                <div className="font-extrabold text-indigo-300 font-mono">{t.score}</div>
-                                {sortKey === "score" && leaderScore > 0 && (
-                                  <>
-                                    <div className="h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden min-w-[72px]" title={`${Math.round((t.score / leaderScore) * 100)}% of the leader's score`}>
-                                      <div
-                                        className={`h-full rounded-full ${i === 0 ? "bg-amber-400" : "bg-indigo-400"}`}
-                                        style={{ width: `${Math.max(4, Math.round((t.score / leaderScore) * 100))}%` }}
-                                      />
-                                    </div>
-                                    {i > 0 && (
-                                      <div className="text-[10px] text-zinc-500 dark:text-zinc-500 mt-0.5 whitespace-nowrap font-semibold">
-                                        {sorted[i - 1].score - t.score} to #{i}
-                                      </div>
-                                    )}
-                                  </>
-                                )}
+                              <td className="py-2 text-right whitespace-nowrap">
+                                <div className="flex items-center justify-end gap-2">
+                                  <span className="font-extrabold text-indigo-300 font-mono">{t.score}</span>
+                                  {sortKey === "score" && leaderScore > 0 && (
+                                    <>
+                                      <span
+                                        className="hidden sm:inline-block w-12 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden"
+                                        title={`${Math.round((t.score / leaderScore) * 100)}% of the leader's score`}
+                                      >
+                                        <span
+                                          className={`block h-full rounded-full ${i === 0 ? "bg-amber-400" : "bg-indigo-400"}`}
+                                          style={{ width: `${Math.max(6, Math.round((t.score / leaderScore) * 100))}%` }}
+                                        />
+                                      </span>
+                                      {i > 0 && (
+                                        <span className="text-[10px] text-zinc-500 dark:text-zinc-500 font-semibold" title={`Points behind rank #${i}`}>
+                                          {sorted[i - 1].score - t.score} to #{i}
+                                        </span>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                             {open && (
@@ -877,7 +884,10 @@ export default function TelecallingDashboard() {
                   onRestore={restoreTelecaller}
                   deletedRows={deletedRows}
                   showDeleted={showDeleted}
-                  onToggleShowDeleted={() => setShowDeleted((s) => !s)}
+                  onToggleShowDeleted={(o) => {
+                    setShowDeleted(o);
+                    if (o) void loadDeleted();
+                  }}
                 />
               </div>
             ) : (
@@ -1010,7 +1020,7 @@ function RosterSection({
   onRestore: (id: string) => void;
   deletedRows: RosterRow[];
   showDeleted: boolean;
-  onToggleShowDeleted: () => void;
+  onToggleShowDeleted: (open: boolean) => void;
 }) {
   const [rosterTab, setRosterTab] = useState<"active" | "inactive">("active");
   const activeRows = rosterRows.filter((r) => r.active);
@@ -1044,10 +1054,10 @@ function RosterSection({
               <button
                 onClick={() => { if (window.confirm(`Delete ${t.name} from the roster? They disappear from the roster, leaderboard and assignment engine (restorable from Deleted Agents).`)) onDelete(t.id); }}
                 disabled={busy}
-                className="text-xs rounded-lg bg-rose-500/10 text-rose-500 dark:text-rose-400 px-2.5 py-1.5 font-semibold hover:bg-rose-500/20 disabled:opacity-40"
-                title="Soft delete — hidden everywhere, restorable from Deleted Agents"
+                className="inline-flex items-center justify-center rounded-lg bg-rose-500/10 text-rose-500 dark:text-rose-400 p-2 hover:bg-rose-500/20 disabled:opacity-40"
+                title="Delete agent — hidden everywhere, restorable from Deleted Agents"
               >
-                🗑
+                <Trash2 className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -1056,38 +1066,50 @@ function RosterSection({
       </div>
 
       {/* Deleted agents — hidden from the roster/leaderboard, restorable */}
-      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 mt-3">
-        <button
-          onClick={onToggleShowDeleted}
-          className="flex items-center gap-2 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 mt-3 flex justify-start">
+        <Popover
+          align="left"
+          widthClass="w-[22rem]"
+          open={showDeleted}
+          onOpenChange={(o) => onToggleShowDeleted(o)}
+          trigger={
+            <button
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800 hover:border-rose-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+              title="Show deleted agents (restorable)"
+            >
+              <Trash2 className="w-4 h-4" />
+              Deleted agents ({deletedRows.length})
+            </button>
+          }
         >
-          <span className={`transition-transform inline-block ${showDeleted ? "rotate-90" : ""}`}>▸</span>
-          🗑️ Deleted agents ({deletedRows.length})
-        </button>
-        {showDeleted && (
-          <div className="mt-2 grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+          <div className="p-4 space-y-3">
+            <div className="font-bold text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 pb-2">
+              Deleted agents
+            </div>
             {deletedRows.map((t) => (
-              <div key={t.id} className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3">
+              <div key={t.id} className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-4">
                 <div className="flex items-center justify-between">
-                  <div className="font-semibold text-sm text-zinc-700 dark:text-zinc-300">{t.name}</div>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400">Deleted</span>
+                  <div className="font-semibold text-sm text-zinc-800 dark:text-zinc-200">{t.name}</div>
+                  <span className="text-[10px] px-2 py-1 rounded-full bg-rose-500/10 text-rose-400 font-bold">Deleted</span>
                 </div>
-                <div className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-1">
-                  {t.neodoveUserName ? `NeoDove: ${t.neodoveUserName}` : "NeoDove: not linked"} · Total assigned: {t.totalAssigned}
+                <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1.5 leading-relaxed">
+                  {t.neodoveUserName ? `NeoDove: ${t.neodoveUserName}` : "NeoDove: not linked"}
+                  <br />
+                  Total assigned: {t.totalAssigned}
                 </div>
                 <button
                   onClick={() => onRestore(t.id)}
                   disabled={busy}
-                  className="mt-2 w-full text-xs rounded-lg bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 py-1.5 font-semibold hover:bg-emerald-500/20 disabled:opacity-40"
+                  className="mt-3 w-full text-xs rounded-lg bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 py-2 font-semibold hover:bg-emerald-500/20 disabled:opacity-40"
                   title="Restore as inactive — reactivate when ready"
                 >
                   ♻ Restore (inactive)
                 </button>
               </div>
             ))}
-            {deletedRows.length === 0 && <p className="text-xs text-zinc-500">No deleted agents.</p>}
+            {deletedRows.length === 0 && <p className="text-xs text-zinc-500 py-2">No deleted agents.</p>}
           </div>
-        )}
+        </Popover>
       </div>
 
       <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4 grid gap-2 md:grid-cols-[1fr_1fr_auto_auto_1fr_1fr]">
