@@ -319,7 +319,9 @@ export default function TelecallingDashboard() {
   // Prefetch EVERY active agent's data in parallel (one round of requests),
   // refreshed on live events. Switching agents then reads from the local map —
   // instant, and it never shows another agent's stale data while loading.
-  const activeAgentIds = (dash.data?.leaderboard ?? [])
+  // Keyed off the CONVERSION data (default view) so agent follow-ups always
+  // load regardless of what Dashboard period filter is active.
+  const activeAgentIds = (convDash.data?.leaderboard ?? dash.data?.leaderboard ?? [])
     .filter((r) => r.active)
     .map((r) => r.id);
   const agentIdsKey = activeAgentIds.join(",");
