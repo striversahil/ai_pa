@@ -272,6 +272,19 @@ export default function TelecallingDashboard() {
     { events: ["automation", "telecalling"], deps: [period], clearOnError: true },
   );
 
+  // Lead Generation has its OWN period filter — independent of the leaderboard
+  // period, so filtering the dashboard/conversion never changes the Generation
+  // view. Same endpoint, different period param.
+  const [genPeriod, setGenPeriod] = useState<typeof period>("week");
+  const genDash = useLiveQuery<DashData>(
+    async () => {
+      const res = await fetch(`/api/automations/telecalling/data?period=${genPeriod}`);
+      if (!res.ok) throw new Error("Gen load failed");
+      return res.json();
+    },
+    { events: ["automation", "telecalling"], deps: [genPeriod], clearOnError: true },
+  );
+
   const roster = useLiveQuery<{ telecallers: RosterRow[] }>(
     async () => {
       if (!canManageRoster) return { telecallers: [] };
@@ -424,6 +437,9 @@ export default function TelecallingDashboard() {
   const kpi = dash.data?.kpi;
   const board = [...(dash.data?.leaderboard ?? [])];
   const activeBoard = board.filter((r) => r.active);
+  // Lead Generation board — driven by its OWN genDash/period, not the leaderboard period.
+  const genBoard = [...(genDash.data?.leaderboard ?? [])];
+  const genActiveBoard = genBoard.filter((r) => r.active);
   const teamEstConv = activeBoard.reduce((s, r) => s + (r.conversion.estimatedConversion?.value ?? 0), 0);
   const sorted = [...activeBoard].sort((a, b) => {
     if (sortKey === "score") return b.score - a.score;
@@ -447,16 +463,6 @@ export default function TelecallingDashboard() {
         onConfirm={() => { const id = confirmDelete?.id; setConfirmDelete(null); if (id) void deleteTelecaller(id); }}
         onCancel={() => setConfirmDelete(null)}
       />
-      {!!dash.error && !dash.data && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 px-4 py-3">
-          <span className="text-sm text-rose-500 dark:text-rose-400 font-semibold">
-            Failed to load the leaderboard — showing nothing rather than stale numbers. ({dash.error instanceof Error ? dash.error.message : String(dash.error ?? "unknown error")})
-          </span>
-          <button onClick={() => dash.refresh()} className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-500">
-            Retry
-          </button>
-        </div>
-      )}
       {/* Header */}
       <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -921,21 +927,42 @@ export default function TelecallingDashboard() {
 
           {view === "generation" && (
             <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-              <h3 className="text-lg font-bold mb-1">📞 Lead Generation</h3>
+              <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="text-lg font-bold mb-1">📞 Lead Generation</h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Per-telecaller NeoDove performance (live) — sourced from the NeoDove worker database.
+                  </p>
+                </div>
+                {/* Independent period filter for Lead Generation */}
+                <div className="flex flex-wrap gap-1.5">
+                  {PERIOD_OPTIONS.map((p) => (
+                    <button
+                      key={p.key}
+                      onClick={() => setGenPeriod(p.key)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                        genPeriod === p.key
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                          : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
-                Per-telecaller NeoDove performance (live) — sourced from the NeoDove worker database.
-                {" "}
-                {dash.data?.meta?.targets ? (
+                {genDash.data?.meta?.targets ? (
                   <span>
-                    Benchmarks per agent for <span className="font-bold">{dash.data.meta.periodLabel ?? "Today"}</span>
-                    {dash.data.meta.workingDays && dash.data.meta.workingDays > 1 ? ` (${dash.data.meta.workingDays} working days × daily target)` : ""}:{" "}
-                    <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {dash.data.meta.targets.connectedCallsPerDay} connected calls</span> ·{" "}
-                    <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {dash.data.meta.targets.leadsPerAgentPerDay} leads</span> (in-progress + converted). Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
+                    Benchmarks per agent for <span className="font-bold">{genDash.data.meta.periodLabel ?? "Today"}</span>
+                    {genDash.data.meta.workingDays && genDash.data.meta.workingDays > 1 ? ` (${genDash.data.meta.workingDays} working days × daily target)` : ""}:{" "}
+                    <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {genDash.data.meta.targets.connectedCallsPerDay} connected calls</span> ·{" "}
+                    <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {genDash.data.meta.targets.leadsPerAgentPerDay} leads</span> (in-progress + converted). Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
                   </span>
                 ) : null}
               </p>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {activeBoard.map((t) => {
+                {genActiveBoard.map((t) => {
                   const g = t.generation;
                   const overall = worst(g.connectedStatus, g.leadsStatus);
                   return (
@@ -1005,7 +1032,7 @@ export default function TelecallingDashboard() {
                     </div>
                   );
                 })}
-                {activeBoard.length === 0 && (
+                {genActiveBoard.length === 0 && (
                   <p className="text-sm text-zinc-500">No active telecallers yet — add them in the Dashboard roster and link each to their NeoDove user.</p>
                 )}
               </div>
