@@ -67,6 +67,11 @@ export interface UseLiveQueryOptions {
   deps?: unknown[];
   /** Optional slow polling safety net in ms (e.g. 60000). */
   pollMs?: number;
+  /**
+   * When true, a failed refetch CLEARS the previous data instead of keeping
+   * the stale view on screen (prevents misreading old numbers as current).
+   */
+  clearOnError?: boolean;
 }
 
 export interface LiveQueryResult<T> {
@@ -80,7 +85,7 @@ export function useLiveQuery<T>(
   fetcher: () => Promise<T>,
   options: UseLiveQueryOptions = {},
 ): LiveQueryResult<T> {
-  const { events, deps = [], pollMs } = options;
+  const { events, deps = [], pollMs, clearOnError } = options;
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -89,6 +94,8 @@ export function useLiveQuery<T>(
   fetcherRef.current = fetcher;
   const eventsRef = useRef(events);
   eventsRef.current = events;
+  const clearOnErrorRef = useRef(clearOnError);
+  clearOnErrorRef.current = clearOnError;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(() => {
@@ -96,7 +103,10 @@ export function useLiveQuery<T>(
     fetcherRef
       .current()
       .then((d) => { setData(d); setError(null); })
-      .catch((e) => { setError(e); })
+      .catch((e) => {
+        setError(e);
+        if (clearOnErrorRef.current) setData(null);
+      })
       .finally(() => { setLoading(false); });
   }, []);
 

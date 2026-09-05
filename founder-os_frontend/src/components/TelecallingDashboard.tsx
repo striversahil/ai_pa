@@ -3,6 +3,7 @@
 import React, { Fragment, useState, useCallback, useEffect } from "react";
 import { Trash2 } from "lucide-react";
 import Popover from "@/components/ui/Popover";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 
@@ -50,7 +51,7 @@ interface RiskRow {
 }
 
 interface DashData {
-  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[] };
+  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[] };
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
@@ -265,10 +266,10 @@ export default function TelecallingDashboard() {
   const dash = useLiveQuery<DashData>(
     async () => {
       const res = await fetch(`/api/automations/telecalling/data?period=${period}`);
-      if (!res.ok) throw new Error("load failed");
+      if (!res.ok) throw new Error(`Failed to load leaderboard (HTTP ${res.status})`);
       return res.json();
     },
-    { events: ["automation", "telecalling"], deps: [period] },
+    { events: ["automation", "telecalling"], deps: [period], clearOnError: true },
   );
 
   const roster = useLiveQuery<{ telecallers: RosterRow[] }>(
@@ -314,7 +315,7 @@ export default function TelecallingDashboard() {
       );
       return Object.fromEntries(entries);
     },
-    { events: ["automation", "telecalling"], deps: [agentIdsKey] },
+    { events: ["automation", "telecalling"], deps: [agentIdsKey], clearOnError: true },
   );
   const agentViewsMap = agentViews.data ?? {};
   const getAgentView = (id: string | null): AgentViewData | null => (id ? agentViewsMap[id] ?? null : null);
@@ -348,6 +349,8 @@ export default function TelecallingDashboard() {
       setBusy(false);
     }
   };
+  // Pretty in-house confirm (replaces window.confirm) for roster deletion.
+  const [confirmDelete, setConfirmDelete] = useState<RosterRow | null>(null);
   const restoreTelecaller = async (id: string) => {
     setBusy(true);
     try {
@@ -435,6 +438,25 @@ export default function TelecallingDashboard() {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={!!confirmDelete}
+        title={`Delete ${confirmDelete?.name ?? "telecaller"}?`}
+        message="They disappear from the roster, leaderboard and assignment engine. You can restore them anytime from Deleted Agents in the Controller."
+        confirmLabel="Delete agent"
+        busy={busy}
+        onConfirm={() => { const id = confirmDelete?.id; setConfirmDelete(null); if (id) void deleteTelecaller(id); }}
+        onCancel={() => setConfirmDelete(null)}
+      />
+      {!!dash.error && !dash.data && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 px-4 py-3">
+          <span className="text-sm text-rose-500 dark:text-rose-400 font-semibold">
+            Failed to load the leaderboard — showing nothing rather than stale numbers. ({dash.error instanceof Error ? dash.error.message : String(dash.error ?? "unknown error")})
+          </span>
+          <button onClick={() => dash.refresh()} className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-500">
+            Retry
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -880,7 +902,7 @@ export default function TelecallingDashboard() {
                   onEdit={edit}
                   onToggleActive={toggleActive}
                   onSave={save}
-                  onDelete={deleteTelecaller}
+                  onDelete={(t) => setConfirmDelete(t)}
                   onRestore={restoreTelecaller}
                   deletedRows={deletedRows}
                   showDeleted={showDeleted}
@@ -905,7 +927,9 @@ export default function TelecallingDashboard() {
                 {" "}
                 {dash.data?.meta?.targets ? (
                   <span>
-                    Benchmarks per agent/day: <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {dash.data.meta.targets.connectedCallsPerDay} connected calls</span> ·{" "}
+                    Benchmarks per agent for <span className="font-bold">{dash.data.meta.periodLabel ?? "Today"}</span>
+                    {dash.data.meta.workingDays && dash.data.meta.workingDays > 1 ? ` (${dash.data.meta.workingDays} working days × daily target)` : ""}:{" "}
+                    <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {dash.data.meta.targets.connectedCallsPerDay} connected calls</span> ·{" "}
                     <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {dash.data.meta.targets.leadsPerAgentPerDay} leads</span> (in-progress + converted). Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
                   </span>
                 ) : null}
@@ -1016,7 +1040,7 @@ function RosterSection({
   onEdit: (t: RosterRow) => void;
   onToggleActive: (id: string, active: boolean) => void;
   onSave: () => void;
-  onDelete: (id: string) => void;
+  onDelete: (t: RosterRow) => void;
   onRestore: (id: string) => void;
   deletedRows: RosterRow[];
   showDeleted: boolean;
@@ -1052,7 +1076,7 @@ function RosterSection({
                 {t.active ? "Make inactive" : "Reactivate"}
               </button>
               <button
-                onClick={() => { if (window.confirm(`Delete ${t.name} from the roster? They disappear from the roster, leaderboard and assignment engine (restorable from Deleted Agents).`)) onDelete(t.id); }}
+                onClick={() => onDelete(t)}
                 disabled={busy}
                 className="inline-flex items-center justify-center rounded-lg bg-rose-500/10 text-rose-500 dark:text-rose-400 p-2 hover:bg-rose-500/20 disabled:opacity-40"
                 title="Delete agent — hidden everywhere, restorable from Deleted Agents"

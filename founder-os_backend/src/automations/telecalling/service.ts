@@ -615,6 +615,21 @@ export function periodRange(period: string, todayStr: string): { from: string; t
   }
 }
 
+/** Working days (Mon–Sat, 6-day work week) inclusive between two IST dates. */
+function workingDaysBetween(from: string, to: string): number {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const start = Date.UTC(fy, fm - 1, fd);
+  const end = Date.UTC(ty, tm - 1, td);
+  if (end < start) return 0;
+  let days = 0;
+  for (let t = start; t <= end; t += 86400000) {
+    const dow = new Date(t).getUTCDay();
+    if (dow !== 0) days += 1; // exclude Sunday only (6-day work week)
+  }
+  return Math.max(1, days);
+}
+
 /**
  * Unified dashboard payload: per-telecaller Lead Conversion + Lead Generation
  * metrics for a given day (default: today, IST), team KPIs, and a live
@@ -784,6 +799,9 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   }
 
   const leaderboard: TelecallerDayMetrics[] = [];
+  // Lead Generation targets scale with the period's working days (6-day work
+  // week, Mon–Sat) — a week target is one day × working days, never 1×.
+  const workingDays = periodMode && periodRangeInfo ? workingDaysBetween(periodRangeInfo.from, periodRangeInfo.to) : 1;
   const kpiAcc = {
     assigned: 0,
     won: 0,
@@ -825,11 +843,11 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
 
     // Lead Generation KRA vs NeoDove daily benchmarks (exact same interface as
     // the NeoDove telecaller report): traffic light 🟢 ≥100% · 🟡 60–99% · 🔴 <60%.
-    const connectedTarget = CONNECTED_CALLS_PER_DAY;
+    const connectedTarget = CONNECTED_CALLS_PER_DAY * workingDays;
     const connectedPct = connectedTarget > 0 ? Math.round((callsConnected / connectedTarget) * 100) : 0;
     const connectedStatus: 'green' | 'amber' | 'red' =
       connectedPct >= 100 ? 'green' : connectedPct >= 60 ? 'amber' : 'red';
-    const leadsTarget = LEADS_PER_AGENT_PER_DAY;
+    const leadsTarget = LEADS_PER_AGENT_PER_DAY * workingDays;
     const leadsPct = leadsTarget > 0 ? Math.round((leadsGenerated / leadsTarget) * 100) : 0;
     const leadsStatus: 'green' | 'amber' | 'red' =
       leadsPct >= 100 ? 'green' : leadsPct >= 60 ? 'amber' : 'red';
@@ -1025,9 +1043,10 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       activeCount,
       agents: agentList,
       targets: {
-        connectedCallsPerDay: CONNECTED_CALLS_PER_DAY,
-        leadsPerAgentPerDay: LEADS_PER_AGENT_PER_DAY,
+        connectedCallsPerDay: CONNECTED_CALLS_PER_DAY * workingDays,
+        leadsPerAgentPerDay: LEADS_PER_AGENT_PER_DAY * workingDays,
       },
+      workingDays,
     },
     kpi: {
       ...kpiAcc,
