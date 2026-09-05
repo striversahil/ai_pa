@@ -532,7 +532,6 @@ export default function TelecallingDashboard() {
               {kpi && (
                 <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                   {[
-                    { label: "Est. Assigned", value: fmtNum(kpi.assigned), accent: "text-zinc-900 dark:text-white" },
                     { label: "Est. Won", value: fmtNum(kpi.won), accent: "text-emerald-400" },
                     { label: "Est. Conv ₹", value: fmtNum(teamEstConv), accent: "text-indigo-300", title: "Projected closed value across the open pipeline (agent win rate × live estimate risk)" },
                     { label: "Calls Connected", value: fmtNum(kpi.callsConnected), accent: "text-emerald-300" },
