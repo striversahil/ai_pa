@@ -697,11 +697,27 @@ export default function TelecallingDashboard() {
                                           style={{ width: `${Math.max(6, Math.round((t.score / leaderScore) * 100))}%` }}
                                         />
                                       </span>
-                                      {i > 0 && (
-                                        <span className="text-[10px] text-zinc-500 dark:text-zinc-500 font-semibold" title={`Points behind rank #${i}`}>
-                                          {sorted[i - 1].score - t.score} to #{i}
-                                        </span>
-                                      )}
+                                      {i > 0 && (() => {
+                                        const gap = sorted[i - 1].score - t.score;
+                                        const closes = Math.ceil(gap / 100);
+                                        const leads = Math.ceil(gap / 15);
+                                        const forecast =
+                                          gap <= 0
+                                            ? `Overtake now`
+                                            : closes <= 1
+                                              ? `1 close → #${i}`
+                                              : leads <= 4
+                                                ? `${leads} leads → #${i}`
+                                                : `${closes} closes → #${i}`;
+                                        return (
+                                          <span
+                                            className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold whitespace-nowrap"
+                                            title={`${gap} pts behind #${i} (score = 1 close ×100 · 1 lead ×15 · 1 call ×0.5). ${closes} closes or ${leads} leads would overtake them.`}
+                                          >
+                                            ⚡ {forecast}
+                                          </span>
+                                        );
+                                      })()}
                                     </>
                                   )}
                                 </div>
