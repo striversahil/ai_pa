@@ -271,17 +271,16 @@ export default function TelecallingDashboard() {
     { events: ["automation", "telecalling"], deps: [period], clearOnError: true },
   );
 
-  // Lead Conversion has its OWN period filter — fully independent of both the
-  // Dashboard leaderboard and Lead Generation. So changing the dashboard's
-  // period never touches the conversion board, and vice versa.
-  const [convPeriod, setConvPeriod] = useState<typeof period>("week");
+  // Lead Conversion uses a fixed "week" period — it's the default view and
+  // intentionally has no filter switching. Its data is still independent of the
+  // Dashboard so the dashboard filter never touches conversion.
   const convDash = useLiveQuery<DashData>(
     async () => {
-      const res = await fetch(`/api/automations/telecalling/data?period=${convPeriod}`);
+      const res = await fetch("/api/automations/telecalling/data?period=week");
       if (!res.ok) throw new Error("Conversion load failed");
       return res.json();
     },
-    { events: ["automation", "telecalling"], deps: [convPeriod], clearOnError: true },
+    { events: ["automation", "telecalling"], deps: ["week"], clearOnError: true },
   );
 
   // Lead Generation has its OWN period filter — independent of the leaderboard
@@ -805,29 +804,11 @@ export default function TelecallingDashboard() {
 
           {view === "conversion" && (
             <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-              <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-                <div>
-                  <h3 className="text-lg font-bold mb-1">📨 Lead Conversion</h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates.
-                  </p>
-                </div>
-                {/* Independent period filter for Lead Conversion */}
-                <div className="flex flex-wrap gap-1.5">
-                  {PERIOD_OPTIONS.map((p) => (
-                    <button
-                      key={p.key}
-                      onClick={() => setConvPeriod(p.key)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
-                        convPeriod === p.key
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                          : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
+              <div className="mb-3">
+                <h3 className="text-lg font-bold mb-1">📨 Lead Conversion</h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates.
+                </p>
               </div>
 
               {/* Horizontal agent tabs */}
