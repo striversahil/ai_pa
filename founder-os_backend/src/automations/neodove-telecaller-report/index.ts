@@ -119,7 +119,11 @@ async function loadReportsInRange(from?: string, to?: string): Promise<{ dates: 
 
 /** Invalidate all cached NeoDove reads when a report snapshot is (re)written. */
 export async function invalidateNeodoveCache(): Promise<void> {
-  await Promise.all([cacheDelPrefix('neodove:report_range'), cacheDelPrefix('neodove:kra')]);
+  await Promise.all([
+    cacheDelPrefix('neodove:report_range'),
+    cacheDelPrefix('neodove:kra'),
+    cacheDelPrefix('telecalling:dashboard'),
+  ]);
 }
 
 function aggregate(rows: any[]): NeodoveAgentRow[] {

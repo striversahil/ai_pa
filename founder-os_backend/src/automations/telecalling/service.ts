@@ -19,7 +19,7 @@ import type { Telecaller } from '@prisma/client';
 import type { AutomationContext } from '../../modules/automation/types';
 import { getNeodoveAgentMap, getAllNeodoveAgents, getLatestNeodoveDay, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from '../neodove-telecaller-report';
 import { isSystemGeneratedComment } from '../../shared/systemComment';
-import { cached, cacheDel } from '../../shared/cache';
+import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -113,6 +113,18 @@ export function hoursUntilEod(now: Date = new Date()): number | null {
 
 function parseCommentDateMs(raw: string | null | undefined): number | null {
   if (!raw) return null;
+  // Zoho's dateFormatted is IST local, e.g. "05/09/2026 02:23 PM". Parsing it as
+  // UTC (or the date-only `date` column, "2026-09-05", as midnight UTC) makes
+  // every today-comment look ~12h stale — so build an explicit +05:30 instant.
+  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (m) {
+    let h = parseInt(m[4], 10);
+    if (m[6].toUpperCase() === 'PM' && h !== 12) h += 12;
+    if (m[6].toUpperCase() === 'AM' && h === 12) h = 0;
+    const iso = `${m[3]}-${m[2]}-${m[1]}T${String(h).padStart(2, '0')}:${m[5]}:00+05:30`;
+    const t = Date.parse(iso);
+    if (!Number.isNaN(t)) return t;
+  }
   const t = Date.parse(raw);
   return Number.isNaN(t) ? null : t;
 }
@@ -128,11 +140,18 @@ async function latestCommentDates(estimateIds: string[]): Promise<Map<string, st
   try {
     const comments = await prisma.comment.findMany({
       where: { estimateId: { in: estimateIds } },
-      orderBy: { date: 'desc' },
-      select: { estimateId: true, date: true },
+      select: { estimateId: true, date: true, dateFormatted: true },
     });
     for (const c of comments) {
-      if (c?.estimateId && c.date && !out.has(c.estimateId)) out.set(c.estimateId, String(c.date));
+      if (!c?.estimateId) continue;
+      // Prefer the full IST timestamp (has time-of-day); the plain `date` is
+      // date-only and would read as midnight UTC. Keep the true newest comment
+      // per estimate (orderBy date is ambiguous within a day).
+      const raw = c.dateFormatted ?? c.date ?? '';
+      const ts = parseCommentDateMs(raw);
+      const cur = out.get(c.estimateId);
+      const curTs = cur ? parseCommentDateMs(cur) : null;
+      if (curTs === null || (ts !== null && ts > curTs)) out.set(c.estimateId, raw);
     }
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'latestCommentDates failed — risk model degrades to classification only');
@@ -252,9 +271,12 @@ async function getRiskItems(): Promise<CachedRiskItem[]> {
 /**
  * Invalidate the risk cache when underlying estimate/comment data changes
  * (status transition, classification, comment sync, or a manual re-deal).
+ * Also invalidates every cached dashboard payload so the leaderboard/lead-gen
+ * views re-aggregate from fresh state on the next read.
  */
 export async function invalidateRiskCache(): Promise<void> {
   await cacheDel(RISK_CACHE_KEY);
+  try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
 }
 
 /**
@@ -846,8 +868,29 @@ function workingDaysBetween(from: string, to: string): number {
  * leaderboard. `?period=week|lastweek|month|lastmonth|year|lastyear` switches
  * the leaderboard to an aggregated period view (assignment history + summed
  * NeoDove daily reports).
+ *
+ * The payload is cached in KV per (period, day, agent) so switching filters and
+ * refreshing dashboards is fast — the underlying aggregation reads the full
+ * EstimateAssignment history + score events, which is expensive on every hit.
+ * A short TTL + single-flight means concurrent users share one compute.
  */
 export async function getTelecallingDashboardData(ctx?: AutomationContext): Promise<any> {
+  const q = (ctx?.subject ?? {}) as Record<string, unknown>;
+  const requestedDay = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate();
+  const period = typeof q.period === 'string' && q.period ? q.period : 'today';
+  const agent = typeof q.agent === 'string' && q.agent ? q.agent : '';
+  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}`;
+  const DASH_TTL_MS = 30 * 1000;
+  return cached<any>(cacheKey, DASH_TTL_MS, async () => {
+    return computeTelecallingDashboardData(ctx);
+  });
+}
+
+/**
+ * The actual (expensive) aggregation. Exposed for reuse and clarity; the public
+ * `getTelecallingDashboardData` wraps this in the KV cache.
+ */
+export async function computeTelecallingDashboardData(ctx?: AutomationContext): Promise<any> {
   const q = (ctx?.subject ?? {}) as Record<string, unknown>;
   const date = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : undefined;
   const requestedDay = date ?? istDate();

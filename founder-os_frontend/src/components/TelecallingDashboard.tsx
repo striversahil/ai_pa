@@ -286,7 +286,7 @@ export default function TelecallingDashboard() {
   // Lead Generation has its OWN period filter — independent of the leaderboard
   // period, so filtering the dashboard/conversion never changes the Generation
   // view. Same endpoint, different period param.
-  const [genPeriod, setGenPeriod] = useState<typeof period>("week");
+  const [genPeriod, setGenPeriod] = useState<typeof period>("today");
   const genDash = useLiveQuery<DashData>(
     async () => {
       const res = await fetch(`/api/automations/telecalling/data?period=${genPeriod}`);
@@ -514,6 +514,15 @@ export default function TelecallingDashboard() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {(dash.loading || genDash.loading) && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-500 dark:text-indigo-300 shadow-sm" role="status" aria-live="polite">
+                <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                </svg>
+                Refreshing…
+              </span>
+            )}
             {dash.data?.meta?.day ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-700 dark:text-zinc-300 shadow-sm">
                 <svg className="w-3.5 h-3.5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -572,7 +581,15 @@ export default function TelecallingDashboard() {
           {view === "dashboard" && (
             <div className="space-y-6">
               {kpi && (
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 relative">
+                  {dash.loading && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/50 dark:bg-zinc-950/50 backdrop-blur-[1px]" aria-hidden="true">
+                      <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                      </svg>
+                    </div>
+                  )}
                   {[
                     { label: "Est. Won", value: fmtNum(kpi.won), accent: "text-emerald-400" },
                     { label: "Est. Conv ₹", value: fmtNum(teamEstConv), accent: "text-indigo-300", title: "Projected closed value across the open pipeline (agent win rate × live estimate risk)" },
@@ -701,7 +718,15 @@ export default function TelecallingDashboard() {
                     })}
                   </div>
                 )}
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto relative">
+                  {dash.loading && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/40 dark:bg-zinc-950/40 backdrop-blur-[1px]" aria-hidden="true">
+                      <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                      </svg>
+                    </div>
+                  )}
                   <table className="w-full text-sm">
                     <thead className="text-zinc-500 dark:text-zinc-400 text-xs uppercase">
                       <tr className="border-b border-zinc-200 dark:border-zinc-800">
@@ -934,7 +959,15 @@ export default function TelecallingDashboard() {
               </div>
 
               {!agentFilter && (
-                <div className="space-y-2">
+                <div className="space-y-2 relative">
+                  {convDash.loading && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/40 dark:bg-zinc-950/40 backdrop-blur-[1px]" aria-hidden="true">
+                      <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                      </svg>
+                    </div>
+                  )}
                   {convActiveBoard.length === 0 && <p className="text-sm text-zinc-500">No active telecallers.</p>}
                   {convActiveBoard.map((t) => (
                     <button
@@ -1075,7 +1108,15 @@ export default function TelecallingDashboard() {
                   </span>
                 ) : null}
               </p>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 relative">
+                {genDash.loading && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/40 dark:bg-zinc-950/40 backdrop-blur-[1px]" aria-hidden="true">
+                    <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                    </svg>
+                  </div>
+                )}
                 {genActiveBoard.map((t) => {
                   const g = t.generation;
                   const overall = worst(g.connectedStatus, g.leadsStatus);

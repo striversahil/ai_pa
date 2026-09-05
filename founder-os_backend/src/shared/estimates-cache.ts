@@ -55,6 +55,7 @@ export async function invalidateDerivedEstimateCaches(): Promise<void> {
   await Promise.all([
     cacheDelPrefix('neodove:kra'),
     cacheDelPrefix('telecalling:risk'),
+    cacheDelPrefix('telecalling:dashboard'),
     cacheDel(KEY),
   ]);
 }
