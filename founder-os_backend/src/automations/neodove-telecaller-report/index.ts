@@ -181,6 +181,23 @@ export async function getAllNeodoveAgents(): Promise<NeodoveAgentRow[]> {
   return aggregate(rows);
 }
 
+/** Aggregated NeoDove metrics per agent over an inclusive IST date range
+ * (YYYY-MM-DD strings). Used by the telecalling leaderboard for week/month/
+ * year period views — sums the stored daily reports in one Setting read. */
+export async function getNeodoveRangeMap(
+  from: string,
+  to: string,
+): Promise<Record<string, NeodoveAgentRow>> {
+  const { rows } = await loadReportsInRange(from, to);
+  const aggregated = aggregate(rows);
+  const map: Record<string, NeodoveAgentRow> = {};
+  for (const a of aggregated) {
+    if (a.userName) map[a.userName] = a;
+    if (a.userId) map[a.userId] = a;
+  }
+  return map;
+}
+
 /** Latest stored NeoDove report day that actually has agent rows (YYYY-MM-DD),
  * or null if none stored. Skips empty snapshots (e.g. early-morning "today"
  * that hasn't been pushed yet) so callers fall back to real data. */

@@ -207,6 +207,9 @@ model Telecaller {
   email            String?
   active           Boolean  @default(true)
   order            Int      @default(0)
+  // Soft delete: hidden from the roster/leaderboard/assignment engine but kept
+  // for history; restorable from the MIS Controller.
+  deleted          Boolean  @default(false)
   // Optional link to the telecaller's NeoDove agent identity so Lead Generation
   // (calls connected / leads generated) can be merged with Lead Conversion.
   neodoveUserId    String?

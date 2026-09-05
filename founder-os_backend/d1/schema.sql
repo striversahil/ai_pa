@@ -532,6 +532,7 @@ CREATE TABLE IF NOT EXISTS Telecaller (
   "order" INTEGER NOT NULL DEFAULT 0,
   neodoveUserId TEXT,
   neodoveUserName TEXT,
+  deleted INTEGER NOT NULL DEFAULT 0,
   createdAt TEXT NOT NULL
 );
 
@@ -569,6 +570,7 @@ CREATE TABLE IF NOT EXISTS Telecaller (
   "order" INTEGER NOT NULL DEFAULT 0,
   neodoveUserId TEXT,
   neodoveUserName TEXT,
+  deleted INTEGER NOT NULL DEFAULT 0,
   createdAt TEXT NOT NULL
 );
 

@@ -17,7 +17,7 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import type { Telecaller } from '@prisma/client';
 import type { AutomationContext } from '../../modules/automation/types';
-import { getNeodoveAgentMap, getAllNeodoveAgents, getLatestNeodoveDay, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from '../neodove-telecaller-report';
+import { getNeodoveAgentMap, getAllNeodoveAgents, getLatestNeodoveDay, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from '../neodove-telecaller-report';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -315,7 +315,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
 }
 
 async function getActiveTelecallers(): Promise<Telecaller[]> {
-  return prisma.telecaller.findMany({ where: { active: true }, orderBy: { order: 'asc' } });
+  return prisma.telecaller.findMany({ where: { active: true, deleted: false }, orderBy: { order: 'asc' } });
 }
 
 // ── Round-robin rotation ─────────────────────────────────────────────────────
@@ -580,15 +580,54 @@ export interface TelecallerDayMetrics {
   risk: { atRisk: number; zombie: number };
 }
 
+/** Shift a YYYY-MM-DD string by N days (UTC arithmetic on the date parts). */
+function shiftDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/** IST date range for a leaderboard period. null = today (default view). */
+export function periodRange(period: string, todayStr: string): { from: string; to: string; label: string } | null {
+  const [y, m, d] = todayStr.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sun
+  const backToMonday = (dow + 6) % 7;
+  switch (period) {
+    case 'week': {
+      const monday = shiftDays(todayStr, -backToMonday);
+      return { from: monday, to: todayStr, label: 'This Week' };
+    }
+    case 'lastweek': {
+      const monday = shiftDays(todayStr, -backToMonday);
+      return { from: shiftDays(monday, -7), to: shiftDays(monday, -1), label: 'Last Week' };
+    }
+    case 'month':
+      return { from: todayStr.slice(0, 8) + '01', to: todayStr, label: 'This Month' };
+    case 'lastmonth': {
+      const prevLast = new Date(Date.UTC(y, m - 1, 0));
+      return { from: prevLast.toISOString().slice(0, 8) + '01', to: prevLast.toISOString().slice(0, 10), label: 'Last Month' };
+    }
+    case 'year':
+      return { from: `${y}-01-01`, to: todayStr, label: 'This Year' };
+    case 'lastyear':
+      return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31`, label: 'Last Year' };
+    default:
+      return null;
+  }
+}
+
 /**
  * Unified dashboard payload: per-telecaller Lead Conversion + Lead Generation
  * metrics for a given day (default: today, IST), team KPIs, and a live
- * leaderboard.
+ * leaderboard. `?period=week|lastweek|month|lastmonth|year|lastyear` switches
+ * the leaderboard to an aggregated period view (assignment history + summed
+ * NeoDove daily reports).
  */
 export async function getTelecallingDashboardData(ctx?: AutomationContext): Promise<any> {
   const q = (ctx?.subject ?? {}) as Record<string, unknown>;
   const date = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : undefined;
   const requestedDay = date ?? istDate();
+  const periodRangeInfo = periodRange(typeof q.period === 'string' ? q.period : 'today', istDate());
+  const periodMode = periodRangeInfo !== null;
 
   // Auto-sync the Telecaller roster from the unique NeoDove agents (all stored
   // days). Idempotent — no-op once every agent is already present.
@@ -597,18 +636,24 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   // If the requested day has no NeoDove data yet, fall back to the latest stored
   // NeoDove day so Lead Generation shows real numbers instead of all zeros.
   let day = requestedDay;
-  let neodoveMap = await getNeodoveAgentMap(requestedDay);
+  let neodoveMap: Record<string, any> = {};
   let usingLatestAvailable = false;
-  if (Object.keys(neodoveMap).length === 0) {
-    const latest = await getLatestNeodoveDay();
-    if (latest && latest !== requestedDay) {
-      day = latest;
-      neodoveMap = await getNeodoveAgentMap(latest);
-      usingLatestAvailable = true;
+  if (periodMode && periodRangeInfo) {
+    // Period leaderboard: sum the stored daily NeoDove reports across the range.
+    neodoveMap = await getNeodoveRangeMap(periodRangeInfo.from, periodRangeInfo.to);
+  } else {
+    neodoveMap = await getNeodoveAgentMap(requestedDay);
+    if (Object.keys(neodoveMap).length === 0) {
+      const latest = await getLatestNeodoveDay();
+      if (latest && latest !== requestedDay) {
+        day = latest;
+        neodoveMap = await getNeodoveAgentMap(latest);
+        usingLatestAvailable = true;
+      }
     }
   }
 
-  const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+  const telecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
   const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
 
   // Risk model over the open pipeline — served from the 5-min cache (D1
@@ -631,8 +676,8 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     where: { assignedTelecallerId: { not: null } },
     select: { estimateId: true, assignedTelecallerId: true, status: true, total: true },
   });
-  const openByOwner = new Map<string, { count: number; value: number }>();
-  const wonByOwner = new Map<string, number>();
+  let openByOwner = new Map<string, { count: number; value: number }>();
+  let wonByOwner = new Map<string, number>();
   for (const e of owned) {
     const owner = String(e.assignedTelecallerId);
     if (e.status === 'sent') {
@@ -691,6 +736,53 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       }
     }
 
+  // ── Period mode: conversion from the assignment history (EstimateAssignment
+  // rows whose `day` falls inside the range). Assigned = assignment rows in the
+  // period; Won = those estimates that have since closed; pipeline = the open
+  // `sent` estimates assigned in the period. Credit split is today-only.
+  let assignedByOwner: Map<string, number> | null = null;
+  let periodOpenIds: Set<string> | null = null;
+  if (periodMode && periodRangeInfo) {
+    const { from, to } = periodRangeInfo;
+    openByOwner = new Map();
+    wonByOwner = new Map();
+    assignedByOwner = new Map();
+    periodOpenIds = new Set();
+    let assignRows: any[] = [];
+    try {
+      assignRows = await prisma.estimateAssignment.findMany({
+        where: { day: { gte: from, lte: to } },
+        select: { telecallerId: true, estimateId: true },
+      });
+    } catch (e: any) {
+      logger.warn({ err: e?.message }, 'period assignment read failed — period leaderboard shows generation only');
+    }
+    const estIds = [...new Set(assignRows.map((r: any) => r.estimateId))];
+    const estById = new Map<string, any>();
+    if (estIds.length > 0) {
+      const ests = await prisma.estimate.findMany({
+        where: { estimateId: { in: estIds } },
+        select: { estimateId: true, status: true, total: true },
+      });
+      for (const e of ests) estById.set(e.estimateId, e);
+    }
+    for (const r of assignRows) {
+      const id = String(r.telecallerId);
+      assignedByOwner.set(id, (assignedByOwner.get(id) ?? 0) + 1);
+      const e = estById.get(r.estimateId);
+      if (!e) continue;
+      if (e.status === 'accepted' || e.status === 'confirmed') {
+        wonByOwner.set(id, (wonByOwner.get(id) ?? 0) + 1);
+      } else if (e.status === 'sent') {
+        periodOpenIds.add(r.estimateId);
+        const cur = openByOwner.get(id) ?? { count: 0, value: 0 };
+        cur.count += 1;
+        cur.value += Number(e.total ?? 0) || 0;
+        openByOwner.set(id, cur);
+      }
+    }
+  }
+
   const leaderboard: TelecallerDayMetrics[] = [];
   const kpiAcc = {
     assigned: 0,
@@ -705,7 +797,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     // Current workload straight off the single assignment field.
     const open = openByOwner.get(tc.id) ?? { count: 0, value: 0 };
     const won = wonByOwner.get(tc.id) ?? 0;
-    const assignedToday = open.count;
+    const assignedToday = periodMode && assignedByOwner ? (assignedByOwner.get(tc.id) ?? 0) : open.count;
     const pipelineValue = open.value;
     const conversionRate = assignedToday + won > 0 ? Math.round((won / (assignedToday + won)) * 100) : 0;
 
@@ -764,6 +856,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     let estValue = 0;
     for (const r of riskItems) {
       if (r.telecallerId !== tc.id) continue;
+      if (periodMode && periodOpenIds && !periodOpenIds.has(r.estimateId)) continue;
       const prob = cap(baseWin * toCloseMultiplier(r.risk));
       estCount += prob;
       estValue += r.total * prob;
@@ -775,7 +868,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       name: tc.name,
       active: tc.active,
       neodoveUserName: tc.neodoveUserName,
-      conversion: { assigned: assignedToday, won, conversionRate, pipelineValue, estimatedConversion, credit: creditByAgent.get(tc.id) ?? { won: 0, value:  0 } },
+      conversion: { assigned: assignedToday, won, conversionRate, pipelineValue, estimatedConversion, credit: periodMode ? { won: 0, value: 0 } : (creditByAgent.get(tc.id) ?? { won: 0, value: 0 }) },
       generation: {
         callsAttempted,
         callsConnected,
@@ -922,6 +1015,10 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       day,
       requestedDay,
       usingLatestAvailable,
+      period: periodMode && periodRangeInfo ? q.period : 'today',
+      periodLabel: periodRangeInfo?.label ?? 'Today',
+      periodFrom: periodRangeInfo?.from ?? null,
+      periodTo: periodRangeInfo?.to ?? null,
       generatedAt: new Date().toISOString(),
       unassignedSent,
       telecallerCount: telecallers.length,

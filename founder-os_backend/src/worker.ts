@@ -938,7 +938,13 @@ function misScopeError(c: any, e: unknown) {
 app.get('/api/telecallers', async (c) => {
   try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
   const { prisma } = deps();
-  const tcs = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+  // ?deleted=1 lists soft-deleted telecallers (MIS Controller "Deleted agents"
+  // dropdown); default listing excludes them entirely.
+  const showDeleted = c.req.query('deleted') === '1';
+  const tcs = await prisma.telecaller.findMany({
+    where: { deleted: showDeleted },
+    orderBy: { order: 'asc' },
+  });
   const withCounts = await Promise.all(
     tcs.map(async (t: any) => {
       const [totalAssigned, activeAssigned] = await Promise.all([
@@ -980,6 +986,12 @@ app.put('/api/telecallers/:id', async (c) => {
   if (body.order !== undefined) data.order = body.order;
   if (body.neodoveUserId !== undefined) data.neodoveUserId = body.neodoveUserId;
   if (body.neodoveUserName !== undefined) data.neodoveUserName = body.neodoveUserName;
+  if (body.deleted !== undefined) {
+    // Restore from the MIS Controller's deleted-agents list (deleted=false);
+    // a restore brings the telecaller back inactive so MIS can review first.
+    data.deleted = !!body.deleted;
+    if (body.deleted === false && body.active === undefined) data.active = false;
+  }
   const tc = await prisma.telecaller.update({ where: { id: c.req.param('id') }, data });
   return c.json(tc);
 });
@@ -987,7 +999,12 @@ app.put('/api/telecallers/:id', async (c) => {
 app.delete('/api/telecallers/:id', async (c) => {
   try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
   const { prisma } = deps();
-  await prisma.telecaller.delete({ where: { id: c.req.param('id') } });
+  // Soft delete: hidden from the roster, leaderboard and assignment engine,
+  // but kept (restorable) so historical close-credit chains stay intact.
+  await prisma.telecaller.update({
+    where: { id: c.req.param('id') },
+    data: { deleted: true, active: false },
+  });
   return c.json({ ok: true });
 });
 

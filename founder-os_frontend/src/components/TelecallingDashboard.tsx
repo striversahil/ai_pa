@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Fragment, useState, useCallback } from "react";
+import React, { Fragment, useState, useCallback, useEffect } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 
@@ -48,7 +48,7 @@ interface RiskRow {
 }
 
 interface DashData {
-  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[] };
+  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[] };
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
@@ -246,17 +246,27 @@ function KraBar({ label, value, target, pct, status }: { label: string; value: n
 export default function TelecallingDashboard() {
   const [view, setView] = useState<View>("dashboard");
   const { me } = useAuth();
+  const [period, setPeriod] = useState<"today" | "week" | "lastweek" | "month" | "lastmonth" | "year" | "lastyear">("today");
+  const PERIOD_OPTIONS: { key: typeof period; label: string }[] = [
+    { key: "today", label: "Today" },
+    { key: "week", label: "This Week" },
+    { key: "lastweek", label: "Last Week" },
+    { key: "month", label: "This Month" },
+    { key: "lastmonth", label: "Last Month" },
+    { key: "year", label: "This Year" },
+    { key: "lastyear", label: "Last Year" },
+  ];
   // Roster is the assignment controller — visible/editable only with the
   // `mis` scope (root/admin always allowed).
   const canManageRoster = !!me && (me.isAdmin || me.scopes.includes("mis"));
 
   const dash = useLiveQuery<DashData>(
     async () => {
-      const res = await fetch("/api/automations/telecalling/data");
+      const res = await fetch(`/api/automations/telecalling/data?period=${period}`);
       if (!res.ok) throw new Error("load failed");
       return res.json();
     },
-    { events: ["automation", "telecalling"] },
+    { events: ["automation", "telecalling"], deps: [period] },
   );
 
   const roster = useLiveQuery<{ telecallers: RosterRow[] }>(
@@ -275,7 +285,7 @@ export default function TelecallingDashboard() {
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated" | "estConv">("estConv");
+  const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated" | "estConv">("score");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -312,6 +322,44 @@ export default function TelecallingDashboard() {
     dash.refresh();
     roster.refresh();
   }, [dash, roster]);
+
+  // ── Deleted agents (MIS Controller) ──────────────────────────────────────
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [deletedRows, setDeletedRows] = useState<RosterRow[]>([]);
+  const loadDeleted = useCallback(async () => {
+    if (!canManageRoster) return;
+    try {
+      const res = await fetch("/api/telecallers?deleted=1");
+      if (res.ok) setDeletedRows((await res.json()).telecallers ?? []);
+    } catch { /* ignore */ }
+  }, [canManageRoster]);
+  useEffect(() => {
+    if (showDeleted) void loadDeleted();
+  }, [showDeleted, loadDeleted]);
+  const deleteTelecaller = async (id: string) => {
+    setBusy(true);
+    try {
+      await fetch(`/api/telecallers/${id}`, { method: "DELETE" });
+      refreshAll();
+      void loadDeleted();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const restoreTelecaller = async (id: string) => {
+    setBusy(true);
+    try {
+      await fetch(`/api/telecallers/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deleted: false }),
+      });
+      refreshAll();
+      void loadDeleted();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = async () => {
     if (!form.name.trim()) return;
@@ -457,7 +505,7 @@ export default function TelecallingDashboard() {
               <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div>
-                    <h3 className="text-lg font-bold">🏆 Leaderboard — Today</h3>
+                    <h3 className="text-lg font-bold">🏆 Leaderboard — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
                     <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5" title="Composite score formula">
                       1 close = <span className="font-bold text-emerald-400">+100</span> · 1 lead ={" "}
                       <span className="font-bold text-amber-400">+15</span> · 1 connected call ={" "}
@@ -475,6 +523,22 @@ export default function TelecallingDashboard() {
                     <option value="callsConnected">Rank by Calls Connected</option>
                     <option value="leadsGenerated">Rank by Leads Generated</option>
                   </select>
+                </div>
+                {/* Period switcher (chase window) */}
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {PERIOD_OPTIONS.map((p) => (
+                    <button
+                      key={p.key}
+                      onClick={() => setPeriod(p.key)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                        period === p.key
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                          : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
                 </div>
                 {/* Chase podium — top 3 with gaps (score ranking only) */}
                 {sortKey === "score" && sorted.length >= 2 && (
@@ -516,7 +580,7 @@ export default function TelecallingDashboard() {
                     <thead className="text-zinc-500 dark:text-zinc-400 text-xs uppercase">
                       <tr className="border-b border-zinc-200 dark:border-zinc-800">
                         <th className="text-left py-2 pr-4">#</th>
-                        <th className="text-left py-2 pr-4">Telecaller</th>
+                        <th className="text-left py-2 pr-4 min-w-[11rem]">Telecaller</th>
                         <th className="text-right py-2 pr-4">Est. Assigned</th>
                         <th className="text-right py-2 pr-4">Est. Won</th>
                         <th className="text-right py-2 pr-4">Conv %</th>
@@ -540,7 +604,7 @@ export default function TelecallingDashboard() {
                               <td className={`py-2 pr-4 font-bold text-lg ${podium ? "" : "text-zinc-500 dark:text-zinc-600"}`} title={podium ? `Rank #${i + 1} — projected + co-credited close value` : `Rank #${i + 1}`}>
                                 {medal ?? i + 1}
                               </td>
-                              <td className="py-2 pr-4">
+                              <td className="py-2 pr-4 min-w-[11rem]">
                                 <button
                                   onClick={() => setExpandedId(open ? null : t.id)}
                                   className="inline-flex items-center gap-1.5 font-semibold text-zinc-900 dark:text-white hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
@@ -809,6 +873,11 @@ export default function TelecallingDashboard() {
                   onEdit={edit}
                   onToggleActive={toggleActive}
                   onSave={save}
+                  onDelete={deleteTelecaller}
+                  onRestore={restoreTelecaller}
+                  deletedRows={deletedRows}
+                  showDeleted={showDeleted}
+                  onToggleShowDeleted={() => setShowDeleted((s) => !s)}
                 />
               </div>
             ) : (
@@ -923,6 +992,11 @@ function RosterSection({
   onEdit,
   onToggleActive,
   onSave,
+  onDelete,
+  onRestore,
+  deletedRows,
+  showDeleted,
+  onToggleShowDeleted,
 }: {
   rosterRows: RosterRow[];
   form: { name: string; email: string; active: boolean; order: number; neodoveUserId: string; neodoveUserName: string };
@@ -932,6 +1006,11 @@ function RosterSection({
   onEdit: (t: RosterRow) => void;
   onToggleActive: (id: string, active: boolean) => void;
   onSave: () => void;
+  onDelete: (id: string) => void;
+  onRestore: (id: string) => void;
+  deletedRows: RosterRow[];
+  showDeleted: boolean;
+  onToggleShowDeleted: () => void;
 }) {
   const [rosterTab, setRosterTab] = useState<"active" | "inactive">("active");
   const activeRows = rosterRows.filter((r) => r.active);
@@ -962,10 +1041,53 @@ function RosterSection({
               }`}>
                 {t.active ? "Make inactive" : "Reactivate"}
               </button>
+              <button
+                onClick={() => { if (window.confirm(`Delete ${t.name} from the roster? They disappear from the roster, leaderboard and assignment engine (restorable from Deleted Agents).`)) onDelete(t.id); }}
+                disabled={busy}
+                className="text-xs rounded-lg bg-rose-500/10 text-rose-500 dark:text-rose-400 px-2.5 py-1.5 font-semibold hover:bg-rose-500/20 disabled:opacity-40"
+                title="Soft delete — hidden everywhere, restorable from Deleted Agents"
+              >
+                🗑
+              </button>
             </div>
           </div>
         ))}
         {rosterRows.length === 0 && <p className="text-sm text-zinc-500">No telecallers yet — add one below.</p>}
+      </div>
+
+      {/* Deleted agents — hidden from the roster/leaderboard, restorable */}
+      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 mt-3">
+        <button
+          onClick={onToggleShowDeleted}
+          className="flex items-center gap-2 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+        >
+          <span className={`transition-transform inline-block ${showDeleted ? "rotate-90" : ""}`}>▸</span>
+          🗑️ Deleted agents ({deletedRows.length})
+        </button>
+        {showDeleted && (
+          <div className="mt-2 grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+            {deletedRows.map((t) => (
+              <div key={t.id} className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-semibold text-sm text-zinc-700 dark:text-zinc-300">{t.name}</div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400">Deleted</span>
+                </div>
+                <div className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-1">
+                  {t.neodoveUserName ? `NeoDove: ${t.neodoveUserName}` : "NeoDove: not linked"} · Total assigned: {t.totalAssigned}
+                </div>
+                <button
+                  onClick={() => onRestore(t.id)}
+                  disabled={busy}
+                  className="mt-2 w-full text-xs rounded-lg bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 py-1.5 font-semibold hover:bg-emerald-500/20 disabled:opacity-40"
+                  title="Restore as inactive — reactivate when ready"
+                >
+                  ♻ Restore (inactive)
+                </button>
+              </div>
+            ))}
+            {deletedRows.length === 0 && <p className="text-xs text-zinc-500">No deleted agents.</p>}
+          </div>
+        )}
       </div>
 
       <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4 grid gap-2 md:grid-cols-[1fr_1fr_auto_auto_1fr_1fr]">

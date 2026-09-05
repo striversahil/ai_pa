@@ -20,8 +20,9 @@ const misGuard = asyncHandler(async (req, res, next) => {
   }
 });
 
-router.get('/', misGuard, asyncHandler(async (_req, res) => {
-  const tcs = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+router.get('/', misGuard, asyncHandler(async (req, res) => {
+  const showDeleted = req.query.deleted === '1';
+  const tcs = await prisma.telecaller.findMany({ where: { deleted: showDeleted }, orderBy: { order: 'asc' } });
   const withCounts = await Promise.all(
     tcs.map(async (t) => {
       const [totalAssigned, activeAssigned] = await Promise.all([
@@ -44,18 +45,28 @@ router.post('/', misGuard, asyncHandler(async (req, res) => {
 }));
 
 router.put('/:id', misGuard, asyncHandler(async (req, res) => {
-  const { name, email, active, order } = req.body || {};
+  const { name, email, active, order, deleted, neodoveUserId, neodoveUserName } = req.body || {};
   const data: Record<string, unknown> = {};
   if (name !== undefined) data.name = String(name).trim();
   if (email !== undefined) data.email = email;
   if (active !== undefined) data.active = active;
   if (order !== undefined) data.order = order;
+  if (neodoveUserId !== undefined) data.neodoveUserId = neodoveUserId;
+  if (neodoveUserName !== undefined) data.neodoveUserName = neodoveUserName;
+  if (deleted !== undefined) {
+    data.deleted = !!deleted;
+    if (deleted === false && active === undefined) data.active = false; // restore comes back inactive
+  }
   const tc = await prisma.telecaller.update({ where: { id: String(req.params.id) }, data });
   res.json(tc);
 }));
 
 router.delete('/:id', misGuard, asyncHandler(async (req, res) => {
-  await prisma.telecaller.delete({ where: { id: String(req.params.id) } });
+  // Soft delete: hidden everywhere, restorable from the MIS Controller.
+  await prisma.telecaller.update({
+    where: { id: String(req.params.id) },
+    data: { deleted: true, active: false },
+  });
   res.json({ ok: true });
 }));
 
