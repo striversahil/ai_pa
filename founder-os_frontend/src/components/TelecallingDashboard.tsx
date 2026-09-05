@@ -271,16 +271,16 @@ export default function TelecallingDashboard() {
     { events: ["automation", "telecalling"], deps: [period], clearOnError: true },
   );
 
-  // Lead Conversion uses a fixed "week" period — it's the default view and
-  // intentionally has no filter switching. Its data is still independent of the
-  // Dashboard so the dashboard filter never touches conversion.
+  // Lead Conversion is the default view with no period filtering — it hits the
+  // plain dashboard endpoint (no ?period=) and stays independent of the
+  // Dashboard's filter.
   const convDash = useLiveQuery<DashData>(
     async () => {
-      const res = await fetch("/api/automations/telecalling/data?period=week");
+      const res = await fetch("/api/automations/telecalling/data");
       if (!res.ok) throw new Error("Conversion load failed");
       return res.json();
     },
-    { events: ["automation", "telecalling"], deps: ["week"], clearOnError: true },
+    { events: ["automation", "telecalling"], clearOnError: true },
   );
 
   // Lead Generation has its OWN period filter — independent of the leaderboard
