@@ -2,7 +2,6 @@
 
 import React, { Fragment, useState, useCallback, useEffect } from "react";
 import { Trash2 } from "lucide-react";
-import Popover from "@/components/ui/Popover";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
@@ -1117,26 +1116,19 @@ function RosterSection({
       </div>
 
       {/* Deleted agents — hidden from the roster/leaderboard, restorable */}
-      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 mt-3 flex justify-start">
-        <Popover
-          align="left"
-          widthClass="w-[22rem]"
-          open={showDeleted}
-          onOpenChange={(o) => onToggleShowDeleted(o)}
-          trigger={
-            <button
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800 hover:border-rose-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
-              title="Show deleted agents (restorable)"
-            >
-              <Trash2 className="w-4 h-4" />
-              Deleted agents ({deletedRows.length})
-            </button>
-          }
+      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 mt-3">
+        <button
+          onClick={() => onToggleShowDeleted(!showDeleted)}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800 hover:border-rose-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+          title="Expand/collapse deleted agents (restorable)"
         >
-          <div className="p-4 space-y-3">
-            <div className="font-bold text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 pb-2">
-              Deleted agents
-            </div>
+          <span className={`transition-transform inline-block ${showDeleted ? "rotate-90" : ""}`}>▸</span>
+          <Trash2 className="w-4 h-4" />
+          Deleted agents ({deletedRows.length})
+        </button>
+
+        {showDeleted && (
+          <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-3">
             {deletedRows.map((t) => (
               <div key={t.id} className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-4">
                 <div className="flex items-center justify-between">
@@ -1160,7 +1152,7 @@ function RosterSection({
             ))}
             {deletedRows.length === 0 && <p className="text-xs text-zinc-500 py-2">No deleted agents.</p>}
           </div>
-        </Popover>
+        )}
       </div>
 
       <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4 grid gap-2 md:grid-cols-[1fr_1fr_auto_auto_1fr_1fr]">
