@@ -627,7 +627,6 @@ export default function TelecallingDashboard() {
                         <th className="text-left py-2 pr-4">#</th>
                         <th className="text-left py-2 pr-4 min-w-[11rem]">Telecaller</th>
                         <th className="text-right py-2 pr-4">Leads</th>
-                        <th className="text-right py-2 pr-4">Est. Assigned</th>
                         <th className="text-right py-2 pr-4">Est. Won</th>
                         <th className="text-right py-2 pr-4">Conv %</th>
                         <th className="text-right py-2 pr-4">Est. Conv ₹</th>
@@ -660,7 +659,6 @@ export default function TelecallingDashboard() {
                                 </button>
                               </td>
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.leadsGenerated)}</td>
-                              <td className="py-2 pr-4 text-right font-mono">{t.conversion.assigned}</td>
                               <td className="py-2 pr-4 text-right text-emerald-400 font-mono whitespace-nowrap">
                                 {t.conversion.won}
                                 {(t.conversion.credit?.won ?? 0) > 0 && (
