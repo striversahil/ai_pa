@@ -635,7 +635,7 @@ export default function TelecallingDashboard() {
                         <th className="text-right py-2 pr-4">Leads</th>
                         <th className="text-right py-2 pr-4">Talk</th>
                         <th className="text-right py-2 pr-4">Risk</th>
-                        <th className="text-right py-2">Score</th>
+                        <th className="text-right py-2 pr-4 whitespace-nowrap min-w-[12rem]">Score</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -683,7 +683,7 @@ export default function TelecallingDashboard() {
                                   <span className="text-emerald-400" title="No estimates at risk">✓</span>
                                 )}
                               </td>
-                              <td className="py-2 text-right whitespace-nowrap">
+                              <td className="py-2 pr-4 text-right whitespace-nowrap min-w-[12rem]">
                                 <div className="flex items-center justify-end gap-2">
                                   <span className="font-extrabold text-indigo-300 font-mono">{t.score}</span>
                                   {sortKey === "score" && leaderScore > 0 && (

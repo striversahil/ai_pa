@@ -775,11 +775,19 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     const estIds = [...new Set(assignRows.map((r: any) => r.estimateId))];
     const estById = new Map<string, any>();
     if (estIds.length > 0) {
-      const ests = await prisma.estimate.findMany({
-        where: { estimateId: { in: estIds } },
-        select: { estimateId: true, status: true, total: true },
-      });
-      for (const e of ests) estById.set(e.estimateId, e);
+      // Chunk to stay under SQLite's ~999 bound-parameter limit per query.
+      for (let i = 0; i < estIds.length; i += 500) {
+        const chunk = estIds.slice(i, i + 500);
+        try {
+          const ests = await prisma.estimate.findMany({
+            where: { estimateId: { in: chunk } },
+            select: { estimateId: true, status: true, total: true },
+          });
+          for (const e of ests) estById.set(e.estimateId, e);
+        } catch (e: any) {
+          logger.warn({ err: e?.message, chunk: i }, 'period estimate chunk read failed');
+        }
+      }
     }
     for (const r of assignRows) {
       const id = String(r.telecallerId);
