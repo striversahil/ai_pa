@@ -271,6 +271,19 @@ export default function TelecallingDashboard() {
     { events: ["automation", "telecalling"], deps: [period], clearOnError: true },
   );
 
+  // Lead Conversion has its OWN period filter — fully independent of both the
+  // Dashboard leaderboard and Lead Generation. So changing the dashboard's
+  // period never touches the conversion board, and vice versa.
+  const [convPeriod, setConvPeriod] = useState<typeof period>("week");
+  const convDash = useLiveQuery<DashData>(
+    async () => {
+      const res = await fetch(`/api/automations/telecalling/data?period=${convPeriod}`);
+      if (!res.ok) throw new Error("Conversion load failed");
+      return res.json();
+    },
+    { events: ["automation", "telecalling"], deps: [convPeriod], clearOnError: true },
+  );
+
   // Lead Generation has its OWN period filter — independent of the leaderboard
   // period, so filtering the dashboard/conversion never changes the Generation
   // view. Same endpoint, different period param.
@@ -436,6 +449,9 @@ export default function TelecallingDashboard() {
   const kpi = dash.data?.kpi;
   const board = [...(dash.data?.leaderboard ?? [])];
   const activeBoard = board.filter((r) => r.active);
+  // Lead Conversion board — driven by ITS OWN convDash/period, not the dashboard.
+  const convBoard = [...(convDash.data?.leaderboard ?? [])];
+  const convActiveBoard = convBoard.filter((r) => r.active);
   // Lead Generation board — driven by its OWN genDash/period, not the leaderboard period.
   const genBoard = [...(genDash.data?.leaderboard ?? [])];
   const genActiveBoard = genBoard.filter((r) => r.active);
@@ -789,10 +805,30 @@ export default function TelecallingDashboard() {
 
           {view === "conversion" && (
             <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-              <h3 className="text-lg font-bold mb-1">📨 Lead Conversion</h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
-                Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates.
-              </p>
+              <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="text-lg font-bold mb-1">📨 Lead Conversion</h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates.
+                  </p>
+                </div>
+                {/* Independent period filter for Lead Conversion */}
+                <div className="flex flex-wrap gap-1.5">
+                  {PERIOD_OPTIONS.map((p) => (
+                    <button
+                      key={p.key}
+                      onClick={() => setConvPeriod(p.key)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                        convPeriod === p.key
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                          : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Horizontal agent tabs */}
               <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-1 px-1">
@@ -806,8 +842,8 @@ export default function TelecallingDashboard() {
                 >
                   All
                 </button>
-                {(dash.data?.meta?.agents ?? activeBoard).filter((a) => a.active).map((t) => {
-                  const board = activeBoard.find((b) => b.id === t.id);
+                {(convDash.data?.meta?.agents ?? convActiveBoard).filter((a) => a.active).map((t) => {
+                  const board = convActiveBoard.find((b) => b.id === t.id);
                   const count = board?.conversion.assigned ?? 0;
                   const active = agentFilter === t.id;
                   return (
@@ -831,8 +867,8 @@ export default function TelecallingDashboard() {
 
               {!agentFilter && (
                 <div className="space-y-2">
-                  {activeBoard.length === 0 && <p className="text-sm text-zinc-500">No active telecallers.</p>}
-                  {activeBoard.map((t) => (
+                  {convActiveBoard.length === 0 && <p className="text-sm text-zinc-500">No active telecallers.</p>}
+                  {convActiveBoard.map((t) => (
                     <div key={t.id} className="flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
                       <span className="font-semibold text-zinc-900 dark:text-white">{t.name}</span>
                       <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono">
