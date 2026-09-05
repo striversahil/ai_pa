@@ -11,7 +11,7 @@ interface LeaderRow {
   name: string;
   active: boolean;
   neodoveUserName: string | null;
-  conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number; estimatedConversion: { count: number; value: number }; credit: { won: number; value: number } };
+  conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number; estimatedConversion: { count: number; value: number } };
   generation: {
     callsAttempted: number;
     callsConnected: number;
@@ -113,9 +113,9 @@ function StaleChip({ staleHours, compact = false }: { staleHours: number | null 
       </span>
     );
   const days = Math.floor(staleHours / 24);
-  if (days >= 2)
+  if (days >= 3)
     return (
-      <span title={`Last comment ${days} days ago — zombie territory (silent > 2 days = reassigned)`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+      <span title={`Last comment ${days} days ago — zombie territory (silent > 3 days = reassigned)`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
         ⏰{compact ? "" : ` ${days}d stale`}
       </span>
     );
@@ -137,13 +137,13 @@ function SnatchChip({ risk, snatchInHours, compact = false }: { risk?: string | 
   const base = `inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold ${compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]"}`;
   if (risk === "zombie")
     return (
-      <span title="Silent for over 2 days — will be snatched at tonight's EOD sweep" className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+      <span title="Silent for over 3 days — will be snatched at tonight's EOD sweep" className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
         ☠{compact ? "" : " Zombie"}
       </span>
     );
   if (risk === "red")
     return (
-      <span title={`Unsatisfactory remark — snatched at EOD${snatchInHours != null ? ` in ~${snatchInHours}h` : ""}`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+      <span title={`Unsatisfactory remark, or last update older than 24h — snatched at EOD${snatchInHours != null ? ` in ~${snatchInHours}h` : ""}`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
         ⚠{compact ? "" : ` Snatch in ${snatchInHours != null ? `~${snatchInHours}h` : "EOD"}`}
       </span>
     );
@@ -312,9 +312,12 @@ export default function TelecallingDashboard() {
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated" | "estConv">("score");
+  const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // ── MIS estimate assignment overrides (lock to one agent / never assign) ──
+  const [overrideBusy, setOverrideBusy] = useState(false);
 
   // Prefetch EVERY active agent's data in parallel (one round of requests),
   // refreshed on live events. Switching agents then reads from the local map —
@@ -461,7 +464,6 @@ export default function TelecallingDashboard() {
     if (sortKey === "score") return b.score - a.score;
     if (sortKey === "won") return b.conversion.won - a.conversion.won;
     if (sortKey === "callsConnected") return b.generation.callsConnected - a.generation.callsConnected;
-    if (sortKey === "estConv") return b.conversion.estimatedConversion.value - a.conversion.estimatedConversion.value;
     return b.generation.leadsGenerated - a.generation.leadsGenerated;
   });
 
@@ -480,23 +482,63 @@ export default function TelecallingDashboard() {
         onCancel={() => setConfirmDelete(null)}
       />
       {/* Header */}
-      <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Telecalling</h1>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Daily performance · Lead Conversion (estimates) + Lead Generation (NeoDove, live)
-              {dash.data?.meta?.day ? ` · ${dash.data.meta.day}` : ""}
-              {dash.data?.meta?.usingLatestAvailable ? (
-                <span className="ml-1 text-amber-400/90">
-                  (today's NeoDove push is empty — showing latest available day)
-                </span>
-              ) : null}
-            </p>
+      <div className="relative overflow-hidden bg-gradient-to-br from-zinc-50 via-white to-indigo-50/60 dark:from-zinc-900 dark:via-zinc-950 dark:to-indigo-950/40 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6">
+        {/* subtle decorative glow */}
+        <div className="pointer-events-none absolute -top-16 -right-16 w-56 h-56 rounded-full bg-indigo-500/10 dark:bg-indigo-500/15 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 -left-10 w-48 h-48 rounded-full bg-emerald-500/5 dark:bg-emerald-500/10 blur-3xl" />
+
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/25 shrink-0">
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+                  <path d="M15 5a6 6 0 0 1 4 4" />
+                  <path d="M15 9a2 2 0 0 1 2 2" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white tracking-tight">
+                  Telecalling
+                </h1>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Daily performance · Lead Conversion (estimates) + Lead Generation (NeoDove, live)
+                  {dash.data?.meta?.usingLatestAvailable ? (
+                    <span className="ml-1 text-amber-400/90">
+                      (today's NeoDove push is empty — showing latest available day)
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="rounded-xl bg-indigo-600/10 border border-indigo-500/30 px-4 py-3 text-center">
-            <div className="text-3xl font-extrabold text-indigo-300">{dash.data?.meta?.unassignedSent ?? "—"}</div>
-            <div className="text-[11px] uppercase tracking-wide text-indigo-300/80">Unassigned sent</div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {dash.data?.meta?.day ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-700 dark:text-zinc-300 shadow-sm">
+                <svg className="w-3.5 h-3.5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                {dash.data.meta.day}
+              </span>
+            ) : null}
+            {dash.data?.meta?.activeCount !== undefined && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 shadow-sm">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
+                {dash.data.meta.activeCount} active agents
+              </span>
+            )}
+            {dash.data?.meta?.telecallerCount !== undefined && dash.data.meta.telecallerCount !== dash.data.meta.activeCount && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 shadow-sm">
+                {dash.data.meta.telecallerCount} total
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -551,23 +593,61 @@ export default function TelecallingDashboard() {
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div>
                     <h3 className="text-lg font-bold">🏆 Leaderboard — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5" title="Composite score formula">
-                      1 close = <span className="font-bold text-emerald-400">+100</span> · 1 lead ={" "}
-                      <span className="font-bold text-amber-400">+15</span> · 1 connected call ={" "}
-                      <span className="font-bold text-indigo-300">+0.5</span>
-                    </p>
+                    {/* Scoring criteria — the composite score is the ranking norm. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-400">
+                        1 close <span className="font-mono">+100</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 font-bold text-rose-400">
+                        snatched <span className="font-mono">−15</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-bold text-amber-400">
+                        1 lead <span className="font-mono">+15</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 font-bold text-indigo-300">
+                        1 call <span className="font-mono">+0.5</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-orange-500/30 bg-orange-500/10 px-2 py-0.5 font-bold text-orange-400">
+                        declined 3d+ <span className="font-mono">−20</span>
+                      </span>
+                    </div>
                   </div>
-                  <select
+                  <div className="flex items-center gap-2">
+                    {/* ⓘ rules — hover for the full game in simple English */}
+                    <div className="relative group inline-flex">
+                      <button
+                        type="button"
+                        aria-label="Game rules"
+                        title="Game rules"
+                        className="w-9 h-9 rounded-full border-2 border-indigo-400/60 bg-indigo-500/10 text-indigo-400 text-base font-bold leading-none inline-flex items-center justify-center hover:bg-indigo-500/20 hover:border-indigo-400 transition-colors"
+                      >
+                        i
+                      </button>
+                      <div className="absolute right-0 top-10 z-30 hidden group-hover:block w-80 md:w-96">
+                        <div className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 shadow-xl p-4 text-left text-[11px] leading-relaxed text-zinc-700 dark:text-zinc-300 space-y-2">
+                          <div className="text-sm font-bold text-zinc-900 dark:text-white">📖 Game Rules</div>
+                          <ul className="space-y-1.5 list-none">
+                            <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+100</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms). Credited to whoever is holding it at that moment.</li>
+                            <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
+                            <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
+                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−15</span> — your estimate is <span className="font-semibold">snatched at EOD</span> (no meaningful update, silent for over 3 days, or your last update is older than 24h — even a good update goes stale). It's handed to a better converter.</li>
+                            <li><span className="font-bold text-orange-500 dark:text-orange-400">−20</span> — an estimate is <span className="font-semibold">declined after 3+ days</span>. <span className="font-semibold">Every time an agent held it</span> costs that agent 20 (−20 × holdings).</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5, minus penalties. The table restarts at zero every week so everyone gets a fair shot.</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                    <select
                     value={sortKey}
                     onChange={(e) => setSortKey(e.target.value as any)}
                     className="px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none"
                   >
-                    <option value="estConv">Rank by Est. Conversion ₹</option>
                     <option value="score">Rank by Composite Score</option>
                     <option value="won">Rank by Estimates Won</option>
                     <option value="callsConnected">Rank by Calls Connected</option>
                     <option value="leadsGenerated">Rank by Leads Generated</option>
                   </select>
+                </div>
                 </div>
                 {/* Period switcher (chase window) */}
                 <div className="flex flex-wrap gap-1.5 mb-3">
@@ -585,12 +665,13 @@ export default function TelecallingDashboard() {
                     </button>
                   ))}
                 </div>
-                {/* Chase podium — top 3 with gaps (score ranking only) */}
+                {/* Chase podium — top 3 with gaps (composite score ranking) */}
                 {sortKey === "score" && sorted.length >= 2 && (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
                     {sorted.slice(0, 3).map((t, i) => {
                       const medals = ["🥇", "🥈", "🥉"];
-                      const gap = i > 0 ? sorted[i - 1].score - t.score : sorted[1] ? t.score - sorted[1].score : 0;
+                      const metric = t.score;
+                      const gap = i > 0 ? sorted[i - 1].score - metric : sorted[1] ? metric - sorted[1].score : 0;
                       return (
                         <div
                           key={t.id}
@@ -610,7 +691,7 @@ export default function TelecallingDashboard() {
                             </div>
                           </div>
                           <div className="text-right shrink-0">
-                            <div className="font-extrabold font-mono text-indigo-300">{t.score}</div>
+                            <div className="font-extrabold font-mono text-indigo-300">{metric}</div>
                             <div className={`text-[10px] font-bold ${i === 0 ? "text-emerald-400" : "text-rose-400"}`}>
                               {i === 0 ? `+${gap} ahead` : `${gap} to #${i}`}
                             </div>
@@ -628,8 +709,6 @@ export default function TelecallingDashboard() {
                         <th className="text-left py-2 pr-4 min-w-[11rem]">Telecaller</th>
                         <th className="text-right py-2 pr-4">Leads</th>
                         <th className="text-right py-2 pr-4">Est. Won</th>
-                        <th className="text-right py-2 pr-4">Conv %</th>
-                        <th className="text-right py-2 pr-4">Est. Conv ₹</th>
                         <th className="text-right py-2 pr-4">Calls</th>
                         <th className="text-right py-2 pr-4">Talk</th>
                         <th className="text-right py-2 pr-4">Risk</th>
@@ -645,7 +724,7 @@ export default function TelecallingDashboard() {
                         return (
                           <Fragment key={t.id}>
                             <tr className={`border-b border-zinc-100 dark:border-zinc-800/60 ${open ? "bg-indigo-50/40 dark:bg-indigo-500/5" : podium ? (i === 0 ? "bg-amber-500/10" : "bg-zinc-500/5") : ""}`}>
-                              <td className={`py-2 pr-4 font-bold text-lg ${podium ? "" : "text-zinc-500 dark:text-zinc-600"}`} title={podium ? `Rank #${i + 1} — projected + co-credited close value` : `Rank #${i + 1}`}>
+                              <td className={`py-2 pr-4 font-bold text-lg ${podium ? "" : "text-zinc-500 dark:text-zinc-600"}`} title={podium ? `Rank #${i + 1} — projected closed value` : `Rank #${i + 1}`}>
                                 {medal ?? i + 1}
                               </td>
                               <td className="py-2 pr-4 min-w-[11rem]">
@@ -661,19 +740,12 @@ export default function TelecallingDashboard() {
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.leadsGenerated)}</td>
                               <td className="py-2 pr-4 text-right text-emerald-400 font-mono whitespace-nowrap">
                                 {t.conversion.won}
-                                {(t.conversion.credit?.won ?? 0) > 0 && (
-                                  <span className="ml-1 text-[10px] font-bold text-amber-500 dark:text-amber-400" title={`Co-credited closes (originator 0.6 + closer 0.4): ₹${fmtNum(t.conversion.credit?.value ?? 0)} co-credited value`}>
-                                    +🏅{t.conversion.credit?.won?.toFixed(1)}
-                                  </span>
-                                )}
                               </td>
-                              <td className="py-2 pr-4 text-right font-mono">{t.conversion.conversionRate}%</td>
-                              <td className="py-2 pr-4 text-right font-mono text-indigo-200">{fmtNum(t.conversion.estimatedConversion?.value ?? 0)}</td>
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.callsConnected)}</td>
                               <td className="py-2 pr-4 text-right font-mono text-indigo-300">{fmtTalk(t.generation.talkTimeSec)}</td>
                               <td className="py-2 pr-4 text-right font-mono whitespace-nowrap">
                                 {(t.risk?.atRisk ?? 0) + (t.risk?.zombie ?? 0) > 0 ? (
-                                  <span className="text-rose-400 font-bold" title="Open estimates red (no meaningful update) or zombie (silent > 2 days) — lost at EOD">
+                                  <span className="text-rose-400 font-bold" title="Open estimates red (no meaningful update) or zombie (silent > 3 days) — lost at EOD">
                                     {t.risk?.atRisk ?? 0}⚠ / {t.risk?.zombie ?? 0}☠
                                   </span>
                                 ) : (
@@ -722,7 +794,7 @@ export default function TelecallingDashboard() {
                             </tr>
                             {open && (
                               <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
-                                <td colSpan={11} className="py-2 pr-4">
+                                <td colSpan={8} className="py-2 pr-4">
                                   <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3">
                                     <div className="flex items-center justify-between mb-2">
                                       <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
@@ -765,7 +837,7 @@ export default function TelecallingDashboard() {
                         );
                       })}
                       {sorted.length === 0 && (
-                        <tr><td colSpan={10} className="py-4 text-center text-zinc-500">No active telecallers yet.</td></tr>
+                        <tr><td colSpan={8} className="py-4 text-center text-zinc-500">No active telecallers yet.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -808,7 +880,7 @@ export default function TelecallingDashboard() {
                     ))}
                   </div>
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
-                    Red = latest AI verdict found no meaningful update · Zombie = no comment for over 2 days. Both are re-poached to a higher-converting agent at tonight's sweep.
+                    Red = latest AI verdict found no meaningful update · Zombie = no comment for over 3 days. Both are re-poached to a higher-converting agent at tonight's sweep.
                   </p>
                 </section>
               )}
@@ -865,12 +937,18 @@ export default function TelecallingDashboard() {
                 <div className="space-y-2">
                   {convActiveBoard.length === 0 && <p className="text-sm text-zinc-500">No active telecallers.</p>}
                   {convActiveBoard.map((t) => (
-                    <div key={t.id} className="flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
-                      <span className="font-semibold text-zinc-900 dark:text-white">{t.name}</span>
+                    <button
+                      key={t.id}
+                      onClick={() => setAgentFilter(t.id)}
+                      className="w-full flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 hover:border-indigo-400 dark:hover:border-indigo-500 transition-colors cursor-pointer group"
+                    >
+                      <span className="font-semibold text-zinc-900 dark:text-white group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors">
+                        {t.name}
+                      </span>
                       <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono">
                         {t.conversion.assigned} assigned · {t.conversion.won} won · {t.conversion.conversionRate}% · ₹{fmtNum(t.conversion.pipelineValue)}
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -930,6 +1008,11 @@ export default function TelecallingDashboard() {
                     the next rotation.
                   </p>
                 </section>
+                <EstimateOverridesSection
+                  rosterRows={rosterRows}
+                  busy={overrideBusy}
+                  setBusy={setOverrideBusy}
+                />
                 <RosterSection
                   rosterRows={rosterRows}
                   form={form}
@@ -1072,6 +1155,234 @@ export default function TelecallingDashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+interface OverrideEstimate {
+  estimateId: string;
+  estimateNumber: string;
+  customerName: string;
+  status: string;
+  total: number;
+  date: string;
+  assignedTelecallerId: string | null;
+  lockedTelecallerId: string | null;
+  skipAssignment: boolean;
+}
+
+/**
+ * MIS-only estimate assignment overrides: lock an estimate to a single agent
+ * (never re-poached, even when red/zombie) or mark it never-assign (excluded
+ * from the assignment engine entirely). Both take precedence over everything.
+ */
+function EstimateOverridesSection({
+  rosterRows,
+  busy,
+  setBusy,
+}: {
+  rosterRows: RosterRow[];
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<OverrideEstimate[]>([]);
+  const [modified, setModified] = useState<OverrideEstimate[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const agentName = (id: string | null | undefined) =>
+    id ? rosterRows.find((r) => r.id === id)?.name ?? "—" : "—";
+
+  const search = useCallback(async () => {
+    if (!q.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/estimates/assignment-overrides?q=${encodeURIComponent(q.trim())}`);
+      if (!res.ok) throw new Error("load failed");
+      const data = await res.json();
+      setResults(data.estimates ?? []);
+      setLoaded(true);
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false);
+    }
+  }, [q, setBusy]);
+
+  const loadModified = useCallback(async () => {
+    try {
+      const res = await fetch("/api/estimates/assignment-overrides?modified=1");
+      if (!res.ok) throw new Error("load failed");
+      const data = await res.json();
+      setModified(data.estimates ?? []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    // On load, only show estimates that already have an override. The search
+    // results list stays empty until the user actually searches.
+    void loadModified();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-save on every change — no save button. Updates the view optimistically
+  // (instant), then persists to the backend. The PUT route broadcasts a live
+  // `telecalling` event which refreshes the dashboard automatically — no manual
+  // refetch here (avoids duplicate API calls).
+  const apply = async (est: OverrideEstimate, locked: string, skip: boolean) => {
+    setSavingId(est.estimateId);
+    const patch = { ...est, lockedTelecallerId: locked || null, skipAssignment: skip };
+    setResults((prev) => prev.map((r) => (r.estimateId === est.estimateId ? patch : r)));
+    setModified((prev) => {
+      const rest = prev.filter((r) => r.estimateId !== est.estimateId);
+      return patch.lockedTelecallerId || patch.skipAssignment ? [patch, ...rest] : rest;
+    });
+    try {
+      await fetch(`/api/estimates/${est.estimateId}/assignment-override`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lockedTelecallerId: locked || null, skipAssignment: skip }),
+      });
+    } catch {
+      // revert on failure so the UI never lies about the saved state
+      setResults((prev) => prev.map((r) => (r.estimateId === est.estimateId ? est : r)));
+      setModified((prev) => {
+        const rest = prev.filter((r) => r.estimateId !== est.estimateId);
+        return est.lockedTelecallerId || est.skipAssignment ? [est, ...rest] : rest;
+      });
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+      <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+        <div>
+          <h3 className="text-lg font-bold">🔒 Estimate Assignment Overrides</h3>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+            Lock an estimate to <span className="font-semibold text-zinc-700 dark:text-zinc-300">one agent</span> (never re-poached, even at EOD) or mark it{" "}
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">never-assign</span> (stays unassigned). Overrides beat the assignment engine —{" "}
+            <span className="font-semibold">changes save automatically</span>.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void search(); }}
+            placeholder="Search estimate # / customer / id…"
+            className="px-3 py-1.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-400 w-64"
+          />
+          <button
+            onClick={() => void search()}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+          >
+            Search
+          </button>
+        </div>
+      </div>
+
+      {busy && results.length === 0 && <p className="text-xs text-zinc-500">Loading…</p>}
+      {!busy && loaded && results.length === 0 && q.trim() && (
+        <p className="text-xs text-zinc-500">No estimates found. Search by estimate number, customer name or id.</p>
+      )}
+      {!busy && !q.trim() && results.length === 0 && (
+        <p className="text-xs text-zinc-500">Search for an estimate above to set its assignment override.</p>
+      )}
+
+      <div className="space-y-2">
+        {results.map((est) => {
+          const isLocked = !!est.lockedTelecallerId;
+          const lockedName = agentName(est.lockedTelecallerId || null);
+          const saving = savingId === est.estimateId;
+          return (
+            <div key={est.estimateId} className={`rounded-lg border bg-white dark:bg-zinc-950 px-3 py-2.5 space-y-2 ${isLocked || est.skipAssignment ? "border-indigo-400/40 dark:border-indigo-500/40" : "border-zinc-200 dark:border-zinc-800"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
+                    {est.estimateNumber} · {est.customerName}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
+                    {est.status} · ₹{fmtNum(Number(est.total ?? 0))} · now: {agentName(est.assignedTelecallerId)}
+                    {est.lockedTelecallerId ? " · 🔒 locked" : ""}
+                    {est.skipAssignment ? " · 🚫 never-assign" : ""}
+                  </div>
+                </div>
+                {saving && <span className="text-[10px] text-indigo-400 font-semibold shrink-0">saving…</span>}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 whitespace-nowrap">Lock to:</label>
+                  <select
+                    value={est.lockedTelecallerId ?? ""}
+                    onChange={(e) => void apply(est, e.target.value, est.skipAssignment)}
+                    disabled={saving}
+                    className="px-2 py-1 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none disabled:opacity-50"
+                  >
+                    <option value="">— no lock —</option>
+                    {rosterRows.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={est.skipAssignment}
+                    onChange={(e) => void apply(est, est.lockedTelecallerId ?? "", e.target.checked)}
+                    disabled={saving}
+                    className="accent-rose-500 disabled:opacity-50"
+                  />
+                  Never assign
+                </label>
+              </div>
+              {(isLocked || est.skipAssignment) && (
+                <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                  {isLocked && <span className="text-indigo-500 dark:text-indigo-400">🔒 Locked to {lockedName} — never re-poached, even if red/zombie.</span>}
+                  {isLocked && est.skipAssignment && <span> </span>}
+                  {est.skipAssignment && <span className="text-rose-500 dark:text-rose-400">🚫 Never assigned to any agent.</span>}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Modified estimates summary — every estimate with an active override. */}
+      {modified.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Modified assignments ({modified.length})
+            </h4>
+            <span className="text-[10px] text-zinc-400">auto-saved</span>
+          </div>
+          <div className="grid gap-1.5 md:grid-cols-2">
+            {modified.map((est) => (
+              <div key={est.estimateId} className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 dark:border-zinc-800 px-2.5 py-1.5 bg-white dark:bg-zinc-950">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-zinc-900 dark:text-white truncate">{est.estimateNumber}</div>
+                  <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono truncate">
+                    {est.lockedTelecallerId
+                      ? `🔒 → ${agentName(est.lockedTelecallerId)}`
+                      : "🔒 → (locked)"}
+                    {est.lockedTelecallerId && est.skipAssignment ? " · " : ""}
+                    {est.skipAssignment ? "🚫 never-assign" : ""}
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 shrink-0 whitespace-nowrap">
+                  now: {agentName(est.assignedTelecallerId)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

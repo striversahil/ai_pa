@@ -33,7 +33,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Message: ['processed', 'isHistorical'],
   Email: ['processed'],
   Digest: ['requiresFounder'],
-  Estimate: ['skipMatching'],
+  Estimate: ['skipMatching', 'skipAssignment'],
   Classification: ['meaningfulUpdate'],
   Automation: ['enabled'],
   MarketingCampaign: ['enabled'],
@@ -66,6 +66,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   Token: ['createdAt', 'updatedAt'],
   Telecaller: ['createdAt'],
   EstimateAssignment: ['assignedAt'],
+  TelecallerScoreEvent: ['createdAt'],
   WaTask: ['lastInboundAt', 'lastOutboundAt', 'waitingSince', 'waitTimeoutAt', 'followUpDueAt', 'createdAt', 'updatedAt'],
   MessageLineage: ['createdAt'],
   WaTaskHistory: ['occurredAt'],
@@ -98,6 +99,7 @@ const ID_FIELDS: Record<string, string> = {
   Token: 'id',
   Telecaller: 'id',
   EstimateAssignment: 'id',
+  TelecallerScoreEvent: 'id',
   WaTask: 'id',
   MessageLineage: 'id',
   WaTaskHistory: 'id',
@@ -139,10 +141,13 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   MarketingLead: { campaign: { model: 'MarketingCampaign', fk: 'campaignId', one: true } },
   MarketingCampaignRun: { campaign: { model: 'MarketingCampaign', fk: 'campaignId', one: true } },
-  Telecaller: { assignments: { model: 'EstimateAssignment', fk: 'telecallerId' } },
+  Telecaller: { assignments: { model: 'EstimateAssignment', fk: 'telecallerId' }, scoreEvents: { model: 'TelecallerScoreEvent', fk: 'telecallerId' } },
   EstimateAssignment: {
     telecaller: { model: 'Telecaller', fk: 'telecallerId', one: true },
     estimate: { model: 'Estimate', fk: 'estimateId', one: true },
+  },
+  TelecallerScoreEvent: {
+    telecaller: { model: 'Telecaller', fk: 'telecallerId', one: true },
   },
   WaTask: {
     history: { model: 'WaTaskHistory', fk: 'taskId' },
@@ -662,6 +667,7 @@ export class D1PrismaClient {
   get token() { return this.model('Token'); }
   get telecaller() { return this.model('Telecaller'); }
   get estimateAssignment() { return this.model('EstimateAssignment'); }
+  get telecallerScoreEvent() { return this.model('TelecallerScoreEvent'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }
   get waTaskHistory() { return this.model('WaTaskHistory'); }

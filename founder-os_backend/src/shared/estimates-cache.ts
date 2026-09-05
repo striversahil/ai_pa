@@ -1,12 +1,13 @@
+import { cached, cacheDel, cacheDelPrefix } from './cache';
 import { prisma } from './prisma';
 import { logger } from './logger';
 import { isSystemGeneratedComment } from './systemComment';
 
-// ── /api/estimates payload cache (D1 row-read budget protection) ─────────────
+// ── /api/estimates payload cache (KV-backed) ─────────────────────────────────
 // The Zoho Estimates dashboard payload includes every open estimate with its
 // FULL comment timeline. Dashboards refetch on every runner WebSocket
-// broadcast (every 5–15 min), so serving it from a short-TTL Setting snapshot
-// cuts D1 row reads by ~100×. Same pattern as the telecalling risk cache.
+// broadcast (every 5–15 min), so serving it from a short-TTL KV snapshot cuts
+// D1 row reads by ~100×. Same pattern as the telecalling risk cache.
 const KEY = 'sales_copilot:estimates_cache';
 const TTL_MS = 5 * 60 * 1000;
 
@@ -36,27 +37,32 @@ async function computeEstimatesPayload(): Promise<EstimatesPayload> {
   };
 }
 
-export async function getEstimatesPayload(): Promise<EstimatesPayload> {
-  let cached: EstimatesPayload | null = null;
-  try {
-    const row = await prisma.setting.findUnique({ where: { key: KEY } });
-    if (row?.value) cached = JSON.parse(String(row.value)) as EstimatesPayload;
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'estimates cache read failed');
-  }
-  if (cached && Date.now() - Date.parse(cached.computedAt) < TTL_MS) return cached;
+/**
+ * Invalidate the estimates cache when the underlying Zoho data changes (a
+ * runner sync, comment sync, status/classification transition, or bulk upsert).
+ * Call sites: the runner endpoints that mutate Estimate/Comment/Classification.
+ */
+export async function invalidateEstimatesCache(): Promise<void> {
+  await cacheDel(KEY);
+}
 
-  try {
+/**
+ * Invalidate every derived cache that depends on the estimates payload (e.g.
+ * the telecalling KRA attribution reads the same estimates). Called alongside
+ * invalidateEstimatesCache() on any mutation.
+ */
+export async function invalidateDerivedEstimateCaches(): Promise<void> {
+  await Promise.all([
+    cacheDelPrefix('neodove:kra'),
+    cacheDelPrefix('telecalling:risk'),
+    cacheDel(KEY),
+  ]);
+}
+
+export async function getEstimatesPayload(): Promise<EstimatesPayload> {
+  return cached<EstimatesPayload>(KEY, TTL_MS, async () => {
     const computed = await computeEstimatesPayload();
-    await prisma.setting.upsert({
-      where: { key: KEY },
-      update: { value: JSON.stringify(computed), updatedAt: new Date() },
-      create: { key: KEY, value: JSON.stringify(computed), updatedAt: new Date() },
-    });
+    logger.debug({ estimates: computed.estimates.length }, 'estimates payload computed');
     return computed;
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'estimates compute failed — serving stale cache if present');
-    if (cached) return cached;
-    throw e;
-  }
+  });
 }

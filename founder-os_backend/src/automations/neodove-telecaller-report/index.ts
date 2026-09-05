@@ -26,6 +26,7 @@
 import { logger } from '../../shared/logger';
 import { prisma } from '../../shared/prisma';
 import { isSystemGeneratedComment } from '../../shared/systemComment';
+import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
 import type { AutomationContext } from '../../modules/automation/types';
 
 export const CONNECTED_CALLS_PER_DAY = 120;
@@ -76,36 +77,49 @@ async function loadReportsInRange(from?: string, to?: string): Promise<{ dates: 
     // `~` sorts right after ':' so the upper bound includes exactly this date.
     keyFilter.lte = `${prefix}${to}~`;
   }
-  const settings = await prisma.setting.findMany({
-    where: { key: keyFilter },
-    orderBy: { key: 'desc' },
-  });
-  const dates: string[] = [];
-  const rows: any[] = [];
-  for (const s of settings) {
-    const keyDate = s.key.slice(prefix.length);
-    try {
-      const parsed = JSON.parse(s.value);
-      if (!Array.isArray(parsed?.rows)) continue;
-      // Defence-in-depth: some stored snapshots contain rows dated outside
-      // their key's day (NeoDove API ignores range params). Trust the ROW's
-      // own date over the key when it is present.
-      const inRange = parsed.rows.filter((r: any) => {
-        const d = typeof r?.date === 'string' ? r.date.slice(0, 10) : null;
-        if (!d || !DATE_RE.test(d)) return true;
-        if (from && d < from) return false;
-        if (to && d > to) return false;
-        return true;
-      });
-      if (inRange.length > 0) {
-        dates.push(keyDate);
-        rows.push(...inRange);
+
+  // The same day-range is re-read by every dashboard on every broadcast, and
+  // the underlying snapshots only change on the 10-min NeoDove refresh — so
+  // cache the parsed read in KV. Invalidated explicitly on report writes.
+  const rangeKey = `neodove:report_range:${from ?? '*'}:${to ?? '*'}`;
+  const CACHE_TTL_MS = 5 * 60 * 1000;
+  return cached<{ dates: string[]; rows: any[] }>(rangeKey, CACHE_TTL_MS, async () => {
+    const settings = await prisma.setting.findMany({
+      where: { key: keyFilter },
+      orderBy: { key: 'desc' },
+    });
+    const dates: string[] = [];
+    const rows: any[] = [];
+    for (const s of settings) {
+      const keyDate = s.key.slice(prefix.length);
+      try {
+        const parsed = JSON.parse(s.value);
+        if (!Array.isArray(parsed?.rows)) continue;
+        // Defence-in-depth: some stored snapshots contain rows dated outside
+        // their key's day (NeoDove API ignores range params). Trust the ROW's
+        // own date over the key when it is present.
+        const inRange = parsed.rows.filter((r: any) => {
+          const d = typeof r?.date === 'string' ? r.date.slice(0, 10) : null;
+          if (!d || !DATE_RE.test(d)) return true;
+          if (from && d < from) return false;
+          if (to && d > to) return false;
+          return true;
+        });
+        if (inRange.length > 0) {
+          dates.push(keyDate);
+          rows.push(...inRange);
+        }
+      } catch {
+        // skip malformed snapshots
       }
-    } catch {
-      // skip malformed snapshots
     }
-  }
-  return { dates, rows };
+    return { dates, rows };
+  });
+}
+
+/** Invalidate all cached NeoDove reads when a report snapshot is (re)written. */
+export async function invalidateNeodoveCache(): Promise<void> {
+  await Promise.all([cacheDelPrefix('neodove:report_range'), cacheDelPrefix('neodove:kra')]);
 }
 
 function aggregate(rows: any[]): NeodoveAgentRow[] {
@@ -258,67 +272,55 @@ async function loadZohoByAgent(nameMap: Record<string, string>): Promise<{
   byZohoName: Record<string, { estimates: number; value: number }>;
 }> {
   // D1 row-read budget protection: the attribution scan reads every open
-  // estimate + every comment row. Cache the result in a Setting key for
-  // 10 min — the NeodoveTelecallerDashboard refetches on every runner
-  // broadcast, and the underlying Zoho data only changes on the 15-min sync.
+  // estimate + every comment row. Cache the result in KV for 10 min — the
+  // NeodoveTelecallerDashboard refetches on every runner broadcast, and the
+  // underlying Zoho data only changes on the 15-min sync.
   const CACHE_KEY = 'neodove:kra_cache';
   const TTL_MS = 10 * 60 * 1000;
-  try {
-    const row = await prisma.setting.findUnique({ where: { key: CACHE_KEY } });
-    if (row?.value) {
-      const cached = JSON.parse(String(row.value)) as { computedAt: string } & Record<string, unknown>;
-      if (Date.now() - Date.parse(cached.computedAt) < TTL_MS) {
-        return { byAgent: cached.byAgent as any, byZohoName: cached.byZohoName as any };
+
+  const result = await cached<{ byAgent: Record<string, { estimates: number; value: number }>; byZohoName: Record<string, { estimates: number; value: number }> }>(
+    CACHE_KEY,
+    TTL_MS,
+    async () => {
+      const byAgent: Record<string, { estimates: number; value: number }> = {};
+      const byZohoName: Record<string, { estimates: number; value: number }> = {};
+
+      const normalizedMap: Record<string, string> = {};
+      for (const [zoho, neo] of Object.entries(nameMap)) {
+        if (zoho && neo) normalizedMap[zoho.trim().toLowerCase()] = neo.trim();
       }
-    }
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'KRA cache read failed');
-  }
 
-  const byAgent: Record<string, { estimates: number; value: number }> = {};
-  const byZohoName: Record<string, { estimates: number; value: number }> = {};
-
-  const normalizedMap: Record<string, string> = {};
-  for (const [zoho, neo] of Object.entries(nameMap)) {
-    if (zoho && neo) normalizedMap[zoho.trim().toLowerCase()] = neo.trim();
-  }
-
-  try {
-    const estimates = await prisma.estimate.findMany({
-      where: { status: 'sent' },
-      include: { comments: { orderBy: { commentId: 'desc' } } },
-    });
-    for (const e of estimates as any[]) {
-      const commenters = new Set<string>();
-      for (const c of e.comments ?? []) {
-        const who = String(c.commentedBy ?? '').trim();
-        if (who && !isSystemGeneratedComment(c.description, who)) commenters.add(who);
-      }
-      for (const who of commenters) {
-        const zstats = (byZohoName[who] ??= { estimates: 0, value: 0 });
-        zstats.estimates += 1;
-        zstats.value += Number(e.total) || 0;
-        const mapped = normalizedMap[who.toLowerCase()];
-        if (mapped) {
-          const astats = (byAgent[mapped] ??= { estimates: 0, value: 0 });
-          astats.estimates += 1;
-          astats.value += Number(e.total) || 0;
+      try {
+        const estimates = await prisma.estimate.findMany({
+          where: { status: 'sent' },
+          include: { comments: { orderBy: { commentId: 'desc' } } },
+        });
+        for (const e of estimates as any[]) {
+          const commenters = new Set<string>();
+          for (const c of e.comments ?? []) {
+            const who = String(c.commentedBy ?? '').trim();
+            if (who && !isSystemGeneratedComment(c.description, who)) commenters.add(who);
+          }
+          for (const who of commenters) {
+            const zstats = (byZohoName[who] ??= { estimates: 0, value: 0 });
+            zstats.estimates += 1;
+            zstats.value += Number(e.total) || 0;
+            const mapped = normalizedMap[who.toLowerCase()];
+            if (mapped) {
+              const astats = (byAgent[mapped] ??= { estimates: 0, value: 0 });
+              astats.estimates += 1;
+              astats.value += Number(e.total) || 0;
+            }
+          }
         }
+      } catch (err) {
+        logger.warn({ err }, 'KRA: failed to attribute Zoho estimates');
       }
-    }
-  } catch (err) {
-    logger.warn({ err }, 'KRA: failed to attribute Zoho estimates');
-  }
-  try {
-    await prisma.setting.upsert({
-      where: { key: CACHE_KEY },
-      update: { value: JSON.stringify({ byAgent, byZohoName, computedAt: new Date().toISOString() }), updatedAt: new Date() },
-      create: { key: CACHE_KEY, value: JSON.stringify({ byAgent, byZohoName, computedAt: new Date().toISOString() }), updatedAt: new Date() },
-    });
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'KRA cache write failed');
-  }
-  return { byAgent, byZohoName };
+      return { byAgent, byZohoName };
+    },
+  );
+
+  return result;
 }
 
 export function computeAgentKra(

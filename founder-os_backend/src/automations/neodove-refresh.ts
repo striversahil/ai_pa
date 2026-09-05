@@ -12,6 +12,7 @@
  */
 import { logger } from '../shared/logger';
 import { prisma } from '../shared/prisma';
+import { invalidateNeodoveCache } from './neodove-telecaller-report';
 
 const NEODOVE_API = 'https://connect.neodove.com/api/v3';
 
@@ -276,6 +277,9 @@ export async function refreshNeodoveReport(dateStr?: string): Promise<{
     { reportDate, fetched: all.length, stored: filtered.length, dropped: all.length - filtered.length },
     'neodove refresh complete',
   );
+  // Invalidate the KV-cached report reads + KRA attribution so dashboards pick
+  // up the new snapshot immediately.
+  await invalidateNeodoveCache();
   return {
     ok: true,
     reportDate,

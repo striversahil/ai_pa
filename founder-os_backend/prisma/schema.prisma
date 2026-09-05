@@ -168,6 +168,15 @@ model Estimate {
   lastSyncTime          DateTime        @default(now())
   skipMatching          Boolean         @default(false)
   assignedTelecallerId  String?
+  // Telecaller who originated this estimate (inferred from the first 1-2
+  // comments naming the sales agent). Sole creator — gets first claim.
+  createdBy             String?
+  // MIS override: estimate is ALWAYS held by this one agent, never re-poached
+  // at EOD even when red/zombie.
+  lockedTelecallerId    String?
+  // MIS override: never assign this estimate to any agent (stays unassigned,
+  // excluded from the assignment engine entirely).
+  skipAssignment        Boolean         @default(false)
   comments              Comment[]
   classification        Classification?
   assignments           EstimateAssignment[]
@@ -216,6 +225,7 @@ model Telecaller {
   neodoveUserName  String?
   createdAt        DateTime @default(now())
   assignments      EstimateAssignment[]
+  scoreEvents      TelecallerScoreEvent[]
 }
 
 // History of which estimate was assigned to which telecaller, and when. The
@@ -240,6 +250,26 @@ model EstimateAssignment {
   @@index([estimateId])
   @@index([telecallerId])
   @@index([day])
+}
+
+// Event-ledger scoring for the telecalling leaderboard. +100 per estimate the
+// agent converted (credited to the holder at conversion moment); -15 per EOD
+// snatch (charged to the agent who lost it for an unsatisfactory remark). The
+// day field (IST date) lets any timeframe be summed with a simple filter, so the
+// weekly leaderboard restarts at zero naturally each Sunday/Monday.
+model TelecallerScoreEvent {
+  id           String     @id @default(uuid())
+  telecallerId String
+  estimateId   String
+  delta        Int // +100 close · -15 snatch
+  day          String // YYYY-MM-DD the event occurred (IST)
+  reason       String?
+  createdAt    DateTime   @default(now())
+  telecaller   Telecaller @relation(fields: [telecallerId], references: [id], onDelete: Cascade)
+
+  @@index([telecallerId])
+  @@index([day])
+  @@index([estimateId])
 }
 
 model AuditLog {

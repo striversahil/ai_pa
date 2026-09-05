@@ -14,11 +14,16 @@ the first thing agents see when they open the tab.
   **9:00 PM IST EOD sweep** to better converters.
 - **Lead Generation** — NeoDove calls connected + leads generated per day,
   refreshed live from the NeoDove backend push (every ~10 min via the GH runner).
-- **🏆 Leaderboard** — ranked by **Est. Conv ₹ + co-credited close value**, with
-  🥇🥈🥉 podium highlighting for the top 3, an "Est. Conv ₹" column, a co-credit
-  badge next to Won (`+🏅n.n`), and sort options (Est. Conversion ₹ / Composite
-  Score / Won / Calls / Leads). Team KPI strip shows **Est. Conv ₹** (projected
-  closed value across the open pipeline) instead of a flat conversion %.
+- **🏆 Leaderboard** — ranked by **composite score** (`close +100 · lead +15 ·
+  call +0.5 − snatch 15 − decline 20`) per selected timeframe, with 🥇🥈🥉
+  podium highlighting for the top 3 and a color-coded **scoring-criteria strip**
+  plus an ⓘ **Game Rules** hover card explaining every rule in plain English.
+  Columns: `# · Telecaller · Leads · Est. Won · Calls · Talk · Risk · Score`.
+  Sort options: Composite Score / Won / Calls / Leads. Because the score is
+  driven by **event-ledger rows keyed by IST day** (see below), every period
+  filter (Today / This Week / This Month / This Year…) sums its own range — the
+  weekly view restarts at zero each week, giving everyone a fair shot at the
+  table.
 - **🔥 At Risk (EOD snatch)** — founder pre-warning panel, sorted by value, with
   **snatch reason** + a live **countdown chip** (`Snatch in ~Xh`) so agents see
   exactly why a deal is about to be taken and how much time they have left.
@@ -30,7 +35,8 @@ the first thing agents see when they open the tab.
 
 - **Healthy estimates stay put.** Estimates whose live risk is `ok`/`pending`
   keep their current agent — customer relationships/momentum are never reset.
-- **Unassigned** `sent` estimates are dealt once, to the best-fit agent.
+- **Unassigned** `sent` estimates are dealt once: **creator-first** (see below),
+  then best-fit agent.
 - **At-risk estimates (`red` / `zombie`) are re-poached** to a better converter.
 - Candidate dealing is **high-value first**, scored per agent by
   `conversionWeight (0.6) × historical win rate − loadWeight (0.4) × load
@@ -38,20 +44,61 @@ the first thing agents see when they open the tab.
   buried.
 - Every assign/reassign is **recorded into the `EstimateAssignment` chain**
   (previous open row marked `resolved`, new row linked via `reassignedFromId`)
-  — the source of truth for fair close-credit. Each EOD snatch also stores a
-  **`snatchReason`** on the new row (e.g. "unsatisfactory remark: customer not
-  answering"), surfaced to the losing agent so the mechanic is instructive.
+  — the source of truth for the decline-penalty and snatch reasons. Each EOD
+  snatch also stores a **`snatchReason`** on the new row (e.g. "unsatisfactory
+  remark: customer not answering"), surfaced to the losing agent so the mechanic
+  is instructive.
 
-The engine runs twice daily: **08:00 IST** (`cron-daily-ist.yml →
-POST /api/trigger/telecalling`) to deal unassigned estimates, and the
-**9:00 PM IST EOD sweep** (`30 15 * * *` UTC) that re-poaches estimates with an
-unsatisfactory remark or 2+ days of silence to the higher-converting agent.
-Risk states accumulate live in between via the 15-min Zoho analyzer.
+### Creator-first lead assignment
 
-## Estimated conversion (per agent + team)
+New estimates are credited to the sales agent who generated the lead. When a
+`sent` estimate is first dealt, `inferEstimateCreator()` reads the **first 3
+comments** (chronological) and matches each author against the active roster —
+**Zoho system auto-logs are skipped** via `isSystemGeneratedComment()`
+(phrase + author filter), so "Quote sent", "status changed", "created for" etc.
+never drive assignment. The **first real comment that names an active agent
+wins** (agents are instructed to write their name in the first two comments).
+The winning agent gets `Estimate.createdBy` set and the estimate is dealt to
+him as sole creator. `creatorMatches()` is prefix/substring-tolerant ("samar" →
+"Samarjeet"), with a 3-char minimum to avoid initials.
+
+### Event-ledger scoring (+100 / −15 / −20)
+
+The leaderboard is driven by an append-only `TelecallerScoreEvent` ledger, and
+**Won is counted from the +100 close events in the selected timeframe** (not the
+lifetime of currently-held won estimates), so Today = only today's conversions:
+
+- **+100** — an estimate the agent held **converts** (status →
+  `accepted`/`confirmed`), credited to the **holder at conversion moment**.
+  Recorded by `recordConversionClose()` in the status-sync route,
+  duplicate-guarded (one +100 per estimate).
+- **−15** — an estimate is **snatched at EOD** (unsatisfactory remark or 3+ days
+  of silence), charged to the **agent who lost it** by `recordSnatchPenalty()`
+  in the assignment engine.
+- **−20** — an estimate **declined after 3+ days** (older than `ZOMBIE_DAYS`);
+  charged **−20 per holding** to **every agent who held it** by
+  `recordDeclinePenalty()` in the status-sync route. Each time an agent held the
+  estimate counts once — an agent who held it 3 times (e.g. snatched away, given
+  back, re-snatched) is penalised **−20 × 3 = −60**. The whole penalty is
+  recorded once per estimate (idempotent).
+
+Each row stores the **IST day** it happened, so any timeframe (week/month/year)
+sums its own range — the weekly table restarts at zero naturally, and the score
+is fully auditable per event.
+
+The engine runs every **30 minutes** (`cron-every-30min.yml →
+POST /api/trigger/telecalling`): it deals unassigned estimates and, at the
+**9:00 PM IST EOD sweep**, re-poaches estimates with an unsatisfactory remark or
+3+ days of silence to the higher-converting agent. Risk states accumulate live
+in between via the 15-min Zoho analyzer (deterministic rules first, LLM fallback
+on the GH runner); the risk scan itself is cached in a Setting key with a
+**15-min TTL** so it refreshes in lock-step with the AI verdicts.
+
+## Estimated conversion (team KPI + agent view)
 
 `conversion.estimatedConversion {count, value}` projects expected closes from
-the agent's open pipeline:
+the agent's open pipeline. It is surfaced as the team-level **Est. Conv ₹** KPI
+and in each agent-view summary (not as a leaderboard column):
 
 ```
 prob(estimate) = clamp(max(agentWinRate, 0.2), 0.05..0.95) × toCloseMultiplier(risk)
@@ -59,18 +106,7 @@ Est. Conv ₹    = Σ over the agent's open estimates of (total × prob)
 ```
 
 Risk multipliers: `ok 1.0 · pending 0.7 · red 0.35 · zombie 0.15`. The 0.2 win-
-rate floor keeps brand-new agents off zero. Also surfaced as the team-level
-"Est. Conv ₹" KPI and in each agent-view summary.
-
-## Close co-credit (fair outcome reward)
-
-A snatch-then-close splits credit between the originator and the closer —
-**origin 0.6 / closer 0.4** (`CLOSE_CREDIT`) — by walking each won estimate's
-`EstimateAssignment` chain to its root. Without history (estimates closed
-before this shipped, or never reassigned) the full close credits the current
-holder. The leaderboard's Won column shows co-credited closes as `+🏅n.n`, and
-co-credited value feeds the ranking, so proven agents aren't demotivated when a
-deal they worked gets re-poached and closed by someone else.
+rate floor keeps brand-new agents off zero.
 
 ## Risk model (live pre-warning)
 
@@ -78,7 +114,7 @@ The dashboard data also computes a real-time risk state for every open `sent`
 estimate, so trouble is visible BEFORE the reassignment sweep:
 
 - **red** — latest AI verdict is `meaningfulUpdate=false` (the snatch candidate)
-- **zombie** — no sales comment for more than 2 days (`ZOMBIE_DAYS`, matching the
+- **zombie** — no sales comment for more than 3 days (`ZOMBIE_DAYS`, matching the
   AI rule that stale comments are never meaningful)
 - **pending** — no AI verdict yet; **ok** — latest comment was meaningful
 

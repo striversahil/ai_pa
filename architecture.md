@@ -92,7 +92,7 @@ Worker + GitHub Actions.
 │   │   ├── storage/ shared/ middleware/ durable/ utils/ types/
 │   │   ├── live.ts                      # canonical LiveEvent catalog + broadcastLive helper
 │   │   └── scripts/                     # build-worker.mjs, smoke-worker.mjs, d1-mock.mjs
-│   ├── wrangler.toml                    # founder-os-worker config (D1 + EventHub DO)
+│   ├── wrangler.toml                    # founder-os-worker config (D1 + CACHE_KV + EventHub DO)
 │   └── dist-worker/ dist/               # build outputs
 ├── waba-worker/                        # separate Cloudflare Worker (WhatsApp ingress + D1 queue)
 │   ├── src/index.ts  schema.sql  wrangler.toml
@@ -288,6 +288,58 @@ thin — heavy AI is performed by GH Actions runners that call `/api/runner/*`.
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.
+
+### 3.4 KV cache layer (`CACHE_KV`)
+
+A dedicated Cloudflare KV namespace **`CACHE_KV`** (`wrangler.toml` binding) caches
+expensive **network calls and D1/Postgres reads** across the app so the GitHub Actions
+runners and dashboards never hammer the database on every broadcast.
+
+**Reusable module — `src/shared/cache.ts`:**
+- `cacheGet<T>(key, ttlMs)` → cached value, `null` when absent or stale.
+- `cacheSet<T>(key, value, ttlMs)` → write payload + `computedAt`, with a 5-min grace
+  window so stale-on-error fallback still works.
+- `cached<T>(key, ttlMs, compute)` → **read-through helper** every route should use:
+  fresh → serve; stale/absent → compute → store → return; compute fails → serve stale.
+- `cacheDel(key)` / `cacheDelPrefix(prefix)` → explicit invalidation the moment
+  underlying data changes.
+- **Local fallback:** non-Worker runtimes (Express) have no KV binding, so the module
+  falls back to an in-memory map with the same TTL contract — identical code paths.
+- Keys are namespaced (`kvx:<key>`) so they can't collide with chat files.
+
+**Migrated caches (Setting-table → KV):**
+| Cache | Key | TTL | Invalidation |
+|-------|-----|-----|--------------|
+| Zoho estimates payload | `sales_copilot:estimates_cache` | 5 min | on bulk-upsert / comment / status / classification runner writes |
+| Telecalling risk model | `telecalling:risk_cache` | 15 min | on estimate mutations + after each assignment-engine run |
+| NeoDove KRA attribution | `neodove:kra_cache` | 10 min | on NeoDove report writes |
+| NeoDove report range reads | `neodove:report_range:<from>:<to>` | 5 min | on NeoDove report writes |
+| WA Engine snapshot | `wa-engine:snapshot` | 6 min | TTL only (monitor cron refreshes) |
+
+**Invalidation wiring:** the runner endpoints that mutate data (`/api/estimates/bulk-upsert`,
+`/api/runner/zoho/comments`, `/api/runner/zoho/status`, `/api/runner/zoho/classification`,
+`/api/runner/neodove/report`, `neodove-refresh`) explicitly invalidate the affected caches via
+`invalidateDerivedEstimateCaches()`, `invalidateNeodoveCache()`, and `invalidateRiskCache()`,
+so the next dashboard read is fresh. `initCache(env)` is bootstrapped in `bootstrapEnv()`.
+
+### 3.5 Zoho analyzer no-change fast path (fingerprint)
+
+The 15-min `zoho-sent-analyzer` runner previously re-scanned **every estimate + comment row in
+D1** on every tick just to *detect* whether anything changed — burning thousands of row reads
+even when Zoho was quiet (the actual cause of D1 row-read limits, not AI). Now both analyzer
+paths compute a **fingerprint** of the Zoho payload from their own network fetch and skip ALL
+DB work when it matches the last fully-processed state:
+
+- Fingerprint = per-estimate `estimate_id | status | total | last_modified_time | maxCommentId`
+  (comments don't bump `last_modified_time`, so max comment id is included).
+- Stored in KV at key `zoho:analyzer:state_fingerprint` (24h TTL; only changes on real change).
+- **In-process (`SalesCopilotService.runSync`)**: fetches estimates + comments (network),
+  computes fingerprint, compares via `cacheGet`; unchanged → skip `estimate.findMany`,
+  `comment.groupBy`, status sync, classification. On a failure-free run → `cacheSet`.
+- **GH Actions runner (`scripts/zoho-sent-runner.js`)**: fetches estimates + comments
+  (network), computes the same fingerprint, checks/stores via
+  `GET/POST /api/runner/zoho/fingerprint`. Unchanged → exit early with **zero DB reads**.
+- Both paths share the same KV key, so they stay in sync. `ZOHO_FORCE=1` bypasses the gate.
 
 ## 4. WhatsApp ingestion paths
 
@@ -520,6 +572,11 @@ cPanel host in the root `.env`).
 - Worker: add to `worker.ts` (mirror the Express route). Keep handlers thin; heavy work → runner.
 - If the endpoint **writes dashboard data**, call `notifyLive(c, { type: "<name>" })` so
   open tabs refresh live (see §11). Add a `useLiveRefresh` wiring in the relevant component.
+- If the endpoint **reads an expensive/aggregated payload**, wrap it in the KV cache
+  read-through helper `cached(key, ttlMs, compute)` (see §3.4) — never hit D1 on every
+  broadcast. When the endpoint **writes** data that other caches derive from, invalidate
+  them (e.g. `invalidateDerivedEstimateCaches()`, `invalidateNeodoveCache()`,
+  `invalidateRiskCache()`, or `cacheDel(key)` / `cacheDelPrefix(prefix)`).
 - Build/verify: `node scripts/build-worker.mjs && node scripts/smoke-worker.mjs`.
 
 ### 10.4 New model

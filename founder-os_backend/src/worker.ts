@@ -21,6 +21,7 @@ import { extractEnquiryFields, pickGroqKey, EnquiryAgentRef } from './modules/en
 type Bindings = {
   DB: D1Database;
   CHAT_FILES?: KVNamespace;
+  CACHE_KV?: KVNamespace;
   EVENT_HUB?: DurableObjectNamespace;
   ASYNC_RUNNER?: DurableObjectNamespace;
   CHAT_ROOM?: DurableObjectNamespace;
@@ -587,6 +588,8 @@ function bootstrapEnv(env: Bindings) {
   (globalThis as any).__WORKER_LOG_LEVEL__ = 'info';
   const { initD1 } = require('./shared/prisma-d1');
   initD1(env);
+  const { initCache } = require('./shared/cache');
+  initCache(env);
 }
 
 // Lazily require modules after bootstrap so config/prisma read the right globals.
@@ -1008,6 +1011,70 @@ app.delete('/api/telecallers/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── MIS estimate assignment overrides ────────────────────────────────────────
+// Per-estimate MIS controls that take precedence over the assignment engine:
+//   lockedTelecallerId — estimate is ALWAYS held by this one agent (never
+//     re-poached at EOD even when red/zombie).
+//   skipAssignment     — estimate is NEVER assigned to any agent.
+// GET  /api/estimates/assignment-overrides?q=      — search estimates (by number/
+//                                                    customer/id) with their current
+//                                                    override state.
+// PUT  /api/estimates/:id/assignment-override      — body { lockedTelecallerId?
+//                                                    , skipAssignment? } to set or
+//                                                    clear (null/false) overrides.
+app.get('/api/estimates/assignment-overrides', async (c) => {
+  try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+  const { prisma } = deps();
+  const q = String(c.req.query('q') ?? '').trim();
+  const modifiedOnly = c.req.query('modified') === '1';
+  let where: any;
+  if (modifiedOnly) {
+    // Only estimates with an active override (locked or never-assign).
+    where = { OR: [{ lockedTelecallerId: { not: null } }, { skipAssignment: true }] };
+  } else if (q) {
+    where = {
+      OR: [
+        { estimateId: { contains: q } },
+        { estimateNumber: { contains: q } },
+        { customerName: { contains: q } },
+      ],
+    };
+  }
+  const rows = await prisma.estimate.findMany({
+    where,
+    orderBy: [{ date: 'desc' }],
+    take: modifiedOnly ? 200 : q ? 25 : 100,
+    select: {
+      estimateId: true,
+      estimateNumber: true,
+      customerName: true,
+      status: true,
+      total: true,
+      date: true,
+      assignedTelecallerId: true,
+      lockedTelecallerId: true,
+      skipAssignment: true,
+    },
+  });
+  return c.json({ estimates: rows });
+});
+
+app.put('/api/estimates/:id/assignment-override', async (c) => {
+  try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+  const { prisma } = deps();
+  const body = await c.req.json().catch(() => ({}));
+  const data: Record<string, unknown> = {};
+  if (body.lockedTelecallerId !== undefined) data.lockedTelecallerId = body.lockedTelecallerId ? String(body.lockedTelecallerId) : null;
+  if (body.skipAssignment !== undefined) data.skipAssignment = !!body.skipAssignment;
+  if (Object.keys(data).length === 0) return c.json({ error: 'nothing to update' }, 400);
+  const est = await prisma.estimate.update({
+    where: { estimateId: c.req.param('id') },
+    data,
+  });
+  notifyLive(c, { type: 'telecalling' });
+  return c.json(est);
+});
+
 // ── Baseline snapshot (shared across all viewers, frozen daily at 1 AM IST) ──
 function kolkataDateStr(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -1093,6 +1160,8 @@ app.post('/api/runner/neodove/report', async (c) => {
   const value = JSON.stringify({ reportDate, fetchedAt: new Date().toISOString(), rows });
   await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
   notifyLive(c, { type: 'neodove', date: reportDate });
+  const { invalidateNeodoveCache } = require('./automations/neodove-telecaller-report');
+  await invalidateNeodoveCache();
   return c.json({ ok: true, key, count: rows.length });
 });
 
@@ -1199,6 +1268,10 @@ app.post('/api/estimates/bulk-upsert', async (c) => {
     });
   }
   notifyLive(c, { type: 'estimates' });
+  // Invalidate every derived cache (estimates payload, telecalling risk model,
+  // NeoDove KRA attribution) so the next dashboard read is fresh.
+  const { invalidateDerivedEstimateCaches } = require('./shared/estimates-cache');
+  await invalidateDerivedEstimateCaches();
   return c.json({ ok: true, count: upserted });
 });
 
@@ -1636,6 +1709,32 @@ app.get('/api/runner/zoho/state', async (c) => {
   });
 });
 
+// ── Zoho analyzer no-change fingerprint (KV) ────────────────────────────────
+// The 15-min GH runner re-scans every estimate + comment row just to detect
+// change. We cache a fingerprint of the last fully-processed Zoho payload in
+// KV; the runner computes the same fingerprint from its (network) Zoho fetch
+// and, if it matches, skips the DB work entirely (the /state scan, comments
+// write, classification). These two endpoints read/write that fingerprint.
+// Wired to the same KV key the in-process analyzer uses so both paths agree.
+const ZOHO_FP_KEY = 'zoho:analyzer:state_fingerprint';
+const ZOHO_FP_TTL_MS = 24 * 60 * 60 * 1000;
+
+app.get('/api/runner/zoho/fingerprint', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { cacheGet }: { cacheGet: <T>(key: string, ttlMs: number) => Promise<T | null> } = require('./shared/cache');
+  const fp = await cacheGet<string>(ZOHO_FP_KEY, ZOHO_FP_TTL_MS);
+  return c.json({ fingerprint: fp ?? null });
+});
+
+app.post('/api/runner/zoho/fingerprint', async (c) => {
+  if (!requireSecret(c)) return c.text('Unauthorized', 401);
+  const { cacheSet }: { cacheSet: <T>(key: string, value: T, ttlMs: number) => Promise<void> } = require('./shared/cache');
+  const body = await c.req.json().catch(() => ({}));
+  const fp = typeof body?.fingerprint === 'string' && body.fingerprint ? body.fingerprint : null;
+  if (fp) await cacheSet(ZOHO_FP_KEY, fp, ZOHO_FP_TTL_MS);
+  return c.json({ ok: true });
+});
+
 app.post('/api/runner/zoho/comments', async (c) => {
   if (!requireSecret(c)) return c.text('Unauthorized', 401);
   const { prisma } = deps();
@@ -1683,6 +1782,8 @@ app.post('/api/runner/zoho/comments', async (c) => {
     upserted++;
   }
   notifyLive(c, { type: 'estimates' });
+  const { invalidateDerivedEstimateCaches } = require('./shared/estimates-cache');
+  await invalidateDerivedEstimateCaches();
   return c.json({ ok: true, count: upserted, skipped: incoming.length - upserted });
 });
 
@@ -1698,9 +1799,32 @@ app.post('/api/runner/zoho/status', async (c) => {
       where: { estimateId: u.estimateId },
       data: { status: u.status, lastSyncTime: new Date() },
     });
+    // Leaderboard event ledger: +100 to the current holder the moment an
+    // estimate converts (duplicate-guarded inside the service).
+    if (u.status === 'accepted' || u.status === 'confirmed') {
+      try {
+        const { recordConversionClose } = require('./automations/telecalling/service');
+        await recordConversionClose(u.estimateId);
+      } catch (e: any) {
+        console.warn({ err: e?.message, estimateId: u.estimateId }, 'recordConversionClose failed');
+      }
+    }
+    // Decline penalty: -20 to EVERY agent who held the estimate if it is
+    // declined after 3+ days (duplicate-guarded inside the service).
+    if (u.status === 'declined' || u.status === 'cancelled' || u.status === 'void') {
+      try {
+        const { recordDeclinePenalty } = require('./automations/telecalling/service');
+        await recordDeclinePenalty(u.estimateId);
+      } catch (e: any) {
+        console.warn({ err: e?.message, estimateId: u.estimateId }, 'recordDeclinePenalty failed');
+      }
+    }
     updated++;
   }
   notifyLive(c, { type: 'estimates' });
+  // Status transitions change the risk model + estimates payload — invalidate.
+  const { invalidateDerivedEstimateCaches } = require('./shared/estimates-cache');
+  await invalidateDerivedEstimateCaches();
   return c.json({ ok: true, count: updated });
 });
 
@@ -1742,6 +1866,8 @@ app.post('/api/runner/zoho/classification', async (c) => {
   });
   await prisma.estimate.update({ where: { estimateId }, data: { lastSyncTime: now } });
   notifyLive(c, { type: 'estimates' });
+  const { invalidateDerivedEstimateCaches } = require('./shared/estimates-cache');
+  await invalidateDerivedEstimateCaches();
   return c.json({ ok: true });
 });
 

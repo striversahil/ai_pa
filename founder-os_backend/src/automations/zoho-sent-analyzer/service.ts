@@ -4,10 +4,23 @@ import { logger } from '../../shared/logger';
 import { config } from '../../config';
 import { isSystemGeneratedComment } from '../../shared/systemComment';
 import { classifyDeterministic } from '../../modules/ai/deterministicClassifier';
+import { cacheGet, cacheSet } from '../../shared/cache';
 import fs from 'fs';
 import path from 'path';
 
 export const PENDING_AI_MARKER = '__PENDING_AI__';
+
+// ── No-change fast path (D1 row-read budget protection) ──────────────────────
+// The analyzer previously re-scanned every estimate + comment row in the DB on
+// EVERY 15-min tick just to detect whether anything changed — burning thousands
+// of D1 row reads even when Zoho had not changed at all. Instead we cache a
+// fingerprint of the last fully-processed Zoho payload (estimate ids/status/
+// totals/last_modified + max real-sales comment id per estimate). On each tick
+// we fetch Zoho's payload first (network — cheap, NOT D1), compute the
+// fingerprint, and if it matches the cached one we skip ALL DB reads/writes and
+// return immediately. Fingerprints only change when the data actually changes.
+const FP_KEY = 'zoho:analyzer:state_fingerprint';
+const FP_TTL_MS = 24 * 60 * 60 * 1000;
 
 export class SalesCopilotService implements AnalysisEngine {
   public name = 'Sales Copilot Analyzer';
@@ -46,6 +59,71 @@ export class SalesCopilotService implements AnalysisEngine {
       return rule;
     }
     return null; // no LLM on worker - GitHub Actions will handle AI via Cloudflare Tunnel
+  }
+
+  /**
+   * Fetch Zoho comments for every active estimate in parallel (NETWORK only —
+   * no DB reads). Returns a map estimateId → { comments, hasNew:false } so the
+   * fingerprint fast-path can compare against the last processed state. This
+   * runs BEFORE any DB access so the no-change check never pays D1 row reads.
+   */
+  private async fetchZohoComments(
+    estimates: any[],
+    orgId: string,
+    headers: Record<string, string>,
+  ): Promise<Map<string, { comments: any[]; hasNew: boolean }>> {
+    const out = new Map<string, { comments: any[]; hasNew: boolean }>();
+    const COMMENT_FETCH_CONCURRENCY = 6;
+    for (let i = 0; i < estimates.length; i += COMMENT_FETCH_CONCURRENCY) {
+      const batch = estimates.slice(i, i + COMMENT_FETCH_CONCURRENCY);
+      await Promise.all(batch.map(async (est) => {
+        const estId = est.estimate_id;
+        const estNo = est.estimate_number;
+        try {
+          const commentsUrl = `https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`;
+          const commentsRes = await fetch(commentsUrl, { headers });
+          if (!commentsRes.ok) {
+            logger.warn(`SalesCopilotService: Failed to fetch comments for ${estNo}: ${commentsRes.status}`);
+            return;
+          }
+          const commentsJson = (await commentsRes.json()) as any;
+          out.set(estId, { comments: commentsJson.comments || [], hasNew: false });
+        } catch (err: any) {
+          logger.warn({ error: err.message }, `SalesCopilotService: Failed to fetch comments for ${estNo} due to network error`);
+        }
+      }));
+    }
+    return out;
+  }
+
+  /**
+   * Deterministic fingerprint of the Zoho payload the analyzer just fetched:
+   * estimate id/status/total/last_modified plus the max real-sales comment id
+   * per estimate (comments don't bump last_modified_time in Zoho, so they must
+   * be part of the fingerprint to catch comment-only changes).
+   */
+  private fingerprintPayload(
+    estimates: any[],
+    commentsByEst: Map<string, { comments: any[] }>,
+  ): string {
+    const parts: string[] = [];
+    for (const est of estimates) {
+      let maxCommentId = '';
+      const bucket = commentsByEst.get(est.estimate_id);
+      for (const c of bucket?.comments ?? []) {
+        if (!this.isRealSalesComment(c.description || '', c.commented_by, c.comment_type)) continue;
+        if (String(c.comment_id) > maxCommentId) maxCommentId = String(c.comment_id);
+      }
+      parts.push([
+        est.estimate_id,
+        est.status,
+        est.total,
+        est.last_modified_time,
+        maxCommentId,
+      ].join('|'));
+    }
+    parts.sort();
+    return parts.join('\n');
   }
 
   /**
@@ -191,6 +269,26 @@ export class SalesCopilotService implements AnalysisEngine {
     const estimates = responseJson.estimates || [];
     logger.info(`SalesCopilotService: Fetched ${estimates.length} active sent estimates from Zoho.`);
 
+    // 1b. Fetch Zoho comments for every active estimate (NETWORK, cheap — NOT a
+    // DB scan). Comments do NOT bump last_modified_time in Zoho, so they must be
+    // fetched to detect comment-only changes. Fetching them here (before any DB
+    // read) lets the fingerprint below decide whether ANY DB work is needed.
+    const fetchedCommentsByEst = await this.fetchZohoComments(estimates, orgId, headers);
+
+    // 1c. NO-CHANGE FAST PATH — if the fingerprint of this exact Zoho payload
+    // (estimates + comments) was fully processed on a previous run, nothing has
+    // changed in the DB since, so skip EVERY DB read/write. This drops the
+    // per-tick D1 row reads to ~0 when Zoho is quiet — the whole reason KV
+    // caching exists.
+    if (!force && estimates.length > 0 && fetchedCommentsByEst.size === estimates.length) {
+      const cachedFp = await cacheGet<string>(FP_KEY, FP_TTL_MS);
+      const currentFp = this.fingerprintPayload(estimates, fetchedCommentsByEst);
+      if (cachedFp && currentFp === cachedFp) {
+        logger.info('SalesCopilotService: No change detected — skipping full sync (served from fingerprint).');
+        return { success: true, skipped: true, estimates: estimates.length, cached: true };
+      }
+    }
+
     const activeEstIds = new Set<string>();
 
     // 2. Load the current DB state once. This single read is reused by both the
@@ -242,12 +340,9 @@ export class SalesCopilotService implements AnalysisEngine {
     // (accepted/declined/etc.). Runs before AI so statuses are in sync too.
     await this.syncClosedStatuses(activeEstIds, orgId, headers);
 
-    // 5. Comment refresh — ALWAYS runs for every sent estimate on every tick.
-    //    Zoho Books comments do NOT bump the estimate's last_modified_time, so the
-    //    incremental gate below would otherwise never re-fetch new sales comments
-    //    and the dashboard's "last comment" age/counts would go stale. Comments are
-    //    fetched in parallel (small concurrency), and new comments are detected by
-    //    comparing Zoho's max comment_id against the highest one stored in the DB.
+    // 5. Comment diff — comments were already fetched from Zoho in step 1b
+    //    (network). Detect which estimates gained NEW comments by comparing
+    //    Zoho's max comment_id against the highest one stored in the DB.
     const dbMaxCommentIdByEst = new Map<string, string>();
     {
       const rows = await prisma.comment.groupBy({
@@ -256,34 +351,13 @@ export class SalesCopilotService implements AnalysisEngine {
       });
       for (const r of rows) dbMaxCommentIdByEst.set(r.estimateId, (r._max.commentId as string) || '');
     }
-
-    const fetchedCommentsByEst = new Map<string, { comments: any[]; hasNew: boolean }>();
-    const COMMENT_FETCH_CONCURRENCY = 6;
-    for (let i = 0; i < estimates.length; i += COMMENT_FETCH_CONCURRENCY) {
-      const batch = estimates.slice(i, i + COMMENT_FETCH_CONCURRENCY);
-      await Promise.all(batch.map(async (est) => {
-        const estId = est.estimate_id;
-        const estNo = est.estimate_number;
-        try {
-          const commentsUrl = `https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`;
-          const commentsRes = await fetch(commentsUrl, { headers });
-          if (!commentsRes.ok) {
-            logger.warn(`SalesCopilotService: Failed to fetch comments for ${estNo}: ${commentsRes.status}`);
-            return;
-          }
-          const commentsJson = (await commentsRes.json()) as any;
-          const comments = commentsJson.comments || [];
-          let maxZohoId = '';
-          for (const c of comments) {
-            if (!this.isRealSalesComment(c.description || '', c.commented_by, c.comment_type)) continue;
-            if (c.comment_id > maxZohoId) maxZohoId = c.comment_id;
-          }
-          const hasNew = maxZohoId > (dbMaxCommentIdByEst.get(estId) || '');
-          fetchedCommentsByEst.set(estId, { comments, hasNew });
-        } catch (err: any) {
-          logger.warn({ error: err.message }, `SalesCopilotService: Failed to fetch comments for ${estNo} due to network error`);
-        }
-      }));
+    for (const [estId, bucket] of fetchedCommentsByEst) {
+      let maxZohoId = '';
+      for (const c of bucket.comments) {
+        if (!this.isRealSalesComment(c.description || '', c.commented_by, c.comment_type)) continue;
+        if (String(c.comment_id) > maxZohoId) maxZohoId = String(c.comment_id);
+      }
+      bucket.hasNew = maxZohoId > (dbMaxCommentIdByEst.get(estId) || '');
     }
 
     // 6. AI analysis — comments are already fresh; classification runs only for
@@ -388,6 +462,15 @@ export class SalesCopilotService implements AnalysisEngine {
       logger.info(`SalesCopilotService: Complete processing pass finished at ${completedAt.toISOString()} (needed ${neededCount}, failed ${failedCount}).`);
     } else {
       logger.warn(`SalesCopilotService: Sync run incomplete — needed ${neededCount}, failed ${failedCount}. Watermark not advanced.`);
+    }
+
+    // A full scan with zero failures (whether it processed 1 or 100 estimates)
+    // means the DB now matches Zoho exactly — cache the fingerprint so the next
+    // 15-min tick can skip every DB read when nothing has changed. A run with
+    // failures is NOT cached (the DB is not guaranteed to match Zoho yet).
+    if (failedCount === 0) {
+      const fp = this.fingerprintPayload(estimates, fetchedCommentsByEst);
+      await cacheSet(FP_KEY, fp, FP_TTL_MS);
     }
 
     return { success: true, processedCount, skippedCount, neededCount, failedCount, complete };

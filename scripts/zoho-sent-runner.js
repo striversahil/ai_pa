@@ -198,6 +198,29 @@ function isRealSalesComment(desc, commentedBy, commentType) {
   return true;
 }
 
+/**
+ * Deterministic fingerprint of the Zoho payload the runner just fetched:
+ * estimate id/status/total/last_modified plus the max real-sales comment id per
+ * estimate. Comments don't bump last_modified_time in Zoho, so they're part of
+ * the fingerprint to catch comment-only changes. The runner computes this from
+ * its OWN network fetch (no DB reads) and compares against the KV fingerprint
+ * stored by the previous complete run.
+ */
+function fingerprintPayload(estimates, fetchedByEst) {
+  const parts = [];
+  for (const est of estimates) {
+    let maxCommentId = '';
+    const bucket = fetchedByEst.get(est.estimate_id);
+    for (const c of bucket?.comments || []) {
+      if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
+      if (c.comment_id > maxCommentId) maxCommentId = c.comment_id;
+    }
+    parts.push([est.estimate_id, est.status, est.total, est.last_modified_time, maxCommentId].join('|'));
+  }
+  parts.sort();
+  return parts.join('\n');
+}
+
 async function zohoFetch(url) {
   const res = await fetch(url, { headers: ZOHO_HEADERS });
   if (!res.ok) throw new Error(`Zoho ${res.status} for ${url}`);
@@ -495,6 +518,42 @@ async function main() {
   const estimates = responseJson.estimates || [];
   console.log(`zoho-sent-runner: fetched ${estimates.length} active sent estimates`);
 
+  const forced = process.env.ZOHO_FORCE === '1';
+
+  // 1b. Fetch Zoho comments for every active estimate (NETWORK only — cheap).
+  //     Comments do NOT bump last_modified_time in Zoho, so they must be fetched
+  //     to detect comment-only changes. This happens BEFORE any DB read so the
+  //     no-change fingerprint below never pays D1 row reads.
+  const COMMENT_CONCURRENCY = 6;
+  const fetchedByEst = new Map();
+  for (let i = 0; i < estimates.length; i += COMMENT_CONCURRENCY) {
+    const batch = estimates.slice(i, i + COMMENT_CONCURRENCY);
+    await Promise.all(batch.map(async (est) => {
+      const estId = est.estimate_id;
+      try {
+        const cj = await zohoFetch(`https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`);
+        fetchedByEst.set(estId, { comments: cj.comments || [], hasNew: false });
+      } catch (err) {
+        console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`);
+      }
+    }));
+  }
+
+  // 1c. NO-CHANGE FAST PATH — compute a fingerprint of this exact Zoho payload
+  //     (estimates + comments) and compare against the last fully-processed one
+  //     (stored in KV by a previous run). If identical, the DB already matches
+  //     Zoho exactly — skip every DB read/write (state fetch, metadata sync,
+  //     closed status check, comments upsert, AI). This is the whole point of
+  //     the KV cache: a quiet 15-min tick costs ZERO D1 row reads.
+  if (!forced && estimates.length > 0 && fetchedByEst.size === estimates.length) {
+    const fp = fingerprintPayload(estimates, fetchedByEst);
+    const fpRes = await workerRequest('/api/runner/zoho/fingerprint').catch(() => ({ fingerprint: null }));
+    if (fpRes?.fingerprint && fpRes.fingerprint === fp) {
+      console.log('zoho-sent-runner: no change detected — skipping full sync (served from fingerprint). 0 DB row reads.');
+      return;
+    }
+  }
+
   console.log('zoho-sent-runner: fetching NeoDove sales agent roster');
   const agentRoster = await fetchAgentRoster();
   console.log(`zoho-sent-runner: roster (${agentRoster.length}): ${agentRoster.join(', ') || '(empty)'}`);
@@ -584,27 +643,16 @@ async function main() {
     console.log(`zoho-sent-runner: ${closedStatusUpdates.length} closed statuses synced`);
   }
 
-  // 5. Comment refresh + 6. change detection
-  const COMMENT_CONCURRENCY = 6;
-  const fetchedByEst = new Map();
-  for (let i = 0; i < estimates.length; i += COMMENT_CONCURRENCY) {
-    const batch = estimates.slice(i, i + COMMENT_CONCURRENCY);
-    await Promise.all(batch.map(async (est) => {
-      const estId = est.estimate_id;
-      try {
-        const cj = await zohoFetch(`https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`);
-        const comments = cj.comments || [];
-        let maxZohoId = '';
-        for (const c of comments) {
-          if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
-          if (c.comment_id > maxZohoId) maxZohoId = c.comment_id;
-        }
-        const hasNew = maxZohoId > (maxCommentIdByEst[estId] || '');
-        fetchedByEst.set(estId, { comments, hasNew });
-      } catch (err) {
-        console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`);
-      }
-    }));
+  // 5. Comment diff — comments were already fetched from Zoho in step 1b
+  //    (network). Detect which estimates gained NEW comments by comparing Zoho's
+  //    max comment_id against the highest one stored in the DB (from /state).
+  for (const [estId, bucket] of fetchedByEst) {
+    let maxZohoId = '';
+    for (const c of bucket.comments) {
+      if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
+      if (c.comment_id > maxZohoId) maxZohoId = c.comment_id;
+    }
+    bucket.hasNew = maxZohoId > (maxCommentIdByEst[estId] || '');
   }
 
   const AI_CONCURRENCY = 6;
@@ -630,7 +678,6 @@ async function main() {
     const fetched = fetchedByEst.get(estId);
     if (!fetched) { failed++; continue; }
     const hasNewComments = fetched.hasNew;
-    const forced = process.env.ZOHO_FORCE === '1';
     const needsProcessing = forced || statusChanged || neverAnalyzed || modifiedSinceLastSync || hasNewComments;
     if (!needsProcessing) { skipped++; continue; }
     workItems.push({ estId, custName, total, dateVal, estStatus, existingEstimate, fetched });
@@ -679,6 +726,17 @@ async function main() {
     console.log(`zoho-sent-runner: complete pass finished, watermark advanced (needed ${neededCount}, failed ${failed})`);
   } else {
     console.log(`zoho-sent-runner: incomplete — needed ${neededCount}, failed ${failed}. Watermark not advanced.`);
+  }
+
+  // A fully-complete run means the DB now matches Zoho exactly — store the
+  // fingerprint so the next 15-min tick can skip every DB read when unchanged.
+  // A run with failures is NOT fingerprinted (the DB may not match Zoho yet).
+  if (failed === 0) {
+    const fp = fingerprintPayload(estimates, fetchedByEst);
+    await workerRequest('/api/runner/zoho/fingerprint', {
+      method: 'POST',
+      body: { fingerprint: fp },
+    }).catch((err) => console.warn(`zoho-sent-runner: fingerprint store failed: ${err.message}`));
   }
 
   console.log(`zoho-sent-runner: done — processed ${processed}, skipped ${skipped}, failed ${failed}`);
