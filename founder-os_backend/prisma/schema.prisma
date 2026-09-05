@@ -209,13 +209,18 @@ model Classification {
 }
 
 // Telecaller / closing-team roster. Estimates are auto-assigned (round-robin)
-// to active telecallers; the `order` field sequences the rotation.
+// to telecallers flagged `assignEstimateFollowUps` (the conversion specialists);
+// the `order` field sequences the rotation. Everyone non-deleted is still shown
+// in the leaderboard / Lead Gen views.
 model Telecaller {
-  id               String   @id @default(uuid())
-  name             String
-  email            String?
-  active           Boolean  @default(true)
-  order            Int      @default(0)
+  id                      String   @id @default(uuid())
+  name                    String
+  email                   String?
+  // Lead-conversion specialist flag: only telecallers with this ON receive
+  // estimate follow-up assignments (new deals + EOD re-poaching). Off = the
+  // telecaller still generates leads (NeoDove) but never holds estimates.
+  assignEstimateFollowUps Boolean  @default(true)
+  order                   Int      @default(0)
   // Soft delete: hidden from the roster/leaderboard/assignment engine but kept
   // for history; restorable from the MIS Controller.
   deleted          Boolean  @default(false)

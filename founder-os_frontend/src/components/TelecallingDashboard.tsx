@@ -9,7 +9,7 @@ import { useAuth } from "@/auth/AuthContext";
 interface LeaderRow {
   id: string;
   name: string;
-  active: boolean;
+  assignEstimateFollowUps: boolean;
   neodoveUserName: string | null;
   conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number; estimatedConversion: { count: number; value: number } };
   generation: {
@@ -170,7 +170,7 @@ interface RosterRow {
   id: string;
   name: string;
   email: string | null;
-  active: boolean;
+  assignEstimateFollowUps: boolean;
   order: number;
   neodoveUserId: string | null;
   neodoveUserName: string | null;
@@ -307,7 +307,7 @@ export default function TelecallingDashboard() {
   );
 
   const [form, setForm] = useState({
-    name: "", email: "", active: true, order: 0,
+    name: "", email: "", assignEstimateFollowUps: true, order: 0,
     neodoveUserId: "", neodoveUserName: "",
   });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -325,7 +325,6 @@ export default function TelecallingDashboard() {
   // Keyed off the CONVERSION data (default view) so agent follow-ups always
   // load regardless of what Dashboard period filter is active.
   const activeAgentIds = (convDash.data?.leaderboard ?? dash.data?.leaderboard ?? [])
-    .filter((r) => r.active)
     .map((r) => r.id);
   const agentIdsKey = activeAgentIds.join(",");
   const agentViews = useLiveQuery<Record<string, AgentViewData | null>>(
@@ -402,7 +401,7 @@ export default function TelecallingDashboard() {
       const payload = {
         name: form.name,
         email: form.email || null,
-        active: form.active,
+        assignEstimateFollowUps: form.assignEstimateFollowUps,
         order: form.order || 0,
         neodoveUserId: form.neodoveUserId || null,
         neodoveUserName: form.neodoveUserName || null,
@@ -420,7 +419,7 @@ export default function TelecallingDashboard() {
           body: JSON.stringify(payload),
         });
       }
-      setForm({ name: "", email: "", active: true, order: 0, neodoveUserId: "", neodoveUserName: "" });
+      setForm({ name: "", email: "", assignEstimateFollowUps: true, order: 0, neodoveUserId: "", neodoveUserName: "" });
       setEditingId(null);
       refreshAll();
     } finally {
@@ -431,18 +430,18 @@ export default function TelecallingDashboard() {
   const edit = (t: RosterRow) => {
     setEditingId(t.id);
     setForm({
-      name: t.name, email: t.email ?? "", active: t.active, order: t.order,
+      name: t.name, email: t.email ?? "", assignEstimateFollowUps: t.assignEstimateFollowUps, order: t.order,
       neodoveUserId: t.neodoveUserId ?? "", neodoveUserName: t.neodoveUserName ?? "",
     });
   };
 
-  const toggleActive = async (id: string, active: boolean) => {
+  const toggleFollowUps = async (id: string, assignEstimateFollowUps: boolean) => {
     setBusy(true);
     try {
       await fetch(`/api/telecallers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: !active }),
+        body: JSON.stringify({ assignEstimateFollowUps: !assignEstimateFollowUps }),
       });
       refreshAll();
     } finally {
@@ -452,13 +451,13 @@ export default function TelecallingDashboard() {
 
   const kpi = dash.data?.kpi;
   const board = [...(dash.data?.leaderboard ?? [])];
-  const activeBoard = board.filter((r) => r.active);
+  const activeBoard = board;
   // Lead Conversion board — driven by ITS OWN convDash/period, not the dashboard.
   const convBoard = [...(convDash.data?.leaderboard ?? [])];
-  const convActiveBoard = convBoard.filter((r) => r.active);
+  const convActiveBoard = convBoard;
   // Lead Generation board — driven by its OWN genDash/period, not the leaderboard period.
   const genBoard = [...(genDash.data?.leaderboard ?? [])];
-  const genActiveBoard = genBoard.filter((r) => r.active);
+  const genActiveBoard = genBoard;
   const teamEstConv = activeBoard.reduce((s, r) => s + (r.conversion.estimatedConversion?.value ?? 0), 0);
   const sorted = [...activeBoard].sort((a, b) => {
     if (sortKey === "score") return b.score - a.score;
@@ -540,7 +539,7 @@ export default function TelecallingDashboard() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                 </span>
-                {dash.data.meta.activeCount} active agents
+                {dash.data.meta.activeCount} follow-up specialists
               </span>
             )}
             {dash.data?.meta?.telecallerCount !== undefined && dash.data.meta.telecallerCount !== dash.data.meta.activeCount && (
@@ -935,7 +934,7 @@ export default function TelecallingDashboard() {
                 >
                   All
                 </button>
-                {(convDash.data?.meta?.agents ?? convActiveBoard).filter((a) => a.active).map((t) => {
+                {(convDash.data?.meta?.agents ?? convActiveBoard).map((t) => {
                   const board = convActiveBoard.find((b) => b.id === t.id);
                   const count = board?.conversion.assigned ?? 0;
                   const active = agentFilter === t.id;
@@ -1053,7 +1052,7 @@ export default function TelecallingDashboard() {
                   editingId={editingId}
                   busy={busy}
                   onEdit={edit}
-                  onToggleActive={toggleActive}
+                  onToggleFollowUps={toggleFollowUps}
                   onSave={save}
                   onDelete={(t) => setConfirmDelete(t)}
                   onRestore={restoreTelecaller}
@@ -1434,7 +1433,7 @@ function RosterSection({
   editingId,
   busy,
   onEdit,
-  onToggleActive,
+  onToggleFollowUps,
   onSave,
   onDelete,
   onRestore,
@@ -1443,12 +1442,12 @@ function RosterSection({
   onToggleShowDeleted,
 }: {
   rosterRows: RosterRow[];
-  form: { name: string; email: string; active: boolean; order: number; neodoveUserId: string; neodoveUserName: string };
-  setForm: React.Dispatch<React.SetStateAction<{ name: string; email: string; active: boolean; order: number; neodoveUserId: string; neodoveUserName: string }>>;
+  form: { name: string; email: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string };
+  setForm: React.Dispatch<React.SetStateAction<{ name: string; email: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string }>>;
   editingId: string | null;
   busy: boolean;
   onEdit: (t: RosterRow) => void;
-  onToggleActive: (id: string, active: boolean) => void;
+  onToggleFollowUps: (id: string, assignEstimateFollowUps: boolean) => void;
   onSave: () => void;
   onDelete: (t: RosterRow) => void;
   onRestore: (id: string) => void;
@@ -1456,10 +1455,6 @@ function RosterSection({
   showDeleted: boolean;
   onToggleShowDeleted: (open: boolean) => void;
 }) {
-  const [rosterTab, setRosterTab] = useState<"active" | "inactive">("active");
-  const activeRows = rosterRows.filter((r) => r.active);
-  const inactiveRows = rosterRows.filter((r) => !r.active);
-  const visible = rosterTab === "active" ? activeRows : inactiveRows;
   return (
     <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
       <h3 className="text-lg font-bold mb-3">Telecaller Roster</h3>
@@ -1468,8 +1463,8 @@ function RosterSection({
           <div key={t.id} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-zinc-900 dark:text-white">{t.name}</div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.active ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
-                {t.active ? "Active" : "Inactive"}
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.assignEstimateFollowUps ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
+                {t.assignEstimateFollowUps ? "Follow-ups" : "Lead-gen only"}
               </span>
             </div>
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
@@ -1478,12 +1473,12 @@ function RosterSection({
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Total assigned: {t.totalAssigned}</div>
             <div className="flex gap-2 mt-3">
               <button onClick={() => onEdit(t)} className="flex-1 text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 py-1.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-700">Edit</button>
-              <button onClick={() => onToggleActive(t.id, t.active)} className={`flex-1 text-xs rounded-lg py-1.5 font-semibold ${
-                t.active
+              <button onClick={() => onToggleFollowUps(t.id, t.assignEstimateFollowUps)} className={`flex-1 text-xs rounded-lg py-1.5 font-semibold ${
+                t.assignEstimateFollowUps
                   ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
                   : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-              }`}>
-                {t.active ? "Make inactive" : "Reactivate"}
+              }`} title="Toggles whether this telecaller receives estimate follow-up assignments">
+                {t.assignEstimateFollowUps ? "No follow-ups" : "Assign follow-ups"}
               </button>
               <button
                 onClick={() => onDelete(t)}
@@ -1544,8 +1539,8 @@ function RosterSection({
           className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
         <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email (opt)"
           className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
-        <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 px-2">
-          <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="accent-indigo-500" /> Active
+        <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 px-2" title="When ON, this telecaller receives estimate follow-up assignments; when OFF they only generate leads">
+          <input type="checkbox" checked={form.assignEstimateFollowUps} onChange={(e) => setForm({ ...form, assignEstimateFollowUps: e.target.checked })} className="accent-indigo-500" /> Follow-ups
         </label>
         <input value={form.neodoveUserName} onChange={(e) => setForm({ ...form, neodoveUserName: e.target.value })} placeholder="NeoDove user"
           className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
@@ -1557,9 +1552,11 @@ function RosterSection({
         </button>
       </div>
       <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
-        Link each telecaller to their NeoDove agent (user name) so Lead Generation merges with Lead Conversion. Use
-        {" "}<span className="font-semibold text-zinc-600 dark:text-zinc-400">Make inactive</span> to hide a telecaller's data
-        from the Dashboard, Lead Conversion and Lead Generation views (they stay in this roster so you can Reactivate them).
+        Link each telecaller to their NeoDove agent (user name) so Lead Generation merges with Lead Conversion. The
+        {" "}<span className="font-semibold text-zinc-600 dark:text-zinc-400">Follow-ups</span> toggle marks the
+        lead-conversion specialists who receive estimate follow-up assignments (new deals + end-of-day re-poaching).
+        Telecallers with it OFF still generate leads but never hold estimates. Everyone non-deleted stays visible on the
+        Dashboard, Lead Conversion and Lead Generation views — use Delete to hide someone.
       </p>
     </section>
   );

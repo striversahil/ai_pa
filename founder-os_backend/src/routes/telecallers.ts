@@ -36,26 +36,26 @@ router.get('/', misGuard, asyncHandler(async (req, res) => {
 }));
 
 router.post('/', misGuard, asyncHandler(async (req, res) => {
-  const { name, email, active, order } = req.body || {};
+  const { name, email, assignEstimateFollowUps, order } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   const tc = await prisma.telecaller.create({
-    data: { name: String(name).trim(), email: email ?? null, active: active ?? true, order: order ?? 0 },
+    data: { name: String(name).trim(), email: email ?? null, assignEstimateFollowUps: assignEstimateFollowUps ?? true, order: order ?? 0 },
   });
   return res.status(201).json(tc);
 }));
 
 router.put('/:id', misGuard, asyncHandler(async (req, res) => {
-  const { name, email, active, order, deleted, neodoveUserId, neodoveUserName } = req.body || {};
+  const { name, email, assignEstimateFollowUps, order, deleted, neodoveUserId, neodoveUserName } = req.body || {};
   const data: Record<string, unknown> = {};
   if (name !== undefined) data.name = String(name).trim();
   if (email !== undefined) data.email = email;
-  if (active !== undefined) data.active = active;
+  if (assignEstimateFollowUps !== undefined) data.assignEstimateFollowUps = assignEstimateFollowUps;
   if (order !== undefined) data.order = order;
   if (neodoveUserId !== undefined) data.neodoveUserId = neodoveUserId;
   if (neodoveUserName !== undefined) data.neodoveUserName = neodoveUserName;
   if (deleted !== undefined) {
     data.deleted = !!deleted;
-    if (deleted === false && active === undefined) data.active = false; // restore comes back inactive
+    if (deleted === false && assignEstimateFollowUps === undefined) data.assignEstimateFollowUps = false; // restore comes back without follow-up flag
   }
   const tc = await prisma.telecaller.update({ where: { id: String(req.params.id) }, data });
   res.json(tc);
@@ -65,7 +65,7 @@ router.delete('/:id', misGuard, asyncHandler(async (req, res) => {
   // Soft delete: hidden everywhere, restorable from the MIS Controller.
   await prisma.telecaller.update({
     where: { id: String(req.params.id) },
-    data: { deleted: true, active: false },
+    data: { deleted: true, assignEstimateFollowUps: false },
   });
   res.json({ ok: true });
 }));

@@ -337,7 +337,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
       await prisma.telecaller.create({
         data: {
           name: a.userName,
-          active: true,
+          assignEstimateFollowUps: true,
           order: maxOrder,
           neodoveUserId: a.userId || null,
           neodoveUserName: a.userName,
@@ -350,8 +350,11 @@ async function syncTelecallersFromNeodove(): Promise<void> {
   }
 }
 
-async function getActiveTelecallers(): Promise<Telecaller[]> {
-  return prisma.telecaller.findMany({ where: { active: true, deleted: false }, orderBy: { order: 'asc' } });
+// The conversion-specialist pool: only telecallers flagged to hold estimate
+// follow-ups receive assignments (new deals + EOD re-poaching). Everyone else
+// still generates leads but never holds estimates.
+async function getFollowUpSpecialists(): Promise<Telecaller[]> {
+  return prisma.telecaller.findMany({ where: { assignEstimateFollowUps: true, deleted: false }, orderBy: { order: 'asc' } });
 }
 
 // ── Round-robin rotation ─────────────────────────────────────────────────────
@@ -380,7 +383,7 @@ async function setRotationPointer(telecallerId: string): Promise<void> {
  * Runs once each morning (08:00 IST cron → POST /api/trigger/telecalling).
  */
 export async function rotateEstimatesRoundRobin(): Promise<{ assigned: number }> {
-  const telecallers = await getActiveTelecallers();
+  const telecallers = await getFollowUpSpecialists();
   if (telecallers.length === 0) return { assigned: 0 };
 
   const sent = await prisma.estimate.findMany({
@@ -431,8 +434,11 @@ export async function rotateEstimatesRoundRobin(): Promise<{ assigned: number }>
  * value without resetting live customer relationships every morning.
  */
 export async function assignEstimatesForMaxConversion(): Promise<{ assigned: number; reassigned: number }> {
-  const telecallers = await getActiveTelecallers();
+  const telecallers = await getFollowUpSpecialists();
   if (telecallers.length === 0) return { assigned: 0, reassigned: 0 };
+  // All non-deleted telecallers, for creator inference — a lead-gen creator who
+  // isn't flagged for follow-ups can still claim the estimate they generated.
+  const allTelecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
 
   const sent = await prisma.estimate.findMany({
     where: { status: 'sent', skipAssignment: false },
@@ -511,7 +517,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       // name a sales agent is dealt to that agent (he generated the lead), before
       // falling back to best-fit conversion routing for unassigned estimates.
       if (!wasAssigned && !(est as any).createdBy) {
-        const creatorId = await inferEstimateCreator(est.estimateId, telecallers);
+        const creatorId = await inferEstimateCreator(est.estimateId, allTelecallers);
         if (creatorId) {
           bestId = creatorId;
           await prisma.estimate.update({
@@ -772,7 +778,7 @@ export async function runLeadConversion(): Promise<{ assigned: number }> {
 export interface TelecallerDayMetrics {
   id: string;
   name: string;
-  active: boolean;
+  assignEstimateFollowUps: boolean;
   neodoveUserName: string | null;
   conversion: {
     assigned: number;
@@ -1096,14 +1102,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const snatches = pointsByOwner.get(tc.id)?.snatches ?? 0;
     const score = won * 100 - snatches * 15 + leadsGenerated * 15 + Math.round(callsConnected * 0.5);
 
-    if (tc.active) {
-      kpiAcc.assigned += assignedToday;
-      kpiAcc.won += won;
-      kpiAcc.pipelineValue += pipelineValue;
-      kpiAcc.callsConnected += callsConnected;
-      kpiAcc.leadsGenerated += leadsGenerated;
-      kpiAcc.talkTimeSec += talkTimeSec;
-    }
+    kpiAcc.assigned += assignedToday;
+    kpiAcc.won += won;
+    kpiAcc.pipelineValue += pipelineValue;
+    kpiAcc.callsConnected += callsConnected;
+    kpiAcc.leadsGenerated += leadsGenerated;
+    kpiAcc.talkTimeSec += talkTimeSec;
 
     // Estimated conversion: expected closed value from this agent's open
     // pipeline, weighted by their win rate and each estimate's live risk.
@@ -1125,7 +1129,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     leaderboard.push({
       id: tc.id,
       name: tc.name,
-      active: tc.active,
+      assignEstimateFollowUps: tc.assignEstimateFollowUps,
       neodoveUserName: tc.neodoveUserName,
       conversion: { assigned: assignedToday, won, conversionRate, pipelineValue, estimatedConversion },
       generation: {
@@ -1167,7 +1171,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
 
   // Self-contained agent list so the dashboard can build the per-agent dropdown
   // without a second round-trip.
-  const agentList = telecallers.map((t) => ({ id: t.id, name: t.name, active: t.active }));
+  const agentList = telecallers.map((t) => ({ id: t.id, name: t.name, active: t.assignEstimateFollowUps }));
 
   // Agent dropdown: ?agent=<id|name> returns that agent's open follow-up
   // estimates (what they must call) plus their own metrics.
@@ -1238,7 +1242,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       agent: {
         id: tc.id,
         name: tc.name,
-        active: tc.active,
+        active: tc.assignEstimateFollowUps,
         conversion: lb?.conversion ?? null,
         generation: lb?.generation ?? null,
         score: lb?.score ?? 0,
@@ -1270,7 +1274,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     telecallerName: nameById.get(String(e.assignedTelecallerId)) ?? null,
   }));
 
-  const activeCount = telecallers.filter((t) => t.active).length;
+  const activeCount = telecallers.filter((t) => t.assignEstimateFollowUps).length;
 
   return {
     meta: {

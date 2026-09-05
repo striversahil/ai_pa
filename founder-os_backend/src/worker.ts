@@ -969,7 +969,7 @@ app.post('/api/telecallers', async (c) => {
     data: {
       name: String(body.name).trim(),
       email: body.email ?? null,
-      active: body.active ?? true,
+      assignEstimateFollowUps: body.assignEstimateFollowUps ?? true,
       order: body.order ?? 0,
       neodoveUserId: body.neodoveUserId ?? null,
       neodoveUserName: body.neodoveUserName ?? null,
@@ -985,15 +985,16 @@ app.put('/api/telecallers/:id', async (c) => {
   const data: Record<string, unknown> = {};
   if (body.name !== undefined) data.name = String(body.name).trim();
   if (body.email !== undefined) data.email = body.email;
-  if (body.active !== undefined) data.active = body.active;
+  if (body.assignEstimateFollowUps !== undefined) data.assignEstimateFollowUps = body.assignEstimateFollowUps;
   if (body.order !== undefined) data.order = body.order;
   if (body.neodoveUserId !== undefined) data.neodoveUserId = body.neodoveUserId;
   if (body.neodoveUserName !== undefined) data.neodoveUserName = body.neodoveUserName;
   if (body.deleted !== undefined) {
     // Restore from the MIS Controller's deleted-agents list (deleted=false);
-    // a restore brings the telecaller back inactive so MIS can review first.
+    // a restore brings the telecaller back without the follow-up flag so MIS
+    // can review first.
     data.deleted = !!body.deleted;
-    if (body.deleted === false && body.active === undefined) data.active = false;
+    if (body.deleted === false && body.assignEstimateFollowUps === undefined) data.assignEstimateFollowUps = false;
   }
   const tc = await prisma.telecaller.update({ where: { id: c.req.param('id') }, data });
   return c.json(tc);
@@ -1006,7 +1007,7 @@ app.delete('/api/telecallers/:id', async (c) => {
   // but kept (restorable) so historical close-credit chains stay intact.
   await prisma.telecaller.update({
     where: { id: c.req.param('id') },
-    data: { deleted: true, active: false },
+    data: { deleted: true, assignEstimateFollowUps: false },
   });
   return c.json({ ok: true });
 });

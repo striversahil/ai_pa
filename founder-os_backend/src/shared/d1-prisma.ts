@@ -38,7 +38,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Automation: ['enabled'],
   MarketingCampaign: ['enabled'],
   Token: [],
-  Telecaller: ['active'],
+  Telecaller: ['assignEstimateFollowUps'],
   EstimateAssignment: [],
 };
 
