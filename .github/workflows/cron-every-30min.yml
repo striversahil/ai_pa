@@ -1,8 +1,8 @@
 name: Cron - Every 30 min
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
+  # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
+  # workflow_dispatch). Native schedule removed to avoid double-firing.
   workflow_dispatch:
 
 # Only one run at a time; cancel a stale in-progress run when a new one starts.

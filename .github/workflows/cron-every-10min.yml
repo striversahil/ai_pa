@@ -1,9 +1,8 @@
 name: Cron - Every 10 min
 
 on:
-  schedule:
-    # neodove today-refresh every 10 minutes
-    - cron: "*/10 * * * *"
+  # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
+  # workflow_dispatch). Native schedule removed to avoid double-firing.
   workflow_dispatch:
 
 concurrency:

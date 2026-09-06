@@ -1,20 +1,11 @@
 name: Cron - Daily IST
 
 on:
-  schedule:
-    # data-retention 3:00 AM IST = 21:30 UTC
-    - cron: "30 21 * * *"
-    # baseline-freeze 1:00 AM IST = 19:30 UTC (daily reset anchor)
-    - cron: "30 19 * * *"
-    # morning-brief 8:00 AM IST = 02:30 UTC
-    - cron: "30 2 * * *"
-    # eod-summary 7:00 PM IST = 13:30 UTC
-    - cron: "30 13 * * *"
-    # telecalling EOD snatch 9:00 PM IST = 15:30 UTC — sweep unsatisfactory
-    # estimates to higher-converting agents after the day's calls are done
-    - cron: "30 15 * * *"
-    # neodove-report 12:30 AM IST = 19:00 UTC (reports yesterday)
-    - cron: "0 19 * * *"
+  # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
+  # workflow_dispatch) at 02:30 / 03:30 / 13:30 / 21:30 UTC. Native schedule
+  # removed — GitHub's own scheduler is unreliable and would double-fire.
+  # Each job's `if` guard still matches on workflow_dispatch, so the dispatch
+  # runs the intended daily jobs.
   workflow_dispatch:
     inputs:
       neodove_backfill_days:
