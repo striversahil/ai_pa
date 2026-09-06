@@ -39,6 +39,7 @@ interface RiskRow {
   estimateId: string;
   estimateNumber: string;
   customerName: string;
+  telecallerId: string | null;
   telecallerName: string | null;
   total: number;
   risk: "ok" | "pending" | "red" | "zombie";
@@ -609,6 +610,14 @@ export default function TelecallingDashboard() {
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div>
                     <h3 className="text-lg font-bold">🏆 Leaderboard — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
+                    {dash.data?.meta?.periodFrom && dash.data.meta.periodTo && (
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono mt-0.5">
+                        {dash.data.meta.periodFrom} → {dash.data.meta.periodTo}
+                        {dash.data.meta.periodTo !== dash.data.meta.periodFrom
+                          ? ` · ${dash.data.meta.workingDays ?? "—"} working days`
+                          : ""}
+                      </p>
+                    )}
                     {/* Scoring criteria — the composite score is the ranking norm. */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
                       <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-400">
@@ -1045,6 +1054,7 @@ export default function TelecallingDashboard() {
                   busy={overrideBusy}
                   setBusy={setOverrideBusy}
                 />
+                <ExportDataSection rosterRows={rosterRows} />
                 <RosterSection
                   rosterRows={rosterRows}
                   form={form}
@@ -1557,6 +1567,188 @@ function RosterSection({
         lead-conversion specialists who receive estimate follow-up assignments (new deals + end-of-day re-poaching).
         Telecallers with it OFF still generate leads but never hold estimates. Everyone non-deleted stays visible on the
         Dashboard, Lead Conversion and Lead Generation views — use Delete to hide someone.
+      </p>
+    </section>
+  );
+}
+
+// ── MIS data export (CSV, client-side) ──────────────────────────────────────
+// Exports the FULL live telecalling payload as one CSV download — performance
+// (leaderboard), assignments (conversion summary) and risk (open pipeline)
+// stacked as sections. Filters: period + telecaller sub-set (all / follow-up
+// specialists / lead-gen only / a specific agent). Generated in the browser
+// from the same endpoint the dashboards use — no new backend needed.
+
+function downloadCsv(filename: string, rows: (string | number | null | undefined)[][]) {
+  const esc = (v: string | number | null | undefined) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = rows.map((r) => r.map(esc).join(",")).join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+const EXPORT_PERIODS: { key: string; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "week", label: "This Week" },
+  { key: "lastweek", label: "Last Week" },
+  { key: "month", label: "This Month" },
+  { key: "lastmonth", label: "Last Month" },
+  { key: "year", label: "This Year" },
+  { key: "lastyear", label: "Last Year" },
+];
+
+function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
+  const [period, setPeriod] = useState("week");
+  const [subset, setSubset] = useState("all");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const subsetRows = () => {
+    if (subset === "followups") return rosterRows.filter((r) => r.assignEstimateFollowUps);
+    if (subset === "leadgen") return rosterRows.filter((r) => !r.assignEstimateFollowUps);
+    if (subset !== "all" && subset !== "") return rosterRows.filter((r) => r.id === subset);
+    return rosterRows;
+  };
+
+  const doExport = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/automations/telecalling/data?period=${period}`);
+      if (!res.ok) throw new Error(`Failed to load telecalling data (HTTP ${res.status})`);
+      const data: DashData = await res.json();
+      const wanted = subsetRows();
+      const wantedIds = new Set(wanted.map((r) => r.id));
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      const periodLabel = data.meta?.periodLabel ?? period;
+      const base = `founder-os_all_${periodLabel.replace(/\s+/g, "_").toLowerCase()}_${stamp}.csv`;
+      const rows: (string | number | null | undefined)[][] = [];
+
+      // Section 1 — Performance (per-telecaller leaderboard)
+      rows.push(["═══ PERFORMANCE (LEADERBOARD) ═══"]);
+      rows.push([
+        "Rank", "Telecaller", "Follow-ups", "NeoDove user",
+        "Assigned", "Won", "Conv %", "Pipeline ₹", "Est. Closed ₹",
+        "Calls Attempted", "Calls Connected", "Calls %", "Talk (min)",
+        "Leads Generated", "Leads %", "Score", "At Risk", "Zombie",
+      ]);
+      data.leaderboard
+        .filter((r) => wantedIds.has(r.id))
+        .forEach((r, i) => {
+          rows.push([
+            i + 1,
+            r.name,
+            r.assignEstimateFollowUps ? "yes" : "no",
+            r.neodoveUserName,
+            r.conversion.assigned,
+            r.conversion.won,
+            r.conversion.conversionRate,
+            r.conversion.pipelineValue,
+            r.conversion.estimatedConversion?.value ?? 0,
+            r.generation.callsAttempted,
+            r.generation.callsConnected,
+            r.generation.connectedPct,
+            Math.round((r.generation.talkTimeSec ?? 0) / 60),
+            r.generation.leadsGenerated,
+            r.generation.leadsPct,
+            r.score,
+            r.risk?.atRisk ?? 0,
+            r.risk?.zombie ?? 0,
+          ]);
+        });
+      rows.push([]);
+
+      // Section 2 — Assignments (conversion summary)
+      rows.push(["═══ ASSIGNMENTS (CONVERSION) ═══"]);
+      rows.push(["Telecaller", "Assigned", "Won", "Conv %", "Pipeline ₹", "Est. Closed ₹"]);
+      data.leaderboard
+        .filter((r) => wantedIds.has(r.id))
+        .forEach((r) => {
+          rows.push([
+            r.name,
+            r.conversion.assigned,
+            r.conversion.won,
+            r.conversion.conversionRate,
+            r.conversion.pipelineValue,
+            r.conversion.estimatedConversion?.value ?? 0,
+          ]);
+        });
+      rows.push([]);
+
+      // Section 3 — Risk (open pipeline about to be re-poached)
+      rows.push(["═══ RISK (OPEN PIPELINE) ═══"]);
+      rows.push([
+        "Estimate", "Customer", "Telecaller", "Total ₹", "Risk",
+        "Last Comment", "Stale (h)", "Snatch In (h)", "Reason",
+      ]);
+      (data.risk?.atRisk ?? [])
+        .filter((r) => !wantedIds.size || (r.telecallerId && wantedIds.has(r.telecallerId)))
+        .forEach((r) => {
+          rows.push([
+            r.estimateNumber ?? r.estimateId,
+            r.customerName,
+            r.telecallerName,
+            r.total,
+            r.risk,
+            r.lastCommentDate,
+            r.staleHours,
+            r.snatchInHours,
+            r.snatchReason ?? r.reasoning,
+          ]);
+        });
+
+      downloadCsv(base, rows);
+    } catch (e: any) {
+      setError(e?.message ?? "Export failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+      <h3 className="text-lg font-bold mb-1">📤 Export Data</h3>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+        Download the FULL telecalling payload as one CSV — performance (leaderboard), assignments (conversion) and
+        risk (open pipeline) sections. Generated client-side from the live dashboard endpoint.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+          Period
+          <select value={period} onChange={(e) => setPeriod(e.target.value)}
+            className="px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none">
+            {EXPORT_PERIODS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+          Telecallers
+          <select value={subset} onChange={(e) => setSubset(e.target.value)}
+            className="px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none">
+            <option value="all">All</option>
+            <option value="followups">Follow-up specialists</option>
+            <option value="leadgen">Lead-gen only</option>
+            {rosterRows.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </label>
+        <button onClick={() => void doExport()} disabled={loading}
+          className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
+          {loading ? "Exporting…" : "⬇ Download CSV"}
+        </button>
+        {error && <span className="text-xs text-rose-500">{error}</span>}
+      </div>
+      <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
+        Exports respect the current leaderboard period and telecaller filter. Deleted agents and unassigned estimates
+        are excluded.
       </p>
     </section>
   );

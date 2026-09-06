@@ -337,7 +337,9 @@ async function syncTelecallersFromNeodove(): Promise<void> {
       await prisma.telecaller.create({
         data: {
           name: a.userName,
-          assignEstimateFollowUps: true,
+          // New hires start as lead-gen only — they must be reviewed/flagged as
+          // conversion specialists by MIS before receiving estimate follow-ups.
+          assignEstimateFollowUps: false,
           order: maxOrder,
           neodoveUserId: a.userId || null,
           neodoveUserName: a.userName,
