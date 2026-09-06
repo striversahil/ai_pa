@@ -50,14 +50,14 @@ Worker + GitHub Actions.
 
 | Runtime | Entry | DB | Role |
 |---------|-------|----|------|
-| **Cloudflare Worker** (`founder-os_backend/src/worker.ts`) | `wrangler deploy` → `founder-os-worker` | D1 (SQLite) | **Live API.** Thin JSON API over D1; heavy AI/cron delegated to GH Actions runners via `/api/runner/*`. |
-| **GitHub Actions runners** (`scripts/*-runner.js`) | `.github/workflows/cron-*.yml` (cPanel cron dispatch) | — (call Worker) | **Where all heavy processing & cron actually happens** (digest, brief, summary, zoho, email, neodove). |
+| **Cloudflare Worker** (`founder-os_backend/src/worker.ts`) | `wrangler deploy` → `founder-os-worker` | D1 (SQLite) | **Live API + cron router.** Thin JSON API over D1; heavy AI/cron delegated to GH Actions runners via `/api/runner/*`. A single `* * * * *` Cron Trigger runs every minute and routes `workflow_dispatch` by UTC minute alignment — no external dispatcher needed. |
+| **GitHub Actions runners** (`scripts/*-runner.js`) | `.github/workflows/cron-*.yml` (dispatched by the Worker cron router) | — (call Worker) | **Where all heavy processing actually happens** (digest, brief, summary, zoho, email, neodove). |
 | **waba-worker** (`waba-worker/src/index.ts`) | `wrangler deploy` → `waba-worker` | D1 (`waba-worker`) | Dedicated WhatsApp webhook ingress + durable processing queue. Raw payloads stored in D1, drained by `local-runner.js` (polls `/api/logs`, writes `/api/update`). |
 | **Express server** (`founder-os_backend/src/server.ts`) | `pnpm dev` / `node dist/server.js` | PostgreSQL (Prisma) | Alternate/local runtime. Same route surface + modules; *can* run automations in-process via `node-cron` + BullMQ/Redis, but not the live operational path. |
 | **webhook-relay** (`webhook-relay/relay.js`) | `node relay.js` | disk WAL | Zero-dep buffer between WA Engine Pro and the Express backend; acks instantly, forwards with backoff. |
 | **local-runner.js** | `node local-runner.js` | (reads waba-worker D1) | Local AI processing loop: polls the waba-worker queue, classifies each message (deterministic rules + LLM fallback), writes results back. |
 | **Frontend** (`founder-os_frontend`) | `next build` → Cloudflare Pages | — | Static Next.js dashboard; talks to the Worker/Express API via Pages Functions `/api` proxy. **PWA**: manifest + `sw.js` (build-time precache of all assets) for "Add to Home Screen" + offline shell. |
-| **cPanel cron dispatcher** (`216.10.246.39`, user `brindwqj`) | user crontab → `~/gh-trigger.sh` | — | Replaces cron-job.org: fires `workflow_dispatch` to GitHub Actions on schedule (no Node needed). Also runs the nightly D1 backup (`~/d1-backup.sh` → Cloudflare D1 export API → SQL dump in `~/d1-backups/`, 14-day retention). |
+| **cPanel host** (`216.10.246.39`, user `brindwqj`) | user crontab (d1-backup + health ping only) | — | Legacy workflow-dispatch cron lines are disabled (`#DISABLED-CF-WORKER-CRON`); dispatch is now handled by the Worker's Cron Triggers. Still runs the nightly D1 backup (`~/d1-backup.sh` → Cloudflare D1 export API → SQL dump in `~/d1-backups/`, 14-day retention) and a 15-min health ping. |
 
 ### Key principles
 - **Dual runtime, shared modules:** `founder-os_backend/src/modules/*` and `src/automations/*`
@@ -68,9 +68,11 @@ Worker + GitHub Actions.
 - **Pluggable automations:** Each automation is a folder under `src/automations/<slug>/` with an
   `index.ts` (and required `README.md`). An `AutomationEngine` runs rule/handler automations.
 - **Heavy AI / cron off the request path — done by GitHub Actions:** All heavy jobs run as
-  standalone `scripts/*-runner.js` scripts in GH Actions (fired on schedule by a cPanel cron
-  dispatcher — see §5.1), calling the Worker's `/api/runner/*`. The Express server *can* run
-  the same automations in-process via `node-cron`, but that is not the live operational path.
+  standalone `scripts/*-runner.js` scripts in GH Actions, calling the Worker's `/api/runner/*`.
+  Workflow **dispatch** is handled by a single `* * * * *` Worker Cron Trigger that routes to the
+  right cadence — the Worker fires `workflow_dispatch`, and heavy AI still runs on the runner.
+  The Express server *can* run the same automations in-process via `node-cron`, but that is not
+  the live operational path.
 - **Graceful degradation:** Falls back to in-memory mock data when the DB / LLM is unavailable.
 
 ### Repository structure (actual)
@@ -84,7 +86,12 @@ Worker + GitHub Actions.
 │   ├── prisma/schema.prisma            # 22-model PostgreSQL schema (source of truth)
 │   ├── src/
 │   │   ├── server.ts                   # Express 5 entrypoint (alt/local runtime)
-│   │   ├── worker.ts                    # Cloudflare Worker entrypoint (Hono + D1) — LIVE
+│   │   ├── worker.ts                    # Cloudflare Worker entrypoint — THIN: wires route modules + cron
+│   │   ├── worker/                      # Worker codebase (split from the old monolithic worker.ts):
+│   │   │   ├── context.ts               # Bindings type, bootstrapEnv, deps(), boot, auth guards, live broadcast, shared helpers, app factory (middleware)
+│   │   │   ├── cron.ts                  # * * * * * cron router (neodove-refresh + GH workflow_dispatch dispatcher)
+│   │   │   └── routes/                  # one module per API domain: auth, chat, enquiries, system,
+│   │   │                                #   estimates, whatsapp, triggers, runner, autopilot, automations, events
 │   │   ├── config/ config-worker.ts    # env validation (server / worker variants)
 │   │   ├── routes/                      # Express routers (whatsapp-webhook, health, triggers, ...)
 │   │   ├── modules/                     # ai, automation, brain, whatsapp, waba, email, auth, chat, ...
@@ -106,7 +113,7 @@ Worker + GitHub Actions.
 │   ├── zoho-sent-runner.js             # Zoho sync + LLM classification + comments
 │   ├── email-brain-index-runner.js
 │   ├── neodove-report-runner.js        # NeoDove telecaller report (today + backfill)
-│   └── trigger-workflows.sh            # manual workflow_dispatch helper (cron dispatcher)
+│   └── trigger-workflows.sh            # manual workflow_dispatch helper (fallback / ad-hoc)
 ├── founder-os_frontend/               # Next.js 16 static dashboard (Cloudflare Pages)
 ├── .github/workflows/                 # cron-every-{5,10,15,30}min.yml + cron-daily-ist.yml
 ├── zoho_sent/                         # Zoho Books cURL export (sent_estimates.txt)
@@ -378,25 +385,38 @@ Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_BASE_URL`,
 `OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`. Zoho creds are inferred at runtime from
 `zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets.
 
-### 5.1 External dispatch (cPanel cron → workflow_dispatch)
-GitHub's native `schedule:` is unreliable (observed 1–6 h drift, far worse than the
-30–40 min originally seen), so all workflows are triggered externally. cron-job.org
-was the original dispatcher but **stopped firing** (silent; the PAT must live under
-`extendedData.headers`, which the API ignores if set as `requestHeaders`). It has been
-**replaced by a cPanel cron job** on the team's shared host (`216.10.246.39`):
+### 5.1 External dispatch (Cloudflare Worker Cron Triggers → workflow_dispatch)
+GitHub's native `schedule:` is unreliable (observed 1–6 h drift), so all workflows are triggered
+externally. Originally cron-job.org, then a cPanel cron job (`216.10.246.39` → `~/gh-trigger.sh`),
+but the shared-host cron dropped executions (75–345 min gaps — observed 1 Sep 2026), so dispatch
+moved to the **Cloudflare Worker's native Cron Triggers** (free plan, ≤3 per worker; we use 2):
 
 ```
-cPanel crontab (user brindwqj) every 5/10/15/30 min + daily
-  └─ ~/gh-trigger.sh <every-5min|every-10min|every-15min|every-30min|daily>
-       └─ curl POST https://api.github.com/repos/striversahil/ai_pa/actions/workflows/<wf>/dispatches
+Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
+  └─ * * * * *  → scheduled handler runs EVERY minute (router pattern)
+       ├─ minute-aligned gates (UTC) decide what is due:
+       │     every-5min  → minute % 5 == 0
+       │     every-10min → minute % 10 == 0
+       │     every-15min → minute % 15 == 0
+       │     every-30min → minute % 30 == 0
+       │     daily       → 02:30 / 03:30 / 13:30 / 21:30 UTC
+       │     neodove-refresh → minute % 10 == 0 (native D1 write)
+       └─ ctx.waitUntil(Promise.all(...)) fires all due workflow_dispatches
             └─ GitHub Actions runs the workflow on demand
 ```
 
-- `~/gh-trigger.sh` embeds the GitHub PAT (from `GITHUB_ACCESS_TOKEN` in `.env`) and
-  fires `workflow_dispatch`; it logs HTTP codes to `~/gh-trigger.log`.
-- Schedules: every-5min `*/5`, every-10min `*/10`, every-15min `*/15` (no
-  `force` — change-detection gates AI; force stays manual-only), every-30min
-  `*/30`, daily `30 2,3,13,21 * * *` (UTC; IST 08:00/08:30/18:30/03:00).
+- The router lives in `src/worker.ts` (`scheduled` handler): `dueWorkflows()` computes which
+  workflows are due at the current UTC minute and fires `workflow_dispatch` for each concurrently
+  via `ctx.waitUntil(Promise.all(...))` so the worker never blocks on a slow endpoint. One `* * * * *`
+  Cron Trigger runs every minute; the handler no-ops (cheap) when nothing is due.
+- Cadence gates use `event.scheduledTime` (the slot Cloudflare intended), NOT wall-clock execution
+  time — cron events are delivered 1–2 min late and time-based gates would drift/skip otherwise.
+- Auth: `GITHUB_ACCESS_TOKEN` is a Worker secret (the `ghp_` PAT from `.env`; set via
+  `printf '%s' "$GITHUB_ACCESS_TOKEN" | wrangler secret put GITHUB_ACCESS_TOKEN` — `echo` would add
+  a newline). The dispatch request sends a `User-Agent` header — GitHub rejects requests without it
+  (HTTP 403 with an empty body from Cloudflare egress).
+- The old cPanel dispatch lines are commented out (`#DISABLED-CF-WORKER-CRON`) but left on the host
+  for rollback; only the D1 backup and health ping remain active there.
 - Manual equivalent: `GITHUB_PAT=... ./scripts/trigger-workflows.sh <target>`.
 
 ### 5.2 Runner / worker hardening (Aug 2026)
