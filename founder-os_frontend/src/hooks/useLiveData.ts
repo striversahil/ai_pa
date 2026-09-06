@@ -159,3 +159,21 @@ export function useLiveEvent(handler: (e: LiveEvent) => void): void {
     return () => bus.removeEventListener("live", onLive as EventListener);
   }, []);
 }
+
+/**
+ * Zero-wiring live dashboard hook. Any NEW dashboard view should prefer this:
+ * it subscribes to EVERY live event (typed ones like `estimates`/`telecalling`
+ * plus the backend's automatic `data-changed`), so a new view goes live the
+ * moment its data endpoint exists — no event-name list to maintain. This is the
+ * scalable pattern for adding dashboards/automations as the app grows.
+ *
+ * Under the hood it is `useLiveQuery(fetcher)` with no `events` filter. If you
+ * need to refetch only on specific event types (less traffic at very high
+ * scale), fall back to `useLiveQuery(fetcher, { events: [...] })`.
+ */
+export function useLiveDashboard<T>(
+  fetcher: () => Promise<T>,
+  options: Omit<UseLiveQueryOptions, "events"> = {},
+): LiveQueryResult<T> {
+  return useLiveQuery<T>(fetcher, options);
+}

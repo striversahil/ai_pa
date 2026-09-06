@@ -589,9 +589,12 @@ cPanel host in the root `.env`).
 
 ### 10.3 New Worker/Express endpoint
 - Express: add a handler in `server.ts` or a router in `src/routes/`.
-- Worker: add to `worker.ts` (mirror the Express route). Keep handlers thin; heavy work → runner.
-- If the endpoint **writes dashboard data**, call `notifyLive(c, { type: "<name>" })` so
-  open tabs refresh live (see §11). Add a `useLiveRefresh` wiring in the relevant component.
+- Worker: add to `src/worker/routes/` (mirror the Express route). Keep handlers thin; heavy work → runner.
+- If the endpoint **writes dashboard data**, call `notifyLive(c, { type: "<name>" })` so open tabs
+  refresh live (see §11). This is optional — the auto-live middleware emits a generic
+  `data-changed` event for any mutating `/api/*` write automatically. On the frontend, a new view
+  uses `useLiveDashboard(fetcher)` (or `useLiveQuery` with no `events`) to refetch live with zero
+  wiring. Add a `useLiveRefresh` wiring in the relevant component.
 - If the endpoint **reads an expensive/aggregated payload**, wrap it in the KV cache
   read-through helper `cached(key, ttlMs, compute)` (see §3.4) — never hit D1 on every
   broadcast. When the endpoint **writes** data that other caches derive from, invalidate
@@ -636,6 +639,23 @@ a `c.executionCtx.waitUntil(...)` POST to the hub. Event shapes:
 | `{ type: "neodove" }` | `/api/runner/neodove/report` |
 | `{ type: "baseline" }` | `/api/runner/estimates/baseline` (the 01:00 AM IST daily freeze) |
 | `{ type: "automation", slug }` | `POST /api/trigger/:slug` (after the automation scan completes) |
+| `{ type: "data-changed", path, method }` | **Automatic** — any mutating `/api/*` request whose handler did NOT already broadcast (auto-live middleware) |
+
+### 11.2a Zero-wiring live updates for NEW dashboards/automations
+To scale, live events are now **automatic** — a new dashboard/automation goes live without
+wiring a new event name:
+
+- **Backend auto-live middleware** (`createApp()` in `src/worker/context.ts`): any successful
+  `POST/PUT/PATCH/DELETE` to `/api/*` that the handler did not already broadcast emits a generic
+  `data-changed` event automatically. A handler suppresses the generic one by calling
+  `notifyLive`/`broadcastLive` (it sets a marker on the context). Noisy non-dashboard paths are
+  opted out via `LIVE_NO_AUTO` (`/api/auth/`, `/api/token/`, `/api/chat/typing`, `/api/chat/files`,
+  SSE/WebSocket endpoints).
+- **Frontend default**: `useLiveQuery(fetcher)` with NO `events` option refetches on **every**
+  event. The convenience hook `useLiveDashboard(fetcher)` makes this the explicit default.
+  → A brand-new view backed by a new write endpoint updates live with zero per-view wiring.
+- For high scale, still refetch narrowly with `useLiveQuery(fetcher, { events: ["<type>"] })`
+  to cut unnecessary refetches.
 
 ### 11.3 Frontend — one modular live-data layer
 There is a **single** shared layer that makes every dashboard number live. It opens **one**
@@ -645,6 +665,9 @@ events out to every component via an in-process event bus — no per-dashboard s
 - `src/hooks/useLiveData.ts` (the common modular file):
   - `useLiveQuery<T>(fetcher, { events?, deps?, pollMs? })` — fetches on mount + whenever a
     matching `LiveEvent` arrives (debounced ~1.5s), plus an optional slow `pollMs` safety net.
+    Omit `events` to subscribe to ALL events (auto mode).
+  - `useLiveDashboard<T>(fetcher)` — zero-wiring default for new views (alias of `useLiveQuery`
+    without an `events` filter): refetches on every event including the automatic `data-changed`.
   - `useLiveEvent(handler)` — imperative subscription for components with their own local
     state (e.g. the WhatsApp chat window).
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,

@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { broadcastLive, LiveEvent } from '../live';
+import { broadcastLive, LiveEvent, hasLiveBroadcasted } from '../live';
 import * as AuthRoutes from '../modules/auth/routes';
 import { createAuthStore } from '../modules/auth/store';
 import { authEnabled, getMe, isApproved, requireScope } from '../modules/auth/service';
@@ -420,6 +420,34 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
       return c.json({ error: 'Authentication required' }, 401);
     }
     await next();
+  });
+
+  // ── Auto-live: any successful mutating /api/* write goes live automatically.
+  // If the handler already broadcast a typed event (via notifyLive/broadcastLive)
+  // the marker suppresses the generic one. This is the "zero-wiring" contract for
+  // NEW dashboards/automations: a new endpoint that writes dashboard data gets a
+  // `data-changed` broadcast for free — the frontend refetches on it by default.
+  // Opt OUT of noisy/non-dashboard writes (auth sessions, tokens, chat typing)
+  // via LIVE_NO_AUTO; opt IN to a specific event type via notifyLive().
+  const LIVE_NO_AUTO = [
+    '/api/auth/',      // session management — not dashboard data
+    '/api/token/',     // token store — not dashboard data
+    '/api/chat/typing',// high-frequency ephemeral signal
+    '/api/chat/files', // attachment store — frontend handles refetch
+    '/api/whatsapp/events', // SSE stream
+    '/api/events',     // WebSocket upgrade
+  ];
+  app.use('*', async (c, next) => {
+    await next();
+    if (c.res?.status && c.res.status >= 400) return; // only successful writes
+    const method = c.req.method;
+    if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH' && method !== 'DELETE') return;
+    if (hasLiveBroadcasted(c)) return; // handler already emitted a typed event
+    const path = new URL(c.req.url).pathname;
+    if (!path.startsWith('/api/')) return;
+    if (LIVE_NO_AUTO.some((p) => path.startsWith(p))) return;
+    const { LiveEvent, broadcastLive } = require('../live') as typeof import('../live');
+    broadcastLive(c, LiveEvent.DataChanged, { path, method });
   });
 
   return app;

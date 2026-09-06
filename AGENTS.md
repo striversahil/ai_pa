@@ -49,3 +49,19 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - **Telecalling**: `Telecaller.assignEstimateFollowUps` (renamed from `active`, migration 0015) marks conversion specialists — only they get estimate follow-up assignments. Creator-first assignment still lets the lead-gen creator close their own estimate. Score ledger `TelecallerScoreEvent` (+100 close / −15 snatch / −20 decline).
 - Zoho comments: DB stores `date` (date-only) + `dateFormatted` (full IST time). Risk model must read `dateFormatted` (parse as `+05:30`) or every today-comment looks 12h stale.
 - Architecture truth lives in `architecture.md` (§9 deploy, §5 cron, §10 extension guidelines) — trust it over file names, but it may lag code; verify against config/scripts.
+
+## Live updates (event-driven; automatic for new views)
+- Backend writes go live via the **EventHub Durable Object**: any data-write handler calls
+  `notifyLive(c, { type })` / `broadcastLive` (fire-and-forget, `ctx.waitUntil`). Clients hold
+  ONE WebSocket to `/api/events` (`src/durable/event-hub.ts`).
+- **Automatic**: the auto-live middleware in `src/worker/context.ts` (`createApp()`) emits a
+  generic `data-changed` event for ANY successful mutating `/api/*` request whose handler didn't
+  already broadcast — so a NEW endpoint/dashboard goes live with zero wiring. If a handler
+  broadcasts a typed event, the marker suppresses the generic duplicate. Noisy paths are opted
+  out via `LIVE_NO_AUTO` (`/api/auth/`, `/api/token/`, `/api/chat/typing`, files, SSE/WebSocket).
+- Frontend: a NEW dashboard view should use `useLiveDashboard(fetcher)` (or `useLiveQuery(fetcher)`
+  with NO `events` option) — it refetches on every event, including `data-changed`. Use
+  `useLiveQuery(fetcher, { events: [...] })` only to narrow refetch at high scale.
+- The event is an invalidation signal (type only, not changed rows) — dashboards refetch the full
+  payload from KV-cached endpoints (single-flight `cached()`), so refetch storms collapse to one
+  compute. Add a new write endpoint → auto-live is covered.
