@@ -306,8 +306,10 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       });
     }
     notifyLive(c, { type: 'estimates' });
-    const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
-    await invalidateDerivedEstimateCaches();
+    if (upserted > 0 || lastSyncAt) {
+      const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
+      await invalidateDerivedEstimateCaches();
+    }
     return c.json({ ok: true, count: upserted });
   });
 }

@@ -212,8 +212,13 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       upserted++;
     }
     notifyLive(c, { type: 'estimates' });
-    const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
-    await invalidateDerivedEstimateCaches();
+    // Only invalidate caches when comments actually changed — the runner POSTs
+    // every 15 min even with zero deltas, and an unconditional invalidation
+    // forces a cold ~3s recompute of /api/estimates on the next visitor.
+    if (upserted > 0) {
+      const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
+      await invalidateDerivedEstimateCaches();
+    }
     return c.json({ ok: true, count: upserted, skipped: incoming.length - upserted });
   });
 
@@ -248,8 +253,10 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       updated++;
     }
     notifyLive(c, { type: 'estimates' });
-    const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
-    await invalidateDerivedEstimateCaches();
+    if (updated > 0) {
+      const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
+      await invalidateDerivedEstimateCaches();
+    }
     return c.json({ ok: true, count: updated });
   });
 
@@ -261,6 +268,29 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!estimateId || !classification) return c.json({ error: 'estimateId + classification required' }, 400);
     const now = new Date();
     const toYN = (v: unknown) => (v === 'Yes' || v === 'yes' || v === true ? 'Yes' : 'No');
+
+    // Skip re-invalidating when the classification is unchanged — the runner
+    // force-reclassifies ~100 estimates in one pass, and each one previously
+    // blew the /api/estimates cache (→ a 3s cold recompute for the next user).
+    let changed = true;
+    try {
+      const prev = await prisma.classification.findUnique({ where: { estimateId } });
+      if (prev) {
+        changed =
+          prev.meaningfulUpdate !== !!classification.meaningfulUpdate ||
+          prev.notAnswering !== toYN(classification.notAnswering) ||
+          prev.movingSlow !== toYN(classification.movingSlow) ||
+          prev.underDiscussion !== toYN(classification.underDiscussion) ||
+          prev.confirm !== toYN(classification.confirm) ||
+          prev.intentScore !== (classification.intentScore ?? 2) ||
+          prev.reasoning !== (classification.reasoning || '') ||
+          prev.summary !== (classification.summary || '') ||
+          (prev.salesAgent || 'Unassigned').trim() !== (classification.salesAgent || 'Unassigned').trim();
+      }
+    } catch (e: any) {
+      console.warn({ err: e?.message, estimateId }, 'classification change-check failed — assuming changed');
+    }
+
     await prisma.classification.upsert({
       where: { estimateId },
       update: {
@@ -291,8 +321,10 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     });
     await prisma.estimate.update({ where: { estimateId }, data: { lastSyncTime: now } });
     notifyLive(c, { type: 'estimates' });
-    const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
-    await invalidateDerivedEstimateCaches();
+    if (changed) {
+      const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
+      await invalidateDerivedEstimateCaches();
+    }
     return c.json({ ok: true });
   });
 

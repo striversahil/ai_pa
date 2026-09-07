@@ -9,7 +9,11 @@ import { isSystemGeneratedComment } from './systemComment';
 // broadcast (every 5–15 min), so serving it from a short-TTL KV snapshot cuts
 // D1 row reads by ~100×. Same pattern as the telecalling risk cache.
 const KEY = 'sales_copilot:estimates_cache';
-const TTL_MS = 5 * 60 * 1000;
+// Long TTL: the cache is invalidated on real data changes (comments, status,
+// classification) by the runner endpoints, so a long TTL only guards against
+// expiry-forced recomputes. A short TTL (e.g. 5 min) forced a ~3s cold recompute
+// on the next dashboard load every cycle — that was the "backend is slow" bug.
+const TTL_MS = 30 * 60 * 1000;
 
 interface EstimatesPayload {
   estimates: any[];
