@@ -23,19 +23,48 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     // Signed-up users by email — lets you see which roster agent is a real
     // platform user (for incentive/payout mapping).
     let usersByEmail = new Map<string, { id: string; email: string; name: string; isRoot: boolean }>();
+    let usersByName = new Map<string, { id: string; email: string; name: string; isRoot: boolean }>();
     try {
       const users = await authStore(c).listUsers();
       for (const u of users as any[]) {
-        if (u.email) usersByEmail.set(String(u.email).toLowerCase(), { id: u.id, email: u.email, name: u.name, isRoot: !!u.isRoot });
+        const rec = { id: u.id, email: u.email, name: u.name, isRoot: !!u.isRoot };
+        if (u.email) usersByEmail.set(String(u.email).toLowerCase(), rec);
+        if (u.name) usersByName.set(String(u.name).toLowerCase().replace(/\s+/g, ''), rec);
       }
     } catch { /* user table unavailable — linkedUser stays null */ }
+
+    // Resolve the signed-up user for a roster entry: exact email first, then a
+    // loose NAME match ("muskan" → "Muskan", "samar" → "Samarjeet"). Some
+    // agents signed up with an email different from their roster email, so the
+    // name fallback keeps the "Signed-up platform user" badge accurate.
+    const resolveLinkedUser = (t: any): { id: string; email: string; name: string; isRoot: boolean } | null => {
+      if (t.email) {
+        const byEmail = usersByEmail.get(String(t.email).toLowerCase().trim());
+        if (byEmail) return byEmail;
+      }
+      if (t.name) {
+        const norm = String(t.name).toLowerCase().replace(/\s+/g, '');
+        const exact = usersByName.get(norm);
+        if (exact) return exact;
+        // prefix: roster name prefixes a signed-up name ("samar" → "Samarjeet")
+        for (const [uname, u] of usersByName) {
+          if (uname.startsWith(norm) && norm.length >= 3) return u;
+        }
+        // short form: signed-up name prefixes the roster name
+        for (const [uname, u] of usersByName) {
+          if (norm.startsWith(uname) && uname.length >= 3) return u;
+        }
+      }
+      return null;
+    };
+
     const withCounts = await Promise.all(
       tcs.map(async (t: any) => {
         const [totalAssigned, activeAssigned] = await Promise.all([
           prisma.estimateAssignment.count({ where: { telecallerId: t.id } }),
           prisma.estimateAssignment.count({ where: { telecallerId: t.id, status: 'assigned' } }),
         ]);
-        const linkedUser = t.email ? usersByEmail.get(String(t.email).toLowerCase()) ?? null : null;
+        const linkedUser = resolveLinkedUser(t);
         return { ...t, totalAssigned, activeAssigned, linkedUser };
       }),
     );
