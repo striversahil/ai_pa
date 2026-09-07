@@ -15,9 +15,9 @@ export const VIEW_SCOPE: Record<string, string> = {
   "wa-engine-monitor": "wa-engine",
   "whatsapp-marketing": "whatsapp-marketing",
   "sheet-analysis": "sheet-analysis",
-  "telecalling": "automations",
+  "telecalling": "telecalling",
   "whatsapp-autopilot": "autopilot",
-  "enquiry-tracker": "enquiries",
+  "enquiry-tracker": "enquiry-tracker",
 };
 
 // Scopes a ROLE may grant — limited to automation dashboard views. Keep in sync
@@ -31,6 +31,8 @@ export const DASHBOARD_SCOPES = [
   "whatsapp-marketing",
   "sheet-analysis",
   "autopilot",
+  "telecalling",
+  "enquiry-tracker",
 ];
 
 export interface AuthUserMe {

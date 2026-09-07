@@ -50,7 +50,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'data-retention', name: 'Data Retention Cleanup', description: 'Daily at 3:00 AM, delete WhatsApp messages older than 90 days.', type: 'handler', trigger: { type: 'schedule', cron: '0 3 * * *' }, enabled: true,
   },
   'enquiry-tracker': {
-    id: 'enquiry-tracker', name: 'Enquiry Tracker', description: 'Live sales pipeline: enquiries + threaded comments, persisted and pushed to open dashboards.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'enquiries', enabled: true,
+    id: 'enquiry-tracker', name: 'Enquiry Tracker', description: 'Live sales pipeline: enquiries + threaded comments, persisted and pushed to open dashboards.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'enquiry-tracker', enabled: true,
   },
   'dpp-prices-dashboard': {
     id: 'dpp-prices-dashboard', name: 'DPP Prices → Dashboard', description: 'Parse DPP price messages into PriceQuote rows and compute KRA/KPI for the dashboard.', type: 'rule',
@@ -101,7 +101,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'whatsapp-marketing', name: 'WhatsApp Marketing', description: 'Multi-campaign WhatsApp marketing.', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, scope: 'whatsapp-marketing', enabled: true,
   },
   'telecalling': {
-    id: 'telecalling', name: 'Telecalling', description: 'Unified daily telecaller performance: Lead Conversion (estimate assignment) + Lead Generation (NeoDove calls/leads, live), with KPIs and leaderboard.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'automations', enabled: true,
+    id: 'telecalling', name: 'Telecalling', description: 'Unified daily telecaller performance: Lead Conversion (estimate assignment) + Lead Generation (NeoDove calls/leads, live), with KPIs and leaderboard.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'telecalling', enabled: true,
   },
   'whatsapp-autopilot': {
     id: 'whatsapp-autopilot', name: 'WhatsApp Autopilot', description: 'Structured business layer under WhatsApp: message lineage, per-chat task queue, LLM state transitions. Core loop runs on GH Actions (shadow mode — nothing sends).', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, scope: 'autopilot', enabled: true,

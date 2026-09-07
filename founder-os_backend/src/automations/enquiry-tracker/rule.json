@@ -8,5 +8,5 @@
     "cron": "*/30 * * * *"
   },
   "enabled": true,
-  "scope": "enquiries"
+  "scope": "enquiry-tracker"
 }

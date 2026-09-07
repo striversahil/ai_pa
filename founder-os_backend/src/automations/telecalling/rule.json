@@ -6,5 +6,5 @@
     "type": "schedule",
     "cron": "*/30 * * * *"
   },
-  "scope": "automations"
+  "scope": "telecalling"
 }

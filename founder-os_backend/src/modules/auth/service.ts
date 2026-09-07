@@ -20,6 +20,8 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "brain", label: "Brain", description: "Company Brain search" },
   { key: "autopilot", label: "WhatsApp Autopilot", description: "Autopilot task queue and review dashboard" },
   { key: "mis", label: "MIS", description: "MIS-level control of the telecaller roster (assignment controller)" },
+  { key: "telecalling", label: "Telecalling", description: "Telecalling performance dashboard" },
+  { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
 ];
 
 /**
@@ -36,8 +38,10 @@ export const DASHBOARD_SCOPES = [
   "whatsapp-marketing",
   "sheet-analysis",
   "autopilot",
-  "enquiries",
-  "automations",
+  // Dedicated per-dashboard scopes — each unlocks ONLY its own dashboard,
+  // never the whole Automations registry.
+  "telecalling",
+  "enquiry-tracker",
 ];
 
 export const DEFAULT_ROLES: AuthRole[] = [
