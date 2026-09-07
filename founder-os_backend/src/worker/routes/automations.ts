@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, getEntryOrReload, DASHBOARD_SLUGS, type Bindings } from '../context';
+import { AUTOMATION_SCOPES } from '../../modules/automation/registry-worker';
 
 function parseJson(value: string | null | undefined): unknown {
   if (!value) return null;
@@ -18,6 +19,9 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
       id: r.id, slug: r.slug, name: r.name, description: r.description, type: r.type,
       enabled: r.enabled, cooldownMs: r.cooldownMs, lastRunAt: r.lastRunAt, runCount: r.runCount,
       hasDashboard: withDashboard.has(r.slug),
+      // Permission scope for the dashboard (rule.json `scope`, mirrored in the
+      // registry). Lets the admin render one checkbox per available dashboard.
+      scope: AUTOMATION_SCOPES[r.slug] ?? null,
       trigger: parseJson(r.triggerJson), condition: parseJson(r.conditionJson),
       actions: parseJson(r.actionsJson), config: parseJson(r.configJson),
       createdAt: r.createdAt, updatedAt: r.updatedAt,

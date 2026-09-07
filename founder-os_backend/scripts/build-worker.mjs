@@ -9,20 +9,10 @@
  */
 import { build } from 'esbuild';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-
-// Auto-discover automations: regenerate the registry before bundling so any
-// new src/automations/* directory is automatically registered + dashboarded.
-try {
-  execFileSync(process.execPath, ['scripts/gen-automation-registry.mjs'], { cwd: root, stdio: 'inherit' });
-} catch (e) {
-  console.error('build-worker: automation registry codegen failed:', e?.message);
-  process.exit(1);
-}
 
 // node-bound module → worker-safe twin. Keys are canonical module paths
 // (e.g. "modules/queue/service") matched against the *resolved* file path so

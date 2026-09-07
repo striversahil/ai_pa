@@ -1,27 +1,37 @@
 // View → required permission category (scope). Root (or anyone holding the
 // `admin` scope) can access everything. New categories are created by root in
 // the admin panel and assigned per user.
-//
-// Main-platform views are declared here; automation dashboard scopes come from
-// the AUTO-GENERATED automation manifest (see automation-manifest.generated.ts),
-// so adding a new automation directory + rule.json `scope` needs no hand-sync.
-
-import {
-  DASHBOARD_SCOPE_MAP,
-  AUTOMATION_DASHBOARDS,
-} from "@/automation-manifest.generated";
 
 export const VIEW_SCOPE: Record<string, string> = {
   briefing: "founder-ai",
   whatsapp: "whatsapp",
   automations: "automations",
   admin: "admin",
-  ...DASHBOARD_SCOPE_MAP,
+  // Automation dashboard slugs:
+  "zoho-sent-analyzer": "zoho",
+  "neodove-telecaller-report": "neodove",
+  "dpp-prices-dashboard": "dpp",
+  "enterprise-operations-analytics": "enterprise-ops",
+  "wa-engine-monitor": "wa-engine",
+  "whatsapp-marketing": "whatsapp-marketing",
+  "sheet-analysis": "sheet-analysis",
+  "telecalling": "automations",
+  "whatsapp-autopilot": "autopilot",
+  "enquiry-tracker": "enquiries",
 };
 
-// Scopes a ROLE may grant — limited to automation dashboard views. Derived from
-// the same generated manifest, so a new dashboard is automatically grantable.
-export const DASHBOARD_SCOPES = [...new Set(AUTOMATION_DASHBOARDS.map((slug) => DASHBOARD_SCOPE_MAP[slug]))];
+// Scopes a ROLE may grant — limited to automation dashboard views. Keep in sync
+// with DASHBOARD_SCOPES in founder-os_backend/src/modules/auth/service.ts.
+export const DASHBOARD_SCOPES = [
+  "zoho",
+  "neodove",
+  "dpp",
+  "enterprise-ops",
+  "wa-engine",
+  "whatsapp-marketing",
+  "sheet-analysis",
+  "autopilot",
+];
 
 export interface AuthUserMe {
   user: { id: string; email: string; name: string; picture: string | null; isRoot: boolean };

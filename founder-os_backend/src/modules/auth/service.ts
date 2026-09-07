@@ -26,17 +26,18 @@ export const DEFAULT_SCOPES: AuthScope[] = [
  * Scopes a ROLE may grant. Roles are intentionally limited to automation
  * dashboard views — nothing outside the automations dashboards. To grant a
  * main-platform view (dashboard, enquiries, whatsapp, …) use direct scopes.
- * Derived from the AUTO-GENERATED automation manifest so a new dashboard's
- * scope is grantable without a hand-synced list.
  */
-import { AUTOMATION_RULES } from '../automation/registry.generated';
-
 export const DASHBOARD_SCOPES = [
-  ...new Set(
-    Object.values(AUTOMATION_RULES)
-      .filter((r: any) => typeof r.scope === 'string' && r.scope)
-      .map((r: any) => r.scope as string),
-  ),
+  "zoho",
+  "neodove",
+  "dpp",
+  "enterprise-ops",
+  "wa-engine",
+  "whatsapp-marketing",
+  "sheet-analysis",
+  "autopilot",
+  "enquiries",
+  "automations",
 ];
 
 export const DEFAULT_ROLES: AuthRole[] = [

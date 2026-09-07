@@ -2,17 +2,18 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/auth/AuthContext";
-import { DASHBOARD_SCOPES } from "@/auth/permissions";
 
 interface ScopeRow { key: string; label: string; description: string | null; }
 interface RoleRow { key: string; label: string; description: string | null; scopeKeys: string[]; }
 interface UserRow { id: string; email: string; name: string; picture: string | null; isRoot: boolean; createdAt: string; scopes: string[]; roles: string[]; }
+interface DashboardRow { slug: string; name: string; scope: string | null; }
 
 export default function UserAdmin() {
   const { me, refresh } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [scopes, setScopes] = useState<ScopeRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
   const [userDrafts, setUserDrafts] = useState<Record<string, string[]>>({});
   const [roleDrafts, setRoleDrafts] = useState<Record<string, string[]>>({});
   const [newKey, setNewKey] = useState("");
@@ -21,16 +22,19 @@ export default function UserAdmin() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const [u, s, r] = await Promise.all([
+    const [u, s, r, d] = await Promise.all([
       fetch("/api/auth/users").then((res) => res.json()),
       fetch("/api/auth/scopes").then((res) => res.json()),
       fetch("/api/auth/roles").then((res) => res.json()),
+      fetch("/api/automations").then((res) => res.json()),
     ]);
     const usersArr: UserRow[] = Array.isArray(u) ? u : [];
     const rolesArr: RoleRow[] = Array.isArray(r) ? r : [];
     setUsers(usersArr);
     setScopes(Array.isArray(s) ? s : []);
     setRoles(rolesArr);
+    // Dashboards = automations that have a dashboard renderer (live, not stale).
+    setDashboards((Array.isArray(d) ? d : []).filter((x: any) => x.hasDashboard));
     const ud: Record<string, string[]> = {};
     for (const x of usersArr) ud[x.id] = x.roles;
     setUserDrafts(ud);
@@ -93,7 +97,9 @@ export default function UserAdmin() {
   };
 
   const scopeLabel = (key: string) => scopes.find((s) => s.key === key)?.label || key;
-  const dashboardScopes = scopes.filter((s) => DASHBOARD_SCOPES.includes(s.key));
+  // One checkbox per available automation dashboard, labeled with its name and
+  // mapped to its permission scope (from rule.json via /api/automations).
+  const dashboardScopeKey = (d: DashboardRow) => d.scope ?? "automations";
 
   if (!me?.isRoot) return <div className="p-8 text-zinc-500">Admin access required.</div>;
 
@@ -131,17 +137,20 @@ export default function UserAdmin() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                {dashboardScopes.map((s) => {
-                  const checked = (roleDrafts[role.key] || []).includes(s.key);
+                {dashboards.map((d) => {
+                  const sKey = dashboardScopeKey(d);
+                  const checked = (roleDrafts[role.key] || []).includes(sKey);
                   return (
-                    <label key={s.key}
+                    <label key={d.slug}
                       className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border cursor-pointer ${
                         checked ? "bg-indigo-600/20 border-indigo-500 text-indigo-300" : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300"}`}>
-                      <input type="checkbox" checked={checked} onChange={() => setRoleDrafts((p) => toggle(p, role.key, s.key))} className="accent-indigo-500" />
-                      {s.label}
+                      <input type="checkbox" checked={checked} onChange={() => setRoleDrafts((p) => toggle(p, role.key, sKey))} className="accent-indigo-500" />
+                      <span className="font-semibold">{d.name}</span>
+                      <span className="text-[9px] uppercase tracking-wide opacity-70">{sKey}</span>
                     </label>
                   );
                 })}
+                {dashboards.length === 0 && <span className="text-xs text-zinc-500">No dashboards available.</span>}
               </div>
             </div>
           ))}
@@ -160,17 +169,20 @@ export default function UserAdmin() {
             </button>
           </div>
           <div className="flex flex-wrap gap-2 mt-3">
-            {dashboardScopes.map((s) => {
-              const checked = newScopes.includes(s.key);
+            {dashboards.map((d) => {
+              const sKey = dashboardScopeKey(d);
+              const checked = newScopes.includes(sKey);
               return (
-                <label key={s.key}
+                <label key={d.slug}
                   className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border cursor-pointer ${
                     checked ? "bg-indigo-600/20 border-indigo-500 text-indigo-300" : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300"}`}>
-                  <input type="checkbox" checked={checked} onChange={() => setNewScopes((p) => p.includes(s.key) ? p.filter((k) => k !== s.key) : [...p, s.key])} className="accent-indigo-500" />
-                  {s.label}
+                  <input type="checkbox" checked={checked} onChange={() => setNewScopes((p) => p.includes(sKey) ? p.filter((k) => k !== sKey) : [...p, sKey])} className="accent-indigo-500" />
+                  <span className="font-semibold">{d.name}</span>
+                  <span className="text-[9px] uppercase tracking-wide opacity-70">{sKey}</span>
                 </label>
               );
             })}
+            {dashboards.length === 0 && <span className="text-xs text-zinc-500">No dashboards available.</span>}
           </div>
         </div>
       </section>

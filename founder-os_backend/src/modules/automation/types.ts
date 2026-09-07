@@ -54,6 +54,8 @@ export interface AutomationDefinition {
   config?: Record<string, unknown>;
   cooldownMs?: number;
   enabled?: boolean;
+  /** Permission scope required to view this automation's dashboard (rule.json `scope`). */
+  scope?: string;
 }
 
 /**
