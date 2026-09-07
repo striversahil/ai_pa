@@ -156,7 +156,20 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { cacheGet }: { cacheGet: <T>(key: string, ttlMs: number) => Promise<T | null> } = require('../../shared/cache');
     const fp = await cacheGet<string>(ZOHO_FP_KEY, ZOHO_FP_TTL_MS);
-    return c.json({ fingerprint: fp ?? null });
+    // While ANY active estimate still lacks lead details (detailsCaptured=0),
+    // the runner must keep re-entering the pass instead of trusting the
+    // no-change fingerprint — this is what keeps new/uncaptured estimates in
+    // the 15-min capture loop until the sales agent posts the lead block
+    // (~40 min). Fail-open (true) so an error never starves capture.
+    let needsBackfill = true;
+    try {
+      const { prisma } = deps();
+      const pending = await prisma.estimate.count({ where: { status: 'sent', detailsCaptured: false } });
+      needsBackfill = pending > 0;
+    } catch (e: any) {
+      console.warn({ err: e?.message }, 'fingerprint: pending-details count failed — keeping backfill enabled');
+    }
+    return c.json({ fingerprint: fp ?? null, needsBackfill });
   });
 
   app.post('/api/runner/zoho/fingerprint', async (c) => {

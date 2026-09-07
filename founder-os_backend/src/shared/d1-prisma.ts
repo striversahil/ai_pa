@@ -33,7 +33,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Message: ['processed', 'isHistorical'],
   Email: ['processed'],
   Digest: ['requiresFounder'],
-  Estimate: ['skipMatching', 'skipAssignment'],
+  Estimate: ['skipMatching', 'skipAssignment', 'detailsCaptured'],
   Classification: ['meaningfulUpdate'],
   Automation: ['enabled'],
   MarketingCampaign: ['enabled'],

@@ -95,6 +95,47 @@ export default function EstimateCard({ est, expanded, onToggleComments }: Props)
         )}
       </div>
 
+      {/* Lead-details chips (extracted from Zoho comments by the GH runner) */}
+      {(est.leadOf || est.enquiryNumber || est.sourceLead || est.location || est.contactName || est.contactPhone || est.contactEmail) && (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {est.leadOf && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+              <span className="uppercase tracking-wide opacity-70 text-[8px]">By</span> {est.leadOf}
+            </span>
+          )}
+          {est.contactName && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">
+              <span className="uppercase tracking-wide opacity-70 text-[8px]">Contact</span> {est.contactName}
+            </span>
+          )}
+          {est.contactPhone && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+              <span className="uppercase tracking-wide opacity-70 text-[8px]">Mobile</span> {est.contactPhone}
+            </span>
+          )}
+          {est.contactEmail && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-teal-500/30 bg-teal-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-teal-600 dark:text-teal-300">
+              <span className="uppercase tracking-wide opacity-70 text-[8px]">Mail</span> {est.contactEmail}
+            </span>
+          )}
+          {est.location && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+              <span className="uppercase tracking-wide opacity-70 text-[8px]">Loc</span> {est.location}
+            </span>
+          )}
+          {est.sourceLead && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+              <span className="uppercase tracking-wide opacity-70 text-[8px]">Source</span> {est.sourceLead}
+            </span>
+          )}
+          {est.enquiryNumber && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-400">
+              <span className="uppercase tracking-wide opacity-70 text-[8px]">Enq</span> {est.enquiryNumber}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* AI Timeline Summary */}
       {c.summary && (
         <div className="p-4 rounded-xl bg-zinc-50/40 dark:bg-zinc-950/40 border border-zinc-200/80 dark:border-zinc-800/80 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">

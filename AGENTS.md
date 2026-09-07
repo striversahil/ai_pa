@@ -25,6 +25,7 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - Worker smoke test (no DB/LLM): `cd founder-os_backend && node scripts/smoke-worker.mjs`
 - Frontend build+deploy: `cd founder-os_frontend && NODE_ENV=production npm run build && set -a; source ../.env; set +a; npx wrangler pages deploy out --project-name founder-os-frontend`
 - Frontend dev: use `./run-dev.sh` (Next 16 Turbopack leaks memory and OOMs; the wrapper forces `--webpack`). Plain `npm run dev` uses Turbopack — avoid.
+- **Frontend production build MUST use webpack** — `package.json` `build` now runs `next build --webpack`. Next 16 defaults to Turbopack for `next build`, and Turbopack **drops the nested dynamic-import chunks** (e.g. `page → Automations → TelecallingDashboard`): the chips/Export section silently vanish from the deployed bundle even though the source has them. Always rebuild via `npm run build` (webpack) and confirm the deployed index has no `turbopack` chunk.
 - **There is no test suite** (`npm test` errors). Verification = `smoke-worker.mjs` + live curl of `/health`, `/api/status`, and dashboard endpoints. `NODE_ENV=production npm run build` in the frontend is the only reliable static-export path.
 - Typecheck backend: `cd founder-os_backend && npx tsc --noEmit`. Expect pre-existing errors in `durable/*.ts` (missing CF types) and `automations/zoho-sent-analyzer/service.ts` (4 known `null → number` errors) — leave those untouched.
 

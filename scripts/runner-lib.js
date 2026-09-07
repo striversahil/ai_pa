@@ -83,6 +83,65 @@ async function groqFallback(system, user, temperature) {
   return data.choices?.[0]?.message?.content || '';
 }
 
+/**
+ * Robust direct-Groq JSON caller for GH Actions runners — the PRIMARY LLM path
+ * (survives omniroute outages; omniroute is used only by older runners). Uses
+ * `GROQ_API_KEYS` (comma-separated; different API keys = different orgs =
+ * independent rate limits). Randomly rotates the STARTING key and retries up to
+ * `maxAttempts` (default 5) with 5s backoff (honours the 429 `retry-after`
+ * header) until a valid JSON response is received. Model defaults to
+ * `openai/gpt-oss-120b` (the verified account model) with HIGH reasoning —
+ * `reasoning_effort: high` (per Groq docs) + JSON mode (reasoning is parsed
+ * out automatically in JSON mode, so content returns clean JSON). Returns the
+ * parsed JSON; throws when every key/attempt fails.
+ */
+async function groqJson(system, user, { temperature = 0, maxAttempts = 5, maxTokens = 4096 } = {}) {
+  const keys = (process.env.GROQ_API_KEYS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (keys.length === 0) throw new Error('GROQ_API_KEYS not set — cannot run AI');
+  const model = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+  const reasoningEffort = process.env.GROQ_REASONING_EFFORT || 'high';
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const start = Math.floor(Math.random() * keys.length);
+  let lastError = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const key = keys[(start + attempt) % keys.length];
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          reasoning_effort: reasoningEffort,
+          temperature,
+          response_format: { type: 'json_object' },
+          max_tokens: maxTokens,
+          stream: false,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+        }),
+        signal: AbortSignal.timeout(240000),
+      });
+      if (!res.ok) {
+        lastError = new Error(`groq ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+        const retryAfter = Number(res.headers.get('retry-after') || 0);
+        await sleep((retryAfter > 0 ? retryAfter + 1 : 5) * 1000);
+        continue;
+      }
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content || '';
+      const parsed = extractJson(content);
+      if (!parsed) throw new Error('No JSON in groq response');
+      return parsed;
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts - 1) await sleep(5000);
+    }
+  }
+  throw lastError;
+}
+
 async function omniroute(system, user, { temperature = 0, maxRetries = 2 } = {}) {
   let lastError;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -186,6 +245,7 @@ async function omnirouteJson(system, user, opts) {
 module.exports = {
   requireEnv,
   workerRequest,
+  groqJson,
   omniroute,
   omnirouteJson,
   WORKER_URL,

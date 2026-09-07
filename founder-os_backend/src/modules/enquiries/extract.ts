@@ -31,6 +31,12 @@ export function pickGroqKey(env: any): string | null {
   return keys[Math.floor(Math.random() * keys.length)];
 }
 
+/** All configured GROQ keys (comma-separated in env GROQ_API_KEYS). */
+export function listGroqKeys(env: any): string[] {
+  const raw = (env?.GROQ_API_KEYS as string) || "";
+  return raw.split(",").map((k) => k.trim()).filter(Boolean);
+}
+
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "openai/gpt-oss-20b";
 
@@ -101,4 +107,31 @@ Text:
   } catch {
     return null;
   }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Extract with key rotation + retry: on any API error / rate-limit, wait 5s and
+ * try the next GROQ key until one succeeds or all keys are exhausted. High
+ * reasoning via temperature 0 (grounded, deterministic extraction).
+ */
+export async function extractEnquiryFieldsRobust(
+  keys: string[],
+  input: { text: string; title?: string; company?: string },
+  agents: EnquiryAgentRef[] = [],
+): Promise<ExtractionResult | null> {
+  if (keys.length === 0) return null;
+  const start = Math.floor(Math.random() * keys.length);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[(start + i) % keys.length];
+    try {
+      const result = await extractEnquiryFields(key, input, agents);
+      if (result) return result;
+    } catch {
+      // fall through to next key
+    }
+    if (i < keys.length - 1) await sleep(5000);
+  }
+  return null;
 }

@@ -547,9 +547,14 @@ The Pages Functions proxy (`functions/api/[[path]].ts`) forwards `/api/*` to
 ### 8.2 Build & deploy
 ```
 cd founder-os_frontend
-npm run build                  # static export → out/
+npm run build                  # static export → out/ (webpack: next build --webpack)
 wrangler pages deploy out --project-name founder-os-frontend
 ```
+> **Must build with webpack.** Next 16 defaults `next build` to Turbopack, and the
+> Turbopack production build drops nested dynamic-import chunks (`page →
+> Automations → TelecallingDashboard`) — dashboard chips/Export vanish from the
+> deployed bundle despite being in the source. `package.json` `build` runs
+> `next build --webpack`; do not revert to plain `next build`.
 The `functions/` dir is excluded from Next typecheck (Pages Functions types come from
 `@cloudflare/workers-types`).
 

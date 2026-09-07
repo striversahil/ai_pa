@@ -177,6 +177,19 @@ model Estimate {
   // MIS override: never assign this estimate to any agent (stays unassigned,
   // excluded from the assignment engine entirely).
   skipAssignment        Boolean         @default(false)
+  // Lead-details block extracted from the first Zoho comments by the GH runner
+  // (Enquiry Number / Source Lead / Location / Contact / Mobile). Surfaces as
+  // chips on the Telecalling follow-ups and the ZohoEstimates view.
+  enquiryNumber         String?
+  sourceLead            String?
+  location              String?
+  contactName           String?
+  contactPhone          String?
+  contactEmail          String?
+  // 0 until the GH runner has captured even ONE lead-detail field from the
+  // first Zoho comments; while 0 the 15-min capture loop keeps re-processing
+  // the estimate (agents can take ~40 min to post the lead block).
+  detailsCaptured       Boolean         @default(false)
   comments              Comment[]
   classification        Classification?
   assignments           EstimateAssignment[]
