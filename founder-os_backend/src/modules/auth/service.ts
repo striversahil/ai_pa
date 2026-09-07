@@ -26,16 +26,17 @@ export const DEFAULT_SCOPES: AuthScope[] = [
  * Scopes a ROLE may grant. Roles are intentionally limited to automation
  * dashboard views — nothing outside the automations dashboards. To grant a
  * main-platform view (dashboard, enquiries, whatsapp, …) use direct scopes.
+ * Derived from the AUTO-GENERATED automation manifest so a new dashboard's
+ * scope is grantable without a hand-synced list.
  */
+import { AUTOMATION_RULES } from '../automation/registry.generated';
+
 export const DASHBOARD_SCOPES = [
-  "zoho",
-  "neodove",
-  "dpp",
-  "enterprise-ops",
-  "wa-engine",
-  "whatsapp-marketing",
-  "sheet-analysis",
-  "autopilot",
+  ...new Set(
+    Object.values(AUTOMATION_RULES)
+      .filter((r: any) => typeof r.scope === 'string' && r.scope)
+      .map((r: any) => r.scope as string),
+  ),
 ];
 
 export const DEFAULT_ROLES: AuthRole[] = [
@@ -63,18 +64,24 @@ export function authEnabled(env: any): boolean {
   return getGoogleConfig(env) !== null;
 }
 
-/** Seed default categories/scopes on first use so root can immediately assign them. */
+/** Seed default categories/scopes so root can immediately assign them. Additive —
+ *  upserts any default missing from the DB, so new scopes added in code (e.g. a
+ *  new automation dashboard scope) appear in the admin without a DB reset. */
 export async function ensureScopesSeeded(store: AuthStore): Promise<void> {
   const existing = await store.listScopes();
-  if (existing.length > 0) return;
-  for (const s of DEFAULT_SCOPES) await store.createScope(s.key, s.label, s.description);
+  const have = new Set(existing.map((s) => s.key));
+  for (const s of DEFAULT_SCOPES) {
+    if (!have.has(s.key)) await store.createScope(s.key, s.label, s.description);
+  }
 }
 
-/** Seed default roles (e.g. MIS) on first use. */
+/** Seed default roles (e.g. MIS) on first use. Additive — upserts missing defaults. */
 export async function ensureRolesSeeded(store: AuthStore): Promise<void> {
   const existing = await store.listRoles();
-  if (existing.length > 0) return;
-  for (const r of DEFAULT_ROLES) await store.createRole(r.key, r.label, r.description, r.scopeKeys);
+  const have = new Set(existing.map((r) => r.key));
+  for (const r of DEFAULT_ROLES) {
+    if (!have.has(r.key)) await store.createRole(r.key, r.label, r.description, r.scopeKeys);
+  }
 }
 
 export function startLogin(env: any, publicOrigin: string): { url: string } {

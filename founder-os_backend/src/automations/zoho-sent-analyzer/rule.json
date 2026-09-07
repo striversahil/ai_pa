@@ -3,6 +3,10 @@
   "name": "Zoho Sent Analyzer",
   "description": "Incremental Zoho estimate sync + analysis every 15 minutes.",
   "type": "handler",
-  "trigger": { "type": "schedule", "cron": "*/15 * * * *" },
-  "enabled": true
+  "trigger": {
+    "type": "schedule",
+    "cron": "*/15 * * * *"
+  },
+  "enabled": true,
+  "scope": "zoho"
 }

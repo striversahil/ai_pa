@@ -10,15 +10,22 @@
   },
   "condition": {
     "all": [
-      { "field": "chatId", "op": "eq", "value": "{{config.dppChatId}}" }
+      {
+        "field": "chatId",
+        "op": "eq",
+        "value": "{{config.dppChatId}}"
+      }
     ]
   },
   "dedupField": "wahaMessageId",
   "actions": [
-    { "type": "custom:storePrices" }
+    {
+      "type": "custom:storePrices"
+    }
   ],
   "config": {
     "dppChatId": ""
   },
-  "enabled": true
+  "enabled": true,
+  "scope": "dpp"
 }

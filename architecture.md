@@ -521,27 +521,28 @@ This avoids manual GitHub Secret rotation for frequently-expiring tokens.
 founder-os_frontend/src/
 ├── app/{layout.tsx, page.tsx, globals.css, favicon.ico}
 ├── api/client.ts                     # fetch wrapper (API_BASE = '/api')
- ├── hooks/{useEnquiryData, useTheme, useToast, useCSV, useLocalStorage, useHashRoute, useLiveEvents}.ts
+├── hooks/{useEnquiryData, useTheme, useToast, useCSV, useLocalStorage, useHashRoute,
+│          useLiveData, useLiveEvents}.ts
 ├── types/index.ts  mockData.ts
 └── components/
     ├── layout/{Sidebar, MobileNav}.tsx
-    ├── Dashboard, Enquiry{List,Detail,Modal,RowItem}, ClientProfile, CommentNode,
-    │   FilterControls, CalendarRibbon, ActivityTimeline, KpiCard, PipelineFunnel,
-    │   TrendChart, SpecificationsSection, Lightbox, ToastContainer, ErrorBoundary
-    ├── FounderAssistant                 # AI chat (Brain RAG)
+    ├── Automations                    # automation registry viewer (renderDashboard switch)
     ├── ZohoEstimates + zoho/{EstimateCard, CommentsTimeline, DailyMovementTracker,
     │   CallingPriorityChecklist, ActiveFilters, KpiCards, ZohoEstimatesHeader, types, utils}
-    ├── WhatsAppDashboard, WhatsAppMarketingDashboard
-    ├── WaEngineDashboard, NeodoveTelecallerDashboard
-    ├── DppPricesDashboard, EnterpriseOperationsDashboard, SheetAnalysisDashboard
-    └── Automations                      # automation registry viewer
+    ├── TelecallingDashboard           # leaderboard + At-Risk + Lead Conversion/Generation
+    ├── EnquiryTracker + Enquiry{List,Detail,Modal,RowItem}  # live sales pipeline
+    ├── NeodoveTelecallerDashboard, WaEngineDashboard, DppPricesDashboard
+    ├── EnterpriseOperationsDashboard, WhatsAppMarketingDashboard
+    ├── AutopilotDashboard, WhatsAppDashboard
+    ├── SheetAnalysisDashboard         # generic fallback for data()-only automations
+    └── FounderAssistant               # AI chat (Brain RAG)
 ```
 
 `page.tsx` is the shell: `<Sidebar>|<MobileNav>` + view switch wrapped in
-`<ErrorBoundary>`, with `<EnquiryModal>`, `<Lightbox>`, `<ToastContainer>` overlays.
-Views like `ZohoEstimates`, `FounderAssistant`, `WhatsAppDashboard` call the API
-directly via `fetch()`. The Pages Functions proxy (`functions/api/[[path]].ts`) forwards
-`/api/*` to `env.API_WORKER_URL`; runner endpoints are never called from the browser.
+`<ErrorBoundary>`. Each dashboard is a self-contained component that reads its
+automation's `data()` endpoint via `/api/automations/:slug/data` (proxy → worker).
+The Pages Functions proxy (`functions/api/[[path]].ts`) forwards `/api/*` to
+`env.API_WORKER_URL`; runner endpoints are never called from the browser.
 
 ### 8.2 Build & deploy
 ```

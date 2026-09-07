@@ -3,7 +3,13 @@
   "name": "WA Engine Pro Monitor",
   "description": "Every 5 minutes, check WA Engine Pro API connectivity and audit sustained outages.",
   "type": "handler",
-  "trigger": { "type": "schedule", "cron": "*/5 * * * *" },
-  "config": { "windowDays": 7 },
-  "enabled": true
+  "trigger": {
+    "type": "schedule",
+    "cron": "*/5 * * * *"
+  },
+  "config": {
+    "windowDays": 7
+  },
+  "enabled": true,
+  "scope": "wa-engine"
 }

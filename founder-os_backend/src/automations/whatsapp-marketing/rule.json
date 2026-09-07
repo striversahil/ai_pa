@@ -7,5 +7,6 @@
     "type": "schedule",
     "cron": "* * * * *"
   },
-  "enabled": true
+  "enabled": true,
+  "scope": "whatsapp-marketing"
 }

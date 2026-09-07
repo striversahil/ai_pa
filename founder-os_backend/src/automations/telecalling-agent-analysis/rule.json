@@ -12,5 +12,6 @@
     "range": "A1:Z1000",
     "maxDailySO": 50
   },
-  "enabled": true
+  "enabled": true,
+  "scope": "sheet-analysis"
 }

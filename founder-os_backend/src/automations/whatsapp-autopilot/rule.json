@@ -3,6 +3,10 @@
   "name": "WhatsApp Autopilot (shadow)",
   "description": "Structured business layer under WhatsApp: message-to-task association, state transitions, proposed actions. Core loop runs on the GH Actions runner every 5 minutes; this automation only serves the dashboard. Shadow mode: nothing is ever sent.",
   "type": "handler",
-  "trigger": { "type": "schedule", "cron": "15 * * * *" },
-  "enabled": true
+  "trigger": {
+    "type": "schedule",
+    "cron": "15 * * * *"
+  },
+  "enabled": true,
+  "scope": "autopilot"
 }
