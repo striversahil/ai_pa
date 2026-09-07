@@ -626,17 +626,11 @@ export default function TelecallingDashboard() {
                       <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-400">
                         1 close <span className="font-mono">+100</span>
                       </span>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 font-bold text-rose-400">
-                        snatched <span className="font-mono">−15</span>
-                      </span>
                       <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-bold text-amber-400">
                         1 lead <span className="font-mono">+15</span>
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 font-bold text-indigo-300">
                         1 call <span className="font-mono">+0.5</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-orange-500/30 bg-orange-500/10 px-2 py-0.5 font-bold text-orange-400">
-                        declined 3d+ <span className="font-mono">−20</span>
                       </span>
                     </div>
                   </div>
@@ -679,9 +673,7 @@ export default function TelecallingDashboard() {
                             <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+100</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms). Credited to whoever is holding it at that moment.</li>
                             <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
                             <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−15</span> — your estimate is <span className="font-semibold">snatched at EOD</span> (no meaningful update, silent for over 3 days, or your last update is older than 24h — even a good update goes stale). It's handed to a better converter.</li>
-                            <li><span className="font-bold text-orange-500 dark:text-orange-400">−20</span> — an estimate is <span className="font-semibold">declined after 3+ days</span>. <span className="font-semibold">Every time an agent held it</span> costs that agent 20 (−20 × holdings).</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5, minus penalties. The table restarts at zero every week so everyone gets a fair shot.</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5. The table restarts at zero every week so everyone gets a fair shot.</li>
                           </ul>
                         </div>
                       </div>

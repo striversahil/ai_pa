@@ -561,7 +561,8 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       // The agent who lost the estimate at the EOD snatch gets -15 (unsatisfactory
       // remark or silent > 2 days). Charged to the holder who was re-poached FROM.
       // Lock enforcement is NOT a snatch, so it never triggers the -15 penalty.
-      if (movedFrom && !locked) {
+      // Penalties are currently disabled (PENALTIES_ENABLED=false).
+      if (movedFrom && !locked && PENALTIES_ENABLED) {
         await recordSnatchPenalty(String(movedFrom), est.estimateId, today, reason);
       }
     } else {
@@ -677,6 +678,10 @@ async function inferEstimateCreator(estimateId: string, telecallers: Telecaller[
 const CLOSE_POINTS = 100;
 const SNATCH_PENALTY = -15;
 const DECLINE_PENALTY = -20;
+// Penalties (snatch −15, decline −20) are currently DISABLED — no negative
+// score events are recorded and the leaderboard score ignores them. Flip to
+// true to enable once the founder is ready.
+const PENALTIES_ENABLED = false;
 
 /**
  * Append a score event to the ledger. day is the IST date the event happened.
@@ -735,6 +740,7 @@ async function recordSnatchPenalty(telecallerId: string, estimateId: string, day
  */
 export async function recordDeclinePenalty(estimateId: string): Promise<void> {
   try {
+    if (!PENALTIES_ENABLED) return;
     const est = await prisma.estimate.findUnique({
       where: { estimateId },
       select: { status: true, date: true },
@@ -1101,11 +1107,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       leadsPct >= 100 ? 'green' : leadsPct >= 60 ? 'amber' : 'red';
 
     // Composite score (tunable, the leaderboard norm): a converted estimate
-    // weighs +100, an EOD snatch (unsatisfactory remark) −15, a generated lead
-    // +15 and a connected call +0.5. Wins drive competition; snatches penalise
-    // losing a deal so nobody parks on a dead pipeline.
+    // weighs +100, a generated lead +15 and a connected call +0.5. Snatch
+    // penalties (−15) are currently DISABLED (PENALTIES_ENABLED=false) so the
+    // score only counts positive actions.
     const snatches = pointsByOwner.get(tc.id)?.snatches ?? 0;
-    const score = won * 100 - snatches * 15 + leadsGenerated * 15 + Math.round(callsConnected * 0.5);
+    const score = won * 100 + (PENALTIES_ENABLED ? -snatches * 15 : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5);
 
     kpiAcc.assigned += assignedToday;
     kpiAcc.won += won;
