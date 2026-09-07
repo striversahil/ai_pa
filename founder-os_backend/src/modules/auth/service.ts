@@ -24,26 +24,6 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
 ];
 
-/**
- * Scopes a ROLE may grant. Roles are intentionally limited to automation
- * dashboard views — nothing outside the automations dashboards. To grant a
- * main-platform view (dashboard, enquiries, whatsapp, …) use direct scopes.
- */
-export const DASHBOARD_SCOPES = [
-  "zoho",
-  "neodove",
-  "dpp",
-  "enterprise-ops",
-  "wa-engine",
-  "whatsapp-marketing",
-  "sheet-analysis",
-  "autopilot",
-  // Dedicated per-dashboard scopes — each unlocks ONLY its own dashboard,
-  // never the whole Automations registry.
-  "telecalling",
-  "enquiry-tracker",
-];
-
 export const DEFAULT_ROLES: AuthRole[] = [
   {
     key: "mis",
@@ -225,11 +205,15 @@ export async function listRoles(store: AuthStore) {
 export async function createRole(store: AuthStore, key: string, label: string, description: string | null, scopeKeys: string[]) {
   if (!/^[a-z0-9-]+$/.test(key)) throw new AuthError("FORBIDDEN", "Role key must be a-z0-9-", 400);
   if (!Array.isArray(scopeKeys)) throw new AuthError("FORBIDDEN", "scopeKeys must be an array", 400);
-  const invalid = scopeKeys.filter((s) => !DASHBOARD_SCOPES.includes(s));
+  // Validate against the scopes that actually exist (any scope is grantable —
+  // dashboard scopes and the automations/enquiries views alike). Unknown/typo
+  // scope keys are rejected so a role never silently grants nothing.
+  const known = new Set((await store.listScopes()).map((s) => s.key));
+  const invalid = scopeKeys.filter((s) => !known.has(s));
   if (invalid.length > 0) {
     throw new AuthError(
       "FORBIDDEN",
-      `Roles may only grant automation dashboard scopes, not: ${invalid.join(", ")}`,
+      `Unknown scope(s) in role: ${invalid.join(", ")}`,
       400,
     );
   }
