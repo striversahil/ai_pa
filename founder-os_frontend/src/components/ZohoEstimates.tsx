@@ -14,6 +14,7 @@ const KPI_FILTERS: Omit<KpiCardConfig, "count">[] = [
   { field: "satisfactory", label: "Satisfactory", negLabel: "Unsatisfactory", accent: "emerald", polarity: "good" },
   { field: "notAnswering", label: "Not Answering", negLabel: "Answering", accent: "rose", polarity: "bad" },
   { field: "high_value", label: "High Value", negLabel: "Low Value", accent: "amber", polarity: "good" },
+  { field: "value_above_50k", label: "Above ₹50k", negLabel: "₹50k & Below", accent: "sky", polarity: "good" },
   { field: "movingSlow", label: "Moving Slow", negLabel: "Moving Fast", accent: "orange", polarity: "bad" },
   { field: "underDiscussion", label: "Under Discussion", negLabel: "Not Discussed", accent: "indigo", polarity: "bad" },
   { field: "confirm", label: "Confirm Expected", negLabel: "No Confirm", accent: "violet", polarity: "good" },
@@ -154,6 +155,7 @@ export default function ZohoEstimates() {
       if (!c.meaningfulUpdate) activeCats.push("No Meaningful Update");
       if (c.notAnswering === "Yes") activeCats.push("Not Answering");
       if (est.total > 80000) activeCats.push("High Value");
+      if (est.total > 50000) activeCats.push("Above ₹50k");
       if (c.movingSlow === "Yes") activeCats.push("Moving Slow (>5d)");
       if (c.underDiscussion === "Yes") activeCats.push("Under Discussion");
       if (c.confirm === "Yes") activeCats.push("Confirmed");
@@ -205,6 +207,7 @@ export default function ZohoEstimates() {
       if (!c.meaningfulUpdate) activeCats.push("No Meaningful Update");
       if (c.notAnswering === "Yes") activeCats.push("Not Answering");
       if (est.total > 80000) activeCats.push("High Value");
+      if (est.total > 50000) activeCats.push("Above ₹50k");
       if (c.movingSlow === "Yes") activeCats.push("Moving Slow (>5d)");
       if (c.underDiscussion === "Yes") activeCats.push("Under Discussion");
       if (c.confirm === "Yes") activeCats.push("Confirmed");
@@ -284,6 +287,7 @@ export default function ZohoEstimates() {
     lines.push(`No Meaningful Update: ${stats.totalCount - filterOptionCounts.satisfactory}`);
     lines.push(`Not Answering: ${filterOptionCounts.notAnswering}`);
     lines.push(`High Value (₹80k+): ${filterOptionCounts.high_value}`);
+    lines.push(`Above ₹50k: ${filterOptionCounts.value_above_50k}`);
     lines.push(`Moving Slow (>5d): ${filterOptionCounts.movingSlow}`);
     lines.push(`Under Discussion: ${filterOptionCounts.underDiscussion}`);
     lines.push(`Confirmed: ${filterOptionCounts.confirm}`);
@@ -350,6 +354,8 @@ export default function ZohoEstimates() {
             estValue = c.meaningfulUpdate === true;
           } else if (rule.field === "high_value") {
             estValue = est.total > 80000;
+          } else if (rule.field === "value_above_50k") {
+            estValue = est.total > 50000;
           } else if (rule.field === "last_comment_within_5h") {
             const latest = est.comments && est.comments[0];
             const age = (latest && latest.dateFormatted) ? getCommentAgeHours(latest.dateFormatted) : Infinity;
@@ -534,6 +540,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
       satisfactory: 0,
       notAnswering: 0,
       high_value: 0,
+      value_above_50k: 0,
       movingSlow: 0,
       underDiscussion: 0,
       confirm: 0,
@@ -548,6 +555,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
       if (c.meaningfulUpdate === true) counts.satisfactory++;
       if (c.notAnswering === "Yes") counts.notAnswering++;
       if (est.total > 80000) counts.high_value++;
+      if (est.total > 50000) counts.value_above_50k++;
       if (c.movingSlow === "Yes") counts.movingSlow++;
       if (c.underDiscussion === "Yes") counts.underDiscussion++;
       if (c.confirm === "Yes") counts.confirm++;

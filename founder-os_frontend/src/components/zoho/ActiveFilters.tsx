@@ -51,6 +51,7 @@ export default function ActiveFilters({ filters, resultCount, onAdd, onUpdate, o
                 <option value="satisfactory">Satisfactory (Qualified)</option>
                 <option value="notAnswering">Not Answering</option>
                 <option value="high_value">High Value (&gt; ₹80k)</option>
+                <option value="value_above_50k">Value Above ₹50,000</option>
                 <option value="movingSlow">Moving Slow</option>
                 <option value="underDiscussion">Under Discussion</option>
                 <option value="confirm">Confirm Expected</option>
@@ -69,7 +70,13 @@ export default function ActiveFilters({ filters, resultCount, onAdd, onUpdate, o
               </select>
 
               <span className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 px-2.5 py-1 rounded-lg font-medium">
-                {rule.field === "satisfactory" ? "Satisfactory" : rule.field === "high_value" ? "High Value" : "Yes"}
+                {rule.field === "satisfactory"
+                  ? "Satisfactory"
+                  : rule.field === "high_value"
+                    ? "High Value"
+                    : rule.field === "value_above_50k"
+                      ? "Above ₹50k"
+                      : "Yes"}
               </span>
 
               <button
