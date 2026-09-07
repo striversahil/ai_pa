@@ -216,6 +216,9 @@ model Telecaller {
   id                      String   @id @default(uuid())
   name                    String
   email                   String?
+  // Contact details — used to reach the agent and map incentives/payouts.
+  phone                   String?
+  whatsapp                String?
   // Lead-conversion specialist flag: only telecallers with this ON receive
   // estimate follow-up assignments (new deals + EOD re-poaching). Off = the
   // telecaller still generates leads (NeoDove) but never holds estimates.

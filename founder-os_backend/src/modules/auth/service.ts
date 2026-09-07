@@ -22,6 +22,7 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "mis", label: "MIS", description: "MIS-level control of the telecaller roster (assignment controller)" },
   { key: "telecalling", label: "Telecalling", description: "Telecalling performance dashboard" },
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
+  { key: "sales", label: "Sales Agent", description: "Sales agent identity — roster entry with contact details and incentive mapping" },
 ];
 
 export const DEFAULT_ROLES: AuthRole[] = [

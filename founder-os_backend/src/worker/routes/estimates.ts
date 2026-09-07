@@ -3,7 +3,7 @@
 // overrides, baseline snapshots, NeoDove report, Zoho classification, bulk-upsert.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, type Bindings } from '../context';
+import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, type Bindings } from '../context';
 
 export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Estimates ───────────────────────────────────────────────────────────────
@@ -20,13 +20,23 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       where: { deleted: showDeleted },
       orderBy: { order: 'asc' },
     });
+    // Signed-up users by email — lets you see which roster agent is a real
+    // platform user (for incentive/payout mapping).
+    let usersByEmail = new Map<string, { id: string; email: string; name: string; isRoot: boolean }>();
+    try {
+      const users = await authStore(c).listUsers();
+      for (const u of users as any[]) {
+        if (u.email) usersByEmail.set(String(u.email).toLowerCase(), { id: u.id, email: u.email, name: u.name, isRoot: !!u.isRoot });
+      }
+    } catch { /* user table unavailable — linkedUser stays null */ }
     const withCounts = await Promise.all(
       tcs.map(async (t: any) => {
         const [totalAssigned, activeAssigned] = await Promise.all([
           prisma.estimateAssignment.count({ where: { telecallerId: t.id } }),
           prisma.estimateAssignment.count({ where: { telecallerId: t.id, status: 'assigned' } }),
         ]);
-        return { ...t, totalAssigned, activeAssigned };
+        const linkedUser = t.email ? usersByEmail.get(String(t.email).toLowerCase()) ?? null : null;
+        return { ...t, totalAssigned, activeAssigned, linkedUser };
       }),
     );
     return c.json({ telecallers: withCounts });
@@ -41,6 +51,8 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       data: {
         name: String(body.name).trim(),
         email: body.email ?? null,
+        phone: body.phone ?? null,
+        whatsapp: body.whatsapp ?? null,
         assignEstimateFollowUps: body.assignEstimateFollowUps ?? true,
         order: body.order ?? 0,
         neodoveUserId: body.neodoveUserId ?? null,
@@ -57,6 +69,8 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     const data: Record<string, unknown> = {};
     if (body.name !== undefined) data.name = String(body.name).trim();
     if (body.email !== undefined) data.email = body.email;
+    if (body.phone !== undefined) data.phone = body.phone;
+    if (body.whatsapp !== undefined) data.whatsapp = body.whatsapp;
     if (body.assignEstimateFollowUps !== undefined) data.assignEstimateFollowUps = body.assignEstimateFollowUps;
     if (body.order !== undefined) data.order = body.order;
     if (body.neodoveUserId !== undefined) data.neodoveUserId = body.neodoveUserId;

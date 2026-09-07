@@ -171,12 +171,15 @@ interface RosterRow {
   id: string;
   name: string;
   email: string | null;
+  phone: string | null;
+  whatsapp: string | null;
   assignEstimateFollowUps: boolean;
   order: number;
   neodoveUserId: string | null;
   neodoveUserName: string | null;
   totalAssigned: number;
   activeAssigned: number;
+  linkedUser?: { id: string; email: string; name: string; isRoot: boolean } | null;
 }
 
 type View = "dashboard" | "conversion" | "generation" | "controller";
@@ -318,7 +321,7 @@ export default function TelecallingDashboard() {
   );
 
   const [form, setForm] = useState({
-    name: "", email: "", assignEstimateFollowUps: true, order: 0,
+    name: "", email: "", phone: "", whatsapp: "", assignEstimateFollowUps: true, order: 0,
     neodoveUserId: "", neodoveUserName: "",
   });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -412,6 +415,8 @@ export default function TelecallingDashboard() {
       const payload = {
         name: form.name,
         email: form.email || null,
+        phone: form.phone || null,
+        whatsapp: form.whatsapp || null,
         assignEstimateFollowUps: form.assignEstimateFollowUps,
         order: form.order || 0,
         neodoveUserId: form.neodoveUserId || null,
@@ -430,7 +435,7 @@ export default function TelecallingDashboard() {
           body: JSON.stringify(payload),
         });
       }
-      setForm({ name: "", email: "", assignEstimateFollowUps: true, order: 0, neodoveUserId: "", neodoveUserName: "" });
+      setForm({ name: "", email: "", phone: "", whatsapp: "", assignEstimateFollowUps: true, order: 0, neodoveUserId: "", neodoveUserName: "" });
       setEditingId(null);
       refreshAll();
     } finally {
@@ -441,7 +446,8 @@ export default function TelecallingDashboard() {
   const edit = (t: RosterRow) => {
     setEditingId(t.id);
     setForm({
-      name: t.name, email: t.email ?? "", assignEstimateFollowUps: t.assignEstimateFollowUps, order: t.order,
+      name: t.name, email: t.email ?? "", phone: t.phone ?? "", whatsapp: t.whatsapp ?? "",
+      assignEstimateFollowUps: t.assignEstimateFollowUps, order: t.order,
       neodoveUserId: t.neodoveUserId ?? "", neodoveUserName: t.neodoveUserName ?? "",
     });
   };
@@ -1475,8 +1481,8 @@ function RosterSection({
   onToggleShowDeleted,
 }: {
   rosterRows: RosterRow[];
-  form: { name: string; email: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string };
-  setForm: React.Dispatch<React.SetStateAction<{ name: string; email: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string }>>;
+  form: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string };
+  setForm: React.Dispatch<React.SetStateAction<{ name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string }>>;
   editingId: string | null;
   busy: boolean;
   onEdit: (t: RosterRow) => void;
@@ -1503,6 +1509,17 @@ function RosterSection({
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
               {t.neodoveUserName ? `NeoDove: ${t.neodoveUserName}` : "NeoDove: not linked"}
             </div>
+            <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              {t.email && <>Email: {t.email}</>}
+              {t.phone && <> · Phone: {t.phone}</>}
+              {t.whatsapp && <> · WhatsApp: {t.whatsapp}</>}
+              {!t.email && !t.phone && !t.whatsapp && "No contact details"}
+            </div>
+            {t.linkedUser && (
+              <div className="text-[11px] text-emerald-500 dark:text-emerald-400 mt-0.5">
+                ✓ Signed-up platform user: {t.linkedUser.name} ({t.linkedUser.email})
+              </div>
+            )}
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Total assigned: {t.totalAssigned}</div>
             <div className="flex gap-2 mt-3">
               <button onClick={() => onEdit(t)} className="flex-1 text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 py-1.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-700">Edit</button>
@@ -1567,10 +1584,14 @@ function RosterSection({
         )}
       </div>
 
-      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4 grid gap-2 md:grid-cols-[1fr_1fr_auto_auto_1fr_1fr]">
+      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4 grid gap-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto_1fr_1fr]">
         <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Name"
           className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
         <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email (opt)"
+          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+        <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone (opt)"
+          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+        <input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} placeholder="WhatsApp (opt)"
           className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
         <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 px-2" title="When ON, this telecaller receives estimate follow-up assignments; when OFF they only generate leads">
           <input type="checkbox" checked={form.assignEstimateFollowUps} onChange={(e) => setForm({ ...form, assignEstimateFollowUps: e.target.checked })} className="accent-indigo-500" /> Follow-ups
@@ -1585,7 +1606,8 @@ function RosterSection({
         </button>
       </div>
       <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
-        Link each telecaller to their NeoDove agent (user name) so Lead Generation merges with Lead Conversion. The
+        Record each agent's name + contact (email/phone/WhatsApp) so incentives map to a real platform user. Link each
+        telecaller to their NeoDove agent (user name) so Lead Generation merges with Lead Conversion. The
         {" "}<span className="font-semibold text-zinc-600 dark:text-zinc-400">Follow-ups</span> toggle marks the
         lead-conversion specialists who receive estimate follow-up assignments (new deals + end-of-day re-poaching).
         Telecallers with it OFF still generate leads but never hold estimates. Everyone non-deleted stays visible on the

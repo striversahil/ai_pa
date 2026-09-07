@@ -33,6 +33,7 @@ export const DASHBOARD_SCOPES = [
   "autopilot",
   "telecalling",
   "enquiry-tracker",
+  "sales",
 ];
 
 export interface AuthUserMe {
