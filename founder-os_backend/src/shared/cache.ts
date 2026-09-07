@@ -60,38 +60,46 @@ function isFresh(computedAt: string, ttlMs: number): boolean {
 /** Read a cached value; null when absent or stale (caller recomputes). */
 export async function cacheGet<T>(key: string, ttlMs: number): Promise<T | null> {
   const fullKey = `${NS}:${key}`;
+  // Fast path: per-isolate memory first — avoids KV read latency/throttling
+  // entirely once this isolate has computed the value.
+  const mem = memory.get(fullKey);
+  if (mem) {
+    if (Date.now() - mem.computedAt < ttlMs) return mem.payload as T;
+    memory.delete(fullKey);
+  }
   if (kv) {
     try {
       const raw = await kv.get(fullKey);
-      if (!raw) return null;
-      const entry = JSON.parse(raw) as CacheEntry<T>;
-      if (!isFresh(entry.computedAt, ttlMs)) return null;
-      return entry.value;
+      if (raw) {
+        const entry = JSON.parse(raw) as CacheEntry<T>;
+        if (isFresh(entry.computedAt, ttlMs)) return entry.value;
+      }
     } catch (e: any) {
       logger.warn({ err: e?.message, key }, 'kv cache read failed');
-      return null;
     }
+    return null;
   }
-  const mem = memory.get(fullKey);
-  if (!mem) return null;
-  if (Date.now() - mem.computedAt >= ttlMs) return null;
-  return mem.payload as T;
+  return null;
 }
 
-/** Write a value with a TTL. Keeps an extra GRACE window for stale fallback. */
+/** Write a value with a TTL. Keeps an extra GRACE window for stale fallback.
+ *  Always writes the in-memory copy too — so when KV hits the free-tier daily
+ *  put quota (write errors are swallowed), the cache still works per-isolate. */
 export async function cacheSet<T>(key: string, value: T, ttlMs: number): Promise<void> {
   const fullKey = `${NS}:${key}`;
   const computedAt = new Date().toISOString();
   const entry: CacheEntry<T> = { value, computedAt };
+  memory.set(fullKey, { payload: value, computedAt: Date.now() });
   if (kv) {
     try {
       await kv.put(fullKey, JSON.stringify(entry), { expirationTtl: Math.ceil((ttlMs + GRACE_MS) / 1000) });
     } catch (e: any) {
-      logger.warn({ err: e?.message, key }, 'kv cache write failed');
+      // KV put quota exceeded (free tier) — the in-memory copy above keeps
+      // this cache working for this isolate, so a quota hit is not an error.
+      logger.debug({ err: e?.message, key }, 'kv cache write failed — serving from in-memory');
     }
     return;
   }
-  memory.set(fullKey, { payload: value, computedAt: Date.now() });
 }
 
 /** Explicitly invalidate a single cache key (call after underlying data changes). */
