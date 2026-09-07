@@ -48,6 +48,41 @@ async function workerRequest(path, { method = 'GET', body, timeoutMs = 90000 } =
   return text ? JSON.parse(text) : {};
 }
 
+/**
+ * Direct-Groq fallback so AI analysis survives omniroute outages. When the
+ * primary OMNIROUTE_BASE_URL worker is down (Cloudflare tunnel 530, timeout)
+ * or its provider/model 404s, fall back to Groq directly using a randomly
+ * rotated key from GROQ_API_KEYS (comma-separated). Model defaults to
+ * openai/gpt-oss-120b, which the account is verified to serve.
+ */
+async function groqFallback(system, user, temperature) {
+  const keys = (process.env.GROQ_API_KEYS || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  if (keys.length === 0) return null;
+  const key = keys[Math.floor(Math.random() * keys.length)];
+  const model = process.env.GROQ_FALLBACK_MODEL || 'openai/gpt-oss-120b';
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      temperature,
+      stream: false,
+    }),
+    signal: AbortSignal.timeout(180000),
+  });
+  if (!res.ok) throw new Error(`groq fallback ${res.status}: ${await res.text().catch(() => '')}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
 async function omniroute(system, user, { temperature = 0, maxRetries = 2 } = {}) {
   let lastError;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -80,6 +115,19 @@ async function omniroute(system, user, { temperature = 0, maxRetries = 2 } = {})
       }
     } catch (err) {
       lastError = err;
+      // After all retries fail, fall back to direct Groq so the run survives
+      // an omniroute outage instead of failing the whole automation pass.
+      if (attempt === maxRetries) {
+        try {
+          const fallback = await groqFallback(system, user, temperature);
+          if (fallback) {
+            console.warn(`omniroute ${err.message.slice(0, 120)} — using Groq fallback`);
+            return fallback;
+          }
+        } catch (fbErr) {
+          lastError = new Error(`${err.message} | groq fallback: ${fbErr.message}`);
+        }
+      }
       await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
     }
   }

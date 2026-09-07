@@ -72,6 +72,7 @@ jobs:
           OMNIROUTE_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
           OMNIROUTE_MODEL: ${{ secrets.OMNIROUTE_MODEL }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
         run: node scripts/morning-brief-runner.js
 
   eod-summary:
@@ -86,6 +87,7 @@ jobs:
           OMNIROUTE_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
           OMNIROUTE_MODEL: ${{ secrets.OMNIROUTE_MODEL }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
         run: node scripts/eod-summary-runner.js
 
   neodove-report:
