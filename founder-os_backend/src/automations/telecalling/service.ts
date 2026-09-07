@@ -1211,7 +1211,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     }
     const followUpEsts = await prisma.estimate.findMany({
       where: { assignedTelecallerId: tc.id, status: 'sent' },
-      orderBy: [{ date: 'asc' }],
+      // Highest-value estimates first — agents see the biggest deals at the
+      // top of their conversion list.
+      orderBy: [{ total: 'desc' }, { date: 'asc' }],
       // 15-min Zoho analyzer verdict — drives the Satisfactory/Unsatisfactory
       // chip. Note: D1PrismaClient resolves relations via `include`, not a
       // nested relation under `select`.
