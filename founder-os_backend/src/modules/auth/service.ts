@@ -28,8 +28,8 @@ export const DEFAULT_ROLES: AuthRole[] = [
   {
     key: "mis",
     label: "MIS",
-    description: "Management information dashboards (Zoho estimates, etc.)",
-    scopeKeys: ["zoho"],
+    description: "Management information dashboards (Zoho estimates, etc.) + telecalling roster control",
+    scopeKeys: ["mis", "zoho"],
   },
 ];
 
