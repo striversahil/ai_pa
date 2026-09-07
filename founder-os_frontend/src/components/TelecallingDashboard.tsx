@@ -321,6 +321,7 @@ export default function TelecallingDashboard() {
   );
 
   const [editTarget, setEditTarget] = useState<RosterRow | null>(null);
+  const [rosterModalOpen, setRosterModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
@@ -439,6 +440,7 @@ export default function TelecallingDashboard() {
         });
       }
       setEditTarget(null);
+      setRosterModalOpen(false);
       refreshAll();
     } finally {
       setBusy(false);
@@ -1088,8 +1090,8 @@ export default function TelecallingDashboard() {
                 <RosterSection
                   rosterRows={rosterRows}
                   busy={busy}
-                  onAdd={() => setEditTarget(null)}
-                  onEditModal={(t) => setEditTarget(t)}
+                  onAdd={() => { setEditTarget(null); setRosterModalOpen(true); }}
+                  onEditModal={(t) => { setEditTarget(t); setRosterModalOpen(true); }}
                   onToggleFollowUps={toggleFollowUps}
                   onDelete={(t) => setConfirmDelete(t)}
                   onRestore={restoreTelecaller}
@@ -1102,9 +1104,10 @@ export default function TelecallingDashboard() {
                 />
                 <RosterEditModal
                   target={editTarget}
+                  open={rosterModalOpen}
                   busy={busy}
                   onSave={saveRoster}
-                  onClose={() => setEditTarget(null)}
+                  onClose={() => setRosterModalOpen(false)}
                 />
               </div>
             ) : (
@@ -1597,11 +1600,13 @@ function RosterSection({
 // edited here) and is shown read-only when editing an existing agent.
 function RosterEditModal({
   target,
+  open,
   busy,
   onSave,
   onClose,
 }: {
   target: RosterRow | null; // null = creating a new agent
+  open: boolean;
   busy: boolean;
   onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean }) => void;
   onClose: () => void;
@@ -1623,6 +1628,8 @@ function RosterEditModal({
       setName(""); setEmail(""); setPhone(""); setWhatsapp(""); setFollowUps(true);
     }
   }, [target]);
+
+  if (!open) return null;
 
   const isCreate = !target;
   const inputCls = "w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm";
