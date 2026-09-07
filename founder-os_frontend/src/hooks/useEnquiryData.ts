@@ -32,6 +32,9 @@ function toEnquiry(raw: any): Enquiry {
   return {
     id: raw.id,
     estNumber: raw.estNumber || '',
+    enquiryNumber: raw.enquiryNumber || '',
+    sourceLead: raw.sourceLead || '',
+    location: raw.location || '',
     clientCompany: raw.clientCompany,
     contactName: raw.contactName,
     contactEmail: raw.contactEmail,

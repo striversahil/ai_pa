@@ -43,6 +43,27 @@ export default function ClientProfile({
             <span className="font-bold text-base mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.clientCompany}</span>
           </div>
 
+          {selectedEnquiry.enquiryNumber && (
+            <div>
+              <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Enquiry Number</span>
+              <span className="font-semibold text-sm mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.enquiryNumber}</span>
+            </div>
+          )}
+
+          {selectedEnquiry.sourceLead && (
+            <div>
+              <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Source Lead</span>
+              <span className="font-semibold text-sm mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.sourceLead}</span>
+            </div>
+          )}
+
+          {selectedEnquiry.location && (
+            <div>
+              <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Location</span>
+              <span className="font-semibold text-sm mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.location}</span>
+            </div>
+          )}
+
           <div>
             <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">EST No.</span>
             <span className="font-heading font-extrabold text-lg text-brand-indigo block mt-0.5">{selectedEnquiry.estNumber || "—"}</span>

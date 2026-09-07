@@ -9,6 +9,9 @@ function mapEnquiry(row: any): Enquiry | null {
   return {
     id: row.id,
     estNumber: row.estNumber ?? "",
+    enquiryNumber: row.enquiryNumber ?? "",
+    sourceLead: row.sourceLead ?? "",
+    location: row.location ?? "",
     clientCompany: row.clientCompany,
     contactName: row.contactName,
     contactEmail: row.contactEmail,

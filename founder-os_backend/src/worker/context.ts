@@ -19,7 +19,7 @@ import { createChatStore, resolveLinkedSender } from '../modules/chat/store';
 import * as ChatRoutes from '../modules/chat/routes';
 import { createEnquiryStore } from '../modules/enquiries/store';
 import * as EnquiryRoutes from '../modules/enquiries/routes';
-import { extractEnquiryFields, pickGroqKey, EnquiryAgentRef } from '../modules/enquiries/extract';
+import { extractEnquiryFields, pickGroqKey } from '../modules/enquiries/extract';
 import { DASHBOARD_SLUGS } from '../modules/automation/dashboardSlugs';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automations/neodove-refresh';
 import { isSystemGeneratedComment } from '../shared/systemComment';
@@ -254,8 +254,12 @@ export function enquirySend(c: any, r: any) {
   if (r.live) broadcastLive(c, r.live.type, r.live.extra);
 }
 
-// Real-time LLM extraction: after an enquiry is created/edited, parse the
-// freeform description into structured fields (title/company/contact/agent).
+// Real-time LLM extraction: after an enquiry is created/edited (and after its
+// first 1–2 comments are added — the agent writes the lead-details block in
+// the first comment), parse the text into structured fields
+// (title/enquiryNumber/sourceLead/location/company/contact). The client's
+// wording is NEVER rewritten, and the agent ("Lead of") is NOT inferred here —
+// it is set to the enquiry's creator at creation time.
 export function runEnquiryExtraction(c: any, enquiryId: string) {
   const work = async () => {
     try {
@@ -264,23 +268,30 @@ export function runEnquiryExtraction(c: any, enquiryId: string) {
       const store = createEnquiryStore(c.env);
       const enquiry = await store.getEnquiry(enquiryId);
       if (!enquiry) return;
-      const users = await authStore(c).listUsers();
-      const agents: EnquiryAgentRef[] = users
-        .filter((u: any) => u.isRoot || u.scopes.includes('enquiries'))
-        .map((u: any) => ({ id: u.id, name: u.name }));
+      // Extraction source: the description PLUS the first two comments (the
+      // agent is told to write the lead-details block in comment #1/#2).
+      let comments: any[] = [];
+      try { comments = await store.listComments(enquiryId); } catch { /* ignore */ }
+      const firstComments = (comments || [])
+        .slice(0, 2)
+        .map((cm: any) => `${cm.content ?? ''}`)
+        .join('\n');
+      const text = [enquiry.description, firstComments].filter(Boolean).join('\n');
       const extracted = await extractEnquiryFields(key, {
-        description: enquiry.description,
+        text,
         title: enquiry.title,
         company: enquiry.clientCompany,
-      }, agents);
+      }, []);
       if (!extracted) return;
       const updates: Record<string, string> = {};
       if (!enquiry.title && extracted.title) updates.title = extracted.title;
+      if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;
+      if (!enquiry.sourceLead && extracted.sourceLead) updates.sourceLead = extracted.sourceLead;
+      if (!enquiry.location && extracted.location) updates.location = extracted.location;
       if (!enquiry.clientCompany && extracted.company) updates.clientCompany = extracted.company;
       if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
       if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
       if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
-      if (!enquiry.assignedAgentId && extracted.agentId) updates.assignedAgentId = extracted.agentId;
       if (Object.keys(updates).length === 0) return;
       const saved = await store.updateEnquiry(enquiryId, updates);
       if (saved) {

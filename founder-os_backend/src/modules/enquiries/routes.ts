@@ -13,7 +13,8 @@ const err = (message: string, status = 403): EnquiryResult => json(status, { err
 
 function pick(data: any): Partial<Enquiry> | null {
   const map: any = {
-    estNumber: "estNumber", clientCompany: "clientCompany", contactName: "contactName",
+    estNumber: "estNumber", enquiryNumber: "enquiryNumber", sourceLead: "sourceLead", location: "location",
+    clientCompany: "clientCompany", contactName: "contactName",
     contactEmail: "contactEmail", contactPhone: "contactPhone",
     title: "title", description: "description",
     priority: "priority", status: "status", assignedAgentId: "assignedAgentId",
@@ -38,10 +39,17 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse): Promise<
 
 export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: any): Promise<EnquiryResult> {
   // Only EST No. is mandatory — everything else is LLM-auto-filled from the
-  // description (extract.ts), so structured fields are optional on input.
+  // description/comments (extract.ts), so structured fields are optional.
   if (!body?.estNumber || String(body.estNumber).trim() === "") return json(400, { error: "estNumber required" });
+  // Lead of = the agent who created the enquiry (no AI guessing). The creator
+  // is the signed-in user; a provided agent still wins (e.g. root assigning).
+  const creatorAgentId = String(me?.user?.id ?? "");
+  const assignedAgentId = String(body.assignedAgentId || creatorAgentId || "");
   const enquiry = await store.createEnquiry({
     estNumber: String(body.estNumber).trim(),
+    enquiryNumber: body.enquiryNumber,
+    sourceLead: body.sourceLead,
+    location: body.location,
     clientCompany: body.clientCompany,
     contactName: body.contactName,
     contactEmail: body.contactEmail || "",
@@ -50,7 +58,7 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     description: body.description,
     priority: body.priority || "medium",
     status: body.status || "new",
-    assignedAgentId: String(body.assignedAgentId || ""),
+    assignedAgentId,
     imageUrls: Array.isArray(body.imageUrls) ? body.imageUrls : [],
     activities: Array.isArray(body.activities) ? body.activities : [],
     additionalRequirements: (Array.isArray(body.additionalRequirements) ? body.additionalRequirements : [])

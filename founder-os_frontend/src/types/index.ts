@@ -22,6 +22,9 @@ export interface EnquiryRequirement {
 export interface Enquiry {
   id: string;
   estNumber: string;
+  enquiryNumber?: string;
+  sourceLead?: string;
+  location?: string;
   clientCompany: string;
   contactName: string;
   contactEmail: string;

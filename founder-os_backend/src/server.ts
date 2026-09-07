@@ -37,7 +37,7 @@ import { createChatStore } from './modules/chat/store';
 import * as EnquiryRoutes from './modules/enquiries/routes';
 import { PrismaEnquiryStore } from './modules/enquiries/store-prisma';
 import { createEnquiryStore } from './modules/enquiries/store';
-import { extractEnquiryFields, pickGroqKey, EnquiryAgentRef } from './modules/enquiries/extract';
+import { extractEnquiryFields, pickGroqKey } from './modules/enquiries/extract';
 
 
 const app = express();
@@ -229,23 +229,30 @@ async function runEnquiryExtraction(id: string) {
     if (!key) return;
     const enquiry = await enquiryStore.getEnquiry(id);
     if (!enquiry) return;
-    const users = await authStore.listUsers();
-    const agents: EnquiryAgentRef[] = users
-      .filter((u: any) => u.isRoot || u.scopes.includes('enquiries'))
-      .map((u: any) => ({ id: u.id, name: u.name }));
+    // Extraction source: the description PLUS the first two comments (the
+    // agent writes the lead-details block in comment #1/#2).
+    let comments: any[] = [];
+    try { comments = await enquiryStore.listComments(id); } catch { /* ignore */ }
+    const firstComments = (comments || [])
+      .slice(0, 2)
+      .map((cm: any) => `${cm.content ?? ''}`)
+      .join('\n');
+    const text = [enquiry.description, firstComments].filter(Boolean).join('\n');
     const extracted = await extractEnquiryFields(key, {
-      description: enquiry.description,
+      text,
       title: enquiry.title,
       company: enquiry.clientCompany,
-    }, agents);
+    }, []);
     if (!extracted) return;
     const updates: Record<string, string> = {};
     if (!enquiry.title && extracted.title) updates.title = extracted.title;
+    if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;
+    if (!enquiry.sourceLead && extracted.sourceLead) updates.sourceLead = extracted.sourceLead;
+    if (!enquiry.location && extracted.location) updates.location = extracted.location;
     if (!enquiry.clientCompany && extracted.company) updates.clientCompany = extracted.company;
     if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
     if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
     if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
-    if (!enquiry.assignedAgentId && extracted.agentId) updates.assignedAgentId = extracted.agentId;
     if (Object.keys(updates).length) await enquiryStore.updateEnquiry(id, updates);
   } catch (e: any) {
     console.error('enquiry extraction failed:', e?.message);
@@ -289,6 +296,9 @@ app.post('/api/enquiries/:id/comments', async (req, res) => {
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const r = await EnquiryRoutes.enquiryAddComment(enquiryStore, me, req.params.id, req.body || {});
   res.status(r.status).json(r.body);
+  // The agent writes the lead-details block in the first 1–2 comments — run
+  // extraction so enquiryNumber/sourceLead/location/company/contact fill in.
+  if (r.body?.enquiryId) void runEnquiryExtraction(r.body.enquiryId);
 });
 // File attachments are stored in Workers KV (worker runtime only); the
 // Express/alt runtime is the local/dev path without KV.

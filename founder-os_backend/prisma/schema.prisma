@@ -599,6 +599,10 @@ model ChatMember {
 model Enquiry {
   id             String  @id @default(uuid())
   estNumber      String
+  // Sales-agent lead details (parsed by AI from the first 1–2 comments).
+  enquiryNumber  String
+  sourceLead     String
+  location       String
   clientCompany  String
   contactName    String
   contactEmail   String

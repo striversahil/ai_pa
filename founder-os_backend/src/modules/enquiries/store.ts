@@ -11,6 +11,10 @@ export interface EnquiryRequirement {
 export interface Enquiry {
   id: string;
   estNumber: string;
+  /** Sales-agent lead details (parsed by AI from the first 1–2 comments). */
+  enquiryNumber: string;
+  sourceLead: string;
+  location: string;
   clientCompany: string;
   contactName: string;
   contactEmail: string;
@@ -66,6 +70,9 @@ export function mapEnquiry(row: any): Enquiry | null {
   return {
     id: row.id,
     estNumber: row.estNumber ?? "",
+    enquiryNumber: row.enquiryNumber ?? "",
+    sourceLead: row.sourceLead ?? "",
+    location: row.location ?? "",
     clientCompany: row.clientCompany,
     contactName: row.contactName,
     contactEmail: row.contactEmail,
@@ -116,6 +123,9 @@ export function sanitize(e: any): Enquiry {
   return {
     ...e,
     estNumber: str(e.estNumber),
+    enquiryNumber: str(e.enquiryNumber),
+    sourceLead: str(e.sourceLead),
+    location: str(e.location),
     clientCompany: str(e.clientCompany),
     contactName: str(e.contactName),
     contactEmail: str(e.contactEmail),
@@ -189,10 +199,10 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
-        e.id, e.estNumber, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
+        e.id, e.estNumber, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
         e.priority, e.status, e.assignedAgentId, e.createdAt, e.updatedAt,
         JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []),
       )
@@ -205,10 +215,10 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=? WHERE id=?",
       )
       .bind(
-        merged.estNumber, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
+        merged.estNumber, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
         merged.description, merged.priority, merged.status, merged.assignedAgentId,
         merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
         JSON.stringify(merged.additionalRequirements ?? []), id,

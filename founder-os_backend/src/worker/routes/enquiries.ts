@@ -67,6 +67,9 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryAddComment(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
     enquirySend(c, r);
+    // The agent writes the lead-details block in the first 1–2 comments — run
+    // extraction so enquiryNumber/sourceLead/location/company/contact fill in.
+    if (r.body?.enquiryId) runEnquiryExtraction(c, r.body.enquiryId);
     return c.json(r.body, r.status as any);
   });
 }
