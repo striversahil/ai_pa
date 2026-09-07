@@ -108,9 +108,9 @@ export const deps = () => {
 // handlers (e.g. /api/automations/:slug/data) run.
 // Only automation-management routes wait for full boot; every other endpoint
 // proceeds immediately. A failed/hung init is RETRYABLE by the next request.
-export const BOOT_PATH_RE = /^\/api\/(trigger|automations)(\/|$)/;
-const BOOT_TIMEOUT_MS = 8000;
-const BOOT_WAIT_MS = 5000;
+export const BOOT_PATH_RE = /^\/api\/(trigger|automations|status|health)(\/|$)/;
+const BOOT_TIMEOUT_MS = 20000;
+const BOOT_WAIT_MS = 15000;
 const BOOT_MAX_ATTEMPTS = 5;
 let bootAttempts = 0;
 let bootSucceeded = false;
@@ -140,8 +140,8 @@ export function ensureBoot(): Promise<void> {
 
 export function bootStatus(): { attempts: number; automationsLoaded: number; healthy: boolean } {
   try {
-    const loaded = bootPromise ? (deps().AutomationEngine.all() as unknown[]).length : 0;
-    return { attempts: bootAttempts, automationsLoaded: loaded, healthy: bootSucceeded && loaded > 0 };
+    const loaded = (deps().AutomationEngine.all() as unknown[]).length;
+    return { attempts: bootAttempts, automationsLoaded: loaded, healthy: loaded > 0 };
   } catch {
     return { attempts: bootAttempts, automationsLoaded: 0, healthy: false };
   }
