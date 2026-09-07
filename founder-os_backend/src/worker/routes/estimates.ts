@@ -342,14 +342,15 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
         const creatorId = idByName.get(norm(creatorName));
         if (creatorId) data.createdBy = creatorId;
       }
-      const hasDetail = [
+      const detailFields = [
         r.enquiryNumber, r.sourceLead, r.location, r.contactName,
         r.contactPhone, r.contactEmail, r.leadGeneratedBy,
-      ].some((v: any) => v !== undefined && v !== null && String(v).length > 0);
-      if (!hasDetail) continue;
-      // Stop the 15-min capture loop once ANY detail field is stored (cheapest
-      // mode) — an estimate with no gate detail would otherwise re-enter every
-      // pass forever.
+      ].filter((v: any) => v !== undefined && v !== null && String(v).length > 0);
+      // Validity gate: only a capture with >= 3 non-empty fields is significant.
+      // Fewer than 3 is judged invalid — keep detailsCaptured=false so the
+      // 15-min loop retries (a lone field is usually a fragment/hallucination).
+      if (detailFields.length < 3) continue;
+      // Stop the 15-min capture loop once 3+ detail fields are stored.
       data.detailsCaptured = true;
       try {
         await prisma.estimate.update({ where: { estimateId: r.estimateId }, data });

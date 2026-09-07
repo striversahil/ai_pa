@@ -759,8 +759,17 @@ async function main() {
       if (!firstRealSales.trim()) continue;
       try {
         const extracted = await extractLeadDetails({ text: firstRealSales, company: est.customer_name || '' });
-        if (extracted && (extracted.enquiryNumber || extracted.sourceLead || extracted.location || extracted.contactName || extracted.contactPhone || extracted.contactEmail || extracted.leadGeneratedBy)) {
+        const fieldCount = extracted
+          ? ['enquiryNumber', 'sourceLead', 'location', 'contactName', 'contactPhone', 'contactEmail', 'leadGeneratedBy']
+            .filter((k) => extracted[k]).length
+          : 0;
+        // Validity gate: ONLY a capture with >= 3 non-empty fields is considered
+        // significant (a lone field is usually a fragment/hallucination). Below 3
+        // the estimate is left detailsCaptured=false and retried next pass.
+        if (fieldCount >= 3) {
           leadDetailRows.push({ estimateId: est.estimate_id, ...extracted });
+        } else {
+          console.warn(`zoho-sent-runner: ${est.estimate_number}: extraction had ${fieldCount}/7 fields — below 3, judged invalid, retrying next pass`);
         }
       } catch (err) {
         console.warn(`zoho-sent-runner: lead-details extraction failed for ${est.estimate_number}: ${err.message}`);
