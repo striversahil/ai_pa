@@ -1219,6 +1219,21 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       // nested relation under `select`.
       include: { classification: true },
     });
+    // Lead details from the enquiry tracker: the sales agent writes the
+    // contact/location/source/enquiry-number block in the enquiry comments,
+    // and we surface it here so the agent can follow up without switching
+    // views. Matched to the Zoho estimate by normalized company name.
+    const enquiryByCompany = new Map<string, any>();
+    try {
+      const enquiries = await prisma.enquiry.findMany({});
+      const norm = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      for (const enq of enquiries as any[]) {
+        const key = norm(enq.clientCompany);
+        if (key && !enquiryByCompany.has(key)) enquiryByCompany.set(key, enq);
+      }
+    } catch (e: any) {
+      logger.warn({ err: e?.message }, 'enquiry lead-details lookup failed — follow-ups show without lead details');
+    }
     const followLastComments = new Map<string, string>();
     for (const r of riskItems) {
       if (r.lastCommentDate) followLastComments.set(r.estimateId, r.lastCommentDate);
@@ -1229,6 +1244,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       const staleHours = ts !== null ? (nowMs - ts) / 3600000 : null;
       const riskItem = riskItems.find((r) => r.estimateId === e.estimateId);
       const risk = riskItem?.risk ?? 'pending';
+      const enquiry = enquiryByCompany.get(String(e.customerName || '').toLowerCase().replace(/[^a-z0-9]/g, '')) ?? null;
       return {
         estimateId: e.estimateId,
         estimateNumber: e.estimateNumber,
@@ -1242,6 +1258,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         analysisSummary: e.classification?.summary ?? null,
         lastCommentDate,
         staleHours,
+        // Lead details from the matched enquiry (null when no enquiry exists).
+        enquiryNumber: enquiry?.enquiryNumber ?? null,
+        sourceLead: enquiry?.sourceLead ?? null,
+        location: enquiry?.location ?? null,
+        contactName: enquiry?.contactName ?? null,
+        contactPhone: enquiry?.contactPhone ?? null,
+        clientCompany: enquiry?.clientCompany ?? null,
         risk,
         snatchReason: riskItem?.snatchReason ?? (risk === 'red' || risk === 'zombie' ? buildSnatchReason(e, risk) : null),
         snatchInHours: riskItem?.snatchInHours ?? hoursUntilEod(new Date(nowMs)),

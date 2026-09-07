@@ -80,6 +80,13 @@ interface FollowUp {
   risk?: "ok" | "pending" | "red" | "zombie";
   snatchReason?: string | null;
   snatchInHours?: number | null;
+  /** Lead details from the matched enquiry (null when no enquiry exists). */
+  enquiryNumber?: string | null;
+  sourceLead?: string | null;
+  location?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  clientCompany?: string | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -158,6 +165,28 @@ function SnatchChip({ risk, snatchInHours, compact = false }: { risk?: string | 
     <span title="Meaningful update logged — safe from tonight's sweep" className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>
       🛡{compact ? "" : " Safe"}
     </span>
+  );
+}
+
+/** Lead-details chips (from the matched enquiry) — contact, mobile, location,
+ *  source lead, enquiry number — so the agent can call without switching views. */
+function LeadChips({ f }: { f: FollowUp }) {
+  const chips: { label: string; value: string; cls: string }[] = [];
+  if (f.contactName) chips.push({ label: "Contact", value: f.contactName as string, cls: "text-indigo-600 dark:text-indigo-300 border-indigo-500/30 bg-indigo-500/5" });
+  if (f.contactPhone) chips.push({ label: "Mobile", value: f.contactPhone as string, cls: "text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/5" });
+  if (f.location) chips.push({ label: "Loc", value: f.location as string, cls: "text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5" });
+  if (f.sourceLead) chips.push({ label: "Source", value: f.sourceLead as string, cls: "text-sky-600 dark:text-sky-400 border-sky-500/30 bg-sky-500/5" });
+  if (f.enquiryNumber) chips.push({ label: "Enq", value: f.enquiryNumber as string, cls: "text-violet-600 dark:text-violet-400 border-violet-500/30 bg-violet-500/5" });
+  if (chips.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5 pt-0.5">
+      {chips.map((c) => (
+        <span key={c.label} title={`${c.label}: ${c.value}`} className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${c.cls}`}>
+          <span className="uppercase tracking-wide opacity-70 text-[8px]">{c.label}</span>
+          {c.value}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1048,6 +1077,7 @@ export default function TelecallingDashboard() {
                             <span className="text-xs font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</span>
                           </div>
                         </div>
+                        <LeadChips f={f} />
                         {(f.risk === "red" || f.risk === "zombie") && f.snatchReason && (
                           <p className="text-[11px] text-rose-600/80 dark:text-rose-400/70 leading-snug line-clamp-2" title={f.snatchReason}>
                             {f.snatchReason}
@@ -1200,20 +1230,23 @@ export default function TelecallingDashboard() {
                                   <p className="text-[11px] text-zinc-500">No assigned estimates.</p>
                                 )}
                                 {(view?.followUps ?? []).map((f) => (
-                                  <div key={f.estimateId} className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 dark:border-zinc-800 px-2 py-1.5 bg-white dark:bg-zinc-950">
-                                    <div className="min-w-0">
-                                      <div className="text-[11px] font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
-                                      <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
-                                    </div>
-                                    <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
-                                      <div className="flex items-center gap-1">
-                                        <SatChip value={f.satisfactory} compact />
-                                        <StaleChip staleHours={f.staleHours} compact />
+                                  <div key={f.estimateId} className="rounded-md border border-zinc-200 dark:border-zinc-800 px-2 py-1.5 bg-white dark:bg-zinc-950">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <div className="text-[11px] font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
+                                        <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
                                       </div>
-                                      <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} compact />
-                                      <div className="text-[10px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
-                                      <div className="text-[10px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
+                                      <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
+                                        <div className="flex items-center gap-1">
+                                          <SatChip value={f.satisfactory} compact />
+                                          <StaleChip staleHours={f.staleHours} compact />
+                                        </div>
+                                        <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} compact />
+                                        <div className="text-[10px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
+                                        <div className="text-[10px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
+                                      </div>
                                     </div>
+                                    <LeadChips f={f} />
                                   </div>
                                 ))}
                               </div>

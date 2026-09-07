@@ -40,6 +40,8 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Token: [],
   Telecaller: ['assignEstimateFollowUps'],
   EstimateAssignment: [],
+  Enquiry: [],
+  EnquiryComment: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -66,6 +68,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   Token: ['createdAt', 'updatedAt'],
   Telecaller: ['createdAt'],
   EstimateAssignment: ['assignedAt'],
+  Enquiry: ['createdAt', 'updatedAt'],
+  EnquiryComment: ['createdAt'],
   TelecallerScoreEvent: ['createdAt'],
   WaTask: ['lastInboundAt', 'lastOutboundAt', 'waitingSince', 'waitTimeoutAt', 'followUpDueAt', 'createdAt', 'updatedAt'],
   MessageLineage: ['createdAt'],
@@ -99,6 +103,8 @@ const ID_FIELDS: Record<string, string> = {
   Token: 'id',
   Telecaller: 'id',
   EstimateAssignment: 'id',
+  Enquiry: 'id',
+  EnquiryComment: 'id',
   TelecallerScoreEvent: 'id',
   WaTask: 'id',
   MessageLineage: 'id',
@@ -653,6 +659,8 @@ export class D1PrismaClient {
   get chatNote() { return this.model('ChatNote'); }
   get founderNote() { return this.model('FounderNote'); }
   get estimate() { return this.model('Estimate'); }
+  get enquiry() { return this.model('Enquiry'); }
+  get enquiryComment() { return this.model('EnquiryComment'); }
   get comment() { return this.model('Comment'); }
   get classification() { return this.model('Classification'); }
   get auditLog() { return this.model('AuditLog'); }
