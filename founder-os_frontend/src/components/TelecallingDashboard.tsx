@@ -90,6 +90,8 @@ interface FollowUp {
   clientCompany?: string | null;
   /** Originating agent (estimate creator) — "Lead of". */
   leadOf?: string | null;
+  /** True once the GH runner captured at least one detail for this estimate. */
+  detailsCaptured?: boolean | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -183,7 +185,16 @@ function LeadChips({ f }: { f: FollowUp }) {
   if (f.location) chips.push({ label: "Loc", value: f.location as string, cls: "text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5" });
   if (f.sourceLead) chips.push({ label: "Source", value: f.sourceLead as string, cls: "text-sky-600 dark:text-sky-400 border-sky-500/30 bg-sky-500/5" });
   if (f.enquiryNumber) chips.push({ label: "Enq", value: f.enquiryNumber as string, cls: "text-violet-600 dark:text-violet-400 border-violet-500/30 bg-violet-500/5" });
-  if (chips.length === 0) return null;
+  if (chips.length === 0) {
+    if (f.detailsCaptured) return null; // captured, nothing to show
+    // Not captured yet — the 15-min GH analyzer fills these as soon as the
+    // sales agent posts the lead block in the Zoho comments.
+    return (
+      <span title="Lead details not captured yet — the 15-min analyzer fills these in" className="inline-flex items-center gap-1 rounded-full border border-zinc-400/30 bg-zinc-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
+        <span className="uppercase tracking-wide opacity-70 text-[8px]">AI</span> capturing…
+      </span>
+    );
+  }
   return (
     <div className="flex flex-wrap gap-1.5 pt-0.5">
       {chips.map((c) => (
