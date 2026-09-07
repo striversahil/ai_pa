@@ -51,7 +51,7 @@ interface RiskRow {
 }
 
 interface DashData {
-  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[] };
+  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null };
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
@@ -320,18 +320,18 @@ export default function TelecallingDashboard() {
     { events: ["telecalling", "automation"] },
   );
 
-  const [form, setForm] = useState({
-    name: "", email: "", phone: "", whatsapp: "", assignEstimateFollowUps: true, order: 0,
-    neodoveUserId: "", neodoveUserName: "",
-  });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  // Agent being edited in the modal (null = closed). NeoDove mapping is NOT
-  // editable here — only contact + role fields.
   const [editTarget, setEditTarget] = useState<RosterRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // A scoped (non-admin) sales agent is locked to their OWN lead conversion:
+  // force the conversion view onto their agent id and never let them switch.
+  const selfAgentId = dash.data?.meta?.selfAgentId ?? convDash.data?.meta?.selfAgentId ?? null;
+  useEffect(() => {
+    if (selfAgentId) setAgentFilter(selfAgentId);
+  }, [selfAgentId]);
 
   // ── MIS estimate assignment overrides (lock to one agent / never assign) ──
   const [overrideBusy, setOverrideBusy] = useState(false);
@@ -343,7 +343,9 @@ export default function TelecallingDashboard() {
   // load regardless of what Dashboard period filter is active.
   const activeAgentIds = (convDash.data?.leaderboard ?? dash.data?.leaderboard ?? [])
     .map((r) => r.id);
-  const agentIdsKey = activeAgentIds.join(",");
+  // A scoped (non-admin) agent only ever sees their OWN follow-ups — prefetch
+  // just their id, never every agent.
+  const agentIdsKey = selfAgentId ? selfAgentId : activeAgentIds.join(",");
   const agentViews = useLiveQuery<Record<string, AgentViewData | null>>(
     async () => {
       if (!agentIdsKey) return {};
@@ -411,22 +413,20 @@ export default function TelecallingDashboard() {
     }
   };
 
-  const save = async () => {
-    if (!form.name.trim()) return;
+  // Add/edit agent from the modal — contact + role only, never NeoDove mapping.
+  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean }) => {
+    if (!updates.name.trim()) return;
     setBusy(true);
     try {
       const payload = {
-        name: form.name,
-        email: form.email || null,
-        phone: form.phone || null,
-        whatsapp: form.whatsapp || null,
-        assignEstimateFollowUps: form.assignEstimateFollowUps,
-        order: form.order || 0,
-        neodoveUserId: form.neodoveUserId || null,
-        neodoveUserName: form.neodoveUserName || null,
+        name: updates.name,
+        email: updates.email || null,
+        phone: updates.phone || null,
+        whatsapp: updates.whatsapp || null,
+        assignEstimateFollowUps: updates.assignEstimateFollowUps,
       };
-      if (editingId) {
-        await fetch(`/api/telecallers/${editingId}`, {
+      if (editTarget) {
+        await fetch(`/api/telecallers/${editTarget.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -438,30 +438,6 @@ export default function TelecallingDashboard() {
           body: JSON.stringify(payload),
         });
       }
-      setForm({ name: "", email: "", phone: "", whatsapp: "", assignEstimateFollowUps: true, order: 0, neodoveUserId: "", neodoveUserName: "" });
-      setEditingId(null);
-      refreshAll();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Save edits from the modal — contact + role only, never NeoDove mapping.
-  const saveEdit = async (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean }) => {
-    if (!editTarget || !updates.name.trim()) return;
-    setBusy(true);
-    try {
-      await fetch(`/api/telecallers/${editTarget.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: updates.name,
-          email: updates.email || null,
-          phone: updates.phone || null,
-          whatsapp: updates.whatsapp || null,
-          assignEstimateFollowUps: updates.assignEstimateFollowUps,
-        }),
-      });
       setEditTarget(null);
       refreshAll();
     } finally {
@@ -927,7 +903,9 @@ export default function TelecallingDashboard() {
               {dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
                 <section className="bg-rose-500/5 border border-rose-500/30 rounded-xl p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <h3 className="text-lg font-bold text-rose-500 dark:text-rose-400">🔥 At Risk — about to be snatched at EOD (9 PM IST)</h3>
+                    <h3 className="text-lg font-bold text-rose-500 dark:text-rose-400">
+                      {selfAgentId ? "🔥 Your At Risk — will be snatched at EOD (9 PM IST)" : "🔥 At Risk — about to be snatched at EOD (9 PM IST)"}
+                    </h3>
                     <span className="text-xs text-zinc-600 dark:text-zinc-400">
                       <span className="font-mono font-bold text-rose-400">₹{fmtNum(dash.data.risk.valueAtRisk)}</span> at risk ·{" "}
                       <span className="font-bold text-rose-400">{dash.data.risk.counts.red} red</span> ·{" "}
@@ -973,46 +951,50 @@ export default function TelecallingDashboard() {
               <div className="mb-3">
                 <h3 className="text-lg font-bold mb-1">📨 Lead Conversion</h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates.
+                  {selfAgentId
+                    ? "Your assigned estimates — call them and log a meaningful update before the end-of-day sweep."
+                    : "Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates."}
                 </p>
               </div>
 
-              {/* Horizontal agent tabs */}
-              <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-1 px-1">
-                <button
-                  onClick={() => setAgentFilter(null)}
-                  className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
-                    !agentFilter
-                      ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                      : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-indigo-400 dark:hover:border-indigo-500"
-                  }`}
-                >
-                  All
-                </button>
-                {(convDash.data?.meta?.agents ?? convActiveBoard).map((t) => {
-                  const board = convActiveBoard.find((b) => b.id === t.id);
-                  const count = board?.conversion.assigned ?? 0;
-                  const active = agentFilter === t.id;
-                  return (
-                    <button
-                      key={t.id}
-                      onClick={() => setAgentFilter(active ? null : t.id)}
-                      className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
-                        active
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                          : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-indigo-400 dark:hover:border-indigo-500"
-                      }`}
-                    >
-                      {t.name}
-                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${active ? "bg-white/20" : "bg-zinc-100 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400"}`}>
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              {/* Horizontal agent tabs — hidden for scoped (self-only) agents */}
+              {!selfAgentId && (
+                <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-1 px-1">
+                  <button
+                    onClick={() => setAgentFilter(null)}
+                    className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
+                      !agentFilter
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                        : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-indigo-400 dark:hover:border-indigo-500"
+                    }`}
+                  >
+                    All
+                  </button>
+                  {(convDash.data?.meta?.agents ?? convActiveBoard).map((t) => {
+                    const board = convActiveBoard.find((b) => b.id === t.id);
+                    const count = board?.conversion.assigned ?? 0;
+                    const active = agentFilter === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setAgentFilter(active ? null : t.id)}
+                        className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
+                          active
+                            ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                            : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-indigo-400 dark:hover:border-indigo-500"
+                        }`}
+                      >
+                        {t.name}
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${active ? "bg-white/20" : "bg-zinc-100 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400"}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-              {!agentFilter && (
+              {!selfAgentId && !agentFilter && (
                 <div className="space-y-2 relative">
                   {convDash.loading && (
                     <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/40 dark:bg-zinc-950/40 backdrop-blur-[1px]" aria-hidden="true">
@@ -1044,9 +1026,11 @@ export default function TelecallingDashboard() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="font-semibold text-zinc-900 dark:text-white">
-                      {selectedAgentView?.agent?.name ?? "…"} — follow-ups ({selectedAgentView?.agent?.followUpCount ?? 0})
+                      {selfAgentId ? "Your follow-ups" : `${selectedAgentView?.agent?.name ?? "…"} — follow-ups`} ({selectedAgentView?.agent?.followUpCount ?? 0})
                     </h4>
-                    <button onClick={() => setAgentFilter(null)} className="text-xs text-indigo-400 hover:underline">Back to all</button>
+                    {!selfAgentId && (
+                      <button onClick={() => setAgentFilter(null)} className="text-xs text-indigo-400 hover:underline">Back to all</button>
+                    )}
                   </div>
                   {agentViews.loading && !selectedAgentView && <p className="text-sm text-zinc-500">Loading…</p>}
                   {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) === 0 && (
@@ -1103,13 +1087,10 @@ export default function TelecallingDashboard() {
                 <ExportDataSection rosterRows={rosterRows} />
                 <RosterSection
                   rosterRows={rosterRows}
-                  form={form}
-                  setForm={setForm}
-                  editingId={editingId}
                   busy={busy}
+                  onAdd={() => setEditTarget(null)}
                   onEditModal={(t) => setEditTarget(t)}
                   onToggleFollowUps={toggleFollowUps}
-                  onSave={save}
                   onDelete={(t) => setConfirmDelete(t)}
                   onRestore={restoreTelecaller}
                   deletedRows={deletedRows}
@@ -1122,7 +1103,7 @@ export default function TelecallingDashboard() {
                 <RosterEditModal
                   target={editTarget}
                   busy={busy}
-                  onSave={saveEdit}
+                  onSave={saveRoster}
                   onClose={() => setEditTarget(null)}
                 />
               </div>
@@ -1490,13 +1471,10 @@ function EstimateOverridesSection({
 
 function RosterSection({
   rosterRows,
-  form,
-  setForm,
-  editingId,
   busy,
+  onAdd,
   onEditModal,
   onToggleFollowUps,
-  onSave,
   onDelete,
   onRestore,
   deletedRows,
@@ -1504,13 +1482,10 @@ function RosterSection({
   onToggleShowDeleted,
 }: {
   rosterRows: RosterRow[];
-  form: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string };
-  setForm: React.Dispatch<React.SetStateAction<{ name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; order: number; neodoveUserId: string; neodoveUserName: string }>>;
-  editingId: string | null;
   busy: boolean;
+  onAdd: () => void;
   onEditModal: (t: RosterRow) => void;
   onToggleFollowUps: (id: string, assignEstimateFollowUps: boolean) => void;
-  onSave: () => void;
   onDelete: (t: RosterRow) => void;
   onRestore: (id: string) => void;
   deletedRows: RosterRow[];
@@ -1519,7 +1494,13 @@ function RosterSection({
 }) {
   return (
     <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-      <h3 className="text-lg font-bold mb-3">Telecaller Roster</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-lg font-bold">Telecaller Roster</h3>
+        <button onClick={onAdd} disabled={busy}
+          className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
+          + Add agent
+        </button>
+      </div>
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 mb-5">
         {rosterRows.map((t) => (
           <div key={t.id} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4">
@@ -1606,51 +1587,21 @@ function RosterSection({
           </div>
         )}
       </div>
-
-      <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4 grid gap-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto_1fr_1fr]">
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Name"
-          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
-        <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email (opt)"
-          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
-        <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone (opt)"
-          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
-        <input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} placeholder="WhatsApp (opt)"
-          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
-        <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 px-2" title="When ON, this telecaller receives estimate follow-up assignments; when OFF they only generate leads">
-          <input type="checkbox" checked={form.assignEstimateFollowUps} onChange={(e) => setForm({ ...form, assignEstimateFollowUps: e.target.checked })} className="accent-indigo-500" /> Follow-ups
-        </label>
-        <input value={form.neodoveUserName} onChange={(e) => setForm({ ...form, neodoveUserName: e.target.value })} placeholder="NeoDove user"
-          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
-        <input value={form.neodoveUserId} onChange={(e) => setForm({ ...form, neodoveUserId: e.target.value })} placeholder="NeoDove user id (opt)"
-          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm" />
-        <button onClick={onSave} disabled={busy}
-          className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
-          {editingId ? "Update" : "Add"}
-        </button>
-      </div>
-      <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
-        Record each agent's name + contact (email/phone/WhatsApp) so incentives map to a real platform user. Link each
-        telecaller to their NeoDove agent (user name) so Lead Generation merges with Lead Conversion. The
-        {" "}<span className="font-semibold text-zinc-600 dark:text-zinc-400">Follow-ups</span> toggle marks the
-        lead-conversion specialists who receive estimate follow-up assignments (new deals + end-of-day re-poaching).
-        Telecallers with it OFF still generate leads but never hold estimates. Everyone non-deleted stays visible on the
-        Dashboard, Lead Conversion and Lead Generation views — use Delete to hide someone.
-      </p>
     </section>
   );
 }
 
-// ── Roster edit modal ────────────────────────────────────────────────────────
-// Opens from the roster card's Edit button. Edits the agent's contact + role
-// fields ONLY — the NeoDove mapping is managed by the auto-sync (never edited
-// here) and is shown read-only for reference.
+// ── Roster add/edit modal ────────────────────────────────────────────────────
+// Opens from "Add agent" (create) or a roster card's Edit button. Edits contact
+// + role fields ONLY — the NeoDove mapping is managed by the auto-sync (never
+// edited here) and is shown read-only when editing an existing agent.
 function RosterEditModal({
   target,
   busy,
   onSave,
   onClose,
 }: {
-  target: RosterRow | null;
+  target: RosterRow | null; // null = creating a new agent
   busy: boolean;
   onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean }) => void;
   onClose: () => void;
@@ -1668,11 +1619,12 @@ function RosterEditModal({
       setPhone(target.phone ?? "");
       setWhatsapp(target.whatsapp ?? "");
       setFollowUps(target.assignEstimateFollowUps);
+    } else {
+      setName(""); setEmail(""); setPhone(""); setWhatsapp(""); setFollowUps(true);
     }
   }, [target]);
 
-  if (!target) return null;
-
+  const isCreate = !target;
   const inputCls = "w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm";
   const field = (label: string, children: React.ReactNode) => (
     <label className="block space-y-1">
@@ -1685,8 +1637,10 @@ function RosterEditModal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div>
-          <h4 className="font-bold text-zinc-900 dark:text-white">Edit agent</h4>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Update contact details and role. NeoDove mapping is read-only.</p>
+          <h4 className="font-bold text-zinc-900 dark:text-white">{isCreate ? "Add agent" : "Edit agent"}</h4>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+            {isCreate ? "Create a roster entry with contact details." : "Update contact details and role. NeoDove mapping is read-only."}
+          </p>
         </div>
 
         <div className="space-y-3">
@@ -1701,12 +1655,14 @@ function RosterEditModal({
           </label>
 
           {/* NeoDove mapping — read-only, managed by the auto-sync */}
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-3 py-2.5 text-xs text-zinc-500 dark:text-zinc-400">
-            <div className="font-bold uppercase tracking-wider text-[10px] mb-1">NeoDove mapping</div>
-            {target.neodoveUserName ? `Linked to NeoDove user: ${target.neodoveUserName}` : "Not linked to a NeoDove user"}
-            {target.neodoveUserId ? ` (id: ${target.neodoveUserId})` : ""}
-            <div className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">Managed automatically — not editable here.</div>
-          </div>
+          {!isCreate && (
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-3 py-2.5 text-xs text-zinc-500 dark:text-zinc-400">
+              <div className="font-bold uppercase tracking-wider text-[10px] mb-1">NeoDove mapping</div>
+              {target.neodoveUserName ? `Linked to NeoDove user: ${target.neodoveUserName}` : "Not linked to a NeoDove user"}
+              {target.neodoveUserId ? ` (id: ${target.neodoveUserId})` : ""}
+              <div className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">Managed automatically — not editable here.</div>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-1">
@@ -1718,7 +1674,7 @@ function RosterEditModal({
             onClick={() => onSave({ name, email, phone, whatsapp, assignEstimateFollowUps: followUps })}
             disabled={busy || !name.trim()}
             className="px-4 py-2 text-sm rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
-            {busy ? "Saving…" : "Save"}
+            {busy ? "Saving…" : isCreate ? "Add" : "Save"}
           </button>
         </div>
       </div>

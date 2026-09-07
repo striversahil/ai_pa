@@ -10,6 +10,51 @@ function parseJson(value: string | null | undefined): unknown {
   try { return JSON.parse(value); } catch { return null; }
 }
 
+/**
+ * Resolve the signed-in user to their Telecaller roster entry so non-admin
+ * sales agents are scoped to their own telecalling data.
+ *
+ * Matching order:
+ *   1. Exact email match (roster.email === signed-in email).
+ *   2. Loose name match — normalize (lowercase, strip spaces) and accept when
+ *      the signed-in name is a prefix of a roster name ("muskan" → "Muskan")
+ *      or a unique short form of it ("samar" → "Samarjeet").
+ *   3. No match → null (dashboard shows an empty/zero state for that user).
+ */
+async function resolveSelfTelecaller(c: any): Promise<string | null> {
+  const { prisma } = deps();
+  const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  if (!me) return null;
+  const meEmail = me.user?.email ? String(me.user.email).toLowerCase().trim() : '';
+  const meName = me.user?.name ? String(me.user.name).toLowerCase().replace(/\s+/g, '') : '';
+
+  const tcs = await prisma.telecaller.findMany({ where: { deleted: false } });
+  if (tcs.length === 0) return null;
+
+  // 1. Exact email match.
+  if (meEmail) {
+    const byEmail = tcs.find((t: any) => t.email && String(t.email).toLowerCase().trim() === meEmail);
+    if (byEmail) return byEmail.id;
+  }
+
+  // 2. Loose name match against active agents only.
+  if (meName) {
+    const norm = (n: string) => String(n).toLowerCase().replace(/\s+/g, '');
+    const candidates = tcs.map((t: any) => ({ id: t.id, name: norm(t.name) }));
+    // full-equal
+    const exact = candidates.find((c) => c.name === meName);
+    if (exact) return exact.id;
+    // prefix: signed-in name prefixes a roster name
+    const prefix = candidates.filter((c) => c.name.startsWith(meName) && meName.length >= 3);
+    if (prefix.length === 1) return prefix[0].id;
+    // short form: a roster name starts with the signed-in name
+    const short = candidates.filter((c) => meName.startsWith(c.name) && c.name.length >= 3);
+    if (short.length === 1) return short[0].id;
+  }
+
+  return null;
+}
+
 export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/automations', async (c) => {
     const { prisma } = deps();
@@ -63,7 +108,23 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     const { AutomationEngine } = deps();
     try {
       if (!AutomationEngine.get(c.req.param('slug'))) await getEntryOrReload(c.req.param('slug'));
-      const data = await AutomationEngine.getData(c.req.param('slug'), c.req.query());
+      const query = { ...c.req.query() };
+      // For the telecalling dashboard, non-admin sales agents are scoped to
+      // their OWN lead conversion + at-risk data (leaderboard stays team-wide).
+      // The agent is identified from the signed-in session: exact roster-email
+      // match first, then a loose name match ("muskan" → "Muskan",
+      // "samar" → "Samarjeet"). Root/admin/MIS always see the full team view.
+      if (c.req.param('slug') === 'telecalling') {
+        try {
+          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis');
+          if (me && !isAdmin) {
+            const selfId = await resolveSelfTelecaller(c);
+            if (selfId) query.selfAgentId = selfId;
+          }
+        } catch { /* no session → unscoped */ }
+      }
+      const data = await AutomationEngine.getData(c.req.param('slug'), query);
       return c.json(data);
     } catch (e: any) {
       return c.json({ error: e?.message ?? 'no data provider' }, 404);

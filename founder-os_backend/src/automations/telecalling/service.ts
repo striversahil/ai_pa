@@ -887,7 +887,10 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   const requestedDay = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate();
   const period = typeof q.period === 'string' && q.period ? q.period : 'today';
   const agent = typeof q.agent === 'string' && q.agent ? q.agent : '';
-  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}`;
+  const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : '';
+  // Include selfAgentId so a scoped agent never receives a cached team-wide
+  // (admin) payload — each user's view is isolated in the cache.
+  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}`;
   const DASH_TTL_MS = 30 * 1000;
   return cached<any>(cacheKey, DASH_TTL_MS, async () => {
     return computeTelecallingDashboardData(ctx);
@@ -1177,7 +1180,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
 
   // Agent dropdown: ?agent=<id|name> returns that agent's open follow-up
   // estimates (what they must call) plus their own metrics.
-  const agentFilter = typeof q.agent === 'string' && q.agent ? q.agent : undefined;
+  // A non-admin sales agent may only ever see THEIR OWN agent view: any
+  // explicit ?agent= is coerced to self (blocks reading other agents). The
+  // team view (no ?agent=) keeps the full leaderboard but scopes the risk
+  // payload to self (scopedRiskItems below).
+  const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : null;
+  const requestedAgent = typeof q.agent === 'string' && q.agent ? q.agent : undefined;
+  const agentFilter = requestedAgent ? (selfAgentId ?? requestedAgent) : undefined;
   if (agentFilter) {
     const tc = telecallers.find(
       (t) => t.id === agentFilter || t.name === agentFilter || (t.neodoveUserName ?? '') === agentFilter,
@@ -1278,6 +1287,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
 
   const activeCount = telecallers.filter((t) => t.assignEstimateFollowUps).length;
 
+  // Non-admin sales agents are scoped to their OWN data: the leaderboard stays
+  // team-wide, but the risk/at-risk list + recent activity are filtered to the
+  // agent signed in (selfAgentId injected by the worker route). Root/admin/MIS
+  // get the full team view.
+  const scopedRiskItems = selfAgentId ? riskItems.filter((r) => r.telecallerId === selfAgentId) : riskItems;
+
   return {
     meta: {
       analysis: 'telecalling',
@@ -1299,6 +1314,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         leadsPerAgentPerDay: LEADS_PER_AGENT_PER_DAY * workingDays,
       },
       workingDays,
+      selfAgentId,
     },
     kpi: {
       ...kpiAcc,
@@ -1306,19 +1322,20 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     },
     // Founder pre-warning: open estimates about to be snatched at EOD, sorted
     // by value. Red = latest AI verdict found no meaningful update; zombie =
-    // silent for more than ZOMBIE_DAYS.
+    // silent for more than ZOMBIE_DAYS. Scoped to the signed-in agent when
+    // selfAgentId is present.
     risk: {
       counts: {
-        open: riskItems.length,
-        ok: riskItems.filter((r) => r.risk === 'ok').length,
-        pending: riskItems.filter((r) => r.risk === 'pending').length,
-        red: riskItems.filter((r) => r.risk === 'red').length,
-        zombie: riskItems.filter((r) => r.risk === 'zombie').length,
+        open: scopedRiskItems.length,
+        ok: scopedRiskItems.filter((r) => r.risk === 'ok').length,
+        pending: scopedRiskItems.filter((r) => r.risk === 'pending').length,
+        red: scopedRiskItems.filter((r) => r.risk === 'red').length,
+        zombie: scopedRiskItems.filter((r) => r.risk === 'zombie').length,
       },
-      valueAtRisk: riskItems
+      valueAtRisk: scopedRiskItems
         .filter((r) => r.risk === 'red' || r.risk === 'zombie')
         .reduce((s, r) => s + r.total, 0),
-      atRisk: riskItems
+      atRisk: scopedRiskItems
         .filter((r) => r.risk === 'red' || r.risk === 'zombie')
         .sort((a, b) => b.total - a.total)
         .slice(0, RISK_LIST_CAP),
