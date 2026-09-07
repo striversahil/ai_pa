@@ -454,4 +454,4 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
 }
 
 // Re-exported for route modules that need these modules directly.
-export { AuthRoutes, ChatRoutes, EnquiryRoutes, createChatStore, createEnquiryStore, resolveLinkedSender, refreshNeodoveReport, neodoveTodayIst, DASHBOARD_SLUGS, authEnabled, getMe, isApproved, requireScope, isSystemGeneratedComment, getEstimatesPayload };
+export { AuthRoutes, ChatRoutes, EnquiryRoutes, createChatStore, createEnquiryStore, resolveLinkedSender, refreshNeodoveReport, neodoveTodayIst, DASHBOARD_SLUGS, authEnabled, getMe, isApproved, requireScope, isSystemGeneratedComment, getEstimatesPayload, readSessionCookie };

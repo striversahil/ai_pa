@@ -46,6 +46,9 @@ export interface AuthUserMe {
 export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   if (!me) return false;
   if (me.isAdmin) return true;
+  // The Automations REGISTRY page is root/admin-only. Non-root users reach
+  // their dashboards individually (useDashboardNav) — never the full registry.
+  if (viewOrSlug === "automations") return false;
   if (viewOrSlug === "chat") {
     // Team chat: available to every approved member (any granted scope/role).
     return me.scopes.length > 0 || me.roles.length > 0;
