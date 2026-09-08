@@ -5,8 +5,8 @@
 // endpoints are SHARED_SECRET gated and stay well under the 30s CPU limit.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, kolkataDateStr, type Bindings } from '../context';
-import { recordAssignment, invalidateRiskCache } from '../../automations/telecalling/service';
+import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, type Bindings } from '../context';
+import { bulkAssignEstimates } from '../../automations/telecalling/service';
 
 export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── whatsapp-digest runner ───────────────────────────────────────────────────
@@ -443,99 +443,18 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
 
   // ── MIS bulk assignment enforcement (one-shot ops tool) ──────────────────────
   // Body: { moves: [{ estimateNumber?, estimateId?, telecallerId }], followUpAgents?: [id], reason?: string }
-  // One-time assign: sets Estimate.assignedTelecallerId + ledger rows, NO locks,
-  // NO score events/penalties (redistribution itself is never a snatch). Only
-  // `sent` estimates move; anything else is reported as skipped. Temp-cover
-  // provenance is explicitly cleared (these are real assignments, not covers).
+  // Thin secret-gated wrapper around the shared bulkAssignEstimates core (also
+  // used by the interactive MIS endpoint). See service.ts for semantics.
   app.post('/api/runner/estimates/bulk-assign', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     const moves = Array.isArray(body.moves) ? body.moves : [];
     const followUpAgents = Array.isArray(body.followUpAgents) ? body.followUpAgents : [];
-    const reason = typeof body.reason === 'string' && body.reason ? body.reason : 'MIS bulk mapping enforcement';
     if (moves.length === 0 && followUpAgents.length === 0) {
       return c.json({ error: 'moves[] or followUpAgents[] required' }, 400);
     }
-    if (moves.length > 500) return c.json({ error: 'max 500 moves per call' }, 400);
-
-    const moved: Array<Record<string, unknown>> = [];
-    const skipped: Array<Record<string, unknown>> = [];
-    const errors: Array<Record<string, unknown>> = [];
-
-    // Resolve + validate everything BEFORE writing (all-or-checked, fail fast per item).
-    const plan: Array<{ estimateId: string; estimateNumber: string; from: string | null; to: string }> = [];
-    for (const m of moves) {
-      const ident = m.estimateNumber ?? m.estimateId;
-      if (!ident || !m.telecallerId) { errors.push({ ident, error: 'estimateNumber/estimateId + telecallerId required' }); continue; }
-      const est = m.estimateNumber
-        ? await prisma.estimate.findFirst({ where: { estimateNumber: String(m.estimateNumber) }, select: { estimateId: true, estimateNumber: true, status: true, assignedTelecallerId: true } })
-        : await prisma.estimate.findUnique({ where: { estimateId: String(m.estimateId) }, select: { estimateId: true, estimateNumber: true, status: true, assignedTelecallerId: true } });
-      if (!est) { errors.push({ ident, error: 'estimate not found' }); continue; }
-      if (est.status !== 'sent') { skipped.push({ estimateNumber: est.estimateNumber, status: est.status, reason: 'not sent — left untouched' }); continue; }
-      const tc = await prisma.telecaller.findUnique({ where: { id: String(m.telecallerId) }, select: { id: true, name: true, deleted: true } });
-      if (!tc || tc.deleted) { errors.push({ estimateNumber: est.estimateNumber, error: 'target telecaller not found/deleted' }); continue; }
-      if (est.assignedTelecallerId === tc.id) { skipped.push({ estimateNumber: est.estimateNumber, reason: `already with ${tc.name}` }); continue; }
-      plan.push({ estimateId: est.estimateId, estimateNumber: est.estimateNumber, from: est.assignedTelecallerId, to: tc.id });
-    }
-
-    // Phase 1: resolve open ledger rows for everything being moved (history chain).
-    const openByEstimate = new Map<string, string>();
-    if (plan.length > 0) {
-      const ids = plan.map((p) => p.estimateId);
-      for (let i = 0; i < ids.length; i += 400) {
-        const rows = await prisma.estimateAssignment.findMany({
-          where: { estimateId: { in: ids.slice(i, i + 400) }, status: 'assigned' },
-          select: { id: true, estimateId: true },
-        });
-        for (const r of rows) openByEstimate.set(r.estimateId, r.id);
-      }
-    }
-
-    // Phase 2: batched writes (same chunked pattern as the absentee-cover engine).
-    const nowIso = new Date().toISOString();
-    const day = kolkataDateStr();
-    const stmts: { sql: string; params: any[] }[] = [];
-    for (const p of plan) {
-      const priorOpenId = openByEstimate.get(p.estimateId) ?? null;
-      stmts.push({ sql: 'UPDATE Estimate SET assignedTelecallerId = ? WHERE estimateId = ?', params: [p.to, p.estimateId] });
-      if (priorOpenId) stmts.push({ sql: `UPDATE EstimateAssignment SET status = ? WHERE id = ?`, params: ['resolved', priorOpenId] });
-      stmts.push({
-        sql: 'INSERT INTO EstimateAssignment (id, estimateId, telecallerId, assignedAt, day, reassignedFromId, status, snatchReason, tempForTelecallerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        params: [crypto.randomUUID(), p.estimateId, p.to, nowIso, day, priorOpenId, 'assigned', reason, null],
-      });
-    }
-    try {
-      for (let i = 0; i < stmts.length; i += 25) {
-        await (prisma as any).batch(stmts.slice(i, i + 25));
-      }
-      for (const p of plan) moved.push({ estimateNumber: p.estimateNumber, from: p.from, to: p.to });
-    } catch (e: any) {
-      // Fallback: sequential writes via the prisma API so the batch still lands.
-      for (const p of plan) {
-        try {
-          await prisma.estimate.update({ where: { estimateId: p.estimateId }, data: { assignedTelecallerId: p.to } });
-          await recordAssignment(p.estimateId, p.to, reason, null);
-          moved.push({ estimateNumber: p.estimateNumber, from: p.from, to: p.to, via: 'sequential-fallback' });
-        } catch (e2: any) {
-          errors.push({ estimateNumber: p.estimateNumber, error: e2?.message || String(e2) });
-        }
-      }
-    }
-
-    // Phase 3: follow-up specialist flags (e.g. Samarjeet back to conversion).
-    const flagsUpdated: string[] = [];
-    for (const id of followUpAgents) {
-      try {
-        await prisma.telecaller.update({ where: { id: String(id) }, data: { assignEstimateFollowUps: true } });
-        flagsUpdated.push(String(id));
-      } catch (e: any) {
-        errors.push({ telecallerId: id, error: e?.message || String(e) });
-      }
-    }
-
-    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    if (moved.length > 0 || flagsUpdated.length > 0) notifyLive(c, { type: 'telecalling' });
-    return c.json({ ok: errors.length === 0, moved, movedCount: moved.length, skipped, flagsUpdated, errors });
+    const result = await bulkAssignEstimates(moves, { followUpAgents, reason: body.reason });
+    if (result.moved.length > 0 || result.flagsUpdated.length > 0) notifyLive(c, { type: 'telecalling' });
+    return c.json({ ok: result.errors.length === 0, movedCount: result.moved.length, ...result });
   });
 }

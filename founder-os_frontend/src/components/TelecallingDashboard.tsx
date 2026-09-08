@@ -1218,6 +1218,11 @@ export default function TelecallingDashboard() {
                   busy={overrideBusy}
                   setBusy={setOverrideBusy}
                 />
+                <BulkModifySection
+                  rosterRows={rosterRows}
+                  refreshAll={refreshAll}
+                  setRosterError={setRosterError}
+                />
                 <ExportDataSection rosterRows={rosterRows} />
                 <RosterSection
                   rosterRows={rosterRows}
@@ -1603,6 +1608,219 @@ function EstimateOverridesSection({
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * MIS-only bulk modification: hand-pick individual estimates (search by number
+ * / customer / id), tick them, choose ONE target agent and move them all at
+ * once. The correction tool for AI hallucinations and misassignments — moves
+ * are one-time assigns (ledger rows written, NO locks, NO score penalties).
+ */
+function BulkModifySection({
+  rosterRows,
+  refreshAll,
+  setRosterError,
+}: {
+  rosterRows: RosterRow[];
+  refreshAll: () => void;
+  setRosterError: (msg: string | null) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<OverrideEstimate[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [targetId, setTargetId] = useState("");
+  const [reason, setReason] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [report, setReport] = useState<{ moved: any[]; skipped: any[]; errors: any[] } | null>(null);
+
+  const agentName = (id: string | null | undefined) =>
+    id ? rosterRows.find((r) => r.id === id)?.name ?? "—" : "unassigned";
+
+  const search = useCallback(async () => {
+    if (!q.trim()) return;
+    setSearching(true);
+    setReport(null);
+    try {
+      const res = await fetch(`/api/estimates/assignment-overrides?q=${encodeURIComponent(q.trim())}`);
+      if (!res.ok) throw new Error("load failed");
+      const data = await res.json();
+      setResults(data.estimates ?? []);
+      setSelected(new Set());
+      setLoaded(true);
+    } catch {
+      setRosterError("Bulk search failed — please retry");
+    } finally {
+      setSearching(false);
+    }
+  }, [q, setRosterError]);
+
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleAll = () => {
+    setSelected((prev) => (prev.size === results.length ? new Set() : new Set(results.map((r) => r.estimateId))));
+  };
+
+  const assign = async () => {
+    if (selected.size === 0 || !targetId) return;
+    setAssigning(true);
+    setRosterError(null);
+    setReport(null);
+    try {
+      const res = await fetch("/api/estimates/bulk-assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          moves: [...selected].map((estimateId) => ({ estimateId, telecallerId: targetId })),
+          reason: reason.trim() || "MIS bulk modification",
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
+      setReport({ moved: body.moved ?? [], skipped: body.skipped ?? [], errors: body.errors ?? [] });
+      if ((body.errors ?? []).length > 0) {
+        setRosterError(`Bulk assign completed with ${(body.errors ?? []).length} error(s) — see report below`);
+      }
+      // Reflect the moves locally so the list stays truthful without a re-search.
+      const movedIds = new Set((body.moved ?? []).map((m: any) => m.estimateNumber));
+      setResults((prev) =>
+        prev.map((r) => (movedIds.has(r.estimateNumber) ? { ...r, assignedTelecallerId: targetId } : r)),
+      );
+      setSelected(new Set());
+      refreshAll();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Bulk assign failed");
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  return (
+    <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+      <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+        <div>
+          <h3 className="text-lg font-bold">🔀 Bulk Modification</h3>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+            Fix misassignments (AI hallucinations etc.): tick estimates below and move them all to{" "}
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">one agent</span>. One-time move —{" "}
+            <span className="font-semibold">no locks, no penalties</span>.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void search(); }}
+            placeholder="Search estimate # / customer / id…"
+            className="px-3 py-1.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-400 w-64"
+          />
+          <button
+            onClick={() => void search()}
+            disabled={searching}
+            className="px-3 py-1.5 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+          >
+            {searching ? "…" : "Search"}
+          </button>
+        </div>
+      </div>
+
+      {searching && results.length === 0 && <p className="text-xs text-zinc-500">Loading…</p>}
+      {!searching && loaded && results.length === 0 && q.trim() && (
+        <p className="text-xs text-zinc-500">No estimates found. Search by estimate number, customer name or id.</p>
+      )}
+      {!searching && !q.trim() && results.length === 0 && (
+        <p className="text-xs text-zinc-500">Search for estimates above, tick the ones to fix, then assign them to an agent.</p>
+      )}
+
+      {results.length > 0 && (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <button onClick={toggleAll} className="text-xs font-semibold text-indigo-500 dark:text-indigo-400 hover:underline">
+              {selected.size === results.length ? "Deselect all" : `Select all (${results.length})`}
+            </button>
+            <span className="text-xs text-zinc-500">{selected.size} selected</span>
+          </div>
+          <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+            {results.map((est) => {
+              const checked = selected.has(est.estimateId);
+              return (
+                <label
+                  key={est.estimateId}
+                  className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${checked ? "border-indigo-400/60 dark:border-indigo-500/60 bg-indigo-500/5" : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950"}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleOne(est.estimateId)}
+                    className="accent-indigo-600 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
+                      {est.estimateNumber} · {est.customerName}
+                    </div>
+                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
+                      {est.status} · ₹{fmtNum(Number(est.total ?? 0))} · now: {agentName(est.assignedTelecallerId)}
+                      {est.lockedTelecallerId ? " · 🔒 locked" : ""}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 whitespace-nowrap">Move to:</label>
+            <select
+              value={targetId}
+              onChange={(e) => setTargetId(e.target.value)}
+              disabled={assigning}
+              className="px-2 py-1.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none disabled:opacity-50"
+            >
+              <option value="">— choose agent —</option>
+              {rosterRows.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}{r.assignEstimateFollowUps ? "" : " (lead-gen)"}</option>
+              ))}
+            </select>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Reason (optional, shown in history)…"
+              className="flex-1 min-w-40 px-2 py-1.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-400"
+            />
+            <button
+              onClick={() => void assign()}
+              disabled={assigning || selected.size === 0 || !targetId}
+              className="px-4 py-1.5 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+            >
+              {assigning ? "Moving…" : `Assign selected (${selected.size})`}
+            </button>
+          </div>
+        </>
+      )}
+
+      {report && (
+        <div className="mt-3 text-xs space-y-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
+          <div className="font-bold text-emerald-500 dark:text-emerald-400">✓ Moved {report.moved.length}</div>
+          {report.skipped.length > 0 && (
+            <div className="text-zinc-500 dark:text-zinc-400">
+              Skipped ({report.skipped.length}): {report.skipped.map((s: any) => `${s.estimateNumber} (${s.reason ?? s.status})`).join(", ")}
+            </div>
+          )}
+          {report.errors.length > 0 && (
+            <div className="text-rose-500 dark:text-rose-400">
+              Errors ({report.errors.length}): {report.errors.map((e: any) => `${e.estimateNumber ?? e.ident ?? "?"} — ${e.error}`).join("; ")}
+            </div>
+          )}
         </div>
       )}
     </section>

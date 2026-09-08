@@ -10,6 +10,7 @@ import {
   markTelecallerPresent,
   isPenaltiesEnabled,
   setPenaltiesEnabled,
+  bulkAssignEstimates,
   invalidateRiskCache,
 } from '../../automations/telecalling/service';
 
@@ -257,6 +258,21 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
     notifyLive(c, { type: 'telecalling' });
     return c.json(est);
+  });
+
+  // ── Bulk modification (MIS): move hand-picked estimates to chosen agents ───
+  // The controller's correction tool for AI hallucinations / misassignments:
+  // moves are one-time assigns (ledger rows written, NO locks, NO score
+  // penalties). Only `sent` estimates move; the response reports per-item
+  // moved / skipped / errors so MIS sees exactly what happened.
+  app.post('/api/estimates/bulk-assign', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    const moves = Array.isArray(body.moves) ? body.moves : [];
+    if (moves.length === 0) return c.json({ error: 'moves[] required' }, 400);
+    const result = await bulkAssignEstimates(moves, { reason: body.reason || 'MIS bulk modification' });
+    if (result.moved.length > 0) notifyLive(c, { type: 'telecalling' });
+    return c.json({ ok: result.errors.length === 0, movedCount: result.moved.length, ...result });
   });
 
   // ── Baseline snapshot (frozen daily at 1 AM IST) ────────────────────────────
