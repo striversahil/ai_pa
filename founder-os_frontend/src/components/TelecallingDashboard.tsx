@@ -92,6 +92,8 @@ interface FollowUp {
   leadOf?: string | null;
   /** True once the GH runner captured at least one detail for this estimate. */
   detailsCaptured?: boolean | null;
+  /** Terminal AI give-up: 10 capture turns with <3 fields. */
+  detailsFailed?: boolean | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -187,6 +189,14 @@ function LeadChips({ f }: { f: FollowUp }) {
   if (f.enquiryNumber) chips.push({ label: "Enq", value: f.enquiryNumber as string, cls: "text-violet-600 dark:text-violet-400 border-violet-500/30 bg-violet-500/5" });
   if (chips.length === 0) {
     if (f.detailsCaptured) return null; // captured, nothing to show
+    // Gave up after 10 fruitless AI turns — terminal state, shown in amber.
+    if (f.detailsFailed) {
+      return (
+        <span title="AI tried 10 times but could not extract lead details from the Zoho comments" className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+          <span className="uppercase tracking-wide opacity-70 text-[8px]">AI</span> details unavailable
+        </span>
+      );
+    }
     // Not captured yet — the 15-min GH analyzer fills these as soon as the
     // sales agent posts the lead block in the Zoho comments.
     return (
@@ -220,6 +230,7 @@ interface RosterRow {
   phone: string | null;
   whatsapp: string | null;
   assignEstimateFollowUps: boolean;
+  absentSince: string | null;
   order: number;
   neodoveUserId: string | null;
   neodoveUserName: string | null;
@@ -500,6 +511,49 @@ export default function TelecallingDashboard() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assignEstimateFollowUps: !assignEstimateFollowUps }),
+      });
+      refreshAll();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── "Active Penalty" runtime toggle (MIS Controller) ───────────────────────
+  const [penaltyMode, setPenaltyMode] = useState<boolean | null>(null);
+  const loadPenaltyMode = useCallback(async () => {
+    if (!canManageRoster) return;
+    try {
+      const res = await fetch("/api/telecallers/penalty-mode");
+      if (res.ok) setPenaltyMode((await res.json()).enabled ?? false);
+    } catch { /* keep last known state */ }
+  }, [canManageRoster]);
+  useEffect(() => {
+    void loadPenaltyMode();
+  }, [loadPenaltyMode]);
+  const togglePenaltyMode = async () => {
+    setBusy(true);
+    try {
+      const next = !(penaltyMode ?? false);
+      await fetch("/api/telecallers/penalty-mode", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      setPenaltyMode(next);
+      refreshAll();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Absentee cover (MIS Controller): absent → equal redistribution ─────────
+  const toggleAbsent = async (id: string, isAbsent: boolean) => {
+    setBusy(true);
+    try {
+      await fetch(`/api/telecallers/${id}/absent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ absent: !isAbsent }),
       });
       refreshAll();
     } finally {
@@ -1121,6 +1175,32 @@ export default function TelecallingDashboard() {
                     the next rotation.
                   </p>
                 </section>
+                {/* Active Penalty master toggle (MIS) */}
+                <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-bold mb-1">⚖️ Active Penalty</h3>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xl">
+                        Master switch for the whole roster. OFF (default): no −15 snatch / −20
+                        decline for anyone — only the +100 conversion close counts. ON: penalties
+                        apply, except temp holds covering an absent agent, which are always
+                        penalty-free.
+                      </p>
+                    </div>
+                    <button
+                      onClick={togglePenaltyMode}
+                      disabled={busy || penaltyMode === null}
+                      className={`shrink-0 text-sm font-bold rounded-lg px-5 py-2.5 transition-colors disabled:opacity-60 ${
+                        penaltyMode
+                          ? "bg-rose-600 hover:bg-rose-500 text-white"
+                          : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                      }`}
+                      title="Toggles whether snatch/decline penalties are charged to agents"
+                    >
+                      {penaltyMode === null ? "…" : penaltyMode ? "Active Penalty: ON" : "Active Penalty: OFF"}
+                    </button>
+                  </div>
+                </section>
                 <EstimateOverridesSection
                   rosterRows={rosterRows}
                   busy={overrideBusy}
@@ -1133,6 +1213,7 @@ export default function TelecallingDashboard() {
                   onAdd={() => { setEditTarget(null); setRosterModalOpen(true); }}
                   onEditModal={(t) => { setEditTarget(t); setRosterModalOpen(true); }}
                   onToggleFollowUps={toggleFollowUps}
+                  onToggleAbsent={toggleAbsent}
                   onDelete={(t) => setConfirmDelete(t)}
                   onRestore={restoreTelecaller}
                   deletedRows={deletedRows}
@@ -1521,6 +1602,7 @@ function RosterSection({
   onAdd,
   onEditModal,
   onToggleFollowUps,
+  onToggleAbsent,
   onDelete,
   onRestore,
   deletedRows,
@@ -1532,6 +1614,7 @@ function RosterSection({
   onAdd: () => void;
   onEditModal: (t: RosterRow) => void;
   onToggleFollowUps: (id: string, assignEstimateFollowUps: boolean) => void;
+  onToggleAbsent: (id: string, isAbsent: boolean) => void;
   onDelete: (t: RosterRow) => void;
   onRestore: (id: string) => void;
   deletedRows: RosterRow[];
@@ -1552,9 +1635,16 @@ function RosterSection({
           <div key={t.id} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-zinc-900 dark:text-white">{t.name}</div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.assignEstimateFollowUps ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
-                {t.assignEstimateFollowUps ? "Follow-ups" : "Lead-gen only"}
-              </span>
+              <div className="flex items-center gap-1">
+                {t.absentSince && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 dark:text-amber-400 font-semibold">
+                    Absent
+                  </span>
+                )}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.assignEstimateFollowUps ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
+                  {t.assignEstimateFollowUps ? "Follow-ups" : "Lead-gen only"}
+                </span>
+              </div>
             </div>
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
               {t.neodoveUserName ? `NeoDove: ${t.neodoveUserName}` : "NeoDove: not linked"}
@@ -1571,7 +1661,7 @@ function RosterSection({
               </div>
             )}
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Total assigned: {t.totalAssigned}</div>
-            <div className="flex gap-2 mt-3">
+            <div className="flex gap-2 mt-3 flex-wrap">
               <button onClick={() => onEditModal(t)} className="flex-1 text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 py-1.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-700">Edit</button>
               <button onClick={() => onToggleFollowUps(t.id, t.assignEstimateFollowUps)} className={`flex-1 text-xs rounded-lg py-1.5 font-semibold ${
                 t.assignEstimateFollowUps
@@ -1579,6 +1669,20 @@ function RosterSection({
                   : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
               }`} title="Toggles whether this telecaller receives estimate follow-up assignments">
                 {t.assignEstimateFollowUps ? "No follow-ups" : "Assign follow-ups"}
+              </button>
+              <button
+                onClick={() => onToggleAbsent(t.id, !!t.absentSince)}
+                disabled={busy}
+                className={`flex-1 text-xs rounded-lg py-1.5 font-semibold disabled:opacity-40 ${
+                  t.absentSince
+                    ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                    : "bg-amber-500/10 text-amber-500 dark:text-amber-400 hover:bg-amber-500/20"
+                }`}
+                title={t.absentSince
+                  ? "Mark present — her temp-covered estimates return to her and normal scoring resumes"
+                  : "Mark absent — all her open estimates are dealt equally to the active conversion agents (no penalties; they come back when she returns)"}
+              >
+                {t.absentSince ? "Mark present" : "Mark absent"}
               </button>
               <button
                 onClick={() => onDelete(t)}

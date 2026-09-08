@@ -33,7 +33,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Message: ['processed', 'isHistorical'],
   Email: ['processed'],
   Digest: ['requiresFounder'],
-  Estimate: ['skipMatching', 'skipAssignment', 'detailsCaptured'],
+  Estimate: ['skipMatching', 'skipAssignment', 'detailsCaptured', 'detailsFailed'],
   Classification: ['meaningfulUpdate'],
   Automation: ['enabled'],
   MarketingCampaign: ['enabled'],
@@ -66,7 +66,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   MarketingLead: ['sentAt', 'deliveredAt', 'readAt', 'createdAt'],
   MarketingCampaignRun: ['startedAt', 'finishedAt'],
   Token: ['createdAt', 'updatedAt'],
-  Telecaller: ['createdAt'],
+  Telecaller: ['createdAt', 'absentSince'],
   EstimateAssignment: ['assignedAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
@@ -289,8 +289,9 @@ function buildWhere(model: string, where: any): { sql: string; params: any[] } {
         }
       }
     } else {
-      clauses.push(`${qid(key)} = ?`);
-      params.push(serialize(cond));
+      // Raw null must be IS NULL (= NULL is never true in SQL).
+      if (cond === null) clauses.push(`${qid(key)} IS NULL`);
+      else { clauses.push(`${qid(key)} = ?`); params.push(serialize(cond)); }
     }
   }
   return { sql: clauses.join(' AND '), params };
@@ -684,6 +685,18 @@ export class D1PrismaClient {
 
   $on() {}
   $disconnect() {}
+
+  /**
+   * Run many prepared statements in a SINGLE D1 network round-trip.
+   * Each entry: { sql: string, params?: any[] }. Returns D1 result metas.
+   * This is the key to cutting latency: N statements that would cost N
+   * sequential round-trips now cost one. Used by the absentee-cover engine to
+   * redistribute an absent agent's whole pipeline in one shot.
+   */
+  async batch(statements: { sql: string; params?: any[] }[]): Promise<any[]> {
+    const prepared = statements.map((s) => this.db.prepare(s.sql).bind(...(s.params || [])));
+    return this.db.batch(prepared);
+  }
 
   /** D1 has no interactive transactions; run the batch sequentially in order. */
   async $transaction(queries: any[] | any): Promise<any> {

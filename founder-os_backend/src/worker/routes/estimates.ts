@@ -4,6 +4,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, type Bindings } from '../context';
+import {
+  recordAssignment,
+  markTelecallerAbsent,
+  markTelecallerPresent,
+  isPenaltiesEnabled,
+  setPenaltiesEnabled,
+  invalidateRiskCache,
+} from '../../automations/telecalling/service';
 
 export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Estimates ───────────────────────────────────────────────────────────────
@@ -91,6 +99,26 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     return c.json(tc, 201);
   });
 
+  // ── "Active Penalty" runtime toggle (MIS) ────────────────────────────────────
+  // OFF (default) = no −15 snatch / −20 decline for anyone; +100 conversion
+  // close always stays on. ON = penalties apply, except temp absent-cover holds
+  // which are always penalty-free.
+  // NOTE: registered BEFORE /api/telecallers/:id so 'penalty-mode' can never be
+  // captured as an :id by a router that matches in registration order.
+  app.get('/api/telecallers/penalty-mode', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    return c.json({ enabled: await isPenaltiesEnabled() });
+  });
+
+  app.put('/api/telecallers/penalty-mode', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    if (typeof body.enabled !== 'boolean') return c.json({ error: 'enabled boolean required' }, 400);
+    await setPenaltiesEnabled(body.enabled);
+    notifyLive(c, { type: 'telecalling' });
+    return c.json({ ok: true, enabled: body.enabled });
+  });
+
   app.put('/api/telecallers/:id', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     const { prisma } = deps();
@@ -120,6 +148,22 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       data: { deleted: true, assignEstimateFollowUps: false },
     });
     return c.json({ ok: true });
+  });
+
+  // ── Absentee cover (MIS): mark absent → redistribute, present → return ──────
+  app.post('/api/telecallers/:id/absent', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    const id = c.req.param('id');
+    let result: Record<string, unknown>;
+    if (body.absent === false) {
+      result = await markTelecallerPresent(id);
+      result = { absent: false, ...result };
+    } else {
+      result = { absent: true, ...(await markTelecallerAbsent(id)) };
+    }
+    notifyLive(c, { type: 'telecalling' });
+    return c.json({ ok: true, ...result });
   });
 
   // ── MIS estimate assignment overrides ────────────────────────────────────────
@@ -167,10 +211,50 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     if (body.lockedTelecallerId !== undefined) data.lockedTelecallerId = body.lockedTelecallerId ? String(body.lockedTelecallerId) : null;
     if (body.skipAssignment !== undefined) data.skipAssignment = !!body.skipAssignment;
     if (Object.keys(data).length === 0) return c.json({ error: 'nothing to update' }, 400);
+    const estimateId = c.req.param('id');
+    const current = await prisma.estimate.findUnique({
+      where: { estimateId },
+      select: { assignedTelecallerId: true, skipAssignment: true, lockedTelecallerId: true },
+    });
+    if (!current) return c.json({ error: 'estimate not found' }, 404);
+
+    // "Never assign" turned ON → the estimate leaves the assignment engine AND
+    // drops its current holder right now, so no dashboard still shows an agent
+    // on it. The open ledger row is closed for the same reason.
+    if (data.skipAssignment === true && !current.skipAssignment) {
+      data.assignedTelecallerId = null;
+      await prisma.estimateAssignment.updateMany({
+        where: { estimateId, status: 'assigned' },
+        data: { status: 'resolved' },
+      });
+    }
+    // "Never assign" turned OFF → hand the estimate straight back to whoever
+    // held it last (latest ledger row) so the follow-up relationship resumes
+    // instead of waiting for the next engine rotation to re-deal it.
+    if (data.skipAssignment === false && current.skipAssignment) {
+      const last = await prisma.estimateAssignment.findFirst({
+        where: { estimateId },
+        orderBy: { assignedAt: 'desc' },
+      });
+      if (last) {
+        data.assignedTelecallerId = last.telecallerId;
+        await recordAssignment(estimateId, last.telecallerId, 'MIS: never-assign removed — returned to previous holder');
+      }
+      // No history (never assigned before the skip): leave unassigned — the
+      // engine deals it as a fresh candidate on its next run.
+    }
+    // Locking an agent applies IMMEDIATELY (the engines would enforce it on
+    // their next run anyway — this keeps the dashboards honest right away).
+    if (data.lockedTelecallerId && data.lockedTelecallerId !== current.assignedTelecallerId) {
+      const lockedId = String(data.lockedTelecallerId);
+      data.assignedTelecallerId = lockedId;
+      await recordAssignment(estimateId, lockedId, 'MIS lock applied');
+    }
     const est = await prisma.estimate.update({
-      where: { estimateId: c.req.param('id') },
+      where: { estimateId },
       data,
     });
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
     notifyLive(c, { type: 'telecalling' });
     return c.json(est);
   });
@@ -310,12 +394,20 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   });
 
   // ── Lead-details storage (GH runner extracts from Zoho comments) ─────────────
+  // AI retry budget: each runner pass that processes an estimate but extracts
+  // <3 fields consumes one attempt (detailsAttempts + 1). At
+  // MAX_DETAILS_ATTEMPTS the estimate is marked detailsFailed and leaves the
+  // 15-min capture loop for good (UI shows "Details unavailable"). A later
+  // >=3-field capture still stores and resets the budget.
+  const MAX_DETAILS_ATTEMPTS = 10;
   app.post('/api/runner/estimates/lead-details', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     const rows = Array.isArray(body.rows) ? body.rows : [];
     let updated = 0;
+    let attempted = 0;
+    let failed = 0;
     // "Lead generated by": the runner extracts the agent NAME from the first
     // comments; map it to a Telecaller id here (never invent a holder).
     const norm = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -347,11 +439,39 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
         r.contactPhone, r.contactEmail, r.leadGeneratedBy,
       ].filter((v: any) => v !== undefined && v !== null && String(v).length > 0);
       // Validity gate: only a capture with >= 3 non-empty fields is significant.
-      // Fewer than 3 is judged invalid — keep detailsCaptured=false so the
-      // 15-min loop retries (a lone field is usually a fragment/hallucination).
-      if (detailFields.length < 3) continue;
-      // Stop the 15-min capture loop once 3+ detail fields are stored.
+      // Fewer than 3 is judged invalid — it consumes one AI retry attempt instead
+      // of storing. At MAX_DETAILS_ATTEMPTS the estimate gives up (detailsFailed)
+      // and leaves the capture loop; the UI shows "Details unavailable".
+      if (detailFields.length < 3) {
+        attempted++;
+        try {
+          const cur = await prisma.estimate.findUnique({
+            where: { estimateId: r.estimateId },
+            select: { detailsAttempts: true, detailsCaptured: true, detailsFailed: true },
+          });
+          if (cur && !cur.detailsCaptured) {
+            const attempts = (Number((cur as any).detailsAttempts) || 0) + 1;
+            const nowFailed = attempts >= MAX_DETAILS_ATTEMPTS;
+            await prisma.estimate.update({
+              where: { estimateId: r.estimateId },
+              data: {
+                detailsAttempts: attempts,
+                detailsFailed: nowFailed ? true : (cur as any).detailsFailed,
+              },
+            });
+            if (nowFailed && !(cur as any).detailsFailed) failed++;
+          }
+        } catch (e: any) {
+          console.warn({ err: e?.message, estimateId: r.estimateId }, 'lead-details attempt-count update failed');
+        }
+        continue;
+      }
+      // Stop the 15-min capture loop once 3+ detail fields are stored. A success
+      // also resets the retry budget (recovers a prior give-up — e.g. the agent
+      // posted the lead block in a new comment and the runner re-admitted it).
       data.detailsCaptured = true;
+      data.detailsAttempts = 0;
+      data.detailsFailed = false;
       try {
         await prisma.estimate.update({ where: { estimateId: r.estimateId }, data });
         updated++;
@@ -359,7 +479,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
         console.warn({ err: e?.message, estimateId: r.estimateId }, 'lead-details update failed');
       }
     }
-    if (updated > 0) {
+    if (updated > 0 || failed > 0) {
       // Both the ZohoEstimates view and the TelecallingDashboard follow-ups show
       // these chips — broadcast both types so each open tab refetches (the
       // telecalling dashboards subscribe narrowly to automation/telecalling).
@@ -370,7 +490,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
       await invalidateDerivedEstimateCaches();
     }
-    return c.json({ ok: true, count: updated });
+    return c.json({ ok: true, count: updated, attempted, failed });
   });
 
   app.post('/api/estimates/bulk-upsert', async (c) => {

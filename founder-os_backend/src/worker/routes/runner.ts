@@ -160,11 +160,13 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // the runner must keep re-entering the pass instead of trusting the
     // no-change fingerprint — this is what keeps new/uncaptured estimates in
     // the 15-min capture loop until the sales agent posts the lead block
-    // (~40 min). Fail-open (true) so an error never starves capture.
+    // (~40 min). Estimates that exhausted their 10-turn AI budget
+    // (detailsFailed=1) are terminal and must NOT hold the loop open.
+    // Fail-open (true) so an error never starves capture.
     let needsBackfill = true;
     try {
       const { prisma } = deps();
-      const pending = await prisma.estimate.count({ where: { status: 'sent', detailsCaptured: false } });
+      const pending = await prisma.estimate.count({ where: { status: 'sent', detailsCaptured: false, detailsFailed: false } });
       needsBackfill = pending > 0;
     } catch (e: any) {
       console.warn({ err: e?.message }, 'fingerprint: pending-details count failed — keeping backfill enabled');

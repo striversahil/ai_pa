@@ -356,7 +356,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
 // follow-ups receive assignments (new deals + EOD re-poaching). Everyone else
 // still generates leads but never holds estimates.
 async function getFollowUpSpecialists(): Promise<Telecaller[]> {
-  return prisma.telecaller.findMany({ where: { assignEstimateFollowUps: true, deleted: false }, orderBy: { order: 'asc' } });
+  return prisma.telecaller.findMany({ where: { assignEstimateFollowUps: true, deleted: false, absentSince: null }, orderBy: { order: 'asc' } });
 }
 
 // ── Round-robin rotation ─────────────────────────────────────────────────────
@@ -438,9 +438,12 @@ export async function rotateEstimatesRoundRobin(): Promise<{ assigned: number }>
 export async function assignEstimatesForMaxConversion(): Promise<{ assigned: number; reassigned: number }> {
   const telecallers = await getFollowUpSpecialists();
   if (telecallers.length === 0) return { assigned: 0, reassigned: 0 };
-  // All non-deleted telecallers, for creator inference — a lead-gen creator who
-  // isn't flagged for follow-ups can still claim the estimate they generated.
-  const allTelecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
+  // Runtime "Active Penalty" toggle (MIS) — read once per engine run.
+  const penaltiesEnabled = await isPenaltiesEnabled();
+  // All non-deleted, PRESENT telecallers, for creator inference — a lead-gen
+  // creator who isn't flagged for follow-ups can still claim the estimate they
+  // generated, but an ABSENT creator never receives claims while away.
+  const allTelecallers = await prisma.telecaller.findMany({ where: { deleted: false, absentSince: null }, orderBy: { order: 'asc' } });
 
   const sent = await prisma.estimate.findMany({
     where: { status: 'sent', skipAssignment: false },
@@ -546,6 +549,19 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       }
     }
     if (!bestId) continue;
+    // Absent-cover awareness: read the CURRENT open ledger row (recordAssignment
+    // resolves it below). If the estimate is a temp cover for an absent agent,
+    // the losing temp holder is NEVER charged the snatch penalty, and the new
+    // row auto-carries the original absent agent's id (see recordAssignment).
+    let openRow: any = null;
+    if (wasAssigned) {
+      try {
+        openRow = await prisma.estimateAssignment.findFirst({
+          where: { estimateId: est.estimateId, status: 'assigned' },
+          orderBy: { assignedAt: 'desc' },
+        });
+      } catch { /* non-fatal — penalty guard defaults to not penalising */ }
+    }
     // If the current holder is being re-poached, the NEW row keeps the same
     // snatchReason (why the estimate left the previous holder). Fresh deals get
     // a null reason. Lock enforcement is not a snatch — no snatchReason.
@@ -560,9 +576,10 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       reassigned += 1;
       // The agent who lost the estimate at the EOD snatch gets -15 (unsatisfactory
       // remark or silent > 2 days). Charged to the holder who was re-poached FROM.
-      // Lock enforcement is NOT a snatch, so it never triggers the -15 penalty.
-      // Penalties are currently disabled (PENALTIES_ENABLED=false).
-      if (movedFrom && !locked && PENALTIES_ENABLED) {
+      // Lock enforcement is NOT a snatch, and neither is losing a TEMP absent-cover
+      // hold. Snatch/decline penalties follow the MIS "Active Penalty" toggle
+      // (runtime Setting — default OFF).
+      if (movedFrom && !locked && penaltiesEnabled && !openRow?.tempForTelecallerId) {
         await recordSnatchPenalty(String(movedFrom), est.estimateId, today, reason);
       }
     } else {
@@ -589,7 +606,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
  * previous holder lost it at EOD) is persisted so the losing agent sees exactly
  * what cost them the deal.
  */
-async function recordAssignment(estimateId: string, telecallerId: string, snatchReason: string | null = null): Promise<void> {
+export async function recordAssignment(estimateId: string, telecallerId: string, snatchReason: string | null = null, tempForTelecallerId?: string | null): Promise<void> {
   try {
     const current = await prisma.estimateAssignment.findFirst({
       where: { estimateId, status: 'assigned' },
@@ -604,11 +621,207 @@ async function recordAssignment(estimateId: string, telecallerId: string, snatch
       data: {
         estimateId, telecallerId, assignedAt: new Date(), day: istDate(), reassignedFromId, status: 'assigned',
         snatchReason,
+        // Absentee-cover provenance: a temp-covered estimate that is re-poached
+        // at EOD carries the ORIGINAL absent agent's id forward so it still
+        // returns to her when she is marked present. Pass undefined to
+        // auto-carry from the resolved row; pass null to explicitly clear
+        // (e.g. when the estimate returns to the original holder).
+        tempForTelecallerId: tempForTelecallerId === undefined
+          ? (((current as any)?.tempForTelecallerId as string | undefined) ?? null)
+          : tempForTelecallerId,
       },
     });
   } catch (e: any) {
     logger.warn({ err: e?.message, estimateId }, 'recordAssignment failed — continuing without history');
   }
+}
+
+// ── Absentee cover (MIS) ─────────────────────────────────────────────────────
+// When MIS marks an agent ABSENT, her entire open pipeline is dealt equally
+// (round-robin by roster order) across the active conversion specialists as
+// TEMP covers. The redistribution itself is never a snatch — no score event of
+// any kind is written. Each cover ledger row carries `tempForTelecallerId` =
+// the ABSENT agent's id (carried forward through later EOD re-poaches), so
+// marking her PRESENT hands every still-open estimate straight back to her.
+// A cover agent keeps the +100 close for anything she converts meanwhile
+// (recordConversionClose credits the holder); converted/declined estimates do
+// not come back. Locked and never-assign estimates are left untouched.
+
+export async function markTelecallerAbsent(telecallerId: string): Promise<{ redistributed: number; covers: number }> {
+  // ── Phase 1: parallel reads (3 independent D1 round-trips at once) ─────────
+  const [tc, held, covers] = await Promise.all([
+    prisma.telecaller.findUnique({ where: { id: telecallerId } }),
+    prisma.estimate.findMany({
+      // Exclude estimates that are ALREADY temp covers for another absent agent
+      // (tempForTelecallerId set) — those belong to someone else who's away and must
+      // NOT be swept into this agent's redistribution. Otherwise nested absence
+      // (cover agent also goes absent) creates conflicting temp covers that both
+      // agents would pull back on return.
+      where: { assignedTelecallerId: telecallerId, status: 'sent', skipAssignment: false, lockedTelecallerId: null, tempForTelecallerId: null },
+      select: { estimateId: true, total: true },
+    }),
+    prisma.telecaller.findMany({
+      where: { assignEstimateFollowUps: true, deleted: false, absentSince: null, id: { not: telecallerId } },
+      orderBy: { order: 'asc' },
+    }),
+  ]);
+  if (!tc) throw new Error('telecaller not found');
+  if (held.length === 0 || covers.length === 0) {
+    // Nothing to move (or nobody to cover) — still flag absent so the roster hides him.
+    await prisma.telecaller.update({ where: { id: telecallerId }, data: { absentSince: new Date() } });
+    logger.info({ telecallerId, name: tc.name, held: held.length, covers: covers.length }, 'Agent marked absent — nothing to redistribute');
+    return { redistributed: 0, covers: covers.length };
+  }
+
+  // ── Phase 2: read the currently-open assignment rows (for the history chain) ─
+  // One batched query resolves the previous holder for every held estimate.
+  const heldIds = held.map((e) => e.estimateId);
+  const openRows = await prisma.estimateAssignment.findMany({
+    where: { estimateId: { in: heldIds }, status: 'assigned' },
+    select: { id: true, estimateId: true },
+  });
+  const openByEstimate = new Map(openRows.map((r) => [r.estimateId, r.id]));
+
+  // ── Phase 3: build ALL writes, then fire them in chunks of D1 round-trips ─
+  // Equal round-robin across the active conversion specialists (random start so it
+  // isn't always the top of the roster). Batching collapses ~N×4 sequential
+  // round-trips into a handful — this is what takes the call from ~10s to well
+  // under 1s. Statements are chunked (D1 batch has practical size limits) and
+  // each chunk is one network round-trip.
+  const stmts: { sql: string; params: any[] }[] = [];
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const day = istDate();
+
+  // (a) flag the agent absent
+  stmts.push({ sql: 'UPDATE Telecaller SET absentSince = ? WHERE id = ?', params: [nowIso, telecallerId] });
+
+  let idx = Math.floor(Math.random() * covers.length);
+  for (const est of held) {
+    const cover = covers[idx % covers.length];
+    const priorOpenId = openByEstimate.get(est.estimateId) ?? null;
+
+    // (b) reassign the estimate to its cover
+    stmts.push({ sql: 'UPDATE Estimate SET assignedTelecallerId = ? WHERE estimateId = ?', params: [cover.id, est.estimateId] });
+
+    // (c) close the previous open assignment row (history chain)
+    if (priorOpenId) {
+      stmts.push({ sql: 'UPDATE EstimateAssignment SET status = ? WHERE id = ?', params: ['resolved', priorOpenId] });
+    }
+
+    // (d) open a new cover row, tagged with the absent agent so it returns on "present"
+    stmts.push({
+      sql: 'INSERT INTO EstimateAssignment (id, estimateId, telecallerId, assignedAt, day, reassignedFromId, status, snatchReason, tempForTelecallerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      params: [crypto.randomUUID(), est.estimateId, cover.id, nowIso, day, priorOpenId, 'assigned', `Absent cover — ${tc.name} marked absent`, telecallerId],
+    });
+
+    idx += 1;
+  }
+
+  // Fire in chunks of 25 statements per D1 batch round-trip.
+  const CHUNK = 25;
+  try {
+    for (let i = 0; i < stmts.length; i += CHUNK) {
+      const chunk = stmts.slice(i, i + CHUNK);
+      await (prisma as any).batch(chunk);
+    }
+  } catch (e: any) {
+    logger.error(
+      { telecallerId, error: e?.message || String(e), stmtCount: stmts.length, chunkSize: CHUNK, firstSql: stmts[0]?.sql },
+      'markTelecallerAbsent: batched writes failed — falling back to sequential',
+    );
+    // Fallback: sequential writes so the feature still works while batching is debugged.
+    await prisma.telecaller.update({ where: { id: telecallerId }, data: { absentSince: new Date() } });
+    let fidx = Math.floor(Math.random() * covers.length);
+    for (const est of held) {
+      const cover = covers[fidx % covers.length];
+      await prisma.estimate.update({ where: { estimateId: est.estimateId }, data: { assignedTelecallerId: cover.id } });
+      await recordAssignment(est.estimateId, cover.id, `Absent cover — ${tc.name} marked absent`, telecallerId);
+      fidx += 1;
+    }
+  }
+
+  logger.info(
+    { telecallerId, name: tc.name, held: held.length, covers: covers.length, statements: stmts.length },
+    'Agent marked absent — estimates redistributed (batched) as temp covers',
+  );
+  try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+  return { redistributed: held.length, covers: covers.length };
+}
+
+export async function markTelecallerPresent(telecallerId: string): Promise<{ returned: number }> {
+  // ── Phase 1: parallel reads ───────────────────────────────────────────────
+  // Read the agent (for the history note) and all still-open temp-cover rows in one shot.
+  const [tc, tempRows] = await Promise.all([
+    prisma.telecaller.findUnique({ where: { id: telecallerId } }),
+    prisma.estimateAssignment.findMany({
+      where: { tempForTelecallerId: telecallerId, status: 'assigned' },
+      orderBy: { assignedAt: 'asc' },
+      select: { id: true, estimateId: true },
+    }),
+  ]);
+  if (!tc) throw new Error('telecaller not found');
+
+  // ── Phase 2: which of those are still open (not converted/declined while covered)?
+  // One batched read over the candidate estimate ids.
+  let returned = 0;
+  if (tempRows.length > 0) {
+    const estIds = tempRows.map((r) => r.estimateId);
+    const estRows = await prisma.estimate.findMany({
+      where: { estimateId: { in: estIds } },
+      select: { estimateId: true, status: true },
+    });
+    const statusByEstimate = new Map(estRows.map((e) => [e.estimateId, e.status]));
+    const openTempRows = tempRows.filter((r) => statusByEstimate.get(r.estimateId) === 'sent');
+
+    if (openTempRows.length > 0) {
+      // ── Phase 3: clear absent flag + return every open estimate, all batched ──
+      const stmts: { sql: string; params: any[] }[] = [];
+      const nowIso = new Date().toISOString();
+      const day = istDate();
+
+      // (a) clear the absent flag
+      stmts.push({ sql: 'UPDATE Telecaller SET absentSince = ? WHERE id = ?', params: [null, telecallerId] });
+
+      for (const row of openTempRows) {
+        const priorOpenId = row.id; // the temp-cover row becomes the "reassigned from" link
+
+        // (b) hand the estimate back to the original agent
+        stmts.push({ sql: 'UPDATE Estimate SET assignedTelecallerId = ? WHERE estimateId = ?', params: [telecallerId, row.estimateId] });
+
+        // (c) close the temp-cover row
+        stmts.push({ sql: 'UPDATE EstimateAssignment SET status = ? WHERE id = ?', params: ['resolved', priorOpenId] });
+
+        // (d) open a fresh row for the original agent (temp provenance cleared)
+        stmts.push({
+          sql: 'INSERT INTO EstimateAssignment (id, estimateId, telecallerId, assignedAt, day, reassignedFromId, status, snatchReason, tempForTelecallerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          params: [crypto.randomUUID(), row.estimateId, telecallerId, nowIso, day, priorOpenId, 'assigned', `Returned from absence — back to ${tc.name}`, null],
+        });
+        returned += 1;
+      }
+
+      try {
+        await (prisma as any).batch(stmts);
+      } catch (e: any) {
+        logger.error(
+          { telecallerId, error: e?.message || String(e), stmtCount: stmts.length },
+          'markTelecallerPresent: batch failed — falling back to sequential writes',
+        );
+        await prisma.telecaller.update({ where: { id: telecallerId }, data: { absentSince: null } });
+        for (const row of openTempRows) {
+          await prisma.estimate.update({ where: { estimateId: row.estimateId }, data: { assignedTelecallerId: telecallerId } });
+          await recordAssignment(row.estimateId, telecallerId, `Returned from absence — back to ${tc.name}`, null);
+        }
+      }
+    }
+  } else {
+    // No temp rows — just clear the flag.
+    await prisma.telecaller.update({ where: { id: telecallerId }, data: { absentSince: null } });
+  }
+
+  logger.info({ telecallerId, name: tc.name, tempRows: tempRows.length, returned }, 'Agent marked present — temp-covered estimates returned (batched)');
+  try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+  return { returned };
 }
 
 // ── Creator inference ────────────────────────────────────────────────────────
@@ -678,10 +891,32 @@ async function inferEstimateCreator(estimateId: string, telecallers: Telecaller[
 const CLOSE_POINTS = 100;
 const SNATCH_PENALTY = -15;
 const DECLINE_PENALTY = -20;
-// Penalties (snatch −15, decline −20) are currently DISABLED — no negative
-// score events are recorded and the leaderboard score ignores them. Flip to
-// true to enable once the founder is ready.
-const PENALTIES_ENABLED = false;
+// Snatch (−15) / decline (−20) penalties are governed at runtime by the MIS
+// "Active Penalty" toggle (Setting `telecalling:penalties_enabled`, default
+// OFF = the historical behaviour: only positive score events are recorded and
+// the leaderboard score ignores penalties). +100 conversion close is ALWAYS
+// credited regardless of the toggle. Temp absent-cover holds are penalty-free
+// even when the toggle is ON (guarded at the call sites).
+const PENALTIES_SETTING_KEY = 'telecalling:penalties_enabled';
+
+/** Runtime state of the MIS "Active Penalty" toggle. Default: OFF. */
+export async function isPenaltiesEnabled(): Promise<boolean> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: PENALTIES_SETTING_KEY } });
+    return String(row?.value ?? '').trim().toLowerCase() === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/** Flip the MIS "Active Penalty" toggle. */
+export async function setPenaltiesEnabled(enabled: boolean): Promise<void> {
+  await prisma.setting.upsert({
+    where: { key: PENALTIES_SETTING_KEY },
+    update: { value: String(enabled) },
+    create: { key: PENALTIES_SETTING_KEY, value: String(enabled) },
+  });
+}
 
 /**
  * Append a score event to the ledger. day is the IST date the event happened.
@@ -740,7 +975,7 @@ async function recordSnatchPenalty(telecallerId: string, estimateId: string, day
  */
 export async function recordDeclinePenalty(estimateId: string): Promise<void> {
   try {
-    if (!PENALTIES_ENABLED) return;
+    if (!(await isPenaltiesEnabled())) return;
     const est = await prisma.estimate.findUnique({
       where: { estimateId },
       select: { status: true, date: true },
@@ -757,12 +992,15 @@ export async function recordDeclinePenalty(estimateId: string): Promise<void> {
 
     const rows = await prisma.estimateAssignment.findMany({
       where: { estimateId },
-      select: { telecallerId: true },
+      select: { telecallerId: true, tempForTelecallerId: true },
       orderBy: { assignedAt: 'asc' },
     });
     // Count every holding per agent (each assignment row = one holding).
+    // TEMP-absence covers (tempForTelecallerId set) are never penalised for a
+    // decline — only the +100 close ever applies to a temporary converter.
     const holdings = new Map<string, number>();
     for (const r of rows) {
+      if (r.tempForTelecallerId) continue; // absent-cover hold — penalty-free
       const tid = String(r.telecallerId);
       holdings.set(tid, (holdings.get(tid) ?? 0) + 1);
     }
@@ -940,6 +1178,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
 
   const telecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
   const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+  // Leaderboard reflects the runtime "Active Penalty" toggle: when OFF (default)
+  // the score only counts positive actions.
+  const penaltiesEnabled = await isPenaltiesEnabled();
 
   // Risk model over the open pipeline — served from the 5-min cache (D1
   // row-read budget protection). Stale chips in the agent view read from the
@@ -1108,10 +1349,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
 
     // Composite score (tunable, the leaderboard norm): a converted estimate
     // weighs +100, a generated lead +15 and a connected call +0.5. Snatch
-    // penalties (−15) are currently DISABLED (PENALTIES_ENABLED=false) so the
-    // score only counts positive actions.
+    // penalties (−15) only count while the MIS "Active Penalty" toggle is ON.
     const snatches = pointsByOwner.get(tc.id)?.snatches ?? 0;
-    const score = won * 100 + (PENALTIES_ENABLED ? -snatches * 15 : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5);
+    const score = won * 100 + (penaltiesEnabled ? -snatches * 15 : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5);
 
     kpiAcc.assigned += assignedToday;
     kpiAcc.won += won;
@@ -1271,6 +1511,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         contactEmail: (e as any).contactEmail ?? null,
         clientCompany: enquiry?.clientCompany ?? null,
         detailsCaptured: !!(e as any).detailsCaptured,
+        // Terminal AI give-up: 10 capture turns with <3 fields (see the
+        // lead-details route). UI shows "Details unavailable" instead of the
+        // perpetual "AI capturing…" state.
+        detailsFailed: !!(e as any).detailsFailed,
         // "Lead generated by" = the originating agent (creator) ONLY — never the
         // current holder. Hidden (null) until the creator is recorded.
         leadOf: (e as any).createdBy ? nameById.get(String((e as any).createdBy)) ?? null : null,

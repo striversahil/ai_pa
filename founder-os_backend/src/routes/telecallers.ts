@@ -4,6 +4,12 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { requireScope } from '../modules/auth/service';
 import { AuthError } from '../modules/auth/types';
 import { PrismaAuthStore } from '../modules/auth/store-prisma';
+import {
+  markTelecallerAbsent,
+  markTelecallerPresent,
+  isPenaltiesEnabled,
+  setPenaltiesEnabled,
+} from '../automations/telecalling/service';
 
 const router = Router();
 
@@ -33,6 +39,29 @@ router.get('/', misGuard, asyncHandler(async (req, res) => {
     }),
   );
   res.json({ telecallers: withCounts });
+}));
+
+// ── "Active Penalty" runtime toggle (MIS) — registered BEFORE /:id routes ────
+router.get('/penalty-mode', misGuard, asyncHandler(async (_req, res) => {
+  res.json({ enabled: await isPenaltiesEnabled() });
+}));
+
+router.put('/penalty-mode', misGuard, asyncHandler(async (req, res) => {
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled boolean required' });
+  await setPenaltiesEnabled(enabled);
+  res.json({ ok: true, enabled });
+}));
+
+// ── Absentee cover (MIS): mark absent → redistribute, present → return ───────
+router.post('/:id/absent', misGuard, asyncHandler(async (req, res) => {
+  const { absent } = req.body || {};
+  if (absent === false) {
+    const result = await markTelecallerPresent(String(req.params.id));
+    return res.json({ ok: true, absent: false, ...result });
+  }
+  const result = await markTelecallerAbsent(String(req.params.id));
+  res.json({ ok: true, absent: true, ...result });
 }));
 
 router.post('/', misGuard, asyncHandler(async (req, res) => {

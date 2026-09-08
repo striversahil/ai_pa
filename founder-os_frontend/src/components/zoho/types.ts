@@ -41,6 +41,8 @@ export interface Estimate {
   leadOf?: string;
   /** True once the GH runner has stored at least one lead-detail field. */
   detailsCaptured?: boolean;
+  /** Terminal AI give-up: 10 capture turns with <3 fields. UI shows "Details unavailable". */
+  detailsFailed?: boolean;
   [key: string]: unknown;
 }
 

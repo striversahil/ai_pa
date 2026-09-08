@@ -137,8 +137,13 @@ export default function EstimateCard({ est, expanded, onToggleComments }: Props)
       )}
 
       {/* Not captured yet — the 15-min GH analyzer fills these once the agent
-          posts the lead block in the Zoho comments. */}
-      {!(est.leadOf || est.enquiryNumber || est.sourceLead || est.location || est.contactName || est.contactPhone || est.contactEmail) && est.detailsCaptured === false && (
+          posts the lead block in the Zoho comments. After 10 fruitless turns
+          the estimate gives up and shows "Details unavailable" instead. */}
+      {!(est.leadOf || est.enquiryNumber || est.sourceLead || est.location || est.contactName || est.contactPhone || est.contactEmail) && (est as any).detailsFailed ? (
+        <span title="AI tried 10 times but could not extract lead details from the Zoho comments" className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+          <span className="uppercase tracking-wide opacity-70 text-[8px]">AI</span> details unavailable
+        </span>
+      ) : !(est.leadOf || est.enquiryNumber || est.sourceLead || est.location || est.contactName || est.contactPhone || est.contactEmail) && est.detailsCaptured === false && (
         <span title="Lead details not captured yet — the 15-min analyzer fills these in" className="inline-flex items-center gap-1 rounded-full border border-zinc-400/30 bg-zinc-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
           <span className="uppercase tracking-wide opacity-70 text-[8px]">AI</span> capturing…
         </span>

@@ -738,13 +738,25 @@ async function main() {
   //     backfill on the first pass). Robust Groq (gpt-oss-120b, HIGH
   //     reasoning, random key rotation + 5 attempts) is used strictly — no
   //     omniroute. The worker flips detailsCaptured=true (stopping the loop)
-  //     as soon as ANY detail field is stored — cheapest mode.
+  //     as soon as a >= 3-field capture is stored.
+  //     RETRY BUDGET (10 AI turns, enforced worker-side): a pass that extracts
+  //     <3 fields consumes one attempt (detailsAttempts + 1); at 10 the worker
+  //     marks detailsFailed and the estimate leaves this loop for good — EXCEPT
+  //     when NEW comments arrived since the last pass (the agent may have
+  //     finally posted the lead block), which re-admits it for one more turn.
+  //     A later success clears the give-up flag.
   const groqKeys = (process.env.GROQ_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
   if (groqKeys.length > 0) {
     const leadDetailRows = [];
     const pendingCapture = estimates.filter((est) => {
       const existing = existingByEstId.get(est.estimate_id);
-      return !existing || !existing.detailsCaptured;
+      if (!existing || !existing.detailsCaptured) {
+        if (existing?.detailsFailed) {
+          return !!fetchedByEst.get(est.estimate_id)?.hasNew;
+        }
+        return true;
+      }
+      return false;
     });
     console.log(`zoho-sent-runner: ${pendingCapture.length} active estimates still need lead-details capture`);
     for (const est of pendingCapture) {
@@ -757,27 +769,35 @@ async function main() {
         .map((c) => `${c.commented_by || ''}: ${cleanHtml(c.description || '')}`)
         .join('\n');
       if (!firstRealSales.trim()) continue;
+      // Attempt number for logging (worker is the source of truth — it counts).
+      const attemptNo = (existingByEstId.get(est.estimate_id)?.detailsAttempts ?? 0) + 1;
       try {
         const extracted = await extractLeadDetails({ text: firstRealSales, company: est.customer_name || '' });
         const fieldCount = extracted
           ? ['enquiryNumber', 'sourceLead', 'location', 'contactName', 'contactPhone', 'contactEmail', 'leadGeneratedBy']
             .filter((k) => extracted[k]).length
           : 0;
-        // Validity gate: ONLY a capture with >= 3 non-empty fields is considered
-        // significant (a lone field is usually a fragment/hallucination). Below 3
-        // the estimate is left detailsCaptured=false and retried next pass.
+        // Report EVERY attempt to the worker — including thin (<3-field) ones.
+        // Validity gate (>= 3 non-empty fields) is applied worker-side: a thin
+        // capture consumes one retry-budget attempt instead of being dropped
+        // silently (a lone field is usually a fragment/hallucination).
+        leadDetailRows.push({ estimateId: est.estimate_id, ...(extracted || {}) });
         if (fieldCount >= 3) {
-          leadDetailRows.push({ estimateId: est.estimate_id, ...extracted });
+          console.log(`zoho-sent-runner: ${est.estimate_number}: captured ${fieldCount}/7 lead-detail fields`);
         } else {
-          console.warn(`zoho-sent-runner: ${est.estimate_number}: extraction had ${fieldCount}/7 fields — below 3, judged invalid, retrying next pass`);
+          console.warn(`zoho-sent-runner: ${est.estimate_number}: extraction had ${fieldCount}/7 fields (attempt ${attemptNo}/10) — below 3, judged invalid, consuming one retry attempt`);
         }
       } catch (err) {
-        console.warn(`zoho-sent-runner: lead-details extraction failed for ${est.estimate_number}: ${err.message}`);
+        // A failed AI turn still consumes budget (reported as an empty row) so
+        // a permanently broken estimate gives up after 10 turns instead of
+        // burning Groq calls on every pass forever.
+        leadDetailRows.push({ estimateId: est.estimate_id });
+        console.warn(`zoho-sent-runner: lead-details extraction failed for ${est.estimate_number} (attempt ${attemptNo}/10): ${err.message} — consuming one retry attempt`);
       }
     }
     if (leadDetailRows.length > 0) {
-      await workerRequest('/api/runner/estimates/lead-details', { method: 'POST', body: { rows: leadDetailRows } });
-      console.log(`zoho-sent-runner: stored lead-details for ${leadDetailRows.length} estimates`);
+      const res = await workerRequest('/api/runner/estimates/lead-details', { method: 'POST', body: { rows: leadDetailRows } });
+      console.log(`zoho-sent-runner: lead-details stored for ${res?.count ?? '?'} estimates, thin attempts ${res?.attempted ?? '?'}, gave up ${res?.failed ?? '?'}`);
     }
   }
 

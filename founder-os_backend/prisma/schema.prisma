@@ -190,6 +190,12 @@ model Estimate {
   // first Zoho comments; while 0 the 15-min capture loop keeps re-processing
   // the estimate (agents can take ~40 min to post the lead block).
   detailsCaptured       Boolean         @default(false)
+  // Bounded AI retry budget: each 15-min pass that extracts <3 fields consumes
+  // one attempt. At MAX_DETAILS_ATTEMPTS (10, worker route) detailsFailed flips
+  // to true and the estimate leaves the capture loop for good (UI shows
+  // "Details unavailable"). A later >=3-field capture still stores + resets.
+  detailsAttempts       Int             @default(0)
+  detailsFailed         Boolean         @default(false)
   comments              Comment[]
   classification        Classification?
   assignments           EstimateAssignment[]
@@ -245,6 +251,10 @@ model Telecaller {
   neodoveUserId    String?
   neodoveUserName  String?
   createdAt        DateTime @default(now())
+  // Absentee flag (MIS Controller): when set, the agent holds no pipeline — her
+  // open estimates are dealt as temp covers to the active specialists (see
+  // EstimateAssignment.tempForTelecallerId) and return on "mark present".
+  absentSince      DateTime?
   assignments      EstimateAssignment[]
   scoreEvents      TelecallerScoreEvent[]
 }
@@ -265,6 +275,10 @@ model EstimateAssignment {
   // remark: customer not answering"). Shown to the losing agent so the
   // snatch mechanic teaches what loses a deal.
   snatchReason      String?
+  // Absentee cover provenance: when this row is a TEMP cover (the holder is
+  // covering for an absent agent), this is the ABSENT agent's id the estimate
+  // returns to when MIS marks her present. Null = a normal assignment.
+  tempForTelecallerId String?
   estimate          Estimate   @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
   telecaller        Telecaller @relation(fields: [telecallerId], references: [id], onDelete: Cascade)
 

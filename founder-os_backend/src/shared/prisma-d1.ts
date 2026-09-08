@@ -17,6 +17,10 @@ export const prisma = new D1PrismaClient({
     if (!_db) throw new Error('D1 database not initialized. Call initD1(env) first.');
     return _db.prepare(query);
   },
+  batch: (statements: any[]) => {
+    if (!_db) throw new Error('D1 database not initialized. Call initD1(env) first.');
+    return _db.batch(statements);
+  },
 } as any);
 
 export async function checkDatabaseConnection(): Promise<boolean> {
