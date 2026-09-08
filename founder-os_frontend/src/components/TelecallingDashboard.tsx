@@ -785,7 +785,7 @@ export default function TelecallingDashboard() {
                             <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+100</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms). Credited to whoever is holding it at that moment.</li>
                             <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
                             <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5. The table restarts at zero every week so everyone gets a fair shot.</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5{penaltyMode ? <span> · <span className="text-rose-500">snatch −15</span> (Active Penalty ON — charged when an estimate is snatched for neglect)</span> : <span> (snatch −15 applies only while Active Penalty is ON, and only to future snatches)</span>}. The table restarts at zero every week so everyone gets a fair shot.</li>
                           </ul>
                         </div>
                       </div>
