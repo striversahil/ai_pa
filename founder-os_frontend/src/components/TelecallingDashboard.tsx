@@ -1220,6 +1220,7 @@ export default function TelecallingDashboard() {
                 <RosterSection
                   rosterRows={rosterRows}
                   busy={busy}
+                  rosterError={rosterError}
                   onAdd={() => { setEditTarget(null); setRosterModalOpen(true); }}
                   onEditModal={(t) => { setEditTarget(t); setRosterModalOpen(true); }}
                   onToggleFollowUps={toggleFollowUps}
@@ -1609,6 +1610,7 @@ function EstimateOverridesSection({
 function RosterSection({
   rosterRows,
   busy,
+  rosterError,
   onAdd,
   onEditModal,
   onToggleFollowUps,
@@ -1621,6 +1623,7 @@ function RosterSection({
 }: {
   rosterRows: RosterRow[];
   busy: boolean;
+  rosterError: string | null;
   onAdd: () => void;
   onEditModal: (t: RosterRow) => void;
   onToggleFollowUps: (id: string, assignEstimateFollowUps: boolean) => void;
