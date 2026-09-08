@@ -101,9 +101,10 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   });
 
   // ── "Active Penalty" runtime toggle (MIS) ────────────────────────────────────
-  // OFF (default) = no −15 snatch / −20 decline for anyone; +100 conversion
-  // close always stays on. ON = penalties apply, except temp absent-cover holds
-  // which are always penalty-free.
+  // OFF (default) = no −15 snatch for anyone; +100 conversion close always
+  // stays on. ON = the −15 EOD-snatch penalty applies, except temp
+  // absent-cover holds which are always penalty-free. (The old −20 decline
+  // penalty is retired entirely.)
   // NOTE: registered BEFORE /api/telecallers/:id so 'penalty-mode' can never be
   // captured as an :id by a router that matches in registration order.
   app.get('/api/telecallers/penalty-mode', async (c) => {

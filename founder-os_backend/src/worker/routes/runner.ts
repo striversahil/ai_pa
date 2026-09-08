@@ -258,14 +258,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
           console.warn({ err: e?.message, estimateId: u.estimateId }, 'recordConversionClose failed');
         }
       }
-      if (u.status === 'declined' || u.status === 'cancelled' || u.status === 'void') {
-        try {
-          const { recordDeclinePenalty } = require('../../automations/telecalling/service');
-          await recordDeclinePenalty(u.estimateId);
-        } catch (e: any) {
-          console.warn({ err: e?.message, estimateId: u.estimateId }, 'recordDeclinePenalty failed');
-        }
-      }
+      // Declines carry no penalty (retired) — status sync only.
       updated++;
     }
     notifyLive(c, { type: 'estimates' });

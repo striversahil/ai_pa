@@ -577,7 +577,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       // The agent who lost the estimate at the EOD snatch gets -15 (unsatisfactory
       // remark or silent > 2 days). Charged to the holder who was re-poached FROM.
       // Lock enforcement is NOT a snatch, and neither is losing a TEMP absent-cover
-      // hold. Snatch/decline penalties follow the MIS "Active Penalty" toggle
+      // hold. The snatch penalty follows the MIS "Active Penalty" toggle
       // (runtime Setting — default OFF).
       if (movedFrom && !locked && penaltiesEnabled && !openRow?.tempForTelecallerId) {
         await recordSnatchPenalty(String(movedFrom), est.estimateId, today, reason);
@@ -1006,13 +1006,16 @@ async function inferEstimateCreator(estimateId: string, telecallers: Telecaller[
 // automatically.
 const CLOSE_POINTS = 100;
 const SNATCH_PENALTY = -15;
-const DECLINE_PENALTY = -20;
-// Snatch (−15) / decline (−20) penalties are governed at runtime by the MIS
-// "Active Penalty" toggle (Setting `telecalling:penalties_enabled`, default
-// OFF = the historical behaviour: only positive score events are recorded and
-// the leaderboard score ignores penalties). +100 conversion close is ALWAYS
-// credited regardless of the toggle. Temp absent-cover holds are penalty-free
-// even when the toggle is ON (guarded at the call sites).
+// The old −20 decline penalty is RETIRED (founder: too heavy) — only the −15
+// EOD snatch remains. recordDeclinePenalty() is deleted; historical −20 rows
+// stay in the ledger but the score loop below ignores any delta that isn't
+// +100/−15, so they no longer affect any board.
+// The −15 snatch is governed at runtime by the MIS "Active Penalty" toggle
+// (Setting `telecalling:penalties_enabled`, default OFF = the historical
+// behaviour: only positive score events are recorded and the leaderboard
+// score ignores penalties). +100 conversion close is ALWAYS credited
+// regardless of the toggle. Temp absent-cover holds are penalty-free even
+// when the toggle is ON (guarded at the call sites).
 const PENALTIES_SETTING_KEY = 'telecalling:penalties_enabled';
 
 /** Runtime state of the MIS "Active Penalty" toggle. Default: OFF. */
@@ -1078,56 +1081,6 @@ export async function recordConversionClose(estimateId: string): Promise<void> {
  */
 async function recordSnatchPenalty(telecallerId: string, estimateId: string, day: string, reason: string | null): Promise<void> {
   await recordScoreEvent(telecallerId, estimateId, SNATCH_PENALTY, day, reason ?? 'EOD snatch — unsatisfactory remark');
-}
-
-/**
- * Charge -20 per holding to EVERY agent who held an estimate if it is declined
- * after 3+ days (ZOMBIE_DAYS). Called on a status transition to declined. Walks
- * the full EstimateAssignment chain and counts how many times each agent held
- * the estimate (each assignment row = one holding, e.g. snatched away then given
- * back counts twice). An agent who held it 3 times is penalised -20 × 3 = -60.
- * Idempotent: the whole decline penalty is recorded once per estimate — if a -20
- * already exists for this estimate it is never re-charged.
- */
-export async function recordDeclinePenalty(estimateId: string): Promise<void> {
-  try {
-    if (!(await isPenaltiesEnabled())) return;
-    const est = await prisma.estimate.findUnique({
-      where: { estimateId },
-      select: { status: true, date: true },
-    });
-    if (!est || est.status !== 'declined') return;
-    const days = est.date ? Math.max(0, Math.floor((Date.now() - Date.parse(String(est.date))) / 86400000)) : 0;
-    if (days < ZOMBIE_DAYS) return;
-
-    // Idempotency: this estimate's decline penalty is applied once, ever.
-    const alreadyPenalised = await prisma.telecallerScoreEvent.findFirst({
-      where: { estimateId, delta: DECLINE_PENALTY },
-    });
-    if (alreadyPenalised) return;
-
-    const rows = await prisma.estimateAssignment.findMany({
-      where: { estimateId },
-      select: { telecallerId: true, tempForTelecallerId: true },
-      orderBy: { assignedAt: 'asc' },
-    });
-    // Count every holding per agent (each assignment row = one holding).
-    // TEMP-absence covers (tempForTelecallerId set) are never penalised for a
-    // decline — only the +100 close ever applies to a temporary converter.
-    const holdings = new Map<string, number>();
-    for (const r of rows) {
-      if (r.tempForTelecallerId) continue; // absent-cover hold — penalty-free
-      const tid = String(r.telecallerId);
-      holdings.set(tid, (holdings.get(tid) ?? 0) + 1);
-    }
-    for (const [tid, count] of holdings) {
-      for (let i = 0; i < count; i++) {
-        await recordScoreEvent(tid, estimateId, DECLINE_PENALTY, istDate(), `Estimate declined after 3+ days — holding #${i + 1} penalised`);
-      }
-    }
-  } catch (e: any) {
-    logger.warn({ err: e?.message, estimateId }, 'recordDeclinePenalty failed');
-  }
 }
 
 /**
@@ -1395,9 +1348,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     });
     for (const ev of events) {
       const cur = pointsByOwner.get(String(ev.telecallerId)) ?? { closes: 0, snatches: 0, total: 0 };
-      if (ev.delta > 0) cur.closes += 1;
-      else cur.snatches += 1;
-      cur.total += ev.delta;
+      // Only live deltas count: +100 closes and −15 snatches. Retired −20
+      // decline rows still sit in the ledger but are ignored everywhere.
+      if (ev.delta === CLOSE_POINTS) { cur.closes += 1; cur.total += ev.delta; }
+      else if (ev.delta === SNATCH_PENALTY) { cur.snatches += 1; cur.total += ev.delta; }
       pointsByOwner.set(String(ev.telecallerId), cur);
     }
   } catch (e: any) {

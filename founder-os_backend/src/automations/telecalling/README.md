@@ -75,12 +75,9 @@ lifetime of currently-held won estimates), so Today = only today's conversions:
 - **−15** — an estimate is **snatched at EOD** (unsatisfactory remark or 3+ days
   of silence), charged to the **agent who lost it** by `recordSnatchPenalty()`
   in the assignment engine.
-- **−20** — an estimate **declined after 3+ days** (older than `ZOMBIE_DAYS`);
-  charged **−20 per holding** to **every agent who held it** by
-  `recordDeclinePenalty()` in the status-sync route. Each time an agent held the
-  estimate counts once — an agent who held it 3 times (e.g. snatched away, given
-  back, re-snatched) is penalised **−20 × 3 = −60**. The whole penalty is
-  recorded once per estimate (idempotent).
+- **−20 decline — RETIRED** (too heavy). No new decline penalties are recorded,
+  and the score loop ignores historical −20 rows, so old ones no longer affect
+  any board.
 
 Each row stores the **IST day** it happened, so any timeframe (week/month/year)
 sums its own range — the weekly table restarts at zero naturally, and the score

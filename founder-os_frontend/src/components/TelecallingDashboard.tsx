@@ -1193,9 +1193,9 @@ export default function TelecallingDashboard() {
                     <div>
                       <h3 className="text-lg font-bold mb-1">⚖️ Active Penalty</h3>
                       <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xl">
-                        Master switch for the whole roster. OFF (default): no −15 snatch / −20
-                        decline for anyone — only the +100 conversion close counts. ON: penalties
-                        apply, except temp holds covering an absent agent, which are always
+                        Master switch for the whole roster. OFF (default): no −15 snatch
+                        for anyone — only the +100 conversion close counts. ON: the −15
+                        EOD-snatch penalty applies. Temp absent-cover holds are always
                         penalty-free.
                       </p>
                     </div>
@@ -1207,7 +1207,7 @@ export default function TelecallingDashboard() {
                           ? "bg-rose-600 hover:bg-rose-500 text-white"
                           : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-700"
                       }`}
-                      title="Toggles whether snatch/decline penalties are charged to agents"
+                      title="Toggles whether the EOD-snatch penalty is charged to agents"
                     >
                       {penaltyMode === null ? "…" : penaltyMode ? "Active Penalty: ON" : "Active Penalty: OFF"}
                     </button>
