@@ -42,15 +42,24 @@ export interface EffortRow {
   p: string;
   /** NeoDove user id of the dialling agent (`call_initiated_by`). */
   u: string;
-  /** Outgoing attempts that day. */
+  /** EFFECTIVE outgoing attempts that day (redials merged — see below). */
   n: number;
-  /** First→last attempt span, hours. */
+  /** Raw dial count before merging (audit). */
+  raw: number;
+  /** First→last effective attempt span, hours. */
   spanH: number;
-  /** Connected calls that day (any agent — a connect voids neglect). */
+  /** Connected calls that day (any agent — evidence only, never verdict). */
   conn: number;
   firstTs: string;
   lastTs: string;
 }
+
+/**
+ * Redial window: consecutive dials less than this apart are ONE effort, not
+ * N (a 20-second redial is not a fresh attempt). 30 min keeps the genuine
+ * "every ~2 hours" pattern untouched while killing burst gaming.
+ */
+const REDIAL_MERGE_MS = 30 * 60 * 1000;
 
 /** Last-10-digit phone normalization (matches Estimate.contactPhone loosely). */
 export function normPhone10(raw: unknown): string {
@@ -160,13 +169,21 @@ function aggregateDay(day: string, apiRows: any[]): EffortRow[] {
   for (const [key, tsList] of attempts) {
     const [p, u] = key.split('|');
     const sorted = tsList.filter(Boolean).sort();
+    // Merge redials: greedy groups where each dial is ≥30 min after the
+    // previous group's first dial. n = effective attempts (groups).
+    const groups: string[][] = [];
+    for (const ts of sorted) {
+      const last = groups[groups.length - 1];
+      if (last && Date.parse(ts) - Date.parse(last[0]) < REDIAL_MERGE_MS) last.push(ts);
+      else groups.push([ts]);
+    }
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
     const spanH = sorted.length > 1
       ? Math.max(0, (Date.parse(last) - Date.parse(first)) / 3600000)
       : 0;
     out.push({
-      p, u, n: sorted.length,
+      p, u, n: groups.length, raw: sorted.length,
       spanH: Math.round(spanH * 10) / 10,
       conn: connectedPhones.has(p) ? 1 : 0,
       firstTs: first, lastTs: last,

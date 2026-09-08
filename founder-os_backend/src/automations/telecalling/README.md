@@ -82,10 +82,10 @@ lifetime of currently-held won estimates), so Today = only today's conversions:
 ### Effort shield (snatch protection)
 An unsatisfactory (red) remark does NOT automatically cost the agent the
 estimate: the **effort shield** protects it when the holder dialled that lead
-**≥3 outgoing calls with ≥2h first→last spread in the IST day** — whether any
-call connected or not (connects are recorded as evidence but never affect the
-verdict). Counting restarts at zero every IST day; bursts (3 dials in minutes)
-never qualify. Grace lasts **2 consecutive effort days** — day 3 snatches with
+**≥3 EFFECTIVE outgoing calls with ≥2h first→last spread in the IST day** —
+whether any call connected or not. Redials within 30 min merge into one
+attempt (a 20-second redial is not fresh effort), so 2 rapid dials + 1 later
+call = 2 effective = no shield. Counting restarts at zero every IST day. Grace lasts **2 consecutive effort days** — day 3 snatches with
 −15 despite continued attempts. Sources: 15-min `effort-sync` snapshots
 (`Setting telecalling:effort:<date>`, live NeoDove token, all pages) read by
 the engine at snatch time for the CURRENT holder (fail-open: any error →

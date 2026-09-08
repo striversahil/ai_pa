@@ -67,7 +67,7 @@ export function evaluateShield(
   if (!qualifies(a)) {
     return {
       shielded: false, streak: 0, expired: false, status: 'insufficient',
-      reason: `only ${a?.n ?? 0} attempts / ${a?.spanH ?? 0}h span today — needs 3+ calls over 2h+`,
+      reason: `only ${a?.n ?? 0} effective attempts / ${a?.spanH ?? 0}h span today — needs 3+ spread calls over 2h+ (redials within 30 min count once)`,
       evidence,
     };
   }
@@ -80,14 +80,14 @@ export function evaluateShield(
   if (streak >= EFFORT_MAX_SHIELD_DAYS) {
     return {
       shielded: false, streak, expired: true, status: 'expiring',
-      reason: `2-day effort grace exhausted (day 3) — snatches with −15 despite ${a!.n} attempts over ${a!.spanH}h`,
+      reason: `2-day effort grace exhausted (day 3) — snatches with −15 despite ${a!.n} effective attempts over ${a!.spanH}h`,
       evidence,
     };
   }
   return {
     shielded: true, streak, expired: false,
     status: streak >= 1 ? 'shielded-2' : 'shielded-1',
-    reason: `effort shield day ${streak + 1}/2 — ${a!.n} calls over ${a!.spanH}h protect this estimate today`,
+    reason: `effort shield day ${streak + 1}/2 — ${a!.n} effective calls over ${a!.spanH}h protect this estimate today`,
     evidence,
   };
 }
