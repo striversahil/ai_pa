@@ -561,15 +561,27 @@ export default function TelecallingDashboard() {
   }, [loadPenaltyMode]);
   const togglePenaltyMode = async () => {
     setBusy(true);
+    setRosterError(null);
     try {
       const next = !(penaltyMode ?? false);
-      await fetch("/api/telecallers/penalty-mode", {
+      const res = await fetch("/api/telecallers/penalty-mode", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: next }),
       });
-      setPenaltyMode(next);
+      // Never flip the switch optimistically: a failed PUT (401/403/5xx) must
+      // NOT display the new state — that exact lie caused the 2026-09-08
+      // "penalty not working" report (UI said ON, server disagreed).
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Penalty toggle failed (${res.status})`);
+      }
+      const body = await res.json().catch(() => ({}));
+      if (body && body.ok === false) throw new Error(body?.error || "Penalty toggle failed");
+      setPenaltyMode(body?.enabled ?? next);
       refreshAll();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Penalty toggle failed");
     } finally {
       setBusy(false);
     }
@@ -814,7 +826,7 @@ export default function TelecallingDashboard() {
                             <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+100</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms). Credited to whoever is holding it at that moment.</li>
                             <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
                             <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5{penaltyMode ? <span> · <span className="text-rose-500">snatch −15</span> (Active Penalty ON — charged when an estimate is snatched for neglect)</span> : <span> (snatch −15 applies only while Active Penalty is ON, and only to future snatches)</span>}. The table restarts at zero every week so everyone gets a fair shot.</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5{penaltyMode ? <span> · <span className="text-rose-500">snatch −15</span> (Active Penalty ON — unsatisfied/red estimates are re-poached at the sweep and the loser is charged)</span> : <span> (snatch −15 applies only while Active Penalty is ON, and only to future snatches)</span>} · <span className="text-emerald-500">🛡 shield</span> (3+ effective calls over 2h+ on the lead protects a red estimate for the day — redials within 30 min count once; grace lasts 2 days, day 3 snatches). The table restarts at zero every week so everyone gets a fair shot.</li>
                           </ul>
                         </div>
                       </div>
