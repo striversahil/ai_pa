@@ -7,6 +7,7 @@
 import type { Hono } from 'hono';
 import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, type Bindings } from '../context';
 import { bulkAssignEstimates } from '../../automations/telecalling/service';
+import { syncEffortSnapshots } from '../../automations/telecalling/effort-sync';
 
 export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── whatsapp-digest runner ───────────────────────────────────────────────────
@@ -449,5 +450,18 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const result = await bulkAssignEstimates(moves, { followUpAgents, reason: body.reason });
     if (result.moved.length > 0 || result.flagsUpdated.length > 0) notifyLive(c, { type: 'telecalling' });
     return c.json({ ok: result.errors.length === 0, movedCount: result.moved.length, ...result });
+  });
+
+  // ── telecalling effort-sync (every-15min GH runner) ──────────────────────────
+  // Pulls ALL pages of the NeoDove lead-call-log for today + 2 prior IST days
+  // (worker-side fetch — GH egress is blocked by NeoDove) and persists per-day
+  // snapshots to Setting `telecalling:effort:<YYYY-MM-DD>`. The 30-min
+  // assignment engine reads these for the snatch shield; the MIS Shield tab
+  // reads them for audit. Fail-open: ok:false leaves the engine unshielded.
+  app.post('/api/runner/telecalling/effort-sync', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const result = await syncEffortSnapshots();
+    if (result.ok) notifyLive(c, { type: 'telecalling' });
+    return c.json(result);
   });
 }

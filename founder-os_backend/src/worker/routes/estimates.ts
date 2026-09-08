@@ -13,6 +13,8 @@ import {
   bulkAssignEstimates,
   invalidateRiskCache,
 } from '../../automations/telecalling/service';
+import { evaluateShield } from '../../automations/telecalling/effort-shield';
+import { normPhone10, readEffortSnapshot, EFFORT_AUTH_KEY, type EffortRow } from '../../automations/telecalling/effort-sync';
 
 export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Estimates ───────────────────────────────────────────────────────────────
@@ -119,6 +121,52 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     await setPenaltiesEnabled(body.enabled);
     notifyLive(c, { type: 'telecalling' });
     return c.json({ ok: true, enabled: body.enabled });
+  });
+
+  // ── Effort-shield audit (MIS) ───────────────────────────────────────────────
+  // Per-sent-estimate shield verdicts from the 15-min effort snapshots, for the
+  // Shield tab: attempts/span/connected today, streak, and status —
+  // shielded-1 | shielded-2 | expiring (streak 2, snatches tomorrow) |
+  // connected | insufficient | no-phone. 401-gated like the rest of MIS.
+  app.get('/api/telecalling/shields', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    const { prisma } = deps();
+    const dayMinus = (n: number) => kolkataDateStr(new Date(Date.now() - n * 86400000));
+    const [s0, s1, s2] = await Promise.all([
+      readEffortSnapshot(dayMinus(0)), readEffortSnapshot(dayMinus(1)), readEffortSnapshot(dayMinus(2)),
+    ]);
+    let auth: any = null;
+    try {
+      const row: any = await (prisma as any).setting.findUnique({ where: { key: EFFORT_AUTH_KEY } });
+      auth = row?.value ? JSON.parse(String(row.value)) : null;
+    } catch { /* non-fatal */ }
+    const [ests, tcs] = await Promise.all([
+      (prisma as any).estimate.findMany({
+        where: { status: 'sent' },
+        select: { estimateId: true, estimateNumber: true, customerName: true, contactPhone: true, assignedTelecallerId: true },
+      }),
+      (prisma as any).telecaller.findMany({ select: { id: true, name: true, neodoveUserId: true } }),
+    ]);
+    const nameById = new Map<string, { name: string; neoId: string }>();
+    for (const t of tcs) nameById.set(String(t.id), { name: String(t.name ?? ''), neoId: String(t.neodoveUserId ?? '') });
+    const rows: Array<Record<string, unknown>> = [];
+    for (const e of ests) {
+      const holder = nameById.get(String(e.assignedTelecallerId ?? ''));
+      const phone10 = normPhone10((e as any).contactPhone);
+      const verdict = evaluateShield(phone10, holder?.neoId ?? '', [s0, s1, s2]);
+      const status = verdict.shielded ? (verdict.streak >= 1 ? 'shielded-2' : 'shielded-1')
+        : verdict.expired ? 'expiring'
+        : (verdict.evidence?.conn ? 'connected' : (!phone10 || !holder?.neoId ? 'no-phone' : 'insufficient'));
+      rows.push({
+        estimateId: e.estimateId, estimateNumber: e.estimateNumber, customerName: e.customerName,
+        phone10, holderName: holder?.name ?? 'Unassigned',
+        n: verdict.evidence?.n ?? 0, spanH: verdict.evidence?.spanH ?? 0,
+        conn: verdict.evidence?.conn ?? 0, streak: verdict.streak,
+        status, reason: verdict.reason,
+      });
+    }
+    rows.sort((a, b) => (String(a.status) < String(b.status) ? -1 : String(a.status) > String(b.status) ? 1 : Number(b.n) - Number(a.n)));
+    return c.json({ day: dayMinus(0), snapshots: [!!s0, !!s1, !!s2], auth, rows });
   });
 
   app.put('/api/telecallers/:id', async (c) => {

@@ -43,6 +43,8 @@ const tests = [
   ['GET /api/estimates/baseline', '/api/estimates/baseline'],
   ['POST /api/runner/estimates/baseline no-auth', '/api/runner/estimates/baseline', { method: 'POST', headers: { Authorization: 'Bearer wrong' } }],
   ['POST /api/runner/estimates/baseline auth', '/api/runner/estimates/baseline', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['POST /api/runner/telecalling/effort-sync no-auth', '/api/runner/telecalling/effort-sync', { method: 'POST', headers: { Authorization: 'Bearer wrong' } }],
+  ['POST /api/runner/telecalling/effort-sync auth', '/api/runner/telecalling/effort-sync', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
   ['GET /nope', '/nope'],
 ];
 

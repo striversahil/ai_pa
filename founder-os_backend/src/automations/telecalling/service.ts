@@ -20,6 +20,8 @@ import type { AutomationContext } from '../../modules/automation/types';
 import { getNeodoveAgentMap, getAllNeodoveAgents, getLatestNeodoveDay, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from '../neodove-telecaller-report';
 import { isSystemGeneratedComment } from '../../shared/systemComment';
 import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
+import { evaluateShield } from './effort-shield';
+import { normPhone10, readEffortSnapshot, type EffortRow } from './effort-sync';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -435,9 +437,9 @@ export async function rotateEstimatesRoundRobin(): Promise<{ assigned: number }>
  * load penalty keeps anyone from being buried. This maximises expected closed
  * value without resetting live customer relationships every morning.
  */
-export async function assignEstimatesForMaxConversion(): Promise<{ assigned: number; reassigned: number }> {
+export async function assignEstimatesForMaxConversion(): Promise<{ assigned: number; reassigned: number; shielded: number }> {
   const telecallers = await getFollowUpSpecialists();
-  if (telecallers.length === 0) return { assigned: 0, reassigned: 0 };
+  if (telecallers.length === 0) return { assigned: 0, reassigned: 0, shielded: 0 };
   // Runtime "Active Penalty" toggle (MIS) — read once per engine run.
   const penaltiesEnabled = await isPenaltiesEnabled();
   // All non-deleted, PRESENT telecallers, for creator inference — a lead-gen
@@ -449,7 +451,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
     where: { status: 'sent', skipAssignment: false },
     include: { classification: true },
   });
-  if (sent.length === 0) return { assigned: 0, reassigned: 0 };
+  if (sent.length === 0) return { assigned: 0, reassigned: 0, shielded: 0 };
 
   // Live risk for every open estimate (served from the 5-min risk cache).
   let riskItems: CachedRiskItem[] = [];
@@ -506,8 +508,30 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
 
   let assigned = 0;
   let reassigned = 0;
+  let shielded = 0;
   const { conversionWeight, loadWeight } = ASSIGN_TUNING;
   const today = istDate();
+  // Effort-shield snapshots (today + 2 prior IST days) — loaded LAZILY, only
+  // when the first snatch candidate appears, so quiet runs cost zero API/DB
+  // reads beyond these three indexed Setting rows. Null = no evidence.
+  let effortSnaps: [EffortRow[] | null, EffortRow[] | null, EffortRow[] | null] | null = null;
+  async function getEffortSnaps(): Promise<[EffortRow[] | null, EffortRow[] | null, EffortRow[] | null]> {
+    if (!effortSnaps) {
+      const dayMinus = (n: number) => istDate(new Date(Date.now() - n * 86400000));
+      try {
+        effortSnaps = [
+          await readEffortSnapshot(dayMinus(0)),
+          await readEffortSnapshot(dayMinus(1)),
+          await readEffortSnapshot(dayMinus(2)),
+        ];
+      } catch (e: any) {
+        // Fail-open: snapshot unreadable → run unshielded, exactly as before.
+        logger.warn({ err: e?.message }, 'assign: effort snapshots unreadable — running unshielded');
+        effortSnaps = [null, null, null];
+      }
+    }
+    return effortSnaps;
+  }
   for (const est of candidates) {
     const wasAssigned = !!est.assignedTelecallerId;
     const risk = riskByEstimate.get(est.estimateId) ?? 'pending';
@@ -549,6 +573,35 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       }
     }
     if (!bestId) continue;
+    // Effort shield: a red/zombie estimate about to be re-poached STAYS with
+    // its holder (no snatch, no −15) when the holder earned it today — ≥3
+    // outgoing calls on the lead, span ≥2h, 0 connected — and the 2-day grace
+    // isn't exhausted. Evaluated for the CURRENT holder at snatch time, from
+    // the 15-min snapshots (fail-open: any error → snatch as before).
+    if (wasAssigned && !locked && est.assignedTelecallerId && bestId !== String(est.assignedTelecallerId)) {
+      try {
+        const holder = (allTelecallers as any[]).find((t) => String(t.id) === String(est.assignedTelecallerId));
+        const holderNeoId = String(holder?.neodoveUserId ?? '');
+        const phone10 = normPhone10((est as any).contactPhone);
+        const verdict = evaluateShield(phone10, holderNeoId, await getEffortSnaps());
+        if (verdict.shielded) {
+          shielded += 1;
+          logger.info(
+            { estimateId: est.estimateId, holder: est.assignedTelecallerId, streak: verdict.streak, evidence: verdict.evidence },
+            `effort-shield: ${verdict.reason} — staying put`,
+          );
+          continue;
+        }
+        if (verdict.expired) {
+          logger.info(
+            { estimateId: est.estimateId, holder: est.assignedTelecallerId, streak: verdict.streak, evidence: verdict.evidence },
+            `effort-shield: ${verdict.reason}`,
+          );
+        }
+      } catch (e: any) {
+        logger.warn({ err: e?.message, estimateId: est.estimateId }, 'effort-shield check failed — snatching as before');
+      }
+    }
     // Absent-cover awareness: read the CURRENT open ledger row (recordAssignment
     // resolves it below). If the estimate is a temp cover for an absent agent,
     // the losing temp holder is NEVER charged the snatch penalty, and the new
@@ -588,7 +641,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
   }
 
   logger.info(
-    { assigned, reassigned, candidates: candidates.length, telecallers: telecallers.length },
+    { assigned, reassigned, shielded, candidates: candidates.length, telecallers: telecallers.length },
     'Stability-first conversion-maximising assignment complete',
   );
   // Assignments changed the open-pipeline ownership — invalidate the risk cache
@@ -596,7 +649,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
   if (assigned > 0 || reassigned > 0) {
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
   }
-  return { assigned, reassigned };
+  return { assigned, reassigned, shielded };
 }
 
 /**

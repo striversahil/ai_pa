@@ -30,3 +30,13 @@ jobs:
           NEODOVE_AGENT_NAMES: Muskan
           ZOHO_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
         run: node scripts/zoho-sent-runner.js
+
+  telecalling-effort-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: effort-sync (NeoDove call-log snapshots for snatch shield)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: node scripts/effort-sync-runner.js
