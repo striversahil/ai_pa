@@ -763,6 +763,9 @@ export default function TelecallingDashboard() {
               )}
 
               {/* Leaderboard */}
+              {Boolean(dash.error) && !dash.loading && (
+                <QueryErrorBanner message={String((dash.error as any)?.message ?? dash.error)} onRetry={() => dash.refresh()} />
+              )}
               <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div>
@@ -1145,6 +1148,9 @@ export default function TelecallingDashboard() {
                       </svg>
                     </div>
                   )}
+                  {Boolean(convDash.error) && !convDash.loading && (
+                    <QueryErrorBanner message={String((convDash.error as any)?.message ?? convDash.error)} onRetry={() => convDash.refresh()} />
+                  )}
                   {convActiveBoard.length === 0 && <p className="text-sm text-zinc-500">No active telecallers.</p>}
                   {convActiveBoard.map((t) => (
                     <button
@@ -1257,7 +1263,7 @@ export default function TelecallingDashboard() {
                   refreshAll={refreshAll}
                   setRosterError={setRosterError}
                 />
-                <ShieldSection shields={shields.data ?? null} />
+                <ShieldSection shields={shields.data ?? null} error={shields.error} />
                 <ExportDataSection rosterRows={rosterRows} />
                 <RosterSection
                   rosterRows={rosterRows}
@@ -1650,13 +1656,42 @@ function EstimateOverridesSection({
 }
 
 /**
+ * Query error banner with retry — pairs with the useLiveQuery fetch timeout so
+ * a stalled/slow backend surfaces as an actionable error instead of an
+ * eternal spinner (the endless-loader incident, 2026-09-08).
+ */
+function QueryErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2.5">
+      <span className="text-xs font-semibold text-rose-600 dark:text-rose-300">⚠ Couldn’t load live data — {message}</span>
+      <button
+        onClick={onRetry}
+        className="text-xs font-bold rounded-lg px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white transition-colors"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
+/**
  * MIS-only effort-shield audit: per-sent-estimate shield verdicts from the
  * 15-min NeoDove call-log snapshots. Shows WHY an estimate stays or snatches —
  * attempts today, spread, connects, streak — so effort is trackable per lead.
  */
-function ShieldSection({ shields }: { shields: ShieldData | null }) {
+function ShieldSection({ shields, error }: { shields: ShieldData | null; error?: unknown }) {
   const [filter, setFilter] = useState<"all" | ShieldRow["status"]>("all");
-  if (!shields) return null;
+  if (!shields) {
+    // Never vanish silently: a failed shields fetch means MIS scope or sync
+    // trouble — say so instead of hiding the tab (2026-09-08 lesson).
+    if (!error) return null;
+    return (
+      <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+        <h3 className="text-lg font-bold mb-1">🛡 Effort Shield</h3>
+        <QueryErrorBanner message={String((error as any)?.message ?? error)} onRetry={() => window.location.reload()} />
+      </section>
+    );
+  }
   const counts = new Map<string, number>();
   for (const r of shields.rows) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
   const visible = shields.rows.filter((r) => filter === "all" || r.status === filter).slice(0, 60);

@@ -99,6 +99,9 @@ async function fetchDayRows(token: string, day: string): Promise<any[]> {
   for (let page = 0; page < MAX_PAGES_PER_DAY; page++) {
     const res = await fetch(`${NEODOVE_API}/lead-call-log/fetch-lead-call-log-details?application_type=PORTAL`, {
       method: 'POST',
+      // Bound every page fetch — a stalled socket fails the sync (fail-open:
+      // engine runs unshielded) instead of holding the runner endpoint.
+      signal: AbortSignal.timeout(30000),
       headers: {
         Accept: 'application/json, text/plain, */*',
         'Content-Type': 'application/json',

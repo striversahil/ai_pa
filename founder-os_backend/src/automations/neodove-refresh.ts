@@ -117,8 +117,10 @@ async function fetchLeadsGenerated(token: string, dateStr: string, userIds: stri
       };
       const res = await fetch(`${NEODOVE_API}/lead/get-leads?application_type=PORTAL`, {
         method: 'POST',
-        headers: {
-          Accept: 'application/json, text/plain, */*',
+        // Bound every upstream wait — a stalled NeoDove socket must fail the
+        // sync loudly, never hold a worker invocation (or a cache compute).
+        signal: AbortSignal.timeout(30000),
+        headers: {          Accept: 'application/json, text/plain, */*',
           'Content-Type': 'application/json',
           Referer: `https://connect.neodove.com/leads/${NEODOVE_PIPELINE_ID}`,
           loaderDivId: 'LEAD_SUMMARY_PAGE_LOADER',
@@ -234,6 +236,7 @@ export async function refreshNeodoveReport(dateStr?: string): Promise<{
     application_type: 'PORTAL',
   });
   const res = await fetch(`${NEODOVE_API}/report/call-log-report?${params}`, {
+    signal: AbortSignal.timeout(30000),
     headers: {
       Accept: 'application/json, text/plain, */*',
       Referer: 'https://connect.neodove.com/reports/user-report',

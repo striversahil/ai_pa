@@ -15,6 +15,12 @@ export type LiveEvent = { type: string; [key: string]: unknown };
 
 const PING_MS = 60_000;
 const REFRESH_DEBOUNCE_MS = 1500;
+/**
+ * No fetch may spin forever: any query still unsettled after this long is
+ * failed as a timeout (error state + retry) instead of an eternal spinner.
+ * 30s covers even cold-cache computes (~5s observed) with wide margin.
+ */
+const FETCH_TIMEOUT_MS = 30_000;
 
 // ── Module-level singleton: one socket + one event bus for the whole app ──
 const bus = new EventTarget();
@@ -72,6 +78,8 @@ export interface UseLiveQueryOptions {
    * the stale view on screen (prevents misreading old numbers as current).
    */
   clearOnError?: boolean;
+  /** Per-query timeout override in ms (default 30s — never spin forever). */
+  timeoutMs?: number;
 }
 
 export interface LiveQueryResult<T> {
@@ -85,7 +93,7 @@ export function useLiveQuery<T>(
   fetcher: () => Promise<T>,
   options: UseLiveQueryOptions = {},
 ): LiveQueryResult<T> {
-  const { events, deps = [], pollMs, clearOnError } = options;
+  const { events, deps = [], pollMs, clearOnError, timeoutMs = FETCH_TIMEOUT_MS } = options;
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -98,16 +106,24 @@ export function useLiveQuery<T>(
   clearOnErrorRef.current = clearOnError;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const timeoutMsRef = useRef(timeoutMs);
+  timeoutMsRef.current = timeoutMs;
+
   const refresh = useCallback(() => {
     setLoading(true);
-    fetcherRef
-      .current()
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`Request timed out after ${timeoutMsRef.current / 1000}s — retrying`)), timeoutMsRef.current);
+    });
+    // Race the fetch against the timeout: a stalled connection can NEVER hold
+    // the spinner forever — it becomes an error with data kept + retry below.
+    Promise.race([fetcherRef.current(), timeout])
       .then((d) => { setData(d); setError(null); })
       .catch((e) => {
         setError(e);
         if (clearOnErrorRef.current) setData(null);
       })
-      .finally(() => { setLoading(false); });
+      .finally(() => { if (timer) clearTimeout(timer); setLoading(false); });
   }, []);
 
   // Initial load + reload when deps change.
