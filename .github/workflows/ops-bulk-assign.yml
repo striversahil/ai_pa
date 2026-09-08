@@ -1,0 +1,27 @@
+name: Ops - Bulk Assign Mapping
+
+on:
+  # One-shot MIS enforcement of agent_assigned_mapping.json. Dispatched
+  # manually (Actions tab -> Run workflow) or via the API. NOT on any cron.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the move list without changing anything"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ops-bulk-assign
+  cancel-in-progress: false
+
+jobs:
+  bulk-assign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: enforce agent_assigned_mapping.json
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+        run: node scripts/bulk-assign-runner.js
