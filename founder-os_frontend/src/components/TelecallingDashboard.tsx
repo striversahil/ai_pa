@@ -1061,6 +1061,13 @@ export default function TelecallingDashboard() {
                             <div className="flex justify-end gap-1">
                               <StaleChip compact staleHours={r.staleHours} />
                               <SnatchChip compact risk={r.risk} snatchInHours={r.snatchInHours} />
+                              <ShieldChip
+                                compact
+                                shield={(() => {
+                                  const s = (dash.data?.shielded ?? []).find((x) => x.estimateId === r.estimateId);
+                                  return s ? { status: s.status, reason: s.reason, n: s.n, spanH: s.spanH, streak: s.streak } : null;
+                                })()}
+                              />
                             </div>
                           </div>
                         </div>
@@ -1094,29 +1101,9 @@ export default function TelecallingDashboard() {
               </div>
 
               {/* Team-wide effort shields — earned red/zombie holdings the engine
-                  will NOT snatch today (3+ spread calls). Agents see their own;
-                  MIS/root see the team. */}
-              {(convDash.data?.shielded ?? []).length > 0 && (
-                <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
-                  <div className="text-xs font-bold text-emerald-600 dark:text-emerald-300 mb-1.5">
-                    🛡 Protected by effort today ({convDash.data!.shielded!.filter((s) => s.status !== "expiring").length} shielded
-                    {convDash.data!.shielded!.some((s) => s.status === "expiring") &&
-                      ` · ${convDash.data!.shielded!.filter((s) => s.status === "expiring").length} grace over`}
-                    )
-                  </div>
-                  <div className="space-y-1">
-                    {convDash.data!.shielded!.map((s) => (
-                      <div key={s.estimateId} title={s.reason} className="flex flex-wrap items-center gap-x-2 text-xs">
-                        <span className={`font-bold ${s.status === "expiring" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                          {s.status === "expiring" ? "⏳" : "🛡"} {s.estimateNumber}
-                        </span>
-                        <span className="text-zinc-600 dark:text-zinc-300 truncate max-w-[260px]">{s.customerName}</span>
-                        <span className="text-zinc-500 dark:text-zinc-400">· {s.holderName} · {s.n} calls{ s.status === "expiring" ? " — snatches" : ` · day ${(s.streak ?? 0) + 1}/2`}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  will NOT snatch today (3+ spread calls). Shown as a 🛡 chip on
+                  the estimate rows below (joined from the payload's shielded
+                  list), next to the other chips. */}
 
               {/* Horizontal agent tabs — hidden for scoped (self-only) agents */}
               {!selfAgentId && (
