@@ -50,6 +50,27 @@ interface RiskRow {
   snatchInHours?: number | null;
 }
 
+interface ShieldRow {
+  estimateId: string;
+  estimateNumber: string | null;
+  customerName: string | null;
+  phone10: string;
+  holderName: string;
+  n: number;
+  spanH: number;
+  conn: number;
+  streak: number;
+  status: "shielded-1" | "shielded-2" | "expiring" | "connected" | "insufficient" | "no-phone";
+  reason: string;
+}
+
+interface ShieldData {
+  day: string;
+  snapshots: boolean[];
+  auth: { ok: boolean; at: string; error?: string } | null;
+  rows: ShieldRow[];
+}
+
 interface DashData {
   meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null };
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
@@ -377,6 +398,18 @@ export default function TelecallingDashboard() {
     { events: ["telecalling", "automation"] },
   );
 
+  // Effort-shield audit (MIS) — per-sent-estimate shield verdicts from the
+  // 15-min NeoDove call-log snapshots. Refreshed live with everything else.
+  const shields = useLiveQuery<ShieldData>(
+    async () => {
+      if (!canManageRoster) return { day: "", snapshots: [], auth: null, rows: [] };
+      const res = await fetch("/api/telecalling/shields");
+      if (!res.ok) throw new Error("shield load failed");
+      return res.json();
+    },
+    { events: ["telecalling", "automation"] },
+  );
+
   const [editTarget, setEditTarget] = useState<RosterRow | null>(null);
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -432,7 +465,8 @@ export default function TelecallingDashboard() {
     convDash.refresh();
     agentViews.refresh();
     roster.refresh();
-  }, [dash, convDash, agentViews, roster]);
+    shields.refresh();
+  }, [dash, convDash, agentViews, roster, shields]);
 
   // ── Deleted agents (MIS Controller) ──────────────────────────────────────
   const [showDeleted, setShowDeleted] = useState(false);
@@ -1223,6 +1257,7 @@ export default function TelecallingDashboard() {
                   refreshAll={refreshAll}
                   setRosterError={setRosterError}
                 />
+                <ShieldSection shields={shields.data ?? null} />
                 <ExportDataSection rosterRows={rosterRows} />
                 <RosterSection
                   rosterRows={rosterRows}
@@ -1608,6 +1643,103 @@ function EstimateOverridesSection({
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * MIS-only effort-shield audit: per-sent-estimate shield verdicts from the
+ * 15-min NeoDove call-log snapshots. Shows WHY an estimate stays or snatches —
+ * attempts today, spread, connects, streak — so effort is trackable per lead.
+ */
+function ShieldSection({ shields }: { shields: ShieldData | null }) {
+  const [filter, setFilter] = useState<"all" | ShieldRow["status"]>("all");
+  if (!shields) return null;
+  const counts = new Map<string, number>();
+  for (const r of shields.rows) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+  const visible = shields.rows.filter((r) => filter === "all" || r.status === filter).slice(0, 60);
+  const chip: Record<ShieldRow["status"], string> = {
+    "shielded-1": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+    "shielded-2": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+    expiring: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
+    connected: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30",
+    insufficient: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border-zinc-500/30",
+    "no-phone": "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border-zinc-500/30",
+  };
+  const label: Record<ShieldRow["status"], string> = {
+    "shielded-1": "🛡 Shield day 1/2",
+    "shielded-2": "🛡 Shield day 2/2",
+    expiring: "⏳ Grace over — snatches",
+    connected: "📞 Connected",
+    insufficient: "No shield",
+    "no-phone": "No phone",
+  };
+  return (
+    <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+        <h3 className="text-lg font-bold">🛡 Effort Shield</h3>
+        <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
+          {shields.day} · snapshots {shields.snapshots.map((s) => (s ? "●" : "○")).join(" ")}
+          {shields.auth && !shields.auth.ok && <span className="text-rose-500 font-bold"> · SYNC AUTH FAIL</span>}
+        </span>
+      </div>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-2xl">
+        ≥3 outgoing calls + ≥2h spread + 0 connected today = no snatch that day, even on a
+        “not answering” remark. Grace lasts 2 days — day 3 snatches with −15. Counting
+        restarts at zero every IST day.
+      </p>
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {(["all", "shielded-1", "shielded-2", "expiring", "connected", "insufficient", "no-phone"] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`text-[11px] font-semibold rounded-full px-2.5 py-1 border transition-colors ${
+              filter === f
+                ? "bg-indigo-600 text-white border-indigo-600"
+                : "border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+            }`}
+          >
+            {f === "all" ? `All (${shields.rows.length})` : `${label[f]} (${counts.get(f) ?? 0})`}
+          </button>
+        ))}
+      </div>
+      {visible.length === 0 ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">Nothing in this bucket.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+                <th className="py-1.5 pr-2 font-semibold">Estimate</th>
+                <th className="py-1.5 pr-2 font-semibold">Holder</th>
+                <th className="py-1.5 pr-2 font-semibold text-right">Tries</th>
+                <th className="py-1.5 pr-2 font-semibold text-right">Span</th>
+                <th className="py-1.5 pr-2 font-semibold text-right">Conn</th>
+                <th className="py-1.5 pr-2 font-semibold text-right">Streak</th>
+                <th className="py-1.5 pr-2 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.estimateId} title={r.reason} className="border-b border-zinc-100 dark:border-zinc-800/60">
+                  <td className="py-1.5 pr-2">
+                    <div className="font-semibold text-zinc-900 dark:text-white">{r.estimateNumber ?? r.estimateId.slice(-6)}</div>
+                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate max-w-[220px]">{r.customerName} · {r.phone10}</div>
+                  </td>
+                  <td className="py-1.5 pr-2">{r.holderName}</td>
+                  <td className="py-1.5 pr-2 text-right font-mono">{r.n}</td>
+                  <td className="py-1.5 pr-2 text-right font-mono">{r.spanH}h</td>
+                  <td className="py-1.5 pr-2 text-right font-mono">{r.conn}</td>
+                  <td className="py-1.5 pr-2 text-right font-mono">{r.streak}d</td>
+                  <td className="py-1.5 pr-2">
+                    <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 border whitespace-nowrap ${chip[r.status]}`}>{label[r.status]}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
