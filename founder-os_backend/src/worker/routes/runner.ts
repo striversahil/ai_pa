@@ -161,6 +161,12 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (typeof body?.date !== 'string' || typeof body?.count !== 'number') {
       return c.json({ error: 'date (YYYY-MM-DD) and count (number) required' }, 400);
     }
+    const orders = Array.isArray(body.orders)
+      ? body.orders.slice(0, 50).map((o: any) => ({
+          so: String(o?.so ?? ''), ref: String(o?.ref ?? ''), customer: String(o?.customer ?? ''),
+          total: Number(o?.total) || 0, status: String(o?.status ?? ''), time: String(o?.time ?? ''),
+        }))
+      : [];
     const { cacheSet }: { cacheSet: <T>(key: string, value: T, ttlMs: number) => Promise<void> } = require('../../shared/cache');
     await cacheSet(
       'zoho:salesorders_today',
@@ -169,6 +175,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
         count: body.count,
         totalValue: Number(body.totalValue) || 0,
         statuses: body.statuses || {},
+        orders,
       },
       45 * 60 * 1000,
     );

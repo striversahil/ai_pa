@@ -39,6 +39,7 @@ export async function data() {
     activeSalesOrdersToday: salesOrdersToday.count,
     salesOrdersTodayValue: salesOrdersToday.totalValue,
     salesOrdersTodayStatuses: salesOrdersToday.statuses,
+    salesOrdersTodayOrders: salesOrdersToday.orders,
     declinedEstimates: declined,
     totalSentValue: totalValue,
     // Only the last fully-completed processing pass counts as "last synced" —

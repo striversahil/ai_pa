@@ -39,6 +39,7 @@ export default function ZohoEstimates() {
   // Live Zoho Books sales orders created today (from the zoho-sent-analyzer data endpoint).
   const [salesOrdersToday, setSalesOrdersToday] = useState<number | null>(null);
   const [salesOrdersTodayValue, setSalesOrdersTodayValue] = useState<number | null>(null);
+  const [salesOrdersTodayOrders, setSalesOrdersTodayOrders] = useState<any[] | null>(null);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -70,6 +71,7 @@ export default function ZohoEstimates() {
       const data = await res.json();
       setSalesOrdersToday(data.activeSalesOrdersToday ?? 0);
       setSalesOrdersTodayValue(data.salesOrdersTodayValue ?? 0);
+      setSalesOrdersTodayOrders(Array.isArray(data.salesOrdersTodayOrders) ? data.salesOrdersTodayOrders : []);
     } catch (e) {
       console.error("Error loading sales orders today:", e);
     }
@@ -681,6 +683,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
           pending={movement.pending}
           salesOrdersToday={salesOrdersToday}
           salesOrdersTodayValue={salesOrdersTodayValue}
+          salesOrdersTodayOrders={salesOrdersTodayOrders}
         />
       )}
 

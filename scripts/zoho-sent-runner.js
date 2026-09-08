@@ -571,6 +571,7 @@ async function syncSalesOrdersToday() {
   try {
     const today = istDateString(new Date());
     const statuses = {};
+    const orders = [];
     let count = 0;
     let totalValue = 0;
 
@@ -585,6 +586,16 @@ async function syncSalesOrdersToday() {
         if (istDateString(new Date(so.created_time)) === today) {
           count++;
           totalValue += parseFloat(so.total) || 0;
+          if (orders.length < 50) {
+            orders.push({
+              so: so.salesorder_number || '',
+              ref: so.reference_number || '',           // linked estimate (EST-xxxxx)
+              customer: so.customer_name || '',
+              total: parseFloat(so.total) || 0,
+              status: st,
+              time: so.created_time_formatted || so.created_time || '',
+            });
+          }
         }
       }
       if (salesorders.length < 200) break;
@@ -595,7 +606,7 @@ async function syncSalesOrdersToday() {
     totalValue = Math.round(totalValue * 100) / 100;
     await workerRequest('/api/runner/zoho/salesorders-today', {
       method: 'POST',
-      body: { date: today, count, totalValue, statuses },
+      body: { date: today, count, totalValue, statuses, orders },
     });
     console.log(`zoho-sent-runner: sales orders today (${today}): ${count} (₹${totalValue.toLocaleString()})`);
     return true;

@@ -141,15 +141,15 @@ export class SalesCopilotService implements AnalysisEngine {
     return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
   }
 
-  public async getActiveSalesOrdersToday(): Promise<{ count: number; totalValue: number; statuses: Record<string, number> }> {
-    const payload = await cacheGet<{ date: string; count: number; totalValue: number; statuses: Record<string, number> }>(
+  public async getActiveSalesOrdersToday(): Promise<{ count: number; totalValue: number; statuses: Record<string, number>; orders: any[] }> {
+    const payload = await cacheGet<{ date: string; count: number; totalValue: number; statuses: Record<string, number>; orders: any[] }>(
       SalesCopilotService.SO_CACHE_KEY,
       SalesCopilotService.SO_TTL_MS,
     );
     if (payload && payload.date === this.istDateString(new Date()) && typeof payload.count === 'number') {
-      return { count: payload.count, totalValue: payload.totalValue || 0, statuses: payload.statuses || {} };
+      return { count: payload.count, totalValue: payload.totalValue || 0, statuses: payload.statuses || {}, orders: Array.isArray(payload.orders) ? payload.orders : [] };
     }
-    return { count: 0, totalValue: 0, statuses: {} };
+    return { count: 0, totalValue: 0, statuses: {}, orders: [] };
   }
 
   /**
