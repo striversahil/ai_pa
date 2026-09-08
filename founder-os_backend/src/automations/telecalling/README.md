@@ -79,6 +79,19 @@ lifetime of currently-held won estimates), so Today = only today's conversions:
   and the score loop ignores historical −20 rows, so old ones no longer affect
   any board.
 
+### Effort shield (snatch protection)
+An unsatisfactory (red) remark does NOT automatically cost the agent the
+estimate: the **effort shield** protects it when the holder dialled that lead
+**≥3 outgoing calls with ≥2h first→last spread in the IST day** — whether any
+call connected or not (connects are recorded as evidence but never affect the
+verdict). Counting restarts at zero every IST day; bursts (3 dials in minutes)
+never qualify. Grace lasts **2 consecutive effort days** — day 3 snatches with
+−15 despite continued attempts. Sources: 15-min `effort-sync` snapshots
+(`Setting telecalling:effort:<date>`, live NeoDove token, all pages) read by
+the engine at snatch time for the CURRENT holder (fail-open: any error →
+snatch as before). Agents see their 🛡 chip inline on the shielded follow-up
+row; MIS keeps the per-estimate audit at `GET /api/telecalling/shields`.
+
 Each row stores the **IST day** it happened, so any timeframe (week/month/year)
 sums its own range — the weekly table restarts at zero naturally, and the score
 is fully auditable per event.

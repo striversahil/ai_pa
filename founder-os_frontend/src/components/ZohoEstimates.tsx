@@ -50,20 +50,6 @@ export default function ZohoEstimates() {
     return new Date(lastCompleteSyncAt).toLocaleString();
   }, [lastCompleteSyncAt]);
 
-  const fetchEstimates = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch("/api/estimates");
-      const data = await res.json();
-      setEstimates(data.estimates ?? []);
-      setLastCompleteSyncAt(data.lastCompleteSyncAt ?? null);
-    } catch (e) {
-      console.error("Error loading Zoho estimates:", e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   // Sales orders data now rides on /api/estimates (the automation data() route
   // is not registered on the Worker — it 404s — so /api/estimates is the single
   // reliable source for the "Sales Orders Today" KPI + feed).

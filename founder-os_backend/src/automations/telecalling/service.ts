@@ -575,9 +575,9 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
     if (!bestId) continue;
     // Effort shield: a red/zombie estimate about to be re-poached STAYS with
     // its holder (no snatch, no −15) when the holder earned it today — ≥3
-    // outgoing calls on the lead, span ≥2h, 0 connected — and the 2-day grace
-    // isn't exhausted. Evaluated for the CURRENT holder at snatch time, from
-    // the 15-min snapshots (fail-open: any error → snatch as before).
+    // outgoing calls on the lead with ≥2h spread (connects irrelevant).
+    // Evaluated for the CURRENT holder at snatch time, from the 15-min
+    // snapshots (fail-open: any error → snatch as before).
     if (wasAssigned && !locked && est.assignedTelecallerId && bestId !== String(est.assignedTelecallerId)) {
       try {
         const holder = (allTelecallers as any[]).find((t) => String(t.id) === String(est.assignedTelecallerId));
@@ -1607,6 +1607,40 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     for (const r of riskItems) {
       if (r.lastCommentDate) followLastComments.set(r.estimateId, r.lastCommentDate);
     }
+    // Effort shield, agent-facing: red/zombie follow-ups the holder earned
+    // (≥3 outgoing, ≥2h spread — connects irrelevant) carry their verdict so
+    // the agent SEES the protection inline. Snapshots load once, only when at
+    // least one follow-up is actually at risk; any failure → no shield fields
+    // (fail-open, rows render exactly as before).
+    const shieldByEstimate = new Map<string, { status: string; reason: string; n: number; spanH: number; streak: number }>();
+    try {
+      const atRisk = followUpEsts.filter((e) => {
+        const rk = riskItems.find((r) => r.estimateId === e.estimateId)?.risk;
+        return rk === 'red' || rk === 'zombie';
+      });
+      if (atRisk.length > 0) {
+        const dayMinus = (n: number) => istDate(new Date(Date.now() - n * 86400000));
+        const snaps: [EffortRow[] | null, EffortRow[] | null, EffortRow[] | null] = [
+          await readEffortSnapshot(dayMinus(0)),
+          await readEffortSnapshot(dayMinus(1)),
+          await readEffortSnapshot(dayMinus(2)),
+        ];
+        const holderNeoId = String((tc as any)?.neodoveUserId ?? '');
+        for (const e of atRisk) {
+          try {
+            const v = evaluateShield(normPhone10((e as any).contactPhone), holderNeoId, snaps);
+            if (v.shielded || v.expired) {
+              shieldByEstimate.set(e.estimateId, {
+                status: v.status, reason: v.reason,
+                n: v.evidence?.n ?? 0, spanH: v.evidence?.spanH ?? 0, streak: v.streak,
+              });
+            }
+          } catch { /* per-row fail-open */ }
+        }
+      }
+    } catch (e: any) {
+      logger.warn({ err: e?.message, agent: (tc as any)?.id }, 'follow-up shield attach failed — rows render unshielded');
+    }
     const followUps = followUpEsts.map((e) => {
       const lastCommentDate = followLastComments.get(e.estimateId) ?? null;
       const ts = parseCommentDateMs(lastCommentDate);
@@ -1650,6 +1684,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         risk,
         snatchReason: riskItem?.snatchReason ?? (risk === 'red' || risk === 'zombie' ? buildSnatchReason(e, risk) : null),
         snatchInHours: riskItem?.snatchInHours ?? hoursUntilEod(new Date(nowMs)),
+        // Effort-shield verdict for at-risk rows (null otherwise) — the agent
+        // sees 🛡 + reason inline in their conversion list.
+        shield: shieldByEstimate.get(e.estimateId) ?? null,
       };
     });
     const lb = leaderboard.find((l) => l.id === tc.id);

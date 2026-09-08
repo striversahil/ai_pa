@@ -124,10 +124,10 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   });
 
   // ── Effort-shield audit (MIS) ───────────────────────────────────────────────
-  // Per-sent-estimate shield verdicts from the 15-min effort snapshots, for the
-  // Shield tab: attempts/span/connected today, streak, and status —
-  // shielded-1 | shielded-2 | expiring (streak 2, snatches tomorrow) |
-  // connected | insufficient | no-phone. 401-gated like the rest of MIS.
+  // Per-sent-estimate shield verdicts from the 15-min effort snapshots.
+  // Statuses: shielded-1 | shielded-2 | expiring (streak 2, snatches tomorrow)
+  // | insufficient | no-phone. Connects never affect the verdict (effort-only
+  // rule). 401-gated like the rest of MIS.
   app.get('/api/telecalling/shields', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     const { prisma } = deps();
@@ -154,9 +154,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       const holder = nameById.get(String(e.assignedTelecallerId ?? ''));
       const phone10 = normPhone10((e as any).contactPhone);
       const verdict = evaluateShield(phone10, holder?.neoId ?? '', [s0, s1, s2]);
-      const status = verdict.shielded ? (verdict.streak >= 1 ? 'shielded-2' : 'shielded-1')
-        : verdict.expired ? 'expiring'
-        : (verdict.evidence?.conn ? 'connected' : (!phone10 || !holder?.neoId ? 'no-phone' : 'insufficient'));
+      const status = verdict.status;
       rows.push({
         estimateId: e.estimateId, estimateNumber: e.estimateNumber, customerName: e.customerName,
         phone10, holderName: holder?.name ?? 'Unassigned',
