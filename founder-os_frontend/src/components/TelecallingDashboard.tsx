@@ -380,6 +380,7 @@ export default function TelecallingDashboard() {
   const [editTarget, setEditTarget] = useState<RosterRow | null>(null);
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [rosterError, setRosterError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -549,13 +550,22 @@ export default function TelecallingDashboard() {
   // ── Absentee cover (MIS Controller): absent → equal redistribution ─────────
   const toggleAbsent = async (id: string, isAbsent: boolean) => {
     setBusy(true);
+    setRosterError(null);
     try {
-      await fetch(`/api/telecallers/${id}/absent`, {
+      const res = await fetch(`/api/telecallers/${id}/absent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ absent: !isAbsent }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Request failed (${res.status})`);
+      }
+      const body = await res.json().catch(() => ({}));
+      if (body && body.ok === false) throw new Error(body?.error || "Request failed");
       refreshAll();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Mark absent/present failed");
     } finally {
       setBusy(false);
     }
@@ -1630,6 +1640,11 @@ function RosterSection({
           + Add agent
         </button>
       </div>
+      {rosterError && (
+        <div className="mb-3 text-xs font-semibold text-rose-500 dark:text-rose-400 bg-rose-500/10 rounded-lg px-3 py-2">
+          {rosterError}
+        </div>
+      )}
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 mb-5">
         {rosterRows.map((t) => (
           <div key={t.id} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4">

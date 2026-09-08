@@ -652,12 +652,11 @@ export async function markTelecallerAbsent(telecallerId: string): Promise<{ redi
   const [tc, held, covers] = await Promise.all([
     prisma.telecaller.findUnique({ where: { id: telecallerId } }),
     prisma.estimate.findMany({
-      // Exclude estimates that are ALREADY temp covers for another absent agent
-      // (tempForTelecallerId set) — those belong to someone else who's away and must
-      // NOT be swept into this agent's redistribution. Otherwise nested absence
-      // (cover agent also goes absent) creates conflicting temp covers that both
-      // agents would pull back on return.
-      where: { assignedTelecallerId: telecallerId, status: 'sent', skipAssignment: false, lockedTelecallerId: null, tempForTelecallerId: null },
+      // NOTE: temp-cover provenance (tempForTelecallerId) lives on the
+      // EstimateAssignment ledger, NOT on Estimate — so it cannot be filtered
+      // here (unknown column → SQL error). Nested-absence exclusion happens in
+      // Phase 2 via the open ledger rows instead.
+      where: { assignedTelecallerId: telecallerId, status: 'sent', skipAssignment: false, lockedTelecallerId: null },
       select: { estimateId: true, total: true },
     }),
     prisma.telecaller.findMany({
@@ -675,12 +674,26 @@ export async function markTelecallerAbsent(telecallerId: string): Promise<{ redi
 
   // ── Phase 2: read the currently-open assignment rows (for the history chain) ─
   // One batched query resolves the previous holder for every held estimate.
+  // Nested-absence guard lives here (not in Phase 1): an estimate whose open
+  // ledger row is ALREADY a temp cover for another absent agent belongs to
+  // someone else who's away and must NOT be swept into this redistribution —
+  // otherwise two agents would both pull it back on return.
   const heldIds = held.map((e) => e.estimateId);
   const openRows = await prisma.estimateAssignment.findMany({
     where: { estimateId: { in: heldIds }, status: 'assigned' },
-    select: { id: true, estimateId: true },
+    select: { id: true, estimateId: true, tempForTelecallerId: true },
   });
   const openByEstimate = new Map(openRows.map((r) => [r.estimateId, r.id]));
+  const tempCovered = new Set(
+    openRows.filter((r) => (r as any).tempForTelecallerId != null).map((r) => r.estimateId),
+  );
+  const movable = held.filter((e) => !tempCovered.has(e.estimateId));
+  if (movable.length !== held.length) {
+    logger.info(
+      { telecallerId, held: held.length, movable: movable.length, skipped: held.length - movable.length },
+      'markTelecallerAbsent: skipping estimates already temp-covering another absent agent',
+    );
+  }
 
   // ── Phase 3: build ALL writes, then fire them in chunks of D1 round-trips ─
   // Equal round-robin across the active conversion specialists (random start so it
@@ -697,7 +710,7 @@ export async function markTelecallerAbsent(telecallerId: string): Promise<{ redi
   stmts.push({ sql: 'UPDATE Telecaller SET absentSince = ? WHERE id = ?', params: [nowIso, telecallerId] });
 
   let idx = Math.floor(Math.random() * covers.length);
-  for (const est of held) {
+  for (const est of movable) {
     const cover = covers[idx % covers.length];
     const priorOpenId = openByEstimate.get(est.estimateId) ?? null;
 
@@ -733,7 +746,7 @@ export async function markTelecallerAbsent(telecallerId: string): Promise<{ redi
     // Fallback: sequential writes so the feature still works while batching is debugged.
     await prisma.telecaller.update({ where: { id: telecallerId }, data: { absentSince: new Date() } });
     let fidx = Math.floor(Math.random() * covers.length);
-    for (const est of held) {
+    for (const est of movable) {
       const cover = covers[fidx % covers.length];
       await prisma.estimate.update({ where: { estimateId: est.estimateId }, data: { assignedTelecallerId: cover.id } });
       await recordAssignment(est.estimateId, cover.id, `Absent cover — ${tc.name} marked absent`, telecallerId);
@@ -742,11 +755,11 @@ export async function markTelecallerAbsent(telecallerId: string): Promise<{ redi
   }
 
   logger.info(
-    { telecallerId, name: tc.name, held: held.length, covers: covers.length, statements: stmts.length },
+    { telecallerId, name: tc.name, held: held.length, movable: movable.length, covers: covers.length, statements: stmts.length },
     'Agent marked absent — estimates redistributed (batched) as temp covers',
   );
   try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-  return { redistributed: held.length, covers: covers.length };
+  return { redistributed: movable.length, covers: covers.length };
 }
 
 export async function markTelecallerPresent(telecallerId: string): Promise<{ returned: number }> {
