@@ -14,6 +14,7 @@
 // Free-plan safe (1 Cron Trigger). Heavy AI still runs on the GH Actions runner.
 // ─────────────────────────────────────────────────────────────────────────────
 import { bootstrapEnv, refreshNeodoveReport, neodoveTodayIst, type Bindings } from './context';
+import { getTelecallingDashboardData } from '../automations/telecalling/service';
 
 const GITHUB_REPO = 'striversahil/ai_pa';
 const GITHUB_REF = 'main';
@@ -77,6 +78,24 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
       refreshNeodoveReport(neodoveTodayIst(0))
         .then((r) => console.log(`[cron] neodove-refresh ${r.reportDate}: ok=${r.ok} stored=${r.stored} ${r.error ?? ''}`))
         .catch((e: any) => console.error('[cron] neodove-refresh failed:', e?.message)),
+    );
+    // Dashboard warmer: pre-compute the hot filter payloads (today/week/month)
+    // into KV right after the refresh, so page loads and filter clicks never
+    // eat a cold aggregation. Sequential (no self-contention); each compute is
+    // ~2-3s of mostly I/O wait. Failures are silent — worst case the next user
+    // request computes on demand as before.
+    ctx.waitUntil(
+      (async () => {
+        for (const period of ['today', 'week', 'month']) {
+          const t0 = Date.now();
+          try {
+            await getTelecallingDashboardData({ subject: { period } } as any);
+            console.log(`[cron] dash-warm ${period}: ok in ${Date.now() - t0}ms`);
+          } catch (e: any) {
+            console.error(`[cron] dash-warm ${period} failed:`, e?.message);
+          }
+        }
+      })(),
     );
   }
 

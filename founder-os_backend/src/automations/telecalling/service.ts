@@ -1257,7 +1257,13 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   // Include selfAgentId so a scoped agent never receives a cached team-wide
   // (admin) payload — each user's view is isolated in the cache.
   const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}`;
-  const DASH_TTL_MS = 30 * 1000;
+  // 5-min TTL (not 30s): every write path invalidates these keys explicitly
+  // (invalidateRiskCache / estimates-cache / neodove report), and live events
+  // refetch — so the TTL only governs idle re-reads. A short TTL meant every
+  // filter click + every 30s of idle viewing re-ran the full aggregation, and
+  // a page load's ~10 concurrent cold computes contended into 30s+ timeouts
+  // (2026-09-08 filter incident).
+  const DASH_TTL_MS = 5 * 60 * 1000;
   return cached<any>(cacheKey, DASH_TTL_MS, async () => {
     return computeTelecallingDashboardData(ctx);
   });
