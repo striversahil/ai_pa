@@ -1743,6 +1743,56 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // get the full team view.
   const scopedRiskItems = selfAgentId ? riskItems.filter((r) => r.telecallerId === selfAgentId) : riskItems;
 
+  // Team-wide effort-shield strip for the Lead Conversion tab: red/zombie
+  // holdings whose holder earned protection (or exhausted it today). Same
+  // self-scope as risk. Snapshots load once and only when reds exist; any
+  // failure → null (fail-open, tab renders without the strip).
+  let shielded: Array<{
+    estimateId: string; estimateNumber: string; customerName: string;
+    holderName: string | null; status: string; reason: string;
+    n: number; spanH: number; streak: number;
+  }> | null = null;
+  try {
+    const reds = scopedRiskItems.filter((r) => r.risk === 'red' || r.risk === 'zombie');
+    if (reds.length === 0) {
+      shielded = [];
+    } else {
+      const ids = [...new Set(reds.map((r) => r.estimateId))];
+      const phoneById = new Map<string, string>();
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunkRows: any[] = await prisma.estimate.findMany({
+          where: { estimateId: { in: ids.slice(i, i + 500) } },
+          select: { estimateId: true, contactPhone: true },
+        });
+        for (const e of chunkRows) phoneById.set(e.estimateId, String(e.contactPhone ?? ''));
+      }
+      const dayMinus = (n: number) => istDate(new Date(Date.now() - n * 86400000));
+      const snaps: [EffortRow[] | null, EffortRow[] | null, EffortRow[] | null] = [
+        await readEffortSnapshot(dayMinus(0)),
+        await readEffortSnapshot(dayMinus(1)),
+        await readEffortSnapshot(dayMinus(2)),
+      ];
+      const neoById = new Map<string, string>();
+      for (const t of telecallers as any[]) neoById.set(String(t.id), String(t.neodoveUserId ?? ''));
+      shielded = [];
+      for (const r of reds) {
+        try {
+          const v = evaluateShield(normPhone10(phoneById.get(r.estimateId) ?? ''), neoById.get(String(r.telecallerId)) ?? '', snaps);
+          if (v.shielded || v.expired) {
+            shielded.push({
+              estimateId: r.estimateId, estimateNumber: r.estimateNumber, customerName: r.customerName,
+              holderName: r.telecallerName, status: v.status, reason: v.reason,
+              n: v.evidence?.n ?? 0, spanH: v.evidence?.spanH ?? 0, streak: v.streak,
+            });
+          }
+        } catch { /* per-row fail-open */ }
+      }
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'team shield strip failed — payload renders without it');
+    shielded = null;
+  }
+
   return {
     meta: {
       analysis: 'telecalling',
@@ -1790,6 +1840,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         .sort((a, b) => b.total - a.total)
         .slice(0, RISK_LIST_CAP),
     },
+    // Team-wide effort shields (earned red/zombie holdings). Null when the
+    // snapshots were unreadable — the tab hides the strip instead of erroring.
+    shielded,
     leaderboard,
     recent,
   };

@@ -55,6 +55,8 @@ interface DashData {
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
+  /** Team-wide earned shields (red/zombie holdings protected today). */
+  shielded?: Array<{ estimateId: string; estimateNumber: string; customerName: string; holderName: string | null; status: string; reason: string; n: number; spanH: number; streak: number }> | null;
   risk?: {
     counts: { open: number; ok: number; pending: number; red: number; zombie: number };
     valueAtRisk: number;
@@ -1090,6 +1092,31 @@ export default function TelecallingDashboard() {
                     : "Sent estimates are distributed across telecallers. Switch between agent tabs to see each one's assigned estimates."}
                 </p>
               </div>
+
+              {/* Team-wide effort shields — earned red/zombie holdings the engine
+                  will NOT snatch today (3+ spread calls). Agents see their own;
+                  MIS/root see the team. */}
+              {(convDash.data?.shielded ?? []).length > 0 && (
+                <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
+                  <div className="text-xs font-bold text-emerald-600 dark:text-emerald-300 mb-1.5">
+                    🛡 Protected by effort today ({convDash.data!.shielded!.filter((s) => s.status !== "expiring").length} shielded
+                    {convDash.data!.shielded!.some((s) => s.status === "expiring") &&
+                      ` · ${convDash.data!.shielded!.filter((s) => s.status === "expiring").length} grace over`}
+                    )
+                  </div>
+                  <div className="space-y-1">
+                    {convDash.data!.shielded!.map((s) => (
+                      <div key={s.estimateId} title={s.reason} className="flex flex-wrap items-center gap-x-2 text-xs">
+                        <span className={`font-bold ${s.status === "expiring" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                          {s.status === "expiring" ? "⏳" : "🛡"} {s.estimateNumber}
+                        </span>
+                        <span className="text-zinc-600 dark:text-zinc-300 truncate max-w-[260px]">{s.customerName}</span>
+                        <span className="text-zinc-500 dark:text-zinc-400">· {s.holderName} · {s.n} calls{ s.status === "expiring" ? " — snatches" : ` · day ${(s.streak ?? 0) + 1}/2`}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Horizontal agent tabs — hidden for scoped (self-only) agents */}
               {!selfAgentId && (
