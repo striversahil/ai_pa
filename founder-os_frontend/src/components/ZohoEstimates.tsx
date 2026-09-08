@@ -64,31 +64,42 @@ export default function ZohoEstimates() {
     }
   };
 
-  const fetchSalesOrdersToday = async () => {
+  // Sales orders data now rides on /api/estimates (the automation data() route
+  // is not registered on the Worker — it 404s — so /api/estimates is the single
+  // reliable source for the "Sales Orders Today" KPI + feed).
+  const readSalesOrdersFrom = (data: any) => {
+    const so = data?.salesOrdersToday;
+    setSalesOrdersToday(typeof so?.count === 'number' ? so.count : 0);
+    setSalesOrdersTodayValue(typeof so?.totalValue === 'number' ? so.totalValue : 0);
+    setSalesOrdersTodayOrders(Array.isArray(so?.orders) ? so.orders : []);
+  };
+
+  const fetchEstimates = async () => {
+    setIsLoading(true);
     try {
-      const res = await fetch("/api/automations/zoho-sent-analyzer/data");
-      if (!res.ok) return;
+      const res = await fetch("/api/estimates");
       const data = await res.json();
-      setSalesOrdersToday(data.activeSalesOrdersToday ?? 0);
-      setSalesOrdersTodayValue(data.salesOrdersTodayValue ?? 0);
-      setSalesOrdersTodayOrders(Array.isArray(data.salesOrdersTodayOrders) ? data.salesOrdersTodayOrders : []);
+      setEstimates(data.estimates ?? []);
+      setLastCompleteSyncAt(data.lastCompleteSyncAt ?? null);
+      readSalesOrdersFrom(data);
     } catch (e) {
-      console.error("Error loading sales orders today:", e);
+      console.error("Error loading Zoho estimates:", e);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchEstimates();
     fetchBaseline();
-    fetchSalesOrdersToday();
     // Safety-net poll; primary freshness comes from useLiveEvents below.
-    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); fetchSalesOrdersToday(); }, 15 * 60 * 1000);
+    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); }, 15 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
 
   useLiveRefresh(
     (event) => event.type === "estimates" || event.type === "baseline" || event.type === "automation",
-    () => { fetchEstimates(); fetchBaseline(); fetchSalesOrdersToday(); },
+    () => { fetchEstimates(); fetchBaseline(); },
   );
 
   const fetchBaseline = async () => {

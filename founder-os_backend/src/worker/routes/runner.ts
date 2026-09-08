@@ -167,19 +167,25 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
           total: Number(o?.total) || 0, status: String(o?.status ?? ''), time: String(o?.time ?? ''),
         }))
       : [];
-    const { cacheSet }: { cacheSet: <T>(key: string, value: T, ttlMs: number) => Promise<void> } = require('../../shared/cache');
-    await cacheSet(
-      'zoho:salesorders_today',
-      {
-        date: body.date,
-        count: body.count,
-        totalValue: Number(body.totalValue) || 0,
-        statuses: body.statuses || {},
-        orders,
-      },
-      45 * 60 * 1000,
-    );
-    return c.json({ ok: true });
+    const cache = require('../../shared/cache');
+    const next = { date: body.date, count: body.count, totalValue: Number(body.totalValue) || 0, statuses: body.statuses || {}, orders };
+    // Only invalidate the (30-min-TTL) estimates cache when the SO data actually
+    // changed — the dashboard KPI/feed rides on /api/estimates, and pointless
+    // invalidations would force a ~3s cold recompute every 15 min.
+    const prev = await cache.cacheGet('zoho:salesorders_today', 45 * 60 * 1000);
+    const changed = !prev
+      || prev.date !== next.date
+      || prev.count !== next.count
+      || prev.totalValue !== next.totalValue
+      || JSON.stringify(prev.orders ?? []) !== JSON.stringify(next.orders);
+    await cache.cacheSet('zoho:salesorders_today', next, 45 * 60 * 1000);
+    if (changed) {
+      try {
+        const { invalidateEstimatesCache } = require('../../shared/estimates-cache');
+        await invalidateEstimatesCache();
+      } catch { /* invalidation is best-effort */ }
+    }
+    return c.json({ ok: true, changed });
   });
 
   // ── Zoho analyzer no-change fingerprint (KV) ────────────────────────────────

@@ -1,4 +1,4 @@
-import { cached, cacheDel, cacheDelPrefix } from './cache';
+import { cached, cacheGet, cacheDel, cacheDelPrefix } from './cache';
 import { prisma } from './prisma';
 import { logger } from './logger';
 import { isSystemGeneratedComment } from './systemComment';
@@ -19,6 +19,32 @@ interface EstimatesPayload {
   estimates: any[];
   lastCompleteSyncAt: string | null;
   computedAt: string;
+  /** Active Zoho sales orders created today (IST) — fetched by the GH runner,
+   *  persisted in KV by /api/runner/zoho/salesorders-today, merged here so the
+   *  dashboard gets the "Sales Orders Today" KPI + feed from the SAME endpoint
+   *  it already loads (/api/estimates). The automation data() route is
+   *  worker-unregistered ("no data provider"), so it must NOT be relied on. */
+  salesOrdersToday: { count: number; totalValue: number; statuses: Record<string, number>; orders: any[] };
+}
+
+/** Calendar date (YYYY-MM-DD) in IST (+05:30). */
+function istDateString(d: Date): string {
+  return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+const EMPTY_SO = { count: 0, totalValue: 0, statuses: {}, orders: [] as any[] };
+
+async function getSalesOrdersToday(): Promise<typeof EMPTY_SO> {
+  try {
+    const so = await cacheGet<{ date: string; count: number; totalValue: number; statuses: Record<string, number>; orders: any[] }>(
+      'zoho:salesorders_today',
+      45 * 60 * 1000,
+    );
+    if (so && so.date === istDateString(new Date()) && typeof so.count === 'number') {
+      return { count: so.count, totalValue: so.totalValue || 0, statuses: so.statuses || {}, orders: Array.isArray(so.orders) ? so.orders : [] };
+    }
+  } catch { /* KV miss → zeros */ }
+  return EMPTY_SO;
 }
 
 async function computeEstimatesPayload(): Promise<EstimatesPayload> {
@@ -31,6 +57,7 @@ async function computeEstimatesPayload(): Promise<EstimatesPayload> {
     prisma.telecaller.findMany({}),
   ]);
   const nameById = new Map(telecallers.map((t: any) => [t.id, t.name]));
+  const salesOrdersToday = await getSalesOrdersToday();
   return {
     estimates: estimates.map((e: any) => ({
       ...e,
@@ -43,6 +70,7 @@ async function computeEstimatesPayload(): Promise<EstimatesPayload> {
     })),
     lastCompleteSyncAt: lastCompleteSync?.value ?? null,
     computedAt: new Date().toISOString(),
+    salesOrdersToday,
   };
 }
 
