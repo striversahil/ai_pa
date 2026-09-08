@@ -188,6 +188,40 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json({ ok: true, changed });
   });
 
+  // ── CRM sales-orders snapshot (fetched by the GH runner; served to the CRM dashboard)
+  // The runner pages /api/v3/salesorders (Status.All), computes each open order's
+  // next pending process step, and POSTs the grouped snapshot here. The CRM
+  // data() reads this KV payload — no Zoho fetch on the request path.
+  app.post('/api/runner/crm/snapshot', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const body = await c.req.json().catch(() => ({}));
+    if (typeof body?.date !== 'string' || typeof body?.totalActive !== 'number' || !body?.byProcess) {
+      return c.json({ error: 'date, totalActive, and byProcess required' }, 400);
+    }
+    const byProcess: Record<string, { count: number; value: number; orders: any[] }> = {};
+    for (const [step, entry] of Object.entries(body.byProcess)) {
+      const e = entry as any;
+      byProcess[step] = {
+        count: Number(e?.count) || 0,
+        value: Number(e?.value) || 0,
+        orders: Array.isArray(e?.orders) ? e.orders.slice(0, 100) : [],
+      };
+    }
+    const { cacheSet } = require('../../shared/cache');
+    await cacheSet(
+      'crm:salesorders_snapshot',
+      {
+        date: body.date,
+        totalActive: Number(body.totalActive) || 0,
+        totalValue: Number(body.totalValue) || 0,
+        byProcess,
+        computedAt: new Date().toISOString(),
+      },
+      45 * 60 * 1000,
+    );
+    return c.json({ ok: true });
+  });
+
   // ── Zoho analyzer no-change fingerprint (KV) ────────────────────────────────
   const ZOHO_FP_KEY = 'zoho:analyzer:state_fingerprint';
   const ZOHO_FP_TTL_MS = 24 * 60 * 60 * 1000;

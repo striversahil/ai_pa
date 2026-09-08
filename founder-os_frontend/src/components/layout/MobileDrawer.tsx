@@ -18,6 +18,7 @@ import {
   Megaphone,
   Table2,
   Bot,
+  PackageCheck,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const DASH_ICONS: Record<string, LucideIcon> = {
   "whatsapp-autopilot": Bot,
   "sheet-analysis": Table2,
   telecalling: PhoneCall,
+  crm: PackageCheck,
 };
 
 interface MobileDrawerProps {

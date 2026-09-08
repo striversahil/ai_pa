@@ -25,6 +25,7 @@ import * as waEngineMonitor from '../../automations/wa-engine-monitor';
 import * as whatsappMarketing from '../../automations/whatsapp-marketing';
 import * as telecalling from '../../automations/telecalling';
 import * as whatsappAutopilot from '../../automations/whatsapp-autopilot';
+import * as crm from '../../automations/crm';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
@@ -43,6 +44,7 @@ const MODULES: Record<string, AutomationModule> = {
   'whatsapp-marketing': whatsappMarketing as AutomationModule,
   'telecalling': telecalling as AutomationModule,
   'whatsapp-autopilot': whatsappAutopilot as AutomationModule,
+  'crm': crm as AutomationModule,
 };
 
 const RULES: Record<string, Partial<AutomationDefinition>> = {
@@ -105,6 +107,9 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'whatsapp-autopilot': {
     id: 'whatsapp-autopilot', name: 'WhatsApp Autopilot', description: 'Structured business layer under WhatsApp: message lineage, per-chat task queue, LLM state transitions. Core loop runs on GH Actions (shadow mode — nothing sends).', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, scope: 'autopilot', enabled: true,
+  },
+  'crm': {
+    id: 'crm', name: 'CRM — Active Sales Orders', description: 'Pipeline of open Zoho Books sales orders grouped by the next pending process step (Confirm → Invoice → Ship → Payment). Fetched by the GH runner, served from KV.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, scope: 'zoho', enabled: true,
   },
 };
 

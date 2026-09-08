@@ -17,6 +17,7 @@ import {
   Megaphone,
   Table2,
   Bot,
+  PackageCheck,
   Palette,
   Check,
   type LucideIcon,
@@ -33,6 +34,7 @@ const DASH_ICONS: Record<string, LucideIcon> = {
   "whatsapp-autopilot": Bot,
   "sheet-analysis": Table2,
   telecalling: PhoneCall,
+  crm: PackageCheck,
 };
 
 interface SidebarProps {

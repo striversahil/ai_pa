@@ -19,6 +19,7 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'telecalling',
   'whatsapp-autopilot',
   'enquiry-tracker',
+  'crm',
   // generic sheet-analysis renderer (SheetAnalysisDashboard fallback)
   'telecalling-agent-analysis',
 ]);
