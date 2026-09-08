@@ -127,6 +127,32 @@ export class SalesCopilotService implements AnalysisEngine {
   }
 
   /**
+   * Active sales orders generated TODAY (IST). The heavy Zoho fetch runs in the
+   * GH Actions runner (scripts/zoho-sent-runner.js), which POSTs the result to
+   * /api/runner/zoho/salesorders-today every tick; this reads that KV payload.
+   * A payload whose `date` is not today (stale from yesterday / absent) reads
+   * as zero — counts reset naturally at midnight IST.
+   */
+  private static SO_CACHE_KEY = 'zoho:salesorders_today';
+  private static SO_TTL_MS = 45 * 60 * 1000; // runner refreshes every 15 min
+
+  /** Calendar date (YYYY-MM-DD) of a timestamp in IST (+05:30). */
+  private istDateString(d: Date): string {
+    return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
+  public async getActiveSalesOrdersToday(): Promise<{ count: number; totalValue: number; statuses: Record<string, number> }> {
+    const payload = await cacheGet<{ date: string; count: number; totalValue: number; statuses: Record<string, number> }>(
+      SalesCopilotService.SO_CACHE_KEY,
+      SalesCopilotService.SO_TTL_MS,
+    );
+    if (payload && payload.date === this.istDateString(new Date()) && typeof payload.count === 'number') {
+      return { count: payload.count, totalValue: payload.totalValue || 0, statuses: payload.statuses || {} };
+    }
+    return { count: 0, totalValue: 0, statuses: {} };
+  }
+
+  /**
    * Parses the raw Zoho curl-export content into a URL + headers + orgId.
    * Shared by the local fs path and the Worker secret path.
    */

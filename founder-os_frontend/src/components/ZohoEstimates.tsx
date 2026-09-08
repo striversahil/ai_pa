@@ -36,6 +36,9 @@ export default function ZohoEstimates() {
   const [showClosed, setShowClosed] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [lastCompleteSyncAt, setLastCompleteSyncAt] = useState<string | null>(null);
+  // Live Zoho Books sales orders created today (from the zoho-sent-analyzer data endpoint).
+  const [salesOrdersToday, setSalesOrdersToday] = useState<number | null>(null);
+  const [salesOrdersTodayValue, setSalesOrdersTodayValue] = useState<number | null>(null);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -60,17 +63,30 @@ export default function ZohoEstimates() {
     }
   };
 
+  const fetchSalesOrdersToday = async () => {
+    try {
+      const res = await fetch("/api/automations/zoho-sent-analyzer/data");
+      if (!res.ok) return;
+      const data = await res.json();
+      setSalesOrdersToday(data.activeSalesOrdersToday ?? 0);
+      setSalesOrdersTodayValue(data.salesOrdersTodayValue ?? 0);
+    } catch (e) {
+      console.error("Error loading sales orders today:", e);
+    }
+  };
+
   useEffect(() => {
     fetchEstimates();
     fetchBaseline();
+    fetchSalesOrdersToday();
     // Safety-net poll; primary freshness comes from useLiveEvents below.
-    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); }, 15 * 60 * 1000);
+    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); fetchSalesOrdersToday(); }, 15 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
 
   useLiveRefresh(
     (event) => event.type === "estimates" || event.type === "baseline" || event.type === "automation",
-    () => { fetchEstimates(); fetchBaseline(); },
+    () => { fetchEstimates(); fetchBaseline(); fetchSalesOrdersToday(); },
   );
 
   const fetchBaseline = async () => {
@@ -663,6 +679,8 @@ Action: (single clear objective — close order / clarify doubts / send revised 
           baselineDate={baselineDate}
           movement={movement}
           pending={movement.pending}
+          salesOrdersToday={salesOrdersToday}
+          salesOrdersTodayValue={salesOrdersTodayValue}
         />
       )}
 

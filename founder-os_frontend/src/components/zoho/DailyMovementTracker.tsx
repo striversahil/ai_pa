@@ -9,9 +9,12 @@ interface Props {
   baselineDate: string;
   movement: Movement;
   pending?: boolean;
+  /** Active Zoho Books sales orders created today (live from /api/automations/zoho-sent-analyzer/data). */
+  salesOrdersToday?: number | null;
+  salesOrdersTodayValue?: number | null;
 }
 
-export default function DailyMovementTracker({ baselineCount, baselineValue, baselineDate, movement, pending }: Props) {
+export default function DailyMovementTracker({ baselineCount, baselineValue, baselineDate, movement, pending, salesOrdersToday, salesOrdersTodayValue }: Props) {
   return (
     <div className="bg-zinc-50/30 dark:bg-zinc-950/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-4 space-y-4 mb-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-zinc-200/60 dark:border-zinc-800/60 pb-3">
@@ -36,9 +39,9 @@ export default function DailyMovementTracker({ baselineCount, baselineValue, bas
           <span className="text-base font-bold text-zinc-700 dark:text-zinc-300 font-mono mt-0.5 block">{baselineCount}</span>
         </div>
         <div className="bg-emerald-950/10 border border-emerald-900/20 p-2.5 rounded-lg text-center">
-          <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-wider block">Accepted Today</span>
+          <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-wider block">Sales Orders Today</span>
           <span className="text-base font-bold text-emerald-400 font-mono mt-0.5 block">
-            {movement.accepted.length} <span className="text-[10px] text-zinc-600 dark:text-zinc-500">(₹{movement.accepted.reduce((sum: number, x: any) => sum + x.total, 0).toLocaleString()})</span>
+            {salesOrdersToday ?? 0} <span className="text-[10px] text-zinc-600 dark:text-zinc-500">(₹{(salesOrdersTodayValue ?? 0).toLocaleString()})</span>
           </span>
         </div>
         <div className="bg-rose-950/10 border border-rose-900/20 p-2.5 rounded-lg text-center">

@@ -150,6 +150,31 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     });
   });
 
+  // ── Zoho sales-orders-today (fetched by the GH runner; served to the dashboard)
+  // The runner computes "active sales orders created today (IST)" from the Zoho
+  // salesorders API (same curl credentials as the estimates sync) and POSTs it
+  // here every tick. The dashboard reads this KV payload — no Zoho fetch on the
+  // request path.
+  app.post('/api/runner/zoho/salesorders-today', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const body = await c.req.json().catch(() => ({}));
+    if (typeof body?.date !== 'string' || typeof body?.count !== 'number') {
+      return c.json({ error: 'date (YYYY-MM-DD) and count (number) required' }, 400);
+    }
+    const { cacheSet }: { cacheSet: <T>(key: string, value: T, ttlMs: number) => Promise<void> } = require('../../shared/cache');
+    await cacheSet(
+      'zoho:salesorders_today',
+      {
+        date: body.date,
+        count: body.count,
+        totalValue: Number(body.totalValue) || 0,
+        statuses: body.statuses || {},
+      },
+      45 * 60 * 1000,
+    );
+    return c.json({ ok: true });
+  });
+
   // ── Zoho analyzer no-change fingerprint (KV) ────────────────────────────────
   const ZOHO_FP_KEY = 'zoho:analyzer:state_fingerprint';
   const ZOHO_FP_TTL_MS = 24 * 60 * 60 * 1000;

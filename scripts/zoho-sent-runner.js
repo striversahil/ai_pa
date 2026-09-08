@@ -552,7 +552,66 @@ async function processEstimate(job, agentRoster) {
   });
 }
 
+// ── Sales orders created today (IST) ─────────────────────────────────────────
+// Feeds the Zoho dashboard's "Sales Orders Today" tile. The Worker cannot do
+// this fetch reliably from the dashboard request path, so the runner (which
+// already talks to Zoho with the same curl credentials) computes it every tick
+// and POSTs it to /api/runner/zoho/salesorders-today (KV-cached there).
+const SO_TODAY_EXCLUDED = new Set(['cancelled', 'void']);
+
+function istDateString(d) {
+  return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function buildSalesOrdersUrl(page) {
+  return `https://books.zoho.com/api/v3/salesorders?page=${page}&per_page=200&filter_by=Status.All&sort_column=created_time&sort_order=D&usestate=true&organization_id=${orgId}`;
+}
+
+async function syncSalesOrdersToday() {
+  try {
+    const today = istDateString(new Date());
+    const statuses = {};
+    let count = 0;
+    let totalValue = 0;
+
+    // Newest first; stop when a page is short or its oldest order predates today.
+    for (let page = 1; page <= 10; page++) {
+      const json = await zohoFetch(buildSalesOrdersUrl(page));
+      const salesorders = json.salesorders || [];
+      for (const so of salesorders) {
+        const st = String(so.status || '').toLowerCase();
+        statuses[st] = (statuses[st] || 0) + 1;
+        if (SO_TODAY_EXCLUDED.has(st)) continue;
+        if (istDateString(new Date(so.created_time)) === today) {
+          count++;
+          totalValue += parseFloat(so.total) || 0;
+        }
+      }
+      if (salesorders.length < 200) break;
+      const oldest = salesorders[salesorders.length - 1];
+      if (istDateString(new Date(oldest.created_time)) < today) break;
+    }
+
+    totalValue = Math.round(totalValue * 100) / 100;
+    await workerRequest('/api/runner/zoho/salesorders-today', {
+      method: 'POST',
+      body: { date: today, count, totalValue, statuses },
+    });
+    console.log(`zoho-sent-runner: sales orders today (${today}): ${count} (₹${totalValue.toLocaleString()})`);
+    return true;
+  } catch (err) {
+    // Non-fatal: the dashboard tile reads 0 until the next 15-min tick.
+    console.warn(`zoho-sent-runner: sales-orders-today sync failed: ${err.message}`);
+    return false;
+  }
+}
+
 async function main() {
+  // 0. Sales orders created today (IST) — runs BEFORE the no-change fast path:
+  //    new sales orders don't touch the estimates payload at all, so a quiet
+  //    estimates day still needs this refreshed.
+  await syncSalesOrdersToday();
+
   console.log('zoho-sent-runner: fetching active sent estimates from Zoho');
   const responseJson = await zohoFetch(ZOHO_BOOKS_SENT_URL);
   const estimates = responseJson.estimates || [];

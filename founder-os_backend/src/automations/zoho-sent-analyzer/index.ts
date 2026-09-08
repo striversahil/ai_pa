@@ -15,14 +15,16 @@ import { PENDING_AI_MARKER } from './service';
  */
 export async function data() {
   const where = { OR: [{ status: 'sent' }, { status: 'accepted' }, { status: 'declined' }, { status: 'confirmed' }] };
-  const [estimates, sent, sentClassifiedRaw, pendingAiCount, accepted, declined, lastCompleteSync] = await Promise.all([
+  // "Accepted" KPI replaced by live Zoho Books sales orders created today (IST),
+  // fetched with the same curl credentials as the estimates sync (10-min KV cache).
+  const [estimates, sent, sentClassifiedRaw, pendingAiCount, declined, lastCompleteSync, salesOrdersToday] = await Promise.all([
     prisma.estimate.findMany({ where, select: { estimateId: true, estimateNumber: true, customerName: true, total: true, status: true, lastSyncTime: true } }),
     prisma.estimate.count({ where: { status: 'sent' } }),
     prisma.estimate.count({ where: { status: 'sent', classification: { isNot: null } } }),
     prisma.classification.count({ where: { reasoning: PENDING_AI_MARKER } }),
-    prisma.estimate.count({ where: { status: { in: ['accepted', 'confirmed'] } } }),
     prisma.estimate.count({ where: { status: 'declined' } }),
     prisma.setting.findUnique({ where: { key: 'sales_copilot:last_complete_sync_at' } }),
+    new SalesCopilotService().getActiveSalesOrdersToday(),
   ]);
 
   const totalValue = estimates.filter((e) => e.status === 'sent').reduce((sum, e) => sum + e.total, 0);
@@ -34,7 +36,9 @@ export async function data() {
     classifiedEstimates,
     unclassifiedEstimates: Math.max(0, sent - classifiedEstimates),
     pendingAiEstimates: pendingAiCount,
-    acceptedEstimates: accepted,
+    activeSalesOrdersToday: salesOrdersToday.count,
+    salesOrdersTodayValue: salesOrdersToday.totalValue,
+    salesOrdersTodayStatuses: salesOrdersToday.statuses,
     declinedEstimates: declined,
     totalSentValue: totalValue,
     // Only the last fully-completed processing pass counts as "last synced" —
