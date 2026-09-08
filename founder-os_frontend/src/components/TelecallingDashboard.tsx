@@ -429,8 +429,10 @@ export default function TelecallingDashboard() {
 
   const refreshAll = useCallback(() => {
     dash.refresh();
+    convDash.refresh();
+    agentViews.refresh();
     roster.refresh();
-  }, [dash, roster]);
+  }, [dash, convDash, agentViews, roster]);
 
   // ── Deleted agents (MIS Controller) ──────────────────────────────────────
   const [showDeleted, setShowDeleted] = useState(false);
