@@ -5,15 +5,13 @@
  * Actions runners (CommonJS, no build step). Mirrors the TS module's surface
  * exactly so both runtimes share one key-management contract:
  *
- *   env.AI_KEYS = "provider:key:label,provider:key:label,..."
- *     provider: groq | openrouter | deepseek | together | openai | omniroute
- *     (auto-detected from key prefix when omitted)
- *   Legacy per-provider env vars still work: GROQ_API_KEYS, OPENROUTER_API_KEYS,
- *   DEEPSEEK_API_KEYS, TOGETHER_API_KEYS, OPENAI_API_KEYS, LLM_API_KEY,
- *   OMNIROUTE_BASE_URL + OMNIROUTE_API_KEY.
+ *   env.GROQ_API_KEYS = "key1,key2,key3,..."   (THE only LLM key source)
+ *     Every key is Groq. The gateway handles least-failures selection, random
+ *     rotation, 429 cooldown (honors retry-after), 401/403 disable, 5xx rotate.
+ *     No omniroute / no other provider fallbacks — Groq direct only.
  */
 
-// ── Provider registry (mirror of TS) ─────────────────────────────────────────
+// ── Provider registry (mirror of TS; Groq-only) ──────────────────────────────
 const PROVIDERS = {
   groq: {
     id: 'groq',
@@ -22,50 +20,7 @@ const PROVIDERS = {
     jsonMode: { type: 'json_object' },
     defaultModel: 'openai/gpt-oss-120b',
   },
-  openrouter: {
-    id: 'openrouter',
-    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
-    extraParams: { transforms: [] },
-    supportsReasoning: false,
-    defaultModel: 'google/gemini-2.0-flash-001',
-  },
-  deepseek: {
-    id: 'deepseek',
-    baseURL: 'https://api.deepseek.com/v1/chat/completions',
-    supportsReasoning: false,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'deepseek-chat',
-  },
-  together: {
-    id: 'together',
-    baseURL: 'https://api.together.xyz/v1/chat/completions',
-    supportsReasoning: false,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  },
-  openai: {
-    id: 'openai',
-    baseURL: 'https://api.openai.com/v1/chat/completions',
-    supportsReasoning: false,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'gpt-4o-mini',
-  },
-  omniroute: {
-    id: 'omniroute',
-    baseURL: '',
-    supportsReasoning: false,
-    defaultModel: 'groq/openai/gpt-oss-120b',
-  },
 };
-
-function detectProvider(key) {
-  const k = String(key || '').trim();
-  if (k.startsWith('gsk_')) return 'groq';
-  if (k.startsWith('sk-or-')) return 'openrouter';
-  if (/^sk-[A-Za-z0-9]{20,}$/.test(k)) return k.length <= 40 ? 'deepseek' : 'openai';
-  if (k.length === 32 && !k.includes('-')) return 'deepseek';
-  return 'openai';
-}
 
 class AiGatewayError extends Error {
   constructor(message, cause, attempts) {
@@ -80,15 +35,10 @@ class AiGatewayError extends Error {
 class KeyPool {
   constructor() {
     this.keys = [];
-    this.omnirouteBaseURL = '';
   }
 
   loadFromEnv(env) {
     const raw = (v) => (typeof v === 'string' ? v : '');
-    this.omnirouteBaseURL = raw(env && env.OMNIROUTE_BASE_URL).replace(/\/$/, '');
-    if (this.omnirouteBaseURL && PROVIDERS.omniroute) {
-      PROVIDERS.omniroute.baseURL = this.omnirouteBaseURL + '/chat/completions';
-    }
     const seen = new Set();
     const PLACEHOLDER = /^(your[_-]?api[_-]?key.*|replace[_-]?.*|xxx+|placeholder.*|\*+)$/i;
     const add = (provider, key, label) => {
@@ -98,31 +48,9 @@ class KeyPool {
       this.keys.push(this.makeKey(provider, k, label));
     };
 
-    const aiKeys = raw(env && env.AI_KEYS);
-    if (aiKeys) {
-      for (const entry of aiKeys.split(',')) {
-        const parts = entry.split(':');
-        if (parts.length >= 2) {
-          const provider = parts[0].trim() || detectProvider(parts[1]);
-          let key, label;
-          if (parts.length >= 3) {
-            label = parts[parts.length - 1];
-            key = parts.slice(1, parts.length - 1).join(':');
-          } else {
-            key = parts[1];
-          }
-          add(provider, key, label);
-        }
-      }
-    }
+    // Groq is the ONLY key source. Keys from GROQ_API_KEYS are all Groq; any
+    // AI_KEYS/legacy *_API_KEYS/OMNIROUTE_* env is intentionally IGNORED.
     for (const key of raw(env && env.GROQ_API_KEYS).split(',')) add('groq', key);
-    for (const key of raw(env && env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
-    for (const key of raw(env && env.DEEPSEEK_API_KEYS).split(',')) add('deepseek', key);
-    for (const key of raw(env && env.TOGETHER_API_KEYS).split(',')) add('together', key);
-    for (const key of raw(env && env.OPENAI_API_KEYS).split(',')) add('openai', key);
-    for (const key of raw(env && env.LLM_API_KEY).split(',')) add(detectProvider(key), key);
-    const omniKey = raw(env && env.OMNIROUTE_API_KEY);
-    if (omniKey && this.omnirouteBaseURL) add('omniroute', omniKey, 'omniroute');
 
     console.log(`[AiGateway] loaded ${this.keys.length} keys: ${this.keys.map((k) => `${k.provider}:${k.label}`).join(', ')}`);
   }
@@ -325,7 +253,6 @@ module.exports = {
   AiGateway,
   KeyPool,
   getGateway,
-  detectProvider,
   PROVIDERS,
   AiGatewayError,
 };

@@ -1,31 +1,13 @@
 /**
  * Unified multi-provider AI gateway — the SINGLE module every AI call in the
- * system routes through.
- *
- * Why this exists: the app previously had four independent LLM code paths
- * (Worker enquiry extraction, Express AIService, GH Actions runner-lib, and
- * local-runner), each with its own key-pick / retry / rate-limit logic and each
- * hard-coded to one provider. When you throw free keys from different vendors at
- * the system, you need ONE place that:
- *   - holds the key pool and knows each key's provider + health,
- *   - picks the best key (least failures, not in cooldown),
- *   - translates to each provider's OpenAI-compatible endpoint,
- *   - rotates + retries on 429/5xx with backoff, and
- *   - remembers rate-limit cooldowns so it stops hammering an exhausted key.
- *
- * Provider model: every provider below speaks the OpenAI `/chat/completions`
- * wire format, so the request builder is shared; only the endpoint URL,
- * auth header, and a couple of optional params (reasoning_effort, json mode)
- * differ. Adding a provider = one line in PROVIDERS.
+ * system routes through. Currently Groq-only (direct Groq API). Every key in
+ * the pool is a Groq key; the gateway handles least-failures selection, random
+ * rotation, 429 cooldown (honors retry-after), 401/403 disable, 5xx rotate.
  *
  * Key configuration (single source of truth, both runtimes):
- *   env.AI_KEYS = "provider:key:label,provider:key:label,..."
- *     - provider: "groq" | "openrouter" | "deepseek" | "together" | "openai" | "omniroute"
- *       (auto-detected from the key prefix/shape when omitted)
- *     - key: the raw API key
- *     - label: optional human name for logs (defaults to key fingerprint)
- *   Legacy per-provider env vars (GROQ_API_KEYS, OPENROUTER_API_KEYS, LLM_API_KEY,
- *   OMNIROUTE_*) are still read so old configs keep working.
+ *   env.GROQ_API_KEYS = "key1,key2,..."   (comma-separated Groq keys)
+ *   env.AI_KEYS        = optional Groq keys in "key:label" form
+ *   env.OMNIROUTE_*    = IGNORED (no legacy gateway / no fallback)
  *
  * Runtime note: this module is edge-safe (no Node-only deps) so it bundles into
  * the Cloudflare Worker via build-worker.mjs. The GH Actions scripts consume a
@@ -57,40 +39,6 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     jsonMode: { type: 'json_object' },
     defaultModel: 'openai/gpt-oss-120b',
   },
-  openrouter: {
-    id: 'openrouter',
-    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
-    extraParams: { transforms: [] },
-    supportsReasoning: false,
-    defaultModel: 'google/gemini-2.0-flash-001',
-  },
-  deepseek: {
-    id: 'deepseek',
-    baseURL: 'https://api.deepseek.com/v1/chat/completions',
-    supportsReasoning: false,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'deepseek-chat',
-  },
-  together: {
-    id: 'together',
-    baseURL: 'https://api.together.xyz/v1/chat/completions',
-    supportsReasoning: false,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  },
-  openai: {
-    id: 'openai',
-    baseURL: 'https://api.openai.com/v1/chat/completions',
-    supportsReasoning: false,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'gpt-4o-mini',
-  },
-  omniroute: {
-    id: 'omniroute',
-    baseURL: '',
-    supportsReasoning: false,
-    defaultModel: 'groq/openai/gpt-oss-120b',
-  },
 };
 
 // ── Errors + provider detection ──────────────────────────────────────────────
@@ -105,17 +53,7 @@ export class AiGatewayError extends Error {
   }
 }
 
-export function detectProvider(key: string): string {
-  const k = key.trim();
-  if (k.startsWith('gsk_')) return 'groq';
-  if (k.startsWith('sk-or-')) return 'openrouter';
-  if (/^sk-[A-Za-z0-9]{20,}$/.test(k)) {
-    if (k.length <= 40) return 'deepseek';
-    return 'openai';
-  }
-  if (k.length === 32 && !k.includes('-')) return 'deepseek';
-  return 'openai';
-}
+// detectProvider intentionally removed — Groq-only mode; every key is Groq.
 
 // ── Key identity + health ────────────────────────────────────────────────────
 export interface AiKey {

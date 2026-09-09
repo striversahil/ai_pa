@@ -69,9 +69,6 @@ jobs:
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          OMNIROUTE_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
-          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
-          OMNIROUTE_MODEL: ${{ secrets.OMNIROUTE_MODEL }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
         run: node scripts/morning-brief-runner.js
 
@@ -84,9 +81,6 @@ jobs:
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          OMNIROUTE_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
-          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
-          OMNIROUTE_MODEL: ${{ secrets.OMNIROUTE_MODEL }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
         run: node scripts/eod-summary-runner.js
 

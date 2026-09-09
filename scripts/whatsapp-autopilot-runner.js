@@ -29,7 +29,7 @@
  */
 
 const {
-  requireEnv, workerRequest, omnirouteJson,
+  requireEnv, workerRequest, groqJson,
 } = require('./runner-lib');
 requireEnv();
 
@@ -218,7 +218,7 @@ async function processMessage(msg, ctx) {
 
   let result;
   try {
-    result = await omnirouteJson(TRANSITION_SYSTEM, prompt, { temperature: 0 });
+    result = await groqJson(TRANSITION_SYSTEM, prompt, { temperature: 0 });
   } catch (err) {
     // §7: invalid/unparseable structured output after retries → review path
     console.error(`autopilot: LLM failed for ${out.msgId}: ${err.message}`);

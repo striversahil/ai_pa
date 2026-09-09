@@ -12,7 +12,7 @@
  * OMNIROUTE_* kept as legacy fallback) — all via runner-lib.
  */
 
-const { requireEnv, workerRequest, omnirouteJson } = require('./runner-lib');
+const { requireEnv, workerRequest, groqJson } = require('./runner-lib');
 requireEnv();
 
 const SUMMARIZE_SYSTEM = `
@@ -134,7 +134,7 @@ async function main() {
       const founderContext = noteRes.content || '';
 
       const { system, user } = buildUserPrompt(chatName, chatMessages, founderContext, previousDigest);
-      const result = await omnirouteJson(system, user, { temperature: 0.1 });
+      const result = await groqJson(system, user, { temperature: 0.1 });
 
       const digestRes = await workerRequest('/api/runner/digests', {
         method: 'POST',

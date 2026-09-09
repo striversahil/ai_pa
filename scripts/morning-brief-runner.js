@@ -12,7 +12,7 @@
  * OMNIROUTE_* kept as legacy fallback) — all via runner-lib.
  */
 
-const { requireEnv, workerRequest, omniroute } = require('./runner-lib');
+const { requireEnv, workerRequest, groq } = require('./runner-lib');
 requireEnv();
 
 const BRIEF_SYSTEM = `
@@ -170,8 +170,8 @@ async function main() {
     console.log(`morning-brief-runner: context trimmed to fit (${estimateTokens(system)} tokens)`);
   }
 
-  console.log('morning-brief-runner: generating brief via direct Groq (omniroute fallback)');
-  const brief = await omniroute(system, 'Generate briefing now.', { temperature: 0.7 });
+  console.log('morning-brief-runner: generating brief via direct Groq');
+  const brief = await groq(system, 'Generate briefing now.', { temperature: 0.7 });
   if (!brief || !brief.trim()) throw new Error('Empty brief returned by LLM');
 
   await workerRequest('/api/runner/founder-notes', { method: 'POST', body: { content: brief } });

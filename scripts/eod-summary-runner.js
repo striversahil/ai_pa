@@ -12,7 +12,7 @@
  * OMNIROUTE_* kept as legacy fallback) — all via runner-lib.
  */
 
-const { requireEnv, workerRequest, omniroute } = require('./runner-lib');
+const { requireEnv, workerRequest, groq } = require('./runner-lib');
 requireEnv();
 
 const EOD_SYSTEM = `
@@ -114,8 +114,8 @@ async function main() {
     .replace('{tasksCreated}', tasksCreated)
     .replace('{pendingApprovals}', pendingApprovals);
 
-  console.log('eod-summary-runner: generating EOD summary via direct Groq (omniroute fallback)');
-  const summary = await omniroute(system, 'Generate EOD summary now.', { temperature: 0.5 });
+  console.log('eod-summary-runner: generating EOD summary via direct Groq');
+  const summary = await groq(system, 'Generate EOD summary now.', { temperature: 0.5 });
   if (!summary || !summary.trim()) throw new Error('Empty EOD summary returned by LLM');
 
   await workerRequest('/api/runner/founder-notes', { method: 'POST', body: { content: summary } });

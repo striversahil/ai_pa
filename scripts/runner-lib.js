@@ -10,24 +10,20 @@
  * Env:
  *   WORKER_URL          — founder-os-worker URL (same as workflow WORKER_URL)
  *   SHARED_SECRET       — must match the worker's SHARED_SECRET
- *   GROQ_API_KEYS       — comma-separated Groq keys, randomly rotated per call
- *                         (PRIMARY LLM path for every AI runner)
+ *   LLM                 — EITHER GROQ_API_KEYS (mandatory now):
+ *   GROQ_API_KEYS       — comma-separated Groq keys, rotated per call via the
+ *                         unified AiGateway (least-failures selection,
+ *                         429 cooldown / 401 disable / 5xx rotate)
  *   GROQ_MODEL          — override (default: openai/gpt-oss-120b)
  *   GROQ_REASONING_EFFORT — override (default: high)
- *   OMNIROUTE_BASE_URL  — legacy gateway, kept as FALLBACK only
- *   OMNIROUTE_API_KEY   — legacy gateway key (fallback only)
- *   OMNIROUTE_MODEL     — legacy model name (default: groq/openai/gpt-oss-120b)
+ *   (OMNIROUTE_* REMOVED — no legacy fallback; Groq is the only LLM path.)
  */
 
 const WORKER_URL = process.env.WORKER_URL;
 const SHARED_SECRET = process.env.SHARED_SECRET;
-const OMNIROUTE_BASE_URL = (process.env.OMNIROUTE_BASE_URL || '').replace(/\/$/, '');
-const OMNIROUTE_API_KEY = process.env.OMNIROUTE_API_KEY;
-const OMNIROUTE_MODEL = process.env.OMNIROUTE_MODEL || 'groq/openai/gpt-oss-120b';
 
 function requireEnv(names) {
   // names: explicit extra vars to require (e.g. ['WORKER_URL','SHARED_SECRET','LLM']).
-  // 'LLM' accepts EITHER direct-Groq (primary) or omniroute (legacy fallback).
   const required = names || ['WORKER_URL', 'SHARED_SECRET', 'LLM'];
   const missing = [];
   if (required.includes('WORKER_URL') && !WORKER_URL) missing.push('WORKER_URL');
@@ -35,16 +31,17 @@ function requireEnv(names) {
   for (const n of required) {
     if (n !== 'WORKER_URL' && n !== 'SHARED_SECRET' && n !== 'LLM' && !process.env[n]) missing.push(n);
   }
-  if (required.includes('LLM')) {
-    const hasGroq = !!(process.env.GROQ_API_KEYS || '').trim();
-    const hasOmni = !!(OMNIROUTE_BASE_URL && OMNIROUTE_API_KEY);
-    if (!hasGroq && !hasOmni) missing.push('GROQ_API_KEYS (or OMNIROUTE_BASE_URL + OMNIROUTE_API_KEY fallback)');
+  if (required.includes('LLM') && !GROQ_API_KEYS) {
+    missing.push('GROQ_API_KEYS (comma-separated Groq keys — the only LLM path)');
   }
   if (missing.length) {
     console.error(`Missing required env vars: ${missing.join(', ')}`);
     process.exit(1);
   }
 }
+
+/** Comma-separated Groq keys read once at boot (the only LLM key source). */
+const GROQ_API_KEYS = (process.env.GROQ_API_KEYS || '').trim();
 
 async function workerRequest(path, { method = 'GET', body, timeoutMs = 90000 } = {}) {
   const res = await fetch(`${WORKER_URL}${path}`, {
@@ -98,17 +95,6 @@ async function groqJson(system, user, { temperature = 0, maxTokens } = {}) {
   });
 }
 
-// Legacy omniroute wrappers are retained for any runner that still imports
-// them, but they now delegate to the gateway (which only reaches omniroute
-// when no direct provider key is configured).
-async function omniroute(system, user, { temperature = 0 } = {}) {
-  return groq(system, user, { temperature });
-}
-
-async function omnirouteJson(system, user, opts = {}) {
-  return groqJson(system, user, opts);
-}
-
 function extractJson(raw) {
   const str = String(raw || '').trim();
   if (!str) return null;
@@ -154,11 +140,8 @@ module.exports = {
   workerRequest,
   groq,
   groqJson,
-  omniroute,
-  omnirouteJson,
   extractJson,
   gateway,
   WORKER_URL,
-  OMNIROUTE_BASE_URL,
-  OMNIROUTE_MODEL,
+  GROQ_API_KEYS,
 };
