@@ -529,8 +529,7 @@ async function saveCommentsAndExtract(estId, comments, existingEstimate, doSave)
 }
 
 async function processEstimate(job, agentRoster) {
-  const { estId, custName, total, dateVal, estStatus, fetched, existingEstimate } = job;
-  const comments = fetched.comments || [];
+  const { estId, custName, total, dateVal, estStatus, fetched } = job;  const comments = fetched.comments || [];
   const salesComments = await saveCommentsAndExtract(estId, comments, null, true);
 
   salesComments.sort((a, b) => String(b.id).localeCompare(String(a.id)));
@@ -538,38 +537,12 @@ async function processEstimate(job, agentRoster) {
   const commentHistory = historyLines.join('\n');
 
   let classification;
-  let via = 'llm';
   if (!commentHistory) {
     classification = defaultClassification(dateVal);
-    via = 'default';
   } else {
     const latestComment = historyLines[0] || '';
-    // Deterministic fast path — resolves clear-cut cases with zero LLM cost,
-    // so a Groq outage/dead key only affects genuinely ambiguous estimates.
-    // Journey outputs (summary/intent) are preserved from the previous
-    // classification when present so a deterministic pass never wipes them.
-    const det = classifyDeterministic(latestComment, dateVal);
-    if (det) {
-      const prev = (existingEstimate && existingEstimate.classification) || {};
-      const base = defaultClassification(dateVal);
-      classification = {
-        ...base,
-        meaningfulUpdate: !!det.meaningful_update,
-        notAnswering: det.not_answering ? 'Yes' : 'No',
-        underDiscussion: det.under_discussion ? 'Yes' : 'No',
-        confirm: finalConfirm({ confirm: !!det.confirm, confirm_date: det.confirm_date }),
-        reasoning: det.reasoning || base.reasoning,
-        summary: prev.summary || base.summary,
-        intentScore: prev.intentScore ?? base.intentScore,
-        salesAgent: resolveSalesAgent({ sales_agent: '' }, agentRoster, latestComment),
-      };
-      via = 'deterministic';
-    } else {
-      // LLM path — a failure here throws and is counted as retryable by the
-      // pool below (warn-only; the estimate is retried on the next tick).
-      const { badgeResult, journeyResult } = await classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster);
-      classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster, latestComment);
-    }
+    const { badgeResult, journeyResult } = await classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster);
+    classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster, latestComment);
   }
   void estStatus;
 
@@ -577,7 +550,6 @@ async function processEstimate(job, agentRoster) {
     method: 'POST',
     body: { estimateId: estId, classification },
   });
-  return via;
 }
 
 // ── Sales orders created today (IST) ─────────────────────────────────────────
@@ -900,7 +872,6 @@ async function main() {
   }
 
   let processed = 0;
-  let detHits = 0;
   let workerIndex = 0;
   const failedItems = [];
   const runPool = async (items) => {
@@ -909,14 +880,10 @@ async function main() {
       while (workerIndex < items.length) {
         const job = items[workerIndex++];
         try {
-          const via = await processEstimate(job, agentRoster);
-          if (via === 'deterministic' || via === 'default') detHits++;
+          await processEstimate(job, agentRoster);
           processed++;
         } catch (err) {
-          // Retryable (usually Groq 401/429/5xx): leave the estimate for the
-          // next 15-min tick instead of failing the run. Metadata + comments
-          // are already synced, so nothing is lost.
-          console.error(`zoho-sent-runner: AI processing error for ${job.estId} (will retry next tick): ${err.message}`);
+          console.error(`zoho-sent-runner: AI processing error for ${job.estId}: ${err.message}`);
           innerFailed.push(job);
         }
       }
@@ -958,13 +925,11 @@ async function main() {
     }).catch((err) => console.warn(`zoho-sent-runner: fingerprint store failed: ${err.message}`));
   }
 
-  console.log(`zoho-sent-runner: done — processed ${processed} (${detHits} deterministic, ${processed - detHits} LLM), skipped ${skipped}, ai-failed ${failed} (retry next tick)`);
+  console.log(`zoho-sent-runner: done — processed ${processed}, skipped ${skipped}, failed ${failed}`);
 
   if (failed > 0) {
-    // Warn-only: an LLM outage (dead/rate-limited keys) must not turn every
-    // 15-min tick red. Watermark + fingerprint are held above, so the failed
-    // estimates are picked up again on the next tick once keys recover.
-    console.warn(`zoho-sent-runner: ${failed} estimate(s) need LLM retry — check GROQ_API_KEYS. Sync data is safe; run stays green.`);
+    console.error(`zoho-sent-runner: ${failed} estimate(s) failed (Groq/LLM unreachable after 5 attempts). Failing the run.`);
+    process.exit(1);
   }
 }
 
