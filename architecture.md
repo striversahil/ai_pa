@@ -106,14 +106,14 @@ Worker + GitHub Actions.
 ├── webhook-relay/relay.js              # Node WAL buffer → Express backend
 ├── local-runner.js                     # local AI classification loop (drains waba-worker)
 ├── scripts/                            # GH Actions file-based runners (heavy AI runs HERE)
-│   ├── runner-lib.js                   # shared helpers (workerRequest, omnirouteJson, extractJson)
+│   ├── runner-lib.js                   # shared helpers (workerRequest, groq/groqJson direct-Groq primary + omniroute fallback, extractJson)
 │   ├── whatsapp-digest-runner.js
 │   ├── morning-brief-runner.js
 │   ├── eod-summary-runner.js
 │   ├── zoho-sent-runner.js             # Zoho sync + LLM classification + comments
 │   ├── email-brain-index-runner.js
 │   ├── neodove-report-runner.js        # NeoDove telecaller report (today + backfill)
-│   └── trigger-workflows.sh            # manual workflow_dispatch helper (fallback / ad-hoc)
+│   └── set-ai-keys.sh                  # push GROQ_API_KEYS to GH + Worker secrets (keys never touch disk/git)
 ├── founder-os_frontend/               # Next.js 16 static dashboard (Cloudflare Pages)
 ├── .github/workflows/                 # cron-every-{5,10,15,30}min.yml + cron-daily-ist.yml
 ├── zoho_sent/                         # Zoho Books cURL export (sent_estimates.txt)
@@ -139,7 +139,7 @@ Worker + GitHub Actions.
 | Database | PostgreSQL (external; `DATABASE_URL`) |
 | Scheduler | `node-cron` (in-process) + `cron-parser` |
 | Queue | BullMQ + Redis (ioredis) — message processing queue |
-| LLM | OpenAI-compatible client (`openai`) → Omniroute endpoint |
+| LLM | Unified **AI gateway** (`src/shared/ai-gateway.ts` on Worker/Express, JS port `scripts/ai-gateway.js` on GH runners) → multi-provider OpenAI-compatible endpoints with a managed key pool |
 | Embeddings | HuggingFace Router API (384-dim), stored as JSON |
 | Validation | Zod 4 |
 | Logging | Pino (+ pino-pretty) |
@@ -225,6 +225,7 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 | `orphaned-message-recovery` | handler | `*/2 * * * *` | Re-enqueue saved-but-unclassified messages |
 | `outbound-intent-recovery` | handler | `*` | Re-defer persisted outbound intents once Redis back |
 | `sla-monitor` | handler | `*` | Flag SLA breaches → Slack |
+| `telecalling` | handler | `*/30 * * * *` rule intent; **production-live via `cron-daily-ist.yml` (08:00 IST round-robin rotation + 21:00 IST EOD snatch) + `cron-every-15min.yml` effort-sync → `/api/runner/telecalling/effort-sync`** | Unified Lead Conversion (programmatic estimate assignment) + Lead Generation (NeoDove, live). **Deterministic — no LLM.** Handler `runLeadConversion()` (service.ts) assigns unassigned + EOD-reassigns red/zombie; `bulkAssignEstimates()` powers MIS bulk-assign. Registered in `registry-worker.ts` as `telecalling`. Triggered in prod by `POST /api/trigger/telecalling` (secret-gated), NOT by in-worker node-cron. |
 | `telecalling-agent-analysis` | handler | `*/30 * * * *` | Read Telecalling Agents sheet → per-agent metrics |
 | `telecalling-enquiry-to-dpp` | rule | event+scan | Enquiry messages → DPP |
 | `wa-engine-monitor` | handler | `*` | WA Engine session/health monitor + dashboard |
@@ -365,13 +366,54 @@ There are **two** ingestion routes from WA Engine Pro (the WhatsApp gateway):
     `founder-os-worker`'s `/api/runner/*` instead. waba-worker + local-runner is the
     local/dev classification path.)
 
-`local-runner.js` ports `deterministicClassifier.ts` rules and calls Omniroute for
+`local-runner.js` ports `deterministicClassifier.ts` rules and calls the legacy Omniroute gateway for
 ambiguous messages; it naturally drains backlog accumulated while the machine was off.
+(Local/dev path only — production GH runners use direct Groq.)
 
 ## 5. GitHub Actions — AI processing & scheduling
 
 Heavy jobs are standalone Node scripts in repo-root `scripts/` that call the Worker's
-`/api/runner/*` (D1 reads/writes) and make LLM calls via Omniroute directly.
+`/api/runner/*` (D1 reads/writes) and make LLM calls through the **unified AI
+gateway** (`scripts/ai-gateway.js`, port of `src/shared/ai-gateway.ts` — the edge-safe
+TS module used by the Worker enquiry extractor and Express `AIService`, so all four
+former LLM paths now share one contract).
+
+Gateway design (one place, both runtimes):
+- **Key pool**: `KeyPool` in the gateway owns every key with per-key health
+  (`failures`, `cooldownUntil`, `enabled`, `successCount`, `lastError`).
+- **Key config**: single `AI_KEYS` env — `provider:key:label,...`
+  (`groq`/`openrouter`/`deepseek`/`together`/`openai`/`omniroute`; provider
+  auto-detected from key prefix when omitted; labels are optional). Legacy
+  `GROQ_API_KEYS` / `OPENROUTER_API_KEYS` / `DEEPSEEK_API_KEYS` / `LLM_API_KEY` /
+  `OMNIROUTE_*` vars are still merged for backwards compat, and obvious
+  placeholders (`your_api_key_here` etc.) are ignored. Deduped.
+- **Selection**: least-failures → least-recently-used among enabled, non-cooling keys.
+- **Failure handling**: 401/403 → key disabled permanently; 429 → cooldown
+  (exponential backoff, honors `retry-after`); 402/quota → 5-min cooldown;
+  5xx/network → short cooldown + rotate immediately; attempts = pool size (min 3).
+- **Providers** (all OpenAI `/chat/completions` wire format): Groq
+  (`reasoning_effort` supported, default `openai/gpt-oss-120b`), OpenRouter,
+  DeepSeek, Together, OpenAI, and legacy Omniroute as the last-resort fallback.
+  Adding a vendor = one line in `PROVIDERS`.
+- **Surface**: `complete({ messages, temperature, json, model, reasoningEffort,
+  provider })` → `{ content, provider, keyId, usage }`; `completeJson()` parses.
+  `scripts/runner-lib.js` exposes the same `groq()`/`groqJson()`/`omnirouteJson()`
+  names as thin gateway wrappers, so existing runners needed zero call-site changes.
+
+**Omniroute is NOT the production AI path** — it's the final fallback inside the pool.
+
+Telecalling production status: the `telecalling` automation is **production-live and
+fully deterministic (no LLM)** — `runLeadConversion()` in
+`founder-os_backend/src/automations/telecalling/service.ts` (round-robin assignment,
+conversion-weighted routing, risk/ok-red-zombie model, snatch shield from NeoDove
+effort snapshots, `TelecallerScoreEvent` ledger). Live cadence: `cron-daily-ist.yml`
+fires `POST /api/trigger/telecalling` at 08:00 IST (round-robin rotation) and 21:00 IST
+(EOD snatch sweep of red/zombie estimates), while `cron-every-15min.yml` runs
+`scripts/effort-sync-runner.js` → `POST /api/runner/telecalling/effort-sync`, which
+persists per-day NeoDove call-log snapshots (`telecalling:effort:<YYYY-MM-DD>`) that the
+assignment engine reads for the snatch shield. Dashboard: `TelecallingDashboard`
+(frontend) ← `/api/automations/telecalling/data` + `/api/estimates` (KV-cached, live via
+EventHub `telecalling` events).
 
 | Workflow | Cadence (UTC) | Jobs |
 |----------|---------------|------|
@@ -381,8 +423,9 @@ Heavy jobs are standalone Node scripts in repo-root `scripts/` that call the Wor
 | `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |
 | `cron-daily-ist.yml` | `30 19` (baseline-freeze 01:00 IST), `30 21` (data-retention 03:00 IST) | baseline-freeze (curl), data-retention (curl), `morning-brief-runner.js`, `eod-summary-runner.js`, `neodove-report-runner.js` (yesterday + N-day backfill) |
 
-Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_BASE_URL`,
-`OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`. Zoho creds are inferred at runtime from
+Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `AI_KEYS` (unified gateway keys;
+legacy `GROQ_API_KEYS`/`OPENROUTER_API_KEYS` + `OMNIROUTE_*` still merged as fallback).
+Zoho creds are inferred at runtime from
 `zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets.
 
 ### 5.1 External dispatch (Cloudflare Worker Cron Triggers → workflow_dispatch)
@@ -417,7 +460,8 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
   (HTTP 403 with an empty body from Cloudflare egress).
 - The old cPanel dispatch lines are commented out (`#DISABLED-CF-WORKER-CRON`) but left on the host
   for rollback; only the D1 backup and health ping remain active there.
-- Manual equivalent: `GITHUB_PAT=... ./scripts/trigger-workflows.sh <target>`.
+- Manual equivalent: dispatch from the Actions tab, or `curl` a `workflow_dispatch`
+  to the workflow file (see `src/worker/cron.ts` `dispatchGitHubWorkflow` for the exact call).
 
 ### 5.2 Runner / worker hardening (Aug 2026)
 Several runner failures were diagnosed and fixed; runs that previously failed now
@@ -440,7 +484,7 @@ Operational notes:
   `/api/trigger`); `/api/status` reporting `automationsLoaded: 0` before such a
   request is expected, not an error.
 - Secrets used by the cron dispatcher and runners: `GITHUB_ACCESS_TOKEN`, `WORKER_URL`,
-  `SHARED_SECRET`, `OMNIROUTE_BASE_URL`, `OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`.
+  `SHARED_SECRET`, `AI_KEYS` (unified gateway; legacy per-provider `*_API_KEYS` + `OMNIROUTE_*` still merged).
   Zoho creds are inferred at runtime from `zoho_sent/sent_estimates.txt`.
 
 
@@ -572,7 +616,7 @@ The `functions/` dir is excluded from Next typecheck (Pages Functions types come
 | webhook-relay / local-runner | host/process | `node webhook-relay/relay.js`, `node local-runner.js` |
 
 Secrets: `SHARED_SECRET` (Worker + GH Actions + waba-worker), `DATABASE_URL` (Express),
-`WA_ENGINE_API_KEY`, `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` (Omniroute),
+`WA_ENGINE_API_KEY`, `AI_KEYS` (unified gateway keys; legacy `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` Omniroute still merged as last-resort fallback),
 `GOOGLE_SERVICE_ACCOUNT_JSON`, `GITHUB_ACCESS_TOKEN` (cron dispatch; also `SSH_*` for the
 cPanel host in the root `.env`).
 
@@ -590,8 +634,8 @@ cPanel host in the root `.env`).
    Worker: add the static import to `registry-worker.ts`.
 
 ### 10.2 New GH Actions runner
-1. Add `scripts/<name>-runner.js`, reuse `runner-lib.js` (`workerRequest`, `omnirouteJson`).
-2. Add a job to the matching workflow with `env: { WORKER_URL, SHARED_SECRET, OMNIROUTE_* }`.
+1. Add `scripts/<name>-runner.js`, reuse `runner-lib.js` (`workerRequest` + `groq`/`groqJson` gateway wrappers — full surface in `scripts/ai-gateway.js`; never hand-roll fetch/rotation).
+2. Add a job to the matching workflow with `env: { WORKER_URL, SHARED_SECRET, AI_KEYS }` (legacy `*_API_KEYS`/`OMNIROUTE_*` still work via gateway's backwards-compat merge).
 
 ### 10.3 New Worker/Express endpoint
 - Express: add a handler in `server.ts` or a router in `src/routes/`.
@@ -819,8 +863,8 @@ for every approved member — not an automation.
 | Frontend (+ PWA) | Cloudflare Pages | `npm run build` → `npx wrangler pages deploy out --project-name founder-os-frontend` |
 | webhook-relay / local-runner | host/process | `node webhook-relay/relay.js`, `node local-runner.js` |
 
-Secrets: `SHARED_SECRET`, `DATABASE_URL`, `WA_ENGINE_API_KEY`, `LLM_API_KEY`/`LLM_BASE_URL`/
-`LLM_MODEL`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GITHUB_ACCESS_TOKEN` (+ `SSH_HOST`/`SSH_USER`/
+Secrets: `SHARED_SECRET`, `DATABASE_URL`, `WA_ENGINE_API_KEY`, `AI_KEYS` (unified gateway keys) /
+legacy per-provider `*_API_KEYS` + `LLM_*` (merged as fallback), `GOOGLE_SERVICE_ACCOUNT_JSON`, `GITHUB_ACCESS_TOKEN` (+ `SSH_HOST`/`SSH_USER`/
 `SSH_PASSWORD` for the cPanel host, stored in root `.env`).
 
 

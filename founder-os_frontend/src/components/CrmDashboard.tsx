@@ -1,141 +1,222 @@
 "use client";
 
-import React from "react";
+import React, { useMemo, useState } from "react";
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  flexRender,
+  type ColumnDef,
+  type SortingState,
+} from "@tanstack/react-table";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { PackageCheck, FileCheck, Truck, CreditCard, CheckCircle2, RefreshCw } from "lucide-react";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmtINR = (n: number | null | undefined): string =>
+  `₹${Number(n || 0).toLocaleString("en-IN")}`;
+
+const signed = (n: number): string => (n > 0 ? `+${n}` : String(n));
+
+const shortTime = (iso: string | null | undefined): string => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+};
+
+function ageClass(age: number | null | undefined): string {
+  if (age === null || age === undefined) return "text-zinc-400";
+  if (age > 15) return "text-red-400 font-bold";
+  if (age > 7) return "text-amber-400 font-semibold";
+  return "text-zinc-400";
+}
+
+const ageText = (age: number | null | undefined): string =>
+  age === null || age === undefined ? "—" : `${age}d`;
+
+function StatusPill({ status, accent }: { status: string | null | undefined; accent: string }) {
+  if (!status) return <span className="text-zinc-400">—</span>;
+  return (
+    <span className={`px-1.5 py-0.5 text-[8px] rounded font-extrabold uppercase tracking-wide border ${accent}`}>
+      {status}
+    </span>
+  );
+}
+
+const PAID_PILL: Record<string, string> = {
+  paid: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
+  partial: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+};
+
+const STAGE_PILL: Record<string, string> = {
+  draft: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+  confirmed: "text-sky-400 bg-sky-500/10 border-sky-500/30",
+  approved: "text-sky-400 bg-sky-500/10 border-sky-500/30",
+};
+
+// ── Metadata ──────────────────────────────────────────────────────────────────
 const PROCESS_META: Record<string, { label: string; icon: React.ElementType; accent: string; desc: string }> = {
-  confirm:   { label: "Confirm",   icon: FileCheck,    accent: "text-amber-400 bg-amber-500/10 border-amber-500/30", desc: "Draft — needs confirmation" },
-  invoice:   { label: "Invoice",   icon: PackageCheck, accent: "text-sky-400 bg-sky-500/10 border-sky-500/30", desc: "Confirmed — needs invoicing" },
-  ship:      { label: "Ship",      icon: Truck,        accent: "text-indigo-400 bg-indigo-500/10 border-indigo-500/30", desc: "Invoiced — needs shipping" },
-  payment:   { label: "Payment",   icon: CreditCard,   accent: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30", desc: "Shipped — awaiting payment" },
+  confirm: { label: "Confirm", icon: FileCheck, accent: "text-amber-400 bg-amber-500/10 border-amber-500/30", desc: "Draft — needs confirmation" },
+  invoice: { label: "Invoice", icon: PackageCheck, accent: "text-sky-400 bg-sky-500/10 border-sky-500/30", desc: "Confirmed — needs invoicing" },
+  ship: { label: "Ship", icon: Truck, accent: "text-indigo-400 bg-indigo-500/10 border-indigo-500/30", desc: "Invoiced — needs shipping" },
+  payment: { label: "Payment", icon: CreditCard, accent: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30", desc: "Shipped — awaiting payment" },
 };
 
 const STEP_ORDER = ["confirm", "invoice", "ship", "payment"];
 
-export default function CrmDashboard() {
-  const crm = useLiveQuery<any>(
-    async () => {
-      const res = await fetch("/api/automations/crm/data");
-      if (!res.ok) throw new Error("load failed");
-      return res.json();
-    },
-    { events: ["automation"] },
-  );
+const DEPT_META: Record<string, { label: string; icon: string; accent: string }> = {
+  crm: { label: "CRM Desk", icon: "🤝", accent: "text-indigo-400" },
+  accounts: { label: "Accounts", icon: "💰", accent: "text-emerald-400" },
+  dispatch: { label: "Dispatch", icon: "🚚", accent: "text-amber-400" },
+  procurement: { label: "Procurement", icon: "📦", accent: "text-sky-400" },
+};
 
-  const data = crm.data;
-  const byProcess = data?.byProcess || {};
-  const totalActive = data?.totalActive || 0;
-  const totalValue = data?.totalValue || 0;
-  const fresh = data?.fresh !== false;
-  const computedAt = data?.computedAt ? new Date(data.computedAt).toLocaleString() : null;
+type View = "overview" | "crm" | "accounts" | "dispatch" | "procurement";
+
+const TABS: { key: View; label: string; icon: string }[] = [
+  { key: "overview", label: "Overview", icon: "📊" },
+  { key: "crm", label: "CRM Desk", icon: "🤝" },
+  { key: "accounts", label: "Accounts", icon: "💰" },
+  { key: "dispatch", label: "Dispatch", icon: "🚚" },
+  { key: "procurement", label: "Procurement", icon: "📦" },
+];
+
+// ── KPI card ──────────────────────────────────────────────────────────────────
+function Kpi({ label, value, sub, accent, title }: { label: string; value: string; sub?: string; accent?: string; title?: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4" title={title}>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">{label}</span>
+      <span className={`text-2xl font-extrabold ${accent || "text-white"}`}>{value}</span>
+      {sub && <span className="text-[10px] text-zinc-500 block mt-0.5">{sub}</span>}
+    </div>
+  );
+}
+
+// ── Reusable TanStack table ───────────────────────────────────────────────────
+function DataTable({
+  columns,
+  data,
+  searchPlaceholder = "Search…",
+  emptyState = "Nothing here yet.",
+  initialSorting,
+}: {
+  columns: ColumnDef<any, any>[];
+  data: any[];
+  searchPlaceholder?: string;
+  emptyState?: React.ReactNode;
+  initialSorting?: SortingState;
+}) {
+  const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
+  const [globalFilter, setGlobalFilter] = useState("");
+
+  const table = useReactTable({
+    data,
+    columns,
+    state: { sorting, globalFilter },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: { pagination: { pageSize: 25 } },
+  });
+
+  const rows = table.getRowModel().rows;
+  const filteredRows = table.getFilteredRowModel().rows.length;
 
   return (
-    <div className="space-y-6 text-zinc-900 dark:text-zinc-100">
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">CRM — Active Sales Orders</span>
-          </h2>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Open Zoho Books sales orders grouped by the next pending process step. Auto-refreshes every 15 minutes.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-          {fresh ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-          {computedAt ? `Updated ${computedAt}` : "Loading…"}
-        </div>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={globalFilter}
+          onChange={(e) => setGlobalFilter(e.target.value)}
+          placeholder={searchPlaceholder}
+          className="w-64 max-w-full px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+        />
+        <span className="text-[10px] text-zinc-500">{filteredRows} / {data.length} rows</span>
       </div>
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">Active SOs</span>
-          <span className="text-2xl font-extrabold text-white">{totalActive.toLocaleString()}</span>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">Pipeline Value</span>
-          <span className="text-2xl font-extrabold text-emerald-400">₹{totalValue.toLocaleString()}</span>
-        </div>
-        {STEP_ORDER.map((step) => {
-          const meta = PROCESS_META[step];
-          const Icon = meta?.icon || CheckCircle2;
-          const count = byProcess[step]?.count || 0;
-          const value = byProcess[step]?.value || 0;
-          return (
-            <div key={step} className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
-              <div className="flex items-center gap-1.5 mb-1">
-                <Icon className="w-3.5 h-3.5 text-zinc-400" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">{meta?.label || step}</span>
-              </div>
-              <span className="text-2xl font-extrabold text-white">{count}</span>
-              <span className="text-[10px] text-zinc-500 block">₹{value.toLocaleString()}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Process columns */}
-      <div className="space-y-4">
-        {STEP_ORDER.map((step) => {
-          const meta = PROCESS_META[step];
-          const Icon = meta?.icon || CheckCircle2;
-          const group = byProcess[step];
-          const orders = group?.orders || [];
-          if (!group || group.count === 0) return null;
-          return (
-            <div key={step} className="bg-zinc-50/30 dark:bg-zinc-950/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3 pb-2 border-b border-zinc-200/60 dark:border-zinc-800/60">
-                <div className="flex items-center gap-2">
-                  <span className={`w-7 h-7 rounded-lg border flex items-center justify-center ${meta?.accent}`}>
-                    <Icon className="w-3.5 h-3.5" />
-                  </span>
-                  <div>
-                    <h4 className="text-xs font-bold text-zinc-900 dark:text-white">{meta?.label}</h4>
-                    <p className="text-[10px] text-zinc-500 dark:text-zinc-400">{meta?.desc}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-lg font-extrabold text-white">{group.count}</span>
-                  <span className="text-[10px] text-zinc-500 block">₹{group.value.toLocaleString()}</span>
-                </div>
-              </div>
-              {orders.length > 0 ? (
-                <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1 scrollbar-thin">
-                  {orders.map((o: any, idx: number) => (
-                    <div key={o.so || idx} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 px-2 rounded-lg hover:bg-zinc-100/40 dark:hover:bg-zinc-800/40 text-[11px]">
-                      <span className={`px-1.5 py-0.5 text-[8px] rounded font-extrabold uppercase tracking-wide border ${meta?.accent}`}>{o.status || step}</span>
-                      <span className="text-zinc-800 dark:text-zinc-200 font-mono font-bold">{o.so}</span>
-                      {o.ref && <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[10px]">↳ {o.ref}</span>}
-                      <span className="text-zinc-800 dark:text-zinc-200 font-semibold truncate max-w-[160px]">{o.customer}</span>
-                      {o.salesperson && <span className="text-zinc-500 dark:text-zinc-400 text-[10px]">{o.salesperson}</span>}
-                      <span className="text-zinc-500 dark:text-zinc-400 font-mono ml-auto">₹{Number(o.total).toLocaleString()}</span>
-                    </div>
+      <div className="overflow-x-auto rounded-xl border border-zinc-200/80 dark:border-zinc-800/80">
+        <table className="w-full text-[11px]">
+          <thead>
+            {table.getHeaderGroups().map((hg) => (
+              <tr key={hg.id} className="bg-zinc-50 dark:bg-zinc-900/80 border-b border-zinc-200 dark:border-zinc-800">
+                {hg.headers.map((header) => {
+                  const sorted = header.column.getIsSorted();
+                  return (
+                    <th
+                      key={header.id}
+                      onClick={header.column.getToggleSortingHandler()}
+                      className={`px-2.5 py-2 text-left font-bold uppercase tracking-wide text-[9px] text-zinc-500 dark:text-zinc-400 select-none ${
+                        header.column.getCanSort() ? "cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200" : ""
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {header.column.getCanSort() && (
+                          <span className="text-[8px]">{sorted === "asc" ? "▲" : sorted === "desc" ? "▼" : "↕"}</span>
+                        )}
+                      </span>
+                    </th>
+                  );
+                })}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length} className="px-3 py-6 text-center text-zinc-500 italic">
+                  {emptyState}
+                </td>
+              </tr>
+            ) : (
+              rows.map((row) => (
+                <tr key={row.id} className="border-b border-zinc-100 dark:border-zinc-800/50 hover:bg-zinc-100/40 dark:hover:bg-zinc-800/40">
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id} className="px-2.5 py-1.5 text-zinc-800 dark:text-zinc-200">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
                   ))}
-                  {group.count > orders.length && (
-                    <p className="text-[10px] text-zinc-500 italic py-1">…and {group.count - orders.length} more (showing first {orders.length})</p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[11px] text-zinc-500 italic py-2">Counted {group.count} — detail loading on next refresh.</p>
-              )}
-            </div>
-          );
-        })}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
-      {totalActive === 0 && fresh && (
-        <div className="text-center py-12 text-zinc-500">
-          <PackageCheck className="w-10 h-10 mx-auto mb-3 text-zinc-600" />
-          <p className="text-sm">No active sales orders. Pipeline is clear!</p>
-        </div>
-      )}
-
-      {!fresh && totalActive === 0 && (
-        <div className="text-center py-12 text-zinc-500 animate-pulse">
-          <RefreshCw className="w-10 h-10 mx-auto mb-3 text-zinc-600 animate-spin" />
-          <p className="text-sm">Waiting for first CRM snapshot (every 15 min)…</p>
+      {filteredRows > table.getState().pagination.pageSize && (
+        <div className="flex items-center justify-between text-[10px] text-zinc-500">
+          <span>Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}</span>
+          <div className="flex items-center gap-2">
+            <select
+              value={table.getState().pagination.pageSize}
+              onChange={(e) => table.setPageSize(Number(e.target.value))}
+              className="px-1.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300"
+            >
+              {[10, 25, 50].map((n) => (
+                <option key={n} value={n}>{n} / page</option>
+              ))}
+            </select>
+            <button
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
+              Prev
+            </button>
+            <button
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
     </div>

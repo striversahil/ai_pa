@@ -6,6 +6,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, type Bindings } from '../context';
+import { prisma } from '../../shared/prisma';
+import { logger } from '../../shared/logger';
 import { bulkAssignEstimates } from '../../automations/telecalling/service';
 import { syncEffortSnapshots } from '../../automations/telecalling/effort-sync';
 
@@ -190,36 +192,151 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
 
   // ── CRM sales-orders snapshot (fetched by the GH runner; served to the CRM dashboard)
   // The runner pages /api/v3/salesorders (Status.All), computes each open order's
-  // next pending process step, and POSTs the grouped snapshot here. The CRM
-  // data() reads this KV payload — no Zoho fetch on the request path.
+  // next pending process step and POSTs the department-grouped snapshot here.
+  // Every snapshot is DIFFED against the previous one (KV) and the movement is
+  // written to the DepartmentScoreEvent ledger — the department-level points
+  // game, exactly like the telecalling leaderboard:
+  //   new SO created today       → CRM +25
+  //   left the confirm stage     → CRM +50 and Procurement +25 (material allocated)
+  //   left the invoice stage     → Accounts +50
+  //   left the ship stage        → Dispatch +50
+  //   closed as paid             → Accounts +100 (implies all stage completions)
+  //   closed cancelled/void      → −20 charged to the dept owning the stage it was in
+  // Stage → desk ownership: confirm=CRM, invoice=Accounts, ship=Dispatch, payment=Accounts.
+  const CRM_SNAPSHOT_KEY = 'crm:salesorders_snapshot';
+  const CRM_DATA_CACHE_KEY = 'crm:data';
+  const CRM_STAGES = ['confirm', 'invoice', 'ship', 'payment'];
+  const STAGE_DEPT: Record<string, string> = { confirm: 'crm', invoice: 'accounts', ship: 'dispatch', payment: 'accounts' };
+  // Completing a stage credits these (dept, points, reason) pairs, in order.
+  const STAGE_COMPLETION: Record<string, Array<[string, number, string]>> = {
+    confirm: [['crm', 50, 'Sales order confirmed'], ['procurement', 25, 'Material allocated — cleared confirm']],
+    invoice: [['accounts', 50, 'Invoice raised']],
+    ship: [['dispatch', 50, 'Order shipped']],
+    payment: [['accounts', 100, 'Payment received']],
+  };
+
   app.post('/api/runner/crm/snapshot', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const body = await c.req.json().catch(() => ({}));
-    if (typeof body?.date !== 'string' || typeof body?.totalActive !== 'number' || !body?.byProcess) {
-      return c.json({ error: 'date, totalActive, and byProcess required' }, 400);
+    if (typeof body?.date !== 'string' || typeof body?.totalActive !== 'number' || !body?.stages) {
+      return c.json({ error: 'date, totalActive, and stages required' }, 400);
     }
-    const byProcess: Record<string, { count: number; value: number; orders: any[] }> = {};
-    for (const [step, entry] of Object.entries(body.byProcess)) {
+    const stages: Record<string, { count: number; value: number; orders: any[] }> = {};
+    for (const [step, entry] of Object.entries(body.stages)) {
       const e = entry as any;
-      byProcess[step] = {
+      stages[step] = {
         count: Number(e?.count) || 0,
         value: Number(e?.value) || 0,
-        orders: Array.isArray(e?.orders) ? e.orders.slice(0, 100) : [],
+        orders: Array.isArray(e?.orders) ? e.orders.slice(0, 400) : [],
       };
     }
-    const { cacheSet } = require('../../shared/cache');
+
+    const { cacheGet, cacheSet, cacheDel } = require('../../shared/cache');
+    const prev: any = await cacheGet(CRM_SNAPSHOT_KEY, 24 * 60 * 60 * 1000);
+
+    // Previous active orders: so → { stage, paidStatus }.
+    const prevBySo = new Map<string, { stage: string; paidStatus: string }>();
+    const prevSource = prev?.stages || prev?.byProcess || {};
+    for (const [stage, entry] of Object.entries(prevSource)) {
+      for (const o of (entry as any)?.orders ?? []) {
+        if (o?.so) prevBySo.set(String(o.so), { stage, paidStatus: String(o.paidStatus || '') });
+      }
+    }
+    // New active orders: so → { stage, paidStatus, createdToday, salesperson }.
+    const nextBySo = new Map<string, { stage: string; paidStatus: string; createdToday: boolean; salesperson: string }>();
+    for (const [stage, entry] of Object.entries(stages)) {
+      for (const o of entry.orders) {
+        if (o?.so) nextBySo.set(String(o.so), {
+          stage,
+          paidStatus: String(o.paidStatus || ''),
+          createdToday: !!o.createdToday,
+          salesperson: String(o.salesperson || ''),
+        });
+      }
+    }
+    const day = body.date;
+    const events: { dept: string; soNumber: string; points: number; reason: string; actor: string | null; day: string }[] = [];
+    const credit = (dept: string, so: string, points: number, reason: string, actor?: string | null) =>
+      events.push({ dept, soNumber: so, points, reason, actor: actor || null, day });
+
+    // Stage-completion credits for an order advancing through the pipeline.
+    const awardStageCompletions = (fromIdx: number, toIdxInclusive: number, so: string, salesperson: string | null) => {
+      for (let i = fromIdx; i <= toIdxInclusive; i++) {
+        const stage = CRM_STAGES[i];
+        for (const [dept, points, reason] of STAGE_COMPLETION[stage] || []) {
+          credit(dept, so, points, reason, dept === 'crm' || dept === 'dispatch' ? salesperson : null);
+        }
+      }
+    };
+
+    for (const [so, next] of nextBySo) {
+      const prevEntry = prevBySo.get(so);
+      if (!prevEntry) {
+        // First time visible in the pipeline. Only orders CREATED TODAY earn the
+        // new-order credit (prevents a re-credit flood if the KV snapshot expired).
+        if (next.createdToday) credit('crm', so, 25, 'New sales order created', next.salesperson);
+        continue;
+      }
+      if (prevEntry.stage !== next.stage) {
+        const prevIdx = CRM_STAGES.indexOf(prevEntry.stage);
+        const nextIdx = CRM_STAGES.indexOf(next.stage);
+        if (nextIdx > prevIdx) awardStageCompletions(prevIdx, nextIdx - 1, so, next.salesperson);
+        // Regression (credit note / manual revert) scores nothing.
+      }
+      if (next.paidStatus === 'paid' && prevEntry.paidStatus !== 'paid') {
+        credit('accounts', so, 100, 'Payment received', null);
+      }
+    }
+
+    // Closed orders (absent from the active stages): paid → Accounts +100 with
+    // all stage completions implied; cancelled/void → −20 to the dept that
+    // owned the stage the order was sitting in.
+    const closedList: any[] = Array.isArray(body.closed) ? body.closed.slice(0, 400) : [];
+    for (const co of closedList) {
+      const so = String(co?.so || '');
+      const prevEntry = prevBySo.get(so);
+      if (!prevEntry) continue; // wasn't active in the previous snapshot — nothing to credit
+      const status = String(co?.status || '');
+      const salesperson = String(co?.salesperson || '') || null;
+      if (status === 'cancelled' || status === 'void') {
+        credit(STAGE_DEPT[prevEntry.stage] || 'crm', so, -20, `Order cancelled (was in ${prevEntry.stage})`, salesperson);
+      } else if ((co?.paidStatus === 'paid' || co?.orderStatus === 'closed') && prevEntry.paidStatus !== 'paid') {
+        const prevIdx = CRM_STAGES.indexOf(prevEntry.stage);
+        if (prevIdx >= 0) awardStageCompletions(prevIdx, CRM_STAGES.length - 1, so, salesperson);
+      }
+    }
+
+    // Persist the ledger first (best-effort — never block the snapshot).
+    let persisted = 0;
+    if (events.length > 0) {
+      try {
+        const res = await prisma.departmentScoreEvent.createMany({ data: events });
+        persisted = res?.count ?? events.length;
+      } catch (e: any) {
+        logger.warn({ err: e?.message, events: events.length }, 'crm snapshot: score ledger write failed');
+      }
+    }
+
     await cacheSet(
-      'crm:salesorders_snapshot',
+      CRM_SNAPSHOT_KEY,
       {
         date: body.date,
         totalActive: Number(body.totalActive) || 0,
         totalValue: Number(body.totalValue) || 0,
-        byProcess,
+        stages,
+        byProcess: stages, // legacy alias (pre-department dashboards)
+        closed: closedList,
+        materials: Array.isArray(body.materials) ? body.materials.slice(0, 300) : [],
+        salespeople: Array.isArray(body.salespeople) ? body.salespeople.slice(0, 200) : [],
+        meta: body.meta ?? null,
         computedAt: new Date().toISOString(),
       },
       45 * 60 * 1000,
     );
-    return c.json({ ok: true });
+    // The aggregated data() cache derives from the snapshot + ledger — bust it.
+    await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
+    broadcastLive(c, LiveEvent.Crm, { totalActive: Number(body.totalActive) || 0, events: persisted });
+    return c.json({ ok: true, events: persisted });
   });
 
   // ── Zoho analyzer no-change fingerprint (KV) ────────────────────────────────

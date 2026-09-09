@@ -307,6 +307,32 @@ model TelecallerScoreEvent {
   @@index([estimateId])
 }
 
+// Event-ledger scoring for the CRM sales-order pipeline (mirrors
+// TelecallerScoreEvent). Every measurable movement of a sales order credits or
+// debits the owning department's point balance: +50 CRM confirm,
+// +25 Procurement allocation, +50 Accounts invoice, +50 Dispatch ship,
+// +100 Accounts payment received, +25 CRM new order, −20 cancel (charged to
+// the department that owned the stage the order was in). The day field (IST
+// date) lets any timeframe be summed with a simple filter, so each department
+// dashboard's leaderboard restarts naturally every week. `actor` is the Zoho
+// salesperson for CRM/Dispatch credits; Accounts/Procurement are team desks
+// (actor NULL).
+model DepartmentScoreEvent {
+  id        String   @id @default(uuid())
+  dept      String // crm | accounts | dispatch | procurement
+  soNumber  String
+  points    Int
+  reason    String
+  actor     String?
+  day       String // YYYY-MM-DD the event occurred (IST)
+  createdAt DateTime @default(now())
+
+  @@index([dept])
+  @@index([day])
+  @@index([actor])
+  @@index([soNumber])
+}
+
 model AuditLog {
   id          String   @id @default(uuid())
   action      String   // e.g. "MESSAGE_RECEIVED", "MESSAGE_CLASSIFIED", "MESSAGE_SENT", "SLA_BREACHED", "WAHA_RECONNECT"

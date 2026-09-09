@@ -37,7 +37,7 @@ import { createChatStore } from './modules/chat/store';
 import * as EnquiryRoutes from './modules/enquiries/routes';
 import { PrismaEnquiryStore } from './modules/enquiries/store-prisma';
 import { createEnquiryStore } from './modules/enquiries/store';
-import { extractEnquiryFields, pickGroqKey } from './modules/enquiries/extract';
+import { extractEnquiryFieldsRobust } from './modules/enquiries/extract';
 
 
 const app = express();
@@ -225,12 +225,8 @@ app.get('/api/enquiries/agents', async (req, res) => {
 });
 async function runEnquiryExtraction(id: string) {
   try {
-    const key = pickGroqKey(process.env as any);
-    if (!key) return;
     const enquiry = await enquiryStore.getEnquiry(id);
     if (!enquiry) return;
-    // Extraction source: the description PLUS the first two comments (the
-    // agent writes the lead-details block in comment #1/#2).
     let comments: any[] = [];
     try { comments = await enquiryStore.listComments(id); } catch { /* ignore */ }
     const firstComments = (comments || [])
@@ -238,11 +234,11 @@ async function runEnquiryExtraction(id: string) {
       .map((cm: any) => `${cm.content ?? ''}`)
       .join('\n');
     const text = [enquiry.description, firstComments].filter(Boolean).join('\n');
-    const extracted = await extractEnquiryFields(key, {
+    const extracted = await extractEnquiryFieldsRobust(process.env as any, {
       text,
       title: enquiry.title,
       company: enquiry.clientCompany,
-    }, []);
+    });
     if (!extracted) return;
     const updates: Record<string, string> = {};
     if (!enquiry.title && extracted.title) updates.title = extracted.title;

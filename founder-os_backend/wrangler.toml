@@ -52,7 +52,7 @@ enabled = true
 # Secrets (set via wrangler secret put):
 #   SHARED_SECRET       — shared with GitHub Actions + local-runner
 #   WA_ENGINE_API_KEY   — waengine.pro account key
-#   LLM_API_KEY         — omniroute key
-#   LLM_BASE_URL        — http://127.0.0.1:20128/v1 (local) or remote
-#   LLM_MODEL           — groq/openai/gpt-oss-120b
+#   AI_KEYS             — unified AI gateway keys: "provider:key:label,..."
+#                         (groq/openrouter/deepseek/together/openai/omniroute;
+#                         legacy GROQ_API_KEYS / LLM_API_KEY / OMNIROUTE_* also merged)
 #   GOOGLE_SERVICE_ACCOUNT_JSON — GSheets service account (if needed)

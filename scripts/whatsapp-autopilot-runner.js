@@ -21,8 +21,8 @@
  * (arrival order); task writes are optimistic (`version`) with one re-read +
  * re-run on conflict; create-dedupe window is enforced server-side too.
  *
- * Env (via runner-lib): WORKER_URL, SHARED_SECRET, OMNIROUTE_BASE_URL,
- * OMNIROUTE_API_KEY, OMNIROUTE_MODEL.
+ * Env (via runner-lib): WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (primary
+ * direct-Groq LLM; OMNIROUTE_* kept as legacy fallback).
  * Optional thresholds: ASSOC_THRESHOLD (0.85), TRANSITION_CREATE_THRESHOLD
  * (0.8), TRANSITION_COMPLETE_THRESHOLD (0.9), AUTOPILOT_AUTO_CLOSE_DAYS (7),
  * AUTOPILOT_FOLLOW_UP_HOURS (24).

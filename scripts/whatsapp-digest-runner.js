@@ -8,8 +8,8 @@
  * summarize each chat (full or incremental via previous digest) → persist
  * digests, tasks and pending items → mark messages processed.
  *
- * Env: WORKER_URL, SHARED_SECRET, OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY,
- * OMNIROUTE_MODEL (all via runner-lib).
+ * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (primary direct-Groq LLM;
+ * OMNIROUTE_* kept as legacy fallback) — all via runner-lib.
  */
 
 const { requireEnv, workerRequest, omnirouteJson } = require('./runner-lib');
@@ -186,7 +186,7 @@ async function main() {
   console.log(`whatsapp-digest-runner: done — chats=${processedChats}, failed=${failedChats}, tasks=${tasksCreated}`);
 
   if (failedChats > 0) {
-    console.error(`whatsapp-digest-runner: ${failedChats} chat(s) failed (omniroute/LLM unreachable). Failing the run.`);
+    console.error(`whatsapp-digest-runner: ${failedChats} chat(s) failed (Groq/LLM unreachable). Failing the run.`);
     process.exit(1);
   }
 }

@@ -1,10 +1,10 @@
-// Groq-based real-time enquiry field extraction.
-//
-// Called from the worker after an enquiry is created/edited AND after the first
-// 1–2 comments are added: the sales agent writes the lead-details block in the
-// first comment(s), and this parses it into structured fields. The client's
-// wording is NEVER rewritten. Keys rotate randomly per call (GROQ_API_KEYS,
-// comma-separated; server-side only).
+/**
+ * Enquiry field extraction — routes through the unified AiGateway
+ * (src/shared/ai-gateway.ts) so key rotation, retry, rate-limit cooldowns and
+ * multi-provider support are handled in ONE place. This module keeps the
+ * extraction prompt + response shaping; the gateway owns the wire call.
+ */
+import { getGateway } from '../../shared/ai-gateway';
 
 export interface ExtractionResult {
   title?: string | null;
@@ -15,8 +15,6 @@ export interface ExtractionResult {
   contactName?: string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
-  // NOTE: agent assignment is NOT done here — "Lead of" = the enquiry's
-  // creator, set at creation time (no AI guessing).
 }
 
 export interface EnquiryAgentRef {
@@ -24,28 +22,10 @@ export interface EnquiryAgentRef {
   name: string;
 }
 
-export function pickGroqKey(env: any): string | null {
-  const raw = (env?.GROQ_API_KEYS as string) || "";
-  const keys = raw.split(",").map((k) => k.trim()).filter(Boolean);
-  if (keys.length === 0) return null;
-  return keys[Math.floor(Math.random() * keys.length)];
-}
+const MODEL = 'openai/gpt-oss-20b';
 
-/** All configured GROQ keys (comma-separated in env GROQ_API_KEYS). */
-export function listGroqKeys(env: any): string[] {
-  const raw = (env?.GROQ_API_KEYS as string) || "";
-  return raw.split(",").map((k) => k.trim()).filter(Boolean);
-}
-
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "openai/gpt-oss-20b";
-
-export async function extractEnquiryFields(
-  key: string,
-  input: { text: string; title?: string; company?: string },
-  agents: EnquiryAgentRef[],
-): Promise<ExtractionResult | null> {
-  const prompt = `You are a B2B industrial-sales data extractor. Sales agents write a lead-details block for each enquiry. From the text below, extract ONLY these fields and return STRICT JSON (no markdown):
+function buildPrompt(input: { text: string; title?: string; company?: string }): string {
+  return `You are a B2B industrial-sales data extractor. Sales agents write a lead-details block for each enquiry. From the text below, extract ONLY these fields and return STRICT JSON (no markdown):
 
 {
   "title": "a concise enquiry title, or null",
@@ -67,71 +47,70 @@ Rules:
 - Return JSON only.
 
 Current values:
-title: ${input.title || "?"}
-company: ${input.company || "?"}
+title: ${input.title || '?'}
+company: ${input.company || '?'}
 
 Text:
-"""${(input.text || "").slice(0, 4000)}"""`;
+"""${(input.text || '').slice(0, 4000)}"""`;
+}
 
-  const res = await fetch(GROQ_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: "Extract structured sales-enquiry fields as JSON. Never alter client wording." },
-        { role: "user", content: prompt },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    console.log("groq extract failed:", res.status, (await res.text()).slice(0, 200));
-    return null;
-  }
-  const data: any = await res.json();
-  const content = data?.choices?.[0]?.message?.content || "";
+function shapeResult(parsed: any): ExtractionResult {
+  return {
+    title: parsed.title ? String(parsed.title) : null,
+    enquiryNumber: parsed.enquiryNumber ? String(parsed.enquiryNumber) : null,
+    sourceLead: parsed.sourceLead ? String(parsed.sourceLead) : null,
+    location: parsed.location ? String(parsed.location) : null,
+    company: parsed.company ? String(parsed.company) : null,
+    contactName: parsed.contactName ? String(parsed.contactName) : null,
+    contactEmail: parsed.contactEmail ? String(parsed.contactEmail) : null,
+    contactPhone: parsed.contactPhone ? String(parsed.contactPhone) : null,
+  };
+}
+
+/**
+ * Extract structured fields from an enquiry's lead-details text. Uses the
+ * unified gateway so it inherits key rotation + retry + rate-limit handling and
+ * works across any configured provider (Groq, OpenRouter, DeepSeek, …).
+ */
+export async function extractEnquiryFieldsRobust(
+  env: Record<string, unknown>,
+  input: { text: string; title?: string; company?: string },
+  _agents: EnquiryAgentRef[] = [],
+): Promise<ExtractionResult | null> {
+  const gateway = getGateway(env);
+  if (gateway.keyCount === 0) return null;
   try {
-    const parsed = JSON.parse(content.replace(/```json|```/g, "").trim());
-    return {
-      title: parsed.title ? String(parsed.title) : null,
-      enquiryNumber: parsed.enquiryNumber ? String(parsed.enquiryNumber) : null,
-      sourceLead: parsed.sourceLead ? String(parsed.sourceLead) : null,
-      location: parsed.location ? String(parsed.location) : null,
-      company: parsed.company ? String(parsed.company) : null,
-      contactName: parsed.contactName ? String(parsed.contactName) : null,
-      contactEmail: parsed.contactEmail ? String(parsed.contactEmail) : null,
-      contactPhone: parsed.contactPhone ? String(parsed.contactPhone) : null,
-    };
-  } catch {
+    const parsed = await gateway.completeJson<any>({
+      messages: [
+        { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
+        { role: 'user', content: buildPrompt(input) },
+      ],
+      temperature: 0,
+      model: MODEL,
+      json: true,
+    });
+    return shapeResult(parsed);
+  } catch (err) {
+    console.error(`[extract] gateway extraction failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Extract with key rotation + retry: on any API error / rate-limit, wait 5s and
- * try the next GROQ key until one succeeds or all keys are exhausted. High
- * reasoning via temperature 0 (grounded, deterministic extraction).
- */
-export async function extractEnquiryFieldsRobust(
-  keys: string[],
+/** @deprecated Use extractEnquiryFieldsRobust(env, input) instead. */
+export async function extractEnquiryFields(
+  _key: string,
   input: { text: string; title?: string; company?: string },
   agents: EnquiryAgentRef[] = [],
 ): Promise<ExtractionResult | null> {
-  if (keys.length === 0) return null;
-  const start = Math.floor(Math.random() * keys.length);
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[(start + i) % keys.length];
-    try {
-      const result = await extractEnquiryFields(key, input, agents);
-      if (result) return result;
-    } catch {
-      // fall through to next key
-    }
-    if (i < keys.length - 1) await sleep(5000);
-  }
+  return extractEnquiryFieldsRobust({}, input, agents);
+}
+
+/** @deprecated AI keys are now configured via env.AI_KEYS / GROQ_API_KEYS. */
+export function pickGroqKey(_env: any): string | null {
   return null;
+}
+
+/** @deprecated AI keys are now configured via env.AI_KEYS / GROQ_API_KEYS. */
+export function listGroqKeys(_env: any): string[] {
+  return [];
 }

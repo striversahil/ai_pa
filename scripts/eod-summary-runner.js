@@ -8,8 +8,8 @@
  * the engines produce → LLM generate the EOD summary → persist as a founder
  * note. IST-aware for the "created today" task boundary.
  *
- * Env: WORKER_URL, SHARED_SECRET, OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY,
- * OMNIROUTE_MODEL (all via runner-lib).
+ * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (primary direct-Groq LLM;
+ * OMNIROUTE_* kept as legacy fallback) — all via runner-lib.
  */
 
 const { requireEnv, workerRequest, omniroute } = require('./runner-lib');
@@ -114,7 +114,7 @@ async function main() {
     .replace('{tasksCreated}', tasksCreated)
     .replace('{pendingApprovals}', pendingApprovals);
 
-  console.log('eod-summary-runner: generating EOD summary via omniroute');
+  console.log('eod-summary-runner: generating EOD summary via direct Groq (omniroute fallback)');
   const summary = await omniroute(system, 'Generate EOD summary now.', { temperature: 0.5 });
   if (!summary || !summary.trim()) throw new Error('Empty EOD summary returned by LLM');
 

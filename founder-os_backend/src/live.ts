@@ -24,6 +24,8 @@ export const LiveEvent = {
   Sheet: "sheet",
   Enquiries: "enquiries",
   Autopilot: "autopilot",
+  /** CRM sales-order pipeline snapshot refreshed by the GH runner. */
+  Crm: "crm",
   Chat: "chat",
   /**
    * Generic "data changed somewhere" event, emitted automatically by the

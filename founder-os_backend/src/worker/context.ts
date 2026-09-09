@@ -19,7 +19,7 @@ import { createChatStore, resolveLinkedSender } from '../modules/chat/store';
 import * as ChatRoutes from '../modules/chat/routes';
 import { createEnquiryStore } from '../modules/enquiries/store';
 import * as EnquiryRoutes from '../modules/enquiries/routes';
-import { extractEnquiryFields, pickGroqKey } from '../modules/enquiries/extract';
+import { extractEnquiryFieldsRobust } from '../modules/enquiries/extract';
 import { DASHBOARD_SLUGS } from '../modules/automation/dashboardSlugs';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automations/neodove-refresh';
 import { isSystemGeneratedComment } from '../shared/systemComment';
@@ -263,8 +263,6 @@ export function enquirySend(c: any, r: any) {
 export function runEnquiryExtraction(c: any, enquiryId: string) {
   const work = async () => {
     try {
-      const key = pickGroqKey(c.env);
-      if (!key) return;
       const store = createEnquiryStore(c.env);
       const enquiry = await store.getEnquiry(enquiryId);
       if (!enquiry) return;
@@ -277,11 +275,11 @@ export function runEnquiryExtraction(c: any, enquiryId: string) {
         .map((cm: any) => `${cm.content ?? ''}`)
         .join('\n');
       const text = [enquiry.description, firstComments].filter(Boolean).join('\n');
-      const extracted = await extractEnquiryFields(key, {
+      const extracted = await extractEnquiryFieldsRobust(c.env, {
         text,
         title: enquiry.title,
         company: enquiry.clientCompany,
-      }, []);
+      });
       if (!extracted) return;
       const updates: Record<string, string> = {};
       if (!enquiry.title && extracted.title) updates.title = extracted.title;

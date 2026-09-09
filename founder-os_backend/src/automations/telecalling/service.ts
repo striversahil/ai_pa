@@ -59,6 +59,15 @@ const ASSIGN_TUNING = {
   baseWin: 0.2,          // floor conversion rate for new/unknown agents
 } as const;
 
+// ── Accepted-value KPI targets ─────────────────────────────────────────────
+// "Est. Conv ₹" = total ₹ of ACCEPTED estimates closed in the selected period
+// (from the +100 close-event ledger, valued at each estimate's total).
+// Daily thresholds (founder-set): ₹5L = target hit (celebrate), ₹10L = gold.
+// Period targets scale linearly by working days (Mon–Sat): a week holds up to
+// 6× the daily bar, a month ~26×, so every filter has a fair proportional goal.
+export const CONVERSION_TARGET_DAILY = 500_000;
+export const CONVERSION_GOLD_DAILY = 1_000_000;
+
 /** Per-risk close-probability factor used for estimated-conversion projection. */
 export function toCloseMultiplier(risk: EstimateRisk): number {
   switch (risk) {
@@ -1153,8 +1162,13 @@ export interface TelecallerDayMetrics {
     won: number;
     conversionRate: number;
     pipelineValue: number;
+    // Accepted-value KPI: total ₹ of estimates this agent closed in the period
+    // (valued from +100 close events — the number behind "Est. Conv ₹").
+    acceptedValue: number;
     // Forward-looking: expected closed value given the agent's win rate and the
     // live risk of each open estimate. count = expected number of closes.
+    // Kept for the leaderboard tie-break + API compat; the KPI card shows
+    // acceptedValue (actuals), not this projection.
     estimatedConversion: { count: number; value: number };
   };
   generation: {
@@ -1193,8 +1207,7 @@ function shiftDays(dateStr: string, days: number): string {
 }
 
 /** IST date range for a leaderboard period. null = today (default view). */
-export function periodRange(period: string, todayStr: string): { from: string; to: string; label: string } | null {
-  const [y, m, d] = todayStr.split('-').map(Number);
+export function periodRange(period: string, todayStr: string): { from: string; to: string; label: string } | null {  const [y, m, d] = todayStr.split('-').map(Number);
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sun
   const backToMonday = (dow + 6) % 7;
   switch (period) {
@@ -1222,8 +1235,7 @@ export function periodRange(period: string, todayStr: string): { from: string; t
 }
 
 /** Working days (Mon–Sat, 6-day work week) inclusive between two IST dates. */
-function workingDaysBetween(from: string, to: string): number {
-  const [fy, fm, fd] = from.split('-').map(Number);
+function workingDaysBetween(from: string, to: string): number {  const [fy, fm, fd] = from.split('-').map(Number);
   const [ty, tm, td] = to.split('-').map(Number);
   const start = Date.UTC(fy, fm - 1, fd);
   const end = Date.UTC(ty, tm - 1, td);
@@ -1243,11 +1255,227 @@ function workingDaysBetween(from: string, to: string): number {
  * the leaderboard to an aggregated period view (assignment history + summed
  * NeoDove daily reports).
  *
+ * `?daily=1` (period mode only) additionally attaches `daily`: a per-day ×
+ * per-agent breakdown (closes with estimate tags, declines, calls, leads) for
+ * the MIS export. Gated because it re-reads per-day NeoDove snapshots.
+ *
  * The payload is cached in KV per (period, day, agent) so switching filters and
  * refreshing dashboards is fast — the underlying aggregation reads the full
  * EstimateAssignment history + score events, which is expensive on every hit.
  * A short TTL + single-flight means concurrent users share one compute.
  */
+export interface TelecallingDailyRow {
+  date: string;
+  weekday: string;
+  telecallerId: string;
+  telecallerName: string;
+  assigned: number;
+  won: number;
+  closedValue: number;
+  /** Accepted estimate numbers that day ("EST-.., EST-.." or ""). */
+  closedEstimates: string;
+  declined: number;
+  declinedValue: number;
+  /** Declined estimate numbers that day. Day ≈ status-change day (see below). */
+  declinedEstimates: string;
+  snatches: number;
+  callsAttempted: number;
+  callsConnected: number;
+  callsNotConnected: number;
+  talkTimeMin: number;
+  leadsGenerated: number;
+  leadsConverted: number;
+  score: number;
+}
+
+/** YYYY-MM-DD list inclusive. null when the range exceeds the cap. */
+function listDays(from: string, to: string, cap = 93): string[] | null {
+  const out: string[] = [];
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  if ([fy, fm, fd, ty, tm, td].some((n) => !Number.isFinite(n))) return [];
+  let t = Date.UTC(fy, fm - 1, fd);
+  const end = Date.UTC(ty, tm - 1, td);
+  if (end < t) return [];
+  while (t <= end) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+    if (out.length > cap) return null;
+    t += 86400000;
+  }
+  return out;
+}
+
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function weekdayOf(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if ([y, m, d].some((n) => !Number.isFinite(n))) return '';
+  return WEEKDAY_SHORT[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] ?? '';
+}
+
+/** IST day (YYYY-MM-DD) of a stored Date/ISO value. null when unparseable. */
+function istDayOf(val: unknown): string | null {
+  if (!val) return null;
+  const d = val instanceof Date ? val : new Date(String(val));
+  if (Number.isNaN(d.getTime())) return null;
+  return istDate(d);
+}
+
+/**
+ * Per-day × per-agent MIS breakdown for an inclusive IST range.
+ * Sources per day: +100 close events (accepted-day truth, valued at the
+ * estimate total), `declined` estimates whose `lastSyncTime` falls that day
+ * (approximation — declined rows are untouched after leaving `sent`, so the
+ * watermark ≈ status-change day; holder = current assignee), assignment rows
+ * dealt that day, −15 snatch events, and the stored NeoDove day snapshot.
+ */
+export async function computeTelecallingDaily(
+  from: string,
+  to: string,
+): Promise<{ rows: TelecallingDailyRow[] } | { error: string }> {
+  const dates = listDays(from, to);
+  if (dates === null) return { error: 'daily breakdown capped at 93 days — pick week/month, not year' };
+  if (dates.length === 0) return { rows: [] };
+  const penaltiesEnabled = await isPenaltiesEnabled();
+  const telecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
+  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+
+  type DayAgg = {
+    assigned: number; won: number; snatches: number;
+    closeIds: string[]; declinedIds: string[];
+  };
+  const agg = new Map<string, DayAgg>(); // `${day}|${owner}`
+  const cell = (day: string, owner: string): DayAgg => {
+    const k = `${day}|${owner}`;
+    let c = agg.get(k);
+    if (!c) { c = { assigned: 0, won: 0, snatches: 0, closeIds: [], declinedIds: [] }; agg.set(k, c); }
+    return c;
+  };
+
+  try {
+    const events = await prisma.telecallerScoreEvent.findMany({
+      where: { day: { gte: from, lte: to } },
+      select: { telecallerId: true, delta: true, estimateId: true, day: true },
+    });
+    for (const ev of events as any[]) {
+      const day = String(ev.day ?? '');
+      if (!day) continue;
+      if (ev.delta === CLOSE_POINTS) {
+        const c = cell(day, String(ev.telecallerId));
+        c.won += 1;
+        if (ev.estimateId) c.closeIds.push(String(ev.estimateId));
+      } else if (ev.delta === SNATCH_PENALTY) {
+        cell(day, String(ev.telecallerId)).snatches += 1;
+      }
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'daily: score events read failed');
+  }
+
+  try {
+    const rows = await prisma.estimateAssignment.findMany({
+      where: { day: { gte: from, lte: to } },
+      select: { telecallerId: true, day: true },
+    });
+    for (const r of rows as any[]) {
+      if (!r?.day) continue;
+      cell(String(r.day), String(r.telecallerId)).assigned += 1;
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'daily: assignment rows read failed');
+  }
+
+  // Value + tags for closes (chunked for SQLite's bound limit).
+  const valueById = new Map<string, number>();
+  const numberById = new Map<string, string>();
+  try {
+    const ids = [...new Set([...agg.values()].flatMap((c) => c.closeIds))];
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      if (chunk.length === 0) continue;
+      const rows = await prisma.estimate.findMany({
+        where: { estimateId: { in: chunk } },
+        select: { estimateId: true, estimateNumber: true, total: true },
+      });
+      for (const r of rows as any[]) {
+        valueById.set(r.estimateId, Number(r.total ?? 0) || 0);
+        if (r.estimateNumber) numberById.set(r.estimateId, String(r.estimateNumber));
+      }
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'daily: close-estimate lookup failed');
+  }
+
+  // Declines grouped by watermark day (approximation, see docstring).
+  try {
+    const declined = await prisma.estimate.findMany({
+      where: { status: 'declined' },
+      select: { estimateId: true, estimateNumber: true, total: true, assignedTelecallerId: true, lastSyncTime: true },
+    });
+    for (const e of declined as any[]) {
+      const d = istDayOf(e.lastSyncTime);
+      if (!d || d < from || d > to) continue;
+      if (!e.assignedTelecallerId) continue;
+      cell(d, String(e.assignedTelecallerId)).declinedIds.push(String(e.estimateId));
+      if (e.estimateNumber) numberById.set(String(e.estimateId), String(e.estimateNumber));
+      valueById.set(String(e.estimateId), Number(e.total ?? 0) || 0);
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'daily: declined lookup failed');
+  }
+
+  // NeoDove snapshots, one cached read per day.
+  const neoByDay = new Map<string, Record<string, any>>();
+  for (const d of dates) {
+    try {
+      neoByDay.set(d, await getNeodoveAgentMap(d));
+    } catch {
+      neoByDay.set(d, {});
+    }
+  }
+
+  const out: TelecallingDailyRow[] = [];
+  for (const d of dates) {
+    const neoMap = neoByDay.get(d) ?? {};
+    for (const tc of telecallers as any[]) {
+      const id = String(tc.id);
+      const c = agg.get(`${d}|${id}`);
+      const nd = (tc.neodoveUserName && neoMap[tc.neodoveUserName])
+        || (tc.neodoveUserId && neoMap[tc.neodoveUserId])
+        || undefined;
+      const callsConnected = nd?.callsConnected ?? 0;
+      const leadsGenerated = typeof nd?.leadsGenerated === 'number'
+        ? nd.leadsGenerated
+        : ((nd?.leadsInProgress ?? 0) + (nd?.leadsConverted ?? 0));
+      const won = c?.won ?? 0;
+      const snatches = c?.snatches ?? 0;
+      const closedValue = Math.round((c?.closeIds ?? []).reduce((s, eid) => s + (valueById.get(eid) ?? 0), 0));
+      const declinedIds = c?.declinedIds ?? [];
+      out.push({
+        date: d,
+        weekday: weekdayOf(d),
+        telecallerId: id,
+        telecallerName: nameById.get(tc.id) ?? tc.name,
+        assigned: c?.assigned ?? 0,
+        won,
+        closedValue,
+        closedEstimates: (c?.closeIds ?? []).map((eid) => numberById.get(eid) ?? eid).join(' | '),
+        declined: declinedIds.length,
+        declinedValue: Math.round(declinedIds.reduce((s, eid) => s + (valueById.get(eid) ?? 0), 0)),
+        declinedEstimates: declinedIds.map((eid) => numberById.get(eid) ?? eid).join(' | '),
+        snatches,
+        callsAttempted: nd?.callsAttempted ?? 0,
+        callsConnected,
+        callsNotConnected: nd?.callsNotConnected ?? 0,
+        talkTimeMin: Math.round((nd?.talkTimeSec ?? 0) / 60),
+        leadsGenerated,
+        leadsConverted: nd?.leadsConverted ?? 0,
+        score: won * 100 + (penaltiesEnabled ? -snatches * 15 : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
+      });
+    }
+  }
+  return { rows: out };
+}
+
 export async function getTelecallingDashboardData(ctx?: AutomationContext): Promise<any> {
   const q = (ctx?.subject ?? {}) as Record<string, unknown>;
   const requestedDay = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate();
@@ -1256,7 +1484,8 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : '';
   // Include selfAgentId so a scoped agent never receives a cached team-wide
   // (admin) payload — each user's view is isolated in the cache.
-  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}`;
+  const wantDaily = String(q.daily ?? '') === '1' || String(q.daily ?? '').toLowerCase() === 'true';
+  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}`;
   // 5-min TTL (not 30s): every write path invalidates these keys explicitly
   // (invalidateRiskCache / estimates-cache / neodove report), and live events
   // refetch — so the TTL only governs idle re-reads. A short TTL meant every
@@ -1400,21 +1629,52 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const pointsFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
   const pointsTo = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
   const pointsByOwner = new Map<string, { closes: number; snatches: number; total: number }>();
+  // Estimate ids behind each +100 close — valued below into accepted ₹ totals.
+  const closeIdsByOwner = new Map<string, string[]>();
   try {
     const events = await prisma.telecallerScoreEvent.findMany({
       where: { day: { gte: pointsFrom, lte: pointsTo } },
-      select: { telecallerId: true, delta: true },
+      select: { telecallerId: true, delta: true, estimateId: true },
     });
     for (const ev of events) {
       const cur = pointsByOwner.get(String(ev.telecallerId)) ?? { closes: 0, snatches: 0, total: 0 };
       // Only live deltas count: +100 closes and −15 snatches. Retired −20
       // decline rows still sit in the ledger but are ignored everywhere.
-      if (ev.delta === CLOSE_POINTS) { cur.closes += 1; cur.total += ev.delta; }
+      if (ev.delta === CLOSE_POINTS) {
+        cur.closes += 1; cur.total += ev.delta;
+        if ((ev as any).estimateId) {
+          const arr = closeIdsByOwner.get(String(ev.telecallerId)) ?? [];
+          arr.push(String((ev as any).estimateId));
+          closeIdsByOwner.set(String(ev.telecallerId), arr);
+        }
+      }
       else if (ev.delta === SNATCH_PENALTY) { cur.snatches += 1; cur.total += ev.delta; }
       pointsByOwner.set(String(ev.telecallerId), cur);
     }
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'score events read failed — leaderboard points unavailable');
+  }
+
+  // Value each close at its estimate's total (chunked for SQLite's bound limit).
+  // Missing rows (deleted estimates) count the win but value ₹0.
+  const valueByEstimate = new Map<string, number>();
+  try {
+    const allCloseIds = [...new Set([...closeIdsByOwner.values()].flat())];
+    for (let i = 0; i < allCloseIds.length; i += 500) {
+      const chunk = allCloseIds.slice(i, i + 500);
+      if (chunk.length === 0) continue;
+      const rows = await prisma.estimate.findMany({
+        where: { estimateId: { in: chunk } },
+        select: { estimateId: true, total: true },
+      });
+      for (const r of rows) valueByEstimate.set(r.estimateId, Number((r as any).total ?? 0) || 0);
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'close-estimate totals read failed — accepted ₹ falls back to 0');
+  }
+  const acceptedByOwner = new Map<string, number>();
+  for (const [owner, ids] of closeIdsByOwner) {
+    acceptedByOwner.set(owner, ids.reduce((s, id) => s + (valueByEstimate.get(id) ?? 0), 0));
   }
 
   const leaderboard: TelecallerDayMetrics[] = [];
@@ -1425,6 +1685,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     assigned: 0,
     won: 0,
     pipelineValue: 0,
+    acceptedValue: 0,
     callsConnected: 0,
     leadsGenerated: 0,
     talkTimeSec: 0,
@@ -1441,6 +1702,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const won = pointsByOwner.get(tc.id)?.closes ?? 0;
     const assignedToday = periodMode && assignedByOwner ? (assignedByOwner.get(tc.id) ?? 0) : open.count;
     const pipelineValue = open.value;
+    // Accepted ₹ in this period: sum of totals of the estimates this agent
+    // closed here (valued from the +100 ledger rows above). This is the number
+    // behind the "Est. Conv ₹" KPI — actuals, not the projection below.
+    const acceptedValue = Math.round(acceptedByOwner.get(tc.id) ?? 0);
     const conversionRate = assignedToday + won > 0 ? Math.round((won / (assignedToday + won)) * 100) : 0;
 
     // Lead Generation: copy this telecaller's live NeoDove metrics (matched by
@@ -1485,6 +1750,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     kpiAcc.assigned += assignedToday;
     kpiAcc.won += won;
     kpiAcc.pipelineValue += pipelineValue;
+    kpiAcc.acceptedValue += acceptedValue;
     kpiAcc.callsConnected += callsConnected;
     kpiAcc.leadsGenerated += leadsGenerated;
     kpiAcc.talkTimeSec += talkTimeSec;
@@ -1511,7 +1777,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       name: tc.name,
       assignEstimateFollowUps: tc.assignEstimateFollowUps,
       neodoveUserName: tc.neodoveUserName,
-      conversion: { assigned: assignedToday, won, conversionRate, pipelineValue, estimatedConversion },
+      conversion: { assigned: assignedToday, won, conversionRate, pipelineValue, acceptedValue, estimatedConversion },
       generation: {
         callsAttempted,
         callsConnected,
@@ -1539,10 +1805,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
 
   // Rank by event-ledger points first (conversion outcomes: +100 closes, -15
   // snatches) — the metric that reflects who actually converted pipeline in the
-  // period. Tie-break by projected closed value, then by the composite score.
+  // period. Tie-break by accepted closed ₹, then projected value, then score.
   leaderboard.sort((a, b) => {
     const rankA = b.points.total - a.points.total;
     if (rankA !== 0) return rankA;
+    const accA = (a.conversion as any).acceptedValue ?? 0;
+    const accB = (b.conversion as any).acceptedValue ?? 0;
+    if (accB - accA !== 0) return accB - accA;
     const estA = a.conversion.estimatedConversion.value;
     const estB = b.conversion.estimatedConversion.value;
     if (estB - estA !== 0) return estB - estA;
@@ -1813,6 +2082,26 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         connectedCallsPerDay: CONNECTED_CALLS_PER_DAY * workingDays,
         leadsPerAgentPerDay: LEADS_PER_AGENT_PER_DAY * workingDays,
       },
+      // Accepted-₹ goal for the "Est. Conv ₹" KPI, scaled by working days so
+      // every period filter has a fair proportional target:
+      // today = ₹5L / gold ₹10L; week (Mon–Sat) up to 6×; month ~26×, etc.
+      conversionTarget: {
+        perDay: CONVERSION_TARGET_DAILY,
+        goldPerDay: CONVERSION_GOLD_DAILY,
+        workingDays,
+        target: CONVERSION_TARGET_DAILY * workingDays,
+        gold: CONVERSION_GOLD_DAILY * workingDays,
+        value: kpiAcc.acceptedValue,
+        pct: (() => {
+          const t = CONVERSION_TARGET_DAILY * workingDays;
+          return t > 0 ? Math.round((kpiAcc.acceptedValue / t) * 100) : 0;
+        })(),
+        status: kpiAcc.acceptedValue >= CONVERSION_GOLD_DAILY * workingDays
+          ? 'gold'
+          : kpiAcc.acceptedValue >= CONVERSION_TARGET_DAILY * workingDays
+            ? 'hit'
+            : 'below',
+      },
       workingDays,
       selfAgentId,
     },
@@ -1845,5 +2134,22 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     shielded,
     leaderboard,
     recent,
+    // MIS daily breakdown (only when ?daily=1 in period mode): per-day ×
+    // per-agent closes w/ estimate tags, declines, calls, leads. Absent
+    // otherwise so dashboard loads stay light.
+    ...(await buildDailySection(q, periodMode, periodRangeInfo)),
   };
+}
+
+/** Daily MIS section for period payloads. Empty (no keys) unless requested. */
+async function buildDailySection(
+  q: Record<string, unknown>,
+  periodMode: boolean,
+  periodRangeInfo: { from: string; to: string; label: string } | null,
+): Promise<{ daily?: TelecallingDailyRow[]; dailyError?: string | null }> {
+  const wantDaily = String(q.daily ?? '') === '1' || String(q.daily ?? '').toLowerCase() === 'true';
+  if (!wantDaily || !periodMode || !periodRangeInfo) return {};
+  const res = await computeTelecallingDaily(periodRangeInfo.from, periodRangeInfo.to);
+  if ('error' in res) return { dailyError: res.error };
+  return { daily: res.rows, dailyError: null };
 }

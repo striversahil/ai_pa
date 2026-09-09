@@ -11,7 +11,7 @@ interface LeaderRow {
   name: string;
   assignEstimateFollowUps: boolean;
   neodoveUserName: string | null;
-  conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number; estimatedConversion: { count: number; value: number } };
+  conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number; acceptedValue?: number; estimatedConversion: { count: number; value: number } };
   generation: {
     callsAttempted: number;
     callsConnected: number;
@@ -51,10 +51,13 @@ interface RiskRow {
 }
 
 interface DashData {
-  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null };
-  kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
+  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null };
+  kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; acceptedValue?: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
+  /** Per-day × per-agent MIS breakdown (only when fetched with ?daily=1). */
+  daily?: DailyRow[];
+  dailyError?: string | null;
   /** Team-wide earned shields (red/zombie holdings protected today). */
   shielded?: Array<{ estimateId: string; estimateNumber: string; customerName: string; holderName: string | null; status: string; reason: string; n: number; spanH: number; streak: number }> | null;
   risk?: {
@@ -64,8 +67,30 @@ interface DashData {
   };
 }
 
-interface FollowUp {
-  estimateId: string;
+/** One day × one telecaller of MIS detail (backend `daily` block, ?daily=1). */
+interface DailyRow {
+  date: string;
+  weekday: string;
+  telecallerId: string;
+  telecallerName: string;
+  assigned: number;
+  won: number;
+  closedValue: number;
+  closedEstimates: string;
+  declined: number;
+  declinedValue: number;
+  declinedEstimates: string;
+  snatches: number;
+  callsAttempted: number;
+  callsConnected: number;
+  callsNotConnected: number;
+  talkTimeMin: number;
+  leadsGenerated: number;
+  leadsConverted: number;
+  score: number;
+}
+
+interface FollowUp {  estimateId: string;
   estimateNumber: string | null;
   customerName: string | null;
   status: string | null;
@@ -284,6 +309,32 @@ function fmtTalk(sec: number): string {
 
 function fmtNum(n: number): string {
   return n === 0 ? "0" : n.toLocaleString();
+}
+
+// "500000" → "₹5.0L", "10000000" → "₹1.0Cr" (compact target labels).
+function fmtLakh(n: number): string {
+  if (!n) return "₹0";
+  if (n >= 10000000) {
+    const v = n / 10000000;
+    return `₹${Number.isInteger(v) ? v : v.toFixed(1)}Cr`;
+  }
+  if (n >= 100000) {
+    const v = n / 100000;
+    return `₹${Number.isInteger(v) ? v : v.toFixed(1)}L`;
+  }
+  return `₹${Math.round(n).toLocaleString()}`;
+}
+
+// Accepted-₹ celebration tier for the Est. Conv ₹ KPI card.
+// below = default · hit (≥ target) = emerald glow + pulse · gold (≥ gold) = gold gradient + shimmer.
+function convTier(
+  value: number,
+  target?: { target: number; gold: number; status: "below" | "hit" | "gold" } | null,
+): { status: "below" | "hit" | "gold"; target: number; gold: number } {
+  const t = target?.target ?? 500000;
+  const g = target?.gold ?? 1000000;
+  const status = target?.status ?? (value >= g ? "gold" : value >= t ? "hit" : "below");
+  return { status, target: t, gold: g };
 }
 
 // "2026-09-07" → "7 Sep" (short, human-friendly). Tolerates a missing/partial
@@ -620,7 +671,10 @@ export default function TelecallingDashboard() {
   // Lead Generation board — driven by its OWN genDash/period, not the leaderboard period.
   const genBoard = [...(genDash.data?.leaderboard ?? [])];
   const genActiveBoard = genBoard;
-  const teamEstConv = activeBoard.reduce((s, r) => s + (r.conversion.estimatedConversion?.value ?? 0), 0);
+  // Est. Conv ₹ = ACCEPTED actuals in the selected period. Prefers the
+  // server-side team total so it matches meta.conversionTarget.value exactly.
+  const teamAccepted = kpi?.acceptedValue ?? activeBoard.reduce((s, r) => s + (r.conversion.acceptedValue ?? 0), 0);
+  const conv = convTier(teamAccepted, dash.data?.meta?.conversionTarget ?? null);
   const sorted = [...activeBoard].sort((a, b) => {
     if (sortKey === "score") return b.score - a.score;
     if (sortKey === "won") return b.conversion.won - a.conversion.won;
@@ -743,6 +797,7 @@ export default function TelecallingDashboard() {
             <div className="space-y-6">
               {kpi && (
                 <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 relative">
+                  <style>{`@keyframes fosGoldShimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } } @keyframes fosGlowPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); } 50% { box-shadow: 0 0 18px 2px rgba(16,185,129,0.35); } } .fos-glow-pulse { animation: fosGlowPulse 2s ease-in-out infinite; } .fos-gold-text { background: linear-gradient(100deg, #b45309 20%, #fbbf24 40%, #fef3c7 50%, #fbbf24 60%, #b45309 80%); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: fosGoldShimmer 2.5s linear infinite; }`}</style>
                   {dash.loading && (
                     <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/50 dark:bg-zinc-950/50 backdrop-blur-[1px]" aria-hidden="true">
                       <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24" fill="none">
@@ -753,16 +808,35 @@ export default function TelecallingDashboard() {
                   )}
                   {[
                     { label: "Est. Won", value: fmtNum(kpi.won), accent: "text-emerald-400" },
-                    { label: "Est. Conv ₹", value: fmtNum(teamEstConv), accent: "text-indigo-300", title: "Projected closed value across the open pipeline (agent win rate × live estimate risk)" },
                     { label: "Calls Connected", value: fmtNum(kpi.callsConnected), accent: "text-emerald-300" },
                     { label: "Leads Generated", value: fmtNum(kpi.leadsGenerated), accent: "text-amber-300" },
                     { label: "Talk Time", value: fmtTalk(kpi.talkTimeSec), accent: "text-indigo-300" },
                   ].map((k) => (
-                    <div key={k.label} title={k.title} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+                    <div key={k.label} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
                       <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">{k.label}</div>
                       <div className={`text-2xl font-extrabold mt-1 ${k.accent}`}>{k.value}</div>
                     </div>
                   ))}
+                  {/* Est. Conv ₹ — accepted actuals with target/gold celebration */}
+                  <div
+                    title={`Accepted estimates total in ${dash.data?.meta?.periodLabel ?? "this period"} — target ${fmtLakh(conv.target)} · gold ${fmtLakh(conv.gold)}`}
+                    className={`col-span-2 md:col-span-1 rounded-xl p-4 border ${conv.status === "gold"
+                      ? "bg-gradient-to-br from-amber-50 via-yellow-50 to-amber-100 dark:from-amber-950/60 dark:via-yellow-950/40 dark:to-amber-900/40 border-amber-400/60 dark:border-amber-400/50 fos-glow-pulse"
+                      : conv.status === "hit"
+                        ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-400/50 fos-glow-pulse"
+                        : "bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800"
+                      }`}
+                  >
+                    <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">
+                      Est. Conv ₹ {conv.status === "gold" ? "👑" : conv.status === "hit" ? "🎉" : ""}
+                    </div>
+                    <div className={`text-2xl font-extrabold mt-1 ${conv.status === "gold" ? "fos-gold-text" : conv.status === "hit" ? "text-emerald-400 animate-pulse" : "text-indigo-300"}`}>
+                      {fmtNum(teamAccepted)}
+                    </div>
+                    <div className="text-[11px] mt-1 font-semibold text-zinc-500 dark:text-zinc-400">
+                      Target {fmtLakh(conv.target)} · Gold {fmtLakh(conv.gold)}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1009,7 +1083,7 @@ export default function TelecallingDashboard() {
                                         <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
                                           {view.agent.conversion?.assigned ?? 0} assigned · {view.agent.conversion?.won ?? 0} won ·{" "}
                                           {view.agent.conversion?.conversionRate ?? 0}% conv · Est. Conv ₹{" "}
-                                          {fmtNum(view.agent.conversion?.estimatedConversion?.value ?? 0)}
+                                          {fmtNum(view.agent.conversion?.acceptedValue ?? view.agent.conversion?.estimatedConversion?.value ?? 0)}
                                         </span>
                                       )}
                                     </div>
@@ -2200,7 +2274,7 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/automations/telecalling/data?period=${period}`);
+      const res = await fetch(`/api/automations/telecalling/data?period=${period}&daily=1`);
       if (!res.ok) throw new Error(`Failed to load telecalling data (HTTP ${res.status})`);
       const data: DashData = await res.json();
       const wanted = subsetRows();
@@ -2231,7 +2305,7 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
             r.conversion.won,
             r.conversion.conversionRate,
             r.conversion.pipelineValue,
-            r.conversion.estimatedConversion?.value ?? 0,
+            r.conversion.acceptedValue ?? r.conversion.estimatedConversion?.value ?? 0,
             r.generation.callsAttempted,
             r.generation.callsConnected,
             r.generation.connectedPct,
@@ -2257,7 +2331,7 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
             r.conversion.won,
             r.conversion.conversionRate,
             r.conversion.pipelineValue,
-            r.conversion.estimatedConversion?.value ?? 0,
+            r.conversion.acceptedValue ?? r.conversion.estimatedConversion?.value ?? 0,
           ]);
         });
       rows.push([]);
@@ -2284,6 +2358,63 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
           ]);
         });
 
+      // Section 4 — Daily (per-day × per-agent: every tag, call, lead)
+      rows.push([]);
+      rows.push(["═══ DAILY (DAY × AGENT — MIS DETAIL) ═══"]);
+      rows.push(["NOTE: Declined day ≈ status-change day (lastSyncTime watermark); declined holder = current assignee. Accepted day = conversion day from the +100 ledger."]);
+      if (data.dailyError) {
+        rows.push([`Daily unavailable: ${data.dailyError}`]);
+      } else {
+        rows.push([
+          "Date", "Day", "Telecaller",
+          "Assigned", "Won", "Closed ₹", "Closed Estimates",
+          "Declined", "Declined ₹", "Declined Estimates", "Snatches",
+          "Calls Attempted", "Calls Connected", "Calls Not Conn.", "Talk (min)",
+          "Leads Generated", "Leads Converted", "Score",
+        ]);
+        const daily = (data.daily ?? []).filter((d) => !wantedIds.size || wantedIds.has(d.telecallerId));
+        const byDate = new Map<string, DailyRow[]>();
+        for (const d of daily) {
+          const arr = byDate.get(d.date) ?? [];
+          arr.push(d);
+          byDate.set(d.date, arr);
+        }
+        for (const [date, list] of [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+          const team = {
+            assigned: 0, won: 0, closedValue: 0, declined: 0, declinedValue: 0,
+            snatches: 0, callsAttempted: 0, callsConnected: 0, callsNotConnected: 0,
+            talkTimeMin: 0, leadsGenerated: 0, leadsConverted: 0, score: 0,
+          };
+          const closedTags: string[] = [];
+          const declinedTags: string[] = [];
+          for (const d of list) {
+            team.assigned += d.assigned; team.won += d.won; team.closedValue += d.closedValue;
+            team.declined += d.declined; team.declinedValue += d.declinedValue;
+            team.snatches += d.snatches; team.callsAttempted += d.callsAttempted;
+            team.callsConnected += d.callsConnected; team.callsNotConnected += d.callsNotConnected;
+            team.talkTimeMin += d.talkTimeMin; team.leadsGenerated += d.leadsGenerated;
+            team.leadsConverted += d.leadsConverted; team.score += d.score;
+            if (d.closedEstimates) closedTags.push(`${d.telecallerName}: ${d.closedEstimates}`);
+            if (d.declinedEstimates) declinedTags.push(`${d.telecallerName}: ${d.declinedEstimates}`);
+            rows.push([
+              d.date, d.weekday, d.telecallerName,
+              d.assigned, d.won, d.closedValue, d.closedEstimates,
+              d.declined, d.declinedValue, d.declinedEstimates, d.snatches,
+              d.callsAttempted, d.callsConnected, d.callsNotConnected, d.talkTimeMin,
+              d.leadsGenerated, d.leadsConverted, d.score,
+            ]);
+          }
+          rows.push([
+            date, list[0]?.weekday ?? "", "— TEAM —",
+            team.assigned, team.won, team.closedValue, closedTags.join(" ‖ "),
+            team.declined, team.declinedValue, declinedTags.join(" ‖ "), team.snatches,
+            team.callsAttempted, team.callsConnected, team.callsNotConnected, team.talkTimeMin,
+            team.leadsGenerated, team.leadsConverted, team.score,
+          ]);
+        }
+        if (daily.length === 0) rows.push(["No daily rows (empty range or single-day period)."]);
+      }
+
       downloadCsv(base, rows);
     } catch (e: any) {
       setError(e?.message ?? "Export failed");
@@ -2296,8 +2427,9 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
     <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
       <h3 className="text-lg font-bold mb-1">📤 Export Data</h3>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-        Download the FULL telecalling payload as one CSV — performance (leaderboard), assignments (conversion) and
-        risk (open pipeline) sections. Generated client-side from the live dashboard endpoint.
+        Download the FULL telecalling payload as one CSV — performance (leaderboard), assignments (conversion),
+        risk (open pipeline) and daily (day × agent: accepted/declined tags, calls, leads) sections.
+        Generated client-side from the live dashboard endpoint.
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
@@ -2325,7 +2457,7 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
       </div>
       <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
         Exports respect the current leaderboard period and telecaller filter. Deleted agents and unassigned estimates
-        are excluded.
+        are excluded. The daily section covers up to 93 days (year periods export the other sections only).
       </p>
     </section>
   );

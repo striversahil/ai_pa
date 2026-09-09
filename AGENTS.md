@@ -16,8 +16,9 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
   - every-5min `min%5==0`, every-10min `%10`, every-15min `%15`, every-30min `%30`, daily at 02:30/03:30/13:30/21:30 UTC; neodove-refresh runs natively in-worker every 10 min.
 - **Gate on `event.scheduledTime`, NOT `new Date()`** — Cloudflare delivers cron events 1–2 min late; wall-clock gating skips slots.
 - The `.github/workflows/cron-*.yml` files have **NO `schedule:` block** (removed on purpose). They fire only via `workflow_dispatch` from the Worker. Don't re-add `schedule:`.
-- Heavy AI runs in GH Actions runners: `scripts/*-runner.js` (zoho-sent-runner, morning-brief-runner, eod-summary-runner, neodove-report-runner, whatsapp-digest-runner, whatsapp-autopilot-runner, email-brain-index-runner). They call worker `/api/runner/*` endpoints (Bearer SHARED_SECRET) and the LLM directly via omniRoute.
-- GH secrets used by workflows: `WORKER_URL`, `SHARED_SECRET`, `OMNIROUTE_BASE_URL`, `OMNIROUTE_API_KEY`, `OMNIROUTE_MODEL`, `NEODOVE_USER_IDS`.
+- Heavy AI runs in GH Actions runners: `scripts/*-runner.js` (zoho-sent-runner, morning-brief-runner, eod-summary-runner, neodove-report-runner, whatsapp-digest-runner, whatsapp-autopilot-runner, email-brain-index-runner). They call worker `/api/runner/*` endpoints (Bearer SHARED_SECRET) and the LLM via the **unified AI gateway** — `getGateway(env).complete()/completeJson()` (`src/shared/ai-gateway.ts` for Worker/Express, JS port `scripts/ai-gateway.js` for runners, thin wrappers `groq`/`groqJson` in `runner-lib.js`). Gateway owns the key pool: multi-provider (groq/openrouter/deepseek/together/openai + legacy omniroute fallback), `AI_KEYS=provider:key:label,...` (auto-detect from prefix; legacy `*_API_KEYS` vars still merged), least-failures selection, 429→cooldown (honors retry-after) / 401→disabled / 5xx→rotate, placeholder keys ignored.
+- GH secrets used by workflows: `WORKER_URL`, `SHARED_SECRET`, `AI_KEYS` (or legacy `GROQ_API_KEYS`/`OPENROUTER_API_KEYS`/`DEEPSEEK_API_KEYS` + `OMNIROUTE_*` fallback), `NEODOVE_USER_IDS`.
+- **Telecalling is production-live and deterministic (no LLM)**: `runLeadConversion()` in `src/automations/telecalling/service.ts`; daily `POST /api/trigger/telecalling` at 08:00 IST (round-robin) + 21:00 IST (EOD snatch), plus every-15min `effort-sync-runner.js` → `/api/runner/telecalling/effort-sync` (NeoDove snatch-shield snapshots).
 - Worker secret needed for dispatch: `GITHUB_ACCESS_TOKEN` (set via `printf '%s' "$TOKEN" | npx wrangler secret put GITHUB_ACCESS_TOKEN` — `echo` adds a trailing newline and breaks GitHub auth). GitHub rejects the dispatch POST without a `User-Agent` header (403, empty body from CF egress) — already handled in cron.ts.
 
 ## Commands
@@ -39,7 +40,7 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - Heavy dashboard payloads are KV-cached (estimates payload, telecalling dashboard/risk, NeoDove KRA/range). **When you add a write path that changes data, call the right invalidator** (`invalidateDerivedEstimateCaches`, `invalidateRiskCache`, `invalidateNeodoveCache`) or dashboards go stale for the TTL.
 
 ## Secrets / env gotchas
-- Root `.env` holds Cloudflare tokens, SSH creds, `GITHUB_ACCESS_TOKEN`, but many runtime secrets are **empty there** — real values live as Cloudflare worker secrets and GH repo secrets (`SHARED_SECRET`, `OMNIROUTE_*`, Zoho creds). Don't curl-verify secret-gated endpoints locally with `.env`; they 401/403 by design.
+- Root `.env` holds Cloudflare tokens, SSH creds, `GITHUB_ACCESS_TOKEN`, but many runtime secrets are **empty there** — real values live as Cloudflare worker secrets and GH repo secrets (`SHARED_SECRET`, `GROQ_API_KEYS`, Zoho creds). Don't curl-verify secret-gated endpoints locally with `.env`; they 401/403 by design.
 - `.env` contains `$@` in the SSH password; **do not `source .env`** and reuse those values (bash expands `$@`). Parse with grep/python or set explicitly.
 - Remote cron host (`SSH_HOST` in `.env`) still runs the D1 nightly backup + health ping; workflow-dispatch lines there are commented out. Don't "fix" or re-enable them.
 

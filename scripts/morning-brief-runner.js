@@ -8,8 +8,8 @@
  * from the worker → build the same context strings the engines produce →
  * LLM generate the brief → persist as a founder note.
  *
- * Env: WORKER_URL, SHARED_SECRET, OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY,
- * OMNIROUTE_MODEL (all via runner-lib).
+ * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (primary direct-Groq LLM;
+ * OMNIROUTE_* kept as legacy fallback) — all via runner-lib.
  */
 
 const { requireEnv, workerRequest, omniroute } = require('./runner-lib');
@@ -170,7 +170,7 @@ async function main() {
     console.log(`morning-brief-runner: context trimmed to fit (${estimateTokens(system)} tokens)`);
   }
 
-  console.log('morning-brief-runner: generating brief via omniroute');
+  console.log('morning-brief-runner: generating brief via direct Groq (omniroute fallback)');
   const brief = await omniroute(system, 'Generate briefing now.', { temperature: 0.7 });
   if (!brief || !brief.trim()) throw new Error('Empty brief returned by LLM');
 

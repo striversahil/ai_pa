@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { config } from '../../config';
 import { logger } from '../../shared/logger';
+import { getGateway } from '../../shared/ai-gateway';
 import { summarizeConversationPrompt } from './prompts/summarizeConversation';
 import { incrementalSummarizeConversationPrompt } from './prompts/incrementalSummarizeConversation';
 import { generateBriefPrompt } from './prompts/generateBrief';
@@ -15,13 +16,9 @@ import { classifyMessagePrompt } from './prompts/classifyMessage';
 import { brainQueryPrompt } from './prompts/brainQuery';
 
 
-// Determine if we should mock LLM responses
+// Mock detection stays here (drives the canned dev responses below); the real
+// key pool lives in the unified gateway (src/shared/ai-gateway.ts).
 const isMockLLM = !config.LLM_API_KEY || config.LLM_API_KEY === 'your_api_key_here';
-
-// Extract API keys from a comma-separated list
-const apiKeys = !isMockLLM
-  ? config.LLM_API_KEY.split(',').map((k) => k.trim()).filter(Boolean)
-  : [];
 
 export interface SummaryOutput {
   chatName: string;
@@ -45,79 +42,47 @@ export interface SummaryOutput {
 export class AIService {
   static metrics = { totalCalls: 0, failedCalls: 0 };
 
+  /**
+   * LLM dispatcher backed by the unified AiGateway (src/shared/ai-gateway.ts).
+   * The apiCall callback keeps its OpenAI-compatible signature, so all 12
+   * call sites work unchanged: they receive a shim whose
+   * chat.completions.create() routes through the gateway's key pool (rotation,
+   * retry, rate-limit cooldowns, multi-provider).
+   */
   private static async callLLM<T>(apiCall: (openai: OpenAI, model: string) => Promise<T>): Promise<T> {
-    if (isMockLLM || apiKeys.length === 0) {
+    const gw = getGateway({
+      ...(process.env as any),
+      LLM_API_KEY: config.LLM_API_KEY,
+      LLM_BASE_URL: config.LLM_BASE_URL,
+      LLM_MODEL: config.LLM_MODEL,
+    });
+    if (isMockLLM || gw.keyCount === 0) {
       throw new Error('LLM is mocked or API key is missing');
     }
-
-    const shuffledKeys = [...apiKeys].sort(() => Math.random() - 0.5);
-    let lastError: any = null;
-
-    // Fallback models to try on rate limits or model deprecations
-    const groqModels = [
-      'llama-3.3-70b-versatile',
-      'llama-3.1-8b-instant',
-      'gemma2-9b-it'
-    ];
-    const openaiModels = [
-      'groq/qwen/qwen3.6-27b',
-      'groq/qwen/qwen3-32b'
-    ];
-
-    for (let i = 0; i < shuffledKeys.length; i++) {
-      const key = shuffledKeys[i];
-      const maskedKey = key.length > 12
-        ? `${key.substring(0, 8)}...${key.substring(key.length - 4)}`
-        : '***';
-
-      const isGroq = key.startsWith('gsk_');
-      const modelsToTry = isGroq ? groqModels : openaiModels;
-
-      const configModel = config.LLM_MODEL;
-      const finalModels = [...modelsToTry];
-      if (configModel) {
-        const idx = finalModels.indexOf(configModel);
-        if (idx > -1) {
-          finalModels.splice(idx, 1);
-        }
-        finalModels.unshift(configModel);
-      }
-
-      for (const model of finalModels) {
-        try {
-          this.metrics.totalCalls++;
-          const client = new OpenAI({
-            apiKey: key,
-            baseURL: isGroq ? 'https://api.groq.com/openai/v1' : (config.LLM_BASE_URL || 'https://api.openai.com/v1'),
-          });
-          const result = await apiCall(client, model);
-          if (model !== finalModels[0]) {
-            logger.info(`AIService: Succeeded with fallback model ${model} (Key: ${maskedKey})`);
-          }
-          return result;
-        } catch (err: any) {
-          lastError = err;
-          const status = err.status || err.statusCode;
-          const msg = (err.message || '').toLowerCase();
-
-          const isRateLimit = status === 429 || msg.includes('429') || msg.includes('rate limit');
-          const isModelError = status === 400 || status === 404 || msg.includes('decommissioned') || msg.includes('not support') || msg.includes('not found');
-
-          if (isRateLimit || isModelError || finalModels.length > 1) {
-            logger.warn(
-              `AIService: API Key ${maskedKey} with model ${model} failed (${status || err.message}). Attempting fallback model/key...`
-            );
-            continue;
-          }
-          this.metrics.failedCalls++;
-          throw err;
-        }
-      }
+    const model = config.LLM_MODEL || '';
+    this.metrics.totalCalls++;
+    try {
+      const shim = {
+        chat: {
+          completions: {
+            create: async (params: any) => {
+              const res = await gw.complete({
+                messages: params.messages,
+                temperature: params.temperature ?? 0.2,
+                ...(params.max_tokens ? { maxTokens: params.max_tokens } : {}),
+                model: params.model || model || undefined,
+              });
+              return { choices: [{ message: { content: res.content } }] };
+            },
+          },
+        },
+      };
+      return await apiCall(shim as unknown as OpenAI, model);
+    } catch (err: any) {
+      this.metrics.failedCalls++;
+      logger.error({ error: err.message }, 'AIService: LLM call failed (all gateway keys exhausted)');
+      throw err;
     }
-
-    this.metrics.failedCalls++;
-    logger.error('AIService: All configured LLM API keys and fallback models returned rate limit errors.');
-    throw lastError || new Error('All LLM keys and models exhausted.');
   }
 
   private static cleanJsonString(raw: string): string {
