@@ -30,8 +30,9 @@ if [ -z "$KEYS" ] || [ "$COUNT" -lt 1 ]; then
 fi
 echo "Setting GROQ_API_KEYS with $COUNT key(s)..." >&2
 
-# 1. GitHub Actions secret
-printf '%s' "$KEYS" | gh secret set GROQ_API_KEYS --repo striversahil/ai_pa --body -
+# 1. GitHub Actions secret (NOTE: --body is omitted so gh reads the value
+# from stdin. Passing --body - stores the literal string "-" in gh >= 2.46.)
+printf '%s' "$KEYS" | gh secret set GROQ_API_KEYS --repo striversahil/ai_pa
 echo "GitHub secret GROQ_API_KEYS set." >&2
 
 # 2. Cloudflare Worker secret (parse creds without sourcing .env)
