@@ -100,7 +100,7 @@ Text:
   const parsed = await groqJson(
     'Extract structured sales-enquiry fields as JSON. Never alter client wording or invent values.',
     prompt,
-    { temperature: 0 },
+    { temperature: 0, reasoningEffort: 'high' },
   );
   return {
     enquiryNumber: parsed.enquiryNumber ? String(parsed.enquiryNumber) : null,
@@ -383,7 +383,7 @@ async function classifyEstimate(custName, total, latestComment, dateVal, comment
     badgeResult = await groqJson(
       badgePrompt(agentRoster || []),
       `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
-      { temperature: 0 },
+      { temperature: 0, reasoningEffort: 'high' },
     );
   } catch (err) {
     throw new Error(`Groq badge classification failed: ${err.message}`);
@@ -391,7 +391,7 @@ async function classifyEstimate(custName, total, latestComment, dateVal, comment
   let journeyResult;
   try {
     journeyResult = commentHistory
-      ? await groqJson(journeyPrompt(), `Comment History:\n${commentHistory}`, { temperature: 0 })
+      ? await groqJson(journeyPrompt(), `Comment History:\n${commentHistory}`, { temperature: 0, reasoningEffort: 'high' })
       : { summary: 'No sales agent comment found.', intent_score: 2 };
   } catch (err) {
     throw new Error(`Groq journey summary failed: ${err.message}`);

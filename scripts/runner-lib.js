@@ -71,7 +71,7 @@ async function workerRequest(path, { method = 'GET', body, timeoutMs = 90000 } =
 const { getGateway } = require('./ai-gateway');
 const gateway = getGateway(process.env);
 
-async function groq(system, user, { temperature = 0.5, maxTokens } = {}) {
+async function groq(system, user, { temperature = 0.5, maxTokens, reasoningEffort } = {}) {
   const res = await gateway.complete({
     messages: [
       { role: 'system', content: system },
@@ -79,11 +79,12 @@ async function groq(system, user, { temperature = 0.5, maxTokens } = {}) {
     ],
     temperature,
     ...(maxTokens ? { maxTokens } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
   });
   return res.content;
 }
 
-async function groqJson(system, user, { temperature = 0, maxTokens } = {}) {
+async function groqJson(system, user, { temperature = 0, maxTokens, reasoningEffort } = {}) {
   return gateway.completeJson({
     messages: [
       { role: 'system', content: system },
@@ -91,6 +92,7 @@ async function groqJson(system, user, { temperature = 0, maxTokens } = {}) {
     ],
     temperature,
     ...(maxTokens ? { maxTokens } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     json: true,
   });
 }
