@@ -105,22 +105,33 @@ export async function cacheSet<T>(key: string, value: T, ttlMs: number): Promise
 /** Explicitly invalidate a single cache key (call after underlying data changes). */
 export async function cacheDel(key: string): Promise<void> {
   const fullKey = `${NS}:${key}`;
+  // Always clear the in-memory copy: KV delete only affects the shared store,
+  // but THIS isolate would keep serving its stale in-memory copy until TTL.
+  // (Cross-isolate staleness up to TTL remains — writers should also broadcast
+  // a live event so clients refetch, and readers re-check KV after TTL.)
+  memory.delete(fullKey);
   if (kv) {
     try {
       await kv.delete(fullKey);
     } catch (e: any) {
       logger.warn({ err: e?.message, key }, 'kv cache delete failed');
     }
-    return;
   }
-  memory.delete(fullKey);
 }
 
 /** Invalidate every key under a prefix (e.g. `neodove:user_report:`) in one pass. */
 export async function cacheDelPrefix(prefix: string): Promise<number> {
   const fullPrefix = `${NS}:${prefix}`;
+  // Same contract as cacheDel: always clear matching in-memory copies, even
+  // when KV is bound — otherwise THIS isolate keeps serving stale data.
+  let deleted = 0;
+  for (const k of [...memory.keys()]) {
+    if (k.startsWith(fullPrefix)) {
+      memory.delete(k);
+      deleted++;
+    }
+  }
   if (kv) {
-    let deleted = 0;
     try {
       // KV list() pages in chunks of 1000; loop until exhausted.
       let cursor: string | undefined;
@@ -132,17 +143,8 @@ export async function cacheDelPrefix(prefix: string): Promise<number> {
         }
         cursor = page.list_complete ? undefined : page.cursor;
       } while (cursor);
-      return deleted;
     } catch (e: any) {
       logger.warn({ err: e?.message, prefix }, 'kv cache prefix delete failed');
-      return deleted;
-    }
-  }
-  let deleted = 0;
-  for (const k of [...memory.keys()]) {
-    if (k.startsWith(fullPrefix)) {
-      memory.delete(k);
-      deleted++;
     }
   }
   return deleted;

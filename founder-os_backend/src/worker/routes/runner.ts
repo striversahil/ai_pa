@@ -186,6 +186,11 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
         const { invalidateEstimatesCache } = require('../../shared/estimates-cache');
         await invalidateEstimatesCache();
       } catch { /* invalidation is best-effort */ }
+      // The dashboard KPI/feed rides on /api/estimates but only refetches on
+      // live events it subscribes to ("estimates" | "baseline" | "automation"
+      // — see ZohoEstimates useLiveRefresh). Broadcast so open tabs pick up
+      // the new sales-order tile within ~2s instead of the 15-min poll.
+      notifyLive(c, { type: 'estimates', source: 'salesorders-today' });
     }
     return c.json({ ok: true, changed });
   });
