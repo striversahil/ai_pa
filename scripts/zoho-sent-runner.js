@@ -122,7 +122,7 @@ const INTERNAL_HANDOFF = /\b(sir|ma'am|madam)\s+(will|is going to|will be)\s+(de
 const UNDER_DISCUSSION = /\b(under discussion|negotiat|discuss(ing)? with (his|their|her) (management|partner|team|owner|boss)|price (not )?match(ing)?|match( the|ing)? (the )?price|rates are not matching|will match)\b/i;
 const FUTURE_DATE = /(\b\d{1,2}(st|nd|rd|th)?(\s+of)?\s+(aug|sep|sept|oct|nov|dec|jan|feb|mar|apr|may|jun|jul|august|september|october|november|december|january|february|march|april|june|july)\b)|(\b\d{1,2}-\d{1,2}-\d{4}\b)|(\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)|(\b(today|tomorrow)\b)|(\b(after|in|within)\s+\d{1,2}(\s|-)?(days?|weeks?)\b)|(\bnext\s+(week|month)\b)|(\bafter\s+(\d{1,2}(st|nd|rd|th)?\b))/i;
 const VAGUE_REVERT = /\b(will|wll|willl|wil|going to|have to)\b.{0,50}\b(check|see|look|let( (me|us))? know|intimate|inform|say|update|revert|confirm|take some time|not (have|has) (checked|seen)|hasn'?t (checked|seen)|get back|come back)\b/i;
-const NOT_ANSWERING = /\b(not answering|not answer|couldn'?t reach|not connected|not conne+cted|disconnect(ed|ing)?|didn'?t pick|did not pick|busy( on another call)?|on another call|call(ed)? back to later|call back later|no answer|not reachable|incoming service is not available|service is not available)\b/i;
+const NOT_ANSWERING = /\b(not answering|not answer|unable to connect|unreachable|out of reach|switched off|couldn'?t reach|not connected|not conne+cted|disconnect(ed|ing)?|didn'?t pick|did not pick|busy( on another call)?|on another call|call(ed)? back to later|call back later|no answer|not reachable|incoming service is not available|service is not available)\b/i;
 const REJECTION = /\b(not require|not needed|no requirement|doesn'?t need|do not need|declined|decline|price inquiry|price enquiry|just (a )?price)\b/i;
 const BARE_ACTION = /\b(called|call(ed)? him|message(ed)? sent|whatsapp sent|whatsapp message sent|left (a )?message|sent (the )?quotation|quotation (was )?sent|quote (was )?sent|email(ed)? sent|shared (the )?quotation)\b/i;
 const QUOTATION_ONLY = /\b(enquiry|enq\.?|quote (created|updated)|rates?\s+pending|product (spec|details?)|specifications?)\b/i;
@@ -191,7 +191,10 @@ function classifyDeterministic(latestComment, estimateDate) {
   if (YES_COMMIT.test(comment) || FIRM_COMMIT.test(comment) || ACTIVE_ORDER.test(comment)) {
     return { meaningful_update: true, not_answering: false, under_discussion: UNDER_DISCUSSION.test(comment), confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: customer made a firm commitment ("${comment.slice(0, 80)}").` };
   }
-  if (FUTURE_DATE.test(comment)) {
+  // A bare retry date after failing to reach the customer is NOT progress —
+  // not-answering takes precedence over the future-date rule (the agent's own
+  // retry plan names a date but records no customer contact).
+  if (FUTURE_DATE.test(comment) && !NOT_ANSWERING.test(comment)) {
     const passed = hasPassedDueDate(comment, estimateDate, today);
     if (!passed) return { meaningful_update: true, not_answering: false, under_discussion: UNDER_DISCUSSION.test(comment), confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: comment sets a specific future follow-up date ("${comment.slice(0, 80)}").` };
     return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: follow-up date mentioned has already passed ("${comment.slice(0, 80)}").` };
@@ -332,10 +335,12 @@ Evaluate this single latest comment and output the following keys:
 Strict Decision Rules:
 - Base EVERY chip decision ONLY on the single latest comment provided. Do not infer anything from earlier history.
 - Mark meaningful_update as false if the latest comment is older than 2 days.
-- meaningful_update MUST be true if THIS comment clearly mentions a specific follow-up date, day, or time (e.g. "call after 15 August", "he said call after 15th", "will follow up on Monday", "call after 2 days"). A customer-stated or committed follow-up date is a meaningful next step.
-- meaningful_update MUST also be true if THIS comment records a substantive customer response or commitment that advances the deal — e.g. the customer says they will confirm, will discuss with management/partners and revert, will place the order, accepted the price, or gave a decision/pending decision ("He will confirm after discussing it with his management", "customer will revert tomorrow", "waiting for customer confirmation"). These are meaningful updates about deal status.
+- A follow-up date/day/time counts toward meaningful_update ONLY when the CUSTOMER asked for or agreed to it (e.g. "customer asked to call back Friday", "he said call after 15th", "customer will revert tomorrow"). A date the AGENT set alone is a retry reminder, not progress.
+- meaningful_update MUST be false when THIS comment reports failed contact with no customer response (not answering / not connected / unreachable / switched off / call not picked up / busy) — even if it names a retry date. Set not_answering=true in that case.
+- meaningful_update MUST be false when the customer puts the deal on HOLD or tells the agent to stop calling ("hold for now", "do not call again", "stop calling", "call after 1 week" said with annoyance) — a stalled deal with negative sentiment is not progress, even with a timeline. not_answering stays false if the customer was actually reached; under_discussion stays false (a unilateral hold is not an active negotiation).
+- meaningful_update is true when THIS comment records a substantive customer response or commitment that advances the deal — e.g. the customer says they will confirm, will discuss with management/partners and revert, will place the order, accepted the price, or gave a decision/pending decision ("He will confirm after discussing it with his management", "waiting for customer confirmation").
 - If the latest comment only records an action (calling, messaging, sending a quotation) without presenting any outcome, next step, or decision, meaningful_update must be false.
-- If meaningful_update is true, then not_answering must be false. If meaningful_update is false, not_answering may be true or false as the comment dictates. under_discussion can be true regardless. confirm should typically be true when meaningful_update is true.
+- If meaningful_update is true, then not_answering must be false. If meaningful_update is false, not_answering may be true or false as the comment dictates. under_discussion can be true regardless.
 
 Response Format:
 Return only a valid JSON object matching the JSON structure:
