@@ -439,18 +439,32 @@ export async function rotateEstimatesRoundRobin(): Promise<{ assigned: number }>
  *
  * Keeps the open pipeline on the agent who has momentum with it:
  *   - healthy estimates (risk ok/pending) stay exactly where they are;
- *   - unassigned `sent` estimates are dealt to the best-fit agent;
- *   - at-risk (red/zombie) estimates are re-poached to a better converter.
+ *   - unassigned estimates generated TODAY go to their generator (creator-first,
+ *     lead-gen or converter — the generator owns the fresh relationship);
+ *   - other unassigned `sent` estimates are dealt to the best-fit agent;
+ *   - at-risk (red/zombie) estimates are re-poached to a better converter —
+ *     unless the MIS "EOD Reassignment" switch is OFF (holders keep everything,
+ *     EXCEPT estimates held by lead-gen-only agents — those are always
+ *     corrected back to a conversion specialist, switch-independent).
  *
  * Candidates are dealt high-value-first, favouring proven converters while a
  * load penalty keeps anyone from being buried. This maximises expected closed
  * value without resetting live customer relationships every morning.
  */
-export async function assignEstimatesForMaxConversion(): Promise<{ assigned: number; reassigned: number; shielded: number }> {
+export async function assignEstimatesForMaxConversion(): Promise<{ assigned: number; reassigned: number; shielded: number; roleCorrected: number }> {
   const telecallers = await getFollowUpSpecialists();
-  if (telecallers.length === 0) return { assigned: 0, reassigned: 0, shielded: 0 };
+  if (telecallers.length === 0) return { assigned: 0, reassigned: 0, shielded: 0, roleCorrected: 0 };
+  // Specialist id set — anyone holding a `sent` estimate who is NOT in here
+  // (lead-gen-only, deleted, absent, unknown) is a role-correction candidate:
+  // follow-ups belong with conversion specialists, EOD-switch-independent.
+  const specialistIds = new Set(telecallers.map((t) => String(t.id)));
   // Runtime "Active Penalty" toggle (MIS) — read once per engine run.
   const penaltiesEnabled = await isPenaltiesEnabled();
+  // Runtime "EOD Reassignment" master switch (MIS Controller) — read once per
+  // run. OFF = no risk-based re-poaching between specialists: holders keep
+  // everything, the engine only deals unassigned estimates, enforces MIS locks,
+  // and corrects non-specialist (lead-gen-only) holds back to specialists.
+  const eodReassignEnabled = await isEodReassignEnabled();
   // All non-deleted, PRESENT telecallers, for creator inference — a lead-gen
   // creator who isn't flagged for follow-ups can still claim the estimate they
   // generated, but an ABSENT creator never receives claims while away.
@@ -460,7 +474,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
     where: { status: 'sent', skipAssignment: false },
     include: { classification: true },
   });
-  if (sent.length === 0) return { assigned: 0, reassigned: 0, shielded: 0 };
+  if (sent.length === 0) return { assigned: 0, reassigned: 0, shielded: 0, roleCorrected: 0 };
 
   // Live risk for every open estimate (served from the 5-min risk cache).
   let riskItems: CachedRiskItem[] = [];
@@ -504,12 +518,18 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
   // Candidates: unassigned OR at-risk — highest value first. Locked estimates
   // (MIS override) are only candidates if they are NOT already with their locked
   // agent, so they get placed/enforced but are NEVER re-poached away from it —
-  // even when red/zombie ("despite whatever the case").
+  // even when red/zombie ("despite whatever the case"). When the EOD
+  // Reassignment switch is OFF, assigned estimates are never risk candidates —
+  // holders keep everything, EXCEPT estimates held by a non-specialist
+  // (lead-gen-only / deleted / absent holder): those are always corrected back
+  // to a conversion specialist, switch-independent.
   const candidates = sent
     .filter((e) => {
       const locked = (e as any).lockedTelecallerId as string | null;
       if (locked) return String(e.assignedTelecallerId ?? '') !== String(locked);
       if (!e.assignedTelecallerId) return true;
+      if (!specialistIds.has(String(e.assignedTelecallerId))) return true;
+      if (!eodReassignEnabled) return false;
       const risk = riskByEstimate.get(e.estimateId);
       return risk === 'red' || risk === 'zombie';
     })
@@ -518,6 +538,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
   let assigned = 0;
   let reassigned = 0;
   let shielded = 0;
+  let roleCorrected = 0;
   const { conversionWeight, loadWeight } = ASSIGN_TUNING;
   const today = istDate();
   // Effort-shield snapshots (today + 2 prior IST days) — loaded LAZILY, only
@@ -549,19 +570,46 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
     // no best-fit routing, no snatch penalty (this is an MIS lock, not an EOD
     // snatch). "Despite whatever the case."
     const reason = buildSnatchReason(est, risk);
+    // Role correction: the holder is not a conversion specialist (lead-gen-only,
+    // deleted, absent, unknown). Follow-ups belong with specialists — this move
+    // happens on every run regardless of the EOD switch, skips the effort
+    // shield (not a performance snatch) and never charges the −15 penalty.
+    const isRoleCorrection = wasAssigned && !locked && !!est.assignedTelecallerId
+      && !specialistIds.has(String(est.assignedTelecallerId));
+    const moveReason = locked
+      ? null
+      : isRoleCorrection
+        ? 'Lead-gen hold — moved to a conversion specialist'
+        : wasAssigned ? reason : null;
     let bestId = locked ?? '';
     if (!bestId) {
-      // Sole-creator first claim: a never-assigned estimate whose first comments
-      // name a sales agent is dealt to that agent (he generated the lead), before
-      // falling back to best-fit conversion routing for unassigned estimates.
-      if (!wasAssigned && !(est as any).createdBy) {
-        const creatorId = await inferEstimateCreator(est.estimateId, allTelecallers);
-        if (creatorId) {
-          bestId = creatorId;
-          await prisma.estimate.update({
-            where: { estimateId: est.estimateId },
-            data: { createdBy: creatorId },
-          });
+      // Creator-first (founder rule): a NEVER-ASSIGNED estimate generated TODAY
+      // is dealt to the agent who generated it — whether lead-gen or converter —
+      // before any best-fit routing. The generator owns the fresh relationship.
+      // Older unassigned estimates keep best-fit conversion routing.
+      if (!wasAssigned) {
+        const knownCreator = String((est as any).createdBy ?? '');
+        const creatorPresent = !!knownCreator
+          && (allTelecallers as any[]).some((t) => String(t.id) === knownCreator);
+        const generatedToday = String((est as any).date ?? '').slice(0, 10) === today;
+        if (creatorPresent && generatedToday) {
+          bestId = knownCreator;
+          logger.info(
+            { estimateId: est.estimateId, creator: knownCreator },
+            'creator-first: today\'s lead dealt to its generator',
+          );
+        } else if (!knownCreator) {
+          // Sole-creator first claim: a never-assigned estimate whose first comments
+          // name a sales agent is dealt to that agent (he generated the lead), before
+          // falling back to best-fit conversion routing for unassigned estimates.
+          const creatorId = await inferEstimateCreator(est.estimateId, allTelecallers);
+          if (creatorId) {
+            bestId = creatorId;
+            await prisma.estimate.update({
+              where: { estimateId: est.estimateId },
+              data: { createdBy: creatorId },
+            });
+          }
         }
       }
     }
@@ -586,8 +634,9 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
     // its holder (no snatch, no −15) when the holder earned it today — ≥3
     // outgoing calls on the lead with ≥2h spread (connects irrelevant).
     // Evaluated for the CURRENT holder at snatch time, from the 15-min
-    // snapshots (fail-open: any error → snatch as before).
-    if (wasAssigned && !locked && est.assignedTelecallerId && bestId !== String(est.assignedTelecallerId)) {
+    // snapshots (fail-open: any error → snatch as before). Skipped for role
+    // corrections — a non-specialist hold moves regardless of effort.
+    if (wasAssigned && !locked && !isRoleCorrection && est.assignedTelecallerId && bestId !== String(est.assignedTelecallerId)) {
       try {
         const holder = (allTelecallers as any[]).find((t) => String(t.id) === String(est.assignedTelecallerId));
         const holderNeoId = String(holder?.neodoveUserId ?? '');
@@ -632,16 +681,18 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       where: { estimateId: est.estimateId },
       data: { assignedTelecallerId: bestId },
     });
-    await recordAssignment(est.estimateId, bestId, wasAssigned && !locked ? reason : null);
+    await recordAssignment(est.estimateId, bestId, moveReason);
     loadCount.set(bestId, (loadCount.get(bestId) ?? 0) + 1);
     if (wasAssigned) {
       reassigned += 1;
+      if (isRoleCorrection) roleCorrected += 1;
       // The agent who lost the estimate at the EOD snatch gets -15 (unsatisfactory
       // remark or silent > 2 days). Charged to the holder who was re-poached FROM.
       // Lock enforcement is NOT a snatch, and neither is losing a TEMP absent-cover
-      // hold. The snatch penalty follows the MIS "Active Penalty" toggle
-      // (runtime Setting — default OFF).
-      if (movedFrom && !locked && penaltiesEnabled && !openRow?.tempForTelecallerId) {
+      // hold — nor a role correction (the holder didn't earn the snatch; the
+      // creator-first rule dealt it to them). The snatch penalty follows the
+      // MIS "Active Penalty" toggle (runtime Setting — default OFF).
+      if (movedFrom && !locked && !isRoleCorrection && penaltiesEnabled && !openRow?.tempForTelecallerId) {
         await recordSnatchPenalty(String(movedFrom), est.estimateId, today, reason);
       }
     } else {
@@ -650,7 +701,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
   }
 
   logger.info(
-    { assigned, reassigned, shielded, candidates: candidates.length, telecallers: telecallers.length },
+    { assigned, reassigned, shielded, roleCorrected, candidates: candidates.length, telecallers: telecallers.length, eodReassignEnabled },
     'Stability-first conversion-maximising assignment complete',
   );
   // Assignments changed the open-pipeline ownership — invalidate the risk cache
@@ -658,7 +709,7 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
   if (assigned > 0 || reassigned > 0) {
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
   }
-  return { assigned, reassigned, shielded };
+  return { assigned, reassigned, shielded, roleCorrected };
 }
 
 /**
@@ -808,9 +859,10 @@ export async function recordAssignment(estimateId: string, telecallerId: string,
 // any kind is written. Each cover ledger row carries `tempForTelecallerId` =
 // the ABSENT agent's id (carried forward through later EOD re-poaches), so
 // marking her PRESENT hands every still-open estimate straight back to her.
-// A cover agent keeps the +100 close for anything she converts meanwhile
-// (recordConversionClose credits the holder); converted/declined estimates do
-// not come back. Locked and never-assign estimates are left untouched.
+// A cover agent's conversions credit the LEAD GENERATOR (founder rule —
+// recordConversionClose credits createdBy, holder only as fallback);
+// converted/declined estimates do not come back. Locked and never-assign
+// estimates are left untouched.
 
 export async function markTelecallerAbsent(telecallerId: string): Promise<{ redistributed: number; covers: number }> {
   // ── Phase 1: parallel reads (3 independent D1 round-trips at once) ─────────
@@ -1061,7 +1113,7 @@ async function inferEstimateCreator(estimateId: string, telecallers: Telecaller[
 
 // ── Event-ledger scoring ─────────────────────────────────────────────────────
 // The leaderboard is driven by an append-only score ledger: +100 when an
-// estimate the agent held converts (credited to the holder at conversion), -15
+// estimate converts (credited to the LEAD GENERATOR, not the holder), -15
 // per EOD snatch (charged to the agent who lost it for an unsatisfactory
 // remark). Each row records the IST day, so any timeframe (week/month/year) can
 // be summed with a simple day-range filter — the weekly view restarts at zero
@@ -1099,6 +1151,33 @@ export async function setPenaltiesEnabled(enabled: boolean): Promise<void> {
   });
 }
 
+// ── EOD risk-reassignment master switch (MIS Controller) ────────────────────
+// ON (default) = red/zombie estimates are re-poached to a better converter at
+// the engine runs. OFF = holders keep everything; the engine only deals
+// unassigned estimates and enforces MIS locks. Same Setting-table pattern as
+// the Active Penalty toggle above.
+const EOD_REASSIGN_SETTING_KEY = 'telecalling:eod_reassign_enabled';
+
+/** Runtime state of the MIS "EOD Reassignment" toggle. Default: ON. */
+export async function isEodReassignEnabled(): Promise<boolean> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: EOD_REASSIGN_SETTING_KEY } });
+    // Only an explicit 'false' disables — missing/any other value means ON.
+    return String(row?.value ?? '').trim().toLowerCase() !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+/** Flip the MIS "EOD Reassignment" toggle. */
+export async function setEodReassignEnabled(enabled: boolean): Promise<void> {
+  await prisma.setting.upsert({
+    where: { key: EOD_REASSIGN_SETTING_KEY },
+    update: { value: String(enabled) },
+    create: { key: EOD_REASSIGN_SETTING_KEY, value: String(enabled) },
+  });
+}
+
 /**
  * Append a score event to the ledger. day is the IST date the event happened.
  * Idempotent callers guard duplicates at the call site.
@@ -1114,33 +1193,74 @@ async function recordScoreEvent(telecallerId: string, estimateId: string, delta:
 }
 
 /**
- * Credit +100 to the current holder the moment an estimate converts (status →
- * accepted/confirmed). No-op if the estimate is not won or has no holder.
- * Duplicate-guarded: one +100 per estimate, ever.
+ * Credit +100 to the LEAD GENERATOR (Estimate.createdBy) the moment an
+ * estimate converts (status → accepted/confirmed). Founder rule: the agent
+ * who generated the lead earns the close, not whoever happened to hold the
+ * follow-up at conversion. Falls back to the current holder when the creator
+ * is unknown (old estimates pre-dating creator capture); no-op if neither
+ * exists. Duplicate-guarded: one +100 per estimate, ever.
  */
 export async function recordConversionClose(estimateId: string): Promise<void> {
   try {
     const est = await prisma.estimate.findUnique({
       where: { estimateId },
-      select: { status: true, assignedTelecallerId: true },
+      select: { status: true, assignedTelecallerId: true, createdBy: true },
     });
     if (!est || !(est.status === 'accepted' || est.status === 'confirmed')) return;
-    const holder = est.assignedTelecallerId;
-    if (!holder) return;
+    const earner = (est as any).createdBy || est.assignedTelecallerId;
+    if (!earner) return;
     const existing = await prisma.telecallerScoreEvent.findFirst({
       where: { estimateId, delta: CLOSE_POINTS },
     });
     if (existing) return;
-    await recordScoreEvent(String(holder), estimateId, CLOSE_POINTS, istDate(), 'Estimate converted — full points to lead converter');
+    await recordScoreEvent(String(earner), estimateId, CLOSE_POINTS, istDate(), 'Estimate converted — full points to lead generator');
   } catch (e: any) {
     logger.warn({ err: e?.message, estimateId }, 'recordConversionClose failed');
   }
 }
 
 /**
+ * Converters map for the MIS per-estimate export: estimateId → { name, day }
+ * sourced from the +100 close ledger (credited to the lead generator per the
+ * founder rule). Only converted estimates ever have a row (duplicate-guarded:
+ * one +100 per estimate); declined/open estimates resolve to nothing so the
+ * export leaves "Converted By" blank for them.
+ */
+export async function getConvertersMap(sinceDay: string = ''): Promise<Record<string, { name: string; day: string }>> {
+  try {
+    const events = await prisma.telecallerScoreEvent.findMany({
+      where: {
+        delta: CLOSE_POINTS,
+        ...(DATE_RE.test(sinceDay) ? { day: { gte: sinceDay } } : {}),
+      },
+      select: { telecallerId: true, estimateId: true, day: true },
+    });
+    const ids = [...new Set((events as any[]).map((e) => String(e.telecallerId ?? '')).filter(Boolean))];
+    const nameById = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const rows = await prisma.telecaller.findMany({
+        where: { id: { in: ids.slice(i, i + 500) } },
+        select: { id: true, name: true },
+      });
+      for (const r of rows as any[]) nameById.set(String(r.id), String(r.name ?? ''));
+    }
+    const out: Record<string, { name: string; day: string }> = {};
+    for (const e of events as any[]) {
+      const estId = String(e.estimateId ?? '');
+      if (!estId || out[estId]) continue; // first +100 wins; ledger guards dupes
+      out[estId] = { name: nameById.get(String(e.telecallerId)) ?? '', day: String(e.day ?? '') };
+    }
+    return out;
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'converters map read failed — export Converted-By falls back to blank');
+    return {};
+  }
+}
+
+/**
  * Charge -15 to the agent who lost an estimate at the EOD snatch. Called when a
  * red/zombie estimate is re-poached away from its current holder.
- */
+ */;
 async function recordSnatchPenalty(telecallerId: string, estimateId: string, day: string, reason: string | null): Promise<void> {
   await recordScoreEvent(telecallerId, estimateId, SNATCH_PENALTY, day, reason ?? 'EOD snatch — unsatisfactory remark');
 }
@@ -1192,7 +1312,7 @@ export interface TelecallerDayMetrics {
   };
   score: number;
   // Event-ledger points for the period: +100 per converted estimate (credited
-  // to the holder at conversion), -15 per EOD snatch (charged to the losing
+  // to the lead generator), -15 per EOD snatch (charged to the losing
   // agent). Summed over the period so the weekly view resets to zero naturally.
   points: { closes: number; snatches: number; total: number };
   // Live pipeline risk: open estimates currently red (no meaningful update) or
@@ -1478,6 +1598,23 @@ export async function computeTelecallingDaily(
 
 export async function getTelecallingDashboardData(ctx?: AutomationContext): Promise<any> {
   const q = (ctx?.subject ?? {}) as Record<string, unknown>;
+  // 5-min TTL (not 30s): every write path invalidates these keys explicitly
+  // (invalidateRiskCache / estimates-cache / neodove report), and live events
+  // refetch — so the TTL only governs idle re-reads. A short TTL meant every
+  // filter click + every 30s of idle viewing re-ran the full aggregation, and
+  // a page load's ~10 concurrent cold computes contended into 30s+ timeouts
+  // (2026-09-08 filter incident).
+  const DASH_TTL_MS = 5 * 60 * 1000;
+  // Converters-only shortcut for the MIS per-estimate export
+  // (GET /api/automations/telecalling/data?converters=1&since=YYYY-MM-DD):
+  // returns just { converters } from the +100 close ledger and skips the full
+  // dashboard aggregation entirely. Same endpoint on both runtimes, no new
+  // route needed.
+  const wantConverters = String(q.converters ?? '') === '1' || String(q.converters ?? '').toLowerCase() === 'true';
+  if (wantConverters) {
+    const since = typeof q.since === 'string' && DATE_RE.test(q.since) ? q.since : '';
+    return cached<any>(`telecalling:converters:${since || 'all'}`, DASH_TTL_MS, () => getConvertersMap(since));
+  }
   const requestedDay = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate();
   const period = typeof q.period === 'string' && q.period ? q.period : 'today';
   const agent = typeof q.agent === 'string' && q.agent ? q.agent : '';
@@ -1486,13 +1623,6 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   // (admin) payload — each user's view is isolated in the cache.
   const wantDaily = String(q.daily ?? '') === '1' || String(q.daily ?? '').toLowerCase() === 'true';
   const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}`;
-  // 5-min TTL (not 30s): every write path invalidates these keys explicitly
-  // (invalidateRiskCache / estimates-cache / neodove report), and live events
-  // refetch — so the TTL only governs idle re-reads. A short TTL meant every
-  // filter click + every 30s of idle viewing re-ran the full aggregation, and
-  // a page load's ~10 concurrent cold computes contended into 30s+ timeouts
-  // (2026-09-08 filter incident).
-  const DASH_TTL_MS = 5 * 60 * 1000;
   return cached<any>(cacheKey, DASH_TTL_MS, async () => {
     return computeTelecallingDashboardData(ctx);
   });
@@ -1623,7 +1753,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   }
 
   // Event-ledger points for the leaderboard period: +100 per converted estimate
-  // (credited to the holder at conversion), -15 per EOD snatch (charged to the
+  // (credited to the lead generator), -15 per EOD snatch (charged to the
   // losing agent). Filtered by day range so the weekly view restarts at zero —
   // everyone gets a fair shot on the table each week.
   const pointsFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
@@ -1910,6 +2040,36 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     } catch (e: any) {
       logger.warn({ err: e?.message, agent: (tc as any)?.id }, 'follow-up shield attach failed — rows render unshielded');
     }
+    // No-pickup flag (MIS "did not pickup" filter): TODAY's dial outcome per
+    // number from the 15-min NeoDove snapshot. A follow-up is flagged when its
+    // contact number was dialled today and the MOST RECENT call did not
+    // connect (lastConn === false) — number-level (only the holder normally
+    // dials their leads). Transitional fallback: rows written before lastConn
+    // existed use the day aggregate (dialled, never connected). Fail-open:
+    // snapshot missing → no flags, rows render as before.
+    const pickupByPhone = new Map<string, { attempts: number; connected: boolean; noPickup: boolean; lastTs: string }>();
+    try {
+      const todaySnap = await readEffortSnapshot(istDate());
+      for (const row of todaySnap ?? []) {
+        const p = String((row as any)?.p ?? '');
+        if (!p) continue;
+        const n = Number((row as any)?.n ?? 0) || 0;
+        const lastConn = (row as any)?.lastConn;
+        const latestMissed = lastConn === false || (lastConn == null && n > 0 && !(row as any)?.conn);
+        const cur = pickupByPhone.get(p) ?? { attempts: 0, connected: false, noPickup: false, lastTs: '' };
+        cur.attempts += n;
+        if ((row as any)?.conn) cur.connected = true;
+        // Most-recent dial on the number wins (a later connect clears the flag).
+        const ts = String((row as any)?.lastTs ?? '');
+        if (!cur.lastTs || (ts && ts > cur.lastTs)) {
+          cur.lastTs = ts;
+          cur.noPickup = latestMissed && cur.attempts > 0;
+        }
+        pickupByPhone.set(p, cur);
+      }
+    } catch (e: any) {
+      logger.warn({ err: e?.message, agent: (tc as any)?.id }, 'no-pickup attach failed — follow-ups render unflagged');
+    }
     const followUps = followUpEsts.map((e) => {
       const lastCommentDate = followLastComments.get(e.estimateId) ?? null;
       const ts = parseCommentDateMs(lastCommentDate);
@@ -1917,6 +2077,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       const riskItem = riskItems.find((r) => r.estimateId === e.estimateId);
       const risk = riskItem?.risk ?? 'pending';
       const enquiry = enquiryByCompany.get(String(e.customerName || '').toLowerCase().replace(/[^a-z0-9]/g, '')) ?? null;
+      // No-pickup lookup on the normalized contact number (see block above).
+      const phone10 = normPhone10((e as any).contactPhone);
+      const pickup = phone10 ? pickupByPhone.get(phone10) : undefined;
+      const callAttempts = pickup?.attempts ?? 0;
+      const noPickup = !!pickup?.noPickup && callAttempts > 0;
       return {
         estimateId: e.estimateId,
         estimateNumber: e.estimateNumber,
@@ -1956,6 +2121,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         // Effort-shield verdict for at-risk rows (null otherwise) — the agent
         // sees 🛡 + reason inline in their conversion list.
         shield: shieldByEstimate.get(e.estimateId) ?? null,
+        // NeoDove dial outcome for the contact number (today only): flagged
+        // when the most recent call did not connect. Drives the 📵 chip +
+        // filter.
+        noPickup,
+        callAttempts,
+        callConnected: !!pickup?.connected,
       };
     });
     const lb = leaderboard.find((l) => l.id === tc.id);

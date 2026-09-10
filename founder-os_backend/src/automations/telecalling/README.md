@@ -85,7 +85,9 @@ holder earned protection or exhausted it; null when snapshots unreadable
   are never reset.
 - **Candidates** (highest `total` first): unassigned `sent` (unless
   `skipAssignment`), OR assigned with risk red/zombie, OR locked estimates
-  NOT with their locked agent (lock enforcement). Everything else is
+  NOT with their locked agent (lock enforcement), OR estimates held by a
+  **non-specialist** (lead-gen-only / deleted / absent holder — role
+  correction, switch-independent, see below). Everything else is
   untouched.
 - **Routing per candidate**: locked → straight to `lockedTelecallerId` (no
   creator inference, no best-fit, no snatch penalty, no `snatchReason`).
@@ -101,16 +103,24 @@ holder earned protection or exhausted it; null when snapshots unreadable
   `loadCount` increments for the winner within the run. After the run,
   `invalidateRiskCache()` fires if anything moved.
 - **EOD vs every-run**: the engine re-poaches red/zombie on **every**
-  30-min run — there is no 21:00 time gate in the automation. 21:00 IST
+  run — there is no 21:00 time gate in the automation. 21:00 IST
   only drives the `snatchInHours` countdown (`hoursUntilEod()`, null past
   21:00). "EOD snatch/sweep" wording elsewhere means this standing
   red/zombie re-poach, not a once-daily job.
+- **Role correction (switch-independent)**: estimates held by a
+  non-specialist (`assignEstimateFollowUps=false`, deleted, absent holder)
+  are always moved to the best-fit specialist — even when the EOD switch
+  is OFF. Role fix, not a performance snatch: no effort-shield check, no
+  −15 penalty, `snatchReason` = "Lead-gen hold — moved to a conversion
+  specialist". (Creator-first can still deal today's fresh lead to its
+  lead-gen generator; the correction picks it up on a later run.)
 - **Effort shield check** runs per re-poach (current holder only, lazy
   snapshots, fail-open — see Shield). Shielded → skip (counts `shielded`,
   no write, no penalty). `expired` (day-3) → snatch proceeds with log.
+  Skipped for role corrections.
 - **Snatch penalty guard**: only when `movedFrom && !locked &&
-  penaltiesEnabled && !openRow.tempForTelecallerId`. Temp absent-cover
-  holders are never charged.
+  penaltiesEnabled && !openRow.tempForTelecallerId && !isRoleCorrection`.
+  Temp absent-cover holders and role-corrected holders are never charged.
 
 ### Creator-first lead assignment
 
@@ -161,9 +171,10 @@ IST, reason). Only `+100` and `−15` deltas count — historical −20 decline
 rows stay in the table but the score loop ignores them everywhere.
 
 - **+100 close** (`recordConversionClose`, called from the status-sync
-  route): estimate status → `accepted`/`confirmed`, credited to the
-  **holder at conversion moment**. Duplicate-guarded (one +100 per
-  estimate, ever). ALWAYS recorded, toggle-independent.
+  route): estimate status → `accepted`/`confirmed`, credited to the **lead
+  generator** (`Estimate.createdBy`, holder only as fallback when the creator
+  is unknown). Duplicate-guarded (one +100 per estimate, ever). ALWAYS
+  recorded, toggle-independent.
 - **−15 snatch** (`recordSnatchPenalty`, called from the engine only):
   charged to the agent re-poached FROM. Gated by the MIS **Active Penalty**
   toggle (`Setting telecalling:penalties_enabled`, `isPenaltiesEnabled()`,
@@ -296,9 +307,11 @@ emerald glow + pulse; gold = gold gradient + shimmer. `recent` = last 25 assigne
 
 ## Triggers, endpoints, invalidation
 
-- Trigger: `POST /api/trigger/telecalling` ← GH `cron-every-30min.yml`
-  (plus local `rule.json` node-cron on Express). No time gate — every run
-  deals unassigned + re-poaches red/zombie (shield/penalty guards apply).
+- Trigger: `POST /api/trigger/telecalling` ← GH `cron-daily-ist.yml`
+  (08:00 IST distribution + 21:00 IST EOD sweep; plus local `rule.json`
+  node-cron on Express). No time gate — every run deals unassigned +
+  re-poaches red/zombie (shield/penalty guards apply) + corrects
+  non-specialist holds back to specialists (switch-independent).
 - Dashboard: `GET /api/automations/telecalling/data[?date=&period=&agent=]`.
   `&daily=1` (period mode) attaches `daily: TelecallingDailyRow[]` — per-day ×
   per-agent closes with estimate-number tags, declines, snatches, calls, talk,

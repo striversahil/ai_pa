@@ -1,9 +1,9 @@
 {
   "id": "crm",
   "name": "CRM — Active Sales Orders",
-  "description": "Pipeline of open Zoho Books sales orders grouped by the next pending process step (Confirm → Invoice → Ship → Payment). Fetched by the GH runner, served from KV.",
+  "description": "Department-split CRM control room (Overview | CRM Desk | Accounts | Dispatch | Procurement) with DepartmentScoreEvent points ledger. Open Zoho Books sales orders grouped by next pending step. Fetched by the GH runner, served from KV.",
   "type": "handler",
   "trigger": { "type": "schedule", "cron": "*/15 * * * *" },
-  "scope": "zoho",
+  "scope": "crm",
   "enabled": true
 }

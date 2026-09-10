@@ -9,6 +9,7 @@
  *
  *   { day, fetchedAt, rows: [{ p: phoneLast10, u: neodoveUserId,
  *                              n: outgoingAttempts, spanH, conn: connected,
+ *                              lastConn: mostRecentCallConnected,
  *                              firstTs, lastTs }] }
  *
  * Counting is per-IST-day — each snapshot stands alone, so yesterday's dials
@@ -50,6 +51,10 @@ export interface EffortRow {
   spanH: number;
   /** Connected calls that day (any agent — evidence only, never verdict). */
   conn: number;
+  /** Outcome of the MOST RECENT call that day (drives the 📵 no-pickup flag:
+   *  the flag fires when the latest dial did not connect). Absent on rows
+   *  written before this field existed (transitional — callers fall back). */
+  lastConn?: boolean;
   firstTs: string;
   lastTs: string;
 }
@@ -152,8 +157,9 @@ async function fetchDayRows(token: string, day: string): Promise<any[]> {
 }
 
 function aggregateDay(day: string, apiRows: any[]): EffortRow[] {
-  // per (phone10, agent): attempt timestamps; per phone10: any-connect flag.
-  const attempts = new Map<string, string[]>();
+  // per (phone10, agent): attempt { timestamp, connected } pairs; per
+  // phone10: any-connect flag.
+  const attempts = new Map<string, { ts: string; conn: boolean }[]>();
   const connectedPhones = new Set<string>();
   for (const r of apiRows) {
     if (r?.call_type !== CALL_TYPE_OUTGOING) continue;
@@ -162,23 +168,23 @@ function aggregateDay(day: string, apiRows: any[]): EffortRow[] {
     if (!p || !u) continue;
     const key = `${p}|${u}`;
     if (!attempts.has(key)) attempts.set(key, []);
-    attempts.get(key)!.push(String(r.date_call));
+    attempts.get(key)!.push({ ts: String(r.date_call), conn: r.call_status === CALL_STATUS_CONNECTED });
     if (r.call_status === CALL_STATUS_CONNECTED) connectedPhones.add(p);
   }
   const out: EffortRow[] = [];
-  for (const [key, tsList] of attempts) {
+  for (const [key, pairs] of attempts) {
     const [p, u] = key.split('|');
-    const sorted = tsList.filter(Boolean).sort();
+    const sorted = pairs.filter((x) => x.ts).sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     // Merge redials: greedy groups where each dial is ≥30 min after the
     // previous group's first dial. n = effective attempts (groups).
-    const groups: string[][] = [];
-    for (const ts of sorted) {
+    const groups: { ts: string; conn: boolean }[][] = [];
+    for (const pr of sorted) {
       const last = groups[groups.length - 1];
-      if (last && Date.parse(ts) - Date.parse(last[0]) < REDIAL_MERGE_MS) last.push(ts);
-      else groups.push([ts]);
+      if (last && Date.parse(pr.ts) - Date.parse(last[0].ts) < REDIAL_MERGE_MS) last.push(pr);
+      else groups.push([pr]);
     }
-    const first = sorted[0];
-    const last = sorted[sorted.length - 1];
+    const first = sorted[0].ts;
+    const last = sorted[sorted.length - 1].ts;
     const spanH = sorted.length > 1
       ? Math.max(0, (Date.parse(last) - Date.parse(first)) / 3600000)
       : 0;
@@ -186,6 +192,7 @@ function aggregateDay(day: string, apiRows: any[]): EffortRow[] {
       p, u, n: groups.length, raw: sorted.length,
       spanH: Math.round(spanH * 10) / 10,
       conn: connectedPhones.has(p) ? 1 : 0,
+      lastConn: sorted[sorted.length - 1].conn,
       firstTs: first, lastTs: last,
     });
   }

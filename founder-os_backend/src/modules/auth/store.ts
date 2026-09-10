@@ -243,8 +243,10 @@ class D1AuthStore implements AuthStore {
     return (rows.results || []) as AuthScope[];
   }
   async createScope(key: string, label: string, description: string | null) {
+    // Upsert WITHOUT delete: INSERT OR REPLACE would DELETE the row first and
+    // fire ON DELETE CASCADE (wiping auth_user_scope + auth_role_scope rows).
     await this.db
-      .prepare("INSERT OR REPLACE INTO auth_scope (key, label, description) VALUES (?, ?, ?)")
+      .prepare("INSERT INTO auth_scope (key, label, description) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET label = excluded.label, description = excluded.description")
       .bind(key, label, description)
       .run();
     return { key, label, description };
@@ -287,7 +289,11 @@ class D1AuthStore implements AuthStore {
   }
   async createRole(key: string, label: string, description: string | null, scopeKeys: string[]) {
     if (!(await this.ensureRoleTables())) return { key, label, description, scopeKeys };
-    await this.db.prepare("INSERT OR REPLACE INTO auth_role (key, label, description) VALUES (?, ?, ?)").bind(key, label, description).run();
+    // Upsert WITHOUT delete: INSERT OR REPLACE would DELETE the row first and
+    // fire ON DELETE CASCADE on auth_user_role — silently unassigning this
+    // role from every user whenever its scopes are edited. ON CONFLICT DO
+    // UPDATE edits the row in place, so user assignments survive role saves.
+    await this.db.prepare("INSERT INTO auth_role (key, label, description) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET label = excluded.label, description = excluded.description").bind(key, label, description).run();
     await this.db.prepare("DELETE FROM auth_role_scope WHERE roleKey = ?").bind(key).run();
     for (const s of scopeKeys) {
       await this.db.prepare("INSERT OR IGNORE INTO auth_role_scope (roleKey, scopeKey) VALUES (?, ?)").bind(key, s).run();

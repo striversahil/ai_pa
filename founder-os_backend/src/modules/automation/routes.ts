@@ -12,6 +12,7 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { AutomationEngine } from './engine';
 import { DASHBOARD_SLUGS } from './dashboardSlugs';
+import { AUTOMATION_SCOPES } from './registry-worker';
 import { asyncHandler } from '../../middleware/asyncHandler';
 
 const router = Router();
@@ -40,6 +41,9 @@ router.get('/', asyncHandler(async (_req, res) => {
     lastRunAt: r.lastRunAt,
     runCount: r.runCount,
     hasDashboard: withDashboard.has(r.slug),
+    // Permission scope for the dashboard (rule.json `scope`, mirrored in the
+    // registry; defaults to the slug so new dashboards work with zero edits).
+    scope: AUTOMATION_SCOPES[r.slug] ?? r.slug,
     trigger: parseJson(r.triggerJson),
     condition: parseJson(r.conditionJson),
     actions: parseJson(r.actionsJson),

@@ -1,13 +1,19 @@
 // View → required permission category (scope). Root (or anyone holding the
 // `admin` scope) can access everything. New categories are created by root in
 // the admin panel and assigned per user.
+//
+// Explicit overrides live here; anything NOT listed falls back to using the
+// view/slug itself as the scope (the backend's AUTOMATION_SCOPES contract also
+// defaults a dashboard's scope to its slug). So a newly added dashboard
+// automation is grantable with zero frontend edits — root just assigns the
+// auto-seeded scope in the admin panel.
 
 export const VIEW_SCOPE: Record<string, string> = {
   briefing: "founder-ai",
   whatsapp: "whatsapp",
   automations: "automations",
   admin: "admin",
-  // Automation dashboard slugs:
+  // Automation dashboard slugs whose scope differs from the slug:
   "zoho-sent-analyzer": "zoho",
   "neodove-telecaller-report": "neodove",
   "dpp-prices-dashboard": "dpp",
@@ -18,10 +24,17 @@ export const VIEW_SCOPE: Record<string, string> = {
   "telecalling": "telecalling",
   "whatsapp-autopilot": "autopilot",
   "enquiry-tracker": "enquiry-tracker",
+  "telecalling-agent-analysis": "sheet-analysis",
+  "crm": "crm",
 };
 
-// Scopes a ROLE may grant — limited to automation dashboard views. Keep in sync
-// with DASHBOARD_SCOPES in founder-os_backend/src/modules/auth/service.ts.
+// Scope that grants the Admin panel without root access (e.g. MIS). Holders
+// can assign roles, but never touch the root user nor grant `admin`.
+export const USER_ADMIN_SCOPE = "user-admin";
+
+// Scopes a ROLE may grant. New dashboard scopes are auto-seeded by the backend
+// (ensureScopesSeeded covers AUTOMATION_SCOPES) and appear in the admin panel
+// without editing this list — it is kept for reference only.
 export const DASHBOARD_SCOPES = [
   "zoho",
   "neodove",
@@ -33,6 +46,7 @@ export const DASHBOARD_SCOPES = [
   "autopilot",
   "telecalling",
   "enquiry-tracker",
+  "crm",
   "sales",
 ];
 
@@ -54,7 +68,14 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
     // Team chat: available to every approved member (any granted scope/role).
     return me.scopes.length > 0 || me.roles.length > 0;
   }
-  const scope = VIEW_SCOPE[viewOrSlug];
+  if (viewOrSlug === "admin") {
+    // Admin panel: full admins plus user-managers (e.g. MIS holders of the
+    // user-admin scope). Root-only powers inside are gated separately.
+    return me.scopes.includes(USER_ADMIN_SCOPE);
+  }
+  // Main-platform views are fail-closed (unknown view = denied). Dashboard
+  // slugs fall back to slug-as-scope so new automations work with zero edits.
+  const scope = VIEW_SCOPE[viewOrSlug] ?? viewOrSlug;
   if (!scope) return false; // unrecognized view defaults to denied (fail-closed)
   return me.scopes.includes(scope);
 }

@@ -46,6 +46,7 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 
 ## Auth / scopes
 - Google OAuth gate: paths in `AUTH_EXEMPT` (context.ts) skip it; runners auth via `SHARED_SECRET` (`requireSecret`), MIS endpoints via the `mis` scope (`requireMisScope`). Roster/telecaller writes are MIS-only.
+- Admin panel (`UserAdmin`): root sees Roles + Users; holders of the `user-admin` scope (auto-merged into the `mis` role by `ensureRolesSeeded`) see Users only and can assign roles. The backend rejects touching the root user or granting `admin` (`asUserManager` in `modules/auth/routes.ts`); role create/edit/delete stays root-only; role saves use `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE` (which would cascade-wipe user assignments).
 
 ## Domain quirks worth knowing
 - **Telecalling**: `Telecaller.assignEstimateFollowUps` (renamed from `active`, migration 0015) marks conversion specialists — only they get estimate follow-up assignments. Creator-first assignment still lets the lead-gen creator close their own estimate. Score ledger `TelecallerScoreEvent` (+100 close / −15 snatch / −20 decline).

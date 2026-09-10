@@ -19,6 +19,7 @@ import {
   Table2,
   Bot,
   PackageCheck,
+  ClipboardList,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -34,6 +35,8 @@ const DASH_ICONS: Record<string, LucideIcon> = {
   "sheet-analysis": Table2,
   telecalling: PhoneCall,
   crm: PackageCheck,
+  "enquiry-tracker": ClipboardList,
+  "telecalling-agent-analysis": Table2,
 };
 
 interface MobileDrawerProps {

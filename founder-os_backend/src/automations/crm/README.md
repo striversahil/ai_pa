@@ -1,78 +1,113 @@
-# crm — Active Sales Orders pipeline
+# crm — Department Control Room + Points System
 
-Read-only dashboard automation. Shows OPEN Zoho Books sales orders grouped
-by the next pending process step. The Worker never calls Zoho — the GH
-Actions runner fetches + computes, the Worker's `data()` serves the cached
-snapshot.
+Department-split, points-driven CRM dashboard. Shows OPEN Zoho Books sales
+orders grouped by the next pending process step, with a **DepartmentScoreEvent**
+points ledger (mirrors `TelecallerScoreEvent` in telecalling). The Worker never
+calls Zoho — the GH Actions runner fetches + computes, the Worker diffs
+snapshots to score points, and `data()` serves the cached snapshot + ledger.
 
 Files:
 
 - `index.ts` — `handler()` is a no-op log (triggered via
-  `POST /api/trigger/crm` but all work lives in the runner); `data()` reads
-  the KV snapshot for `GET /api/automations/crm/data`.
-- `rule.json` — handler, `schedule: */15 * * * *`, scope **`zoho`**
-  (not `crm` — the CRM view is gated by the zoho permission category).
+  `POST /api/trigger/crm` but all work lives in the runner + snapshot route);
+  `data()` reads the KV snapshot + aggregates the score ledger for
+  `GET /api/automations/crm/data`.
+- `rule.json` — handler, `schedule: */15 * * * *`, scope **`zoho`**.
 
 ## 1. What it does
 
-Presents a pipeline of all OPEN sales orders grouped by next action:
+Presents a department control room with horizontal tabs
+(**Overview | CRM Desk | Accounts | Dispatch | Procurement**):
 
-| Step | Meaning (exact rule in `pendingStep()`) |
-|------|------------------------------------------|
-| **confirm** | Default: draft / anything open that matches no later stage |
-| **invoice** | `order_status` confirmed/approved (or any `invoiced_status` set) but not invoiced |
-| **ship** | `invoiced_status` invoiced/partial but not shipped |
-| **payment** | `shipped_status` shipped/partial but not paid |
-| *(excluded)* | `paid_status=paid` or `order_status=closed` or `status` cancelled/void → `complete`, dropped from the active pipeline |
+| Tab | Content |
+|-----|---------|
+| **Overview** | KPI strip (active SOs, pipeline value, points-today per dept), 4 pipeline stage cards, recent movements feed |
+| **CRM Desk** | KPIs (pending confirm, points today/week), CRM leaderboard (7d), orders awaiting confirmation |
+| **Accounts** | KPIs, two tables — To Invoice + Awaiting Payment |
+| **Dispatch** | KPIs, orders to ship |
+| **Procurement** | KPIs (distinct materials, total qty, open orders), materials table |
 
-Precedence matters: paid/closed is checked first, then shipped, then
-invoiced, then confirmed — an order matching multiple stages lands in the
-latest one. Fully paid/closed/cancelled/void orders never appear.
+### Stage → desk ownership
+
+| Step | Meaning | Desk |
+|------|---------|------|
+| **confirm** | Default: draft / anything open that matches no later stage | CRM Desk |
+| **invoice** | `order_status` confirmed/approved but not invoiced | Accounts |
+| **ship** | `invoiced_status` invoiced/partial but not shipped | Dispatch |
+| **payment** | `shipped_status` shipped/partial but not paid | Accounts (collections) |
+| *(excluded)* | `paid_status=paid` or `order_status=closed` or cancelled/void → `complete`, dropped from active pipeline | — |
+
+### Points system (DepartmentScoreEvent ledger)
+
+| Movement | Points | Dept | Actor |
+|---|---|---|---|
+| New SO created today | +25 | crm | salesperson |
+| Left `confirm` stage (order confirmed) | +50 | crm | salesperson |
+| (same event) Material allocated | +25 | procurement | — |
+| Left `invoice` stage (invoice raised) | +50 | accounts | — |
+| Left `ship` stage (shipped) | +50 | dispatch | salesperson |
+| Closed as paid (payment received) | +100 | accounts | — |
+| Closed cancelled/void | −20 | dept owning the stage it was in | salesperson |
+
+Backward stage jumps score nothing. The Worker diffs each new snapshot against
+the previous KV snapshot (so→stage map) and writes ledger rows via
+`prisma.departmentScoreEvent.createMany`.
 
 ## 2. Trigger
 
 - **Type:** `handler` · **Cron:** `*/15 * * * *` (GH `cron-every-15min.yml`
   → `workflow_dispatch` → runner; worker `/api/trigger/crm` only logs).
 - **Condition:** none — runs unconditionally on schedule.
-- **Actions:** none — read-only; no writes, no dedup, no config.
+- **Actions:** the snapshot route (`POST /api/runner/crm/snapshot`) writes
+  `DepartmentScoreEvent` rows + busts the `crm:data` cache key.
 
 ## 3. Source / integration
 
 - **Zoho Books** `/api/v3/salesorders` (`filter_by=Status.All`,
-  `per_page=200`, newest first, up to 20 pages, stop on short/empty page),
-  fetched by GH runner `scripts/crm-runner.js` using the same curl
-  credentials as the estimates sync (`zoho_sent/sent_estimates.txt`).
-  Note: the CRM parser only handles single-quoted curl (`'…'`) — unlike
-  the zoho runner it has no double-quote fallback, so a re-exported curl
-  file in `"…"` format will fail with "Could not extract URL".
+  `per_page=200`, newest first, up to 30 pages, early stop when a page has no
+  active orders AND nothing created within 120 days), fetched by GH runner
+  `scripts/crm-runner.js` using the same curl credentials as the estimates
+  sync (`zoho_sent/sent_estimates.txt`).
 - The runner computes `pendingStep()` per order, aggregates
-  `{count, value, orders[]}` per step (**orders capped at 100 per step** —
-  the dashboard never sees beyond the first 100; counts/values are complete),
-  rounds values to 2 decimals, and POSTs
-  `{date (IST), totalActive, totalValue, byProcess}` to
-  `/api/runner/crm/snapshot` (KV-cached on the Worker).
+  `{count, value, orders[]}` per step (**orders capped at 400 per stage** via
+  `DETAIL_CAP`, closed capped at 400 via `CLOSED_CAP`, materials capped at 300
+  via `MATERIALS_CAP**), rounds values to 2 decimals, and POSTs
+  `{date (IST), totalActive, totalValue, stages, closed, materials,
+  salespeople, meta}` to `/api/runner/crm/snapshot` (KV-cached on the Worker).
 - `data()` reads KV `crm:salesorders_snapshot` (45-min TTL) and returns it
   **only when `snapshot.date === today (IST)`** (`{…, fresh:true}`).
-  Stale/absent snapshot → empty pipeline
-  (`{totalActive:0, totalValue:0, byProcess:{}, computedAt:null, fresh:false}`)
-  — the dashboard shows zeros, never yesterday's data. The runner refreshes
-  it on the next tick.
+  Stale/absent snapshot → empty pipeline + zeroed scores
+  (`{totalActive:0, totalValue:0, stages:{}, scores:{…all zero},
+  computedAt:null, fresh:false}`) — the dashboard shows a "waiting for first
+  snapshot" state, never yesterday's data. The runner refreshes it on the next
+  tick.
+- `data()` also aggregates the score ledger in parallel: today's points (by
+  dept), 7-day points, CRM leaderboard (7d, by actor: points/events/
+  created/confirmed), and a recent 50-event feed.
 
 ## 4. Config / dedup
 
-None (read-only dashboard).
+None (read-only dashboard + append-only points ledger).
 
 ## 5. Runbook / troubleshooting
 
 - Log prefix: `crm-runner:` (GH Actions run logs). Success line:
-  `N page(s), M active SOs (₹V) — confirm:a  invoice:b …`.
+  `N page(s), M active SOs (₹V) — confirm:a  invoice:b  ship:c  payment:d`.
 - Verify: open the CRM dashboard → KPI strip shows active SO counts + value
   with `fresh:true` (check the payload, not just the numbers).
 - If empty/zeros with `fresh:false`: the runner hasn't posted today's
   snapshot — check the `cron-every-15min.yml` run for `crm-runner` errors;
   verify `zoho_sent/sent_estimates.txt` cookies are fresh; confirm
   `WORKER_URL`/`SHARED_SECRET` GH secrets.
+- **Migration:** `0021_department_score_events.sql` MUST be applied to remote
+  D1 before the points ledger works (the snapshot route writes
+  `DepartmentScoreEvent` rows; without the table the writes fail best-effort
+  and the ledger stays empty).
 - Snapshot KV key is `crm:salesorders_snapshot` (45-min TTL, date-gated as
   above — TTL expiry alone doesn't cause zeros, a stale `date` does).
-- Gotchas: scope is `zoho` (grant zoho to see CRM); per-step order lists
-  truncate at 100 (counts don't); handler endpoint does nothing by design.
+- Data cache key is `crm:data` (60-s TTL, busted on every runner refresh).
+- Gotchas: scope is `zoho` (grant zoho to see CRM); per-stage order lists
+  truncate at 400 (counts don't); handler endpoint does nothing by design; if
+  the Procurement tab is empty, check `meta.withLineItems` — Zoho's list
+  response may not include line items (the runner records whether it did).
+

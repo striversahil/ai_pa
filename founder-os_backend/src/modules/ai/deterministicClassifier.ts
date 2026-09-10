@@ -23,7 +23,7 @@ const INTERNAL_HANDOFF = /\b(sir|sir|ma'am|madam|madam)\s+(will|is going to|will
 const UNDER_DISCUSSION = /\b(under discussion|negotiat|discuss(ing)? with (his|their|her) (management|partner|team|owner|boss)|price (not )?match(ing)?|match( the|ing)? (the )?price|rates are not matching|will match)\b/i;
 const FUTURE_DATE = /(\b\d{1,2}(st|nd|rd|th)?(\s+of)?\s+(aug|sep|sept|oct|nov|dec|jan|feb|mar|apr|may|jun|jul|august|september|october|november|december|january|february|march|april|june|july)\b)|(\b\d{1,2}-\d{1,2}-\d{4}\b)|(\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)|(\b(today|tomorrow)\b)|(\b(after|in|within)\s+\d{1,2}(\s|-)?(days?|weeks?)\b)|(\bnext\s+(week|month)\b)|(\bafter\s+(\d{1,2}(st|nd|rd|th)?\b))/i;
 const VAGUE_REVERT = /\b(will|wll|willl|wil|going to|have to)\b.{0,50}\b(check|see|look|let( (me|us))? know|intimate|inform|say|update|revert|confirm|take some time|not (have|has) (checked|seen)|hasn'?t (checked|seen)|get back|come back)\b/i;
-const NOT_ANSWERING = /\b(not answering|not answer|couldn'?t?t reach|not connected|not conne+cted|disconnect(ed|ing)?|didn'?t pick|did not pick|busy( on another call)?|on another call|call(ed)? back to later|call back later|couldn'?t reach|no answer|not reachable|incoming service is not available|service is not available)\b/i;
+const NOT_ANSWERING = /\b(not answering|not answer|unable to connect|unreachable|out of reach|switched off|couldn'?t?t reach|not connected|not conne+cted|disconnect(ed|ing)?|didn'?t pick|did not pick|busy( on another call)?|on another call|call(ed)? back to later|call back later|couldn'?t reach|no answer|not reachable|incoming service is not available|service is not available)\b/i;
 const REJECTION = /\b(not require|not needed|no requirement|doesn'?t need|do not need|declined|decline|price inquiry|price enquiry|just (a )?price)\b/i;
 const BARE_ACTION = /\b(called|call(ed)? him|message(ed)? sent|whatsapp sent|whatsapp message sent|left (a )?message|sent (the )?quotation|quotation (was )?sent|quote (was )?sent|email(ed)? sent|shared (the )?quotation)\b/i;
 const QUOTATION_ONLY = /\b(enquiry|enq\.?|quote (created|updated)|rates?\s+pending|product (spec|details?)|specifications?)\b/i;
@@ -145,8 +145,11 @@ export function classifyDeterministic(
     };
   }
 
-  // RULE 2b: Explicit future follow-up date → meaningful (before not-answering)
-  if (FUTURE_DATE.test(comment)) {
+  // RULE 2b: Explicit future follow-up date → meaningful (before not-answering).
+  // A bare retry date after failing to reach the customer is NOT progress —
+  // not-answering takes precedence (the agent's own retry plan names a date
+  // but records no customer contact).
+  if (FUTURE_DATE.test(comment) && !NOT_ANSWERING.test(comment)) {
     const passed = hasPassedDueDate(comment, estimateDate, today);
     if (!passed) {
       return {

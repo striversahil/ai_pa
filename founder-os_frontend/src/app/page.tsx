@@ -42,11 +42,18 @@ function AppInner() {
       ? (route.view as ViewType)
       : "automations";
 
-  const viewDenied = activeView !== "admin" && !(activeView === "automations" && sub ? canView(sub) : canView(activeView));
-
   // Views this user can actually reach: accessible main nav views + role-granted dashboards.
   const accessibleMain = useMemo(() => NAV_ITEMS.filter((i) => canView(i.view)), [canView]);
   const dashboards = useDashboardNav();
+
+  const viewDenied =
+    activeView !== "admin" &&
+    !(activeView === "automations" && sub
+      ? // Dashboard slugs are resolved against the live, permission-filtered
+        // sidebar list (server-provided scopes) so new dashboard automations
+        // need zero per-slug edits here; canView() is the fallback.
+        dashboards.some((d) => d.slug === sub) || canView(sub)
+      : canView(activeView));
 
   // If the current view is denied but the user has SOMETHING they can access,
   // auto-route them to it. Only users with literally nothing granted keep seeing

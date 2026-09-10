@@ -17,6 +17,7 @@ import {
   deleteScope as svcDeleteScope,
   setUserRoles as svcSetUserRoles,
   setUserScopes as svcSetUserScopes,
+  requireManager,
   requireUser,
   startLogin,
 } from "./service";
@@ -85,9 +86,22 @@ async function asRoot(store: AuthStore, cookieHeader: string | null) {
   return me;
 }
 
+// ── User-manager gate ─────────────────────────────────────────────────────────
+// Root/admin or anyone holding the `user-admin` scope (e.g. MIS). Managers may
+// assign roles and edit role scopes, but NEVER the root user nor anything
+// granting the `admin` scope — enforced per endpoint below.
+async function asUserManager(store: AuthStore, cookieHeader: string | null) {
+  const me = await requireManager(store, cookieHeader);
+  return { me, root: isRoot(me) };
+}
+
+function isTargetRoot(target: { isRoot: boolean; email: string }): boolean {
+  return target.isRoot || target.email === ROOT_EMAIL;
+}
+
 export async function authListUsers(store: AuthStore, cookieHeader: string | null): Promise<AuthResult> {
   try {
-    await asRoot(store, cookieHeader);
+    await asUserManager(store, cookieHeader);
     return json(200, await listUsers(store));
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
@@ -174,7 +188,8 @@ export async function authCreateRole(
   try {
     await asRoot(store, cookieHeader);
     if (!payload.key || !payload.label) return json(400, { error: "key and label required" });
-    const role = await svcCreateRole(store, payload.key, payload.label, payload.description ?? null, payload.scopeKeys ?? []);
+    const scopeKeys = payload.scopeKeys ?? [];
+    const role = await svcCreateRole(store, payload.key, payload.label, payload.description ?? null, scopeKeys);
     return json(201, role);
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
@@ -205,8 +220,22 @@ export async function authSetUserRoles(
   keys: string[],
 ): Promise<AuthResult> {
   try {
-    await asRoot(store, cookieHeader);
+    const { root } = await asUserManager(store, cookieHeader);
     if (!Array.isArray(keys)) return json(400, { error: "keys must be an array" });
+    if (!root) {
+      const target = await store.getUserById(userId);
+      if (!target) return json(404, { error: "user not found" });
+      if (isTargetRoot(target)) return json(403, { error: "Only root can modify the root user" });
+      const roles = await listRoles(store);
+      const byKey = new Map(roles.map((r) => [r.key, r]));
+      for (const k of keys) {
+        const role = byKey.get(k);
+        if (!role) return json(400, { error: `Unknown role: ${k}` });
+        if (role.scopeKeys.map((s) => String(s).toLowerCase()).includes("admin")) {
+          return json(403, { error: "Only root can assign admin access" });
+        }
+      }
+    }
     await svcSetUserRoles(store, userId, keys);
     invalidateAllSessionCaches();
     return json(200, { ok: true });

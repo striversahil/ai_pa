@@ -10,6 +10,8 @@ import {
   markTelecallerPresent,
   isPenaltiesEnabled,
   setPenaltiesEnabled,
+  isEodReassignEnabled,
+  setEodReassignEnabled,
   bulkAssignEstimates,
   invalidateRiskCache,
 } from '../../automations/telecalling/service';
@@ -119,6 +121,25 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     const body = await c.req.json().catch(() => ({}));
     if (typeof body.enabled !== 'boolean') return c.json({ error: 'enabled boolean required' }, 400);
     await setPenaltiesEnabled(body.enabled);
+    return c.json({ ok: true, enabled: body.enabled });
+  });
+
+  // ── "EOD Reassignment" master switch (MIS) ─────────────────────────────────
+  // ON (default) = red/zombie estimates are re-poached to a better converter
+  // at the engine runs. OFF = no risk re-poaching between specialists; only
+  // unassigned deals + MIS locks + non-specialist (lead-gen) holds corrected
+  // back to specialists still move. NOTE: registered BEFORE /api/telecallers/:id so
+  // 'eod-reassign' can never be captured as an :id.
+  app.get('/api/telecallers/eod-reassign', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    return c.json({ enabled: await isEodReassignEnabled() });
+  });
+
+  app.put('/api/telecallers/eod-reassign', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    if (typeof body.enabled !== 'boolean') return c.json({ error: 'enabled boolean required' }, 400);
+    await setEodReassignEnabled(body.enabled);
     notifyLive(c, { type: 'telecalling' });
     return c.json({ ok: true, enabled: body.enabled });
   });

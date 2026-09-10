@@ -93,6 +93,7 @@ export async function invalidateDerivedEstimateCaches(): Promise<void> {
     cacheDelPrefix('neodove:kra'),
     cacheDelPrefix('telecalling:risk'),
     cacheDelPrefix('telecalling:dashboard'),
+    cacheDelPrefix('telecalling:converters'),
     cacheDel(KEY),
   ]);
 }

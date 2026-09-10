@@ -69,14 +69,18 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
       enabled: r.enabled, cooldownMs: r.cooldownMs, lastRunAt: r.lastRunAt, runCount: r.runCount,
       hasDashboard: withDashboard.has(r.slug),
       // Permission scope for the dashboard (rule.json `scope`, mirrored in the
-      // registry). Lets the admin render one checkbox per available dashboard.
-      scope: AUTOMATION_SCOPES[r.slug] ?? null,
+      // registry; defaults to the slug so new dashboards work with zero edits).
+      // Lets the admin render one checkbox per available dashboard.
+      scope: AUTOMATION_SCOPES[r.slug] ?? r.slug,
       trigger: parseJson(r.triggerJson), condition: parseJson(r.conditionJson),
       actions: parseJson(r.actionsJson), config: parseJson(r.configJson),
       createdAt: r.createdAt, updatedAt: r.updatedAt,
     }));
     if (isAdmin) return c.json(full);
-    return c.json(full.map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard })));
+    // Non-admin clients get the minimal dashboard list PLUS the permission
+    // scope per dashboard, so the sidebar/page guard can resolve access
+    // dynamically (new dashboard automations work with zero frontend edits).
+    return c.json(full.map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
   });
 
   app.get('/api/automations/:slug', async (c) => {

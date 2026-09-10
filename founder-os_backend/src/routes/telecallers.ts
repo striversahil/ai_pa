@@ -9,6 +9,8 @@ import {
   markTelecallerPresent,
   isPenaltiesEnabled,
   setPenaltiesEnabled,
+  isEodReassignEnabled,
+  setEodReassignEnabled,
 } from '../automations/telecalling/service';
 
 const router = Router();
@@ -50,6 +52,18 @@ router.put('/penalty-mode', misGuard, asyncHandler(async (req, res) => {
   const { enabled } = req.body || {};
   if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled boolean required' });
   await setPenaltiesEnabled(enabled);
+  res.json({ ok: true, enabled });
+}));
+
+// ── "EOD Reassignment" master switch (MIS) — registered BEFORE /:id routes ──
+router.get('/eod-reassign', misGuard, asyncHandler(async (_req, res) => {
+  res.json({ enabled: await isEodReassignEnabled() });
+}));
+
+router.put('/eod-reassign', misGuard, asyncHandler(async (req, res) => {
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled boolean required' });
+  await setEodReassignEnabled(enabled);
   res.json({ ok: true, enabled });
 }));
 

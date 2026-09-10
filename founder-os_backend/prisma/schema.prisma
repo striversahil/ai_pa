@@ -287,9 +287,9 @@ model EstimateAssignment {
   @@index([day])
 }
 
-// Event-ledger scoring for the telecalling leaderboard. +100 per estimate the
-// agent converted (credited to the holder at conversion moment); -15 per EOD
-// snatch (charged to the agent who lost it for an unsatisfactory remark). The
+// Event-ledger scoring for the telecalling leaderboard. +100 per converted
+// estimate (credited to the lead generator, holder only as fallback); -15 per
+// EOD snatch (charged to the agent who lost it for an unsatisfactory remark). The
 // day field (IST date) lets any timeframe be summed with a simple filter, so the
 // weekly leaderboard restarts at zero naturally each Sunday/Monday.
 model TelecallerScoreEvent {
@@ -332,6 +332,28 @@ model DepartmentScoreEvent {
   @@index([actor])
   @@index([soNumber])
 }
+
+// Manual CRM status changes (local override layer). When a CRM operator
+// manually advances/cancels an order from the dashboard, the action is recorded
+// here. The runner applies these overrides on top of Zoho's raw status before
+// computing pendingStep(), so the snapshot reflects the manual change and the
+// diff logic scores points automatically.
+model CrmOrderAction {
+  id            String   @id @default(uuid())
+  soNumber      String
+  action        String // confirm | invoice | ship | payment | cancel | void
+  fromStage     String? // stage the order was in before this action
+  toStage       String // stage after this action
+  reason    String?
+  actor     String // who performed the action (MIS user name)
+  day       String // YYYY-MM-DD (IST)
+  createdAt DateTime @default(now())
+
+  @@index([soNumber])
+  @@index([day])
+  @@index([action])
+}
+
 
 model AuditLog {
   id          String   @id @default(uuid())

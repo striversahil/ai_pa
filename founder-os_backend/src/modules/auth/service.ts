@@ -3,6 +3,11 @@ import { AuthStore, createAuthStore } from "./store";
 import { buildGoogleAuthUrl, exchangeGoogleCode, GoogleConfig } from "./google";
 import { SESSION_COOKIE, SESSION_MAX_AGE, readSessionCookie } from "./session";
 
+/** Scope that grants user & role management (Admin panel) WITHOUT root access.
+ *  Holders can assign roles and edit role scopes, but can never touch the root
+ *  user nor grant anything containing the `admin` scope (enforced in routes). */
+export const USER_ADMIN_SCOPE = "user-admin";
+
 export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "admin", label: "Administrator", description: "Full access to every view and user management" },
   { key: "dashboard", label: "Dashboard", description: "Main pipeline dashboard" },
@@ -21,6 +26,8 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "autopilot", label: "WhatsApp Autopilot", description: "Autopilot task queue and review dashboard" },
   { key: "mis", label: "MIS", description: "MIS-level control of the telecaller roster (assignment controller)" },
   { key: "telecalling", label: "Telecalling", description: "Telecalling performance dashboard" },
+  { key: "crm", label: "CRM", description: "CRM active sales orders pipeline" },
+  { key: USER_ADMIN_SCOPE, label: "User Manager", description: "Admin panel: assign roles and edit role scopes (cannot touch root user or grant admin access)" },
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
   { key: "sales", label: "Sales Agent", description: "Sales agent identity — roster entry with contact details and incentive mapping" },
 ];
@@ -29,8 +36,8 @@ export const DEFAULT_ROLES: AuthRole[] = [
   {
     key: "mis",
     label: "MIS",
-    description: "Management information dashboards (Zoho estimates, etc.) + telecalling roster control",
-    scopeKeys: ["mis", "zoho"],
+    description: "Management information dashboards (Zoho estimates, etc.) + telecalling roster control + user/role assignment (no root access)",
+    scopeKeys: ["mis", "zoho", USER_ADMIN_SCOPE],
   },
 ];
 
@@ -52,21 +59,49 @@ export function authEnabled(env: any): boolean {
 
 /** Seed default categories/scopes so root can immediately assign them. Additive —
  *  upserts any default missing from the DB, so new scopes added in code (e.g. a
- *  new automation dashboard scope) appear in the admin without a DB reset. */
+ *  new automation dashboard scope) appear in the admin without a DB reset.
+ *  Automation rule.json `scope` values (AUTOMATION_SCOPES) are seeded too, so a
+ *  newly added dashboard automation is grantable without touching this file —
+ *  just declare `scope` in its rule.json (or it defaults to its slug). */
 export async function ensureScopesSeeded(store: AuthStore): Promise<void> {
   const existing = await store.listScopes();
   const have = new Set(existing.map((s) => s.key));
   for (const s of DEFAULT_SCOPES) {
-    if (!have.has(s.key)) await store.createScope(s.key, s.label, s.description);
+    if (!have.has(s.key)) {
+      await store.createScope(s.key, s.label, s.description);
+      have.add(s.key);
+    }
+  }
+  try {
+    const { AUTOMATION_SCOPES } = await import("../automation/registry-worker");
+    for (const scope of new Set(Object.values(AUTOMATION_SCOPES))) {
+      if (!have.has(scope)) {
+        await store.createScope(scope, scope, `Automation dashboard scope (${scope})`);
+        have.add(scope);
+      }
+    }
+  } catch {
+    // Registry not loadable in this runtime — static defaults still apply.
   }
 }
 
-/** Seed default roles (e.g. MIS) on first use. Additive — upserts missing defaults. */
+/** Seed default roles (e.g. MIS) on first use. Additive — creates missing
+ *  defaults AND merges any new default scopes into an existing same-key role
+ *  (never removes). This is how already-seeded roles pick up new capabilities
+ *  like user-admin without a DB reset or touching user assignments. */
 export async function ensureRolesSeeded(store: AuthStore): Promise<void> {
   const existing = await store.listRoles();
-  const have = new Set(existing.map((r) => r.key));
+  const have = new Map(existing.map((r) => [r.key, r]));
   for (const r of DEFAULT_ROLES) {
-    if (!have.has(r.key)) await store.createRole(r.key, r.label, r.description, r.scopeKeys);
+    const cur = have.get(r.key);
+    if (!cur) {
+      await store.createRole(r.key, r.label, r.description, r.scopeKeys);
+      continue;
+    }
+    const merged = [...new Set([...cur.scopeKeys, ...r.scopeKeys])];
+    if (merged.length !== cur.scopeKeys.length) {
+      await store.createRole(r.key, cur.label, cur.description, merged);
+    }
   }
 }
 
@@ -173,6 +208,21 @@ export async function requireScope(
   return me;
 }
 
+/** Like requireUser, but also demands user-management rights: root/admin or the
+ *  user-admin scope (e.g. MIS). Used as the gate for the Admin panel endpoints;
+ *  root-only restrictions (root user, admin scope) are enforced per-endpoint. */
+export async function requireManager(
+  store: AuthStore,
+  cookieHeader: string | null | undefined,
+): Promise<MeResponse> {
+  const me = await requireUser(store, cookieHeader);
+  if (me.isAdmin) return me;
+  if (!me.scopes.includes(USER_ADMIN_SCOPE)) {
+    throw new AuthError("FORBIDDEN", `Requires '${USER_ADMIN_SCOPE}' permission`, 403);
+  }
+  return me;
+}
+
 /** Requires a signed-in user who has been approved (holds any scope/role) — used
  *  for team-wide features like chat that every approved member may use. */
 export function isApproved(me: MeResponse): boolean {
@@ -199,6 +249,7 @@ export async function setUserScopes(store: AuthStore, userId: string, keys: stri
 
 // ── Role management ───────────────────────────────────────────────────────────
 export async function listRoles(store: AuthStore) {
+  await ensureScopesSeeded(store);
   await ensureRolesSeeded(store);
   return store.listRoles();
 }

@@ -123,6 +123,12 @@ interface FollowUp {  estimateId: string;
   detailsCaptured?: boolean | null;
   /** Terminal AI give-up: 10 capture turns with <3 fields. */
   detailsFailed?: boolean | null;
+  /** NeoDove dial outcome (today only): the most recent call did not connect. */
+  noPickup?: boolean | null;
+  /** Effective outgoing attempts on the contact number (today only). */
+  callAttempts?: number | null;
+  /** Whether the number connected at least once today. */
+  callConnected?: boolean | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -222,6 +228,19 @@ function ShieldChip({ shield, compact = false }: {
   return (
     <span title={`${shield.reason} — stays with you, no snatch, no −15`} className={`${base} bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30`}>
       🛡{compact ? "" : ` Shield day ${(shield.streak ?? 0) + 1}/2 · ${shield.n} calls`}
+    </span>
+  );
+}
+
+/** No-pickup chip — today's NeoDove dial outcome: the most recent call to the
+ *  contact number did not connect. Renders nothing when not flagged. */
+function NoPickupChip({ f, compact = false }: { f: FollowUp; compact?: boolean }) {
+  if (!f.noPickup) return null;
+  const base = `inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold ${compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]"}`;
+  const n = f.callAttempts ?? 0;
+  return (
+    <span title={`Today's most recent call did not connect (dialled ${n}× today) — customer did not pick up`} className={`${base} bg-orange-500/10 text-orange-500 dark:text-orange-400 border-orange-500/30`}>
+      📵{compact ? "" : " No pickup"}
     </span>
   );
 }
@@ -461,6 +480,10 @@ export default function TelecallingDashboard() {
   const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // "Did not pickup" filter for the per-agent conversion list (resets when the
+  // selected agent changes).
+  const [noPickupOnly, setNoPickupOnly] = useState(false);
+  useEffect(() => { setNoPickupOnly(false); }, [agentFilter]);
 
   // A scoped (non-admin) sales agent is locked to their OWN lead conversion:
   // force the conversion view onto their agent id and never let them switch.
@@ -503,6 +526,10 @@ export default function TelecallingDashboard() {
   const agentViewsMap = agentViews.data ?? {};
   const getAgentView = (id: string | null): AgentViewData | null => (id ? agentViewsMap[id] ?? null : null);
   const selectedAgentView = getAgentView(agentFilter);
+  // No-pickup subset of the selected agent's follow-ups (NeoDove dial outcome).
+  const convFollowUps = selectedAgentView?.followUps ?? [];
+  const noPickupCount = convFollowUps.filter((f) => f.noPickup).length;
+  const visibleFollowUps = noPickupOnly ? convFollowUps.filter((f) => f.noPickup) : convFollowUps;
 
   const refreshAll = useCallback(() => {
     dash.refresh();
@@ -637,6 +664,50 @@ export default function TelecallingDashboard() {
       setBusy(false);
     }
   };
+
+  // ── "EOD Reassignment" master switch (MIS Controller) ─────────────────────
+  const [eodReassign, setEodReassign] = useState<boolean | null>(null);
+  const loadEodReassign = useCallback(async () => {
+    if (!canManageRoster) return;
+    try {
+      const res = await fetch("/api/telecallers/eod-reassign");
+      if (res.ok) setEodReassign((await res.json()).enabled ?? true);
+    } catch { /* keep last known state */ }
+  }, [canManageRoster]);
+  useEffect(() => {
+    void loadEodReassign();
+  }, [loadEodReassign]);
+  const toggleEodReassign = async () => {
+    setBusy(true);
+    setRosterError(null);
+    try {
+      const next = !(eodReassign ?? true);
+      const res = await fetch("/api/telecallers/eod-reassign", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      // Same no-optimistic-flip rule as the penalty toggle: a failed PUT must
+      // NOT display the new state.
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Reassignment toggle failed (${res.status})`);
+      }
+      const body = await res.json().catch(() => ({}));
+      if (body && body.ok === false) throw new Error(body?.error || "Reassignment toggle failed");
+      setEodReassign(body?.enabled ?? next);
+      refreshAll();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Reassignment toggle failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  // At-risk displays (leaderboard risk column, 🔥 At Risk section, snatch /
+  // shield chips, export risk parts) are hidden while EOD Reassignment is OFF
+  // — nothing can be snatched, so the labels are noise. Defaults to visible
+  // (switch defaults ON; non-MIS viewers never load the switch state).
+  const showRisk = eodReassign ?? true;
 
   // ── Absentee cover (MIS Controller): absent → equal redistribution ─────────
   const toggleAbsent = async (id: string, isAbsent: boolean) => {
@@ -900,7 +971,7 @@ export default function TelecallingDashboard() {
                             <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+100</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms). Credited to whoever is holding it at that moment.</li>
                             <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
                             <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5{penaltyMode ? <span> · <span className="text-rose-500">snatch −15</span> (Active Penalty ON — unsatisfied/red estimates are re-poached at the sweep and the loser is charged)</span> : <span> (snatch −15 applies only while Active Penalty is ON, and only to future snatches)</span>} · <span className="text-emerald-500">🛡 shield</span> (3+ effective calls over 2h+ on the lead protects a red estimate for the day — redials within 30 min count once; grace lasts 2 days, day 3 snatches). The table restarts at zero every week so everyone gets a fair shot.</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5{penaltyMode ? <span> · <span className="text-rose-500">snatch −15</span> (Active Penalty ON — unsatisfied/red estimates are re-poached at the sweep and the loser is charged)</span> : <span> (snatch −15 applies only while Active Penalty is ON, and only to future snatches)</span>} · <span className="text-emerald-500">🛡 shield</span> (3+ effective calls over 2h+ on the lead protects a red estimate for the day — redials within 30 min count once; grace lasts 2 days, day 3 snatches). Risk-based re-poaching itself follows the Controller's 🔁 EOD Reassignment switch (ON by default). The table restarts at zero every week so everyone gets a fair shot.</li>
                           </ul>
                         </div>
                       </div>
@@ -987,7 +1058,7 @@ export default function TelecallingDashboard() {
                         <th className="text-right py-2 pr-4">Est. Won</th>
                         <th className="text-right py-2 pr-4">Calls</th>
                         <th className="text-right py-2 pr-4">Talk</th>
-                        <th className="text-right py-2 pr-4">Risk</th>
+                        {showRisk && <th className="text-right py-2 pr-4">Risk</th>}
                         <th className="text-right py-2 pr-4 whitespace-nowrap min-w-[12rem]">Score</th>
                       </tr>
                     </thead>
@@ -1019,6 +1090,7 @@ export default function TelecallingDashboard() {
                               </td>
                               <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.callsConnected)}</td>
                               <td className="py-2 pr-4 text-right font-mono text-indigo-300">{fmtTalk(t.generation.talkTimeSec)}</td>
+                              {showRisk && (
                               <td className="py-2 pr-4 text-right font-mono whitespace-nowrap">
                                 {(t.risk?.atRisk ?? 0) + (t.risk?.zombie ?? 0) > 0 ? (
                                   <span className="text-rose-400 font-bold" title="Open estimates red (no meaningful update) or zombie (silent > 3 days) — lost at EOD">
@@ -1028,6 +1100,7 @@ export default function TelecallingDashboard() {
                                   <span className="text-emerald-400" title="No estimates at risk">✓</span>
                                 )}
                               </td>
+                              )}
                               <td className="py-2 pr-4 text-right whitespace-nowrap min-w-[12rem]">
                                 <div className="flex items-center justify-end gap-2">
                                   <span className="font-extrabold text-indigo-300 font-mono">{t.score}</span>
@@ -1121,8 +1194,9 @@ export default function TelecallingDashboard() {
                 </div>
               </section>
 
-              {/* Founder pre-warning: open estimates about to be snatched at EOD */}
-              {dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
+              {/* Founder pre-warning: open estimates about to be snatched at EOD.
+                  Hidden while EOD Reassignment is OFF (nothing can be snatched). */}
+              {showRisk && dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
                 <section className="bg-rose-500/5 border border-rose-500/30 rounded-xl p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <h3 className="text-lg font-bold text-rose-500 dark:text-rose-400">
@@ -1269,20 +1343,42 @@ export default function TelecallingDashboard() {
                       <button onClick={() => setAgentFilter(null)} className="text-xs text-indigo-400 hover:underline">Back to all</button>
                     )}
                   </div>
+                  {noPickupCount > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setNoPickupOnly(!noPickupOnly)}
+                        title="Show only follow-ups whose most recent call today did not connect"
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+                          noPickupOnly
+                            ? "bg-orange-600 text-white border-orange-600 shadow-sm"
+                            : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-orange-400 dark:hover:border-orange-500"
+                        }`}
+                      >
+                        📵 No pickup ({noPickupCount})
+                      </button>
+                      {noPickupOnly && (
+                        <button onClick={() => setNoPickupOnly(false)} className="text-xs text-indigo-400 hover:underline">Show all</button>
+                      )}
+                    </div>
+                  )}
                   {agentViews.loading && !selectedAgentView && <p className="text-sm text-zinc-500">Loading…</p>}
                   {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) === 0 && (
                     <p className="text-sm text-zinc-500">No follow-up estimates assigned to this agent.</p>
                   )}
+                  {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) > 0 && visibleFollowUps.length === 0 && (
+                    <p className="text-sm text-zinc-500">No no-pickup follow-ups for this agent.</p>
+                  )}
                   <div className="space-y-2">
-                    {selectedAgentView?.followUps?.map((f) => (
+                    {visibleFollowUps.map((f) => (
                       <div key={f.estimateId} className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 space-y-1">
                         <div className="flex items-start justify-between gap-3">
                           <div className="font-semibold text-sm text-zinc-900 dark:text-white truncate min-w-0">{f.customerName ?? "—"}</div>
                           <div className="flex items-center gap-1.5 shrink-0">
                             <SatChip value={f.satisfactory} />
                             <StaleChip staleHours={f.staleHours} />
-                            <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} />
-                            <ShieldChip shield={f.shield} />
+                            <NoPickupChip f={f} />
+                            {showRisk && <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} />}
+                            {showRisk && <ShieldChip shield={f.shield} />}
                           </div>
                         </div>
                         <div className="flex items-center justify-between gap-3">
@@ -1293,7 +1389,7 @@ export default function TelecallingDashboard() {
                           </div>
                         </div>
                         <LeadChips f={f} />
-                        {(f.risk === "red" || f.risk === "zombie") && f.snatchReason && (
+                        {showRisk && (f.risk === "red" || f.risk === "zombie") && f.snatchReason && (
                           <p className="text-[11px] text-rose-600/80 dark:text-rose-400/70 leading-snug line-clamp-2" title={f.snatchReason}>
                             {f.snatchReason}
                           </p>
@@ -1344,6 +1440,33 @@ export default function TelecallingDashboard() {
                     </button>
                   </div>
                 </section>
+                {/* EOD Reassignment master switch (MIS) */}
+                <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-bold mb-1">🔁 EOD Reassignment</h3>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xl">
+                        Master switch for risk-based reassignment. ON (default):
+                        red/zombie estimates are re-poached to a better converter
+                        at the engine runs. OFF: no risk re-poaching — only
+                        unassigned estimates get dealt, MIS locks enforced, and
+                        lead-gen-held estimates corrected back to converters.
+                      </p>
+                    </div>
+                    <button
+                      onClick={toggleEodReassign}
+                      disabled={busy || eodReassign === null}
+                      className={`shrink-0 text-sm font-bold rounded-lg px-5 py-2.5 transition-colors disabled:opacity-60 ${
+                        eodReassign ?? true
+                          ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                          : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                      }`}
+                      title="Toggles whether at-risk estimates are re-poached at the engine runs"
+                    >
+                      {eodReassign === null ? "…" : eodReassign ? "EOD Reassignment: ON" : "EOD Reassignment: OFF"}
+                    </button>
+                  </div>
+                </section>
                 <EstimateOverridesSection
                   rosterRows={rosterRows}
                   busy={overrideBusy}
@@ -1354,7 +1477,7 @@ export default function TelecallingDashboard() {
                   refreshAll={refreshAll}
                   setRosterError={setRosterError}
                 />
-                <ExportDataSection rosterRows={rosterRows} />
+                <ExportDataSection rosterRows={rosterRows} showRisk={showRisk} />
                 <RosterSection
                   rosterRows={rosterRows}
                   busy={busy}
@@ -1488,9 +1611,10 @@ export default function TelecallingDashboard() {
                                         <div className="flex items-center gap-1">
                                           <SatChip value={f.satisfactory} compact />
                                           <StaleChip staleHours={f.staleHours} compact />
+                                          <NoPickupChip f={f} compact />
                                         </div>
-                                        <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} compact />
-                                        <ShieldChip shield={f.shield} compact />
+                                        {showRisk && <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} compact />}
+                                        {showRisk && <ShieldChip shield={f.shield} compact />}
                                         <div className="text-[10px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
                                         <div className="text-[10px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
                                       </div>
@@ -2257,10 +2381,12 @@ const EXPORT_PERIODS: { key: string; label: string }[] = [
   { key: "lastyear", label: "Last Year" },
 ];
 
-function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
+function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; showRisk: boolean }) {
   const [period, setPeriod] = useState("week");
   const [subset, setSubset] = useState("all");
+  const [days, setDays] = useState("30");
   const [loading, setLoading] = useState(false);
+  const [loadingEst, setLoadingEst] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const subsetRows = () => {
@@ -2291,7 +2417,8 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
         "Rank", "Telecaller", "Follow-ups", "NeoDove user",
         "Assigned", "Won", "Conv %", "Pipeline ₹", "Est. Closed ₹",
         "Calls Attempted", "Calls Connected", "Calls %", "Talk (min)",
-        "Leads Generated", "Leads %", "Score", "At Risk", "Zombie",
+        "Leads Generated", "Leads %", "Score",
+        ...(showRisk ? ["At Risk", "Zombie"] : []),
       ]);
       data.leaderboard
         .filter((r) => wantedIds.has(r.id))
@@ -2313,8 +2440,7 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
             r.generation.leadsGenerated,
             r.generation.leadsPct,
             r.score,
-            r.risk?.atRisk ?? 0,
-            r.risk?.zombie ?? 0,
+            ...(showRisk ? [r.risk?.atRisk ?? 0, r.risk?.zombie ?? 0] : []),
           ]);
         });
       rows.push([]);
@@ -2336,7 +2462,9 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
         });
       rows.push([]);
 
-      // Section 3 — Risk (open pipeline about to be re-poached)
+      // Section 3 — Risk (open pipeline about to be re-poached). Skipped while
+      // EOD Reassignment is OFF (nothing can be snatched).
+      if (showRisk) {
       rows.push(["═══ RISK (OPEN PIPELINE) ═══"]);
       rows.push([
         "Estimate", "Customer", "Telecaller", "Total ₹", "Risk",
@@ -2357,6 +2485,7 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
             r.snatchReason ?? r.reasoning,
           ]);
         });
+      }
 
       // Section 4 — Daily (per-day × per-agent: every tag, call, lead)
       rows.push([]);
@@ -2423,13 +2552,86 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
     }
   };
 
+  // Per-estimate MIS export — one row per estimate in the last N days (by
+  // estimate/sent date), all statuses (sent/accepted/declined/confirmed), with
+  // full lead detail. "Converted By" shows ONLY the lead generator's name
+  // (from the +100 close ledger, which credits Estimate.createdBy) on
+  // accepted/confirmed rows — blank on declined and still-open rows, by rule.
+  const doExportEstimates = async () => {
+    setLoadingEst(true);
+    setError(null);
+    try {
+      const n = Math.min(365, Math.max(1, parseInt(days, 10) || 30));
+      // IST day N days ago (matches the backend ledger's IST day strings).
+      const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+      const since = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate() - n))
+        .toISOString().slice(0, 10);
+      const dayOf = (d: any): string => {
+        const s = String(d ?? "");
+        const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        if (m) return m[1];
+        const t = Date.parse(s);
+        return Number.isNaN(t) ? "" : new Date(t).toISOString().slice(0, 10);
+      };
+      const [estRes, convRes] = await Promise.all([
+        fetch("/api/estimates"),
+        fetch(`/api/automations/telecalling/data?converters=1&since=${since}`),
+      ]);
+      if (!estRes.ok) throw new Error(`Failed to load estimates (HTTP ${estRes.status})`);
+      if (!convRes.ok) throw new Error(`Failed to load converters (HTTP ${convRes.status})`);
+      const estPayload = await estRes.json();
+      const convPayload = await convRes.json();
+      const converters: Record<string, { name: string; day: string }> = convPayload?.converters ?? {};
+      const wanted = new Set(["sent", "accepted", "declined", "confirmed"]);
+      const list: any[] = (estPayload?.estimates ?? []).filter(
+        (e: any) => wanted.has(String(e?.status ?? "").toLowerCase()) && dayOf(e?.date) >= since
+      );
+      list.sort((a, b) => dayOf(a?.date).localeCompare(dayOf(b?.date))
+        || String(a?.estimateNumber ?? "").localeCompare(String(b?.estimateNumber ?? "")));
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      const rows: (string | number | null | undefined)[][] = [];
+      rows.push([`ESTIMATES — LAST ${n} DAYS (SINCE ${since}) — ${list.length} ROWS`]);
+      rows.push([
+        "Estimate", "Sent", "Enq", "Customer", "Contact", "Mobile",
+        "Loc", "Source", "By", "Status", "Total ₹", "Converted By",
+      ]);
+      for (const e of list) {
+        const status = String(e?.status ?? "").toLowerCase();
+        const won = status === "accepted" || status === "confirmed";
+        rows.push([
+          e?.estimateNumber ?? e?.estimateId,
+          dayOf(e?.date),
+          e?.enquiryNumber ?? "",
+          e?.customerName ?? "",
+          e?.contactName ?? "",
+          e?.contactPhone ?? "",
+          e?.location ?? "",
+          e?.sourceLead ?? "",
+          e?.leadOf ?? "",
+          status,
+          e?.total ?? 0,
+          won ? (converters[String(e?.estimateId ?? "")]?.name ?? "") : "",
+        ]);
+      }
+      if (list.length === 0) rows.push(["No estimates in this window."]);
+      downloadCsv(`founder-os_estimates_last_${n}days_${stamp}.csv`, rows);
+    } catch (e: any) {
+      setError(e?.message ?? "Estimates export failed");
+    } finally {
+      setLoadingEst(false);
+    }
+  };
+
   return (
     <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
       <h3 className="text-lg font-bold mb-1">📤 Export Data</h3>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
         Download the FULL telecalling payload as one CSV — performance (leaderboard), assignments (conversion),
-        risk (open pipeline) and daily (day × agent: accepted/declined tags, calls, leads) sections.
-        Generated client-side from the live dashboard endpoint.
+        {showRisk ? " risk (open pipeline)," : ""} daily (day × agent: accepted/declined tags, calls, leads) sections.
+        Generated client-side from the live dashboard endpoint. The estimates download below is the
+        per-estimate MIS ledger for the last N days (by sent date) — contact, location, source, lead
+        creator and Converted By (lead generator only; blank on declined/open rows).
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
@@ -2452,6 +2654,18 @@ function ExportDataSection({ rosterRows }: { rosterRows: RosterRow[] }) {
         <button onClick={() => void doExport()} disabled={loading}
           className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
           {loading ? "Exporting…" : "⬇ Download CSV"}
+        </button>
+        {error && <span className="text-xs text-rose-500">{error}</span>}
+      </div>
+      <div className="flex flex-wrap items-end gap-3 mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+        <label className="flex flex-col gap-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+          Last N days (by sent date)
+          <input value={days} onChange={(e) => setDays(e.target.value)} inputMode="numeric" placeholder="30"
+            className="w-24 px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none" />
+        </label>
+        <button onClick={() => void doExportEstimates()} disabled={loadingEst}
+          className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
+          {loadingEst ? "Exporting…" : "⬇ Download Estimates CSV"}
         </button>
         {error && <span className="text-xs text-rose-500">{error}</span>}
       </div>
