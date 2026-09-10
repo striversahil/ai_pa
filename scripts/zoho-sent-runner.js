@@ -874,7 +874,15 @@ async function main() {
     }
   }
 
-  const AI_CONCURRENCY = 6;
+  // Quota-safe pacing: Groq on_demand keys cap at ~8k TPM and HIGH-reasoning
+  // 120b calls burn 1-4k tokens each — 6 parallel workers saturated every key
+  // at once (Sep-10 force-run 429 storm across all orgs). 2 workers + a short
+  // pause per estimate keeps bursts inside quotas; full passes take longer
+  // but complete instead of failing. (COMMENT_CONCURRENCY above is Zoho API
+  // reads, not LLM — untouched.)
+  const AI_CONCURRENCY = 2;
+  const AI_PACING_MS = 2000;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const workItems = [];
   let skipped = 0;
   let failed = 0;
@@ -991,6 +999,7 @@ async function main() {
           console.error(`zoho-sent-runner: AI processing error for ${job.estId}: ${err.message}`);
           innerFailed.push(job);
         }
+        await sleep(AI_PACING_MS);
       }
     };
     await Promise.all(Array.from({ length: Math.min(AI_CONCURRENCY, items.length) }, () => runner()));
