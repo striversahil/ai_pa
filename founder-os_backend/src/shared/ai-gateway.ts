@@ -53,7 +53,10 @@ export class AiGatewayError extends Error {
   }
 }
 
-// detectProvider intentionally removed — Groq-only mode; every key is Groq.
+// detectProvider: Groq-only mode — every key is Groq regardless of label.
+function detectProvider(_key: string): string {
+  return 'groq';
+}
 
 // ── Key identity + health ────────────────────────────────────────────────────
 export interface AiKey {
@@ -113,7 +116,10 @@ export class KeyPool {
     if (this.omnirouteBaseURL && PROVIDERS.omniroute) {
       PROVIDERS.omniroute.baseURL = this.omnirouteBaseURL + '/chat/completions';
     }
-    const seen = new Set<string>();
+    // Seed from existing keys: getGateway() re-configures on every call and
+    // loadFromEnv appends, so without this the pool would duplicate on each
+    // request (while preserving per-key health across reconfigures).
+    const seen = new Set<string>(this.keys.map((k) => k.key));
     const PLACEHOLDER = /^(your[_-]?api[_-]?key.*|replace[_-]?.*|xxx+|placeholder.*|\*+)$/i;
     const add = (provider: string, key: string, label?: string) => {
       const k = key.trim();
@@ -276,7 +282,7 @@ export class AiGateway {
         ? this.findKey(req.keyId) ?? this.pool.select(req.provider)
         : this.pool.select(req.provider);
       if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)', lastErr, attempt);
-      const provider = PROVIDERS[key.provider] ?? PROVIDERS.openai;
+      const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
       try {
         const result = await this.callProvider(provider, key, req);
         this.pool.reportSuccess(key);

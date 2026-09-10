@@ -1,11 +1,11 @@
 {
   "id": "neodove-telecaller-report",
   "name": "Telecaller Performance (NeoDove Live)",
-  "description": "Per-agent daily call performance from NeoDove. GH runner refreshes TODAY every 10 min; final snapshot for yesterday at 00:30 IST.",
+  "description": "Per-agent daily call performance from NeoDove. Native in-worker refresh writes TODAY every 5 min; GH runner kept as fallback; final snapshot for yesterday at 00:30 IST.",
   "type": "handler",
   "trigger": {
     "type": "schedule",
-    "cron": "*/10 * * * *"
+    "cron": "*/5 * * * *"
   },
   "enabled": true,
   "scope": "neodove"

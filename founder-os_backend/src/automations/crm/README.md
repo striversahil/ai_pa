@@ -55,8 +55,10 @@ the previous KV snapshot (so→stage map) and writes ledger rows via
 
 ## 2. Trigger
 
-- **Type:** `handler` · **Cron:** `*/15 * * * *` (GH `cron-every-15min.yml`
+- **Type:** `handler` · **Cron:** `*/5 * * * *` (GH `cron-every-5min.yml`
   → `workflow_dispatch` → runner; worker `/api/trigger/crm` only logs).
+  5-min cadence = new sales orders surface (and score +25) within ~5 min of
+  creation in Zoho.
 - **Condition:** none — runs unconditionally on schedule.
 - **Actions:** the snapshot route (`POST /api/runner/crm/snapshot`) writes
   `DepartmentScoreEvent` rows + busts the `crm:data` cache key.
@@ -96,9 +98,11 @@ None (read-only dashboard + append-only points ledger).
 - Verify: open the CRM dashboard → KPI strip shows active SO counts + value
   with `fresh:true` (check the payload, not just the numbers).
 - If empty/zeros with `fresh:false`: the runner hasn't posted today's
-  snapshot — check the `cron-every-15min.yml` run for `crm-runner` errors;
+  snapshot — check the `cron-every-5min.yml` run for `crm-runner` errors;
   verify `zoho_sent/sent_estimates.txt` cookies are fresh; confirm
-  `WORKER_URL`/`SHARED_SECRET` GH secrets.
+  `WORKER_URL`/`SHARED_SECRET` GH secrets. (The Zoho "Sales Orders Today"
+  tile refreshes on the same 5-min workflow via `SO_ONLY=1`; the full
+  estimates sync still runs every 15 min.)
 - **Migration:** `0021_department_score_events.sql` MUST be applied to remote
   D1 before the points ledger works (the snapshot route writes
   `DepartmentScoreEvent` rows; without the table the writes fail best-effort

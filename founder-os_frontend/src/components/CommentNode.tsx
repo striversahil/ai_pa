@@ -4,14 +4,16 @@ import { Agent, Comment } from "../mockData";
 interface CommentNodeProps {
   comment: Comment & { replies: Comment[] };
   agents: Agent[];
+  redacted?: boolean;
   onReplyClick: (commentId: string) => void;
   onImageClick: (url: string) => void;
 }
 
-export default function CommentNode({ comment, agents, onReplyClick, onImageClick }: CommentNodeProps) {
+export default function CommentNode({ comment, agents, redacted = false, onReplyClick, onImageClick }: CommentNodeProps) {
   const authorAgent = useMemo<Agent>(() => {
+    if (redacted) return { id: "", name: "Sales Team", initials: "ST", color: "#6366f1", status: "active" };
     return agents.find(a => a.id === comment.agentId) || { id: "", name: "Agent", initials: "A", color: "#888", status: "inactive" };
-  }, [agents, comment.agentId]);
+  }, [agents, comment.agentId, redacted]);
 
   const formatDiscordTimestamp = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -81,6 +83,7 @@ export default function CommentNode({ comment, agents, onReplyClick, onImageClic
               key={reply.id} 
               comment={reply as Comment & { replies: Comment[] }} 
               agents={agents} 
+              redacted={redacted}
               onReplyClick={onReplyClick} 
               onImageClick={onImageClick}
             />

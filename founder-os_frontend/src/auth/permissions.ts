@@ -48,6 +48,7 @@ export const DASHBOARD_SCOPES = [
   "enquiry-tracker",
   "crm",
   "sales",
+  "procurement",
 ];
 
 export interface AuthUserMe {

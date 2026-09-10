@@ -7,6 +7,7 @@ interface EnquiryModalProps {
   editingEnquiry: Enquiry | null;
   agents: Agent[];
   currentAgent: Agent;
+  redacted?: boolean;
   onSave: (data: {
     estNumber: string;
     clientCompany: string;
@@ -30,6 +31,7 @@ export default function EnquiryModal({
   editingEnquiry,
   agents,
   currentAgent,
+  redacted = false,
   onSave,
   isSaving = false,
   saveError = null
@@ -87,6 +89,7 @@ export default function EnquiryModal({
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           <div className="p-5 space-y-4 overflow-y-auto flex-1">
+            {!redacted && (
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Company Name</label>
               <input 
@@ -97,6 +100,7 @@ export default function EnquiryModal({
                 className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
               />
             </div>
+            )}
 
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Enquiry Title</label>
@@ -110,6 +114,7 @@ export default function EnquiryModal({
             </div>
 
             <div className="grid grid-cols-2 gap-4">
+              {!redacted && (
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">EST No. *</label>
                 <input 
@@ -121,7 +126,9 @@ export default function EnquiryModal({
                   required 
                 />
               </div>
+              )}
 
+              {!redacted && (
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Contact Person</label>
                 <input 
@@ -132,8 +139,10 @@ export default function EnquiryModal({
                   className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
                 />
               </div>
+              )}
             </div>
 
+            {!redacted && (
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Contact Email</label>
@@ -157,6 +166,7 @@ export default function EnquiryModal({
                 />
               </div>
             </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
@@ -172,6 +182,7 @@ export default function EnquiryModal({
                 </select>
               </div>
 
+              {!redacted && (
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Initial Stage</label>
                 <select 
@@ -188,22 +199,25 @@ export default function EnquiryModal({
                   <option value="lost">Closed Lost</option>
                 </select>
               </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
+              {!redacted && (
               <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Assign Agent</label>
+                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Lead By</label>
                 <select 
                   value={formAgent} 
                   onChange={(e) => setFormAgent(e.target.value)}
                   className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer text-[var(--text-primary)]"
                 >
-                  {agents.length === 0 && <option value="">No sales agents assigned</option>}
+                  {agents.length === 0 && <option value="">No sales staff found</option>}
                   {agents.map(a => (
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
                 </select>
               </div>
+              )}
 
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Received Date</label>

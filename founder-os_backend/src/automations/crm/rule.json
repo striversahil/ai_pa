@@ -3,7 +3,7 @@
   "name": "CRM — Active Sales Orders",
   "description": "Department-split CRM control room (Overview | CRM Desk | Accounts | Dispatch | Procurement) with DepartmentScoreEvent points ledger. Open Zoho Books sales orders grouped by next pending step. Fetched by the GH runner, served from KV.",
   "type": "handler",
-  "trigger": { "type": "schedule", "cron": "*/15 * * * *" },
+  "trigger": { "type": "schedule", "cron": "*/5 * * * *" },
   "scope": "crm",
   "enabled": true
 }

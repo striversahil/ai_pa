@@ -16,7 +16,7 @@ import { PENDING_AI_MARKER } from './service';
 export async function data() {
   const where = { OR: [{ status: 'sent' }, { status: 'accepted' }, { status: 'declined' }, { status: 'confirmed' }] };
   // "Accepted" KPI replaced by live Zoho Books sales orders created today (IST),
-  // fetched with the same curl credentials as the estimates sync (10-min KV cache).
+  // fetched with the same curl credentials as the estimates sync (5-min refresh).
   const [estimates, sent, sentClassifiedRaw, pendingAiCount, declined, lastCompleteSync, salesOrdersToday] = await Promise.all([
     prisma.estimate.findMany({ where, select: { estimateId: true, estimateNumber: true, customerName: true, total: true, status: true, lastSyncTime: true } }),
     prisma.estimate.count({ where: { status: 'sent' } }),

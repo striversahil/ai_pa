@@ -70,7 +70,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'morning-queue-drain', name: 'Morning Queue Drain', description: 'Every minute, send due deferred WhatsApp messages (drain-locked, 60/cycle cap).', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, enabled: true,
   },
   'neodove-telecaller-report': {
-    id: 'neodove-telecaller-report', name: 'Telecaller Performance (NeoDove Live)', description: 'Per-agent daily call performance from NeoDove. GH runner refreshes TODAY every 10 min; final snapshot for yesterday at 00:30 IST.', type: 'handler', trigger: { type: 'schedule', cron: '*/10 * * * *' }, scope: 'neodove', enabled: true,
+    id: 'neodove-telecaller-report', name: 'Telecaller Performance (NeoDove Live)', description: 'Per-agent daily call performance from NeoDove. Native in-worker refresh writes TODAY every 5 min (GH runner kept as fallback); final snapshot for yesterday at 00:30 IST.', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, scope: 'neodove', enabled: true,
   },
   'notification-batcher': {
     id: 'notification-batcher', name: 'Notification Batcher', description: 'Every 15 minutes, flush grouped alerts to WhatsApp.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, enabled: true,

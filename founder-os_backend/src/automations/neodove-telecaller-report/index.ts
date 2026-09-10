@@ -2,9 +2,10 @@
  * NeoDove Telecaller Report (live).
  *
  * Raw per-user-day rows are pushed into D1 (Settings key
- * `neodove_user_report:<YYYY-MM-DD>`) by the GH Actions runner
- * scripts/neodove-report-runner.js — every 10 minutes for TODAY and once
- * daily for YESTERDAY's final snapshot.
+ * `neodove_user_report:<YYYY-MM-DD>`) by the native in-worker refresh
+ * (src/automations/neodove-refresh.ts — every 5 minutes for TODAY; the GH
+ * Actions runner scripts/neodove-report-runner.js is kept as fallback) and
+ * once daily for YESTERDAY's final snapshot.
  *
  * This automation is the read side only:
  *   - handler(): no-op (nothing to execute server-side)
@@ -79,7 +80,7 @@ async function loadReportsInRange(from?: string, to?: string): Promise<{ dates: 
   }
 
   // The same day-range is re-read by every dashboard on every broadcast, and
-  // the underlying snapshots only change on the 10-min NeoDove refresh — so
+  // the underlying snapshots only change on the 5-min NeoDove refresh — so
   // cache the parsed read in KV. Invalidated explicitly on report writes.
   const rangeKey = `neodove:report_range:${from ?? '*'}:${to ?? '*'}`;
   const CACHE_TTL_MS = 5 * 60 * 1000;

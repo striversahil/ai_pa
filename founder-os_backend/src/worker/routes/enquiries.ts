@@ -2,27 +2,45 @@
 // routes/enquiries.ts — live sales-pipeline enquiry tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { enquiryMe, enquirySend, runEnquiryExtraction, EnquiryRoutes, createEnquiryStore, authStore, type Bindings } from '../context';
+import { enquiryMe, enquirySend, runEnquiryExtraction, EnquiryRoutes, createEnquiryStore, authStore, deps, type Bindings } from '../context';
 
 export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/enquiries', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me);
+    // ?view=procurement lets privileged users (root/MIS) preview exactly what
+    // procurement sees — the AI-redacted payload, not their full data.
+    const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
+    const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me, restricted ? { redact: true } : undefined);
+    // Cache miss on any piece → background re-enrichment (fire-and-forget);
+    // the client refetches on the live event it broadcasts.
+    if (restricted) {
+      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
+        try { runEnquiryExtraction(c, String(id)); } catch { /* ignore */ }
+      }
+    }
     return c.json(r.body, r.status as any);
   });
   app.get('/api/enquiries/agents', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    // Sales agents = users holding the `enquiries` scope (granted via roles by root).
-    const users = await authStore(c).listUsers();
-    const agents = users
-      .filter((u: any) => u.isRoot || u.scopes.includes('enquiries'))
-      .map((u: any) => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        picture: u.picture ?? null,
+    // Restricted (procurement) viewers get NO roster — without names, the
+    // stored lead ids can't be resolved to a person on their screen.
+    if (c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me)) return c.json([]);
+    // "Lead by" roster = ACTIVE + PRESENT sales staff, exactly like the
+    // telecalling dashboard: Telecaller rows that are not soft-deleted and not
+    // marked absent (absentSince set by the MIS Controller). Filtered in code
+    // (not in the D1 where-clause) so a shim null-handling quirk can never
+    // leak absent staff into the list.
+    const { prisma } = deps();
+    const roster = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
+    const agents = (roster as any[])
+      .filter((t) => t && !(t as any).absentSince)
+      .map((t: any) => ({
+        id: String(t.id),
+        name: t.name,
+        email: t.email ?? null,
+        picture: null,
       }));
     return c.json(agents);
   });
@@ -54,12 +72,24 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryDelete(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
     enquirySend(c, r);
+    if (r.status === 200) {
+      try {
+        const { cacheDel } = require('../../shared/cache');
+        await cacheDel(`enquiry:redacted:${c.req.param('id') ?? ''}`);
+      } catch { /* best-effort */ }
+    }
     return c.json(r.body, r.status as any);
   });
   app.get('/api/enquiries/:id/comments', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
+    const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
+    const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '', restricted ? { redact: true } : undefined);
+    if (restricted) {
+      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
+        try { runEnquiryExtraction(c, String(id)); } catch { /* ignore */ }
+      }
+    }
     return c.json(r.body, r.status as any);
   });
   app.post('/api/enquiries/:id/comments', async (c) => {

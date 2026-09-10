@@ -4,6 +4,7 @@ import { Agent, Enquiry } from "../mockData";
 interface ClientProfileProps {
   selectedEnquiry: Enquiry;
   agents: Agent[];
+  redacted?: boolean;
   onUpdateStatus: (id: string, newStatus: Enquiry["status"]) => void;
   onUpdateAgent: (id: string, newAgentId: string) => void;
 }
@@ -11,6 +12,7 @@ interface ClientProfileProps {
 export default function ClientProfile({
   selectedEnquiry,
   agents,
+  redacted = false,
   onUpdateStatus,
   onUpdateAgent
 }: ClientProfileProps) {
@@ -38,10 +40,12 @@ export default function ClientProfile({
         <h3 className="font-heading font-extrabold text-base border-b border-[var(--border-card)] pb-3 text-[var(--text-primary)]">Enquiry Overview</h3>
         
         <div className="space-y-3.5">
-          <div>
-            <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Client Company</span>
-            <span className="font-bold text-base mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.clientCompany}</span>
-          </div>
+          {!redacted && (
+            <div>
+              <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Client Company</span>
+              <span className="font-bold text-base mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.clientCompany}</span>
+            </div>
+          )}
 
           {selectedEnquiry.enquiryNumber && (
             <div>
@@ -57,18 +61,21 @@ export default function ClientProfile({
             </div>
           )}
 
-          {selectedEnquiry.location && (
+          {selectedEnquiry.location && !redacted && (
             <div>
               <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Location</span>
               <span className="font-semibold text-sm mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.location}</span>
             </div>
           )}
 
+          {!redacted && (
           <div>
             <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">EST No.</span>
             <span className="font-heading font-extrabold text-lg text-brand-indigo block mt-0.5">{selectedEnquiry.estNumber || "—"}</span>
           </div>
+          )}
 
+          {!redacted && (
           <div>
             <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1">Sales Stage</span>
             <select 
@@ -85,9 +92,11 @@ export default function ClientProfile({
               <option value="lost">Closed Lost</option>
             </select>
           </div>
+          )}
 
+          {!redacted && (
           <div>
-            <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1">Assigned Agent</span>
+            <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1">Lead By</span>
             <select 
               value={selectedEnquiry.assignedAgentId}
               onChange={(e) => onUpdateAgent(selectedEnquiry.id, e.target.value)}
@@ -98,10 +107,12 @@ export default function ClientProfile({
               ))}
             </select>
           </div>
+          )}
         </div>
       </div>
 
-      {/* B2B Contacts with masking */}
+      {/* B2B Contacts — hidden in procurement view (no client PII) */}
+      {!redacted && (
       <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
         <h3 className="font-heading font-extrabold text-base border-b border-[var(--border-card)] pb-3 text-[var(--text-primary)]">Client Contact PII</h3>
         
@@ -144,6 +155,7 @@ export default function ClientProfile({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

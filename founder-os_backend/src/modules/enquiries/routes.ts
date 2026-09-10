@@ -1,6 +1,19 @@
 import { Enquiry, EnquiryStore } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
+import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
+import { cacheGet } from "../../shared/cache";
+
+/** v1 cache entries (description-only) predate the comments/requirements map —
+ *  treat them as missing so they get re-enriched, never served. */
+function asRedactedViewCache(e: unknown): RedactedViewCache | null {
+  if (!e || typeof e !== 'object') return null;
+  const v = e as Record<string, unknown>;
+  if (typeof v.descHash !== 'string') return null;
+  if (!v.comments || typeof v.comments !== 'object') return null;
+  if (!v.requirements || typeof v.requirements !== 'object') return null;
+  return e as RedactedViewCache;
+}
 
 export interface EnquiryResult {
   status: number;
@@ -10,6 +23,43 @@ export interface EnquiryResult {
 
 const json = (status: number, body: any): EnquiryResult => ({ status, body });
 const err = (message: string, status = 403): EnquiryResult => json(status, { error: message });
+
+/**
+ * Procurement-safe viewer check (mirrors the telecalling scoped-view pattern).
+ * Full client PII + lead attribution is served ONLY to admins, MIS holders,
+ * and sales-scope holders. Every other authenticated viewer (e.g. procurement
+ * staff) gets the same pipeline with PII blanked and an empty agent roster —
+ * enforced in the API, never just hidden in the UI.
+ */
+export function isRestrictedViewer(me: MeResponse): boolean {
+  if (!me) return true;
+  if (me.isAdmin || (me as any).isRoot) return false;
+  const scopes: string[] = (me as any).scopes || [];
+  if (scopes.includes('mis') || scopes.includes('sales')) return false;
+  return true;
+}
+
+const PII_FIELDS = ['clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'estNumber'] as const;
+
+// Status is hidden from restricted viewers too, but it is NOT a scrub term:
+// values like "new"/"won" would nuke ordinary words in free text.
+const HIDDEN_FIELDS = ['status'] as const;
+
+export function redactEnquiryPII<T extends Record<string, any>>(enquiry: T): T {
+  const out: Record<string, any> = { ...enquiry };
+  for (const f of [...PII_FIELDS, ...HIDDEN_FIELDS]) out[f] = '';
+  return out as T;
+}
+
+// ── Procurement view: AI-only redaction ─────────────────────────────────────
+// Restricted viewers NEVER receive raw free text. The procurement rewrite
+// (description + per-comment) is produced by the SAME background AI call that
+// populates the structured fields (see extract.ts + runEnquiryExtraction) and
+// cached per enquiry in KV, verified piece-by-piece against source hashes.
+// There is deliberately NO deterministic fallback: a piece whose cache is
+// missing/stale is withheld (redactedPending) while a background
+// re-enrichment is kicked — the route handlers below do that via the
+// returned flag. Stored rows stay intact for sales + AI.
 
 function pick(data: any): Partial<Enquiry> | null {
   const map: any = {
@@ -32,9 +82,76 @@ function pick(data: any): Partial<Enquiry> | null {
   return Object.keys(out).length ? out : null;
 }
 
-export async function enquiryList(store: EnquiryStore, me: MeResponse): Promise<EnquiryResult> {
+export interface RedactOpts {
+  redact?: boolean;
+}
+
+export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: RedactOpts): Promise<EnquiryResult> {
   const [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
-  return json(200, { enquiries, comments });
+  if (!opts?.redact) return json(200, { enquiries, comments });
+  // AI-only procurement view: each piece comes from the write-time enrichment
+  // cache (RedactedViewCache) and only when its hash still matches the source.
+  // Anything missing/stale is WITHHELD with redactedPending=true — the route
+  // layer kicks a background re-enrichment and the client refetches on the
+  // live event. Raw text is never served, and no deterministic fallback exists.
+  const commentsByEnquiry = new Map<string, any[]>();
+  for (const cm of comments as any[]) {
+    const key = String(cm.enquiryId);
+    if (!commentsByEnquiry.has(key)) commentsByEnquiry.set(key, []);
+    commentsByEnquiry.get(key)!.push(cm);
+  }
+  const redacted = await Promise.all(enquiries.map(async (e: any) => {
+    const id = String(e.id);
+    let raw: unknown = null;
+    try {
+      raw = await cacheGet<RedactedViewCache>(redactedCacheKey(id), REDACTED_CACHE_TTL_MS);
+    } catch { raw = null; }
+    const entry = asRedactedViewCache(raw);
+    let pending = false;
+    let description = '';
+    if (entry && entry.descHash === hashText(String(e.description ?? '')) && typeof entry.description === 'string') {
+      description = entry.description;
+    } else {
+      pending = true;
+    }
+    const servedComments: any[] = [];
+    for (const cm of commentsByEnquiry.get(id) ?? []) {
+      const cid = String(cm.id);
+      const cached = entry?.comments[cid];
+      if (cached && cached.hash === hashText(String(cm.content ?? '')) && typeof cached.content === 'string') {
+        servedComments.push({ ...cm, content: cached.content });
+      } else {
+        pending = true;
+      }
+    }
+    const servedRequirements: any[] = [];
+    const rawReqs = Array.isArray(e.additionalRequirements) ? e.additionalRequirements : [];
+    rawReqs.forEach((r: any, i: number) => {
+      const text = typeof r === 'string' ? r : String(r?.text ?? '');
+      const cached = entry?.requirements?.[i];
+      if (cached && cached.hash === hashText(text) && typeof cached.text === 'string') {
+        servedRequirements.push(typeof r === 'string' ? cached.text : { ...r, text: cached.text });
+      } else {
+        pending = true;
+      }
+    });
+    return {
+      entry: { id, pending },
+      payload: {
+        ...redactEnquiryPII(e),
+        description,
+        additionalRequirements: servedRequirements,
+        redactedPending: pending,
+      },
+      servedComments,
+    };
+  }));
+  return json(200, {
+    enquiries: redacted.map((r) => r.payload),
+    comments: redacted.flatMap((r) => r.servedComments),
+    // Route layer kicks a background re-enrichment for these (fire-and-forget).
+    redactionPendingIds: redacted.filter((r) => r.entry.pending).map((r) => r.entry.id),
+  });
 }
 
 export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: any): Promise<EnquiryResult> {
@@ -105,8 +222,27 @@ export async function enquiryDelete(store: EnquiryStore, me: MeResponse, id: str
   return { status: 200, body: { ok: true }, live: { type: LiveEvent.Enquiries, extra: { action: "deleted", id } } };
 }
 
-export async function enquiryComments(store: EnquiryStore, me: MeResponse, enquiryId: string): Promise<EnquiryResult> {
-  return json(200, await store.listComments(enquiryId));
+export async function enquiryComments(store: EnquiryStore, me: MeResponse, enquiryId: string, opts?: RedactOpts): Promise<EnquiryResult> {
+  const list = await store.listComments(enquiryId);
+  if (!opts?.redact) return json(200, list);
+  // AI-only: serve cached rewrites whose hashes match; withhold the rest.
+  let raw: unknown = null;
+  try {
+    raw = await cacheGet<RedactedViewCache>(redactedCacheKey(enquiryId), REDACTED_CACHE_TTL_MS);
+  } catch { raw = null; }
+  const entry = asRedactedViewCache(raw);
+  const served: any[] = [];
+  let pending = false;
+  for (const cm of list as any[]) {
+    const cid = String(cm.id);
+    const cached = entry?.comments[cid];
+    if (cached && cached.hash === hashText(String(cm.content ?? '')) && typeof cached.content === 'string') {
+      served.push({ ...cm, content: cached.content });
+    } else {
+      pending = true;
+    }
+  }
+  return json(200, { comments: served, redactionPendingIds: pending ? [enquiryId] : [] });
 }
 
 export async function enquiryAddComment(store: EnquiryStore, me: MeResponse, enquiryId: string, body: any): Promise<EnquiryResult> {

@@ -38,6 +38,9 @@ export interface Enquiry {
   activities: Activity[];
   imageUrls?: string[];
   additionalRequirements?: EnquiryRequirement[];
+  /** Procurement view only: true while the AI secure rewrite is still being
+   *  prepared (pieces withheld until ready, client refetches on live event). */
+  redactedPending?: boolean;
 }
 
 export interface Comment {

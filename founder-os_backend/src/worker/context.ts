@@ -19,7 +19,7 @@ import { createChatStore, resolveLinkedSender } from '../modules/chat/store';
 import * as ChatRoutes from '../modules/chat/routes';
 import { createEnquiryStore } from '../modules/enquiries/store';
 import * as EnquiryRoutes from '../modules/enquiries/routes';
-import { extractEnquiryFieldsRobust } from '../modules/enquiries/extract';
+import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from '../modules/enquiries/extract';
 import { DASHBOARD_SLUGS } from '../modules/automation/dashboardSlugs';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automations/neodove-refresh';
 import { isSystemGeneratedComment } from '../shared/systemComment';
@@ -274,13 +274,51 @@ export function runEnquiryExtraction(c: any, enquiryId: string) {
         .slice(0, 2)
         .map((cm: any) => `${cm.content ?? ''}`)
         .join('\n');
-      const text = [enquiry.description, firstComments].filter(Boolean).join('\n');
+      const reqTexts = Array.isArray((enquiry as any).additionalRequirements)
+        ? (enquiry as any).additionalRequirements.map((r: any) => (typeof r === 'string' ? r : String(r?.text ?? '')))
+        : [];
+      const { text, description } = splitExtractionText(
+        enquiry.description,
+        firstComments,
+        (comments || []).map((cm: any) => ({ id: String(cm.id ?? ''), content: String(cm.content ?? '') })),
+        reqTexts,
+      );
       const extracted = await extractEnquiryFieldsRobust(c.env, {
         text,
         title: enquiry.title,
         company: enquiry.clientCompany,
       });
       if (!extracted) return;
+      // Procurement-view cache (v2): AI rewrites for the description + every
+      // comment, hashed against their exact source texts. Independent of the
+      // field-fill below, so it refreshes even when nothing needed filling.
+      if (extracted.redactedDescription) {
+        try {
+          const byId = new Map(((extracted.redactedComments ?? []) as Array<{ id: string; content: string }>).map((r) => [r.id, r.content]));
+          const redactedComments: RedactedViewCache['comments'] = {};
+          for (const cm of comments || []) {
+            const id = String((cm as any)?.id ?? '');
+            if (!id || !byId.has(id)) continue;
+            redactedComments[id] = { content: byId.get(id) as string, hash: hashText(String((cm as any)?.content ?? '')) };
+          }
+          const redactedRequirements: RedactedViewCache['requirements'] = {};
+          for (const r of (extracted.redactedRequirements ?? []) as Array<{ index: number; text: string }>) {
+            const src = reqTexts[r.index];
+            if (src === undefined) continue;
+            redactedRequirements[r.index] = { text: r.text, hash: hashText(src) };
+          }
+          const { cacheSet } = require('../shared/cache');
+          const entry: RedactedViewCache = {
+            description: extracted.redactedDescription,
+            descHash: hashText(description),
+            comments: redactedComments,
+            requirements: redactedRequirements,
+            at: new Date().toISOString(),
+          };
+          await cacheSet(redactedCacheKey(enquiryId), entry, REDACTED_CACHE_TTL_MS);
+          console.log(`enquiry redaction: cached procurement view for ${enquiryId} (${Object.keys(redactedComments).length} comments, ${Object.keys(redactedRequirements).length} requirements)`);
+        } catch { /* redaction cache is best-effort */ }
+      }
       const updates: Record<string, string> = {};
       if (!enquiry.title && extracted.title) updates.title = extracted.title;
       if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;

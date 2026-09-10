@@ -12,6 +12,10 @@ on:
         description: "Neodove: backfill N past days (1 = yesterday only)"
         required: false
         default: ""
+      run_neodove:
+        description: "Run NeoDove-backed jobs (neodove-report). Worker sets false 9PM-9AM IST."
+        type: boolean
+        default: true
 
 # Each job only runs at its own scheduled slot — GH triggers ALL jobs on EVERY cron,
 # so without these guards the baseline would re-freeze at random times of day.
@@ -85,7 +89,7 @@ jobs:
         run: node scripts/eod-summary-runner.js
 
   neodove-report:
-    if: github.event.schedule == '0 19 * * *' || (github.event_name == 'workflow_dispatch')
+    if: (github.event.schedule == '0 19 * * *' || (github.event_name == 'workflow_dispatch')) && github.event.inputs.run_neodove != 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

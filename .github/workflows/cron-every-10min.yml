@@ -3,6 +3,8 @@ name: Cron - Every 10 min
 on:
   # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
   # workflow_dispatch). Native schedule removed to avoid double-firing.
+  # NOTE: the router skips this workflow 9PM-9AM IST (NeoDove-backed analysis
+  # pauses overnight; the native in-worker refresh is the primary path).
   workflow_dispatch:
 
 concurrency:

@@ -5,6 +5,15 @@ on:
   # workflow_dispatch). Native schedule removed: GitHub's own scheduler is
   # unreliable and would double-fire alongside the Worker.
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Force reclassify ALL active estimates with the current model"
+        type: boolean
+        default: false
+      run_zoho:
+        description: "Run Zoho-backed jobs (crm + zoho-sent-analyzer). Worker sets false 9PM-9AM IST."
+        type: boolean
+        default: true
 
 concurrency:
   group: cron-every-5min
@@ -32,6 +41,37 @@ jobs:
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
         run: node scripts/whatsapp-autopilot-runner.js
+
+  # New-SO latency: 5 min. The 15-min ticks coincide with 5-min ticks
+  # (min%15==0 implies min%5==0), so this fully covers the old 15-min CRM run.
+  # Zoho-backed jobs pause 9PM-9AM IST via the run_zoho input (worker-gated).
+  crm:
+    if: github.event.inputs.run_zoho != 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: crm (active sales orders pipeline snapshot)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: node scripts/crm-runner.js
+
+  zoho-sent-analyzer:
+    if: github.event.inputs.run_zoho != 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: zoho-sent-analyzer (full sync + AI on runner)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          NEODOVE_AGENT_NAMES: Muskan
+          ZOHO_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
+        run: node scripts/zoho-sent-runner.js
+  # NOTE: the full sync above refreshes sales-orders-today first thing every
+  # tick, so no separate SO_ONLY job is needed (SO_ONLY=1 remains available
+  # for manual lightweight runs).
 
   light-triggers:
     runs-on: ubuntu-latest

@@ -8,10 +8,21 @@
 //   every-15min → minute % 15 == 0
 //   every-30min → minute % 30 == 0
 //   daily       → 02:30 / 03:30 / 13:30 / 21:30 UTC
-//   neodove-refresh → minute % 10 == 0 (native D1 write; GH egress is blocked by NeoDove)
+//   neodove-refresh → minute % 5 == 0 (native D1 write; GH egress is blocked by NeoDove)
 //
 // Replaces the cPanel/web-server cron that used to fire workflow_dispatch.
 // Free-plan safe (1 Cron Trigger). Heavy AI still runs on the GH Actions runner.
+//
+// Quiet hours: Zoho/NeoDove-backed analysis pauses 21:00–09:00 IST (no shop-floor
+// operation then). isOpsWindow() gates, all from the *scheduled* slot time:
+//   - every-10min / every-15min dispatches are skipped (pure NeoDove/Zoho jobs)
+//   - every-5min dispatches with run_zoho=false (skips crm + zoho-sent-analyzer;
+//     WhatsApp jobs + light triggers keep running)
+//   - daily dispatches with run_neodove=false (skips the neodove-report job;
+//     brief / telecalling / retention / baseline keep running — they read D1)
+//   - the native neodove-refresh (+ dashboard warmer) is skipped in-worker
+// Manual dispatch from the Actions tab defaults both inputs to true, so an
+// overnight manual run still works.
 // ─────────────────────────────────────────────────────────────────────────────
 import { bootstrapEnv, refreshNeodoveReport, neodoveTodayIst, type Bindings } from './context';
 import { getTelecallingDashboardData } from '../automations/telecalling/service';
@@ -27,7 +38,7 @@ const GITHUB_WORKFLOWS: Record<string, string> = {
 };
 
 /** Fire one GitHub Actions workflow_dispatch (best-effort; never throws). */
-async function dispatchGitHubWorkflow(workflowFile: string, token: string): Promise<void> {
+async function dispatchGitHubWorkflow(workflowFile: string, token: string, inputs?: Record<string, string>): Promise<void> {
   try {
     const res = await fetch(
       `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${workflowFile}/dispatches`,
@@ -40,7 +51,7 @@ async function dispatchGitHubWorkflow(workflowFile: string, token: string): Prom
           'User-Agent': 'founder-os-worker',
           'X-GitHub-Api-Version': '2022-11-28',
         },
-        body: JSON.stringify({ ref: GITHUB_REF }),
+        body: JSON.stringify({ ref: GITHUB_REF, ...(inputs ? { inputs } : {}) }),
       },
     );
     const body = await res.text().catch(() => '');
@@ -49,6 +60,12 @@ async function dispatchGitHubWorkflow(workflowFile: string, token: string): Prom
   } catch (e: any) {
     console.error(`[dispatch] ${workflowFile} failed:`, e?.message);
   }
+}
+
+/** Ops window 09:00–21:00 IST. Outside it, Zoho/NeoDove-backed analysis pauses. */
+function isOpsWindow(now: Date): boolean {
+  const istMin = (now.getUTCHours() * 60 + now.getUTCMinutes() + 330) % 1440;
+  return istMin >= 540 && istMin < 1260;
 }
 
 /** Which workflows to fire at the current UTC minute. */
@@ -72,8 +89,9 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   const now = new Date(event.scheduledTime ?? Date.now());
   const min = now.getUTCMinutes();
 
-  // neodove-refresh every 10 min (native D1 write).
-  if (min % 10 === 0) {
+  // neodove-refresh every 5 min in ops hours (native D1 write). Paused in
+  // quiet hours — NeoDove is a Zoho/NeoDove-backed analysis source.
+  if (min % 5 === 0 && isOpsWindow(now)) {
     ctx.waitUntil(
       refreshNeodoveReport(neodoveTodayIst(0))
         .then((r) => console.log(`[cron] neodove-refresh ${r.reportDate}: ok=${r.ok} stored=${r.stored} ${r.error ?? ''}`))
@@ -106,10 +124,26 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     return;
   }
   const due = dueWorkflows(now);
-  if (due.length > 0) {
-    ctx.waitUntil(
-      Promise.all(due.map((key) => dispatchGitHubWorkflow(GITHUB_WORKFLOWS[key], token))),
-    );
+  // Quiet-hours gate (21:00–09:00 IST): pause Zoho/NeoDove-backed analysis.
+  // every-10min (neodove-today) and every-15min (effort-sync) are pure
+  // NeoDove/Zoho jobs → skipped whole. every-5min still fires for WhatsApp,
+  // but with run_zoho=false so crm + zoho-sent-analyzer are skipped. daily
+  // still fires (brief / telecalling / retention read D1), but with
+  // run_neodove=false so the neodove-report job is skipped.
+  const ops = isOpsWindow(now);
+  const runs: Promise<void>[] = [];
+  for (const key of due) {
+    if (!ops && (key === 'every-10min' || key === 'every-15min')) {
+      console.log(`[cron] quiet hours — skipping ${key}`);
+      continue;
+    }
+    const inputs: Record<string, string> = {};
+    if (key === 'every-5min') inputs.run_zoho = ops ? 'true' : 'false';
+    if (key === 'daily') inputs.run_neodove = ops ? 'true' : 'false';
+    runs.push(dispatchGitHubWorkflow(GITHUB_WORKFLOWS[key], token, inputs));
+  }
+  if (runs.length > 0) {
+    ctx.waitUntil(Promise.all(runs));
   }
 }
 

@@ -220,7 +220,7 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 | `enterprise-operations-analytics` | handler | `*/30 * * * *` | 18-point supply-chain analytics dashboard |
 | `eod-summary` | handler | `0 19 * * *` (7 PM IST) | End-of-day summary |
 | `morning-queue-drain` | handler | `*` | Send due deferred WhatsApp messages (Redis) |
-| `neodove-telecaller-report` | handler | `*/10 * * * *` | Per-agent NeoDove call perf (GH runner refreshes TODAY) |
+| `neodove-telecaller-report` | handler | `*/5` (native in-worker) | Per-agent NeoDove call perf (native refresh writes TODAY; GH runner kept as fallback) |
 | `notification-batcher` | handler | `*/15 * * * *` | Flush grouped alerts to WhatsApp |
 | `orphaned-message-recovery` | handler | `*/2 * * * *` | Re-enqueue saved-but-unclassified messages |
 | `outbound-intent-recovery` | handler | `*` | Re-defer persisted outbound intents once Redis back |
@@ -231,7 +231,7 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 | `wa-engine-monitor` | handler | `*` | WA Engine session/health monitor + dashboard |
 | `whatsapp-digest` | handler | event+scan | WhatsApp → AI digest (`process.ts`) |
 | `whatsapp-marketing` | handler | scheduled/recurring | Campaign send via WABA/AiSensy |
-| `zoho-sent-analyzer` | handler | `*/15` (GH) | Zoho sync + AI classification |
+| `zoho-sent-analyzer` | handler | `*/5` (GH) | Zoho sync + AI classification |
 | `email-brain-index` | handler | `*/30` (GH) | Email sync + brain index |
 | `morning-brief` | handler | daily IST (GH) | Morning briefing |
 | `_template` | — | — | Scaffold for new automations |
@@ -417,9 +417,9 @@ EventHub `telecalling` events).
 
 | Workflow | Cadence (UTC) | Jobs |
 |----------|---------------|------|
-| `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI) |
-| `cron-every-10min.yml` | `*/10` | `neodove-report-runner.js` (today, intraday overwrite) |
-| `cron-every-15min.yml` | `*/15` | `zoho-sent-runner.js` (full sync + AI; `force` dispatch reclassifies all active) |
+| `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI), `crm-runner.js` (sales-orders snapshot — 5-min new-SO latency), `zoho-sent-runner.js` (full sync + AI; `force` dispatch reclassifies all active) |
+| `cron-every-10min.yml` | `*/10` | `neodove-report-runner.js` (today, intraday overwrite — GH egress fallback; primary population is the native in-worker refresh every 5 min) |
+| `cron-every-15min.yml` | `*/15` | `effort-sync-runner.js` (NeoDove call-log snapshots for the telecalling snatch shield) |
 | `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |
 | `cron-daily-ist.yml` | `30 19` (baseline-freeze 01:00 IST), `30 21` (data-retention 03:00 IST) | baseline-freeze (curl), data-retention (curl), `morning-brief-runner.js`, `eod-summary-runner.js`, `neodove-report-runner.js` (yesterday + N-day backfill) |
 
@@ -443,7 +443,10 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
        │     every-15min → minute % 15 == 0
        │     every-30min → minute % 30 == 0
        │     daily       → 02:30 / 03:30 / 13:30 / 21:30 UTC
-       │     neodove-refresh → minute % 10 == 0 (native D1 write)
+       │     neodove-refresh → minute % 5 == 0 (native D1 write, ops hours only)
+       │     quiet-hours gate → 21:00–09:00 IST pauses Zoho/NeoDove analysis
+       │       (10/15-min skipped; 5-min fires with run_zoho=false;
+       │        daily fires with run_neodove=false)
        └─ ctx.waitUntil(Promise.all(...)) fires all due workflow_dispatches
             └─ GitHub Actions runs the workflow on demand
 ```
@@ -454,6 +457,12 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
   Cron Trigger runs every minute; the handler no-ops (cheap) when nothing is due.
 - Cadence gates use `event.scheduledTime` (the slot Cloudflare intended), NOT wall-clock execution
   time — cron events are delivered 1–2 min late and time-based gates would drift/skip otherwise.
+- **Quiet hours 21:00–09:00 IST** (no shop-floor operation): Zoho/NeoDove-backed analysis pauses via
+  `isOpsWindow()` in `src/worker/cron.ts` — every-10min (neodove-today) and every-15min (effort-sync)
+  dispatches are skipped, every-5min dispatches with `run_zoho=false` (skips `crm` + `zoho-sent-analyzer`;
+  WhatsApp jobs + light triggers run), daily dispatches with `run_neodove=false` (skips `neodove-report`;
+  brief / telecalling / retention / baseline read D1 and run), and the native neodove-refresh (+ warmer)
+  is skipped in-worker. Manual dispatch defaults both inputs to true, so overnight manual runs work.
 - Auth: `GITHUB_ACCESS_TOKEN` is a Worker secret (the `ghp_` PAT from `.env`; set via
   `printf '%s' "$GITHUB_ACCESS_TOKEN" | wrangler secret put GITHUB_ACCESS_TOKEN` — `echo` would add
   a newline). The dispatch request sends a `User-Agent` header — GitHub rejects requests without it
@@ -749,7 +758,7 @@ contact, assigned sales agent) from the freeform description, keeping the client
 - **Free tier:** one EventHub instance held 24/7 ≈ 10,800 GB-s/day vs the 13,000 GB-s/day
   free quota (hibernation keeps it near-zero in practice); 100k DO requests/day is nowhere
   near hit for an internal dashboard. Workers Paid ($5/mo) includes 400k GB-s/month.
- - Data still only *changes* on the upstream Zoho/NeoDove sync cadence (every 5–10 min via
+ - Data still only *changes* on the upstream Zoho/NeoDove sync cadence (every 5 min via
    GH Actions); the hub delivers those changes to open tabs within ~2s instead of on a
    poll tick. True sub-minute freshness would require Zoho webhooks → worker.
 

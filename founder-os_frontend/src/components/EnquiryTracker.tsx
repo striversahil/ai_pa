@@ -1,27 +1,45 @@
 "use client";
 
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
+import { useAuth } from "@/auth/AuthContext";
 import EnquiryList from "@/components/EnquiryList";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
+import Lightbox from "@/components/Lightbox";
 import type { Enquiry, Comment } from "@/types";
 
 // Enquiry Tracker dashboard (mounted as the `enquiry-tracker` automation).
 // Persists to the backend and updates live via the EventHub.
 export default function EnquiryTracker() {
-const {
-    enquiries, comments, agents, currentAgent, loaded,
-    syncState, addEnquiry, updateEnquiry, deleteEnquiry,
-    addComment, addRequirement, makeActivity,
-  } = useEnquiryData();
-
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingEnquiry, setEditingEnquiry] = useState<Enquiry | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Sales | Procurement scoped views (telecalling pattern: scope-gated tabs)
+  // Sales = full PII + lead attribution. Procurement = same pipeline, client
+  // PII + lead identity hidden (also enforced by the API, never UI-only).
+  const { me } = useAuth();
+  const scopes = me?.scopes ?? [];
+  const privileged = !!me && (me.isAdmin || scopes.includes("mis"));
+  const isSalesTeam = privileged || scopes.includes("sales");
+  const isProcurementTeam = privileged || scopes.includes("procurement");
+  const [teamView, setTeamView] = useState<"sales" | "procurement">("sales");
+  // Procurement-marked staff without a sales-side grant land on procurement.
+  useEffect(() => {
+    if (!isSalesTeam && isProcurementTeam) setTeamView("procurement");
+  }, [isSalesTeam, isProcurementTeam]);
+  const showSalesTab = isSalesTeam || (!isSalesTeam && !isProcurementTeam);
+  const redacted = teamView === "procurement";
+  const {
+    enquiries, comments, agents, currentAgent, loaded,
+    syncState, addEnquiry, updateEnquiry, deleteEnquiry,
+    addComment, addRequirement, makeActivity,
+  } = useEnquiryData(redacted ? "procurement" : "sales");
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
 
@@ -38,7 +56,7 @@ const {
         const changes: string[] = [];
         if (original.status !== data.status) changes.push(`Status updated from ${original.status.toUpperCase()} to ${data.status.toUpperCase()}`);
         if (original.priority !== data.priority) changes.push(`Priority changed from ${original.priority.toUpperCase()} to ${data.priority.toUpperCase()}`);
-        if (original.assignedAgentId !== data.assignedAgentId) changes.push(`Assigned agent changed to ${agents.find((a) => a.id === data.assignedAgentId)?.name || ""}`);
+        if (original.assignedAgentId !== data.assignedAgentId) changes.push(`Lead changed to ${agents.find((a) => a.id === data.assignedAgentId)?.name || ""}`);
         const activities = [...(original.activities || [])];
         changes.forEach((text) => activities.push(makeActivity("status_change", text, original.assignedAgentId)));
         await updateEnquiry(original.id, {
@@ -59,9 +77,10 @@ const {
         } as any);
         newId = saved?.id || null;
       }
-      // Wait for the AI-formatted version to arrive (live event or poll) so the
-      // user sees "Processing → formatted enquiry", then reveal it.
-      await waitForFormatted(newId);
+      // No polling: the save is applied optimistically above, and the
+      // backend's AI extraction broadcasts a live `enquiries/updated` event
+      // (handled in useEnquiryData) that merges the structured fields into
+      // the visible row within seconds.
       setIsAddModalOpen(false);
       setEditingEnquiry(null);
       if (newId) setSelectedId(newId);
@@ -71,27 +90,14 @@ const {
     } finally {
       setIsSaving(false);
     }
-  }, [enquiries, agents, currentAgent, editingEnquiry, updateEnquiry, addEnquiry, makeActivity]);
+  }, [agents, editingEnquiry, updateEnquiry, addEnquiry, makeActivity]);
 
-  // Poll the backend until the enquiry's AI-extracted fields arrive (up to ~20s),
-  // so the processing step is visible and the formatted enquiry is shown.
-  const waitForFormatted = useCallback(async (id: string | null) => {
-    if (!id) return;
-    const deadline = Date.now() + 20000;
-    while (Date.now() < deadline) {
-      const already = enquiries.find((e) => e.id === id);
-      if (already && (already.title || already.clientCompany)) return;
-      try {
-        const res = await fetch("/api/enquiries", { headers: { "Content-Type": "application/json" } });
-        if (res.ok) {
-          const data = await res.json();
-          const hit = (data.enquiries || []).find((e: any) => e.id === id);
-          if (hit && (hit.title || hit.clientCompany)) return;
-        }
-      } catch { /* keep polling */ }
-      await new Promise((r) => setTimeout(r, 800));
-    }
-  }, [enquiries]);
+  const handleOpenLightbox = useCallback((url: string, list?: string[], idx?: number) => {
+    const images = Array.isArray(list) && list.length > 0 ? list.filter(Boolean) : [url].filter(Boolean);
+    if (images.length === 0) return;
+    const index = typeof idx === "number" && images[idx] ? idx : Math.max(0, images.indexOf(url));
+    setLightbox({ images, index });
+  }, []);
 
   const handleDeleteEnquiry = useCallback(async (id: string) => {
     await deleteEnquiry(id);
@@ -111,15 +117,21 @@ const {
   }, [addComment]);
 
   const handleExportCSV = useCallback(() => {
-    const rows = [["EST No.", "Company", "Contact", "Title", "Status", "Priority"]];
-    for (const e of enquiries) rows.push([e.estNumber, e.clientCompany, e.contactName, e.title, e.status, e.priority]);
+    const rows = redacted
+      ? [["Title", "Priority"]]
+      : [["EST No.", "Company", "Contact", "Title", "Status", "Priority"]];
+    for (const e of enquiries) {
+      rows.push(redacted
+        ? [e.title, e.priority]
+        : [e.estNumber, e.clientCompany, e.contactName, e.title, e.status, e.priority]);
+    }
     const csv = rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = "enquiries.csv"; a.click();
     URL.revokeObjectURL(url);
-  }, [enquiries]);
+  }, [enquiries, redacted]);
 
   if (!loaded) {
     return <div className="flex min-h-[50vh] items-center justify-center text-zinc-500 animate-pulse">Loading enquiries…</div>;
@@ -135,8 +147,26 @@ const {
         </button>
       </div>
 
+      {(showSalesTab || isProcurementTeam) && (
+        <nav className="flex flex-row flex-wrap gap-2">
+          {showSalesTab && (
+            <button onClick={() => setTeamView("sales")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${teamView === "sales" ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+              <span className="text-base leading-none">🤝</span>Sales
+            </button>
+          )}
+          {isProcurementTeam && (
+            <button onClick={() => setTeamView("procurement")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${teamView === "procurement" ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+              <span className="text-base leading-none">📦</span>Procurement
+            </button>
+          )}
+        </nav>
+      )}
+
 {selectedEnquiry ? (
         <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
+          redacted={redacted}
           onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
           onUpdateAgent={(id, a) => void handleUpdateAgent(id, a)}
           onAddComment={(c) => void handleAddComment(c)}
@@ -144,10 +174,10 @@ const {
           onDeleteEnquiry={(id) => void handleDeleteEnquiry(id)}
           onOpenEdit={(e) => { setEditingEnquiry(e); setIsAddModalOpen(true); }}
           onBack={() => setSelectedId(null)}
-          onOpenLightbox={() => {}}
+          onOpenLightbox={handleOpenLightbox}
         />
       ) : (
-        <EnquiryList enquiries={enquiries} agents={agents}
+        <EnquiryList enquiries={enquiries} agents={agents} redacted={redacted}
           onViewDetail={(id) => { setSelectedId(id); }}
           onOpenCreate={() => { setEditingEnquiry(null); setIsAddModalOpen(true); }}
           onExportCSV={handleExportCSV}
@@ -161,8 +191,18 @@ const {
         <EnquiryModal key={editingEnquiry?.id || "new-enquiry"}
           isOpen={isAddModalOpen} onClose={() => { if (!isSaving) { setIsAddModalOpen(false); setEditingEnquiry(null); } }}
           editingEnquiry={editingEnquiry} agents={agents} currentAgent={currentAgent}
+          redacted={redacted}
           onSave={(d) => void handleSaveEnquiry(d)}
           isSaving={isSaving} saveError={saveError}
+        />
+      )}
+
+      {lightbox && (
+        <Lightbox
+          images={lightbox.images}
+          initialIndex={lightbox.index}
+          image={null}
+          onClose={() => setLightbox(null)}
         />
       )}
     </div>

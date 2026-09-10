@@ -13,13 +13,21 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 
 ## Cron / scheduling (Cloudflare-only dispatch)
 - ONE Cloudflare Cron Trigger `* * * * *` (wrangler.toml). `src/worker/cron.ts` runs every minute and dispatches GitHub Actions `workflow_dispatch` by **UTC minute alignment**:
-  - every-5min `min%5==0`, every-10min `%10`, every-15min `%15`, every-30min `%30`, daily at 02:30/03:30/13:30/21:30 UTC; neodove-refresh runs natively in-worker every 10 min.
+  - every-5min `min%5==0`, every-10min `%10`, every-15min `%15`, every-30min `%30`, daily at 02:30/03:30/13:30/21:30 UTC; neodove-refresh runs natively in-worker every 5 min.
 - **Gate on `event.scheduledTime`, NOT `new Date()`** — Cloudflare delivers cron events 1–2 min late; wall-clock gating skips slots.
 - The `.github/workflows/cron-*.yml` files have **NO `schedule:` block** (removed on purpose). They fire only via `workflow_dispatch` from the Worker. Don't re-add `schedule:`.
 - Heavy AI runs in GH Actions runners: `scripts/*-runner.js` (zoho-sent-runner, morning-brief-runner, eod-summary-runner, neodove-report-runner, whatsapp-digest-runner, whatsapp-autopilot-runner, email-brain-index-runner). They call worker `/api/runner/*` endpoints (Bearer SHARED_SECRET) and the LLM via the **unified AI gateway** — `getGateway(env).complete()/completeJson()` (`src/shared/ai-gateway.ts` for Worker/Express, JS port `scripts/ai-gateway.js` for runners, thin wrappers `groq`/`groqJson` in `runner-lib.js`). Gateway owns the key pool: multi-provider (groq/openrouter/deepseek/together/openai + legacy omniroute fallback), `AI_KEYS=provider:key:label,...` (auto-detect from prefix; legacy `*_API_KEYS` vars still merged), least-failures selection, 429→cooldown (honors retry-after) / 401→disabled / 5xx→rotate, placeholder keys ignored.
 - GH secrets used by workflows: `WORKER_URL`, `SHARED_SECRET`, `AI_KEYS` (or legacy `GROQ_API_KEYS`/`OPENROUTER_API_KEYS`/`DEEPSEEK_API_KEYS` + `OMNIROUTE_*` fallback), `NEODOVE_USER_IDS`.
-- **Telecalling is production-live and deterministic (no LLM)**: `runLeadConversion()` in `src/automations/telecalling/service.ts`; daily `POST /api/trigger/telecalling` at 08:00 IST (round-robin) + 21:00 IST (EOD snatch), plus every-15min `effort-sync-runner.js` → `/api/runner/telecalling/effort-sync` (NeoDove snatch-shield snapshots).
+- **Telecalling is production-live and deterministic (no LLM)**: `runLeadConversion()` in `src/automations/telecalling/service.ts`; daily `POST /api/trigger/telecalling` at 08:00 IST (round-robin) + 21:00 IST (EOD snatch), plus every-15min `effort-sync-runner.js` → `/api/runner/telecalling/effort-sync` (NeoDove snatch-shield snapshots, ops hours only).
+- **Quiet hours 21:00–09:00 IST**: Zoho/NeoDove-backed analysis pauses via `isOpsWindow()` in cron.ts — every-10min + every-15min dispatches skipped, every-5min fires with `run_zoho=false` (skips crm + zoho-sent jobs), daily fires with `run_neodove=false`, native neodove-refresh skipped. Manual dispatch defaults both inputs true.
 - Worker secret needed for dispatch: `GITHUB_ACCESS_TOKEN` (set via `printf '%s' "$TOKEN" | npx wrangler secret put GITHUB_ACCESS_TOKEN` — `echo` adds a trailing newline and breaks GitHub auth). GitHub rejects the dispatch POST without a `User-Agent` header (403, empty body from CF egress) — already handled in cron.ts.
+
+## Deploy policy (standing instruction from founder)
+- **Deploy every time you make changes — do not ask.** After any code change (backend or frontend), build + deploy it to production immediately as part of the same task.
+- Backend change → `cd founder-os_backend && node scripts/build-worker.mjs && node scripts/smoke-worker.mjs && npx wrangler deploy`.
+- Frontend change → `cd founder-os_frontend && npm run build` (webpack!) `&& npx wrangler pages deploy out --project-name founder-os-frontend`.
+- If both changed, deploy both (backend first). Never finish a code task in a deployed-but-stale state.
+- Never `source ../.env` (contains `$@` in SSH password) — export only the needed vars via grep/python.
 
 ## Commands
 - Worker build+deploy: `cd founder-os_backend && set -a; source ../.env; set +a; node scripts/build-worker.mjs && npx wrangler deploy`

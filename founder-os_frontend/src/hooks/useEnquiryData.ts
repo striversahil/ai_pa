@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Enquiry, Comment, Agent, Activity } from '../types';
 import { useLiveEvent } from './useLiveData';
 
@@ -51,8 +51,12 @@ function toEnquiry(raw: any): Enquiry {
   };
 }
 
-export function useEnquiryData() {
+export function useEnquiryData(view: "sales" | "procurement" = "sales") {
   const AGENT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16'];
+  const redactedView = view === "procurement";
+  // Procurement tab always reads the server-redacted payload (?view=procurement)
+  // so privileged users preview exactly what procurement sees — never raw PII.
+  const qs = redactedView ? "?view=procurement" : "";
 
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -62,8 +66,8 @@ export function useEnquiryData() {
   const fetchAll = useCallback(async () => {
     try {
       const [enqRes, agentsRes] = await Promise.all([
-        fetch('/api/enquiries'),
-        fetch('/api/enquiries/agents'),
+        fetch(`/api/enquiries${qs}`),
+        fetch(`/api/enquiries/agents${qs}`),
       ]);
       if (!enqRes.ok) throw new Error('load failed');
       const data = await enqRes.json();
@@ -87,15 +91,20 @@ export function useEnquiryData() {
     } finally {
       setLoaded(true);
     }
-  }, []);
+  }, [qs]);
 
   useEffect(() => {
     void fetchAll();
   }, [fetchAll]);
 
-  // Live updates: apply created/updated/deleted/comment events instantly.
+  // Live updates: sales view applies events optimistically; procurement view
+  // refetches the redacted payload instead — live broadcasts carry FULL
+  // enquiry objects, which must never be applied to the redacted screen.
+  const fetchAllRef = useRef(fetchAll);
+  fetchAllRef.current = fetchAll;
   useLiveEvent((e) => {
     if (!e || (e as any).type !== 'enquiries') return;
+    if (redactedView) { void fetchAllRef.current(); return; }
     const ev = e as any;
     if (ev.action === 'created' && ev.enquiry) {
       setEnquiries((prev) => [toEnquiry(ev.enquiry), ...prev.filter((x) => x.id !== ev.enquiry.id)]);

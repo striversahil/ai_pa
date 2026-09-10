@@ -3,31 +3,16 @@ name: Cron - Every 15 min
 on:
   # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
   # workflow_dispatch). Native schedule removed to avoid double-firing.
+  # NOTE: zoho-sent-analyzer + crm moved to cron-every-5min.yml (5-min
+  # latency). The router skips this workflow 9PM-9AM IST (effort-sync is
+  # NeoDove-backed and pauses overnight).
   workflow_dispatch:
-    inputs:
-      force:
-        description: "Force reclassify ALL active estimates with the current model"
-        type: boolean
-        default: false
 
 concurrency:
   group: cron-every-15min
   cancel-in-progress: true
 
 jobs:
-  zoho-sent-analyzer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: zoho-sent-analyzer (full sync + AI on runner)
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-          NEODOVE_AGENT_NAMES: Muskan
-          ZOHO_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
-        run: node scripts/zoho-sent-runner.js
-
   telecalling-effort-sync:
     runs-on: ubuntu-latest
     steps:
@@ -37,13 +22,5 @@ jobs:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
         run: node scripts/effort-sync-runner.js
-
-  crm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: crm (active sales orders pipeline snapshot)
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-        run: node scripts/crm-runner.js
+  # NOTE: zoho-sent-analyzer + crm moved to cron-every-5min.yml (5-min
+  # latency).

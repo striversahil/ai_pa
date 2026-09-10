@@ -37,7 +37,8 @@ import { createChatStore } from './modules/chat/store';
 import * as EnquiryRoutes from './modules/enquiries/routes';
 import { PrismaEnquiryStore } from './modules/enquiries/store-prisma';
 import { createEnquiryStore } from './modules/enquiries/store';
-import { extractEnquiryFieldsRobust } from './modules/enquiries/extract';
+import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from './modules/enquiries/extract';
+import { cacheSet, cacheDel } from './shared/cache';
 
 
 const app = express();
@@ -212,16 +213,28 @@ async function enquiryMe(req: Request) {
 app.get('/api/enquiries', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const r = await EnquiryRoutes.enquiryList(enquiryStore, me);
+  const restricted = req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any);
+  const r = await EnquiryRoutes.enquiryList(enquiryStore, me, restricted ? { redact: true } : undefined);
+  if (restricted) {
+    for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
+      try { void runEnquiryExtraction(String(id)); } catch { /* ignore */ }
+    }
+  }
   res.status(r.status).json(r.body);
 });
 app.get('/api/enquiries/agents', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const users = await authStore.listUsers();
-  res.json(users.filter((u: any) => u.isRoot || u.scopes.includes('enquiries')).map((u: any) => ({
-    id: u.id, name: u.name, email: u.email, picture: u.picture ?? null,
-  })));
+  // Restricted (procurement) viewers get NO roster — see worker route.
+  if (req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any)) return res.json([]);
+  // Same "Lead by" roster as the Worker: active + present Telecallers
+  // (not soft-deleted, not marked absent). See worker/routes/enquiries.ts.
+  const roster = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
+  res.json(
+    roster
+      .filter((t: any) => !(t as any).absentSince)
+      .map((t: any) => ({ id: String(t.id), name: t.name, email: t.email ?? null, picture: null })),
+  );
 });
 async function runEnquiryExtraction(id: string) {
   try {
@@ -233,13 +246,47 @@ async function runEnquiryExtraction(id: string) {
       .slice(0, 2)
       .map((cm: any) => `${cm.content ?? ''}`)
       .join('\n');
-    const text = [enquiry.description, firstComments].filter(Boolean).join('\n');
+    const reqTexts = Array.isArray((enquiry as any).additionalRequirements)
+      ? (enquiry as any).additionalRequirements.map((r: any) => (typeof r === 'string' ? r : String(r?.text ?? '')))
+      : [];
+    const { text, description } = splitExtractionText(
+      enquiry.description,
+      firstComments,
+      (comments || []).map((cm: any) => ({ id: String(cm.id ?? ''), content: String(cm.content ?? '') })),
+      reqTexts,
+    );
     const extracted = await extractEnquiryFieldsRobust(process.env as any, {
       text,
       title: enquiry.title,
       company: enquiry.clientCompany,
     });
     if (!extracted) return;
+    // Procurement-view cache (v2) — see worker context.ts runEnquiryExtraction.
+    if (extracted.redactedDescription) {
+      try {
+        const byId = new Map(((extracted.redactedComments ?? []) as Array<{ id: string; content: string }>).map((r) => [r.id, r.content]));
+        const redactedComments: RedactedViewCache['comments'] = {};
+        for (const cm of comments || []) {
+          const id = String((cm as any)?.id ?? '');
+          if (!id || !byId.has(id)) continue;
+          redactedComments[id] = { content: byId.get(id) as string, hash: hashText(String((cm as any)?.content ?? '')) };
+        }
+        const redactedRequirements: RedactedViewCache['requirements'] = {};
+        for (const r of (extracted.redactedRequirements ?? []) as Array<{ index: number; text: string }>) {
+          const src = reqTexts[r.index];
+          if (src === undefined) continue;
+          redactedRequirements[r.index] = { text: r.text, hash: hashText(src) };
+        }
+        const entry: RedactedViewCache = {
+          description: extracted.redactedDescription,
+          descHash: hashText(description),
+          comments: redactedComments,
+          requirements: redactedRequirements,
+          at: new Date().toISOString(),
+        };
+        await cacheSet(redactedCacheKey(id), entry, REDACTED_CACHE_TTL_MS);
+      } catch { /* best-effort */ }
+    }
     const updates: Record<string, string> = {};
     if (!enquiry.title && extracted.title) updates.title = extracted.title;
     if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;
@@ -279,12 +326,21 @@ app.delete('/api/enquiries/:id', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const r = await EnquiryRoutes.enquiryDelete(enquiryStore, me, req.params.id);
+  if (r.status === 200) {
+    try { await cacheDel(`enquiry:redacted:${req.params.id}`); } catch { /* best-effort */ }
+  }
   res.status(r.status).json(r.body);
 });
 app.get('/api/enquiries/:id/comments', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const r = await EnquiryRoutes.enquiryComments(enquiryStore, me, req.params.id);
+  const restricted = req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any);
+  const r = await EnquiryRoutes.enquiryComments(enquiryStore, me, req.params.id, restricted ? { redact: true } : undefined);
+  if (restricted) {
+    for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
+      try { void runEnquiryExtraction(String(id)); } catch { /* ignore */ }
+    }
+  }
   res.status(r.status).json(r.body);
 });
 app.post('/api/enquiries/:id/comments', async (req, res) => {

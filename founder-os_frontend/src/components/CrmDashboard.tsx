@@ -241,7 +241,7 @@ export default function CrmDashboard() {
     return (
       <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-8 text-center">
         <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-400" />
-        <p className="mt-3 text-sm text-zinc-400">Waiting for first CRM snapshot (every 15 min)…</p>
+        <p className="mt-3 text-sm text-zinc-400">Waiting for first CRM snapshot (every 5 min)…</p>
         {crm.error ? <p className="mt-1 text-[11px] text-red-400">{String(crm.error)}</p> : null}
       </div>
     );

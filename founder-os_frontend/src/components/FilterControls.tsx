@@ -11,6 +11,8 @@ interface FilterControlsProps {
   agentFilter: string;
   setAgentFilter: (agent: string) => void;
   agents: Agent[];
+  hideAgentFilter?: boolean;
+  hideStatusFilter?: boolean;
 }
 
 export default function FilterControls({
@@ -22,7 +24,9 @@ export default function FilterControls({
   setPriorityFilter,
   agentFilter,
   setAgentFilter,
-  agents
+  agents,
+  hideAgentFilter = false,
+  hideStatusFilter = false
 }: FilterControlsProps) {
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-4 flex flex-col md:grid md:grid-cols-[2fr_1fr_1fr_1fr] gap-4 items-stretch md:items-center">
@@ -35,12 +39,13 @@ export default function FilterControls({
           type="text" 
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by client, title or contact name..." 
+          placeholder={hideAgentFilter ? "Search by title..." : "Search by client, title or contact name..."} 
           className="w-full pl-11 pr-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm placeholder-[var(--text-tertiary)] text-[var(--text-primary)] focus:outline-hidden focus:border-brand-indigo/80"
         />
       </div>
 
-      {/* Status Filter */}
+      {/* Status Filter — hidden in procurement view (no sales stage) */}
+      {!hideStatusFilter && (
       <div>
         <select 
           value={statusFilter}
@@ -57,6 +62,7 @@ export default function FilterControls({
           <option value="lost">Lost</option>
         </select>
       </div>
+      )}
 
       {/* Priority Filter */}
       <div>
@@ -72,19 +78,21 @@ export default function FilterControls({
         </select>
       </div>
 
-      {/* Agent Filter */}
+      {/* Lead Filter — hidden in procurement view (no lead attribution) */}
+      {!hideAgentFilter && (
       <div>
         <select 
           value={agentFilter}
           onChange={(e) => setAgentFilter(e.target.value)}
           className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm text-[var(--text-secondary)] focus:outline-hidden focus:border-brand-indigo/80 cursor-pointer"
         >
-          <option value="all">All Agents</option>
+          <option value="all">All Leads</option>
           {agents.map(a => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}
         </select>
       </div>
+      )}
     </div>
   );
 }

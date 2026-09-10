@@ -30,6 +30,7 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: USER_ADMIN_SCOPE, label: "User Manager", description: "Admin panel: assign roles and edit role scopes (cannot touch root user or grant admin access)" },
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
   { key: "sales", label: "Sales Agent", description: "Sales agent identity — roster entry with contact details and incentive mapping" },
+  { key: "procurement", label: "Procurement", description: "Procurement view of the enquiry tracker — same pipeline, no client PII and no lead attribution" },
 ];
 
 export const DEFAULT_ROLES: AuthRole[] = [

@@ -692,6 +692,9 @@ model Enquiry {
   imageUrls      String?
   activities     String?
   additionalRequirements String?
+  // AI-parsed line items (JSON array text, same pattern as above):
+  // [{ name, qty, spec }] — one entry per purchasable item in the enquiry.
+  items          String?
   comments       EnquiryComment[]
 }
 

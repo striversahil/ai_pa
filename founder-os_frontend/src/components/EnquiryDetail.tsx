@@ -18,6 +18,7 @@ interface EnquiryDetailProps {
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
+  redacted?: boolean;
 }
 
 export default function EnquiryDetail({
@@ -32,7 +33,8 @@ export default function EnquiryDetail({
   onDeleteEnquiry,
   onOpenEdit,
   onBack,
-  onOpenLightbox
+  onOpenLightbox,
+  redacted = false
 }: EnquiryDetailProps) {
   // Localized view states
   const [activeDetailTab, setActiveDetailTab] = useState<"comments" | "activity">("comments");
@@ -47,6 +49,8 @@ export default function EnquiryDetail({
   const [reqText, setReqText] = useState("");
   const [reqImage, setReqImage] = useState<string | null>(null);
   const [reqSaving, setReqSaving] = useState(false);
+  // Delete confirmation
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleRequirementImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -149,6 +153,7 @@ export default function EnquiryDetail({
           </div>
         </div>
 
+        {!redacted && (
         <div className="flex items-center gap-2">
           <button 
             onClick={() => onOpenEdit(selectedEnquiry)} 
@@ -162,7 +167,7 @@ export default function EnquiryDetail({
           </button>
 
           <button 
-            onClick={() => onDeleteEnquiry(selectedEnquiry.id)} 
+            onClick={() => setConfirmDelete(true)} 
             className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger)_25%,transparent)] text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
             type="button"
           >
@@ -172,6 +177,7 @@ export default function EnquiryDetail({
             <span>Delete</span>
           </button>
         </div>
+        )}
       </div>
 
       {/* Split View */}
@@ -181,6 +187,7 @@ export default function EnquiryDetail({
         <ClientProfile
           selectedEnquiry={selectedEnquiry}
           agents={agents}
+          redacted={redacted}
           onUpdateStatus={onUpdateStatus}
           onUpdateAgent={onUpdateAgent}
         />
@@ -205,7 +212,12 @@ export default function EnquiryDetail({
           <SpecificationsSection
             selectedEnquiry={selectedEnquiry}
             onOpenLightbox={onOpenLightbox}
+            redacted={redacted}
           />
+
+          {redacted && selectedEnquiry.redactedPending && (
+            <p className="text-[11px] text-amber-500 font-semibold px-1">Securing the latest updates for this view…</p>
+          )}
 
           {/* Right Column Twitter threads & audit log */}
           <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm flex flex-col min-h-[500px]">
@@ -288,6 +300,7 @@ export default function EnquiryDetail({
                         key={comment.id} 
                         comment={comment} 
                         agents={agents} 
+                        redacted={redacted}
                         onReplyClick={(cid) => setReplyToCommentId(cid)} 
                         onImageClick={(url) => onOpenLightbox(url)}
                       />
@@ -307,6 +320,31 @@ export default function EnquiryDetail({
           </div>
         </div>
       </div>
+
+      {/* Delete confirmation */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50" onClick={() => setConfirmDelete(false)}>
+          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-xl w-full max-w-sm animate-fade-in" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 space-y-3">
+              <h2 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Delete enquiry?</h2>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                <span className="font-mono font-bold text-[var(--text-primary)]">{selectedEnquiry.estNumber}</span>
+                {selectedEnquiry.title ? ` — ${selectedEnquiry.title}` : ""} and its comments will be permanently removed. This cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setConfirmDelete(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
+                <button
+                  type="button"
+                  onClick={() => { setConfirmDelete(false); onDeleteEnquiry(selectedEnquiry.id); }}
+                  className="px-3.5 py-1.5 bg-[var(--color-danger)] hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Additional Requirement popup */}
       {reqOpen && (

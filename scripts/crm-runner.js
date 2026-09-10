@@ -122,6 +122,15 @@ function orderRow(so, today) {
     const t = new Date(createdTime);
     if (!isNaN(t.getTime())) age = Math.max(0, Math.floor((Date.now() - t.getTime()) / 86400000));
   }
+  // True ONLY when Zoho's created_time falls on today (IST) — same rule as
+  // zoho-sent-runner's syncSalesOrdersToday. The Worker credits +25 new-order
+  // points solely on this flag, so it must never default to true (that would
+  // re-credit every first-seen order after a KV expiry).
+  let createdToday = false;
+  if (so.created_time) {
+    const ct = new Date(so.created_time);
+    if (!isNaN(ct.getTime())) createdToday = istDateString(ct) === today;
+  }
   const items = Array.isArray(so.line_items) ? so.line_items.slice(0, 20) : [];
   return {
     so: so.salesorder_number || '',
@@ -140,7 +149,7 @@ function orderRow(so, today) {
     ageDays: age,
     lineCount: Array.isArray(so.line_items) ? so.line_items.length : 0,
     items,
-    _today: today, // IST date string for new-order crediting on the Worker
+    createdToday,
   };
 }
 
@@ -244,14 +253,10 @@ async function main() {
     if (salesorders.length < 200 || relevant === 0) break;
   }
 
-  // Round values; strip the internal _today marker into a clean boolean.
+  // Round values (createdToday already a clean boolean from orderRow).
   totalValue = Math.round(totalValue * 100) / 100;
   for (const s of STAGES) {
     stages[s].value = Math.round(stages[s].value * 100) / 100;
-    stages[s].orders = stages[s].orders.map((o) => {
-      const { _today, ...rest } = o;
-      return { ...rest, createdToday: _today === today };
-    });
   }
 
   const materials = [...materialMap.values()]

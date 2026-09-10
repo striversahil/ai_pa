@@ -2006,6 +2006,40 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     for (const r of riskItems) {
       if (r.lastCommentDate) followLastComments.set(r.estimateId, r.lastCommentDate);
     }
+    // Most recent real sales note per follow-up estimate (text shown inline on
+    // each conversion row). Timestamp-ordered (Zoho ids aren't chronological);
+    // system auto-logs excluded. Fail-open: rows render without the note.
+    const latestCommentByEst = new Map<string, { text: string; commentedBy: string; dateFormatted: string | null }>();
+    try {
+      const ids = followUpEsts.map((e) => e.estimateId);
+      if (ids.length > 0) {
+        const rows = await prisma.comment.findMany({
+          where: { estimateId: { in: ids } },
+          select: { estimateId: true, description: true, commentedBy: true, date: true, dateFormatted: true },
+        });
+        const best = new Map<string, { ts: number; v: { text: string; commentedBy: string; dateFormatted: string | null } }>();
+        for (const c of rows as any[]) {
+          const text = String(c.description || '').trim();
+          if (!text) continue;
+          if (isSystemGeneratedComment(text, String(c.commentedBy || ''))) continue;
+          const ts = parseCommentDateMs(String(c.dateFormatted ?? c.date ?? ''));
+          if (ts === null) continue;
+          const cur = best.get(String(c.estimateId));
+          if (cur && cur.ts >= ts) continue;
+          best.set(String(c.estimateId), {
+            ts,
+            v: {
+              text,
+              commentedBy: String(c.commentedBy || ''),
+              dateFormatted: (c.dateFormatted ?? c.date ?? null) as string | null,
+            },
+          });
+        }
+        for (const [eid, v] of best) latestCommentByEst.set(eid, v.v);
+      }
+    } catch (e: any) {
+      logger.warn({ err: e?.message }, 'follow-up latest-comment lookup failed — rows render without notes');
+    }
     // Effort shield, agent-facing: red/zombie follow-ups the holder earned
     // (≥3 outgoing, ≥2h spread — connects irrelevant) carry their verdict so
     // the agent SEES the protection inline. Snapshots load once, only when at
@@ -2095,6 +2129,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         analysisSummary: e.classification?.summary ?? null,
         lastCommentDate,
         staleHours,
+        // Most recent real sales note on THIS estimate (see lookup above).
+        latestComment: latestCommentByEst.get(e.estimateId) ?? null,
         // Lead details: per-estimate capture ONLY (stored by the GH runner from this
         // estimate's own Zoho comments). NO company-name enquiry fallback — a
         // fuzzy company match can surface a DIFFERENT customer's POC/mobile/

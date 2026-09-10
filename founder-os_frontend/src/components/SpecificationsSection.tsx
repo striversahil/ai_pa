@@ -6,9 +6,10 @@ interface SpecificationsSectionProps {
   selectedEnquiry: Enquiry;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   onAddRequirement?: (text: string, images: string[]) => void;
+  redacted?: boolean;
 }
 
-export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox, onAddRequirement }: SpecificationsSectionProps) {
+export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox, onAddRequirement, redacted = false }: SpecificationsSectionProps) {
   const [isAddReqOpen, setIsAddReqOpen] = useState(false);
 
   return (
@@ -38,7 +39,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
         <div>
           <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">Specifications & Scope</span>
           <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed bg-[var(--bg-input)]/25 p-3.5 rounded-xl border border-[var(--border-card)]/50">
-            {selectedEnquiry.description || "No specifications provided."}
+            {selectedEnquiry.description || (redacted ? "Preparing secure view…" : "No specifications provided.")}
           </p>
         </div>
 
