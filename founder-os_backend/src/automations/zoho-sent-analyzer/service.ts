@@ -10,6 +10,49 @@ import path from 'path';
 
 export const PENDING_AI_MARKER = '__PENDING_AI__';
 
+// ── Comment timestamp ordering ─────────────────────────────────────────────
+// Zoho comment_ids are NOT chronological (observed: 10/09 comments with SMALLER
+// ids than 09/09 comments on the same estimate, e.g. EST-023377) — so "latest"
+// must come from the timestamp, never from id order. dateFormatted
+// ("DD/MM/YYYY hh:mm AM", IST) carries time-of-day; the plain `date` is
+// date-only. Id order is only the final tiebreak.
+function commentTsMs(c: { dateFormatted?: string | null; date?: string | null }): number | null {
+  const fmt = c.dateFormatted ?? null;
+  if (fmt) {
+    const m = fmt.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (m) {
+      let h = parseInt(m[4], 10);
+      if (m[6].toUpperCase() === 'PM' && h !== 12) h += 12;
+      if (m[6].toUpperCase() === 'AM' && h === 12) h = 0;
+      const t = Date.parse(`${m[3]}-${m[2]}-${m[1]}T${String(h).padStart(2, '0')}:${m[5]}:00+05:30`);
+      if (!Number.isNaN(t)) return t;
+    }
+  }
+  if (c.date) {
+    const t = Date.parse(c.date);
+    if (!Number.isNaN(t)) return t;
+  }
+  return null;
+}
+
+interface SalesComment {
+  id: string;
+  date: string;
+  dateFormatted: string | null;
+  author: string;
+  text: string;
+}
+
+/** Newest first (badge "latest" + journey history order). */
+function latestFirst(a: SalesComment, b: SalesComment): number {
+  const ta = commentTsMs(a);
+  const tb = commentTsMs(b);
+  if (ta !== null && tb !== null && ta !== tb) return tb - ta;
+  if (ta !== null && tb === null) return -1;
+  if (ta === null && tb !== null) return 1;
+  return b.id.localeCompare(a.id);
+}
+
 // ── No-change fast path (D1 row-read budget protection) ──────────────────────
 // The analyzer previously re-scanned every estimate + comment row in the DB on
 // EVERY 15-min tick just to detect whether anything changed — burning thousands
@@ -134,7 +177,7 @@ export class SalesCopilotService implements AnalysisEngine {
    * as zero — counts reset naturally at midnight IST.
    */
   private static SO_CACHE_KEY = 'zoho:salesorders_today';
-  private static SO_TTL_MS = 45 * 60 * 1000; // runner refreshes every 15 min
+  private static SO_TTL_MS = 45 * 60 * 1000; // runner refreshes every 5 min
 
   /** Calendar date (YYYY-MM-DD) of a timestamp in IST (+05:30). */
   private istDateString(d: Date): string {
@@ -521,7 +564,7 @@ export class SalesCopilotService implements AnalysisEngine {
 
     // Save comments and extract sales agent comments
     const comments = fetched.comments;
-    const salesComments: Array<{ id: string; date: string; author: string; text: string }> = [];
+    const salesComments: SalesComment[] = [];
 
     for (const c of comments) {
       const descClean = this.cleanHtml(c.description || '');
@@ -551,14 +594,16 @@ export class SalesCopilotService implements AnalysisEngine {
         salesComments.push({
           id: c.comment_id,
           date: c.date || '',
+          dateFormatted: c.date_formatted || null,
           author: c.commented_by || 'Unknown',
           text: descClean
         });
       }
     }
 
-    // Sort timeline latest first using sequential Zoho comment IDs
-    salesComments.sort((a, b) => b.id.localeCompare(a.id));
+    // Sort timeline latest first by TIMESTAMP (Zoho comment_ids are not
+    // chronological — id order once crowned a stale comment "latest").
+    salesComments.sort(latestFirst);
     const historyLines = salesComments.slice(0, 15).map(c => `[${c.date}] ${c.author}: ${c.text}`);
     const commentHistory = historyLines.join('\n');
 
@@ -722,7 +767,7 @@ export class SalesCopilotService implements AnalysisEngine {
               }
 
               const comments = commentsJson.comments || [];
-              const salesComments: Array<{ id: string; date: string; author: string; text: string }> = [];
+              const salesComments: SalesComment[] = [];
 
               for (const c of comments) {
                 const descClean = this.cleanHtml(c.description || '');
@@ -751,13 +796,14 @@ export class SalesCopilotService implements AnalysisEngine {
                   salesComments.push({
                     id: c.comment_id,
                     date: c.date || '',
+                    dateFormatted: c.date_formatted || null,
                     author: c.commented_by || 'Unknown',
                     text: descClean
                   });
                 }
               }
 
-              salesComments.sort((a, b) => b.id.localeCompare(a.id));
+              salesComments.sort(latestFirst);
               const historyLines = salesComments.slice(0, 15).map(c => `[${c.date}] ${c.author}: ${c.text}`);
               const commentHistory = historyLines.join('\n');
 

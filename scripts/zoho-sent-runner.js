@@ -19,6 +19,8 @@
  * model openai/gpt-oss-120b with HIGH reasoning — the omniroute gateway is
  * avoided because it goes down ~every 12 h). Zoho credentials are inferred
  * automatically from the curl export at zoho_sent/sent_estimates.txt.
+ * SO_ONLY=1: lightweight 5-min tick — refreshes ONLY sales-orders-today
+ * (no GROQ_API_KEYS needed) and exits before the estimates fetch.
  */
 
 const { requireEnv, workerRequest, groqJson } = require('./runner-lib');
@@ -28,7 +30,8 @@ const path = require('path');
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-if (!process.env.GROQ_API_KEYS) missing.push('GROQ_API_KEYS');
+// SO_ONLY=1 (5-min sales-orders-today tick) needs no LLM keys.
+if (process.env.SO_ONLY !== '1' && !process.env.GROQ_API_KEYS) missing.push('GROQ_API_KEYS');
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
   process.exit(1);
@@ -239,6 +242,53 @@ function isRealSalesComment(desc, commentedBy, commentType) {
   if (commentType !== 'internal') return false;
   if (isSystemGeneratedComment(desc, commentedBy)) return false;
   return true;
+}
+
+// ── Comment timestamp ordering ─────────────────────────────────────────────
+// Zoho comment_ids are NOT chronological (observed: 10/09 comments with SMALLER
+// ids than 09/09 comments on the same estimate, e.g. EST-023377) — so "latest"
+// must come from the timestamp, never from id order. date_formatted
+// ("DD/MM/YYYY hh:mm AM", IST) carries time-of-day; the plain `date` is
+// date-only (midnight UTC would read ~12h stale and can't order same-day
+// comments). Id order is only the final tiebreak.
+function commentTsMs(c) {
+  const fmt = c.date_formatted ?? c.dateFormatted ?? c.dateFmt ?? null;
+  if (fmt) {
+    const m = String(fmt).match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (m) {
+      let h = parseInt(m[4], 10);
+      if (m[6].toUpperCase() === 'PM' && h !== 12) h += 12;
+      if (m[6].toUpperCase() === 'AM' && h === 12) h = 0;
+      const t = Date.parse(`${m[3]}-${m[2]}-${m[1]}T${String(h).padStart(2, '0')}:${m[5]}:00+05:30`);
+      if (!Number.isNaN(t)) return t;
+    }
+  }
+  if (c.date) {
+    const t = Date.parse(String(c.date));
+    if (!Number.isNaN(t)) return t;
+  }
+  return null;
+}
+function commentIdStr(c) {
+  return String(c.id ?? c.comment_id ?? '');
+}
+// Newest first (badge "latest" + journey history order).
+function latestFirst(a, b) {
+  const ta = commentTsMs(a);
+  const tb = commentTsMs(b);
+  if (ta !== null && tb !== null && ta !== tb) return tb - ta;
+  if (ta !== null && tb === null) return -1;
+  if (ta === null && tb !== null) return 1;
+  return commentIdStr(b).localeCompare(commentIdStr(a));
+}
+// Oldest first (lead-details capture reads the FIRST real comments).
+function oldestFirst(a, b) {
+  const ta = commentTsMs(a);
+  const tb = commentTsMs(b);
+  if (ta !== null && tb !== null && ta !== tb) return ta - tb;
+  if (ta !== null && tb === null) return -1;
+  if (ta === null && tb !== null) return 1;
+  return commentIdStr(a).localeCompare(commentIdStr(b));
 }
 
 /**
@@ -526,7 +576,7 @@ async function saveCommentsAndExtract(estId, comments, existingEstimate, doSave)
   for (const c of comments) {
     const descClean = cleanHtml(c.description || '');
     if (isRealSalesComment(descClean, c.commented_by, c.comment_type)) {
-      salesComments.push({ id: c.comment_id, date: c.date || '', author: c.commented_by || 'Unknown', text: descClean });
+      salesComments.push({ id: c.comment_id, date: c.date || '', dateFormatted: c.date_formatted || null, author: c.commented_by || 'Unknown', text: descClean });
     }
   }
   void existingEstimate;
@@ -537,7 +587,7 @@ async function processEstimate(job, agentRoster) {
   const { estId, custName, total, dateVal, estStatus, fetched } = job;  const comments = fetched.comments || [];
   const salesComments = await saveCommentsAndExtract(estId, comments, null, true);
 
-  salesComments.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+  salesComments.sort(latestFirst);
   const historyLines = salesComments.slice(0, 15).map((c) => `[${c.date}] ${c.author}: ${c.text}`);
   const commentHistory = historyLines.join('\n');
 
@@ -623,6 +673,16 @@ async function syncSalesOrdersToday() {
 }
 
 async function main() {
+  // SO_ONLY=1 — lightweight 5-min tick: refresh ONLY the sales-orders-today
+  // tile and exit. Skips the full estimates fetch + comments + AI so the
+  // 5-min cadence costs ~10 Zoho reads instead of a full sync. The full sync
+  // still runs every 15 min (cron-every-15min.yml) and also refreshes SO-today.
+  if (process.env.SO_ONLY === '1') {
+    await syncSalesOrdersToday();
+    console.log('zoho-sent-runner: SO_ONLY tick done');
+    return;
+  }
+
   // 0. Sales orders created today (IST) — runs BEFORE the no-change fast path:
   //    new sales orders don't touch the estimates payload at all, so a quiet
   //    estimates day still needs this refreshed.
@@ -733,7 +793,7 @@ async function main() {
         } catch (err) { console.warn(`zoho-sent-runner: comment fetch failed for closed ${est.estimateNumber}: ${err.message}`); }
 
         const salesComments = await saveCommentsAndExtract(est.estimateId, comments, null, true);
-        salesComments.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+        salesComments.sort(latestFirst);
         const historyLines = salesComments.slice(0, 15).map((c) => `[${c.date}] ${c.author}: ${c.text}`);
         const commentHistory = historyLines.join('\n');
 
@@ -839,7 +899,7 @@ async function main() {
       if (!fetched) continue;
       const firstRealSales = (fetched.comments || [])
         .filter((c) => isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type))
-        .sort((a, b) => String(a.comment_id).localeCompare(String(b.comment_id)))
+        .sort(oldestFirst)
         .slice(0, 5)
         .map((c) => `${c.commented_by || ''}: ${cleanHtml(c.description || '')}`)
         .join('\n');
