@@ -397,7 +397,7 @@ estimate. Identify which sales agent from the roster wrote THIS comment:
 - Never invent a name that is not in the roster.
 
 Evaluate this single latest comment and output the following keys:
-1. meaningful_update: Mark as true if THIS comment contains a meaningful work update. Mark as false if it does not.
+1. meaningful_update: true ONLY if THIS comment records a substantive customer outcome or a CUSTOMER-committed next step — price agreed, order/PO received or confirmed, a decision given, the customer says they will confirm/place the order, or a sample/quote requested by the customer. Anything less is false.
 2. Chip Mapping keys (true or false):
    - not_answering: true if THIS comment states the customer did not answer, is not replying, or call was not picked up. Else false.
    - under_discussion: true if THIS comment shows active discussions are ongoing (e.g. price negotiation, technical configuration review, requirement clarification, or visiting plans being finalized). Else false.
@@ -409,10 +409,10 @@ Evaluate this single latest comment and output the following keys:
 Strict Decision Rules:
 - Base EVERY chip decision ONLY on the single latest comment provided. Do not infer anything from earlier history.
 - Mark meaningful_update as false if the latest comment is older than 2 days.
-- A follow-up date/day/time counts toward meaningful_update ONLY when the CUSTOMER asked for or agreed to it (e.g. "customer asked to call back Friday", "he said call after 15th", "customer will revert tomorrow"). A date the AGENT set alone is a retry reminder, not progress.
+- "Shopping around" is NOT progress: when THIS comment only shows the customer comparing vendors / taking rates / "will confirm in N days" with no firm order, PO, decision, or agreed price, meaningful_update MUST be false. under_discussion may still be true while the negotiation is live.
+- A bare deferral is NOT progress: when THIS comment only moves the call to another date/day/time ("call on Monday", "call after 2 days", "will follow up") with no customer substance behind it, meaningful_update MUST be false — even when it names a date. A follow-up date/day/time counts toward meaningful_update ONLY when the CUSTOMER asked for or agreed to it (e.g. "customer asked to call back Friday", "he said call after 15th", "customer will revert tomorrow") AND the comment carries a substantive customer response beyond the date itself. A date the AGENT set alone is a retry reminder, not progress.
 - meaningful_update MUST be false when THIS comment reports failed contact with no customer response (not answering / not connected / unreachable / switched off / call not picked up / busy) — even if it names a retry date. Set not_answering=true in that case.
 - meaningful_update MUST be false when the customer puts the deal on HOLD or tells the agent to stop calling ("hold for now", "do not call again", "stop calling", "call after 1 week" said with annoyance) — a stalled deal with negative sentiment is not progress, even with a timeline. not_answering stays false if the customer was actually reached; under_discussion stays false (a unilateral hold is not an active negotiation).
-- meaningful_update is true when THIS comment records a substantive customer response or commitment that advances the deal — e.g. the customer says they will confirm, will discuss with management/partners and revert, will place the order, accepted the price, or gave a decision/pending decision ("He will confirm after discussing it with his management", "waiting for customer confirmation").
 - If the latest comment only records an action (calling, messaging, sending a quotation) without presenting any outcome, next step, or decision, meaningful_update must be false.
 - If meaningful_update is true, then not_answering must be false. If meaningful_update is false, not_answering may be true or false as the comment dictates. under_discussion can be true regardless.
 
