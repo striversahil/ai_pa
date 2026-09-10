@@ -57,11 +57,13 @@ function latestFirst(a: SalesComment, b: SalesComment): number {
 // The analyzer previously re-scanned every estimate + comment row in the DB on
 // EVERY 15-min tick just to detect whether anything changed — burning thousands
 // of D1 row reads even when Zoho had not changed at all. Instead we cache a
-// fingerprint of the last fully-processed Zoho payload (estimate ids/status/
-// totals/last_modified + max real-sales comment id per estimate). On each tick
-// we fetch Zoho's payload first (network — cheap, NOT D1), compute the
-// fingerprint, and if it matches the cached one we skip ALL DB reads/writes and
-// return immediately. Fingerprints only change when the data actually changes.
+// fingerprint of the last fully-processed Zoho payload: per-estimate metadata
+// plus the FULL sorted real-sales comment id list (v2 JSON — max-id proved
+// blind to newcomers with smaller ids since Zoho ids aren't chronological).
+// On each tick we fetch Zoho's payload first (network — cheap, NOT D1), build
+// the fingerprint, and if it matches the cached one we skip ALL DB work and
+// return immediately. Per-estimate newcomer checks diff against the cached id
+// sets (exact, id-order-proof) with max-id DB compare as legacy fallback.
 const FP_KEY = 'zoho:analyzer:state_fingerprint';
 const FP_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -140,33 +142,54 @@ export class SalesCopilotService implements AnalysisEngine {
   }
 
   /**
-   * Deterministic fingerprint of the Zoho payload the analyzer just fetched:
-   * estimate id/status/total/last_modified plus the max real-sales comment id
-   * per estimate (comments don't bump last_modified_time in Zoho, so they must
-   * be part of the fingerprint to catch comment-only changes).
+   * Id-order-proof fingerprint of the Zoho payload just fetched.
+   *
+   * Zoho comment_ids are NOT chronological (observed: newer comments with
+   * SMALLER ids), so a max-id fingerprint is blind to newcomers that sort
+   * below the current max. Instead the fingerprint is a deterministic JSON
+   * string {v:2, byEst:{estimateId:{m,ids}}} (sorted keys → plain ===
+   * compares): m = status|total|last_modified metadata, ids = sorted real
+   * comment ids. Any added comment or metadata change alters the string.
+   * byEst doubles as the per-estimate baseline for exact newcomer detection
+   * (zero DB reads). Legacy plain-string values fail the shape check and are
+   * treated as a mismatch (one transitional full pass, max-id fallback).
    */
-  private fingerprintPayload(
+  private buildFingerprint(
     estimates: any[],
     commentsByEst: Map<string, { comments: any[] }>,
-  ): string {
-    const parts: string[] = [];
-    for (const est of estimates) {
-      let maxCommentId = '';
+  ): { fp: string; byEst: Map<string, Set<string>> } {
+    const byEst: Record<string, { m: string; ids: string[] }> = {};
+    const sorted = [...estimates].sort((a, b) => String(a.estimate_id).localeCompare(String(b.estimate_id)));
+    for (const est of sorted) {
+      const ids: string[] = [];
       const bucket = commentsByEst.get(est.estimate_id);
       for (const c of bucket?.comments ?? []) {
         if (!this.isRealSalesComment(c.description || '', c.commented_by, c.comment_type)) continue;
-        if (String(c.comment_id) > maxCommentId) maxCommentId = String(c.comment_id);
+        ids.push(String(c.comment_id));
       }
-      parts.push([
-        est.estimate_id,
-        est.status,
-        est.total,
-        est.last_modified_time,
-        maxCommentId,
-      ].join('|'));
+      byEst[est.estimate_id] = {
+        m: [est.status, est.total, est.last_modified_time].join('|'),
+        ids: [...new Set(ids)].sort(),
+      };
     }
-    parts.sort();
-    return parts.join('\n');
+    const fp = JSON.stringify({ v: 2, byEst });
+    const map = new Map(Object.entries(byEst).map(([k, v]) => [k, new Set(v.ids)] as [string, Set<string>]));
+    return { fp, byEst: map };
+  }
+
+  /** Parse a stored fingerprint back into per-estimate id sets. Null when the
+   *  value is legacy-shaped or corrupt → caller falls back to max-id compare. */
+  private parseFingerprint(raw: string | null): Map<string, Set<string>> | null {
+    try {
+      if (typeof raw !== 'string' || !raw.startsWith('{')) return null;
+      const obj = JSON.parse(raw) as any;
+      if (!obj || obj.v !== 2 || !obj.byEst || typeof obj.byEst !== 'object') return null;
+      return new Map(
+        Object.entries(obj.byEst).map(([k, v]: [string, any]) => [k, new Set((v?.ids || []).map(String))] as [string, Set<string>]),
+      );
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -345,14 +368,17 @@ export class SalesCopilotService implements AnalysisEngine {
     const fetchedCommentsByEst = await this.fetchZohoComments(estimates, orgId, headers);
 
     // 1c. NO-CHANGE FAST PATH — if the fingerprint of this exact Zoho payload
-    // (estimates + comments) was fully processed on a previous run, nothing has
-    // changed in the DB since, so skip EVERY DB read/write. This drops the
+    // (estimates + full comment id sets) was fully processed on a previous run,
+    // nothing has changed in the DB since, so skip EVERY DB read/write. This drops the
     // per-tick D1 row reads to ~0 when Zoho is quiet — the whole reason KV
-    // caching exists.
+    // caching exists. The previous run's per-estimate id sets are kept for the
+    // exact newcomer check below (id-order-proof; legacy values → max fallback).
+    let prevByEst: Map<string, Set<string>> | null = null;
     if (!force && estimates.length > 0 && fetchedCommentsByEst.size === estimates.length) {
       const cachedFp = await cacheGet<string>(FP_KEY, FP_TTL_MS);
-      const currentFp = this.fingerprintPayload(estimates, fetchedCommentsByEst);
-      if (cachedFp && currentFp === cachedFp) {
+      const current = this.buildFingerprint(estimates, fetchedCommentsByEst);
+      prevByEst = this.parseFingerprint(cachedFp);
+      if (cachedFp && current.fp === cachedFp) {
         logger.info('SalesCopilotService: No change detected — skipping full sync (served from fingerprint).');
         return { success: true, skipped: true, estimates: estimates.length, cached: true };
       }
@@ -421,12 +447,21 @@ export class SalesCopilotService implements AnalysisEngine {
       for (const r of rows) dbMaxCommentIdByEst.set(r.estimateId, (r._max.commentId as string) || '');
     }
     for (const [estId, bucket] of fetchedCommentsByEst) {
-      let maxZohoId = '';
+      const zohoIds: string[] = [];
       for (const c of bucket.comments) {
         if (!this.isRealSalesComment(c.description || '', c.commented_by, c.comment_type)) continue;
-        if (String(c.comment_id) > maxZohoId) maxZohoId = String(c.comment_id);
+        zohoIds.push(String(c.comment_id));
       }
-      bucket.hasNew = maxZohoId > (dbMaxCommentIdByEst.get(estId) || '');
+      // Exact set-diff against the previous complete run (id-order-proof);
+      // max-id DB compare only as the legacy fallback.
+      const prev = prevByEst?.get(estId);
+      if (prev) {
+        bucket.hasNew = zohoIds.some((id) => !prev.has(id));
+      } else {
+        let maxZohoId = '';
+        for (const id of zohoIds) if (id > maxZohoId) maxZohoId = id;
+        bucket.hasNew = maxZohoId > (dbMaxCommentIdByEst.get(estId) || '');
+      }
     }
 
     // 6. AI analysis — comments are already fresh; classification runs only for
@@ -538,7 +573,7 @@ export class SalesCopilotService implements AnalysisEngine {
     // 15-min tick can skip every DB read when nothing has changed. A run with
     // failures is NOT cached (the DB is not guaranteed to match Zoho yet).
     if (failedCount === 0) {
-      const fp = this.fingerprintPayload(estimates, fetchedCommentsByEst);
+      const { fp } = this.buildFingerprint(estimates, fetchedCommentsByEst);
       await cacheSet(FP_KEY, fp, FP_TTL_MS);
     }
 

@@ -37,11 +37,15 @@ active estimates.
 2. **Fetch estimates** (network): active `sent` list from Zoho Books.
 3. **Fetch comments** for every active estimate (network, concurrency 6,
    before ANY DB read): `estimates/:id/comments?organization_id=`.
-4. **Fingerprint fast-path**: `estimate_id|status|total|last_modified_time|
-   maxRealSalesCommentId` per estimate (sorted, joined). Comments don't bump
-   `last_modified_time` in Zoho, so max comment id is included. Match with
+4. **Fingerprint fast-path**: deterministic JSON `{v:2, byEst:{estimateId:
+   {m, ids}}}` (sorted keys → plain `===` compare), where `m` =
+   `status|total|last_modified_time` and `ids` = the FULL sorted real-sales
+   comment id list. Comments don't bump `last_modified_time` in Zoho, so the
+   id list is included — full lists, not max id, because Zoho ids aren't
+   chronological and max proved blind to low-id newcomers. Match with
    cached fingerprint → return `{skipped:true}` with **zero DB reads**.
    Requires all comment fetches to succeed; `force` skips the gate.
+   Legacy plain-string values auto-migrate (one transitional full pass).
 5. **Metadata sync** (always, before AI): single `findMany` of existing rows
    reused for change detection; field-wise compare
    (number/customer/total/date/status) → `upsert` only changed rows.

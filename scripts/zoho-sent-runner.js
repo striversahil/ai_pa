@@ -292,26 +292,50 @@ function oldestFirst(a, b) {
 }
 
 /**
- * Deterministic fingerprint of the Zoho payload the runner just fetched:
- * estimate id/status/total/last_modified plus the max real-sales comment id per
- * estimate. Comments don't bump last_modified_time in Zoho, so they're part of
- * the fingerprint to catch comment-only changes. The runner computes this from
- * its OWN network fetch (no DB reads) and compares against the KV fingerprint
- * stored by the previous complete run.
+ * Id-order-proof fingerprint of the Zoho payload the runner just fetched.
+ *
+ * Zoho comment_ids are NOT chronological (observed: newer comments with
+ * SMALLER ids, e.g. EST-023207/EST-023377), so a max-id fingerprint is blind
+ * to newcomers that sort below the current max — normal ticks would never
+ * reprocess them. Instead the fingerprint is a deterministic JSON string
+ * {v:2, byEst:{estimateId:[sorted real comment ids]}} (sorted keys → plain
+ * === compares). Any added comment, whatever its id, changes the string.
+ * byEst doubles as the per-estimate baseline for exact newcomer detection
+ * (zero DB reads). Legacy plain-string values fail the shape check and are
+ * treated as a mismatch (one transitional full pass, max-id fallback).
  */
-function fingerprintPayload(estimates, fetchedByEst) {
-  const parts = [];
-  for (const est of estimates) {
-    let maxCommentId = '';
+function buildFingerprint(estimates, fetchedByEst) {
+  const byEst = {};
+  for (const est of [...estimates].sort((a, b) => String(a.estimate_id).localeCompare(String(b.estimate_id)))) {
+    const ids = [];
     const bucket = fetchedByEst.get(est.estimate_id);
     for (const c of bucket?.comments || []) {
       if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
-      if (c.comment_id > maxCommentId) maxCommentId = c.comment_id;
+      ids.push(String(c.comment_id));
     }
-    parts.push([est.estimate_id, est.status, est.total, est.last_modified_time, maxCommentId].join('|'));
+    // m = estimate metadata (status/total/lastmod): a metadata-only change
+    // must also break the fingerprint even when no comment arrived.
+    byEst[est.estimate_id] = {
+      m: [est.status, est.total, est.last_modified_time].join('|'),
+      ids: [...new Set(ids)].sort(),
+    };
   }
-  parts.sort();
-  return parts.join('\n');
+  const fp = JSON.stringify({ v: 2, byEst });
+  const map = new Map(Object.entries(byEst).map(([k, v]) => [k, new Set(v.ids)]));
+  return { fp, byEst: map };
+}
+
+/** Parse a stored fingerprint back into per-estimate id sets. Null when the
+ *  value is legacy-shaped or corrupt → caller falls back to max-id compare. */
+function parseFingerprint(raw) {
+  try {
+    if (typeof raw !== 'string' || !raw.startsWith('{')) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || obj.v !== 2 || !obj.byEst || typeof obj.byEst !== 'object') return null;
+    return new Map(Object.entries(obj.byEst).map(([k, v]) => [k, new Set((v?.ids || []).map(String))]));
+  } catch {
+    return null;
+  }
 }
 
 async function zohoFetch(url) {
@@ -720,14 +744,21 @@ async function main() {
   //     Zoho exactly — skip every DB read/write (state fetch, metadata sync,
   //     closed status check, comments upsert, AI). This is the whole point of
   //     the KV cache: a quiet 15-min tick costs ZERO D1 row reads.
+  // Per-estimate id-set baseline from the previous complete run (filled by
+  // the fingerprint fast-path above; null on legacy values/force → the
+  // max-id DB fallback in the comment-diff step below).
+  let prevByEst = null;
   if (!forced && estimates.length > 0 && fetchedByEst.size === estimates.length) {
-    const fp = fingerprintPayload(estimates, fetchedByEst);
+    const current = buildFingerprint(estimates, fetchedByEst);
     const fpRes = await workerRequest('/api/runner/zoho/fingerprint').catch(() => ({ fingerprint: null }));
+    // Exact per-estimate baseline from the previous complete run (zero DB
+    // reads). Legacy/corrupt values parse to null → max-id fallback below.
+    prevByEst = parseFingerprint(fpRes?.fingerprint);
     // needsBackfill is true while ANY active estimate still has
     // detailsCaptured=false — keep re-entering so uncaptured estimates stay in
     // the 15-min detail-capture loop (the sales agent may take ~40 min to post
     // the lead block). The fingerprint alone would skip them on a quiet tick.
-    if (fpRes?.fingerprint && fpRes.fingerprint === fp && !fpRes.needsBackfill) {
+    if (fpRes?.fingerprint && fpRes.fingerprint === current.fp && !fpRes.needsBackfill) {
       console.log('zoho-sent-runner: no change detected and no details pending — skipping full sync (served from fingerprint). 0 DB row reads.');
       return;
     }
@@ -823,15 +854,24 @@ async function main() {
   }
 
   // 5. Comment diff — comments were already fetched from Zoho in step 1b
-  //    (network). Detect which estimates gained NEW comments by comparing Zoho's
-  //    max comment_id against the highest one stored in the DB (from /state).
+  //    (network). Detect which estimates gained NEW comments. Exact set-diff
+  //    against the previous complete run's id sets (id-order-proof: a newcomer
+  //    with a smaller id still counts); max-id DB compare only as the legacy
+  //    fallback when no baseline map is available.
   for (const [estId, bucket] of fetchedByEst) {
-    let maxZohoId = '';
+    const zohoIds = [];
     for (const c of bucket.comments) {
       if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
-      if (c.comment_id > maxZohoId) maxZohoId = c.comment_id;
+      zohoIds.push(String(c.comment_id));
     }
-    bucket.hasNew = maxZohoId > (maxCommentIdByEst[estId] || '');
+    const prev = prevByEst?.get(estId);
+    if (prev) {
+      bucket.hasNew = zohoIds.some((id) => !prev.has(id));
+    } else {
+      let maxZohoId = '';
+      for (const id of zohoIds) if (id > maxZohoId) maxZohoId = id;
+      bucket.hasNew = maxZohoId > (maxCommentIdByEst[estId] || '');
+    }
   }
 
   const AI_CONCURRENCY = 6;
@@ -983,7 +1023,7 @@ async function main() {
   // fingerprint so the next 15-min tick can skip every DB read when unchanged.
   // A run with failures is NOT fingerprinted (the DB may not match Zoho yet).
   if (failed === 0) {
-    const fp = fingerprintPayload(estimates, fetchedByEst);
+    const { fp } = buildFingerprint(estimates, fetchedByEst);
     await workerRequest('/api/runner/zoho/fingerprint', {
       method: 'POST',
       body: { fingerprint: fp },
