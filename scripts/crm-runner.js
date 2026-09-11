@@ -71,21 +71,6 @@ function buildSalesOrderDetailUrl(salesorderId) {
   return `https://books.zoho.com/api/v3/salesorders/${salesorderId}?organization_id=${orgId}`;
 }
 
-// Bounded-parallel map (fail-soft per item — a single bad SO never kills the tick).
-async function mapPool(items, limit, fn) {
-  const out = new Array(items.length);
-  let i = 0;
-  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (i < items.length) {
-      const idx = i++;
-      try { out[idx] = await fn(items[idx], idx); }
-      catch (e) { out[idx] = { __error: e?.message || String(e) }; }
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
-
 // Full line items for one SO via the detail endpoint (the list endpoint never
 // includes line_items). One 429 backoff + retry; a second consecutive 429
 // OPENS the circuit — remaining rows skip items this tick (fail fast, no
@@ -415,8 +400,7 @@ async function main() {
   const materialMap = new Map();
   // Delta-fetch: a display row hits Zoho ONLY when it is new, moved stage, or
   // was never captured (empty sig). Unchanged rows reuse the previous sig —
-  // the Worker backfills their items from the stored snapshot. A single new
-  // SO therefore costs exactly 1 detail call, not ~500.
+  // the Worker backfills their items from the stored snapshot.
   const queue = [];
   let skipped = 0;
   for (const s of STAGES) {
@@ -426,28 +410,45 @@ async function main() {
       const prev = prevSigs[row.so];
       const prevStage = Array.isArray(prev) ? prev[0] : null;
       const prevSig = Array.isArray(prev) ? prev[1] : '';
+      // Priority: brand-new rows first (createdToday / unseen), then moved or
+      // never-captured rows. Stages scan newest-first, so unshift new rows to
+      // the front — a single new SO is always fetched on its first tick.
       if (prevStage === s && prevSig) {
         hit.entry.itemsSig = prevSig; // worker backfills items
         skipped++;
+      } else if (hit.entry.createdToday || !prev) {
+        queue.unshift(hit);
       } else {
         queue.push(hit);
       }
     }
   }
+  // One-by-one with 10–15s gaps (never a burst → never 429). A per-tick
+  // budget keeps the tick inside the 5-min window; leftovers ride the next
+  // ticks and items ACCUMULATE via worker backfill, so the full set fills in
+  // progressively (~12 rows/tick ≈ 40 ticks for a cold start).
+  const ITEM_BUDGET = 12;
+  const due = queue.slice(0, ITEM_BUDGET);
+  const deferred = queue.length - due.length;
   const t0 = Date.now();
-  // Concurrency 3 + pacing: Zoho blocks bursts (HTTP 429). Idle ticks never
-  // reach here (phase-1 heartbeat), so change-ticks may take ~1 min.
-  const results = await mapPool(queue, 3, async ({ id, row, entry }) => {
-    await sleep(250);
-    const items = (await fetchOrderItems(id)).map(slimItem);
-    row.items = items;
-    row.lineCount = items.length;
-    entry.itemsSig = itemsSig(items);
-    return items.length;
-  });
+  let detailErrors = 0;
+  for (const { id, row, entry } of due) {
+    try {
+      const items = (await fetchOrderItems(id)).map(slimItem);
+      row.items = items;
+      row.lineCount = items.length;
+      entry.itemsSig = itemsSig(items);
+    } catch (e) {
+      detailErrors++;
+      if (e?.message && !String(e.message).includes('circuit open')) {
+        console.log(`crm-runner: detail fetch failed for ${row.so}: ${e.message}`);
+      }
+    }
+    await sleep(10000 + Math.random() * 5000); // 10–15s gap before the next hit
+  }
   const detailMs = Date.now() - t0;
-  const detailErrors = results.filter((r) => r && r.__error).length;
-  for (const { row } of queue) {
+  if (detailCircuitOpen) console.log('crm-runner: detail circuit open — remaining rows skip items this tick');
+  for (const { row } of due) {
     const items = Array.isArray(row.items) ? row.items : [];
     if (items.length > 0) {
       withItems++;
@@ -460,6 +461,7 @@ async function main() {
     }
   }
   if (detailErrors > 0) console.log(`crm-runner: ${detailErrors} detail fetch(es) failed (rows left without items)`);
+  if (deferred > 0) console.log(`crm-runner: ${deferred} row(s) deferred to upcoming ticks (budget ${ITEM_BUDGET}/tick)`);
 
   const materials = [...materialMap.values()]
     .sort((a, b) => b.qty - a.qty)
@@ -495,7 +497,7 @@ async function main() {
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)
     .join('  ');
-  console.log(`crm-runner: ${pages} page(s), ${scanned} scanned, ${totalActive} active SOs (₹${totalValue.toLocaleString()}), ${queue.length} detail fetch(es) + ${skipped} backfilled in ${Math.round(detailMs / 100) / 10}s, ${withItems} with items — ${summary}`);
+  console.log(`crm-runner: ${pages} page(s), ${scanned} scanned, ${totalActive} active SOs (₹${totalValue.toLocaleString()}), ${due.length} detail fetch(es) + ${skipped} backfilled + ${deferred} deferred in ${Math.round(detailMs / 100) / 10}s, ${withItems} with items — ${summary}`);
 }
 
 if (require.main === module) {
