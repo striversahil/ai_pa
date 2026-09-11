@@ -97,6 +97,12 @@ export interface EnquiryItem {
    *  skips the procurement→management loop. False/absent = rate unavailable,
    *  flows to Procurement for quoting and then Management for finalize. */
   rateAvailable?: boolean;
+  /** Management → procurement request: present = management asked for (more)
+   *  vendor rates (incorrect quote / different vendor needed). The item
+   *  returns to the procurement active queue until procurement adds or edits
+   *  a rate, which clears it. */
+  ratesRequested?: string;
+  ratesRequestedAt?: string;
 }
 
 /** ISO instant passthrough (quotedAt/finalizedAt) — invalid values dropped. */
@@ -105,6 +111,13 @@ export const isoOrUndefined = (v: unknown): string | undefined => {
   const d = new Date(String(v));
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 };
+
+/** Strict quantity: plain digits with an optional decimal part only.
+ *  Anything else (units, words, blanks) is rejected to "". */
+export function normalizeQty(v: unknown): string {
+  const s = String(v ?? '').trim();
+  return /^\d+(\.\d+)?$/.test(s) ? s : '';
+}
 
 /** ~10MB binary per attachment (base64 inflates ~4/3). Enforced client-side
  *  and re-checked server-side in routes pick(). */
@@ -256,7 +269,7 @@ export function parseItems(raw: string | null): EnquiryItem[] {
     return parsed
       .map((r: any) => ({
         name: String(r?.name ?? '').slice(0, 300),
-        qty: String(r?.qty ?? '').slice(0, 120),
+        qty: normalizeQty(r?.qty).slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
         media: parseItemMedia(r?.media),
         rates: parseItemRates(r?.rates),
@@ -267,6 +280,8 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
+        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
       }))
       .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -328,7 +343,7 @@ export function sanitize(e: any): Enquiry {
     items: Array.isArray((e as any).items)
       ? (e as any).items.map((r: any) => ({
           name: String(r?.name ?? '').slice(0, 300),
-          qty: String(r?.qty ?? '').slice(0, 120),
+          qty: normalizeQty(r?.qty).slice(0, 120),
           spec: String(r?.spec ?? '').slice(0, 2000),
           media: parseItemMedia(r?.media),
           rates: parseItemRates(r?.rates),
@@ -339,6 +354,8 @@ export function sanitize(e: any): Enquiry {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
+        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         }))
       : [],
   };

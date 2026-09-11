@@ -62,6 +62,8 @@ function toEnquiry(raw: any): Enquiry {
         specIssue: r?.specIssue ? String(r.specIssue) : undefined,
         specFlaggedAt: r?.specFlaggedAt ? String(r.specFlaggedAt) : undefined,
         rateAvailable: r?.rateAvailable === true,
+        ratesRequested: r?.ratesRequested ? String(r.ratesRequested) : undefined,
+        ratesRequestedAt: r?.ratesRequestedAt ? String(r.ratesRequestedAt) : undefined,
       })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
     : [];
   return {

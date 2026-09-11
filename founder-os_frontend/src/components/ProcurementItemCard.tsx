@@ -102,6 +102,18 @@ export default function ProcurementItemCard({
         </div>
       )}
 
+      {item.ratesRequested && (
+        <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-2.5 text-[11px] leading-relaxed">
+          <p className="font-extrabold text-indigo-500 uppercase tracking-wide text-[10px]">Management requested more vendor rates</p>
+          {item.ratesRequested.trim() && (
+            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{item.ratesRequested}</p>
+          )}
+          <p className="mt-1 text-[var(--text-tertiary)]">
+            Add or edit a rate below to answer — the request clears automatically.
+          </p>
+        </div>
+      )}
+
       {rates.length > 0 && (
         <ul className="space-y-1">
           {rates.map((r, ri) => (

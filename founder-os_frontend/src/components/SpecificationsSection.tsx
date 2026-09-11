@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Enquiry, EnquiryItem, EnquiryMedia, parseMoneyInput } from "../mockData";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
+import { cleanQty, duplicateItem } from "./ItemBoxList";
 
 /** ~10MB per file (stored as data-URI on the item; server re-checks). */
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
@@ -124,6 +125,10 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     onUpdateItems(items.filter((_, i) => i !== idx));
     if (editingIdx === idx) setEditingIdx(null);
   };
+  const copyItem = (idx: number) => {
+    if (!onUpdateItems) return;
+    onUpdateItems([...items.slice(0, idx + 1), duplicateItem(items[idx]), ...items.slice(idx + 1)]);
+  };
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
@@ -163,16 +168,18 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                 <li key={idx} className="text-xs md:text-sm bg-[var(--bg-input)]/25 p-3 rounded-xl border border-[var(--border-card)]/50">
                   {editingIdx === idx && editable ? (
                     <div className="space-y-2">
-                      <input
+                      <textarea
                         value={draft.name}
                         onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                         placeholder="Item name"
-                        className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+                        rows={2}
+                        className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
                       />
                       <input
                         value={draft.qty}
-                        onChange={(e) => setDraft({ ...draft, qty: e.target.value })}
-                        placeholder="Quantity"
+                        onChange={(e) => setDraft({ ...draft, qty: cleanQty(e.target.value) })}
+                        placeholder="Quantity (numbers only)"
+                        inputMode="decimal"
                         className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
                       />
                       <textarea
@@ -208,10 +215,24 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                               title="Toggle live — the procurement/management queues update instantly"
                             />
                             <button type="button" onClick={() => startEdit(idx)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Edit</button>
+                            <button type="button" onClick={() => copyItem(idx)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Duplicate</button>
                             <button type="button" onClick={() => deleteItem(idx)} className="text-[11px] font-bold text-[var(--color-danger)] hover:opacity-80 cursor-pointer bg-transparent border-0">Delete</button>
                           </span>
                         )}
                       </div>
+                      {it.rateAvailable && (
+                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 text-[11px] font-extrabold">
+                          Rate available
+                        </div>
+                      )}
+                      {it.ratesRequested && (
+                        <div className="mt-1 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-2 text-[11px] leading-relaxed">
+                          <p className="font-extrabold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide text-[10px]">Management requested more vendor rates</p>
+                          {it.ratesRequested.trim() && it.ratesRequested.trim() !== "requested" && (
+                            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.ratesRequested}</p>
+                          )}
+                        </div>
+                      )}
                       {it.specIssue && !redacted && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
@@ -226,11 +247,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           Rate Received: ₹{Number(it.finalRate).toLocaleString("en-IN")}
                         </div>
                       )}
-                      {it.rateAvailable && !editable && (
-                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 text-[11px] font-extrabold">
-                          Rate available
-                        </div>
-                      )}
                       {mode === "none" && (it.rates ?? []).some((r) => r.specSame === false) && (
                         <div className="mt-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wide text-[10px]">
@@ -238,10 +254,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           </p>
                           {(it.rates ?? []).filter((r) => r.specSame === false && r.specDiff).map((r, ri) => (
                             <p key={ri} className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">
-                              <span className="font-bold">Vendor-quoted version: </span>{r.specDiff}
+                              {r.specDiff}
                             </p>
                           ))}
-                          <p className="mt-1 text-[var(--text-tertiary)]">Confirm these dimensions with procurement before committing to the client.</p>
                         </div>
                       )}
                       {((it.rates ?? []).length > 0 || ratesEditable) && showVendorRates && (
@@ -379,7 +394,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                           </svg>
-                          Add photo / video / PDF
+                          Add attachment
                           <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
                             onChange={(e) => { addItemMedia(idx, e.target.files); e.target.value = ""; }} />
                         </label>

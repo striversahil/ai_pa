@@ -1,4 +1,4 @@
-import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText } from "./store";
+import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from "./extract";
@@ -104,7 +104,7 @@ function pick(data: any): Partial<Enquiry> | null {
     out.items = (Array.isArray(data.items) ? data.items : [])
       .map((r: any) => ({
         name: String(r?.name ?? '').slice(0, 300),
-        qty: String(r?.qty ?? '').slice(0, 120),
+        qty: normalizeQty(r?.qty).slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
         media: parseItemMedia(r?.media),
         rates: parseItemRates(r?.rates),
@@ -115,6 +115,8 @@ function pick(data: any): Partial<Enquiry> | null {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
+        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -131,6 +133,23 @@ export function canManageRates(me: MeResponse): boolean {
   if (!me) return false;
   if (me.isAdmin || (me as any).isRoot) return true;
   return ((me as any).scopes || []).includes('mis');
+}
+
+/** Lead inference (telecalling creator-first pattern): resolve the signed-in
+ *  user to a sales agent via their email on the Telecaller roster. Returns
+ *  the telecaller id, or null when no roster row matches. */
+export async function resolveCreatorAgentId(prisma: any, me: MeResponse): Promise<string | null> {
+  const email = String((me as any)?.user?.email ?? '').toLowerCase().trim();
+  if (!email) return null;
+  try {
+    const roster = await prisma.telecaller.findMany();
+    const hit = ((roster as any[]) ?? []).find(
+      (t) => String(t?.email ?? '').toLowerCase().trim() === email && !t?.deleted,
+    );
+    return hit ? String(hit.id) : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface RedactOpts {
@@ -236,6 +255,12 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
       // Rate-availability is live workflow metadata too: the procurement queue
       // predicate depends on it, so it rides along regardless of cache path.
       served.rateAvailable = (it as any)?.rateAvailable === true;
+      // Management rate-requests are live workflow metadata as well: overlay
+      // stored values so the queue predicate never waits on the AI cache.
+      if ((it as any)?.ratesRequested) {
+        served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
+        if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
+      }
       servedItems.push(served);
     });
     return {
@@ -298,10 +323,11 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     items: (Array.isArray(body.items) ? body.items : [])
       .map((r: any) => ({
         name: String(r?.name ?? '').slice(0, 300),
-        qty: String(r?.qty ?? '').slice(0, 120),
+        qty: normalizeQty(r?.qty).slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
         media: parseItemMedia(r?.media),
         rates: parseItemRates(r?.rates),
+        rateAvailable: r?.rateAvailable === true,
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100),
@@ -381,17 +407,63 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
         base.spec = stored.spec ?? "";
         base.media = stored.media ?? [];
         base.rateAvailable = stored.rateAvailable === true;
+        // A fresh/edited rate answers Management's request — clear it.
+        // Untouched rates keep a pending request alive.
+        const ratesChanged = JSON.stringify(base.rates ?? []) !== JSON.stringify(stored.rates ?? []);
+        base.ratesRequested = ratesChanged ? undefined : stored.ratesRequested;
+        base.ratesRequestedAt = ratesChanged ? undefined : stored.ratesRequestedAt;
+      }
+      // Management rate-request lifecycle: only privileged writers may set
+      // it. Plain sales writers follow the stored value so a stale edit can
+      // never forge or wipe an active request; procurement clears it by
+      // changing rates (handled in the restricted branch above).
+      if (!privileged && !restricted) {
+        base.ratesRequested = stored.ratesRequested;
+        base.ratesRequestedAt = stored.ratesRequestedAt;
+      } else {
+        // Submitted value stands (privileged set it, or the restricted
+        // branch above already resolved it) — but a concurrent rate change
+        // answers the request, so drop it.
+        const ratesChanged = JSON.stringify(parseItemRates(base.rates ?? [])) !== JSON.stringify(parseItemRates(stored.rates ?? []));
+        if (ratesChanged) {
+          base.ratesRequested = undefined;
+          base.ratesRequestedAt = undefined;
+        }
+        // A fresh management request on a finalized item reopens it — the
+        // previous decision clears so the new quotes flow back to review.
+        if (privileged && base.ratesRequested && !stored.ratesRequested
+          && stored.finalRate !== undefined && stored.finalRate !== null) {
+          base.selectedVendor = undefined;
+          base.markup = undefined;
+          base.finalRate = undefined;
+          base.finalizedAt = undefined;
+        }
       }
       // Spec-dispute lifecycle (all writers):
-      // - a spec text change clears an open flag (the sales-correction path);
+      // - a spec text change OR fresh reference media (client-shared photo /
+      //   drawing / video) clears an open flag — that is the sales-correction
+      //   reshare path: the fixed item (with its new attachments) flows back
+      //   into the procurement → management loop via the normal predicates;
       // - otherwise an open flag survives even if the write omits it;
       // - finalized items can't be newly flagged.
       const hadFlag = !!stored.specIssue;
       const specChanged = String(base.spec ?? "") !== String(stored.spec ?? "");
+      const mediaChanged = JSON.stringify(parseItemMedia(base.media ?? [])) !== JSON.stringify(parseItemMedia(stored.media ?? []));
+      const fixed = specChanged || mediaChanged;
       if (stored.finalRate !== undefined && stored.finalRate !== null) {
-        base.specIssue = stored.specIssue;
-        base.specFlaggedAt = stored.specFlaggedAt;
-      } else if (specChanged) {
+        // Privileged re-flag (incorrect rates / need other vendors): reopen
+        // the item — the flag attaches and the previous decision clears, so
+        // procurement picks it back up. Otherwise finalized items are frozen.
+        if (privileged && base.specIssue && !stored.specIssue) {
+          base.selectedVendor = undefined;
+          base.markup = undefined;
+          base.finalRate = undefined;
+          base.finalizedAt = undefined;
+        } else {
+          base.specIssue = stored.specIssue;
+          base.specFlaggedAt = stored.specFlaggedAt;
+        }
+      } else if (fixed) {
         delete base.specIssue;
         delete base.specFlaggedAt;
       } else if (hadFlag && base.specIssue === undefined) {

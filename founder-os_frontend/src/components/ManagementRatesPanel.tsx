@@ -36,6 +36,13 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [finalInputs, setFinalInputs] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedTick, setSavedTick] = useState(false);
+  // Rate-requests back to procurement (incorrect quote / different vendor
+  // needed): per-item note overrides applied at save time.
+  const [reqs, setReqs] = useState<Record<number, string | null>>({});
+  const [reqOpen, setReqOpen] = useState<number | null>(null);
+  const [reqNote, setReqNote] = useState("");
 
   useEffect(() => {
     const s: Record<number, string> = {};
@@ -54,12 +61,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     setModes({});
     setPctInputs(p);
     setFinalInputs(f);
+    setReqs({});
+    setReqOpen(null);
+    setReqNote("");
     setConfirming(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enquiry.id]);
 
   const finalized = enquiry.rateStatus === "finalized";
-  const actionableCount = items.filter((it) => !it.specIssue).length;
+  // Rate-available items skip the loop entirely: never shown, never touched,
+  // never counted here (same rule as the pending queue predicate).
+  const actionableCount = items.filter((it) => !it.specIssue && !it.rateAvailable).length;
 
   const vendorRate = (idx: number, vendor: string): number | undefined =>
     items[idx] ? (items[idx].rates ?? []).find((r) => r.vendor === vendor)?.rate : undefined;
@@ -91,10 +103,22 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
 
   const buildItems = (finalize: boolean): EnquiryItem[] =>
     items.map((it, i) => {
-      // Held for a sales spec correction: never touched here, never finalized.
-      if (it.specIssue) return { ...it };
+      // Held for a sales spec correction, or rate already available: never
+      // touched here, never finalized.
+      if (it.specIssue || it.rateAvailable) return { ...it };
       const vendor = sel[i] ?? it.selectedVendor ?? "";
       const out: EnquiryItem = { ...it, selectedVendor: vendor || undefined };
+      // Management rate-request (incorrect quote / different vendor needed):
+      // attaches the flag + timestamp; null withdraws an unanswered request.
+      if (reqs[i] !== undefined) {
+        if (reqs[i] === null) {
+          delete out.ratesRequested;
+          delete out.ratesRequestedAt;
+        } else {
+          out.ratesRequested = reqs[i] || "requested";
+          out.ratesRequestedAt = new Date().toISOString();
+        }
+      }
       const c = computeItem(i, it);
       if (c) {
         out.markup = c.markup;
@@ -104,10 +128,34 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       return out;
     });
 
+  const dropRate = (i: number, ri: number) => {
+    void onSave(
+      items.map((it, j) => (j === i ? { ...it, rates: (it.rates ?? []).filter((_, k) => k !== ri) } : it)),
+      false,
+    );
+  };
+
+  const submitRequest = (i: number) => {
+    setReqs((prev) => ({ ...prev, [i]: reqNote.trim() }));
+    setReqOpen(null);
+    setReqNote("");
+  };
+
   const doSave = async (finalize: boolean) => {
     setBusy(true);
+    setSaveError(null);
+    setSavedTick(false);
     try {
       await onSave(buildItems(finalize), finalize);
+      // Success: drop the just-saved drafts so the panel shows stored truth.
+      setPctInputs({});
+      setFinalInputs({});
+      setModes({});
+      setReqs({});
+      setReqOpen(null);
+      setSavedTick(true);
+    } catch (e: any) {
+      setSaveError(e?.message || "Save failed — please retry.");
     } finally {
       setBusy(false);
       setConfirming(false);
@@ -136,8 +184,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               {items.filter((it) => it.specIssue).length} item{items.filter((it) => it.specIssue).length === 1 ? "" : "s"} held — spec correction with Sales (shown again once fixed).
             </p>
           )}
+          {items.some((it) => it.rateAvailable) && (
+            <p className="text-[11px] font-semibold text-zinc-500">
+              {items.filter((it) => it.rateAvailable).length} item{items.filter((it) => it.rateAvailable).length === 1 ? "" : "s"} with available rates — skipped (no decision needed).
+            </p>
+          )}
           {items.map((it, i) => {
             if (it.specIssue) return null; // held out — only correct-spec items are shown
+            if (it.rateAvailable) return null; // rate already available — skips Management entirely
             const rates = it.rates ?? [];
             const vendor = sel[i] ?? it.selectedVendor ?? "";
             const rate = rates.find((r) => r.vendor === vendor)?.rate;
@@ -171,6 +225,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30">Spec differs</span>
                             )}
                             <span className="font-mono text-zinc-400">₹{Number(r.rate).toLocaleString("en-IN")}</span>
+                            {!finalized && (
+                              <button type="button" onClick={() => dropRate(i, ri)} title="Remove incorrect rate"
+                                className="text-zinc-600 hover:text-red-400 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">×</button>
+                            )}
                           </span>
                           {r.description && (
                             <span className="block text-zinc-500 whitespace-pre-wrap leading-relaxed mt-0.5">{r.description}</span>
@@ -238,6 +296,38 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   {finalized && it.finalRate !== undefined && it.finalRate !== null && (
                     <span className="block text-[11px] text-zinc-500">Locked at {fmtINR(it.finalRate)}</span>
                   )}
+                  {(it.ratesRequested || reqs[i]) && (
+                    <p className="text-[10px] font-semibold text-indigo-400">
+                      Rates requested from procurement{it.ratesRequested && it.ratesRequested !== "requested" ? `: ${it.ratesRequested}` : "…"}
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {reqOpen === i ? (
+                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-indigo-500/40 p-2">
+                      <input
+                        value={reqNote}
+                        onChange={(e) => setReqNote(e.target.value)}
+                        placeholder="What is wrong / which vendor? (optional)"
+                        className="w-full px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                      />
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => submitRequest(i)}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                          Flag procurement
+                        </button>
+                        <button type="button" onClick={() => { setReqOpen(null); setReqNote(""); }}
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => { setReqOpen(i); setReqNote(""); }}
+                      className="px-2.5 py-1.5 bg-transparent border border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
+                      Flag procurement
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -253,6 +343,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         >
           {busy ? "Saving…" : "Save rates"}
         </button>
+        {saveError && (
+          <span className="text-[11px] font-semibold text-red-400">{saveError}</span>
+        )}
+        {savedTick && !saveError && (
+          <span className="text-[11px] font-extrabold text-emerald-400">Saved ✓</span>
+        )}
         {!finalized ? (
           confirming ? (
             <>

@@ -44,6 +44,7 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
   if (activeImages.length === 0 || !activeImage) return null;
 
   const isVideo = typeof activeImage === "string" && activeImage.startsWith("data:video/");
+  const isPdf = typeof activeImage === "string" && (activeImage.startsWith("data:application/pdf") || activeImage.endsWith(".pdf"));
 
   const handleNext = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -112,7 +113,18 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
 
       {/* Main Image Container */}
       <div className="relative max-w-[95vw] max-h-[90vh] flex flex-col items-center">
-        {isVideo ? (
+        {isPdf ? (
+          <div className="flex flex-col items-center gap-4 rounded-lg border border-white/10 bg-zinc-900 p-10 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <svg className="w-16 h-16 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            <p className="text-sm font-semibold text-white">PDF document</p>
+            <a href={activeImage} download={`document-${currentIndex + 1}.pdf`}
+              className="px-4 py-2 rounded-lg bg-brand-indigo text-white text-xs font-bold">
+              Download PDF
+            </a>
+          </div>
+        ) : isVideo ? (
           <video
             src={activeImage}
             controls

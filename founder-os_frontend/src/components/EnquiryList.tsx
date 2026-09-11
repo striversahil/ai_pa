@@ -33,8 +33,6 @@ export default function EnquiryList({
 }: EnquiryListProps) {
   // Localized filters state
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [priorityFilter, setPriorityFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [ratesFilter, setRatesFilter] = useState("all");
@@ -110,8 +108,6 @@ export default function EnquiryList({
         e.title.toLowerCase().includes(query) ||
         e.contactName.toLowerCase().includes(query);
 
-      const matchStatus = statusFilter === "all" || e.status === statusFilter;
-      const matchPriority = priorityFilter === "all" || e.priority === priorityFilter;
       const matchAgent = agentFilter === "all" || e.assignedAgentId === agentFilter;
       const matchSource = sourceFilter === "all" || (e.source || "TL") === sourceFilter;
       const matchRates = ratesFilter === "all"
@@ -120,20 +116,16 @@ export default function EnquiryList({
 
       const matchDate = !selectedDate || new Date(e.createdAt).toISOString().split("T")[0] === selectedDate;
 
-      return matchSearch && matchStatus && matchPriority && matchAgent && matchSource && matchRates && matchDate;
+      return matchSearch && matchAgent && matchSource && matchRates && matchDate;
     });
-  }, [enquiries, searchQuery, statusFilter, priorityFilter, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly]);
+  }, [enquiries, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly]);
 
   const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold font-heading tracking-tight">Daily Enquiries</h1>
-          <p className="text-[var(--text-secondary)] text-sm mt-1">Track and confirm incoming client requests.</p>
-        </div>
+      {/* Header — title lives in the tracker shell ("Daily Enquiries") */}
+      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-end gap-4">
         <div className="flex flex-wrap items-center gap-2">
           <button 
             onClick={onExportCSV} 
@@ -211,15 +203,10 @@ export default function EnquiryList({
       <FilterControls
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
-        statusFilter={statusFilter}
-        setStatusFilter={setStatusFilter}
-        priorityFilter={priorityFilter}
-        setPriorityFilter={setPriorityFilter}
         agentFilter={agentFilter}
         setAgentFilter={setAgentFilter}
         agents={agents}
         hideAgentFilter={redacted}
-        hideStatusFilter={redacted}
         sourceFilter={sourceFilter}
         setSourceFilter={redacted ? undefined : setSourceFilter}
         ratesFilter={ratesFilter}

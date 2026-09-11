@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from "react";
-import { Agent, Enquiry, Comment, enquiryLabel } from "../mockData";
+import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../mockData";
 import CommentNode from "./CommentNode";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
 import ActivityTimeline from "./ActivityTimeline";
+import Modal from "./Modal";
+import ItemBoxList, { blankItem } from "./ItemBoxList";
 
 interface EnquiryDetailProps {
   selectedEnquiry: Enquiry;
@@ -13,13 +15,13 @@ interface EnquiryDetailProps {
   onUpdateStatus: (id: string, newStatus: Enquiry["status"]) => void;
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
-  onAddRequirement: (id: string, text: string, imageUrl?: string) => Promise<any>;
   onUpdateItems?: (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => void;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   redacted?: boolean;
+  /** Vendor-rate visibility forwarded to SpecificationsSection. */
   ratesMode?: "none" | "edit" | "view";
 }
 
@@ -31,7 +33,6 @@ export default function EnquiryDetail({
   onUpdateStatus,
   onUpdateAgent,
   onAddComment,
-  onAddRequirement,
   onUpdateItems,
   onDeleteEnquiry,
   onOpenEdit,
@@ -48,33 +49,19 @@ export default function EnquiryDetail({
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [commentImage, setCommentImage] = useState<string | null>(null);
 
-  // Additional requirement popup states
-  const [reqOpen, setReqOpen] = useState(false);
-  const [reqText, setReqText] = useState("");
-  const [reqImage, setReqImage] = useState<string | null>(null);
-  const [reqSaving, setReqSaving] = useState(false);
+  // Multi-item add: same item boxes as the B2B form (name/qty/spec/media +
+  // duplicate + new-item box), appended to the enquiry's items on save.
+  const [itemsOpen, setItemsOpen] = useState(false);
+  const [newItems, setNewItems] = useState<EnquiryItem[]>([blankItem()]);
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const handleRequirementImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setReqImage(reader.result as string);
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleAddRequirement = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reqText.trim() || reqSaving) return;
-    setReqSaving(true);
-    onAddRequirement(selectedEnquiry.id, reqText.trim(), reqImage || undefined)
-      .then(() => {
-        setReqText(""); setReqImage(null); setReqOpen(false);
-      })
-      .catch(() => {})
-      .finally(() => setReqSaving(false));
+  const handleSaveNewItems = () => {
+    const fresh = newItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0);
+    if (fresh.length === 0 || !onUpdateItems) return;
+    onUpdateItems(selectedEnquiry.id, [...(selectedEnquiry.items ?? []), ...fresh]);
+    setNewItems([blankItem()]);
+    setItemsOpen(false);
   };
 
   // Nested comment trees calculations
@@ -206,14 +193,14 @@ export default function EnquiryDetail({
           <div className="flex items-center justify-between">
             <h3 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Requirements</h3>
             <button
-              onClick={() => setReqOpen(true)}
+              onClick={() => { setNewItems([blankItem()]); setItemsOpen(true); }}
               className="inline-flex items-center gap-1.5 px-3 py-2 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
               type="button"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
-              Add Additional Requirement
+              Add Items
             </button>
           </div>
 
@@ -356,48 +343,21 @@ export default function EnquiryDetail({
         </div>
       )}
 
-      {/* Add Additional Requirement popup */}
-      {reqOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50" onClick={() => setReqOpen(false)}>
-          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-xl w-full max-w-md animate-fade-in flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center px-5 py-4 border-b border-[var(--border-card)]">
-              <h2 className="font-heading font-extrabold text-base">Add Additional Requirement</h2>
-              <button onClick={() => setReqOpen(false)} className="p-1 rounded-full hover:bg-[var(--bg-input)] transition-all cursor-pointer bg-transparent border-0" type="button">
-                <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <form onSubmit={handleAddRequirement} className="p-5 space-y-4">
-              <textarea
-                rows={3}
-                value={reqText}
-                onChange={(e) => setReqText(e.target.value)}
-                placeholder="Describe the additional requirement… (added as a new item for vendor rates)"
-                className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm resize-y text-[var(--text-primary)]"
-                required
-              />
-              {reqImage && (
-                <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                  <img src={reqImage} alt="Requirement attachment" className="w-full h-full object-cover" />
-                  <button type="button" onClick={() => setReqImage(null)} className="absolute top-1 right-1 bg-black/75 text-zinc-900 dark:text-white w-5 h-5 rounded-full flex items-center justify-center text-xs cursor-pointer font-bold border-0">&times;</button>
-                </div>
-              )}
-              <div className="flex justify-between items-center pt-2 border-t border-[var(--border-card)]/50">
-                <label className="p-1.5 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer rounded-lg bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-all">
-                  <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  <input type="file" onChange={handleRequirementImageUpload} accept="image/*" className="hidden" />
-                </label>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setReqOpen(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
-                  <button type="submit" disabled={reqSaving} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer disabled:opacity-50">
-                    {reqSaving ? "Adding..." : "Add Requirement"}
-                  </button>
-                </div>
-              </div>
-            </form>
+      {/* Add Items popup — same multi-item boxes as the B2B form */}
+      {itemsOpen && (
+        <Modal
+          title="Add Items"
+          subtitle="New items join the vendor-rate flow as rate-pending"
+          onClose={() => setItemsOpen(false)}
+        >
+          <ItemBoxList items={newItems} onChange={setNewItems} />
+          <div className="flex justify-end gap-2 pt-3">
+            <button type="button" onClick={() => setItemsOpen(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
+            <button type="button" onClick={handleSaveNewItems} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer">
+              Add Items
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

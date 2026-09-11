@@ -72,7 +72,15 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/enquiries', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await EnquiryRoutes.enquiryCreate(createEnquiryStore(c.env), me, await c.req.json().catch(() => ({})));
+    const body = await c.req.json().catch(() => ({}));
+    // Lead auto-detect: no selector in the form — the creator's roster row
+    // (matched by login email, telecalling creator-first pattern) owns it.
+    if (!String(body?.assignedAgentId ?? '').trim()) {
+      try {
+        body.assignedAgentId = (await EnquiryRoutes.resolveCreatorAgentId(deps().prisma, me)) ?? '';
+      } catch { /* fallback below (auth id) */ }
+    }
+    const r = await EnquiryRoutes.enquiryCreate(createEnquiryStore(c.env), me, body);
     enquirySend(c, r);
     return c.json(r.body, r.status as any);
   });

@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
+import { useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ProcurementItemCard from "@/components/ProcurementItemCard";
 import Modal from "@/components/Modal";
@@ -63,8 +64,46 @@ export default function ProcurementQueue() {
   const allowed = !!me && (me.isAdmin || scopes.includes("mis") || scopes.includes("procurement"));
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [selected, setSelected] = useState<{ enquiryId: string; itemIdx: number; readOnly: boolean } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const { enquiries, loaded, updateItems } = useEnquiryData("procurement");
+
+  // Live intimations: management rate-requests (act on the item) and sales
+  // spec fixes (flagged item reshared with corrections/reference media).
+  const [toast, setToast] = useState<{ id: string; label: string; title: string; kind: "request" | "fixed" } | null>(null);
+  const requestedRef = useRef<Record<string, number>>({});
+  const flaggedRef = useRef<Record<string, number>>({});
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    for (const e of enquiries) {
+      if (requestedRef.current[e.id] === undefined) requestedRef.current[e.id] = (e.items ?? []).filter((it) => it.ratesRequested).length;
+      if (flaggedRef.current[e.id] === undefined) flaggedRef.current[e.id] = (e.items ?? []).filter((it) => it.specIssue).length;
+    }
+  }, [loaded, enquiries]);
+  useLiveEvent((e: any) => {
+    if (!e || e.type !== "enquiries" || !e.enquiry) return;
+    const id = String(e.enquiry.id ?? "");
+    if (!id) return;
+    const raw = e.enquiry;
+    const label = enquiryLabel({ dailyNo: raw.dailyNo ?? null, createdAt: raw.createdAt ?? "", source: raw.source ?? "TL" });
+    const title = String(raw.title || "Untitled enquiry");
+    const requested = ((raw.items ?? []) as any[]).filter((it) => it?.ratesRequested).length;
+    if (requestedRef.current[id] !== undefined && requested > requestedRef.current[id]) {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      setToast({ id, label, title, kind: "request" });
+      toastTimer.current = setTimeout(() => setToast(null), 10000);
+    }
+    requestedRef.current[id] = requested;
+    const flagged = ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
+    if (flaggedRef.current[id] !== undefined && flagged < flaggedRef.current[id]) {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      setToast({ id, label, title, kind: "fixed" });
+      toastTimer.current = setTimeout(() => setToast(null), 10000);
+    }
+    flaggedRef.current[id] = flagged;
+  });
 
   const pending = useMemo(() => enquiries.filter(isProcurementPending).sort(byNewest), [enquiries]);
   const activeRows: ItemRow[] = useMemo(() => {
@@ -76,18 +115,18 @@ export default function ProcurementQueue() {
     }
     return out;
   }, [pending]);
-  // History: every item rated — already quoted, newest first.
+  // History: every RATED item with no open request — per item, not per
+  // enquiry, so a rate-available (unrated) sibling never hides quoted items.
   const byActivity = (a: Enquiry, b: Enquiry): number =>
     String(b.updatedAt ?? b.createdAt ?? "").localeCompare(String(a.updatedAt ?? a.createdAt ?? ""));
   const historyRows: ItemRow[] = useMemo(() => {
-    const done = enquiries
-      .filter((e) => {
-        const items = e.items ?? [];
-        return items.length > 0 && items.every((it) => (it.rates ?? []).length > 0);
-      })
-      .sort(byActivity);
     const out: ItemRow[] = [];
-    for (const e of done) (e.items ?? []).forEach((item, itemIdx) => out.push({ enquiry: e, item, itemIdx }));
+    const sorted = [...enquiries].sort(byActivity);
+    for (const e of sorted) {
+      (e.items ?? []).forEach((item, itemIdx) => {
+        if ((item.rates ?? []).length > 0 && !item.ratesRequested) out.push({ enquiry: e, item, itemIdx });
+      });
+    }
     return out;
   }, [enquiries]);
   const emptyEnquiries = useMemo(
@@ -118,7 +157,12 @@ export default function ProcurementQueue() {
     enquiryId: string,
     fn: (items: EnquiryItem[]) => EnquiryItem[],
   ) => {
-    await updateItems(enquiryId, fn);
+    setSaveError(null);
+    try {
+      await updateItems(enquiryId, fn);
+    } catch (e: any) {
+      setSaveError(e?.message || "Save failed — please retry.");
+    }
   }, [updateItems]);
 
   const handleAddRate = useCallback((enquiryId: string, itemIdx: number, rate: EnquiryItemRate) =>
@@ -168,6 +212,20 @@ export default function ProcurementQueue() {
           <span className="font-bold text-[var(--text-primary)]">{item.name || `Item ${itemIdx + 1}`}</span>
           {item.qty && <span className="ml-2 text-[11px] text-[var(--text-secondary)]">× {item.qty}</span>}
         </td>
+        <td className={tdClass}>
+          {(item.rates ?? []).length === 0 ? (
+            <span className="text-[11px] text-[var(--text-tertiary)]">—</span>
+          ) : (
+            <span className="flex flex-col gap-0.5">
+              {(item.rates ?? []).map((r, ri) => (
+                <span key={ri} className="text-[11px] whitespace-nowrap">
+                  <span className="font-semibold text-[var(--text-primary)]">{r.vendor}</span>
+                  <span className="font-mono text-[var(--text-secondary)]"> ₹{Number(r.rate).toLocaleString("en-IN")}</span>
+                </span>
+              ))}
+            </span>
+          )}
+        </td>
         <td className="px-4 py-3 border-b border-[var(--border-card)] text-[var(--text-secondary)]">
           <span className="block text-xs max-w-[22rem] truncate">{item.spec || "—"}</span>
         </td>
@@ -189,6 +247,32 @@ export default function ProcurementQueue() {
           {activeRows.length} item{activeRows.length === 1 ? "" : "s"} pending
         </span>
       </div>
+      {saveError && (
+        <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-xs font-bold text-red-500">{saveError}</p>
+      )}
+
+      {toast && (
+        <div className={`fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)] ${
+          toast.kind === "request" ? "border-indigo-500/40" : "border-emerald-500/40"
+        }`}>
+          <div className="flex items-start gap-3">
+            <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base ${
+              toast.kind === "request" ? "bg-indigo-500/15" : "bg-emerald-500/15"
+            }`}>{toast.kind === "request" ? "📩" : "✅"}</span>
+            <div className="min-w-0 flex-1">
+              <p className={`text-xs font-extrabold ${toast.kind === "request" ? "text-indigo-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {toast.kind === "request" ? "Management requested more rates" : "Spec fixed — item reshared"}
+              </p>
+              <p className="truncate text-sm font-bold text-[var(--text-primary)]">{toast.title}</p>
+              <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{toast.label}</p>
+              <button type="button" onClick={() => setToast(null)}
+                className="mt-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-0 bg-transparent">
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isEmpty ? (
         <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
@@ -207,6 +291,7 @@ export default function ProcurementQueue() {
                   <tr>
                     <th className={thClass}>Enquiry</th>
                     <th className={thClass}>Item</th>
+                    <th className={thClass}>Rates</th>
                     <th className={thClass}>Spec</th>
                     <th className={thClass}>Status</th>
                     <th className={thClass}>Quoted</th>
@@ -243,6 +328,7 @@ export default function ProcurementQueue() {
                   <tr>
                     <th className={thClass}>Enquiry</th>
                     <th className={thClass}>Item</th>
+                    <th className={thClass}>Rates</th>
                     <th className={thClass}>Spec</th>
                     <th className={thClass}>Status</th>
                     <th className={thClass}>Quoted</th>

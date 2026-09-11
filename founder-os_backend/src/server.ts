@@ -361,7 +361,14 @@ async function runEnquiryExtraction(id: string) {
 app.post('/api/enquiries', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const r = await EnquiryRoutes.enquiryCreate(enquiryStore, me, req.body || {});
+  const body = req.body || {};
+  // Lead auto-detect — see worker/routes/enquiries.ts POST handler.
+  if (!String(body?.assignedAgentId ?? '').trim()) {
+    try {
+      body.assignedAgentId = (await EnquiryRoutes.resolveCreatorAgentId(prisma, me)) ?? '';
+    } catch { /* fallback (auth id) in enquiryCreate */ }
+  }
+  const r = await EnquiryRoutes.enquiryCreate(enquiryStore, me, body);
   if (r.body?.id) void runEnquiryExtraction(r.body.id);
   res.status(r.status).json(r.body);
 });

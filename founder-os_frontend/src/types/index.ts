@@ -59,11 +59,18 @@ export interface EnquiryItem {
   /** Rate availability (sales-marked): true = rate already available, the item
    *  skips the procurement→management loop. False/absent = rate unavailable. */
   rateAvailable?: boolean;
+  /** Management → procurement request: present = management asked for (more)
+   *  vendor rates (incorrect quote / different vendor needed). Cleared when
+   *  procurement adds or edits a rate. */
+  ratesRequested?: string;
+  ratesRequestedAt?: string;
 }
 
-/** Loop-eligible for Procurement: rate unavailable and still unquoted. */
-export function itemNeedsRates(it: Pick<EnquiryItem, "rateAvailable" | "rates">): boolean {
-  return !it?.rateAvailable && ((it?.rates ?? []).length === 0);
+/** Loop-eligible for Procurement: rate unavailable and (still unquoted OR
+ *  management asked for more quotes). Spec-held items (specIssue) stay
+ *  visible via the pending enquiry — the row chip shows their hold state. */
+export function itemNeedsRates(it: Pick<EnquiryItem, "rateAvailable" | "rates" | "ratesRequested">): boolean {
+  return !it?.rateAvailable && (((it?.rates ?? []).length === 0) || !!it?.ratesRequested);
 }
 
 /** Loop-eligible for Management: rate unavailable, quoted, not finalized,

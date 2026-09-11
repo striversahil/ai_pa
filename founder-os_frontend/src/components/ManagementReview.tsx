@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
+import { useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ManagementRatesPanel from "@/components/ManagementRatesPanel";
 import Modal from "@/components/Modal";
@@ -30,6 +31,37 @@ export default function ManagementReview() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const { enquiries, loaded, agents, updateEnquiry } = useEnquiryData("sales");
+
+  // Live intimation: procurement logged fresh vendor rates (act on the item).
+  const [toast, setToast] = useState<{ id: string; label: string; title: string } | null>(null);
+  const ratesRef = useRef<Record<string, number>>({});
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    for (const e of enquiries) {
+      if (ratesRef.current[e.id] === undefined) {
+        ratesRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + (it.rates ?? []).length, 0);
+      }
+    }
+  }, [loaded, enquiries]);
+  useLiveEvent((e: any) => {
+    if (!e || e.type !== "enquiries" || !e.enquiry) return;
+    const id = String(e.enquiry.id ?? "");
+    if (!id) return;
+    const raw = e.enquiry;
+    const count = ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it?.rates ?? []).length), 0);
+    if (ratesRef.current[id] !== undefined && count > ratesRef.current[id]) {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      setToast({
+        id,
+        label: enquiryLabel({ dailyNo: raw.dailyNo ?? null, createdAt: raw.createdAt ?? "", source: raw.source ?? "TL" }),
+        title: String(raw.title || "Untitled enquiry"),
+      });
+      toastTimer.current = setTimeout(() => setToast(null), 10000);
+    }
+    ratesRef.current[id] = count;
+  });
 
   const byActivity = (a: Enquiry, b: Enquiry): number =>
     String(b.updatedAt ?? b.createdAt ?? "").localeCompare(String(a.updatedAt ?? a.createdAt ?? ""));
@@ -85,8 +117,7 @@ export default function ManagementReview() {
   const renderPendingRows = () => pendingRows.map(({ enquiry: e, itemIdx }) => {
     const it = (e.items ?? [])[itemIdx];
     if (!it) return null;
-    const quotes = (it.rates ?? []).map((r) => r.rate).filter((n) => Number.isFinite(n));
-    const low = quotes.length > 0 ? Math.min(...quotes) : null;
+    const quotes = (it.rates ?? []).filter((r) => Number.isFinite(Number(r.rate)));
     return (
       <tr key={`${e.id}-${itemIdx}`} onClick={() => setSelectedId(e.id)}
         className="cursor-pointer transition-colors hover:bg-[var(--bg-input)]/40">
@@ -102,9 +133,18 @@ export default function ManagementReview() {
           {it.qty && <span className="ml-2 text-[11px] text-[var(--text-secondary)]">× {it.qty}</span>}
         </td>
         <td className={tdClass}>
-          <span className="text-xs text-[var(--text-secondary)] whitespace-nowrap">
-            {quotes.length} quote{quotes.length === 1 ? "" : "s"}{low !== null ? ` · from ₹${Number(low).toLocaleString("en-IN")}` : ""}
-          </span>
+          {quotes.length === 0 ? (
+            <span className="text-xs text-[var(--text-tertiary)]">—</span>
+          ) : (
+            <span className="flex flex-col gap-0.5">
+              {quotes.map((r, ri) => (
+                <span key={ri} className="text-xs whitespace-nowrap">
+                  <span className="text-[var(--text-secondary)]">{r.vendor}</span>
+                  <span className="font-mono font-bold text-[var(--text-primary)]"> ₹{Number(r.rate).toLocaleString("en-IN")}</span>
+                </span>
+              ))}
+            </span>
+          )}
         </td>
         <td className={tdClass}>
           <span className="text-[11px] text-[var(--text-tertiary)]">{historyDateChip(e.updatedAt ?? e.createdAt)}</span>
@@ -212,6 +252,29 @@ export default function ManagementReview() {
         </div>
       )}
 
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border border-emerald-500/40 p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)]">
+          <div className="flex items-start gap-3">
+            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base bg-emerald-500/15">💰</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">New vendor rates</p>
+              <p className="truncate text-sm font-bold text-[var(--text-primary)]">{toast.title}</p>
+              <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{toast.label}</p>
+              <div className="mt-2 flex gap-2">
+                <button type="button" onClick={() => { setSelectedId(toast.id); setToast(null); }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer border-0">
+                  Review
+                </button>
+                <button type="button" onClick={() => setToast(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-0 bg-transparent">
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {sel && (
         <Modal
           title={sel.title || "Untitled enquiry"}
@@ -219,6 +282,17 @@ export default function ManagementReview() {
           onClose={() => setSelectedId(null)}
           wide
         >
+          <div className="rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/30 p-3">
+            <p className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">Client</p>
+            <p className="text-base font-extrabold text-[var(--text-primary)]">{sel.clientCompany || "—"}</p>
+            {sel.contactName && (
+              <p className="mt-0.5 text-xs font-semibold text-[var(--text-secondary)]">
+                {sel.contactName}
+                {sel.contactPhone ? ` · ${sel.contactPhone}` : ""}
+                {sel.contactEmail ? ` · ${sel.contactEmail}` : ""}
+              </p>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border ${
               sel.priority === "high"
@@ -273,7 +347,7 @@ export default function ManagementReview() {
           )}
           <ManagementRatesPanel
             enquiry={sel}
-            onSave={(items, finalize) => void handleSaveRates(sel.id, items, finalize)}
+            onSave={(items, finalize) => handleSaveRates(sel.id, items, finalize)}
           />
         </Modal>
       )}
