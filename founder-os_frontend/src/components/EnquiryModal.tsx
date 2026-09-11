@@ -1,5 +1,13 @@
 import React, { useState } from "react";
-import { Agent, Enquiry } from "../mockData";
+import { Agent, Enquiry, EnquiryItem, EnquiryMedia } from "../mockData";
+
+/** ~10MB per item file (stored as data-URI on the item; server re-checks). */
+const MAX_ITEM_FILE_BYTES = 10 * 1024 * 1024;
+
+const itemMediaKind = (f: File): EnquiryMedia["type"] =>
+  f.type.startsWith("video/") ? "video" : (f.type === "application/pdf" || /\.pdf$/i.test(f.name) ? "pdf" : "image");
+
+const blankItem = (): EnquiryItem => ({ name: "", qty: "", spec: "", media: [] });
 
 interface EnquiryModalProps {
   isOpen: boolean;
@@ -21,6 +29,7 @@ interface EnquiryModalProps {
     assignedAgentId: string;
     description: string;
     imageUrls: string[];
+    items: EnquiryItem[];
   }) => void;
   isSaving?: boolean;
   saveError?: string | null;
@@ -45,13 +54,49 @@ export default function EnquiryModal({
   const [formContactEmail, setFormContactEmail] = useState(() => editingEnquiry?.contactEmail || "");
   const [formContactPhone, setFormContactPhone] = useState(() => editingEnquiry?.contactPhone || "");
   const [formTitle, setFormTitle] = useState(() => editingEnquiry?.title || "");
-  const [formDescription, setFormDescription] = useState(() => editingEnquiry?.description || "");
+  // Description has no input in the modal (item-driven enquiries) — the value
+  // is preserved on edit and empty on create, submitted through untouched.
+  const [formDescription] = useState(() => editingEnquiry?.description || "");
   const [formPriority, setFormPriority] = useState<"high" | "medium" | "low">(() => editingEnquiry?.priority || "medium");
   const [formStatus, setFormStatus] = useState<Enquiry["status"]>(() => editingEnquiry?.status || "new");
   const [formAgent, setFormAgent] = useState(() => editingEnquiry?.assignedAgentId || currentAgent.id || (agents[0]?.id || ""));
   const [formImages, setFormImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
+  const [formItems, setFormItems] = useState<EnquiryItem[]>(() => (editingEnquiry?.items || []).map((it) => ({ ...it, media: [...(it.media ?? [])] })));
+  const [itemFileError, setItemFileError] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const updateItem = (idx: number, patch: Partial<EnquiryItem>) =>
+    setFormItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+
+  const removeItem = (idx: number) =>
+    setFormItems((prev) => prev.filter((_, i) => i !== idx));
+
+  const addItemFiles = (idx: number, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setItemFileError(null);
+    const accepted = Array.from(files).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/") || f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+    const tooBig = Array.from(files).find((f) => f.size > MAX_ITEM_FILE_BYTES);
+    if (tooBig) setItemFileError(`"${tooBig.name}" exceeds 10MB and was skipped.`);
+    const todo = accepted.filter((f) => f.size <= MAX_ITEM_FILE_BYTES);
+    if (todo.length === 0) return;
+    const loaded: EnquiryMedia[] = [];
+    let processed = 0;
+    todo.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        if (evt.target?.result) loaded.push({ type: itemMediaKind(file), url: evt.target.result as string, name: file.name });
+        processed++;
+        if (processed === todo.length) {
+          setFormItems((prev) => prev.map((it, i) => (i === idx ? { ...it, media: [...(it.media ?? []), ...loaded] } : it)));
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeItemFile = (idx: number, mediaIdx: number) =>
+    setFormItems((prev) => prev.map((it, i) => (i === idx ? { ...it, media: (it.media ?? []).filter((_, j) => j !== mediaIdx) } : it)));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +113,7 @@ export default function EnquiryModal({
       assignedAgentId: formAgent,
       description: formDescription,
       imageUrls: formImages,
+      items: formItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0),
     });
   };
 
@@ -237,15 +283,75 @@ export default function EnquiryModal({
               </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Description & Detail Requirements</label>
-              <textarea 
-                rows={3} 
-                placeholder="Provide specs, plansifter cleaning configurations, and bag close models..."
-                value={formDescription}
-                onChange={(e) => setFormDescription(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm resize-y text-[var(--text-primary)]"
-              />
+            <div className="space-y-2">
+              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Items ({formItems.length})</label>
+              {formItems.map((it, idx) => (
+                <div key={idx} className="p-3 rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/25 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-extrabold text-[var(--text-primary)]">Item {idx + 1}</span>
+                    <button type="button" onClick={() => removeItem(idx)}
+                      className="text-[11px] font-bold text-[var(--color-danger)] hover:opacity-80 cursor-pointer bg-transparent border-0">
+                      Remove
+                    </button>
+                  </div>
+                  <input
+                    value={it.name}
+                    onChange={(e) => updateItem(idx, { name: e.target.value })}
+                    placeholder="Item name (e.g. Conveyor Belt Fastener)"
+                    className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={it.qty}
+                      onChange={(e) => updateItem(idx, { qty: e.target.value })}
+                      placeholder="Qty (e.g. 1000)"
+                      className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+                    />
+                    <input
+                      value={it.spec}
+                      onChange={(e) => updateItem(idx, { spec: e.target.value })}
+                      placeholder="Spec (e.g. 24GG 1 mtr)"
+                      className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+                    />
+                  </div>
+                  {(it.media ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {(it.media ?? []).map((m, mi) => (
+                        <div key={mi} className="relative flex-shrink-0 group">
+                          {m.type === "video" ? (
+                            <video src={m.url} controls preload="metadata" className="w-24 h-16 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
+                          ) : m.type === "pdf" ? (
+                            <a href={m.url} download={m.name || `item-${idx + 1}.pdf`} title={m.name || "PDF"}
+                              className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 text-[10px] font-bold text-[var(--text-primary)] max-w-[10rem]">
+                              <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                              </svg>
+                              <span className="truncate">{m.name || "PDF"}</span>
+                            </a>
+                          ) : (
+                            <img src={m.url} alt={`Item ${idx + 1} file ${mi + 1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)]" />
+                          )}
+                          <button type="button" onClick={() => removeItemFile(idx, mi)}
+                            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold cursor-pointer border border-white/20">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
+                    + Photo / video / PDF
+                    <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
+                      onChange={(e) => { addItemFiles(idx, e.target.files); e.target.value = ""; }} />
+                  </label>
+                </div>
+              ))}
+              <button type="button" onClick={() => setFormItems((prev) => [...prev, blankItem()])}
+                className="mx-auto flex items-center justify-center gap-2 w-full max-w-xs px-6 py-3.5 bg-brand-indigo hover:opacity-90 text-white font-extrabold text-sm rounded-xl shadow-lg shadow-indigo-600/20 transition-all cursor-pointer border-0">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Item
+              </button>
+              {itemFileError && <p className="text-[11px] font-semibold text-[var(--color-danger)]">{itemFileError}</p>}
             </div>
 
             <div className="space-y-1">

@@ -196,6 +196,14 @@ model Estimate {
   // "Details unavailable"). A later >=3-field capture still stores + resets.
   detailsAttempts       Int             @default(0)
   detailsFailed         Boolean         @default(false)
+  // Sales-agent call disposition on a conversion follow-up (set from the
+  // Lead Conversion view, NOT by any engine): NO_ANSWER (client not picking
+  // up), BUSY (client busy), CALLBACK (follow up on callbackDate, max +10d).
+  // Sticky until the agent changes/clears it; engines never write or clear it.
+  callTag               String?
+  callbackDate          String?
+  callTagBy             String?
+  callTagAt             String?
   comments              Comment[]
   classification        Classification?
   assignments           EstimateAssignment[]
@@ -692,7 +700,9 @@ model Enquiry {
   imageUrls      String?
   activities     String?
   additionalRequirements String?
-  // AI-parsed line items (JSON array text, same pattern as above):
+  // Procurement workflow stage: '' (legacy) | rate_pending | rates_received | finalized.
+  rateStatus       String   @default("")
+  // Manual line items (JSON array text): [{ name, qty, spec, media, rates, markup... }].
   // [{ name, qty, spec }] — one entry per purchasable item in the enquiry.
   items          String?
   comments       EnquiryComment[]

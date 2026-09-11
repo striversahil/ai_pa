@@ -44,6 +44,11 @@ export interface EnquiryAgentRef {
 
 const MODEL = 'openai/gpt-oss-20b';
 
+/** AI line-item splitting is KEPT but OFF: sales agents enter items manually
+ *  in the modal (Add Item + per-item documents), so the enrichment must never
+ *  overwrite them. Flip to true to re-enable auto-split for empty rows. */
+export const AI_ITEMS_ENABLED = false;
+
 function buildPrompt(input: { text: string; title?: string; company?: string; description?: string; salesItems?: Array<{ name: string; qty: string; spec: string }> }): string {
   const salesLines = (Array.isArray(input.salesItems) ? input.salesItems : [])
     .slice(0, 50)

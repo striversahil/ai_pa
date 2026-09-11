@@ -34,6 +34,15 @@ export const LiveEvent = {
    */
   Telecalling: "telecalling",
   /**
+   * Agent call-disposition tag tap (Lead Conversion view). Deliberately NOT
+   * "telecalling": dashboards refetch wholesale on that type, and a tag save
+   * would fan out into ~20 requests (leaderboard + generation + roster + every
+   * agent view). The tag delta rides INSIDE this event and each tab patches
+   * the single row locally (Sheets-style) — 1 PUT + 1 light reconcile fetch
+   * per tap. The post-cache tag overlay guarantees the next full read agrees.
+   */
+  TelecallingTag: "telecalling-tag",
+  /**
    * Generic "data changed somewhere" event, emitted automatically by the
    * auto-live middleware for ANY mutating /api/* request whose handler did not
    * already broadcast a typed event. Frontends that subscribe to everything

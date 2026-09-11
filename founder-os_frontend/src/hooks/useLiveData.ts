@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useLiveData — ONE modular file that makes every dashboard number live.
@@ -87,6 +87,14 @@ export interface LiveQueryResult<T> {
   loading: boolean;
   error: unknown;
   refresh: () => void;
+  /**
+   * Direct state write (functional or value) — for SURGICAL updates that must
+   * not trigger a full refetch (e.g. merging one agent's view after a tag
+   * save instead of re-fetching every agent). Prefer refresh() unless you can
+   * prove the patch is complete; a wrong patch shadows server state until the
+   * next event-driven refetch.
+   */
+  setData: Dispatch<SetStateAction<T | null>>;
 }
 
 export function useLiveQuery<T>(
@@ -161,7 +169,7 @@ export function useLiveQuery<T>(
     return () => clearInterval(id);
   }, [pollMs, refresh]);
 
-  return { data, loading, error, refresh };
+  return { data, loading, error, refresh, setData };
 }
 
 /** Imperative subscription for components that manage their own state (e.g. the

@@ -27,6 +27,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { workerRequest } = require('./runner-lib');
 
 // ── Parse Zoho curl credentials (same logic as zoho-sent-runner.js) ─────────
@@ -64,6 +65,61 @@ function istDateString(d) {
 
 function buildSalesOrdersUrl(page) {
   return `https://books.zoho.com/api/v3/salesorders?page=${page}&per_page=200&filter_by=Status.All&sort_column=created_time&sort_order=D&usestate=true&organization_id=${orgId}`;
+}
+
+function buildSalesOrderDetailUrl(salesorderId) {
+  return `https://books.zoho.com/api/v3/salesorders/${salesorderId}?organization_id=${orgId}`;
+}
+
+// Bounded-parallel map (fail-soft per item — a single bad SO never kills the tick).
+async function mapPool(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (i < items.length) {
+      const idx = i++;
+      try { out[idx] = await fn(items[idx], idx); }
+      catch (e) { out[idx] = { __error: e?.message || String(e) }; }
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+// Full line items for one SO via the detail endpoint (the list endpoint never
+// includes line_items). One 429 backoff + retry; a second consecutive 429
+// OPENS the circuit — remaining rows skip items this tick (fail fast, no
+// 495×45s sleep storm) and retry on the next tick.
+let detailCircuitOpen = false;
+async function fetchOrderItems(salesorderId) {
+  if (detailCircuitOpen) throw new Error('detail circuit open (rate-limited earlier this tick)');
+  const once = async () => {
+    const json = await zohoFetch(buildSalesOrderDetailUrl(salesorderId));
+    const items = json?.salesorder?.line_items;
+    return Array.isArray(items) ? items.slice(0, 200) : [];
+  };
+  try {
+    return await once();
+  } catch (e) {
+    if (e?.retryAfterMs) {
+      console.log(`crm-runner: rate-limited, backing off ${Math.round(Math.min(e.retryAfterMs, 90000) / 1000)}s…`);
+      await sleep(Math.min(e.retryAfterMs, 90000));
+      try {
+        return await once();
+      } catch (e2) {
+        detailCircuitOpen = true;
+        console.log('crm-runner: still rate-limited — circuit open, remaining rows skip items this tick');
+        throw e2;
+      }
+    }
+    throw e;
+  }
+}
+
+function itemsSig(items) {
+  const count = items.length;
+  const sum = items.reduce((s, li) => s + (parseFloat(li.item_total) || 0), 0);
+  return `${count}:${Math.round(sum * 100) / 100}`;
 }
 
 const EXCLUDED_STATUSES = new Set(['cancelled', 'void']);
@@ -131,7 +187,9 @@ function orderRow(so, today) {
     const ct = new Date(so.created_time);
     if (!isNaN(ct.getTime())) createdToday = istDateString(ct) === today;
   }
-  const items = Array.isArray(so.line_items) ? so.line_items.slice(0, 20) : [];
+  // Populated from the detail endpoint in phase 2 (the list response never
+  // includes line_items); initialized from the list payload when present.
+  const items = Array.isArray(so.line_items) ? so.line_items.slice(0, 200) : [];
   return {
     so: so.salesorder_number || '',
     ref: so.reference_number || '',
@@ -153,8 +211,17 @@ function orderRow(so, today) {
   };
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function zohoFetch(url) {
-  const res = await fetch(url, { headers });
+  // 30s cap per call — a tarpitted connection must fail fast, never hang the tick.
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get('retry-after') || '45', 10);
+    const err = new Error(`Zoho 429 rate-limited for ${url}`);
+    err.retryAfterMs = (isNaN(retryAfter) ? 45 : retryAfter) * 1000;
+    throw err;
+  }
   if (!res.ok) throw new Error(`Zoho ${res.status} for ${url}`);
   return res.json();
 }
@@ -183,21 +250,51 @@ function addSalesperson(map, so, step, total) {
   map.set(name, entry);
 }
 
+// ── Manual overrides (CrmOrderAction layer) ──────────────────────────────────
+// Operators advance/cancel orders from the dashboard; the latest action per SO
+// (within the lookback window) overrides Zoho's raw status before pendingStep().
+const OVERRIDE_LOOKBACK_DAYS = 7;
+const VALID_OVERRIDE_STAGES = new Set(['confirm', 'invoice', 'ship', 'payment', 'complete']);
+
+async function fetchOverrides() {
+  const since = istDateString(new Date(Date.now() - OVERRIDE_LOOKBACK_DAYS * 86400000));
+  try {
+    const res = await workerRequest(`/api/runner/crm/actions?since=${since}`);
+    const map = new Map();
+    for (const a of res.actions || []) {
+      if (!a?.soNumber || !VALID_OVERRIDE_STAGES.has(String(a.toStage))) continue;
+      map.set(String(a.soNumber), String(a.toStage)); // latest row wins (worker returns oldest-first)
+    }
+    if (map.size > 0) console.log(`crm-runner: loaded ${map.size} manual override(s) since ${since}`);
+    return map;
+  } catch (e) {
+    console.log(`crm-runner: override fetch failed (continuing without overrides): ${e.message}`);
+    return new Map();
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   console.log('crm-runner: fetching sales orders from Zoho Books');
   const today = istDateString(new Date());
+  const fetchedAt = new Date().toISOString();
+  const overrides = await fetchOverrides();
 
   const stages = {};
   for (const s of STAGES) stages[s] = { count: 0, value: 0, orders: [] };
   const closed = []; // paid/closed/cancelled orders — diff source for paid/cancel points
-  const materialMap = new Map();
   const salespersonMap = new Map();
+  // Full lightweight index (UNCAPPED) — the Worker's diff source of truth so
+  // per-stage display caps (DETAIL_CAP) never hide points movements.
+  const index = [];
+  // Active SOs by number: soNum → { id, row, entry } (detail lookup map).
+  const activeBySo = new Map();
   let totalActive = 0;
   let totalValue = 0;
   let pages = 0;
   let scanned = 0;
   let withItems = 0;
+  let overridden = 0;
 
   // Page through SOs (Status.All, newest first). Stop when a page has nothing
   // relevant: no active orders AND nothing created inside the scan window.
@@ -209,10 +306,30 @@ async function main() {
 
     let relevant = 0;
     for (const so of salesorders) {
-      const step = pendingStep(so);
+      scanned++;
+      const rawStep = pendingStep(so);
+      const soNum = so.salesorder_number || '';
+      let step = rawStep;
+      if (soNum && overrides.has(soNum) && rawStep !== 'complete') {
+        step = overrides.get(soNum);
+        overridden++;
+      }
       const row = orderRow(so, today);
       const od = orderDate(so);
       const recent = od ? ((Date.now() - od.getTime()) / 86400000) <= SCAN_WINDOW_DAYS : true;
+
+      // Lightweight index entry for EVERY order (uncapped diff source).
+      const entry = {
+        so: soNum,
+        stage: step,
+        paidStatus: String(so.paid_status || '').toLowerCase(),
+        status: String(so.status || '').toLowerCase(),
+        createdToday: !!row.createdToday,
+        salesperson: row.salesperson || '',
+        total: row.total,
+        itemsSig: '',
+      };
+      index.push(entry);
 
       if (step !== 'complete') {
         relevant++;
@@ -222,14 +339,12 @@ async function main() {
         stages[step].value += row.total;
         if (stages[step].orders.length < DETAIL_CAP) stages[step].orders.push(row);
         addSalesperson(salespersonMap, so, step, row.total);
-        if (Array.isArray(so.line_items) && so.line_items.length > 0) {
-          withItems++;
-          addMaterial(materialMap, so.line_items.slice(0, 50).map((li) => ({
-            name: li.name || '',
-            sku: li.sku || '',
-            qty: parseFloat(li.quantity) || 0,
-            item_total: parseFloat(li.item_total) || 0,
-          })));
+        // Line items come from the detail endpoint (the list response never
+        // includes them) — fetched in phase 2, but ONLY for display-capped
+        // rows (what the dashboard can actually render/click). Ancient backlog
+        // beyond the cap stays item-less; points are unaffected (index-based).
+        if (so.salesorder_id && !activeBySo.has(soNum)) {
+          activeBySo.set(soNum, { id: so.salesorder_id, row, entry });
         }
       } else if (recent) {
         // Recently closed (paid / cancelled / void) — feeds the Worker's diff so
@@ -259,6 +374,93 @@ async function main() {
     stages[s].value = Math.round(stages[s].value * 100) / 100;
   }
 
+  // Phase 1 — order-level fingerprint from the list scan alone. Unchanged →
+  // heartbeat and exit WITHOUT any per-SO detail calls (idle ticks stay cheap).
+  // CRM_FORCE=1 bypasses the gate.
+  const orderFp = crypto.createHash('sha1')
+    .update(index.map((e) => [e.so, e.stage, e.paidStatus, e.status, e.total].join('|')).sort().join('\n'))
+    .digest('hex');
+
+  // Previous per-SO [stage, itemsSig] (display rows only) — drives delta-fetch.
+  let prevSigs = {};
+  if (!process.env.CRM_FORCE) {
+    try {
+      const fp = await workerRequest('/api/runner/crm/fingerprint');
+      // Stored fingerprints include the items signature suffix after the first
+      // detail run — compare against the order-level prefix for the shortcut.
+      const storedOrderFp = String(fp?.fingerprint || '').split('+')[0];
+      if (storedOrderFp === orderFp && fp?.date === today) {
+        // No change — refresh the snapshot TTL + fetchedAt so the dashboard
+        // stays fresh without a full POST, ledger diff, or live broadcast.
+        await workerRequest('/api/runner/crm/heartbeat', { method: 'POST', body: { date: today, fingerprint: fp.fingerprint, fetchedAt, totalActive, totalValue } });
+        console.log(`crm-runner: no change (fp ${orderFp.slice(0, 8)}), heartbeat sent — ${totalActive} active SOs`);
+        return;
+      }
+      if (fp?.sigs && typeof fp.sigs === 'object') prevSigs = fp.sigs;
+    } catch (e) {
+      console.log(`crm-runner: fingerprint check failed (continuing with POST): ${e.message}`);
+    }
+  }
+
+  // Phase 2 — pipeline moved (or forced): fetch FULL line items, but ONLY for
+  // display-capped rows (every clickable row gets items; backlog beyond the
+  // cap stays item-less). Items are slimmed to display fields — raw Zoho items
+  // carry ~80 keys each and would bloat the KV snapshot by megabytes.
+  const SLIM_KEYS = ['name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
+  const slimItem = (li) => {
+    const o = {};
+    for (const k of SLIM_KEYS) if (li[k] !== undefined && li[k] !== '' && li[k] !== null) o[k] = li[k];
+    return o;
+  };
+  const materialMap = new Map();
+  // Delta-fetch: a display row hits Zoho ONLY when it is new, moved stage, or
+  // was never captured (empty sig). Unchanged rows reuse the previous sig —
+  // the Worker backfills their items from the stored snapshot. A single new
+  // SO therefore costs exactly 1 detail call, not ~500.
+  const queue = [];
+  let skipped = 0;
+  for (const s of STAGES) {
+    for (const row of stages[s].orders) {
+      const hit = activeBySo.get(row.so);
+      if (!hit) continue;
+      const prev = prevSigs[row.so];
+      const prevStage = Array.isArray(prev) ? prev[0] : null;
+      const prevSig = Array.isArray(prev) ? prev[1] : '';
+      if (prevStage === s && prevSig) {
+        hit.entry.itemsSig = prevSig; // worker backfills items
+        skipped++;
+      } else {
+        queue.push(hit);
+      }
+    }
+  }
+  const t0 = Date.now();
+  // Concurrency 3 + pacing: Zoho blocks bursts (HTTP 429). Idle ticks never
+  // reach here (phase-1 heartbeat), so change-ticks may take ~1 min.
+  const results = await mapPool(queue, 3, async ({ id, row, entry }) => {
+    await sleep(250);
+    const items = (await fetchOrderItems(id)).map(slimItem);
+    row.items = items;
+    row.lineCount = items.length;
+    entry.itemsSig = itemsSig(items);
+    return items.length;
+  });
+  const detailMs = Date.now() - t0;
+  const detailErrors = results.filter((r) => r && r.__error).length;
+  for (const { row } of queue) {
+    const items = Array.isArray(row.items) ? row.items : [];
+    if (items.length > 0) {
+      withItems++;
+      addMaterial(materialMap, items.slice(0, 50).map((li) => ({
+        name: li.name || li.description || '',
+        sku: li.sku || li.item_code || '',
+        qty: parseFloat(li.quantity) || 0,
+        item_total: parseFloat(li.item_total) || 0,
+      })));
+    }
+  }
+  if (detailErrors > 0) console.log(`crm-runner: ${detailErrors} detail fetch(es) failed (rows left without items)`);
+
   const materials = [...materialMap.values()]
     .sort((a, b) => b.qty - a.qty)
     .slice(0, MATERIALS_CAP)
@@ -268,15 +470,24 @@ async function main() {
     .sort((a, b) => b.pipelineValue - a.pipelineValue)
     .map((s) => ({ ...s, pipelineValue: Math.round(s.pipelineValue * 100) / 100 }));
 
+  // Full fingerprint: order-level state + per-order item signatures, so an
+  // item edit also triggers a snapshot POST (but never a heartbeat skip).
+  const fingerprint = `${orderFp}+${crypto.createHash('sha1')
+    .update(index.map((e) => `${e.so}=${e.itemsSig}`).sort().join('\n'))
+    .digest('hex').slice(0, 12)}`;
+
   const snapshot = {
     date: today,
+    fetchedAt,
+    fingerprint,
     totalActive,
     totalValue,
     stages,
     closed,
     materials,
     salespeople,
-    meta: { pages, scanned, withLineItems: withItems },
+    index,
+    meta: { pages, scanned, withLineItems: withItems, overridden },
   };
 
   await workerRequest('/api/runner/crm/snapshot', { method: 'POST', body: snapshot });
@@ -284,7 +495,7 @@ async function main() {
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)
     .join('  ');
-  console.log(`crm-runner: ${pages} page(s), ${scanned} scanned, ${totalActive} active SOs (₹${totalValue.toLocaleString()}) — ${summary}`);
+  console.log(`crm-runner: ${pages} page(s), ${scanned} scanned, ${totalActive} active SOs (₹${totalValue.toLocaleString()}), ${queue.length} detail fetch(es) + ${skipped} backfilled in ${Math.round(detailMs / 100) / 10}s, ${withItems} with items — ${summary}`);
 }
 
 if (require.main === module) {

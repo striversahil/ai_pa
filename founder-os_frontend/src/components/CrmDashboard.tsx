@@ -37,6 +37,100 @@ function ageClass(age: number | null | undefined): string {
 const ageText = (age: number | null | undefined): string =>
   age === null || age === undefined ? "—" : `${age}d`;
 
+// ── CSV export (exports the currently filtered rows, raw values) ─────────────
+function exportCSV(rows: any[], columns: ColumnDef<any, any>[], name: string) {
+  const keys = columns
+    .map((c: any) => (typeof c.accessorKey === "string" ? c.accessorKey : null))
+    .filter(Boolean) as string[];
+  const header = keys.join(",");
+  const lines = rows.map((r) =>
+    keys
+      .map((k) => {
+        const v = r.original?.[k] ?? r.getValue?.(k) ?? "";
+        const s = Array.isArray(v) ? v.length : String(v ?? "");
+        return `"${String(s).replace(/"/g, '""')}"`;
+      })
+      .join(",")
+  );
+  const blob = new Blob([[header, ...lines].join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Manual order actions (MIS-only; backend enforces the scope) ───────────────
+const STAGE_ACTIONS: Record<string, { label: string; action: string; toStage: string; danger?: boolean }[]> = {
+  confirm: [
+    { label: "✓ Confirmed", action: "invoice", toStage: "invoice" },
+    { label: "✕ Cancel", action: "cancel", toStage: "complete", danger: true },
+  ],
+  invoice: [
+    { label: "✓ Invoiced", action: "ship", toStage: "ship" },
+    { label: "✕ Cancel", action: "cancel", toStage: "complete", danger: true },
+  ],
+  ship: [
+    { label: "✓ Shipped", action: "payment", toStage: "payment" },
+    { label: "✕ Cancel", action: "cancel", toStage: "complete", danger: true },
+  ],
+  payment: [
+    { label: "✓ Paid", action: "payment", toStage: "complete" },
+    { label: "✕ Cancel", action: "cancel", toStage: "complete", danger: true },
+  ],
+};
+
+function ActionButtons({ so, stage }: { so: string; stage: string }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const defs = STAGE_ACTIONS[stage] || STAGE_ACTIONS.confirm;
+
+  const run = async (d: { label: string; action: string; toStage: string; danger?: boolean }) => {
+    if (busy || done) return;
+    if (d.danger && !window.confirm(`Mark ${so} as cancelled?`)) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/crm/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ soNumber: so, action: d.action, toStage: d.toStage }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      setDone(true); // live event refetches the tables; next snapshot scores points
+    } catch (e: any) {
+      setErr(e?.message || "failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done) return <span className="text-[9px] text-emerald-400 font-bold">✓ saved</span>;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {defs.map((d) => (
+        <button
+          key={d.label}
+          onClick={() => run(d)}
+          disabled={busy}
+          title={d.label}
+          className={`px-1.5 py-0.5 text-[9px] rounded border font-bold whitespace-nowrap disabled:opacity-40 ${
+            d.danger
+              ? "text-red-400 bg-red-500/10 border-red-500/30 hover:bg-red-500/20"
+              : "text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20"
+          }`}
+        >
+          {d.label}
+        </button>
+      ))}
+      {err && <span className="text-[9px] text-red-400" title={err}>!</span>}
+    </span>
+  );
+}
+
 function StatusPill({ status, accent }: { status: string | null | undefined; accent: string }) {
   if (!status) return <span className="text-zinc-400">—</span>;
   return (
@@ -102,12 +196,14 @@ function DataTable({
   searchPlaceholder = "Search…",
   emptyState = "Nothing here yet.",
   initialSorting,
+  exportName,
 }: {
   columns: ColumnDef<any, any>[];
   data: any[];
   searchPlaceholder?: string;
   emptyState?: React.ReactNode;
   initialSorting?: SortingState;
+  exportName?: string;
 }) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
   const [globalFilter, setGlobalFilter] = useState("");
@@ -138,6 +234,14 @@ function DataTable({
           className="w-64 max-w-full px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
         />
         <span className="text-[10px] text-zinc-500">{filteredRows} / {data.length} rows</span>
+        {exportName && filteredRows > 0 && (
+          <button
+            onClick={() => exportCSV(table.getFilteredRowModel().rows, columns, exportName)}
+            className="ml-auto px-2 py-1 text-[10px] rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-semibold"
+          >
+            ⬇ Export CSV
+          </button>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200/80 dark:border-zinc-800/80">
@@ -236,6 +340,42 @@ export default function CrmDashboard() {
   const depts = data?.departments || {};
   const scores = data?.scores || {};
   const meta = data?.meta || null;
+  const [orderSearch, setOrderSearch] = useState("");
+
+  // Flatten salesperson stage splits so table sort + CSV export see plain fields.
+  const salespeopleFlat = useMemo(
+    () =>
+      (data?.salespeople || []).map((s: any) => ({
+        name: s.name,
+        openOrders: s.openOrders,
+        pipelineValue: s.pipelineValue,
+        confirm: s.byStage?.confirm ?? 0,
+        invoice: s.byStage?.invoice ?? 0,
+        ship: s.byStage?.ship ?? 0,
+        payment: s.byStage?.payment ?? 0,
+      })),
+    [data]
+  );
+
+  // Cross-stage order search (SO / customer / salesperson across all stages).
+  const searchResults = useMemo(() => {
+    const q = orderSearch.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const out: any[] = [];
+    for (const step of STEP_ORDER) {
+      for (const o of stages?.[step]?.orders || []) {
+        if (
+          String(o.so || "").toLowerCase().includes(q) ||
+          String(o.customer || "").toLowerCase().includes(q) ||
+          String(o.salesperson || "").toLowerCase().includes(q)
+        ) {
+          out.push({ ...o, step });
+          if (out.length >= 20) return out;
+        }
+      }
+    }
+    return out;
+  }, [orderSearch, stages]);
 
   if (!data || !data.fresh) {
     return (
@@ -262,8 +402,11 @@ export default function CrmDashboard() {
         <div>
           <h2 className="text-xl font-extrabold text-white flex items-center gap-2">📦 CRM Control Room</h2>
           <p className="text-[11px] text-zinc-500 mt-0.5">
-            {data.date} · updated {data.computedAt ? shortTime(data.computedAt) : "—"} · {data.totalActive} active SO
+            {data.date} · Zoho fetch {data.fetchedAt ? shortTime(data.fetchedAt) : data.computedAt ? shortTime(data.computedAt) : "—"} · {data.totalActive} active SO
           </p>
+          {scores.ledgerOk === false && (
+            <p className="text-[11px] text-amber-400 mt-1">⚠️ Points ledger unavailable — scores may read zero. Pipeline data above is unaffected.</p>
+          )}
         </div>
       </div>
 
@@ -308,6 +451,72 @@ export default function CrmDashboard() {
                 </div>
               );
             })}
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+            <h3 className="text-sm font-bold text-white mb-3">🔍 Find Order (all stages)</h3>
+            <input
+              value={orderSearch}
+              onChange={(e) => setOrderSearch(e.target.value)}
+              placeholder="Type SO number, customer, or salesperson (min 2 chars)…"
+              className="w-full max-w-md px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            />
+            {orderSearch.trim().length >= 2 && (
+              <div className="mt-2 space-y-1.5 max-h-64 overflow-y-auto">
+                {searchResults.length === 0 ? (
+                  <p className="text-xs text-zinc-500 italic">No matching orders.</p>
+                ) : (
+                  searchResults.map((o: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 text-[11px] py-1 border-b border-zinc-800/50 last:border-0">
+                      <span className="px-1.5 py-0.5 rounded font-bold text-[9px] text-sky-400 bg-sky-500/10 uppercase">{o.step}</span>
+                      <span className="font-mono text-zinc-300">{o.so}</span>
+                      <span className="text-zinc-400 truncate flex-1">{o.customer}</span>
+                      {o.salesperson && <span className="text-zinc-500">{o.salesperson}</span>}
+                      <span className="text-zinc-500">{fmtINR(o.total)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+            <h3 className="text-sm font-bold text-white mb-3">👥 Salesperson Pipeline</h3>
+            <DataTable
+              columns={[
+                { accessorKey: "name", header: "Salesperson" },
+                { accessorKey: "openOrders", header: "Open" },
+                { accessorKey: "pipelineValue", header: "Pipeline", cell: ({ getValue }: any) => fmtINR(getValue()), sortingFn: (a: any, b: any) => (a.original.pipelineValue || 0) - (b.original.pipelineValue || 0) },
+                { accessorKey: "confirm", header: "Confirm" },
+                { accessorKey: "invoice", header: "Invoice" },
+                { accessorKey: "ship", header: "Ship" },
+                { accessorKey: "payment", header: "Payment" },
+              ]}
+              data={salespeopleFlat}
+              searchPlaceholder="Search salespeople…"
+              emptyState="No salesperson data yet."
+              initialSorting={[{ id: "pipelineValue", desc: true }]}
+              exportName="crm-salespeople"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+            <h3 className="text-sm font-bold text-white mb-3">✅ Recently Closed (paid / cancelled)</h3>
+            <DataTable
+              columns={[
+                { accessorKey: "so", header: "SO", cell: ({ getValue }: any) => <span className="font-mono">{getValue()}</span> },
+                { accessorKey: "customer", header: "Customer" },
+                { accessorKey: "salesperson", header: "Salesperson" },
+                { accessorKey: "total", header: "Value", cell: ({ getValue }: any) => fmtINR(getValue()), sortingFn: (a: any, b: any) => (a.original.total || 0) - (b.original.total || 0) },
+                { accessorKey: "status", header: "Status", cell: ({ getValue }: any) => <StatusPill status={getValue()} accent={String(getValue()) === "cancelled" || String(getValue()) === "void" ? "text-red-400 bg-red-500/10 border-red-500/30" : "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"} /> },
+                { accessorKey: "paidStatus", header: "Paid" },
+                { accessorKey: "date", header: "Date" },
+              ]}
+              data={data.closed || []}
+              searchPlaceholder="Search closed orders…"
+              emptyState="No recently closed orders."
+              exportName="crm-closed"
+            />
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
@@ -370,12 +579,15 @@ export default function CrmDashboard() {
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
                 { accessorKey: "total", header: "Value", cell: ({ getValue }: any) => fmtINR(getValue()), sortingFn: (a: any, b: any) => (a.original.total || 0) - (b.original.total || 0) },
-                { id: "age", header: "Age", cell: ({ row }: any) => <span className={ageClass(row.original.ageDays)}>{ageText(row.original.ageDays)}</span> },
+                { accessorKey: "ageDays", header: "Age", cell: ({ getValue }: any) => <span className={ageClass(getValue())}>{ageText(getValue())}</span> },
                 { id: "status", header: "Status", cell: ({ row }: any) => <StatusPill status={row.original.orderStatus} accent={STAGE_PILL[row.original.orderStatus] || "text-zinc-400 bg-zinc-500/10 border-zinc-500/30"} /> },
+                { id: "actions", header: "Actions", enableSorting: false, cell: ({ row }: any) => <ActionButtons so={row.original.so} stage="confirm" /> },
               ]}
               data={crmPending.orders || []}
               searchPlaceholder="Search orders…"
               emptyState="No orders awaiting confirmation."
+              initialSorting={[{ id: "ageDays", desc: true }]}
+              exportName="crm-confirm"
             />
           </div>
         </div>
@@ -400,12 +612,15 @@ export default function CrmDashboard() {
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
                 { accessorKey: "total", header: "Value", cell: ({ getValue }: any) => fmtINR(getValue()), sortingFn: (a: any, b: any) => (a.original.total || 0) - (b.original.total || 0) },
-                { id: "age", header: "Age", cell: ({ row }: any) => <span className={ageClass(row.original.ageDays)}>{ageText(row.original.ageDays)}</span> },
+                { accessorKey: "ageDays", header: "Age", cell: ({ getValue }: any) => <span className={ageClass(getValue())}>{ageText(getValue())}</span> },
                 { id: "invoice", header: "Invoice", cell: ({ row }: any) => <StatusPill status={row.original.invoicedStatus} accent={STAGE_PILL[row.original.invoicedStatus] || "text-zinc-400 bg-zinc-500/10 border-zinc-500/30"} /> },
+                { id: "actions", header: "Actions", enableSorting: false, cell: ({ row }: any) => <ActionButtons so={row.original.so} stage="invoice" /> },
               ]}
               data={toInvoice.orders || []}
               searchPlaceholder="Search…"
               emptyState="No orders to invoice."
+              initialSorting={[{ id: "ageDays", desc: true }]}
+              exportName="crm-invoice"
             />
           </div>
 
@@ -418,12 +633,15 @@ export default function CrmDashboard() {
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
                 { accessorKey: "total", header: "Value", cell: ({ getValue }: any) => fmtINR(getValue()), sortingFn: (a: any, b: any) => (a.original.total || 0) - (b.original.total || 0) },
-                { id: "age", header: "Age", cell: ({ row }: any) => <span className={ageClass(row.original.ageDays)}>{ageText(row.original.ageDays)}</span> },
+                { accessorKey: "ageDays", header: "Age", cell: ({ getValue }: any) => <span className={ageClass(getValue())}>{ageText(getValue())}</span> },
                 { id: "paid", header: "Paid", cell: ({ row }: any) => <StatusPill status={row.original.paidStatus} accent={PAID_PILL[row.original.paidStatus] || "text-zinc-400 bg-zinc-500/10 border-zinc-500/30"} /> },
+                { id: "actions", header: "Actions", enableSorting: false, cell: ({ row }: any) => <ActionButtons so={row.original.so} stage="payment" /> },
               ]}
               data={awaitingPayment.orders || []}
               searchPlaceholder="Search…"
               emptyState="No orders awaiting payment."
+              initialSorting={[{ id: "ageDays", desc: true }]}
+              exportName="crm-payment"
             />
           </div>
         </div>
@@ -448,12 +666,15 @@ export default function CrmDashboard() {
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
                 { accessorKey: "total", header: "Value", cell: ({ getValue }: any) => fmtINR(getValue()), sortingFn: (a: any, b: any) => (a.original.total || 0) - (b.original.total || 0) },
-                { id: "age", header: "Age", cell: ({ row }: any) => <span className={ageClass(row.original.ageDays)}>{ageText(row.original.ageDays)}</span> },
+                { accessorKey: "ageDays", header: "Age", cell: ({ getValue }: any) => <span className={ageClass(getValue())}>{ageText(getValue())}</span> },
                 { id: "shipped", header: "Shipped", cell: ({ row }: any) => <StatusPill status={row.original.shippedStatus} accent={STAGE_PILL[row.original.shippedStatus] || "text-zinc-400 bg-zinc-500/10 border-zinc-500/30"} /> },
+                { id: "actions", header: "Actions", enableSorting: false, cell: ({ row }: any) => <ActionButtons so={row.original.so} stage="ship" /> },
               ]}
               data={dispatchPending.orders || []}
               searchPlaceholder="Search…"
               emptyState="No orders to ship."
+              initialSorting={[{ id: "ageDays", desc: true }]}
+              exportName="crm-ship"
             />
           </div>
         </div>

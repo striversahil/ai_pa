@@ -14,12 +14,13 @@ interface EnquiryDetailProps {
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
   onAddRequirement: (id: string, text: string, imageUrl?: string) => Promise<any>;
-  onUpdateItems?: (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video'; url: string }> }>) => void;
+  onUpdateItems?: (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => void;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   redacted?: boolean;
+  ratesMode?: "none" | "edit" | "view";
 }
 
 export default function EnquiryDetail({
@@ -36,7 +37,8 @@ export default function EnquiryDetail({
   onOpenEdit,
   onBack,
   onOpenLightbox,
-  redacted = false
+  redacted = false,
+  ratesMode
 }: EnquiryDetailProps) {
   // Localized view states
   const [activeDetailTab, setActiveDetailTab] = useState<"comments" | "activity">("comments");
@@ -215,6 +217,7 @@ export default function EnquiryDetail({
             selectedEnquiry={selectedEnquiry}
             onOpenLightbox={onOpenLightbox}
             redacted={redacted}
+            ratesMode={ratesMode}
             onUpdateItems={onUpdateItems ? (items) => onUpdateItems(selectedEnquiry.id, items) : undefined}
           />
 

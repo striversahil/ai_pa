@@ -12,8 +12,14 @@ export interface EnquiryRequirement {
  *  (Specifications & Scope). Rendered as Item 1..N in both Sales and
  *  Procurement views; sales can edit/delete/reorder manually. */
 export interface EnquiryMedia {
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'pdf';
   url: string;
+  name?: string;
+}
+
+export interface EnquiryItemRate {
+  vendor: string;
+  rate: number;
 }
 
 export interface EnquiryItem {
@@ -21,6 +27,12 @@ export interface EnquiryItem {
   qty: string;
   spec: string;
   media: EnquiryMedia[];
+  /** Vendor rates collected by Procurement (multiple vendors per item). */
+  rates?: EnquiryItemRate[];
+  /** Management decision: chosen vendor + markup + finalized rate. */
+  selectedVendor?: string;
+  markup?: number;
+  finalRate?: number;
 }
 
 /** ~10MB binary per attachment (base64 inflates ~4/3). Enforced client-side
@@ -31,13 +43,31 @@ export const MAX_ITEM_MEDIA_COUNT = 10;
 export function parseItemMedia(raw: unknown): EnquiryMedia[] {
   if (!Array.isArray(raw)) return [];
   const shaped: EnquiryMedia[] = raw.map((m: any) => ({
-    type: (m?.type === 'video' ? 'video' : 'image') as 'image' | 'video',
+    type: (m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image') as EnquiryMedia['type'],
     url: String(m?.url ?? ''),
+    name: m?.name ? String(m.name).slice(0, 200) : undefined,
   }));
   return shaped
     .filter((m) => m.url.length > 0 && m.url.length <= MAX_ITEM_MEDIA_URL_CHARS)
     .slice(0, MAX_ITEM_MEDIA_COUNT);
 }
+
+export function parseItemRates(raw: unknown): EnquiryItemRate[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r: any) => ({
+      vendor: String(r?.vendor ?? '').slice(0, 200),
+      rate: Number(r?.rate ?? NaN),
+    }))
+    .filter((r) => r.vendor.trim().length > 0 && Number.isFinite(r.rate) && r.rate >= 0)
+    .slice(0, 50);
+}
+
+export const numOrUndefined = (v: unknown): number | undefined => {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+};
 
 export interface Enquiry {
   id: string;
@@ -54,6 +84,8 @@ export interface Enquiry {
   description: string;
   priority: string;
   status: string;
+  /** Procurement workflow stage: '' (legacy) | rate_pending | rates_received | finalized. */
+  rateStatus: string;
   assignedAgentId: string;
   createdAt: string;
   updatedAt: string;
@@ -113,6 +145,7 @@ export function mapEnquiry(row: any): Enquiry | null {
     description: row.description,
     priority: row.priority,
     status: row.status,
+    rateStatus: (row as any).rateStatus ?? "",
     assignedAgentId: String(row.assignedAgentId ?? ""),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -134,8 +167,12 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         qty: String(r?.qty ?? '').slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
         media: parseItemMedia(r?.media),
+        rates: parseItemRates(r?.rates),
+        selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
+        markup: numOrUndefined(r?.markup),
+        finalRate: numOrUndefined(r?.finalRate),
       }))
-      .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0)
+      .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
   } catch {
     return [];
@@ -185,6 +222,7 @@ export function sanitize(e: any): Enquiry {
     description: str(e.description),
     priority: str(e.priority),
     status: str(e.status),
+    rateStatus: str((e as any).rateStatus),
     assignedAgentId: str(e.assignedAgentId),
     imageUrls: Array.isArray(e.imageUrls) ? e.imageUrls : [],
     activities: Array.isArray(e.activities) ? e.activities : [],
@@ -195,6 +233,10 @@ export function sanitize(e: any): Enquiry {
           qty: String(r?.qty ?? '').slice(0, 120),
           spec: String(r?.spec ?? '').slice(0, 2000),
           media: parseItemMedia(r?.media),
+          rates: parseItemRates(r?.rates),
+          selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
+          markup: numOrUndefined(r?.markup),
+          finalRate: numOrUndefined(r?.finalRate),
         }))
       : [],
   };
@@ -258,11 +300,11 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         e.id, e.estNumber, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
-        e.priority, e.status, e.assignedAgentId, e.createdAt, e.updatedAt,
+        e.priority, e.status, e.rateStatus, e.assignedAgentId, e.createdAt, e.updatedAt,
         JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []),
       )
       .run();
@@ -274,11 +316,11 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
       )
       .bind(
         merged.estNumber, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
-        merged.description, merged.priority, merged.status, merged.assignedAgentId,
+        merged.description, merged.priority, merged.status, merged.rateStatus, merged.assignedAgentId,
         merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
         JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), id,
       )

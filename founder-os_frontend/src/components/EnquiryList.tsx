@@ -8,6 +8,9 @@ interface EnquiryListProps {
   enquiries: Enquiry[];
   agents: Agent[];
   redacted?: boolean;
+  /** Pending-only queue (procurement/management): {label, predicate}. When
+   *  provided, the list defaults to pending items with an "All" toggle. */
+  queueToggle?: { pendingLabel: string; isPending: (e: Enquiry) => boolean };
   onViewDetail: (enquiryId: string) => void;
   onOpenCreate: () => void;
   onExportCSV: () => void;
@@ -20,6 +23,7 @@ export default function EnquiryList({
   enquiries,
   agents,
   redacted = false,
+  queueToggle,
   onViewDetail,
   onOpenCreate,
   onExportCSV,
@@ -35,6 +39,7 @@ export default function EnquiryList({
   const [selectedDate, setSelectedDate] = useState<string | null>(() => {
     return new Date().toISOString().split("T")[0];
   });
+  const [queueOnly, setQueueOnly] = useState(true);
 
   const dateInputRef = useRef<HTMLInputElement>(null);
 
@@ -96,7 +101,8 @@ export default function EnquiryList({
 
   // Filtered queries pipeline
   const filteredEnquiries = useMemo(() => {
-    return enquiries.filter(e => {
+    const inQueue = queueToggle && queueOnly ? enquiries.filter(queueToggle.isPending) : enquiries;
+    return inQueue.filter(e => {
       const query = searchQuery.toLowerCase();
       const matchSearch = e.clientCompany.toLowerCase().includes(query) ||
         e.title.toLowerCase().includes(query) ||
@@ -110,7 +116,9 @@ export default function EnquiryList({
 
       return matchSearch && matchStatus && matchPriority && matchAgent && matchDate;
     });
-  }, [enquiries, searchQuery, statusFilter, priorityFilter, agentFilter, selectedDate]);
+  }, [enquiries, searchQuery, statusFilter, priorityFilter, agentFilter, selectedDate, queueToggle, queueOnly]);
+
+  const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -168,6 +176,20 @@ export default function EnquiryList({
           )}
         </div>
       </div>
+
+      {/* Pending queue toggle (procurement/management work queues) */}
+      {queueToggle && (
+        <div className="flex flex-row flex-wrap gap-2">
+          <button onClick={() => setQueueOnly(true)} type="button"
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+            {queueToggle.pendingLabel} ({pendingCount})
+          </button>
+          <button onClick={() => setQueueOnly(false)} type="button"
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${!queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+            All enquiries ({enquiries.length})
+          </button>
+        </div>
+      )}
 
       {/* Horizontal Calendar Selector */}
       <CalendarRibbon

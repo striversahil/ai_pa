@@ -19,10 +19,16 @@ export interface EnquiryRequirement {
   imageUrl?: string;
 }
 
-/** One purchasable line item AI-split from Specifications & Scope. */
+/** One purchasable line item (manual entry in the modal; AI split kept off). */
 export interface EnquiryMedia {
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'pdf';
   url: string;
+  name?: string;
+}
+
+export interface EnquiryItemRate {
+  vendor: string;
+  rate: number;
 }
 
 export interface EnquiryItem {
@@ -30,6 +36,12 @@ export interface EnquiryItem {
   qty: string;
   spec: string;
   media?: EnquiryMedia[];
+  /** Vendor rates collected by Procurement. */
+  rates?: EnquiryItemRate[];
+  /** Management decision: chosen vendor + markup + finalized rate. */
+  selectedVendor?: string;
+  markup?: number;
+  finalRate?: number;
 }
 
 export interface Enquiry {
@@ -46,12 +58,14 @@ export interface Enquiry {
   description: string;
   priority: 'high' | 'medium' | 'low';
   status: 'new' | 'contacted' | 'qualified' | 'proposal' | 'negotiation' | 'won' | 'lost';
+  /** Procurement workflow: '' | rate_pending | rates_received | finalized. */
+  rateStatus?: string;
   assignedAgentId: string;
   createdAt: string;
   activities: Activity[];
   imageUrls?: string[];
   additionalRequirements?: EnquiryRequirement[];
-  /** AI-split line items (Item 1..N), served redacted in procurement view. */
+  /** Manual line items (Item 1..N), shown in both Sales and Procurement views. */
   items?: EnquiryItem[];
   /** Procurement view only: true while the AI secure rewrite is still being
    *  prepared (pieces withheld until ready, client refetches on live event). */

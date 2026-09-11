@@ -2,8 +2,11 @@ import React, { useState } from "react";
 import { Enquiry, EnquiryItem, EnquiryMedia } from "../mockData";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 
-/** ~10MB per photo/video (stored as data-URI on the item; server re-checks). */
+/** ~10MB per file (stored as data-URI on the item; server re-checks). */
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
+
+const mediaKind = (f: File): EnquiryMedia["type"] =>
+  f.type.startsWith("video/") ? "video" : (f.type === "application/pdf" || /\.pdf$/i.test(f.name) ? "pdf" : "image");
 
 interface SpecificationsSectionProps {
   selectedEnquiry: Enquiry;
@@ -11,9 +14,13 @@ interface SpecificationsSectionProps {
   onAddRequirement?: (text: string, images: string[]) => void;
   onUpdateItems?: (items: EnquiryItem[]) => void;
   redacted?: boolean;
+  /** Vendor-rate visibility per view: sales sees finals only ('none');
+   *  procurement collects rates ('edit'); management reviews them ('view'). */
+  ratesMode?: "none" | "edit" | "view";
 }
 
-export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox, onAddRequirement, onUpdateItems, redacted = false }: SpecificationsSectionProps) {
+export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox, onAddRequirement, onUpdateItems, redacted = false, ratesMode }: SpecificationsSectionProps) {
+  const mode: "none" | "edit" | "view" = ratesMode ?? (!!onUpdateItems ? "edit" : "none");
   const [isAddReqOpen, setIsAddReqOpen] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState<EnquiryItem>({ name: "", qty: "", spec: "" });
@@ -23,6 +30,29 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
   const editable = !!onUpdateItems && !redacted;
+  // Vendor-rate collection follows the view mode, not the item-edit flag:
+  // procurement ('edit') collects, management ('view') reviews, sales ('none')
+  // sees finals only.
+  const ratesEditable = !!onUpdateItems && mode === "edit";
+  const showVendorRates = mode !== "none";
+  const [rateDrafts, setRateDrafts] = useState<Record<number, { vendor: string; rate: string }>>({});
+
+  const addItemRate = (idx: number) => {
+    if (!onUpdateItems) return;
+    const d = rateDrafts[idx] ?? { vendor: "", rate: "" };
+    const vendor = d.vendor.trim();
+    const rate = Number(d.rate);
+    if (!vendor || !Number.isFinite(rate) || rate < 0) return;
+    const next = items.map((it, i) => (i === idx ? { ...it, rates: [...(it.rates ?? []), { vendor, rate }] } : it));
+    onUpdateItems(next);
+    setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: "", rate: "" } }));
+  };
+
+  const removeItemRate = (idx: number, rateIdx: number) => {
+    if (!onUpdateItems) return;
+    const next = items.map((it, i) => (i === idx ? { ...it, rates: (it.rates ?? []).filter((_, j) => j !== rateIdx) } : it));
+    onUpdateItems(next);
+  };
 
   const openItemMedia = (idx: number, url: string) => {
     const list = (items[idx]?.media ?? []).map((m) => m.url).filter(Boolean);
@@ -32,7 +62,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const addItemMedia = (idx: number, files: FileList | null) => {
     if (!files || files.length === 0 || !onUpdateItems) return;
     setMediaError(null);
-    const accepted = Array.from(files).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
+    const accepted = Array.from(files).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/") || f.type === "application/pdf" || /\.pdf$/i.test(f.name));
     const tooBig = Array.from(files).find((f) => f.size > MAX_MEDIA_BYTES);
     if (tooBig) {
       setMediaError(`"${tooBig.name}" exceeds 10MB and was skipped.`);
@@ -45,7 +75,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
       const reader = new FileReader();
       reader.onload = (evt) => {
         if (evt.target?.result) {
-          loaded.push({ type: file.type.startsWith("video/") ? "video" : "image", url: evt.target.result as string });
+          loaded.push({ type: mediaKind(file), url: evt.target.result as string, name: file.name });
         }
         processed++;
         if (processed === todo.length) {
@@ -112,19 +142,12 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
 
       <div className="space-y-4">
         <div>
-          <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">Specifications & Scope</span>
-          <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed bg-[var(--bg-input)]/25 p-3.5 rounded-xl border border-[var(--border-card)]/50">
-            {selectedEnquiry.description || (redacted ? "Preparing secure view…" : "No specifications provided.")}
-          </p>
-        </div>
-
-        <div>
           <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">
             Items ({items.length})
           </span>
           {items.length === 0 ? (
             <p className="text-xs text-[var(--text-tertiary)] font-medium bg-[var(--bg-input)]/25 p-3 rounded-xl border border-[var(--border-card)]/50">
-              {redacted ? "Preparing secure view…" : "AI is splitting the specifications into items…"}
+              {redacted ? "Preparing secure view…" : "No items yet — add the first one below."}
             </p>
           ) : (
             <ul className="space-y-2">
@@ -169,6 +192,49 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       </div>
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
                       {it.spec && <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed mt-0.5">{it.spec}</p>}
+                      {it.finalRate !== undefined && it.finalRate !== null && (
+                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[11px] font-extrabold">
+                          Rate Received: ₹{Number(it.finalRate).toLocaleString("en-IN")}
+                        </div>
+                      )}
+                      {((it.rates ?? []).length > 0 || ratesEditable) && showVendorRates && (
+                        <div className="mt-2 space-y-1.5">
+                          {(it.rates ?? []).map((r, ri) => (
+                            <div key={ri} className="flex items-center gap-2 text-[11px]">
+                              <span className="font-bold text-[var(--text-primary)] break-words flex-1">{r.vendor}</span>
+                              <span className="font-mono text-[var(--text-secondary)] whitespace-nowrap">₹{Number(r.rate).toLocaleString("en-IN")}</span>
+                              {ratesEditable && (
+                                <button type="button" onClick={() => removeItemRate(idx, ri)}
+                                  className="text-[var(--color-danger)] hover:opacity-80 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0">×</button>
+                              )}
+                            </div>
+                          ))}
+                          {ratesEditable && (
+                            <div className="space-y-1.5 pt-1">
+                              <textarea
+                                value={rateDrafts[idx]?.vendor ?? ""}
+                                onChange={(e) => setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: e.target.value, rate: prev[idx]?.rate ?? "" } }))}
+                                placeholder="Vendor name & address / dimensions…"
+                                rows={2}
+                                className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
+                              />
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  value={rateDrafts[idx]?.rate ?? ""}
+                                  onChange={(e) => setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: prev[idx]?.vendor ?? "", rate: e.target.value } }))}
+                                  placeholder="Rate ₹"
+                                  inputMode="decimal"
+                                  className="flex-1 px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+                                />
+                                <button type="button" onClick={() => addItemRate(idx)}
+                                  className="px-3 py-2 bg-brand-indigo/10 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-[11px] rounded-lg cursor-pointer border-0 whitespace-nowrap">
+                                  Add rate
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {(it.media ?? []).length > 0 && (
                         <div className="flex flex-wrap gap-2 mt-2">
                           {(it.media ?? []).map((m, mi) => (
@@ -180,6 +246,24 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                   preload="metadata"
                                   className="w-32 h-20 rounded-lg object-cover border border-[var(--border-card)] bg-black"
                                 />
+                                {editable && (
+                                  <button type="button" onClick={() => removeItemMedia(idx, mi)}
+                                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold cursor-pointer border border-white/20">×</button>
+                                )}
+                              </div>
+                            ) : m.type === "pdf" ? (
+                              <div key={mi} className="relative flex-shrink-0 group">
+                                <a
+                                  href={m.url}
+                                  download={m.name || `item-${idx + 1}-doc-${mi + 1}.pdf`}
+                                  title={m.name || "PDF document"}
+                                  className="flex items-center gap-1.5 max-w-[12rem] px-2.5 py-2 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 transition-colors cursor-pointer"
+                                >
+                                  <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                  </svg>
+                                  <span className="text-[10px] font-bold text-[var(--text-primary)] truncate">{m.name || "PDF"}</span>
+                                </a>
                                 {editable && (
                                   <button type="button" onClick={() => removeItemMedia(idx, mi)}
                                     className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold cursor-pointer border border-white/20">×</button>
@@ -207,8 +291,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                           </svg>
-                          Add photo / video
-                          <input type="file" multiple accept="image/*,video/*" className="hidden"
+                          Add photo / video / PDF
+                          <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
                             onChange={(e) => { addItemMedia(idx, e.target.files); e.target.value = ""; }} />
                         </label>
                       )}

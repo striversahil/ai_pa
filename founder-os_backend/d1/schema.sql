@@ -399,7 +399,8 @@ CREATE TABLE IF NOT EXISTS Enquiry (
   imageUrls TEXT,
   activities TEXT,
   additionalRequirements TEXT,
-  items TEXT
+  items TEXT,
+  rateStatus TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_enquiry_status ON Enquiry(status);
 CREATE INDEX IF NOT EXISTS idx_enquiry_created ON Enquiry(createdAt);

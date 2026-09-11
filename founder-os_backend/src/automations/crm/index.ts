@@ -54,19 +54,22 @@ async function computeCrmData() {
   const stages: Record<string, any> = fresh ? (snapshot.stages || snapshot.byProcess || {}) : {};
 
   // Department score ledger — today, last 7 days, CRM leaderboard, recent feed.
+  // Two queries (not three): the 7-day window covers today, so today's
+  // aggregates are derived in memory from the week rows.
   let scores: any = {
     today: { crm: 0, accounts: 0, dispatch: 0, procurement: 0 },
     todayByDeptCount: { crm: 0, accounts: 0, dispatch: 0, procurement: 0 },
     week: { crm: 0, accounts: 0, dispatch: 0, procurement: 0 },
     crmLeaderboard: [] as any[],
     recent: [] as any[],
+    ledgerOk: true,
   };
   try {
-    const [todayEvents, weekEvents, recent] = await Promise.all([
-      prisma.departmentScoreEvent.findMany({ where: { day: today } }),
+    const [weekEvents, recent] = await Promise.all([
       prisma.departmentScoreEvent.findMany({ where: { day: { gte: weekAgo } } }),
       prisma.departmentScoreEvent.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
     ]);
+    const todayEvents = weekEvents.filter((r: any) => r.day === today);
     const sumByDept = (rows: any[]) => {
       const points: Record<string, number> = { crm: 0, accounts: 0, dispatch: 0, procurement: 0 };
       const events: Record<string, number> = { crm: 0, accounts: 0, dispatch: 0, procurement: 0 };
@@ -99,9 +102,11 @@ async function computeCrmData() {
         day: r.day, dept: r.dept, soNumber: r.soNumber, points: r.points,
         reason: r.reason, actor: r.actor, createdAt: r.createdAt,
       })),
+      ledgerOk: true,
     };
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'crm data: score ledger aggregation failed');
+    scores.ledgerOk = false;
   }
 
   const materials = fresh ? (snapshot.materials || []) : [];
@@ -110,6 +115,9 @@ async function computeCrmData() {
   return {
     date: today,
     computedAt: snapshot?.computedAt ?? null,
+    // Zoho fetch time (when the runner pulled the data) vs computedAt (when
+    // the Worker wrote the snapshot) — the dashboard shows fetchedAt.
+    fetchedAt: snapshot?.fetchedAt ?? null,
     fresh,
     totalActive: fresh ? (snapshot.totalActive || 0) : 0,
     totalValue: fresh ? (snapshot.totalValue || 0) : 0,

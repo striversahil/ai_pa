@@ -21,7 +21,7 @@ function parseJson(value: string | null | undefined): unknown {
  *      or a unique short form of it ("samar" → "Samarjeet").
  *   3. No match → null (dashboard shows an empty/zero state for that user).
  */
-async function resolveSelfTelecaller(c: any): Promise<string | null> {
+export async function resolveSelfTelecaller(c: any): Promise<string | null> {
   const { prisma } = deps();
   const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
   if (!me) return null;

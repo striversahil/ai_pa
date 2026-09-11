@@ -8,6 +8,7 @@ import EnquiryKanban from "@/components/EnquiryKanban";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
 import Lightbox from "@/components/Lightbox";
+import ManagementRatesPanel from "@/components/ManagementRatesPanel";
 import type { Enquiry, Comment } from "@/types";
 
 // Enquiry Tracker dashboard (mounted as the `enquiry-tracker` automation).
@@ -22,21 +23,25 @@ export default function EnquiryTracker() {
   const [boardView, setBoardView] = useState<"list" | "board">("list");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Sales | Procurement scoped views (telecalling pattern: scope-gated tabs)
-  // Sales = full PII + lead attribution. Procurement = same pipeline, client
-  // PII + lead identity hidden (also enforced by the API, never UI-only).
+  // ── Sales | Procurement | Management scoped views (telecalling pattern:
+  //  scope-gated tabs). Sales = full PII + lead attribution. Procurement =
+  //  same pipeline, client PII + lead identity hidden (also enforced by the
+  //  API, never UI-only). Management = MIS-only rate review: vendor rates per
+  //  item + client details + markup decisions + finalize.
   const { me } = useAuth();
   const scopes = me?.scopes ?? [];
   const privileged = !!me && (me.isAdmin || scopes.includes("mis"));
   const isSalesTeam = privileged || scopes.includes("sales");
   const isProcurementTeam = privileged || scopes.includes("procurement");
-  const [teamView, setTeamView] = useState<"sales" | "procurement">("sales");
+  const canManage = privileged;
+  const [teamView, setTeamView] = useState<"sales" | "procurement" | "management">("sales");
   // Procurement-marked staff without a sales-side grant land on procurement.
   useEffect(() => {
     if (!isSalesTeam && isProcurementTeam) setTeamView("procurement");
   }, [isSalesTeam, isProcurementTeam]);
   const showSalesTab = isSalesTeam || (!isSalesTeam && !isProcurementTeam);
   const redacted = teamView === "procurement";
+  const isManagement = teamView === "management";
   const {
     enquiries, comments, agents, currentAgent, loaded,
     syncState, addEnquiry, updateEnquiry, deleteEnquiry,
@@ -66,7 +71,7 @@ export default function EnquiryTracker() {
           clientCompany: data.clientCompany, contactName: data.contactName, contactEmail: data.contactEmail,
           contactPhone: data.contactPhone, title: data.title, description: data.description,
           priority: data.priority, status: data.status, assignedAgentId: data.assignedAgentId,
-          additionalRequirements, activities,
+          additionalRequirements, activities, items: data.items || [],
         });
       } else {
         const saved = await addEnquiry({
@@ -74,7 +79,7 @@ export default function EnquiryTracker() {
           contactEmail: data.contactEmail, contactPhone: data.contactPhone, title: data.title,
           description: data.description, priority: data.priority, status: data.status,
           assignedAgentId: data.assignedAgentId || "", imageUrls: data.imageUrls || [],
-          activities: data.activities || [], additionalRequirements,
+          activities: data.activities || [], additionalRequirements, items: data.items || [],
           id: "", createdAt: "", updatedAt: "",
         } as any);
         newId = saved?.id || null;
@@ -118,9 +123,13 @@ export default function EnquiryTracker() {
     await addComment(newComment);
   }, [addComment]);
 
-  const handleUpdateItems = useCallback(async (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video'; url: string }> }>) => {
+  const handleUpdateItems = useCallback(async (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => {
     await updateItems(id, items);
   }, [updateItems]);
+
+  const handleSaveRates = useCallback(async (id: string, items: Enquiry["items"], finalize: boolean) => {
+    await updateEnquiry(id, { items, ...(finalize ? { rateStatus: "finalized" } : {}) } as Partial<Enquiry>);
+  }, [updateEnquiry]);
 
   const handleExportCSV = useCallback(() => {
     const rows = redacted
@@ -165,7 +174,7 @@ export default function EnquiryTracker() {
         </div>
       </div>
 
-      {(showSalesTab || isProcurementTeam) && (
+      {(showSalesTab || isProcurementTeam || canManage) && (
         <nav className="flex flex-row flex-wrap gap-2">
           {showSalesTab && (
             <button onClick={() => setTeamView("sales")}
@@ -179,12 +188,26 @@ export default function EnquiryTracker() {
               <span className="text-base leading-none">📦</span>Procurement
             </button>
           )}
+          {canManage && (
+            <button onClick={() => setTeamView("management")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${teamView === "management" ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+              <span className="text-base leading-none">💼</span>Management
+            </button>
+          )}
         </nav>
       )}
 
 {selectedEnquiry ? (
-        <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
+        <>
+          {isManagement && (
+            <ManagementRatesPanel
+              enquiry={selectedEnquiry}
+              onSave={(items, finalize) => void handleSaveRates(selectedEnquiry.id, items, finalize)}
+            />
+          )}
+          <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
           redacted={redacted}
+          ratesMode={redacted ? "edit" : isManagement ? "view" : "none"}
           onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
           onUpdateAgent={(id, a) => void handleUpdateAgent(id, a)}
           onAddComment={(c) => void handleAddComment(c)}
@@ -195,6 +218,7 @@ export default function EnquiryTracker() {
           onBack={() => setSelectedId(null)}
           onOpenLightbox={handleOpenLightbox}
         />
+        </>
       ) : boardView === "board" ? (
         <EnquiryKanban enquiries={enquiries} agents={agents} redacted={redacted}
           onViewDetail={(id) => { setSelectedId(id); }}
@@ -202,6 +226,15 @@ export default function EnquiryTracker() {
         />
       ) : (
         <EnquiryList enquiries={enquiries} agents={agents} redacted={redacted}
+          queueToggle={isManagement
+            ? { pendingLabel: "Pending review", isPending: (e) => (e.rateStatus ?? "") === "rates_received" }
+            : redacted
+              ? {
+                  pendingLabel: "Pending rates",
+                  isPending: (e) => (e.rateStatus ?? "") !== "finalized"
+                    && ((e.items ?? []).length === 0 || (e.items ?? []).some((it) => (it.rates ?? []).length === 0)),
+                }
+              : undefined}
           onViewDetail={(id) => { setSelectedId(id); }}
           onOpenCreate={() => { setEditingEnquiry(null); setIsAddModalOpen(true); }}
           onExportCSV={handleExportCSV}

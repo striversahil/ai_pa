@@ -37,7 +37,7 @@ import { createChatStore } from './modules/chat/store';
 import * as EnquiryRoutes from './modules/enquiries/routes';
 import { PrismaEnquiryStore } from './modules/enquiries/store-prisma';
 import { createEnquiryStore } from './modules/enquiries/store';
-import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from './modules/enquiries/extract';
+import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from './modules/enquiries/extract';
 import { cacheSet, cacheDel } from './shared/cache';
 
 
@@ -297,11 +297,12 @@ async function runEnquiryExtraction(id: string) {
     });
     if (!extracted) return;
     // Effective sales line items: manual edits win — see worker context.ts.
+    // AI auto-split is OFF (AI_ITEMS_ENABLED); empty rows stay empty.
     const existingItems: Array<{ name: string; qty: string; spec: string }> =
       Array.isArray((enquiry as any).items) ? (enquiry as any).items : [];
     const salesItems = existingItems.length > 0
       ? existingItems
-      : (Array.isArray(extracted.items) ? extracted.items : []);
+      : (AI_ITEMS_ENABLED && Array.isArray(extracted.items) ? extracted.items : []);
     // Procurement-view cache (v2) — see worker context.ts runEnquiryExtraction.
     if (extracted.redactedDescription) {
       try {
@@ -602,6 +603,59 @@ app.get('/api/estimates', asyncHandler(async (req, res) => {
   res.status(200).json({
     estimates: estimatesWithRealComments,
     lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null
+  });
+}));
+
+/**
+ * PUT /api/estimates/:id/call-tag
+ * Sales-agent call disposition on a conversion follow-up (Lead Conversion
+ * view): NO_ANSWER / BUSY / CALLBACK (+callbackDate, max +10 days IST).
+ * Express mirror of the Worker route — same setEstimateCallTag validation.
+ * MIS may tag any estimate; a signed-in agent only their own assigned ones.
+ */
+app.put('/api/estimates/:id/call-tag', asyncHandler(async (req, res) => {
+  const { setEstimateCallTag } = require('./automations/telecalling/service');
+  const body = req.body || {};
+  const me = await getMe(authStore, req.headers.cookie || null);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const scopes: string[] = (me as any)?.scopes ?? [];
+  const isMis = !!((me as any)?.isAdmin) || scopes.includes('mis');
+  let actorTelecallerId: string | null = null;
+  if (!isMis) {
+    const meEmail = (me as any)?.user?.email ? String((me as any).user.email).toLowerCase().trim() : '';
+    const meName = (me as any)?.user?.name ? String((me as any).user.name).toLowerCase().replace(/\s+/g, '') : '';
+    const tcs = await prisma.telecaller.findMany({ where: { deleted: false } });
+    if (meEmail) {
+      const byEmail = tcs.find((t: any) => t.email && String(t.email).toLowerCase().trim() === meEmail);
+      if (byEmail) actorTelecallerId = byEmail.id;
+    }
+    if (!actorTelecallerId && meName) {
+      const norm = (n: string) => String(n).toLowerCase().replace(/\s+/g, '');
+      const exact = tcs.find((t: any) => norm(t.name) === meName);
+      if (exact) actorTelecallerId = exact.id;
+    }
+    if (!actorTelecallerId) return res.status(403).json({ error: 'only MIS or the assigned sales agent can tag estimates' });
+    const current = await prisma.estimate.findUnique({
+      where: { estimateId: String(req.params.id) },
+      select: { assignedTelecallerId: true },
+    });
+    if (!current) return res.status(404).json({ error: 'estimate not found' });
+    if (String((current as any).assignedTelecallerId ?? '') !== actorTelecallerId) {
+      return res.status(403).json({ error: 'you can only tag estimates assigned to you' });
+    }
+  }
+  const result = await setEstimateCallTag({
+    estimateId: String(req.params.id),
+    tag: body.tag ?? null,
+    callbackDate: body.callbackDate ?? null,
+    actorTelecallerId: isMis ? null : actorTelecallerId,
+  });
+  if (!result.ok) return res.status(result.status ?? 400).json({ error: result.error });
+  res.status(200).json({
+    ok: true,
+    estimateId: String(req.params.id),
+    callTag: result.estimate?.callTag ?? null,
+    callbackDate: result.estimate?.callbackDate ?? null,
   });
 }));
 

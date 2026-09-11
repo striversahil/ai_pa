@@ -19,7 +19,7 @@ import { createChatStore, resolveLinkedSender } from '../modules/chat/store';
 import * as ChatRoutes from '../modules/chat/routes';
 import { createEnquiryStore } from '../modules/enquiries/store';
 import * as EnquiryRoutes from '../modules/enquiries/routes';
-import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from '../modules/enquiries/extract';
+import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from '../modules/enquiries/extract';
 import { DASHBOARD_SLUGS } from '../modules/automation/dashboardSlugs';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automations/neodove-refresh';
 import { isSystemGeneratedComment } from '../shared/systemComment';
@@ -295,13 +295,14 @@ export function runEnquiryExtraction(c: any, enquiryId: string) {
         })),
       });
       if (!extracted) return;
-      // Effective sales line items: manual edits win — only auto-fill when the
-      // row has none and the AI split the description into items.
+      // Effective sales line items: manual entry wins. AI auto-split is OFF
+      // (AI_ITEMS_ENABLED) — items come from the modal's Add-Item editor, so
+      // an empty row stays empty instead of being AI-filled.
       const existingItems: Array<{ name: string; qty: string; spec: string }> =
         Array.isArray((enquiry as any).items) ? (enquiry as any).items : [];
       const salesItems = existingItems.length > 0
         ? existingItems
-        : (Array.isArray(extracted.items) ? extracted.items : []);
+        : (AI_ITEMS_ENABLED && Array.isArray(extracted.items) ? extracted.items : []);
       // Procurement-view cache (v2): AI rewrites for the description + every
       // comment, hashed against their exact source texts. Independent of the
       // field-fill below, so it refreshes even when nothing needed filling.

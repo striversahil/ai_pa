@@ -1,7 +1,7 @@
-import { Enquiry, EnquiryStore, parseItemMedia } from "./store";
+import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
-import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
+import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from "./extract";
 import { cacheGet } from "../../shared/cache";
 
 /** v1 cache entries (description-only) predate the comments/requirements map —
@@ -101,11 +101,26 @@ function pick(data: any): Partial<Enquiry> | null {
         qty: String(r?.qty ?? '').slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
         media: parseItemMedia(r?.media),
+        rates: parseItemRates(r?.rates),
+        selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
+        markup: numOrUndefined(r?.markup),
+        finalRate: numOrUndefined(r?.finalRate),
       }))
-      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0)
+      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
   }
+  if (data.rateStatus !== undefined) {
+    const rs = String(data.rateStatus ?? '');
+    if (['', 'rate_pending', 'rates_received', 'finalized'].includes(rs)) (out as any).rateStatus = rs;
+  }
   return Object.keys(out).length ? out : null;
+}
+
+/** Privileged = can decide markup + finalize rates (admin / root / MIS). */
+export function canManageRates(me: MeResponse): boolean {
+  if (!me) return false;
+  if (me.isAdmin || (me as any).isRoot) return true;
+  return ((me as any).scopes || []).includes('mis');
 }
 
 export interface RedactOpts {
@@ -135,7 +150,11 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     const entry = asRedactedViewCache(raw);
     let pending = false;
     let description = '';
-    if (entry && entry.descHash === hashText(String(e.description ?? '')) && typeof entry.description === 'string') {
+    const srcDesc = String(e.description ?? '');
+    if (!srcDesc.trim()) {
+      // Nothing to secure — legitimately empty, not pending.
+      description = '';
+    } else if (entry && entry.descHash === hashText(srcDesc) && typeof entry.description === 'string') {
       description = entry.description;
     } else {
       pending = true;
@@ -161,26 +180,32 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
         pending = true;
       }
     });
-    // Line items: sales stores the AI-split `items`; procurement gets the
-    // cached per-item rewrite only when its hash still matches the sales item.
-    // Media passes through unredacted (technical drawings, like enquiry-level
-    // imageUrls). Stale/missing pieces are withheld (pending → re-enrichment).
-    const salesItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string }> }> =
+    // Line items: manual entry is served as-is in BOTH views (specs, not
+    // PII) — EXCEPT markup decisions, which are Management-only: restricted
+    // viewers see vendor rates but never selectedVendor/markup/finalRate.
+    // A cached AI rewrite (legacy AI-split rows) still wins when its hash
+    // matches; otherwise the stored item is served with no pending flag.
+    const salesItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> =
       Array.isArray((e as any).items) ? (e as any).items : [];
-    const servedItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string }> }> = [];
+    const servedItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> = [];
     salesItems.forEach((it: any, i: number) => {
       const sales = {
         name: String(it?.name ?? ''),
         qty: String(it?.qty ?? ''),
         spec: String(it?.spec ?? ''),
         media: parseItemMedia(it?.media),
+        rates: parseItemRates(it?.rates),
+        selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
+        markup: numOrUndefined(it?.markup),
+        finalRate: numOrUndefined(it?.finalRate),
       };
       const cached = entry?.items?.[i];
       if (cached && cached.hash === hashItem(sales)
         && typeof cached.name === 'string' && typeof cached.qty === 'string' && typeof cached.spec === 'string') {
         servedItems.push({ name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media });
       } else {
-        pending = true;
+        const { selectedVendor, markup, finalRate, ...rest } = sales;
+        servedItems.push(rest);
       }
     });
     return {
@@ -235,10 +260,19 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
         name: String(r?.name ?? '').slice(0, 300),
         qty: String(r?.qty ?? '').slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
+        media: parseItemMedia(r?.media),
+        rates: parseItemRates(r?.rates),
       }))
-      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim())
+      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100),
+    // New requirements arrive as Rate Pending (upgraded below if rates came along).
+    rateStatus: 'rate_pending',
   });
+  const created = enquiry as any;
+  if ((created.items ?? []).some((it: any) => (it.rates ?? []).length > 0)) {
+    await store.updateEnquiry(created.id, { rateStatus: 'rates_received' } as any);
+    created.rateStatus = 'rates_received';
+  }
   return {
     status: 201,
     body: enquiry,
@@ -265,11 +299,35 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
 export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: string, body: any): Promise<EnquiryResult> {
   const updates = pick(body || {});
   if (!updates) return json(400, { error: "no valid fields" });
-  // Items derive from the description: a description edit (without explicit
-  // items) resets them so the background extraction re-splits fresh.
-  // Explicit item saves (manual edit) carry `items` and are preserved.
-  if ((updates as any).description !== undefined && (updates as any).items === undefined) {
+  // Items derive from manual entry: with AI auto-split OFF, a description
+  // edit must preserve them (the reset below only applies when AI splitting
+  // is enabled). Explicit item saves carry `items` and are always preserved.
+  if (AI_ITEMS_ENABLED && (updates as any).description !== undefined && (updates as any).items === undefined) {
     (updates as any).items = [];
+  }
+  const privileged = canManageRates(me);
+  if (!privileged) {
+    // Procurement may collect vendor rates, but markup decisions + finalize
+    // are Management-only: strip them so crafted requests can't sneak them in.
+    if (Array.isArray((updates as any).items)) {
+      (updates as any).items = (updates as any).items.map((it: any) => {
+        const { selectedVendor, markup, finalRate, ...rest } = it;
+        return rest;
+      });
+    }
+    delete (updates as any).rateStatus;
+  }
+  // Auto-advance the workflow: first vendor rate moves Rate Pending → Received.
+  // Finalized is set explicitly by Management (guarded above).
+  if ((updates as any).rateStatus === undefined) {
+    const current = await store.getEnquiry(id).catch(() => null);
+    const mergedItems = Array.isArray((updates as any).items)
+      ? (updates as any).items
+      : ((current as any)?.items ?? []);
+    const cur = String((current as any)?.rateStatus ?? '');
+    if ((cur === '' || cur === 'rate_pending') && mergedItems.some((it: any) => ((it as any).rates ?? []).length > 0)) {
+      (updates as any).rateStatus = 'rates_received';
+    }
   }
   const enquiry = await store.updateEnquiry(id, updates);
   if (!enquiry) return json(404, { error: "not found" });

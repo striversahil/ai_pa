@@ -20,6 +20,7 @@ function mapEnquiry(row: any): Enquiry | null {
     description: row.description,
     priority: row.priority,
     status: row.status,
+    rateStatus: (row as any).rateStatus ?? "",
     assignedAgentId: String(row.assignedAgentId ?? ""),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

@@ -36,10 +36,22 @@ function toEnquiry(raw: any): Enquiry {
         spec: String(r?.spec ?? ""),
         media: Array.isArray(r?.media)
           ? r.media
-              .map((m: any) => ({ type: m?.type === "video" ? "video" : "image", url: String(m?.url ?? "") }))
+              .map((m: any) => ({
+                type: m?.type === "video" ? "video" : m?.type === "pdf" ? "pdf" : "image",
+                url: String(m?.url ?? ""),
+                name: m?.name ? String(m.name) : undefined,
+              }))
               .filter((m: any) => m.url.length > 0)
           : [],
-      })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0)
+        rates: Array.isArray(r?.rates)
+          ? r.rates
+              .map((q: any) => ({ vendor: String(q?.vendor ?? ""), rate: Number(q?.rate ?? NaN) }))
+              .filter((q: any) => q.vendor.trim() && Number.isFinite(q.rate))
+          : [],
+        selectedVendor: r?.selectedVendor ? String(r.selectedVendor) : undefined,
+        markup: r?.markup !== undefined && r?.markup !== null && r?.markup !== "" ? Number(r.markup) : undefined,
+        finalRate: r?.finalRate !== undefined && r?.finalRate !== null && r?.finalRate !== "" ? Number(r.finalRate) : undefined,
+      })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
     : [];
   return {
     id: raw.id,
@@ -55,6 +67,7 @@ function toEnquiry(raw: any): Enquiry {
     description: raw.description,
     priority: raw.priority || 'medium',
     status: raw.status || 'new',
+    rateStatus: raw.rateStatus || '',
     assignedAgentId: String(raw.assignedAgentId ?? ''),
     createdAt: raw.createdAt,
     activities,
@@ -177,6 +190,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
       assignedAgentId: enquiry.assignedAgentId,
       imageUrls: enquiry.imageUrls || [], activities: enquiry.activities || [],
       additionalRequirements: enquiry.additionalRequirements || [],
+      items: enquiry.items || [],
     });
     setEnquiries((prev) => [toEnquiry(saved), ...prev]);
     return saved;

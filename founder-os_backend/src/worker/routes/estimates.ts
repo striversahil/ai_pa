@@ -3,7 +3,7 @@
 // overrides, baseline snapshots, NeoDove report, Zoho classification, bulk-upsert.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, type Bindings } from '../context';
+import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, getMe, readSessionCookie, type Bindings } from '../context';
 import {
   recordAssignment,
   markTelecallerAbsent,
@@ -13,6 +13,7 @@ import {
   isEodReassignEnabled,
   setEodReassignEnabled,
   bulkAssignEstimates,
+  setEstimateCallTag,
   invalidateRiskCache,
 } from '../../automations/telecalling/service';
 import { evaluateShield } from '../../automations/telecalling/effort-shield';
@@ -355,6 +356,116 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     // still visible state) — matches the secret-gated runner twin.
     if (result.moved.length > 0 || result.flagsUpdated.length > 0) notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: result.errors.length === 0, movedCount: result.moved.length, ...result });
+  });
+
+  // ── Agent call-disposition tags (Lead Conversion view) ───────────────────
+  // The sales team tags each follow-up: NO_ANSWER (not picking up), BUSY, or
+  // CALLBACK with a follow-up date (capped at +10 days IST, enforced in
+  // setEstimateCallTag). MIS may tag any estimate; a signed-in sales agent may
+  // only tag estimates currently assigned to THEM (resolved from the session
+  // via resolveSelfTelecaller — same scoping as the conversion view itself).
+  app.put('/api/estimates/:id/call-tag', async (c) => {
+    const { prisma } = deps();
+    const body = await c.req.json().catch(() => ({}));
+    let actorTelecallerId: string | null = null;
+    let isMis = false;
+    try {
+      await requireMisScope(c);
+      isMis = true;
+    } catch {
+      const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
+      try {
+        actorTelecallerId = await resolveSelfTelecaller(c);
+      } catch { actorTelecallerId = null; }
+      if (!actorTelecallerId) return c.json({ error: 'only MIS or the assigned sales agent can tag estimates' }, 403);
+    }
+    const estimateId = c.req.param('id');
+    if (!isMis) {
+      const current = await prisma.estimate.findUnique({
+        where: { estimateId },
+        select: { assignedTelecallerId: true },
+      });
+      if (!current) return c.json({ error: 'estimate not found' }, 404);
+      if (String(current.assignedTelecallerId ?? '') !== actorTelecallerId) {
+        return c.json({ error: 'you can only tag estimates assigned to you' }, 403);
+      }
+    }
+    const result = await setEstimateCallTag({
+      estimateId,
+      tag: body.tag ?? null,
+      callbackDate: body.callbackDate ?? null,
+      actorTelecallerId: isMis ? null : actorTelecallerId,
+    });
+    if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as any);
+    const saved: any = result.estimate ?? {};
+    // Sheets-style delta push: carry the changed row fields IN the event so
+    // every open tab patches its local model instantly instead of waiting for
+    // a full dashboard refetch (the overlay guarantees the refetch agrees).
+    let callTagByName: string | null = null;
+    try {
+      const by = saved.callTagBy ? String(saved.callTagBy) : '';
+      if (by) {
+        const t = await prisma.telecaller.findUnique({ where: { id: by }, select: { name: true } });
+        callTagByName = (t as any)?.name ? String((t as any).name) : null;
+      }
+    } catch { /* name best-effort */ }
+    notifyLive(c, {
+      type: LiveEvent.TelecallingTag,
+      callTag: {
+        estimateId,
+        callTag: saved.callTag ?? null,
+        callbackDate: saved.callbackDate ?? null,
+        callTagBy: saved.callTagBy ?? null,
+        callTagByName,
+        callTagAt: saved.callTagAt ?? null,
+      },
+    });
+    return c.json({
+      ok: true,
+      estimateId,
+      callTag: (result.estimate as any)?.callTag ?? null,
+      callbackDate: (result.estimate as any)?.callbackDate ?? null,
+    });
+  // ── CRM manual order actions (local override layer) ─────────────────────────
+  // MIS operators advance/cancel a sales order from the CRM dashboard. The
+  // action is recorded in CrmOrderAction; the next crm-runner tick applies the
+  // latest action per SO on top of Zoho's raw status, so the snapshot reflects
+  // the manual change and the points diff scores it automatically.
+  app.post('/api/crm/actions', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    const soNumber = String(body?.soNumber || '').trim();
+    const action = String(body?.action || '').trim().toLowerCase();
+    const toStage = String(body?.toStage || action || '').trim().toLowerCase();
+    const reason = typeof body?.reason === 'string' ? body.reason.slice(0, 500) : null;
+    const VALID = new Set(['confirm', 'invoice', 'ship', 'payment', 'complete', 'cancel', 'void']);
+    if (!soNumber) return c.json({ error: 'soNumber required' }, 400);
+    if (!VALID.has(action) || !VALID.has(toStage)) {
+      return c.json({ error: 'action/toStage must be one of confirm|invoice|ship|payment|complete|cancel|void' }, 400);
+    }
+    const { prisma } = deps();
+    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const actor = me?.user?.name || me?.user?.email || 'MIS';
+    // Resolve the stage the order is currently in (for the fromStage audit).
+    let fromStage: string | null = null;
+    try {
+      const { cacheGet }: { cacheGet: <T>(key: string, ttlMs: number) => Promise<T | null> } = require('../../shared/cache');
+      const snap: any = await cacheGet('crm:salesorders_snapshot', 24 * 60 * 60 * 1000);
+      if (Array.isArray(snap?.index)) {
+        const hit = snap.index.find((e: any) => String(e?.so) === soNumber);
+        if (hit?.stage) fromStage = String(hit.stage);
+      }
+    } catch { /* snapshot unavailable — fromStage stays null */ }
+    const day = kolkataDateStr();
+    const row = await prisma.crmOrderAction.create({
+      data: {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        soNumber, action, fromStage, toStage, reason, actor, day,
+        createdAt: new Date(),
+      },
+    });
+    notifyLive(c, { type: LiveEvent.Crm, soNumber, action });
+    return c.json({ ok: true, action: row });
   });
 
   // ── Baseline snapshot (frozen daily at 1 AM IST) ────────────────────────────

@@ -70,12 +70,16 @@ the previous KV snapshot (so→stage map) and writes ledger rows via
   active orders AND nothing created within 120 days), fetched by GH runner
   `scripts/crm-runner.js` using the same curl credentials as the estimates
   sync (`zoho_sent/sent_estimates.txt`).
-- The runner computes `pendingStep()` per order, aggregates
-  `{count, value, orders[]}` per step (**orders capped at 400 per stage** via
-  `DETAIL_CAP`, closed capped at 400 via `CLOSED_CAP`, materials capped at 300
-  via `MATERIALS_CAP**), rounds values to 2 decimals, and POSTs
-  `{date (IST), totalActive, totalValue, stages, closed, materials,
-  salespeople, meta}` to `/api/runner/crm/snapshot` (KV-cached on the Worker).
+- The runner computes `pendingStep()` per order (after applying manual
+  `CrmOrderAction` overrides), aggregates `{count, value, orders[]}` per step
+  (**display rows capped at 400 per stage** via `DETAIL_CAP`, closed capped at
+  400 via `CLOSED_CAP`, materials capped at 300 via `MATERIALS_CAP**), rounds
+  values to 2 decimals, and POSTs `{date (IST), fetchedAt, fingerprint,
+  totalActive, totalValue, stages, closed, materials, salespeople, index,
+  meta}` to `/api/runner/crm/snapshot` (KV-cached on the Worker). `index` is
+  the uncapped lightweight `[{so, stage, paidStatus, status, createdToday,
+  salesperson, total}]` diff source; `fetchedAt` is the Zoho pull time shown
+  in the dashboard header.
 - `data()` reads KV `crm:salesorders_snapshot` (45-min TTL) and returns it
   **only when `snapshot.date === today (IST)`** (`{…, fresh:true}`).
   Stale/absent snapshot → empty pipeline + zeroed scores
@@ -110,8 +114,23 @@ None (read-only dashboard + append-only points ledger).
 - Snapshot KV key is `crm:salesorders_snapshot` (45-min TTL, date-gated as
   above — TTL expiry alone doesn't cause zeros, a stale `date` does).
 - Data cache key is `crm:data` (60-s TTL, busted on every runner refresh).
-- Gotchas: scope is `zoho` (grant zoho to see CRM); per-stage order lists
-  truncate at 400 (counts don't); handler endpoint does nothing by design; if
-  the Procurement tab is empty, check `meta.withLineItems` — Zoho's list
-  response may not include line items (the runner records whether it did).
+- **No-change fast path:** the runner hashes the full pipeline state
+  (`index` rows) and checks `GET /api/runner/crm/fingerprint` first. Unchanged
+  → `POST /api/runner/crm/heartbeat` (refreshes KV TTL + `fetchedAt`, no ledger
+  diff, no cache bust, no broadcast) instead of a full snapshot POST, so idle
+  ticks never refetch open tabs. `CRM_FORCE=1` bypasses the gate.
+- **Full-index diff:** points are diffed on the runner's uncapped lightweight
+  `index` (every SO), NOT the 400-capped display rows — counts and points stay
+  correct at scale. The snapshot route only broadcasts + busts `crm:data` when
+  ledger events were written or totals changed.
+- **Manual actions (wired):** MIS operators advance/cancel orders from the
+  dashboard tables (`POST /api/crm/actions`, MIS scope, actor from session →
+  `CrmOrderAction` rows). The runner fetches the last 7 days of actions
+  (`GET /api/runner/crm/actions`) and applies the latest per SO on top of
+  Zoho's raw status before `pendingStep()`, so points score automatically.
+- Gotchas: scope is `crm` (grant crm to see CRM); per-stage order lists
+  truncate at 400 for display (counts + points use the full index); handler
+  endpoint does nothing by design; if the Procurement tab is empty, check
+  `meta.withLineItems` — Zoho's list response may not include line items
+  (the runner records whether it did).
 

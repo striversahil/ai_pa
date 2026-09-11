@@ -1,9 +1,9 @@
 "use client";
 
-import React, { Fragment, useState, useCallback, useEffect } from "react";
+import React, { Fragment, useState, useCallback, useEffect, useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
-import { useLiveQuery } from "@/hooks/useLiveData";
+import { useLiveQuery, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 
 interface LeaderRow {
@@ -131,6 +131,16 @@ interface FollowUp {  estimateId: string;
   callAttempts?: number | null;
   /** Whether the number connected at least once today. */
   callConnected?: boolean | null;
+  /** Agent call-disposition tag: NO_ANSWER | BUSY | CALLBACK (null = untagged). */
+  callTag?: "NO_ANSWER" | "BUSY" | "CALLBACK" | null;
+  /** Follow-up date for CALLBACK (YYYY-MM-DD, max +10 days). */
+  callbackDate?: string | null;
+  /** Telecaller id that set the tag. */
+  callTagBy?: string | null;
+  /** Display name of the agent that set the tag. */
+  callTagByName?: string | null;
+  /** ISO timestamp of when the tag was set. */
+  callTagAt?: string | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -285,6 +295,185 @@ function LeadChips({ f }: { f: FollowUp }) {
           {c.value}
         </span>
       ))}
+    </div>
+  );
+}
+
+/** Agent call-disposition tags for a conversion follow-up: the sales team
+ *  marks each estimate Not answering / Busy / Callback (+ follow-up date,
+ *  max 10 days out). Saved per estimate via PUT /api/estimates/:id/call-tag. */
+type CallTagValue = "NO_ANSWER" | "BUSY" | "CALLBACK";
+const CALL_TAG_META: Record<CallTagValue, { label: string; icon: string; cls: string; title: string }> = {
+  NO_ANSWER: { label: "Not answering", icon: "📵", cls: "text-orange-600 dark:text-orange-400 border-orange-500/30 bg-orange-500/5", title: "Client is not picking up the phone" },
+  BUSY: { label: "Busy", icon: "⏳", cls: "text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5", title: "Client is busy — call back later" },
+  CALLBACK: { label: "Callback", icon: "📞", cls: "text-sky-600 dark:text-sky-400 border-sky-500/30 bg-sky-500/5", title: "Follow up on a fixed date (max 10 days out)" },
+};
+
+/** Local YYYY-MM-DD of today + offset days (bounds the callback date input). */
+function localIsoDay(offsetDays: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Local-model patch for one estimate's call tag (optimistic echo + live-event deltas). */
+export interface CallTagDelta {
+  callTag: CallTagValue | null;
+  callbackDate: string | null;
+  callTagBy?: string | null;
+  callTagByName?: string | null;
+  callTagAt?: string | null;
+}
+
+function CallTagControl({ f, onSaved, onTag, compact = false }: { f: FollowUp; onSaved: () => void; onTag?: (estimateId: string, delta: CallTagDelta | null) => void; compact?: boolean }) {
+  const [picking, setPicking] = useState<CallTagValue | null>(null);
+  const [date, setDate] = useState(() => f.callbackDate ?? localIsoDay(1));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const minDay = localIsoDay(0);
+  const maxDay = localIsoDay(10);
+
+  const save = async (tag: CallTagValue | null, callbackDate: string | null) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/estimates/${encodeURIComponent(f.estimateId)}/call-tag`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag, callbackDate }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Save failed (HTTP ${res.status})`);
+      setPicking(null);
+      onSaved();
+    } catch (e: any) {
+      // Revert the optimistic echo — never display a state the server rejected.
+      onTag?.(f.estimateId, null);
+      setErr(e?.message || "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Optimistic echo (Sheets-style): paint the intended tag instantly, then
+  // persist. A failed save reverts via save()'s catch above.
+  const tap = (tag: CallTagValue | null, callbackDate: string | null) => {
+    if (tag) onTag?.(f.estimateId, { callTag: tag, callbackDate });
+    else onTag?.(f.estimateId, null);
+    void save(tag, callbackDate);
+  };
+
+  const chipBase = `inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-semibold ${compact ? "text-[10px]" : "text-[11px]"}`;
+
+  // A tag is set — show it with who/when, plus change + clear.
+  if (f.callTag && CALL_TAG_META[f.callTag as CallTagValue]) {
+    const meta = CALL_TAG_META[f.callTag as CallTagValue];
+    const dueNote =
+      f.callTag === "CALLBACK" && f.callbackDate
+        ? f.callbackDate < minDay
+          ? " — overdue, call today"
+          : f.callbackDate === minDay
+            ? " — due today"
+            : ` — due ${f.callbackDate}`
+        : "";
+    return (
+      <div className="flex flex-wrap items-center gap-1 pt-0.5">
+        <span title={`${meta.title}${dueNote}${f.callTagByName ? ` · set by ${f.callTagByName}` : ""}`} className={`${chipBase} ${meta.cls}`}>
+          <span>{meta.icon}</span> {meta.label}
+          {f.callTag === "CALLBACK" && f.callbackDate ? ` · ${f.callbackDate}` : ""}
+        </span>
+        <button
+          disabled={busy}
+          onClick={() => { setDate(f.callbackDate ?? localIsoDay(1)); setPicking(f.callTag as CallTagValue); }}
+          title="Change tag"
+          className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 underline underline-offset-2 hover:text-zinc-800 dark:hover:text-zinc-200 disabled:opacity-50"
+        >
+          change
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => tap(null, null)}
+          title="Clear tag"
+          className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 hover:text-rose-500 disabled:opacity-50"
+        >
+          ✕
+        </button>
+        {picking && (
+          <span className="inline-flex items-center gap-1">
+            {(Object.keys(CALL_TAG_META) as CallTagValue[]).map((t) => (
+              <button
+                key={t}
+                disabled={busy}
+                onClick={() => (t === "CALLBACK" ? setPicking("CALLBACK") : tap(t, null))}
+                title={CALL_TAG_META[t].title}
+                className={`${chipBase} ${picking === t ? CALL_TAG_META[t].cls : "text-zinc-500 dark:text-zinc-400 border-zinc-400/30 bg-zinc-500/5"} hover:opacity-80 disabled:opacity-50`}
+              >
+                <span>{CALL_TAG_META[t].icon}</span> {CALL_TAG_META[t].label}
+              </button>
+            ))}
+          </span>
+        )}
+        {picking === "CALLBACK" && (
+          <span className="inline-flex items-center gap-1">
+            <input
+              type="date"
+              value={date}
+              min={minDay}
+              max={maxDay}
+              onChange={(e) => setDate(e.target.value)}
+              className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-900 dark:text-zinc-100"
+            />
+            <button
+              disabled={busy || !date}
+              onClick={() => tap("CALLBACK", date)}
+              className="rounded-md bg-sky-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-sky-500 disabled:opacity-50"
+            >
+              {busy ? "…" : "Save"}
+            </button>
+          </span>
+        )}
+        {err && <span className="text-[10px] text-rose-500">{err}</span>}
+      </div>
+    );
+  }
+
+  // Untagged — three quick tag buttons; CALLBACK opens the date picker.
+  return (
+    <div className="flex flex-wrap items-center gap-1 pt-0.5">
+      {(Object.keys(CALL_TAG_META) as CallTagValue[]).map((t) => (
+        <button
+          key={t}
+          disabled={busy}
+          onClick={() => (t === "CALLBACK" ? (setDate(localIsoDay(1)), setPicking("CALLBACK")) : tap(t, null))}
+          title={t === "CALLBACK" ? "Follow up on a fixed date (max 10 days out)" : CALL_TAG_META[t].title}
+          className={`${chipBase} text-zinc-500 dark:text-zinc-400 border-zinc-400/30 bg-zinc-500/5 hover:opacity-80 disabled:opacity-50`}
+        >
+          <span>{CALL_TAG_META[t].icon}</span> {CALL_TAG_META[t].label}
+        </button>
+      ))}
+      {picking === "CALLBACK" && (
+        <span className="inline-flex items-center gap-1">
+          <input
+            type="date"
+            value={date}
+            min={minDay}
+            max={maxDay}
+            onChange={(e) => setDate(e.target.value)}
+            className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-900 dark:text-zinc-100"
+          />
+          <button
+            disabled={busy || !date}
+            onClick={() => tap("CALLBACK", date)}
+            className="rounded-md bg-sky-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-sky-500 disabled:opacity-50"
+          >
+            {busy ? "…" : "Save"}
+          </button>
+          <button disabled={busy} onClick={() => setPicking(null)} className="text-[10px] text-zinc-500 hover:text-rose-500 disabled:opacity-50">
+            ✕
+          </button>
+        </span>
+      )}
+      {err && <span className="text-[10px] text-rose-500">{err}</span>}
     </div>
   );
 }
@@ -494,6 +683,10 @@ export default function TelecallingDashboard() {
   // selected agent changes).
   const [noPickupOnly, setNoPickupOnly] = useState(false);
   useEffect(() => { setNoPickupOnly(false); }, [agentFilter]);
+  // Call-tag filters (Sheets-style): Not answering / Busy / Callback (+ due-by
+  // date for callbacks). Pure client-side over the loaded follow-ups.
+  const [tagFilter, setTagFilter] = useState<"ALL" | CallTagValue>("ALL");
+  const [callbackDueBy, setCallbackDueBy] = useState<string>("");
 
   // A scoped (non-admin) sales agent is locked to their OWN lead conversion:
   // force the conversion view onto their agent id and never let them switch.
@@ -533,13 +726,98 @@ export default function TelecallingDashboard() {
     },
     { events: TELECALLING_EVENTS, deps: [agentIdsKey], clearOnError: true },
   );
-  const agentViewsMap = agentViews.data ?? {};
+  // ── Sheets-style instant tags ──────────────────────────────────────────
+  // The backend pushes the changed row INSIDE the telecalling live event
+  // (delta, not a full refetch — same idea as Sheets cell ops over one
+  // socket), and a tag tap applies locally on click (optimistic echo). This
+  // override map is the local model patch: event deltas + own taps land here
+  // in milliseconds. The debounced refetch (whose rows carry server-overlaid
+  // fresh tags) reconciles and clears it — a failed save reverts + shows the
+  // error instead of lying.
+  const [tagOverrides, setTagOverrides] = useState<Record<string, CallTagDelta>>({});
+  // A fresh fetch carries server-overlaid tags — overrides have served their
+  // purpose and must not shadow newer server state.
+  useEffect(() => { setTagOverrides({}); }, [agentViews.data]);
+  useLiveEvent((e) => {
+    // Tag deltas arrive as their own "telecalling-tag" type precisely so they
+    // do NOT match TELECALLING_EVENTS (no ~20-request refetch storm — the
+    // delta patch below is the whole update). The legacy "telecalling" match
+    // covers the brief window where the backend ships ahead of this bundle.
+    if (e.type !== "telecalling-tag" && e.type !== "telecalling") return;
+    const d = (e as unknown as { callTag?: { estimateId?: unknown } }).callTag;
+    if (d && typeof d.estimateId === "string") {
+      const dd = d as unknown as CallTagDelta & { estimateId: string };
+      setTagOverrides((prev) => ({
+        ...prev,
+        [String(dd.estimateId)]: {
+          callTag: dd.callTag ?? null,
+          callbackDate: dd.callbackDate ?? null,
+          callTagBy: dd.callTagBy ?? null,
+          callTagByName: dd.callTagByName ?? null,
+          callTagAt: dd.callTagAt ?? null,
+        },
+      }));
+    }
+  });
+  const applyTagOverride = useCallback((estimateId: string, delta: CallTagDelta | null) => {
+    setTagOverrides((prev) => {
+      if (!delta) {
+        const { [estimateId]: _omit, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [estimateId]: delta };
+    });
+  }, []);
+  /**
+   * Reconcile ONE agent's view after a tag save (1 request) instead of
+   * re-fetching every agent. The optimistic override already painted the tap;
+   * this confirms server state (setter name, timestamp) without the storm.
+   */
+  const refreshOneAgent = useCallback(async (agentId: string | null) => {
+    if (!agentId) { agentViews.refresh(); return; }
+    try {
+      const res = await fetch(`/api/automations/telecalling/data?agent=${encodeURIComponent(agentId)}`);
+      if (!res.ok) return;
+      const view = (await res.json()) as AgentViewData;
+      agentViews.setData((prev) => ({ ...(prev ?? {}), [agentId]: view }));
+    } catch { /* override patch already shows the tap; next event refetch reconciles */ }
+  }, [agentViews]);
+  const agentViewsMap = useMemo(() => {
+    const src = agentViews.data ?? {};
+    if (Object.keys(tagOverrides).length === 0) return src;
+    const out: Record<string, AgentViewData | null> = {};
+    for (const [id, v] of Object.entries(src)) {
+      if (!v || !Array.isArray(v.followUps)) { out[id] = v; continue; }
+      out[id] = {
+        ...v,
+        followUps: v.followUps.map((f) => (tagOverrides[f.estimateId] ? { ...f, ...tagOverrides[f.estimateId] } : f)),
+      };
+    }
+    return out;
+  }, [agentViews.data, tagOverrides]);
   const getAgentView = (id: string | null): AgentViewData | null => (id ? agentViewsMap[id] ?? null : null);
   const selectedAgentView = getAgentView(agentFilter);
   // No-pickup subset of the selected agent's follow-ups (NeoDove dial outcome).
   const convFollowUps = selectedAgentView?.followUps ?? [];
   const noPickupCount = convFollowUps.filter((f) => f.noPickup).length;
-  const visibleFollowUps = noPickupOnly ? convFollowUps.filter((f) => f.noPickup) : convFollowUps;
+  // Call-tag filter counts ( Sheets-style quick filters over the same rows).
+  const tagCounts = useMemo(() => {
+    const c: Record<CallTagValue, number> = { NO_ANSWER: 0, BUSY: 0, CALLBACK: 0 };
+    for (const f of convFollowUps) {
+      const t = (f.callTag ?? null) as CallTagValue | null;
+      if (t && c[t] !== undefined) c[t] += 1;
+    }
+    return c;
+  }, [convFollowUps]);
+  const filtersActive = noPickupOnly || tagFilter !== "ALL";
+  const visibleFollowUps = convFollowUps.filter((f) => {
+    if (noPickupOnly && !f.noPickup) return false;
+    if (tagFilter !== "ALL") {
+      if ((f.callTag ?? null) !== tagFilter) return false;
+      if (tagFilter === "CALLBACK" && callbackDueBy && (f.callbackDate ?? "") > callbackDueBy) return false;
+    }
+    return true;
+  });
 
   const refreshAll = useCallback(() => {
     dash.refresh();
@@ -1211,6 +1489,7 @@ export default function TelecallingDashboard() {
                                             <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
                                             <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
                         <LeadChips f={f} />
+                        <CallTagControl f={f} onSaved={() => void refreshOneAgent(t.id)} onTag={applyTagOverride} />
                         {f.latestComment ? (
                           <p
                             className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"
@@ -1415,6 +1694,48 @@ export default function TelecallingDashboard() {
                       )}
                     </div>
                   )}
+                  {/* Call-tag filters (Sheets-style): Not answering / Busy /
+                      Callback (+ due-by date). Pure client-side over the
+                      loaded follow-ups — instant, no refetch. */}
+                  {(tagCounts.NO_ANSWER + tagCounts.BUSY + tagCounts.CALLBACK > 0 || tagFilter !== "ALL") && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {(Object.keys(CALL_TAG_META) as CallTagValue[]).map((t) => {
+                        const active = tagFilter === t;
+                        return (
+                          <button
+                            key={t}
+                            onClick={() => { setTagFilter(active ? "ALL" : t); if (t !== "CALLBACK") setCallbackDueBy(""); }}
+                            title={t === "CALLBACK" ? "Show only follow-ups marked for callback" : CALL_TAG_META[t].title}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+                              active
+                                ? "bg-sky-600 text-white border-sky-600 shadow-sm"
+                                : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:border-sky-400 dark:hover:border-sky-500"
+                            }`}
+                          >
+                            <span>{CALL_TAG_META[t].icon}</span> {CALL_TAG_META[t].label} ({tagCounts[t]})
+                          </button>
+                        );
+                      })}
+                      {tagFilter === "CALLBACK" && (
+                        <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                          due by
+                          <input
+                            type="date"
+                            value={callbackDueBy}
+                            onChange={(e) => setCallbackDueBy(e.target.value)}
+                            title="Show callbacks due on or before this date"
+                            className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-1.5 py-1 text-xs text-zinc-900 dark:text-zinc-100"
+                          />
+                          {callbackDueBy && (
+                            <button onClick={() => setCallbackDueBy("")} className="text-indigo-400 hover:underline">clear</button>
+                          )}
+                        </span>
+                      )}
+                      {tagFilter !== "ALL" && (
+                        <button onClick={() => { setTagFilter("ALL"); setCallbackDueBy(""); }} className="text-xs text-indigo-400 hover:underline">Show all</button>
+                      )}
+                    </div>
+                  )}
                   {agentViews.loading && !selectedAgentView && <p className="text-sm text-zinc-500">Loading…</p>}
                   {!agentViews.loading && !selectedAgentView && Boolean(agentViews.error) && (
                     <p className="text-sm text-rose-500">Couldn't load follow-ups — <button className="underline font-semibold" onClick={() => agentViews.refresh()}>retry</button>.</p>
@@ -1423,7 +1744,7 @@ export default function TelecallingDashboard() {
                     <p className="text-sm text-zinc-500">No follow-up estimates assigned to this agent.</p>
                   )}
                   {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) > 0 && visibleFollowUps.length === 0 && (
-                    <p className="text-sm text-zinc-500">No no-pickup follow-ups for this agent.</p>
+                    <p className="text-sm text-zinc-500">{filtersActive ? "No follow-ups match the active filters." : "No follow-ups for this agent."}</p>
                   )}
                   <div className="space-y-2">
                     {visibleFollowUps.map((f) => (
@@ -1446,6 +1767,7 @@ export default function TelecallingDashboard() {
                           </div>
                         </div>
                         <LeadChips f={f} />
+                        <CallTagControl f={f} onSaved={() => void refreshOneAgent(agentFilter)} onTag={applyTagOverride} />
                         {f.latestComment ? (
                           <p
                             className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"
@@ -1697,6 +2019,7 @@ export default function TelecallingDashboard() {
                                       </div>
                                     </div>
                                     <LeadChips f={f} />
+                                    <CallTagControl f={f} compact onSaved={() => void refreshOneAgent(t.id)} onTag={applyTagOverride} />
                                     {f.latestComment ? (
                                       <p
                                         className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"

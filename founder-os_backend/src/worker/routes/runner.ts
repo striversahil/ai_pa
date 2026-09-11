@@ -239,24 +239,40 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const { cacheGet, cacheSet, cacheDel } = require('../../shared/cache');
     const prev: any = await cacheGet(CRM_SNAPSHOT_KEY, 24 * 60 * 60 * 1000);
 
+    // Diff source: the runner's full lightweight `index` (UNCAPPED — every SO),
+    // so per-stage display caps (400) never hide points movements. Older
+    // runners that don't send `index` fall back to the truncated order rows.
+    const toEntry = (o: any, fallbackStage: string) => ({
+      stage: String(o?.stage || fallbackStage || ''),
+      paidStatus: String(o?.paidStatus || ''),
+      createdToday: !!o?.createdToday,
+      salesperson: String(o?.salesperson || ''),
+    });
     // Previous active orders: so → { stage, paidStatus }.
     const prevBySo = new Map<string, { stage: string; paidStatus: string }>();
-    const prevSource = prev?.stages || prev?.byProcess || {};
-    for (const [stage, entry] of Object.entries(prevSource)) {
-      for (const o of (entry as any)?.orders ?? []) {
-        if (o?.so) prevBySo.set(String(o.so), { stage, paidStatus: String(o.paidStatus || '') });
+    if (Array.isArray(prev?.index) && prev.index.length > 0) {
+      for (const o of prev.index) {
+        if (o?.so) prevBySo.set(String(o.so), { stage: String(o.stage || ''), paidStatus: String(o.paidStatus || '') });
+      }
+    } else {
+      const prevSource = prev?.stages || prev?.byProcess || {};
+      for (const [stage, entry] of Object.entries(prevSource)) {
+        for (const o of (entry as any)?.orders ?? []) {
+          if (o?.so) prevBySo.set(String(o.so), { stage, paidStatus: String(o.paidStatus || '') });
+        }
       }
     }
     // New active orders: so → { stage, paidStatus, createdToday, salesperson }.
     const nextBySo = new Map<string, { stage: string; paidStatus: string; createdToday: boolean; salesperson: string }>();
-    for (const [stage, entry] of Object.entries(stages)) {
-      for (const o of entry.orders) {
-        if (o?.so) nextBySo.set(String(o.so), {
-          stage,
-          paidStatus: String(o.paidStatus || ''),
-          createdToday: !!o.createdToday,
-          salesperson: String(o.salesperson || ''),
-        });
+    if (Array.isArray((body as any)?.index) && (body as any).index.length > 0) {
+      for (const o of (body as any).index) {
+        if (o?.so && String(o.stage || '') !== 'complete') nextBySo.set(String(o.so), toEntry(o, ''));
+      }
+    } else {
+      for (const [stage, entry] of Object.entries(stages)) {
+        for (const o of entry.orders) {
+          if (o?.so) nextBySo.set(String(o.so), toEntry(o, stage));
+        }
       }
     }
     const day = body.date;
@@ -322,26 +338,87 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       }
     }
 
-    await cacheSet(
-      CRM_SNAPSHOT_KEY,
-      {
-        date: body.date,
-        totalActive: Number(body.totalActive) || 0,
-        totalValue: Number(body.totalValue) || 0,
-        stages,
-        byProcess: stages, // legacy alias (pre-department dashboards)
-        closed: closedList,
-        materials: Array.isArray(body.materials) ? body.materials.slice(0, 300) : [],
-        salespeople: Array.isArray(body.salespeople) ? body.salespeople.slice(0, 200) : [],
-        meta: body.meta ?? null,
-        computedAt: new Date().toISOString(),
-      },
-      45 * 60 * 1000,
-    );
-    // The aggregated data() cache derives from the snapshot + ledger — bust it.
-    await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
-    broadcastLive(c, LiveEvent.Crm, { totalActive: Number(body.totalActive) || 0, events: persisted });
-    return c.json({ ok: true, events: persisted });
+    const snapshotBody = {
+      date: body.date,
+      fetchedAt: typeof (body as any)?.fetchedAt === 'string' ? (body as any).fetchedAt : null,
+      fingerprint: typeof (body as any)?.fingerprint === 'string' ? (body as any).fingerprint : null,
+      totalActive: Number(body.totalActive) || 0,
+      totalValue: Number(body.totalValue) || 0,
+      stages,
+      byProcess: stages, // legacy alias (pre-department dashboards)
+      closed: closedList,
+      materials: Array.isArray(body.materials) ? body.materials.slice(0, 300) : [],
+      salespeople: Array.isArray(body.salespeople) ? body.salespeople.slice(0, 200) : [],
+      // Full lightweight index (uncapped) — the next tick's diff source.
+      index: Array.isArray((body as any)?.index) ? (body as any).index.slice(0, 10000) : [],
+      meta: body.meta ?? null,
+      computedAt: new Date().toISOString(),
+    };
+    // Totals-change detection: skip the cache bust + live broadcast when
+    // nothing moved (no ledger events AND identical counts/values), so idle
+    // ticks don't refetch every open tab. The KV snapshot is still refreshed.
+    const prevStages = prev?.stages || prev?.byProcess || {};
+    const totalsChanged =
+      !prev ||
+      Number(prev?.totalActive) !== snapshotBody.totalActive ||
+      Number(prev?.totalValue) !== snapshotBody.totalValue ||
+      CRM_STAGES.some((s) => Number(prevStages?.[s]?.count) !== Number(stages?.[s]?.count));
+    await cacheSet(CRM_SNAPSHOT_KEY, snapshotBody, 45 * 60 * 1000);
+    if (persisted > 0 || totalsChanged) {
+      // The aggregated data() cache derives from the snapshot + ledger — bust it.
+      await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
+      broadcastLive(c, LiveEvent.Crm, { totalActive: snapshotBody.totalActive, events: persisted });
+    }
+    return c.json({ ok: true, events: persisted, broadcast: persisted > 0 || totalsChanged });
+  });
+
+  // ── CRM fingerprint + heartbeat (no-change fast path) ──────────────────────
+  // The runner hashes the full pipeline state and checks it here before POSTing
+  // a snapshot. Unchanged → heartbeat (refreshes KV TTL + fetchedAt, no ledger
+  // diff, no cache bust, no broadcast) so idle ticks cost ~zero and never
+  // refetch open tabs. TTL expiry alone can't zero the dashboard: the
+  // heartbeat keeps the snapshot alive while its date is still today.
+  app.get('/api/runner/crm/fingerprint', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const { cacheGet }: { cacheGet: <T>(key: string, ttlMs: number) => Promise<T | null> } = require('../../shared/cache');
+    const snap: any = await cacheGet(CRM_SNAPSHOT_KEY, 24 * 60 * 60 * 1000);
+    return c.json({ fingerprint: snap?.fingerprint ?? null, date: snap?.date ?? null });
+  });
+
+  app.post('/api/runner/crm/heartbeat', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const body = await c.req.json().catch(() => ({}));
+    const { cacheGet, cacheSet }: {
+      cacheGet: <T>(key: string, ttlMs: number) => Promise<T | null>;
+      cacheSet: <T>(key: string, value: T, ttlMs: number) => Promise<void>;
+    } = require('../../shared/cache');
+    const snap: any = await cacheGet(CRM_SNAPSHOT_KEY, 24 * 60 * 60 * 1000);
+    if (!snap) return c.json({ ok: false, error: 'no snapshot to refresh' }, 404);
+    if (typeof body?.fingerprint === 'string' && snap?.fingerprint && body.fingerprint !== snap.fingerprint) {
+      return c.json({ ok: false, error: 'fingerprint mismatch — POST a full snapshot' }, 409);
+    }
+    snap.fetchedAt = typeof body?.fetchedAt === 'string' ? body.fetchedAt : snap.fetchedAt;
+    await cacheSet(CRM_SNAPSHOT_KEY, snap, 45 * 60 * 1000);
+    return c.json({ ok: true });
+  });
+
+  // ── CRM manual actions (CrmOrderAction override layer) ─────────────────────
+  // Operators advance/cancel orders from the dashboard; the runner fetches
+  // recent actions and applies them on top of Zoho's raw status.
+  app.get('/api/runner/crm/actions', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const since = c.req.query('since') || '1970-01-01';
+    try {
+      const rows = await prisma.crmOrderAction.findMany({
+        where: { day: { gte: since } },
+        orderBy: { createdAt: 'asc' }, // latest row per SO wins (runner overwrites)
+        take: 2000,
+      });
+      return c.json({ actions: rows });
+    } catch (e: any) {
+      logger.warn({ err: e?.message }, 'crm actions read failed');
+      return c.json({ actions: [] });
+    }
   });
 
   // ── Zoho analyzer no-change fingerprint (KV) ────────────────────────────────
