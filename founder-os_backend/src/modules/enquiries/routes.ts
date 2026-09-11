@@ -1,4 +1,4 @@
-import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined } from "./store";
+import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from "./extract";
@@ -41,16 +41,19 @@ const err = (message: string, status = 403): EnquiryResult => json(status, { err
 
 /**
  * Procurement-safe viewer check (mirrors the telecalling scoped-view pattern).
- * Full client PII + lead attribution is served ONLY to admins, MIS holders,
- * and sales-scope holders. Every other authenticated viewer (e.g. procurement
- * staff) gets the same pipeline with PII blanked and an empty agent roster —
- * enforced in the API, never just hidden in the UI.
+ * Full client PII + lead attribution + the agent roster is served ONLY to
+ * admins, MIS holders, sales-scope holders, and holders of the
+ * `enquiry-tracker` dashboard grant (the admin panel assigns that scope to
+ * the sales role — without it, granted sales staff land in the restricted
+ * view with an empty Lead By dropdown). Every other authenticated viewer
+ * (e.g. procurement staff) gets the same pipeline with PII blanked and an
+ * empty agent roster — enforced in the API, never just hidden in the UI.
  */
 export function isRestrictedViewer(me: MeResponse): boolean {
   if (!me) return true;
   if (me.isAdmin || (me as any).isRoot) return false;
   const scopes: string[] = (me as any).scopes || [];
-  if (scopes.includes('mis') || scopes.includes('sales')) return false;
+  if (scopes.includes('mis') || scopes.includes('sales') || scopes.includes('enquiry-tracker')) return false;
   return true;
 }
 
@@ -89,6 +92,9 @@ function pick(data: any): Partial<Enquiry> | null {
   for (const [k, v] of Object.entries(map)) {
     if (data[k] !== undefined) out[k] = data[k];
   }
+  // Source is editable (drives the label); the daily number is server-assigned
+  // and never client-writable.
+  if (data.source !== undefined) out.source = normalizeEnquirySource(data.source);
   if (data.additionalRequirements !== undefined) {
     out.additionalRequirements = (Array.isArray(data.additionalRequirements) ? data.additionalRequirements : [])
       .map((r: any) => (typeof r === "string" ? { text: r } : { text: String(r?.text ?? ""), imageUrl: r?.imageUrl || undefined }))
@@ -105,6 +111,10 @@ function pick(data: any): Partial<Enquiry> | null {
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         markup: numOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
+        finalizedAt: isoOrUndefined(r?.finalizedAt),
+        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
+        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
+        rateAvailable: r?.rateAvailable === true,
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -198,15 +208,35 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
         selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
         markup: numOrUndefined(it?.markup),
         finalRate: numOrUndefined(it?.finalRate),
+        finalizedAt: isoOrUndefined(it?.finalizedAt),
+        specIssue: it?.specIssue ? String(it.specIssue).slice(0, 2000) : undefined,
+        specFlaggedAt: isoOrUndefined(it?.specFlaggedAt),
       };
       const cached = entry?.items?.[i];
+      let served: any;
       if (cached && cached.hash === hashItem(sales)
         && typeof cached.name === 'string' && typeof cached.qty === 'string' && typeof cached.spec === 'string') {
-        servedItems.push({ name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media });
+        // Cached AI rewrite wins for name/qty/spec — but rates are LIVE
+        // workflow data (adding a quote never changes the hash above), so
+        // they must always ride along. Dropping them here made newly added
+        // vendor rates "show for a second, then disappear" on refetch.
+        served = { name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media, rates: sales.rates };
       } else {
-        const { selectedVendor, markup, finalRate, ...rest } = sales;
-        servedItems.push(rest);
+        // Markup decisions AND finalize timing stay Management-only.
+        const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = sales;
+        served = rest;
       }
+      // Spec-dispute flags are live workflow metadata (not PII, not a markup
+      // decision): always overlay the stored values so a flag change never
+      // waits on — or invalidates — the AI rewrite cache.
+      if (it?.specIssue) {
+        served.specIssue = String(it.specIssue).slice(0, 2000);
+        if (it?.specFlaggedAt) served.specFlaggedAt = String(it.specFlaggedAt);
+      }
+      // Rate-availability is live workflow metadata too: the procurement queue
+      // predicate depends on it, so it rides along regardless of cache path.
+      served.rateAvailable = (it as any)?.rateAvailable === true;
+      servedItems.push(served);
     });
     return {
       entry: { id, pending },
@@ -229,15 +259,25 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
 }
 
 export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: any): Promise<EnquiryResult> {
-  // Only EST No. is mandatory — everything else is LLM-auto-filled from the
-  // description/comments (extract.ts), so structured fields are optional.
-  if (!body?.estNumber || String(body.estNumber).trim() === "") return json(400, { error: "estNumber required" });
+  // EST No. is OPTIONAL (enter now or later) — only the row itself is created;
+  // LLM auto-fill covers the structured fields, so everything is optional.
+  const estNumber = String(body?.estNumber ?? "").trim();
   // Lead of = the agent who created the enquiry (no AI guessing). The creator
   // is the signed-in user; a provided agent still wins (e.g. root assigning).
   const creatorAgentId = String(me?.user?.id ?? "");
   const assignedAgentId = String(body.assignedAgentId || creatorAgentId || "");
+  // Daily enquiry number: auto counter, resets every IST day.
+  const all = await store.listEnquiries().catch(() => [] as any[]);
+  const now = new Date();
+  const dailyNo = nextDailyNo(all as any[], now);
+  const source = normalizeEnquirySource(body.source);
+  // No Title field in the form: a blank title becomes the enquiry number text.
+  const title = String(body?.title ?? "").trim()
+    || enquiryLabelText(dailyNo, now.toISOString(), source);
   const enquiry = await store.createEnquiry({
-    estNumber: String(body.estNumber).trim(),
+    estNumber,
+    dailyNo,
+    source,
     enquiryNumber: body.enquiryNumber,
     sourceLead: body.sourceLead,
     location: body.location,
@@ -245,7 +285,7 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     contactName: body.contactName,
     contactEmail: body.contactEmail || "",
     contactPhone: body.contactPhone || "",
-    title: body.title,
+    title,
     description: body.description,
     priority: body.priority || "medium",
     status: body.status || "new",
@@ -282,12 +322,26 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
 
 export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse, id: string, body: any): Promise<EnquiryResult> {
   const text = String(body?.text || "").trim();
-  if (!text) return json(400, { error: "text required" });
   const imageUrl = body?.imageUrl ? String(body.imageUrl) : undefined;
+  if (!text && !imageUrl) return json(400, { error: "text required" });
   const existing = await store.getEnquiry(id);
   if (!existing) return json(404, { error: "not found" });
-  const requirements = [...(existing.additionalRequirements || []), { text, imageUrl }];
-  const enquiry = await store.updateEnquiry(id, { additionalRequirements: requirements });
+  // An additional requirement is simply a NEW LINE ITEM: appended to the
+  // previous items with no vendor rates, so it shows up as rate-pending in
+  // Procurement and then flows to Management Review like any other item.
+  // (Legacy `additionalRequirements` rows stay readable; new adds go to items.)
+  const newItem = {
+    name: "",
+    qty: "",
+    spec: text.slice(0, 2000),
+    media: parseItemMedia(imageUrl ? [{ type: "image", url: imageUrl }] : []),
+    rates: [],
+  };
+  const patch: any = { items: [...((existing as any).items || []), newItem] };
+  // A finalized enquiry with a new item has pending work again — reopen it so
+  // the procurement queue (and, after rating, management review) picks it up.
+  if ((existing as any).rateStatus === "finalized") patch.rateStatus = "rate_pending";
+  const enquiry = await store.updateEnquiry(id, patch);
   if (!enquiry) return json(404, { error: "not found" });
   return {
     status: 201,
@@ -306,15 +360,48 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     (updates as any).items = [];
   }
   const privileged = canManageRates(me);
+  const restricted = isRestrictedViewer(me);
+  const storedForItems = await store.getEnquiry(id).catch(() => null);
+  const storedItems: any[] = Array.isArray((storedForItems as any)?.items) ? (storedForItems as any).items : [];
+  if (Array.isArray((updates as any).items)) {
+    (updates as any).items = (updates as any).items.map((it: any, idx: number) => {
+      const stored = storedItems[idx] ?? {};
+      // Markup decisions + finalize (+ its timestamp) are Management-only.
+      const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = it;
+      const base: any = privileged ? it : rest;
+      if (restricted) {
+        // Procurement owns rates + spec flags only: identity (name/qty/spec/
+        // media) always follows the stored row, so specs can't be edited or
+        // items appended from this surface. Rate availability is sales-owned
+        // too (procurement sees the state, never flips it). Markup fields
+        // stripped above.
+        if (idx >= storedItems.length) return null;
+        base.name = stored.name ?? "";
+        base.qty = stored.qty ?? "";
+        base.spec = stored.spec ?? "";
+        base.media = stored.media ?? [];
+        base.rateAvailable = stored.rateAvailable === true;
+      }
+      // Spec-dispute lifecycle (all writers):
+      // - a spec text change clears an open flag (the sales-correction path);
+      // - otherwise an open flag survives even if the write omits it;
+      // - finalized items can't be newly flagged.
+      const hadFlag = !!stored.specIssue;
+      const specChanged = String(base.spec ?? "") !== String(stored.spec ?? "");
+      if (stored.finalRate !== undefined && stored.finalRate !== null) {
+        base.specIssue = stored.specIssue;
+        base.specFlaggedAt = stored.specFlaggedAt;
+      } else if (specChanged) {
+        delete base.specIssue;
+        delete base.specFlaggedAt;
+      } else if (hadFlag && base.specIssue === undefined) {
+        base.specIssue = stored.specIssue;
+        base.specFlaggedAt = stored.specFlaggedAt;
+      }
+      return base;
+    }).filter((it: any) => it !== null);
+  }
   if (!privileged) {
-    // Procurement may collect vendor rates, but markup decisions + finalize
-    // are Management-only: strip them so crafted requests can't sneak them in.
-    if (Array.isArray((updates as any).items)) {
-      (updates as any).items = (updates as any).items.map((it: any) => {
-        const { selectedVendor, markup, finalRate, ...rest } = it;
-        return rest;
-      });
-    }
     delete (updates as any).rateStatus;
   }
   // Auto-advance the workflow: first vendor rate moves Rate Pending → Received.

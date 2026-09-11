@@ -70,16 +70,25 @@ the previous KV snapshot (so→stage map) and writes ledger rows via
   active orders AND nothing created within 120 days), fetched by GH runner
   `scripts/crm-runner.js` using the same curl credentials as the estimates
   sync (`zoho_sent/sent_estimates.txt`).
-- The runner computes `pendingStep()` per order (after applying manual
-  `CrmOrderAction` overrides), aggregates `{count, value, orders[]}` per step
-  (**display rows capped at 400 per stage** via `DETAIL_CAP`, closed capped at
-  400 via `CLOSED_CAP`, materials capped at 300 via `MATERIALS_CAP**), rounds
-  values to 2 decimals, and POSTs `{date (IST), fetchedAt, fingerprint,
-  totalActive, totalValue, stages, closed, materials, salespeople, index,
-  meta}` to `/api/runner/crm/snapshot` (KV-cached on the Worker). `index` is
-  the uncapped lightweight `[{so, stage, paidStatus, status, createdToday,
-  salesperson, total}]` diff source; `fetchedAt` is the Zoho pull time shown
-  in the dashboard header.
+- The runner works in **two phases**. Phase 1 pages the SO list (which never
+  includes `line_items`), computes `pendingStep()` per order (after applying
+  manual `CrmOrderAction` overrides), and checks the order-level fingerprint —
+  unchanged → heartbeat, zero further Zoho calls. Phase 2 (pipeline moved)
+  fetches FULL line items per **display-capped row only** via
+  `GET /api/v3/salesorders/:id` (concurrency 3 + pacing + 30s cap, one 429
+  backoff + retry, then a circuit-breaker fails the rest soft for the tick),
+  slims items to display fields (`name/description/sku/item_code/quantity/
+  unit/rate/item_total`), and aggregates real procurement materials from them.
+  Display rows are capped at 400 per stage via `DETAIL_CAP` (closed 400 via
+  `CLOSED_CAP`, materials 300 via `MATERIALS_CAP**); values rounded to 2
+  decimals. POSTs `{date (IST), fetchedAt, fingerprint, totalActive,
+  totalValue, stages, closed, materials, salespeople, index, meta}` to
+  `/api/runner/crm/snapshot` (KV-cached on the Worker). `index` entries carry
+  `itemsSig`, so the final fingerprint (`orderFp+itemsHash`) also triggers a
+  POST on item-only edits. Clicking a dashboard row expands its line items.
+- Scale note (Sep 2026): ~5k open SOs sit in `confirm` (ancient drafts inside
+  the 120-day window) — only display rows pay the detail-call cost; points use
+  the uncapped index either way.
 - `data()` reads KV `crm:salesorders_snapshot` (45-min TTL) and returns it
   **only when `snapshot.date === today (IST)`** (`{…, fresh:true}`).
   Stale/absent snapshot → empty pipeline + zeroed scores
@@ -119,6 +128,14 @@ None (read-only dashboard + append-only points ledger).
   → `POST /api/runner/crm/heartbeat` (refreshes KV TTL + `fetchedAt`, no ledger
   diff, no cache bust, no broadcast) instead of a full snapshot POST, so idle
   ticks never refetch open tabs. `CRM_FORCE=1` bypasses the gate.
+- **Delta-fetch (rate-limit safety):** the fingerprint endpoint also returns
+  `sigs` (`{so: [stage, itemsSig]}` for stored display rows). The runner fetches
+  Zoho details ONLY for rows that are new, moved stage, or never captured —
+  one new SO costs exactly 1 detail call, not ~500. Skipped rows reuse their
+  previous `itemsSig`; the snapshot route backfills their items from the stored
+  snapshot (sig-match) and recomputes procurement materials server-side from
+  the final rows, so delta ticks lose nothing. Item-only edits change the
+  fingerprint suffix and still trigger a full POST.
 - **Full-index diff:** points are diffed on the runner's uncapped lightweight
   `index` (every SO), NOT the 400-capped display rows — counts and points stay
   correct at scale. The snapshot route only broadcasts + busts `crm:data` when

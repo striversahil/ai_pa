@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Enquiry, EnquiryItem, EnquiryMedia } from "../mockData";
+import { Enquiry, EnquiryItem, EnquiryMedia, parseMoneyInput } from "../mockData";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
+import ToggleSwitch from "./ToggleSwitch";
 
 /** ~10MB per file (stored as data-URI on the item; server re-checks). */
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
@@ -24,8 +25,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [isAddReqOpen, setIsAddReqOpen] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState<EnquiryItem>({ name: "", qty: "", spec: "" });
-  const [isAdding, setIsAdding] = useState(false);
-  const [addDraft, setAddDraft] = useState<EnquiryItem>({ name: "", qty: "", spec: "" });
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
@@ -35,17 +34,33 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   // sees finals only.
   const ratesEditable = !!onUpdateItems && mode === "edit";
   const showVendorRates = mode !== "none";
-  const [rateDrafts, setRateDrafts] = useState<Record<number, { vendor: string; rate: string }>>({});
+  const [rateDrafts, setRateDrafts] = useState<Record<number, { vendor: string; description: string; rate: string; specMode: "same" | "diff"; specDiff: string }>>({});
+
+  const blankRateDraft = () => ({ vendor: "", description: "", rate: "", specMode: "same" as const, specDiff: "" });
+
+  const patchRateDraft = (idx: number, patch: Partial<{ vendor: string; description: string; rate: string; specMode: "same" | "diff"; specDiff: string }>) =>
+    setRateDrafts((prev) => {
+      const cur = prev[idx] ?? blankRateDraft();
+      return { ...prev, [idx]: { ...cur, ...patch } };
+    });
 
   const addItemRate = (idx: number) => {
     if (!onUpdateItems) return;
-    const d = rateDrafts[idx] ?? { vendor: "", rate: "" };
+    const d = rateDrafts[idx] ?? { vendor: "", description: "", rate: "", specMode: "same" as const, specDiff: "" };
     const vendor = d.vendor.trim();
-    const rate = Number(d.rate);
-    if (!vendor || !Number.isFinite(rate) || rate < 0) return;
-    const next = items.map((it, i) => (i === idx ? { ...it, rates: [...(it.rates ?? []), { vendor, rate }] } : it));
+    const rate = parseMoneyInput(d.rate);
+    if (!vendor || rate === null) return;
+    const specSame = d.specMode !== "diff";
+    const next = items.map((it, i) => (i === idx ? { ...it, rates: [...(it.rates ?? []), {
+      vendor,
+      rate,
+      description: d.description.trim() || undefined,
+      specSame,
+      specDiff: !specSame && d.specDiff.trim() ? d.specDiff.trim() : undefined,
+      quotedAt: new Date().toISOString(),
+    }] } : it));
     onUpdateItems(next);
-    setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: "", rate: "" } }));
+    setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: "", description: "", rate: "", specMode: "same", specDiff: "" } }));
   };
 
   const removeItemRate = (idx: number, rateIdx: number) => {
@@ -109,13 +124,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     onUpdateItems(items.filter((_, i) => i !== idx));
     if (editingIdx === idx) setEditingIdx(null);
   };
-  const saveAdd = () => {
-    if (!onUpdateItems) return;
-    if (!addDraft.name.trim() && !addDraft.qty.trim() && !addDraft.spec.trim()) return;
-    onUpdateItems([...items, { ...addDraft }]);
-    setAddDraft({ name: "", qty: "", spec: "" });
-    setIsAdding(false);
-  };
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
@@ -174,6 +182,11 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         rows={2}
                         className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
                       />
+                      <ToggleSwitch
+                        checked={draft.rateAvailable === true}
+                        onChange={(next) => setDraft({ ...draft, rateAvailable: next })}
+                        label="Rate available"
+                      />
                       <div className="flex gap-2">
                         <button type="button" onClick={saveEdit} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer">Save</button>
                         <button type="button" onClick={() => setEditingIdx(null)} className="px-3 py-1 border border-[var(--border-card)] font-bold text-[11px] rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
@@ -184,12 +197,28 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className="font-extrabold text-[var(--text-primary)]">Item {idx + 1}{it.name ? ` — ${it.name}` : ""}</span>
                         {editable && (
-                          <span className="flex gap-1.5 flex-shrink-0">
+                          <span className="flex items-center gap-2 flex-shrink-0">
+                            <ToggleSwitch
+                              checked={it.rateAvailable === true}
+                              onChange={(next) => {
+                                if (!onUpdateItems) return;
+                                onUpdateItems(items.map((x, i) => (i === idx ? { ...x, rateAvailable: next } : x)));
+                              }}
+                              label="Rate available"
+                              title="Toggle live — the procurement/management queues update instantly"
+                            />
                             <button type="button" onClick={() => startEdit(idx)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Edit</button>
                             <button type="button" onClick={() => deleteItem(idx)} className="text-[11px] font-bold text-[var(--color-danger)] hover:opacity-80 cursor-pointer bg-transparent border-0">Delete</button>
                           </span>
                         )}
                       </div>
+                      {it.specIssue && !redacted && (
+                        <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
+                          <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
+                          <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
+                          <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below to resolve and release this item for rates.</p>
+                        </div>
+                      )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
                       {it.spec && <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed mt-0.5">{it.spec}</p>}
                       {it.finalRate !== undefined && it.finalRate !== null && (
@@ -197,40 +226,99 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           Rate Received: ₹{Number(it.finalRate).toLocaleString("en-IN")}
                         </div>
                       )}
+                      {it.rateAvailable && !editable && (
+                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 text-[11px] font-extrabold">
+                          Rate available
+                        </div>
+                      )}
+                      {mode === "none" && (it.rates ?? []).some((r) => r.specSame === false) && (
+                        <div className="mt-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] leading-relaxed">
+                          <p className="font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wide text-[10px]">
+                            ⚠ Quoted on a different spec
+                          </p>
+                          {(it.rates ?? []).filter((r) => r.specSame === false && r.specDiff).map((r, ri) => (
+                            <p key={ri} className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">
+                              <span className="font-bold">Vendor-quoted version: </span>{r.specDiff}
+                            </p>
+                          ))}
+                          <p className="mt-1 text-[var(--text-tertiary)]">Confirm these dimensions with procurement before committing to the client.</p>
+                        </div>
+                      )}
                       {((it.rates ?? []).length > 0 || ratesEditable) && showVendorRates && (
                         <div className="mt-2 space-y-1.5">
                           {(it.rates ?? []).map((r, ri) => (
-                            <div key={ri} className="flex items-center gap-2 text-[11px]">
-                              <span className="font-bold text-[var(--text-primary)] break-words flex-1">{r.vendor}</span>
-                              <span className="font-mono text-[var(--text-secondary)] whitespace-nowrap">₹{Number(r.rate).toLocaleString("en-IN")}</span>
-                              {ratesEditable && (
-                                <button type="button" onClick={() => removeItemRate(idx, ri)}
-                                  className="text-[var(--color-danger)] hover:opacity-80 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0">×</button>
+                            <div key={ri} className="rounded-lg border border-[var(--border-card)]/60 p-2 space-y-1">
+                              <div className="flex items-center gap-2 text-[11px]">
+                                <span className="font-bold text-[var(--text-primary)] break-words flex-1">{r.vendor}</span>
+                                {r.specSame === false && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-500 border border-amber-500/30 flex-shrink-0">Spec differs</span>
+                                )}
+                                <span className="font-mono text-[var(--text-secondary)] whitespace-nowrap">₹{Number(r.rate).toLocaleString("en-IN")}</span>
+                                {ratesEditable && (
+                                  <button type="button" onClick={() => removeItemRate(idx, ri)}
+                                    className="text-[var(--color-danger)] hover:opacity-80 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0">×</button>
+                                )}
+                              </div>
+                              {r.description && (
+                                <p className="text-[10px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{r.description}</p>
+                              )}
+                              {r.specSame === false && r.specDiff && (
+                                <p className="text-[10px] text-amber-600 dark:text-amber-400 whitespace-pre-wrap leading-relaxed">
+                                  <span className="font-bold">Their spec: </span>{r.specDiff}
+                                </p>
                               )}
                             </div>
                           ))}
                           {ratesEditable && (
-                            <div className="space-y-1.5 pt-1">
+                            <div className="space-y-1.5 pt-1 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                               <textarea
                                 value={rateDrafts[idx]?.vendor ?? ""}
-                                onChange={(e) => setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: e.target.value, rate: prev[idx]?.rate ?? "" } }))}
-                                placeholder="Vendor name & address / dimensions…"
+                                onChange={(e) => patchRateDraft(idx, { vendor: e.target.value })}
+                                placeholder="Vendor name & address…"
+                                rows={2}
+                                className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
+                              />
+                              <textarea
+                                value={rateDrafts[idx]?.description ?? ""}
+                                onChange={(e) => patchRateDraft(idx, { description: e.target.value })}
+                                placeholder="Vendor description — contact person, terms, delivery…"
                                 rows={2}
                                 className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
                               />
                               <div className="flex items-center gap-1.5">
                                 <input
                                   value={rateDrafts[idx]?.rate ?? ""}
-                                  onChange={(e) => setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: prev[idx]?.vendor ?? "", rate: e.target.value } }))}
+                                  onChange={(e) => patchRateDraft(idx, { rate: e.target.value })}
                                   placeholder="Rate ₹"
                                   inputMode="decimal"
                                   className="flex-1 px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
                                 />
+                                <div className="flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[11px] font-bold">
+                                  <button type="button"
+                                    onClick={() => patchRateDraft(idx, { specMode: "same" })}
+                                    className={`px-2.5 py-2 cursor-pointer border-0 ${((rateDrafts[idx]?.specMode ?? "same") === "same") ? "bg-brand-indigo text-white" : "bg-transparent text-[var(--text-secondary)]"}`}>
+                                    Spec same
+                                  </button>
+                                  <button type="button"
+                                    onClick={() => patchRateDraft(idx, { specMode: "diff" })}
+                                    className={`px-2.5 py-2 cursor-pointer border-0 ${((rateDrafts[idx]?.specMode ?? "same") === "diff") ? "bg-amber-500 text-white" : "bg-transparent text-[var(--text-secondary)]"}`}>
+                                    Spec different
+                                  </button>
+                                </div>
                                 <button type="button" onClick={() => addItemRate(idx)}
                                   className="px-3 py-2 bg-brand-indigo/10 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-[11px] rounded-lg cursor-pointer border-0 whitespace-nowrap">
                                   Add rate
                                 </button>
                               </div>
+                              {(rateDrafts[idx]?.specMode ?? "same") === "diff" && (
+                                <textarea
+                                  value={rateDrafts[idx]?.specDiff ?? ""}
+                                  onChange={(e) => patchRateDraft(idx, { specDiff: e.target.value })}
+                                  placeholder="Log the vendor's differing spec here…"
+                                  rows={2}
+                                  className="w-full px-2.5 py-2 bg-amber-500/5 border border-amber-500/30 rounded-lg outline-none focus:border-amber-500 text-xs resize-y text-[var(--text-primary)]"
+                                />
+                              )}
                             </div>
                           )}
                         </div>
@@ -302,41 +390,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
               ))}
             </ul>
           )}
-          {editable && !isAdding && (
-            <button type="button" onClick={() => setIsAdding(true)}
-              className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-indigo/10 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-xs rounded-lg transition-all cursor-pointer border-0">
-              + Add Item
-            </button>
-          )}
           {mediaError && (
             <p className="mt-2 text-[11px] font-semibold text-[var(--color-danger)]">{mediaError}</p>
-          )}
-          {editable && isAdding && (
-            <div className="space-y-2 mt-2 p-3 rounded-xl border border-[var(--border-card)]/50 bg-[var(--bg-input)]/25">
-              <input
-                value={addDraft.name}
-                onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })}
-                placeholder="Item name"
-                className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
-              />
-              <input
-                value={addDraft.qty}
-                onChange={(e) => setAddDraft({ ...addDraft, qty: e.target.value })}
-                placeholder="Quantity"
-                className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
-              />
-              <textarea
-                value={addDraft.spec}
-                onChange={(e) => setAddDraft({ ...addDraft, spec: e.target.value })}
-                placeholder="Specification detail"
-                rows={2}
-                className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
-              />
-              <div className="flex gap-2">
-                <button type="button" onClick={saveAdd} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer">Add</button>
-                <button type="button" onClick={() => { setIsAdding(false); setAddDraft({ name: "", qty: "", spec: "" }); }} className="px-3 py-1 border border-[var(--border-card)] font-bold text-[11px] rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
-              </div>
-            </div>
           )}
         </div>
 

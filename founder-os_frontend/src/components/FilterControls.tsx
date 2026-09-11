@@ -1,5 +1,5 @@
 import React from "react";
-import { Agent } from "../mockData";
+import { Agent, ENQUIRY_SOURCES } from "../mockData";
 
 interface FilterControlsProps {
   searchQuery: string;
@@ -13,6 +13,10 @@ interface FilterControlsProps {
   agents: Agent[];
   hideAgentFilter?: boolean;
   hideStatusFilter?: boolean;
+  sourceFilter?: string;
+  setSourceFilter?: (source: string) => void;
+  ratesFilter?: string;
+  setRatesFilter?: (rates: string) => void;
 }
 
 export default function FilterControls({
@@ -26,10 +30,14 @@ export default function FilterControls({
   setAgentFilter,
   agents,
   hideAgentFilter = false,
-  hideStatusFilter = false
+  hideStatusFilter = false,
+  sourceFilter = "all",
+  setSourceFilter,
+  ratesFilter = "all",
+  setRatesFilter
 }: FilterControlsProps) {
   return (
-    <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-4 flex flex-col md:grid md:grid-cols-[2fr_1fr_1fr_1fr] gap-4 items-stretch md:items-center">
+    <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-4 flex flex-col md:grid md:grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 items-stretch md:items-center">
       {/* Search Input */}
       <div className="relative">
         <svg className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -89,6 +97,37 @@ export default function FilterControls({
           <option value="all">All Leads</option>
           {agents.map(a => (
             <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+      </div>
+      )}
+
+      {/* Rates Filter — sales view only */}
+      {setRatesFilter && (
+      <div>
+        <select
+          value={ratesFilter}
+          onChange={(e) => setRatesFilter(e.target.value)}
+          className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm text-[var(--text-secondary)] focus:outline-hidden focus:border-brand-indigo/80 cursor-pointer"
+        >
+          <option value="all">All Rates</option>
+          <option value="ready">Rates Ready</option>
+          <option value="awaiting">Awaiting Rates</option>
+        </select>
+      </div>
+      )}
+
+      {/* Source Filter — sales view only */}
+      {setSourceFilter && (
+      <div>
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm text-[var(--text-secondary)] focus:outline-hidden focus:border-brand-indigo/80 cursor-pointer"
+        >
+          <option value="all">All Sources</option>
+          {ENQUIRY_SOURCES.map((s) => (
+            <option key={s} value={s}>{s}</option>
           ))}
         </select>
       </div>

@@ -2208,36 +2208,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     } catch (e: any) {
       logger.warn({ err: e?.message, agent: (tc as any)?.id }, 'follow-up shield attach failed — rows render unshielded');
     }
-    // No-pickup flag (MIS "did not pickup" filter): TODAY's dial outcome per
-    // number from the 15-min NeoDove snapshot. A follow-up is flagged when its
-    // contact number was dialled today and the MOST RECENT call did not
-    // connect (lastConn === false) — number-level (only the holder normally
-    // dials their leads). Transitional fallback: rows written before lastConn
-    // existed use the day aggregate (dialled, never connected). Fail-open:
-    // snapshot missing → no flags, rows render as before.
-    const pickupByPhone = new Map<string, { attempts: number; connected: boolean; noPickup: boolean; lastTs: string }>();
-    try {
-      const todaySnap = await readEffortSnapshot(istDate());
-      for (const row of todaySnap ?? []) {
-        const p = String((row as any)?.p ?? '');
-        if (!p) continue;
-        const n = Number((row as any)?.n ?? 0) || 0;
-        const lastConn = (row as any)?.lastConn;
-        const latestMissed = lastConn === false || (lastConn == null && n > 0 && !(row as any)?.conn);
-        const cur = pickupByPhone.get(p) ?? { attempts: 0, connected: false, noPickup: false, lastTs: '' };
-        cur.attempts += n;
-        if ((row as any)?.conn) cur.connected = true;
-        // Most-recent dial on the number wins (a later connect clears the flag).
-        const ts = String((row as any)?.lastTs ?? '');
-        if (!cur.lastTs || (ts && ts > cur.lastTs)) {
-          cur.lastTs = ts;
-          cur.noPickup = latestMissed && cur.attempts > 0;
-        }
-        pickupByPhone.set(p, cur);
-      }
-    } catch (e: any) {
-      logger.warn({ err: e?.message, agent: (tc as any)?.id }, 'no-pickup attach failed — follow-ups render unflagged');
-    }
     // Telecaller names for the call-tag "set by" attribution below.
     const nameByTelecallerId = new Map<string, string>(
       (telecallers as any[]).map((t) => [String(t.id), String(t.name ?? '')]),
@@ -2249,11 +2219,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       const riskItem = riskItems.find((r) => r.estimateId === e.estimateId);
       const risk = riskItem?.risk ?? 'pending';
       const enquiry = enquiryByCompany.get(String(e.customerName || '').toLowerCase().replace(/[^a-z0-9]/g, '')) ?? null;
-      // No-pickup lookup on the normalized contact number (see block above).
-      const phone10 = normPhone10((e as any).contactPhone);
-      const pickup = phone10 ? pickupByPhone.get(phone10) : undefined;
-      const callAttempts = pickup?.attempts ?? 0;
-      const noPickup = !!pickup?.noPickup && callAttempts > 0;
       const callTagBy = (e as any).callTagBy ?? null;
       return {
         estimateId: e.estimateId,
@@ -2296,12 +2261,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         // Effort-shield verdict for at-risk rows (null otherwise) — the agent
         // sees 🛡 + reason inline in their conversion list.
         shield: shieldByEstimate.get(e.estimateId) ?? null,
-        // NeoDove dial outcome for the contact number (today only): flagged
-        // when the most recent call did not connect. Drives the 📵 chip +
-        // filter.
-        noPickup,
-        callAttempts,
-        callConnected: !!pickup?.connected,
         // Agent call-disposition tag (Lead Conversion view): NO_ANSWER /
         // BUSY / CALLBACK (+callbackDate, max +10d). Sticky, engine-untouched.
         callTag: (e as any).callTag ?? null,

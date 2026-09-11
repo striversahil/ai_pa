@@ -24,6 +24,8 @@ export const VIEW_SCOPE: Record<string, string> = {
   "telecalling": "telecalling",
   "whatsapp-autopilot": "autopilot",
   "enquiry-tracker": "enquiry-tracker",
+  "enquiry-procurement": "procurement",
+  "enquiry-management": "mis",
   "telecalling-agent-analysis": "sheet-analysis",
   "crm": "crm",
 };
@@ -31,6 +33,21 @@ export const VIEW_SCOPE: Record<string, string> = {
 // Scope that grants the Admin panel without root access (e.g. MIS). Holders
 // can assign roles, but never touch the root user nor grant `admin`.
 export const USER_ADMIN_SCOPE = "user-admin";
+
+// A held scope can imply dashboard scopes. The Sales Enquiries dashboard is
+// gated on `enquiry-tracker`, but a `sales`-scope holder is entitled to it
+// (the dashboard's own guard already admits sales) — without this, granting
+// someone "sales access" shows them an empty sidebar with no way in.
+export const IMPLIED_SCOPES: Record<string, string[]> = {
+  sales: ["enquiry-tracker"],
+};
+
+/** All scopes a user effectively holds: granted + implied. */
+export function grantedScopes(me: AuthUserMe | null): Set<string> {
+  const out = new Set(me?.scopes ?? []);
+  for (const s of [...out]) for (const implied of IMPLIED_SCOPES[s] ?? []) out.add(implied);
+  return out;
+}
 
 // Scopes a ROLE may grant. New dashboard scopes are auto-seeded by the backend
 // (ensureScopesSeeded covers AUTOMATION_SCOPES) and appear in the admin panel
@@ -78,5 +95,5 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   // slugs fall back to slug-as-scope so new automations work with zero edits.
   const scope = VIEW_SCOPE[viewOrSlug] ?? viewOrSlug;
   if (!scope) return false; // unrecognized view defaults to denied (fail-closed)
-  return me.scopes.includes(scope);
+  return grantedScopes(me).has(scope);
 }

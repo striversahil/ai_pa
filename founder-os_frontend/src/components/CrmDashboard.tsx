@@ -7,9 +7,11 @@ import {
   getSortedRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
+  getExpandedRowModel,
   flexRender,
   type ColumnDef,
   type SortingState,
+  type ExpandedState,
 } from "@tanstack/react-table";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { PackageCheck, FileCheck, Truck, CreditCard, CheckCircle2, RefreshCw } from "lucide-react";
@@ -189,6 +191,76 @@ function Kpi({ label, value, sub, accent, title }: { label: string; value: strin
   );
 }
 
+// ── Safe primitives (Zoho sometimes returns objects for scalar fields) ───────
+const txt = (v: any): string => {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "object") {
+    const s = JSON.stringify(v);
+    return s && s !== "{}" && s !== "[]" ? s : "—";
+  }
+  const s = String(v);
+  return s === "" ? "—" : s;
+};
+
+const numINR = (v: any): string => {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return isNaN(n) ? "—" : `₹${n.toLocaleString("en-IN")}`;
+};
+
+// ── Line items sub-row (SO detail on row click) ───────────────────────────────
+function OrderItems({ order }: { order: any }) {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  if (items.length === 0) {
+    return (
+      <div className="px-3 py-2 text-[11px] text-zinc-500 italic">
+        No line-item detail for this order{order?.lineCount ? ` (${order.lineCount} line(s) reported, detail not in Zoho response)` : ""}.
+      </div>
+    );
+  }
+  return (
+    <div className="px-3 py-2">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">
+        📦 {order.lineCount || items.length} line item{Number(order.lineCount || items.length) === 1 ? "" : "s"} · {order.so}
+      </div>
+      <table className="w-full text-[11px]">
+        <thead>
+          <tr className="text-left text-[9px] uppercase tracking-wide text-zinc-500">
+            <th className="py-1 pr-2 font-bold">Item</th>
+            <th className="py-1 pr-2 font-bold">SKU</th>
+            <th className="py-1 pr-2 font-bold text-right">Qty</th>
+            <th className="py-1 pr-2 font-bold text-right">Rate</th>
+            <th className="py-1 font-bold text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((li: any, i: number) => {
+            const title = txt(li.name || li.item_name || li.description);
+            const desc = txt(li.description);
+            return (
+              <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800/50">
+                <td className="py-1 pr-2 text-zinc-800 dark:text-zinc-200">
+                  {title}
+                  {title !== "—" && desc !== "—" && desc !== title && (
+                    <span className="block text-[10px] text-zinc-500">{desc}</span>
+                  )}
+                </td>
+                <td className="py-1 pr-2 font-mono text-[10px] text-zinc-500">{txt(li.sku || li.item_code)}</td>
+                <td className="py-1 pr-2 text-right text-zinc-700 dark:text-zinc-300">
+                  {txt(li.quantity ?? li.qty)}{txt(li.unit) !== "—" ? <span className="text-zinc-500"> {txt(li.unit)}</span> : null}
+                </td>
+                <td className="py-1 pr-2 text-right text-zinc-700 dark:text-zinc-300">{numINR(li.rate)}</td>
+                <td className="py-1 text-right font-semibold text-zinc-800 dark:text-zinc-200">
+                  {numINR(li.item_total ?? li.amount ?? li.total)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── Reusable TanStack table ───────────────────────────────────────────────────
 function DataTable({
   columns,
@@ -197,6 +269,7 @@ function DataTable({
   emptyState = "Nothing here yet.",
   initialSorting,
   exportName,
+  expandable,
 }: {
   columns: ColumnDef<any, any>[];
   data: any[];
@@ -204,20 +277,46 @@ function DataTable({
   emptyState?: React.ReactNode;
   initialSorting?: SortingState;
   exportName?: string;
+  // When true, clicking a row expands it to show the SO's line items.
+  expandable?: boolean;
 }) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
   const [globalFilter, setGlobalFilter] = useState("");
+  const [expanded, setExpanded] = useState<ExpandedState>({});
+
+  // Auto expander column (no accessorKey → skipped by CSV export).
+  const cols = useMemo(
+    () =>
+      expandable
+        ? [
+            {
+              id: "exp",
+              header: "",
+              size: 24,
+              enableSorting: false,
+              cell: ({ row }: any) => (
+                <span className="text-zinc-500 text-[10px]">{row.getIsExpanded() ? "▾" : "▸"}</span>
+              ),
+            } as ColumnDef<any, any>,
+            ...columns,
+          ]
+        : columns,
+    [expandable, columns]
+  );
 
   const table = useReactTable({
     data,
-    columns,
-    state: { sorting, globalFilter },
+    columns: cols,
+    state: { sorting, globalFilter, expanded },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onExpandedChange: setExpanded,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+    getRowCanExpand: () => !!expandable,
     initialState: { pagination: { pageSize: 25 } },
   });
 
@@ -274,20 +373,44 @@ function DataTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-3 py-6 text-center text-zinc-500 italic">
+                <td colSpan={cols.length} className="px-3 py-6 text-center text-zinc-500 italic">
                   {emptyState}
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
-                <tr key={row.id} className="border-b border-zinc-100 dark:border-zinc-800/50 hover:bg-zinc-100/40 dark:hover:bg-zinc-800/40">
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-2.5 py-1.5 text-zinc-800 dark:text-zinc-200">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
-              ))
+              rows.flatMap((row) => {
+                const main = (
+                  <tr
+                    key={row.id}
+                    onClick={expandable ? () => row.toggleExpanded() : undefined}
+                    title={expandable ? "Click to see line items" : undefined}
+                    className={`border-b border-zinc-100 dark:border-zinc-800/50 hover:bg-zinc-100/40 dark:hover:bg-zinc-800/40 ${
+                      expandable ? "cursor-pointer" : ""
+                    }`}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td
+                        key={cell.id}
+                        className="px-2.5 py-1.5 text-zinc-800 dark:text-zinc-200"
+                        onClick={cell.column.id === "actions" ? (e) => e.stopPropagation() : undefined}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                );
+                if (expandable && row.getIsExpanded()) {
+                  return [
+                    main,
+                    <tr key={`${row.id}-items`} className="border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/60 dark:bg-zinc-900/40">
+                      <td colSpan={cols.length} className="p-0">
+                        <OrderItems order={row.original} />
+                      </td>
+                    </tr>,
+                  ];
+                }
+                return [main];
+              })
             )}
           </tbody>
         </table>
@@ -588,6 +711,7 @@ export default function CrmDashboard() {
               emptyState="No orders awaiting confirmation."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-confirm"
+              expandable
             />
           </div>
         </div>
@@ -621,6 +745,7 @@ export default function CrmDashboard() {
               emptyState="No orders to invoice."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-invoice"
+              expandable
             />
           </div>
 
@@ -642,6 +767,7 @@ export default function CrmDashboard() {
               emptyState="No orders awaiting payment."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-payment"
+              expandable
             />
           </div>
         </div>
@@ -675,6 +801,7 @@ export default function CrmDashboard() {
               emptyState="No orders to ship."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-ship"
+              expandable
             />
           </div>
         </div>

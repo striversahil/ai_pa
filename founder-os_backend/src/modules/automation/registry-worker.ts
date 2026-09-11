@@ -52,7 +52,13 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'data-retention', name: 'Data Retention Cleanup', description: 'Daily at 3:00 AM, delete WhatsApp messages older than 90 days.', type: 'handler', trigger: { type: 'schedule', cron: '0 3 * * *' }, enabled: true,
   },
   'enquiry-tracker': {
-    id: 'enquiry-tracker', name: 'Enquiry Tracker', description: 'Live sales pipeline: enquiries + threaded comments, persisted and pushed to open dashboards.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'enquiry-tracker', enabled: true,
+    id: 'enquiry-tracker', name: 'Sales Enquiries', description: 'Live sales pipeline: daily enquiries + threaded comments, persisted and pushed to open dashboards.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'enquiry-tracker', enabled: true,
+  },
+  'enquiry-procurement': {
+    id: 'enquiry-procurement', name: 'Procurement Queue', description: 'Pending-only vendor-rate queue: items awaiting rates, client PII hidden. No daily pipeline — just what needs rates now.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'procurement', enabled: true,
+  },
+  'enquiry-management': {
+    id: 'enquiry-management', name: 'Management Review', description: 'Pending-only rate review: rated items awaiting markup + finalize. No daily pipeline — just what needs a decision now.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'mis', enabled: true,
   },
   'dpp-prices-dashboard': {
     id: 'dpp-prices-dashboard', name: 'DPP Prices → Dashboard', description: 'Parse DPP price messages into PriceQuote rows and compute KRA/KPI for the dashboard.', type: 'rule',

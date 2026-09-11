@@ -3,6 +3,51 @@
 // The Worker build imports ONLY this file; the Prisma implementation lives in
 // store-prisma.ts so the Prisma client never enters the Worker bundle.
 
+/** Allowed enquiry sources (New Enquiry form selector, default TL). */
+export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B"] as const;
+
+export function normalizeEnquirySource(v: unknown): string {
+  const s = String(v ?? "TL").trim();
+  return (ENQUIRY_SOURCES as readonly string[]).includes(s) ? s : "TL";
+}
+
+/** IST calendar-day key (YYYY-MM-DD) — the daily counter resets on this. */
+export function istDayKey(d: Date = new Date()): string {
+  const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
+  return ist.toISOString().slice(0, 10);
+}
+
+const MON3 = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/** Display label shared by Sales/Procurement/Management:
+ *  `Enquiry No 10 - 10 SEP TL` (daily counter, IST creation date, source).
+ *  New enquiries are titled with this (the Title form field is removed). */
+export function enquiryLabelText(dailyNo: number | null | undefined, createdAtISO: string, source: string): string {
+  const no = dailyNo === undefined || dailyNo === null ? "–" : String(dailyNo);
+  let dd = "–", mon = "–––";
+  const d = new Date(createdAtISO);
+  if (!Number.isNaN(d.getTime())) {
+    const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
+    dd = String(ist.getUTCDate()).padStart(2, "0");
+    mon = MON3[ist.getUTCMonth()] ?? "–––";
+  }
+  return `Enquiry No ${no} - ${dd} ${mon} ${source || "TL"}`;
+}
+
+/** Next daily sequence number: max dailyNo already assigned today (IST) + 1. */
+export function nextDailyNo(existing: Array<{ createdAt?: string; dailyNo?: number | null }>, now: Date = new Date()): number {
+  const today = istDayKey(now);
+  let max = 0;
+  for (const e of existing) {
+    if (!e?.createdAt) continue;
+    const dt = new Date(e.createdAt);
+    if (Number.isNaN(dt.getTime()) || istDayKey(dt) !== today) continue;
+    const n = Number((e as any).dailyNo ?? 0);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
 export interface EnquiryRequirement {
   text: string;
   imageUrl?: string;
@@ -20,6 +65,14 @@ export interface EnquiryMedia {
 export interface EnquiryItemRate {
   vendor: string;
   rate: number;
+  /** Vendor description / address / contact as entered by Procurement. */
+  description?: string;
+  /** False when this vendor's spec differs from the item spec (see specDiff). */
+  specSame?: boolean;
+  /** The differing spec, logged when specSame is false. */
+  specDiff?: string;
+  /** IST instant the quote was logged (stamped on add; older rows lack it). */
+  quotedAt?: string;
 }
 
 export interface EnquiryItem {
@@ -33,7 +86,25 @@ export interface EnquiryItem {
   selectedVendor?: string;
   markup?: number;
   finalRate?: number;
+  /** IST instant the item was finalized (stamped on finalize). */
+  finalizedAt?: string;
+  /** Procurement spec dispute: present = spec flagged incorrect, awaiting a
+   *  sales spec edit (which auto-clears it). Flagged items are held out of
+   *  Management until resolved. */
+  specIssue?: string;
+  specFlaggedAt?: string;
+  /** Rate availability (sales-marked): true = rate already available, the item
+   *  skips the procurement→management loop. False/absent = rate unavailable,
+   *  flows to Procurement for quoting and then Management for finalize. */
+  rateAvailable?: boolean;
 }
+
+/** ISO instant passthrough (quotedAt/finalizedAt) — invalid values dropped. */
+export const isoOrUndefined = (v: unknown): string | undefined => {
+  if (v === undefined || v === null || v === '') return undefined;
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+};
 
 /** ~10MB binary per attachment (base64 inflates ~4/3). Enforced client-side
  *  and re-checked server-side in routes pick(). */
@@ -55,23 +126,42 @@ export function parseItemMedia(raw: unknown): EnquiryMedia[] {
 export function parseItemRates(raw: unknown): EnquiryItemRate[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((r: any) => ({
-      vendor: String(r?.vendor ?? '').slice(0, 200),
-      rate: Number(r?.rate ?? NaN),
-    }))
+    .map((r: any) => {
+      const specSame = r?.specSame === false ? false : true;
+      return {
+        vendor: String(r?.vendor ?? '').slice(0, 200),
+        rate: strictNum(r?.rate) ?? NaN,
+        description: r?.description ? String(r.description).slice(0, 2000) : undefined,
+        specSame,
+        specDiff: !specSame && r?.specDiff ? String(r.specDiff).slice(0, 2000) : undefined,
+        quotedAt: isoOrUndefined(r?.quotedAt),
+      };
+    })
     .filter((r) => r.vendor.trim().length > 0 && Number.isFinite(r.rate) && r.rate >= 0)
     .slice(0, 50);
 }
 
-export const numOrUndefined = (v: unknown): number | undefined => {
-  if (v === undefined || v === null || v === '') return undefined;
-  const n = Number(v);
+/** Strict numeric for money fields (rates/markup/finals — margin math runs on
+ *  these): plain digits with an optional decimal part only. Rejects empties
+ *  (Number('') is 0!), whitespace, hex, exponents and trailing words. */
+export const strictNum = (v: unknown): number | undefined => {
+  if (v === undefined || v === null) return undefined;
+  const s = String(v).trim();
+  if (!/^\d+(\.\d+)?$/.test(s)) return undefined;
+  const n = Number(s);
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 };
+
+export const numOrUndefined = (v: unknown): number | undefined => strictNum(v);
 
 export interface Enquiry {
   id: string;
   estNumber: string;
+  /** Daily sequence: Enquiry No {dailyNo} - {DD} {MON} {source}. Auto-assigned
+   *  at creation; the counter resets every IST day. */
+  dailyNo: number | null;
+  /** Enquiry source: TL | AI | Incoming | B2B (default TL). */
+  source: string;
   /** Sales-agent lead details (parsed by AI from the first 1–2 comments). */
   enquiryNumber: string;
   sourceLead: string;
@@ -134,6 +224,8 @@ export function mapEnquiry(row: any): Enquiry | null {
   return {
     id: row.id,
     estNumber: row.estNumber ?? "",
+    dailyNo: row.dailyNo === undefined || row.dailyNo === null ? null : Number(row.dailyNo),
+    source: row.source ?? "TL",
     enquiryNumber: row.enquiryNumber ?? "",
     sourceLead: row.sourceLead ?? "",
     location: row.location ?? "",
@@ -171,6 +263,10 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         markup: numOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
+        finalizedAt: isoOrUndefined(r?.finalizedAt),
+        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
+        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
+        rateAvailable: r?.rateAvailable === true,
       }))
       .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -211,6 +307,8 @@ export function sanitize(e: any): Enquiry {
   return {
     ...e,
     estNumber: str(e.estNumber),
+    source: normalizeEnquirySource((e as any).source),
+    dailyNo: (e as any).dailyNo === undefined || (e as any).dailyNo === null ? null : Number((e as any).dailyNo),
     enquiryNumber: str(e.enquiryNumber),
     sourceLead: str(e.sourceLead),
     location: str(e.location),
@@ -237,6 +335,10 @@ export function sanitize(e: any): Enquiry {
           selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
           markup: numOrUndefined(r?.markup),
           finalRate: numOrUndefined(r?.finalRate),
+        finalizedAt: isoOrUndefined(r?.finalizedAt),
+        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
+        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
+        rateAvailable: r?.rateAvailable === true,
         }))
       : [],
   };
@@ -300,10 +402,10 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
-        e.id, e.estNumber, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
+        e.id, e.estNumber, e.dailyNo, e.source, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
         e.priority, e.status, e.rateStatus, e.assignedAgentId, e.createdAt, e.updatedAt,
         JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []),
       )
@@ -316,10 +418,10 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
       )
       .bind(
-        merged.estNumber, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
+        merged.estNumber, merged.dailyNo, merged.source, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
         merged.description, merged.priority, merged.status, merged.rateStatus, merged.assignedAgentId,
         merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
         JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), id,

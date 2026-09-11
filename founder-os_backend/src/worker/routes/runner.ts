@@ -338,6 +338,68 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       }
     }
 
+    // Item backfill (delta-fetch): the runner sends items ONLY for rows it
+    // fetched this tick; rows it skipped carry the previous itemsSig with
+    // empty items. Copy the stored items over when the sig matches, so the
+    // dashboard never loses line detail on delta ticks.
+    let backfilled = 0;
+    try {
+      const prevSigBySo = new Map<string, string>();
+      for (const o of (Array.isArray(prev?.index) ? prev.index : [])) {
+        if (o?.so) prevSigBySo.set(String(o.so), String(o.itemsSig || ''));
+      }
+      const nextSigBySo = new Map<string, string>();
+      for (const o of (Array.isArray((body as any)?.index) ? (body as any).index : [])) {
+        if (o?.so) nextSigBySo.set(String(o.so), String(o.itemsSig || ''));
+      }
+      const prevItemsBySo = new Map<string, { items: any[]; lineCount: number }>();
+      const prevSrc = prev?.stages || prev?.byProcess || {};
+      for (const entry of Object.values(prevSrc)) {
+        for (const o of (entry as any)?.orders ?? []) {
+          if (o?.so && Array.isArray(o?.items) && o.items.length > 0 && !prevItemsBySo.has(String(o.so))) {
+            prevItemsBySo.set(String(o.so), { items: o.items, lineCount: Number(o.lineCount) || o.items.length });
+          }
+        }
+      }
+      for (const entry of Object.values(stages)) {
+        for (const o of (entry as any).orders) {
+          if (o?.so && (!Array.isArray(o?.items) || o.items.length === 0)) {
+            const so = String(o.so);
+            const sig = nextSigBySo.get(so) || '';
+            const hit = prevItemsBySo.get(so);
+            if (sig && hit && prevSigBySo.get(so) === sig) {
+              o.items = hit.items;
+              o.lineCount = hit.lineCount;
+              backfilled++;
+            }
+          }
+        }
+      }
+    } catch { /* backfill is best-effort — snapshot still stores */ }
+    // Materials are recomputed server-side from the FINAL order rows (fetched
+    // + backfilled items), so delta ticks — where the runner only sends items
+    // for changed rows — still report the full procurement picture.
+    let materials: any[] = [];
+    try {
+      const matMap = new Map<string, { item: string; sku: string; qty: number; orders: number; value: number }>();
+      for (const entry of Object.values(stages)) {
+        for (const o of (entry as any).orders) {
+          for (const li of (Array.isArray(o?.items) ? o.items.slice(0, 50) : [])) {
+            const key = String(li?.sku || li?.item_code || li?.name || li?.description || '');
+            if (!key) continue;
+            const e = matMap.get(key) || { item: String(li?.name || li?.description || key), sku: String(li?.sku || li?.item_code || ''), qty: 0, orders: 0, value: 0 };
+            e.qty += parseFloat(li?.quantity) || 0;
+            e.value += parseFloat(li?.item_total) || 0;
+            e.orders += 1;
+            matMap.set(key, e);
+          }
+        }
+      }
+      materials = [...matMap.values()]
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, 300)
+        .map((m) => ({ ...m, qty: Math.round(m.qty * 100) / 100, value: Math.round(m.value * 100) / 100 }));
+    } catch { materials = Array.isArray(body.materials) ? body.materials.slice(0, 300) : []; }
     const snapshotBody = {
       date: body.date,
       fetchedAt: typeof (body as any)?.fetchedAt === 'string' ? (body as any).fetchedAt : null,
@@ -347,29 +409,30 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       stages,
       byProcess: stages, // legacy alias (pre-department dashboards)
       closed: closedList,
-      materials: Array.isArray(body.materials) ? body.materials.slice(0, 300) : [],
+      materials,
       salespeople: Array.isArray(body.salespeople) ? body.salespeople.slice(0, 200) : [],
       // Full lightweight index (uncapped) — the next tick's diff source.
       index: Array.isArray((body as any)?.index) ? (body as any).index.slice(0, 10000) : [],
-      meta: body.meta ?? null,
+      meta: { ...(body.meta ?? null), withLineItems: materials.length > 0 },
       computedAt: new Date().toISOString(),
     };
     // Totals-change detection: skip the cache bust + live broadcast when
     // nothing moved (no ledger events AND identical counts/values), so idle
     // ticks don't refetch every open tab. The KV snapshot is still refreshed.
     const prevStages = prev?.stages || prev?.byProcess || {};
+    const num = (v: unknown) => Number(v) || 0; // missing stage keys → 0, never NaN
     const totalsChanged =
       !prev ||
-      Number(prev?.totalActive) !== snapshotBody.totalActive ||
-      Number(prev?.totalValue) !== snapshotBody.totalValue ||
-      CRM_STAGES.some((s) => Number(prevStages?.[s]?.count) !== Number(stages?.[s]?.count));
+      num(prev?.totalActive) !== snapshotBody.totalActive ||
+      num(prev?.totalValue) !== snapshotBody.totalValue ||
+      CRM_STAGES.some((s) => num(prevStages?.[s]?.count) !== num(stages?.[s]?.count));
     await cacheSet(CRM_SNAPSHOT_KEY, snapshotBody, 45 * 60 * 1000);
     if (persisted > 0 || totalsChanged) {
       // The aggregated data() cache derives from the snapshot + ledger — bust it.
       await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
       broadcastLive(c, LiveEvent.Crm, { totalActive: snapshotBody.totalActive, events: persisted });
     }
-    return c.json({ ok: true, events: persisted, broadcast: persisted > 0 || totalsChanged });
+    return c.json({ ok: true, events: persisted, broadcast: persisted > 0 || totalsChanged, backfilled });
   });
 
   // ── CRM fingerprint + heartbeat (no-change fast path) ──────────────────────
@@ -382,7 +445,26 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { cacheGet }: { cacheGet: <T>(key: string, ttlMs: number) => Promise<T | null> } = require('../../shared/cache');
     const snap: any = await cacheGet(CRM_SNAPSHOT_KEY, 24 * 60 * 60 * 1000);
-    return c.json({ fingerprint: snap?.fingerprint ?? null, date: snap?.date ?? null });
+    // Delta-fetch support: per-SO [stage, itemsSig] for stored DISPLAY rows
+    // only (bounded, ~KBs). The runner fetches Zoho details solely for rows
+    // that are new, moved stage, or never captured — a single new SO costs
+    // exactly 1 detail call instead of ~500.
+    const sigs: Record<string, [string, string]> = {};
+    try {
+      const prevSigBySo = new Map<string, string>();
+      for (const o of (Array.isArray(snap?.index) ? snap.index : [])) {
+        if (o?.so) prevSigBySo.set(String(o.so), String(o.itemsSig || ''));
+      }
+      const src = snap?.stages || snap?.byProcess || {};
+      for (const [stage, entry] of Object.entries(src)) {
+        for (const o of (entry as any)?.orders ?? []) {
+          if (o?.so && !sigs[String(o.so)]) {
+            sigs[String(o.so)] = [String(stage), prevSigBySo.get(String(o.so)) || ''];
+          }
+        }
+      }
+    } catch { /* sigs stay empty → runner fetches everything (safe fallback) */ }
+    return c.json({ fingerprint: snap?.fingerprint ?? null, date: snap?.date ?? null, sigs });
   });
 
   app.post('/api/runner/crm/heartbeat', async (c) => {

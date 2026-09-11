@@ -19,6 +19,8 @@ import {
   Bot,
   PackageCheck,
   ClipboardList,
+  ClipboardCheck,
+  Crown,
   Palette,
   Check,
   type LucideIcon,
@@ -37,6 +39,8 @@ const DASH_ICONS: Record<string, LucideIcon> = {
   telecalling: PhoneCall,
   crm: PackageCheck,
   "enquiry-tracker": ClipboardList,
+  "enquiry-procurement": ClipboardCheck,
+  "enquiry-management": Crown,
   "telecalling-agent-analysis": Table2,
 };
 

@@ -377,6 +377,11 @@ app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const r = await EnquiryRoutes.enquiryAddRequirement(enquiryStore, me, req.params.id, req.body || {});
   res.status(r.status).json(r.body);
+  // New free text needs its procurement-safe rewrite now — otherwise the
+  // redacted copy only appears after the next list fetch kicks enrichment.
+  if (r.status === 200) {
+    try { void runEnquiryExtraction(String(req.params.id)); } catch { /* ignore */ }
+  }
 });
 app.delete('/api/enquiries/:id', async (req, res) => {
   const me = await enquiryMe(req);

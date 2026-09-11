@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Agent, Enquiry, Comment } from "../mockData";
+import { Agent, Enquiry, Comment, enquiryLabel } from "../mockData";
 import CommentNode from "./CommentNode";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
@@ -153,7 +153,11 @@ export default function EnquiryDetail({
           </button>
           <div>
             <h1 className="text-xl md:text-2xl font-extrabold font-heading tracking-tight">{selectedEnquiry.title}</h1>
-            <span className="text-xs text-[var(--text-secondary)]">Logged {new Date(selectedEnquiry.createdAt).toLocaleString()}</span>
+            <div className="mt-0.5 flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-extrabold text-[var(--color-brand-indigo)]">{enquiryLabel(selectedEnquiry)}</span>
+              <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
+              <span className="text-xs text-[var(--text-secondary)]">Logged {new Date(selectedEnquiry.createdAt).toLocaleString()}</span>
+            </div>
           </div>
         </div>
 
@@ -367,7 +371,7 @@ export default function EnquiryDetail({
                 rows={3}
                 value={reqText}
                 onChange={(e) => setReqText(e.target.value)}
-                placeholder="Describe the additional requirement..."
+                placeholder="Describe the additional requirement… (added as a new item for vendor rates)"
                 className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm resize-y text-[var(--text-primary)]"
                 required
               />

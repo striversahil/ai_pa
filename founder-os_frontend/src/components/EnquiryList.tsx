@@ -36,6 +36,8 @@ export default function EnquiryList({
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [ratesFilter, setRatesFilter] = useState("all");
   const [selectedDate, setSelectedDate] = useState<string | null>(() => {
     return new Date().toISOString().split("T")[0];
   });
@@ -111,12 +113,16 @@ export default function EnquiryList({
       const matchStatus = statusFilter === "all" || e.status === statusFilter;
       const matchPriority = priorityFilter === "all" || e.priority === priorityFilter;
       const matchAgent = agentFilter === "all" || e.assignedAgentId === agentFilter;
-      
+      const matchSource = sourceFilter === "all" || (e.source || "TL") === sourceFilter;
+      const matchRates = ratesFilter === "all"
+        || (ratesFilter === "ready" && (e.rateStatus ?? "") === "finalized")
+        || (ratesFilter === "awaiting" && (e.rateStatus ?? "") !== "finalized");
+
       const matchDate = !selectedDate || new Date(e.createdAt).toISOString().split("T")[0] === selectedDate;
 
-      return matchSearch && matchStatus && matchPriority && matchAgent && matchDate;
+      return matchSearch && matchStatus && matchPriority && matchAgent && matchSource && matchRates && matchDate;
     });
-  }, [enquiries, searchQuery, statusFilter, priorityFilter, agentFilter, selectedDate, queueToggle, queueOnly]);
+  }, [enquiries, searchQuery, statusFilter, priorityFilter, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly]);
 
   const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 
@@ -214,6 +220,10 @@ export default function EnquiryList({
         agents={agents}
         hideAgentFilter={redacted}
         hideStatusFilter={redacted}
+        sourceFilter={sourceFilter}
+        setSourceFilter={redacted ? undefined : setSourceFilter}
+        ratesFilter={ratesFilter}
+        setRatesFilter={redacted ? undefined : setRatesFilter}
       />
 
       {/* List */}

@@ -400,7 +400,9 @@ CREATE TABLE IF NOT EXISTS Enquiry (
   activities TEXT,
   additionalRequirements TEXT,
   items TEXT,
-  rateStatus TEXT NOT NULL DEFAULT ''
+  rateStatus TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'TL',
+  dailyNo INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_enquiry_status ON Enquiry(status);
 CREATE INDEX IF NOT EXISTS idx_enquiry_created ON Enquiry(createdAt);

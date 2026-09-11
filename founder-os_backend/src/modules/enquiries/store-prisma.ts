@@ -9,6 +9,8 @@ function mapEnquiry(row: any): Enquiry | null {
   return {
     id: row.id,
     estNumber: row.estNumber ?? "",
+    dailyNo: row.dailyNo === undefined || row.dailyNo === null ? null : Number(row.dailyNo),
+    source: row.source ?? "TL",
     enquiryNumber: row.enquiryNumber ?? "",
     sourceLead: row.sourceLead ?? "",
     location: row.location ?? "",

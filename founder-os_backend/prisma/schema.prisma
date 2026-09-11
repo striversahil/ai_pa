@@ -682,6 +682,11 @@ model ChatMember {
 model Enquiry {
   id             String  @id @default(uuid())
   estNumber      String
+  // Daily enquiry number: Enquiry No {dailyNo} - {DD} {MON} {source}.
+  // Auto-assigned at creation, counter resets every IST day.
+  dailyNo        Int?
+  // Enquiry source: TL | AI | Incoming | B2B (default TL).
+  source         String  @default("TL")
   // Sales-agent lead details (parsed by AI from the first 1–2 comments).
   enquiryNumber  String
   sourceLead     String

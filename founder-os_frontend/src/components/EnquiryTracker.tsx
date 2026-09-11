@@ -2,17 +2,19 @@
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
-import { useAuth } from "@/auth/AuthContext";
+import { useLiveEvent } from "@/hooks/useLiveData";
 import EnquiryList from "@/components/EnquiryList";
 import EnquiryKanban from "@/components/EnquiryKanban";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
 import Lightbox from "@/components/Lightbox";
-import ManagementRatesPanel from "@/components/ManagementRatesPanel";
 import type { Enquiry, Comment } from "@/types";
+import { enquiryLabel } from "@/types";
 
-// Enquiry Tracker dashboard (mounted as the `enquiry-tracker` automation).
-// Persists to the backend and updates live via the EventHub.
+// Sales Enquiries dashboard (mounted as the `enquiry-tracker` automation).
+// Sales-only: the full daily pipeline with PII + lead attribution.
+// Procurement and Management have their own pending-only dashboards
+// (`enquiry-procurement`, `enquiry-management`) — no tabs here.
 export default function EnquiryTracker() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -22,36 +24,81 @@ export default function EnquiryTracker() {
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [boardView, setBoardView] = useState<"list" | "board">("list");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Live intimations: toast when an enquiry transitions to finalized
+  // (rates ready) or gains a spec flag (needs correction) while open.
+  const [rateToast, setRateToast] = useState<{ id: string; label: string; title: string; kind: "rates" | "spec" | "specdiff" } | null>(null);
+  const rateStatusRef = useRef<Record<string, string>>({});
+  const flagCountRef = useRef<Record<string, number>>({});
+  const specDiffCountRef = useRef<Record<string, number>>({});
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Sales | Procurement | Management scoped views (telecalling pattern:
-  //  scope-gated tabs). Sales = full PII + lead attribution. Procurement =
-  //  same pipeline, client PII + lead identity hidden (also enforced by the
-  //  API, never UI-only). Management = MIS-only rate review: vendor rates per
-  //  item + client details + markup decisions + finalize.
-  const { me } = useAuth();
-  const scopes = me?.scopes ?? [];
-  const privileged = !!me && (me.isAdmin || scopes.includes("mis"));
-  const isSalesTeam = privileged || scopes.includes("sales");
-  const isProcurementTeam = privileged || scopes.includes("procurement");
-  const canManage = privileged;
-  const [teamView, setTeamView] = useState<"sales" | "procurement" | "management">("sales");
-  // Procurement-marked staff without a sales-side grant land on procurement.
-  useEffect(() => {
-    if (!isSalesTeam && isProcurementTeam) setTeamView("procurement");
-  }, [isSalesTeam, isProcurementTeam]);
-  const showSalesTab = isSalesTeam || (!isSalesTeam && !isProcurementTeam);
-  const redacted = teamView === "procurement";
-  const isManagement = teamView === "management";
+  const flashToast = useCallback((id: string, label: string, title: string, kind: "rates" | "spec" | "specdiff") => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setRateToast({ id, label, title, kind });
+    toastTimer.current = setTimeout(() => setRateToast(null), 10000);
+  }, []);
+
+  const flashRateToast = useCallback((id: string, label: string, title: string) => {
+    flashToast(id, label, title, "rates");
+  }, [flashToast]);
+
+  // Access is governed ONLY by the admin-panel grant (enquiry-tracker scope):
+  // whoever can open this dashboard sees the full sales pipeline — no
+  // in-view department gates here.
   const {
     enquiries, comments, agents, currentAgent, loaded,
     syncState, addEnquiry, updateEnquiry, deleteEnquiry,
     addComment, addRequirement, updateItems, makeActivity, clients,
-  } = useEnquiryData(redacted ? "procurement" : "sales");
+  } = useEnquiryData("sales");
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
 
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+  // Seed known statuses from the initial fetch (fills gaps only — live events
+  // own the refs after that), so the first transition after opening still fires.
+  useEffect(() => {
+    if (!loaded) return;
+    for (const e of enquiries) {
+      if (rateStatusRef.current[e.id] === undefined) rateStatusRef.current[e.id] = e.rateStatus ?? "";
+      if (flagCountRef.current[e.id] === undefined) {
+        flagCountRef.current[e.id] = (e.items ?? []).filter((it) => it.specIssue).length;
+      }
+      if (specDiffCountRef.current[e.id] === undefined) {
+        specDiffCountRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + (it.rates ?? []).filter((r) => r.specSame === false).length, 0);
+      }
+    }
+  }, [loaded, enquiries]);
+
+  useLiveEvent((e: any) => {
+    if (!e || e.type !== "enquiries" || !e.enquiry) return;
+    const id = String(e.enquiry.id ?? "");
+    if (!id) return;
+    const raw = e.enquiry;
+    const label = enquiryLabel({ dailyNo: raw.dailyNo ?? null, createdAt: raw.createdAt ?? "", source: raw.source ?? "TL" });
+    const title = String(raw.title || "Untitled enquiry");
+    const next = String(raw.rateStatus ?? "");
+    const prev = rateStatusRef.current[id];
+    rateStatusRef.current[id] = next;
+    if (next === "finalized" && prev !== undefined && prev !== "finalized") {
+      flashRateToast(id, label, title);
+    }
+    const flagged = ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
+    const prevFlagged = flagCountRef.current[id];
+    flagCountRef.current[id] = flagged;
+    if (prevFlagged !== undefined && flagged > prevFlagged) {
+      flashToast(id, label, title, "spec");
+    }
+    const diffs = ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it?.rates ?? []).filter((r: any) => r?.specSame === false).length), 0);
+    const prevDiffs = specDiffCountRef.current[id];
+    specDiffCountRef.current[id] = diffs;
+    if (prevDiffs !== undefined && diffs > prevDiffs) {
+      flashToast(id, label, title, "specdiff");
+    }
+  });
+
   const handleSaveEnquiry = useCallback(async (data: any) => {
-    if (!data.estNumber) return;
+    // EST No. is optional — may be filled in later via Edit Details.
     setIsSaving(true);
     setSaveError(null);
     let newId: string | null = null;
@@ -68,15 +115,16 @@ export default function EnquiryTracker() {
         changes.forEach((text) => activities.push(makeActivity("status_change", text, original.assignedAgentId)));
         await updateEnquiry(original.id, {
           estNumber: data.estNumber,
+          source: data.source,
           clientCompany: data.clientCompany, contactName: data.contactName, contactEmail: data.contactEmail,
-          contactPhone: data.contactPhone, title: data.title, description: data.description,
+          contactPhone: data.contactPhone, description: data.description,
           priority: data.priority, status: data.status, assignedAgentId: data.assignedAgentId,
           additionalRequirements, activities, items: data.items || [],
         });
       } else {
         const saved = await addEnquiry({
-          estNumber: data.estNumber, clientCompany: data.clientCompany, contactName: data.contactName,
-          contactEmail: data.contactEmail, contactPhone: data.contactPhone, title: data.title,
+          estNumber: data.estNumber, source: data.source || "TL", clientCompany: data.clientCompany, contactName: data.contactName,
+          contactEmail: data.contactEmail, contactPhone: data.contactPhone, title: "",
           description: data.description, priority: data.priority, status: data.status,
           assignedAgentId: data.assignedAgentId || "", imageUrls: data.imageUrls || [],
           activities: data.activities || [], additionalRequirements, items: data.items || [],
@@ -127,18 +175,10 @@ export default function EnquiryTracker() {
     await updateItems(id, items);
   }, [updateItems]);
 
-  const handleSaveRates = useCallback(async (id: string, items: Enquiry["items"], finalize: boolean) => {
-    await updateEnquiry(id, { items, ...(finalize ? { rateStatus: "finalized" } : {}) } as Partial<Enquiry>);
-  }, [updateEnquiry]);
-
   const handleExportCSV = useCallback(() => {
-    const rows = redacted
-      ? [["Title", "Priority"]]
-      : [["EST No.", "Company", "Contact", "Title", "Status", "Priority"]];
+    const rows = [["EST No.", "Company", "Contact", "Title", "Status", "Priority"]];
     for (const e of enquiries) {
-      rows.push(redacted
-        ? [e.title, e.priority]
-        : [e.estNumber, e.clientCompany, e.contactName, e.title, e.status, e.priority]);
+      rows.push([e.estNumber, e.clientCompany, e.contactName, e.title, e.status, e.priority]);
     }
     const csv = rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -146,7 +186,7 @@ export default function EnquiryTracker() {
     const a = document.createElement("a");
     a.href = url; a.download = "enquiries.csv"; a.click();
     URL.revokeObjectURL(url);
-  }, [enquiries, redacted]);
+  }, [enquiries]);
 
   if (!loaded) {
     return <div className="flex min-h-[50vh] items-center justify-center text-zinc-500 animate-pulse">Loading enquiries…</div>;
@@ -155,7 +195,7 @@ export default function EnquiryTracker() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Enquiry Tracker</h1>
+        <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Sales Enquiries</h1>
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg bg-zinc-100 dark:bg-zinc-900 p-0.5 text-xs font-bold">
             <button onClick={() => setBoardView("list")}
@@ -174,40 +214,9 @@ export default function EnquiryTracker() {
         </div>
       </div>
 
-      {(showSalesTab || isProcurementTeam || canManage) && (
-        <nav className="flex flex-row flex-wrap gap-2">
-          {showSalesTab && (
-            <button onClick={() => setTeamView("sales")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${teamView === "sales" ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
-              <span className="text-base leading-none">🤝</span>Sales
-            </button>
-          )}
-          {isProcurementTeam && (
-            <button onClick={() => setTeamView("procurement")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${teamView === "procurement" ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
-              <span className="text-base leading-none">📦</span>Procurement
-            </button>
-          )}
-          {canManage && (
-            <button onClick={() => setTeamView("management")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${teamView === "management" ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
-              <span className="text-base leading-none">💼</span>Management
-            </button>
-          )}
-        </nav>
-      )}
-
 {selectedEnquiry ? (
-        <>
-          {isManagement && (
-            <ManagementRatesPanel
-              enquiry={selectedEnquiry}
-              onSave={(items, finalize) => void handleSaveRates(selectedEnquiry.id, items, finalize)}
-            />
-          )}
-          <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
-          redacted={redacted}
-          ratesMode={redacted ? "edit" : isManagement ? "view" : "none"}
+        <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
+          ratesMode="none"
           onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
           onUpdateAgent={(id, a) => void handleUpdateAgent(id, a)}
           onAddComment={(c) => void handleAddComment(c)}
@@ -218,23 +227,13 @@ export default function EnquiryTracker() {
           onBack={() => setSelectedId(null)}
           onOpenLightbox={handleOpenLightbox}
         />
-        </>
       ) : boardView === "board" ? (
-        <EnquiryKanban enquiries={enquiries} agents={agents} redacted={redacted}
+        <EnquiryKanban enquiries={enquiries} agents={agents}
           onViewDetail={(id) => { setSelectedId(id); }}
           onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
         />
       ) : (
-        <EnquiryList enquiries={enquiries} agents={agents} redacted={redacted}
-          queueToggle={isManagement
-            ? { pendingLabel: "Pending review", isPending: (e) => (e.rateStatus ?? "") === "rates_received" }
-            : redacted
-              ? {
-                  pendingLabel: "Pending rates",
-                  isPending: (e) => (e.rateStatus ?? "") !== "finalized"
-                    && ((e.items ?? []).length === 0 || (e.items ?? []).some((it) => (it.rates ?? []).length === 0)),
-                }
-              : undefined}
+        <EnquiryList enquiries={enquiries} agents={agents}
           onViewDetail={(id) => { setSelectedId(id); }}
           onOpenCreate={() => { setEditingEnquiry(null); setIsAddModalOpen(true); }}
           onExportCSV={handleExportCSV}
@@ -249,10 +248,46 @@ export default function EnquiryTracker() {
           isOpen={isAddModalOpen} onClose={() => { if (!isSaving) { setIsAddModalOpen(false); setEditingEnquiry(null); } }}
           editingEnquiry={editingEnquiry} agents={agents} currentAgent={currentAgent}
           clients={clients}
-          redacted={redacted}
           onSave={(d) => void handleSaveEnquiry(d)}
           isSaving={isSaving} saveError={saveError}
         />
+      )}
+
+      {rateToast && (
+        <div className={`fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)] ${
+          rateToast.kind === "spec" ? "border-red-500/40" : rateToast.kind === "specdiff" ? "border-amber-500/40" : "border-emerald-500/40"
+        }`}>
+          <div className="flex items-start gap-3">
+            <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base ${
+              rateToast.kind === "spec" ? "bg-red-500/15" : rateToast.kind === "specdiff" ? "bg-amber-500/15" : "bg-emerald-500/15"
+            }`}>{rateToast.kind === "spec" ? "🚩" : rateToast.kind === "specdiff" ? "⚠" : "💰"}</span>
+            <div className="min-w-0 flex-1">
+              <p className={`text-xs font-extrabold ${
+                rateToast.kind === "spec" ? "text-red-500" : rateToast.kind === "specdiff" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+              }`}>{rateToast.kind === "spec" ? "Spec flagged — correction needed" : rateToast.kind === "specdiff" ? "Vendor quoted a different spec" : "Rates ready"}</p>
+              <p className="truncate text-sm font-bold text-[var(--text-primary)]">{rateToast.title}</p>
+              <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{rateToast.label}</p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setSelectedId(rateToast.id); setRateToast(null); }}
+                  className={`px-3 py-1.5 rounded-lg text-white text-xs font-bold cursor-pointer border-0 ${
+                    rateToast.kind === "spec" ? "bg-red-500 hover:bg-red-400" : rateToast.kind === "specdiff" ? "bg-amber-500 hover:bg-amber-400" : "bg-emerald-600 hover:bg-emerald-500"
+                  }`}
+                >
+                  {rateToast.kind === "rates" ? "View rates" : "View item"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRateToast(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-0 bg-transparent"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {lightbox && (

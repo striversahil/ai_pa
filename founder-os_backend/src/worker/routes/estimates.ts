@@ -426,6 +426,8 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       callTag: (result.estimate as any)?.callTag ?? null,
       callbackDate: (result.estimate as any)?.callbackDate ?? null,
     });
+  });
+
   // ── CRM manual order actions (local override layer) ─────────────────────────
   // MIS operators advance/cancel a sales order from the CRM dashboard. The
   // action is recorded in CrmOrderAction; the next crm-runner tick applies the

@@ -1,0 +1,12 @@
+{
+  "id": "enquiry-management",
+  "name": "Management Review",
+  "description": "Pending-only rate review: rated items awaiting markup + finalize. No daily pipeline — just what needs a decision now.",
+  "type": "handler",
+  "trigger": {
+    "type": "schedule",
+    "cron": "*/30 * * * *"
+  },
+  "enabled": true,
+  "scope": "mis"
+}

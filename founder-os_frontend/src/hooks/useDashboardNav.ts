@@ -1,7 +1,7 @@
 "use client";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import { VIEW_SCOPE } from "@/auth/permissions";
+import { VIEW_SCOPE, grantedScopes } from "@/auth/permissions";
 
 export interface DashboardNavItem {
   slug: string;
@@ -33,7 +33,7 @@ export function useDashboardNav(): DashboardNavItem[] {
   // Access is resolved against the server-provided scope (dynamic — no per-slug
   // frontend edits needed for new dashboard automations).
   if (!me) return [];
-  const granted = new Set(me.scopes);
+  const granted = grantedScopes(me);
   return (automations.data ?? [])
     .filter((a) => a.hasDashboard && granted.has(dashboardScope(a)))
     .map((a) => ({ slug: a.slug, name: a.name, scope: dashboardScope(a) }));

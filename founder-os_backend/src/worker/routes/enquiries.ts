@@ -2,7 +2,7 @@
 // routes/enquiries.ts — live sales-pipeline enquiry tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { enquiryMe, enquirySend, runEnquiryExtraction, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, type Bindings } from '../context';
+import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, type Bindings } from '../context';
 
 export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/enquiries', async (c) => {
@@ -12,13 +12,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // procurement sees — the AI-redacted payload, not their full data.
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
     const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me, restricted ? { redact: true } : undefined);
-    // Cache miss on any piece → background re-enrichment (fire-and-forget);
-    // the client refetches on the live event it broadcasts.
-    if (restricted) {
-      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
-        try { runEnquiryExtraction(c, String(id)); } catch { /* ignore */ }
-      }
-    }
     return c.json(r.body, r.status as any);
   });
   app.get('/api/enquiries/agents', async (c) => {
@@ -81,7 +74,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryCreate(createEnquiryStore(c.env), me, await c.req.json().catch(() => ({})));
     enquirySend(c, r);
-    if (r.body?.id) runEnquiryExtraction(c, r.body.id);
     return c.json(r.body, r.status as any);
   });
   app.patch('/api/enquiries/:id', async (c) => {
@@ -89,7 +81,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryUpdate(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
     enquirySend(c, r);
-    if (r.body?.id) runEnquiryExtraction(c, r.body.id);
     return c.json(r.body, r.status as any);
   });
   app.post('/api/enquiries/:id/additional-requirements', async (c) => {
@@ -117,11 +108,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
     const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '', restricted ? { redact: true } : undefined);
-    if (restricted) {
-      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
-        try { runEnquiryExtraction(c, String(id)); } catch { /* ignore */ }
-      }
-    }
     return c.json(r.body, r.status as any);
   });
   app.post('/api/enquiries/:id/comments', async (c) => {
@@ -129,9 +115,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryAddComment(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
     enquirySend(c, r);
-    // The agent writes the lead-details block in the first 1–2 comments — run
-    // extraction so enquiryNumber/sourceLead/location/company/contact fill in.
-    if (r.body?.enquiryId) runEnquiryExtraction(c, r.body.enquiryId);
     return c.json(r.body, r.status as any);
   });
 }

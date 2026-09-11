@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Agent, Enquiry, EnquiryItem, EnquiryMedia } from "../mockData";
+import { Agent, Enquiry, EnquiryItem, EnquiryMedia, ENQUIRY_SOURCES } from "../mockData";
+import ToggleSwitch from "./ToggleSwitch";
 
 /** ~10MB per item file (stored as data-URI on the item; server re-checks). */
 const MAX_ITEM_FILE_BYTES = 10 * 1024 * 1024;
@@ -17,10 +18,10 @@ interface EnquiryModalProps {
   currentAgent: Agent;
   clients?: Array<{ name: string; openEstimates: number; enquiries: number }>;
   redacted?: boolean;
-  onSave: (data: {
+    onSave: (data: {
     estNumber: string;
+    source: string;
     clientCompany: string;
-    title: string;
     contactName: string;
     contactEmail: string;
     contactPhone: string;
@@ -53,14 +54,16 @@ export default function EnquiryModal({
   const [formContactName, setFormContactName] = useState(() => editingEnquiry?.contactName || "");
   const [formContactEmail, setFormContactEmail] = useState(() => editingEnquiry?.contactEmail || "");
   const [formContactPhone, setFormContactPhone] = useState(() => editingEnquiry?.contactPhone || "");
-  const [formTitle, setFormTitle] = useState(() => editingEnquiry?.title || "");
   // Description has no input in the modal (item-driven enquiries) — the value
   // is preserved on edit and empty on create, submitted through untouched.
   const [formDescription] = useState(() => editingEnquiry?.description || "");
   const [formPriority, setFormPriority] = useState<"high" | "medium" | "low">(() => editingEnquiry?.priority || "medium");
   const [formStatus, setFormStatus] = useState<Enquiry["status"]>(() => editingEnquiry?.status || "new");
   const [formAgent, setFormAgent] = useState(() => editingEnquiry?.assignedAgentId || currentAgent.id || (agents[0]?.id || ""));
-  const [formImages, setFormImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
+  const [formSource, setFormSource] = useState<string>(() => editingEnquiry?.source || "TL");
+  // No enquiry-level attachments — media lives per item only. imageUrls pass
+  // through untouched (preserved on edit, empty on create).
+  const [formImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
   const [formItems, setFormItems] = useState<EnquiryItem[]>(() => (editingEnquiry?.items || []).map((it) => ({ ...it, media: [...(it.media ?? [])] })));
   const [itemFileError, setItemFileError] = useState<string | null>(null);
 
@@ -102,9 +105,9 @@ export default function EnquiryModal({
     e.preventDefault();
 
     onSave({
-      estNumber: formEst,
+      estNumber: formEst.trim(),
+      source: formSource,
       clientCompany: formCompany,
-      title: formTitle,
       contactName: formContactName,
       contactEmail: formContactEmail,
       contactPhone: formContactPhone,
@@ -158,28 +161,16 @@ export default function EnquiryModal({
             </div>
             )}
 
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Enquiry Title</label>
-              <input 
-                type="text" 
-                placeholder="e.g. Sieve Sifter Accessories procurement" 
-                value={formTitle} 
-                onChange={(e) => setFormTitle(e.target.value)} 
-                className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
-              />
-            </div>
-
             <div className="grid grid-cols-2 gap-4">
               {!redacted && (
               <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">EST No. *</label>
+                  <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">EST No.</label>
                 <input 
                   type="text" 
                   placeholder="e.g. EST-2026-0001" 
                   value={formEst} 
                   onChange={(e) => setFormEst(e.target.value)} 
                   className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
-                  required 
                 />
               </div>
               )}
@@ -281,6 +272,19 @@ export default function EnquiryModal({
                   {new Date().toLocaleDateString()}
                 </div>
               </div>
+
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Source</label>
+                <select
+                  value={formSource}
+                  onChange={(e) => setFormSource(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer text-[var(--text-primary)]"
+                >
+                  {ENQUIRY_SOURCES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -337,11 +341,18 @@ export default function EnquiryModal({
                       ))}
                     </div>
                   )}
-                  <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
-                    + Photo / video / PDF
-                    <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
-                      onChange={(e) => { addItemFiles(idx, e.target.files); e.target.value = ""; }} />
-                  </label>
+                  <div className="flex items-center justify-between gap-3 pt-1.5">
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
+                      + Photo / video / PDF
+                      <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
+                        onChange={(e) => { addItemFiles(idx, e.target.files); e.target.value = ""; }} />
+                    </label>
+                    <ToggleSwitch
+                      checked={it.rateAvailable === true}
+                      onChange={(next) => updateItem(idx, { rateAvailable: next })}
+                      label="Rate available"
+                    />
+                  </div>
                 </div>
               ))}
               <button type="button" onClick={() => setFormItems((prev) => [...prev, blankItem()])}
@@ -354,51 +365,10 @@ export default function EnquiryModal({
               {itemFileError && <p className="text-[11px] font-semibold text-[var(--color-danger)]">{itemFileError}</p>}
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Reference Drawings / Photos (Multi-Upload)</label>
-              <input 
-                type="file" 
-                multiple
-                accept="image/*" 
-                onChange={(e) => {
-                  const files = e.target.files;
-                  if (files && files.length > 0) {
-                    const fileList = Array.from(files);
-                    const loadedImages: string[] = [];
-                    let processed = 0;
-                    fileList.forEach(file => {
-                      const reader = new FileReader();
-                      reader.onload = (evt) => {
-                        if (evt.target?.result) {
-                          loadedImages.push(evt.target.result as string);
-                        }
-                        processed++;
-                        if (processed === fileList.length) {
-                          setFormImages(prev => [...prev, ...loadedImages]);
-                        }
-                      };
-                      reader.readAsDataURL(file);
-                    });
-                  }
-                }}
-                className="w-full text-xs text-[var(--text-secondary)] file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-brand-indigo/10 file:text-brand-indigo file:cursor-pointer hover:file:opacity-90"
-              />
-              {formImages.length > 0 && (
-                <div className="mt-2 grid grid-cols-4 gap-2">
-                  {formImages.map((img, idx) => (
-                    <div key={idx} className="relative aspect-square border border-[var(--border-card)] rounded-xl overflow-hidden group">
-                      <img src={img} alt={`Preview ${idx + 1}`} className="w-full h-full object-cover" />
-                      <button 
-                        type="button" 
-                        onClick={() => setFormImages(prev => prev.filter((_, i) => i !== idx))}
-                        className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-all duration-150 rounded-xl cursor-pointer"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="space-y-2">
+              <p className="text-[11px] text-[var(--text-tertiary)]">
+                Attach drawings / photos on each item below — there are no enquiry-level attachments.
+              </p>
             </div>
           </div>
 

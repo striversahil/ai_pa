@@ -1,7 +1,7 @@
 {
   "id": "enquiry-tracker",
-  "name": "Enquiry Tracker",
-  "description": "Live sales pipeline: enquiries + threaded comments, persisted and pushed to open dashboards.",
+  "name": "Sales Enquiries",
+  "description": "Live sales pipeline: daily enquiries + threaded comments, persisted and pushed to open dashboards.",
   "type": "handler",
   "trigger": {
     "type": "schedule",
