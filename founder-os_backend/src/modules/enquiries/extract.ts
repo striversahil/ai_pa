@@ -20,6 +20,12 @@ export interface ExtractionResult {
   contactName?: string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  /** Line items AI-split from the DESCRIPTION (Specifications & Scope) only:
+   *  one entry per distinct purchasable product/material. */
+  items?: Array<{ name: string; qty: string; spec: string }> | null;
+  /** Same items rewritten for procurement (identifying details omitted,
+   *  technical content verbatim), by index into `items`. */
+  redactedItems?: Array<{ index: number; name: string; qty: string; spec: string }> | null;
   /** Procurement-team rewrite of the DESCRIPTION: every line carrying ONLY
    *  client-identifying details (company, people, contacts, places,
    *  salesperson names, lead labels) is OMITTED entirely — never replaced
@@ -38,7 +44,14 @@ export interface EnquiryAgentRef {
 
 const MODEL = 'openai/gpt-oss-20b';
 
-function buildPrompt(input: { text: string; title?: string; company?: string }): string {
+function buildPrompt(input: { text: string; title?: string; company?: string; description?: string; salesItems?: Array<{ name: string; qty: string; spec: string }> }): string {
+  const salesLines = (Array.isArray(input.salesItems) ? input.salesItems : [])
+    .slice(0, 50)
+    .map((it, i) => `[${i}] ${String(it?.name ?? '')} | ${String(it?.qty ?? '')} | ${String(it?.spec ?? '').slice(0, 500)}`)
+    .join('\n');
+  const itemsSection = salesLines
+    ? `\nCurrent line items (already split — rewrite EACH one for procurement below):\n${salesLines}\n`
+    : ``;
   return `You are a B2B industrial-sales data extractor. Sales agents write a lead-details block for each enquiry. From the text below, extract ONLY these fields and return STRICT JSON (no markdown):
 
 {
@@ -58,6 +71,21 @@ Also return:
   "redactedComments": [{"id": "comment id from the THREAD section", "content": "that comment rewritten with the same rules: identifying-only lines omitted, technical content verbatim"}],
   "redactedRequirements": [{"index": 0, "text": "the REQUIREMENTS item at that index rewritten with the same rules"}]
 }
+
+Also split the DESCRIPTION section (Specifications & Scope) below into individual
+purchasable line items — Item 1 to Item N. YOU decide the boundaries: each
+distinct product/material with its quantity/dimensions/spec is one item
+(e.g. "24GG sheet 1 mtr" and "conveyor belt fastener qty 1000" are two items).
+Ignore COMMENTS/THREAD/REQUIREMENTS for this — DESCRIPTION only.
+{
+  "items": [{"name": "short product name", "qty": "quantity with unit, or empty string when not stated", "spec": "dimensions / material / spec detail, verbatim from the description"}],
+  "redactedItems": [{"index": 0, "name": "same item rewritten for procurement: omit client-identifying details, keep technical content verbatim"}]
+}
+If the description is empty or has no splittable product, return "items": [].
+Single-product enquiries return exactly one item. Never invent quantities.
+"redactedItems" must rewrite the CURRENT line items above (by [index]) when
+that section is present — otherwise it must cover every entry of "items" by
+position. Every sales item needs exactly one redacted entry.${itemsSection}
 
 Rules:
 - Match the labels loosely: 'Enquiry Number', 'Inquiry No', 'Source Lead', 'Lead Source',
@@ -124,6 +152,28 @@ function shapeResult(parsed: any): ExtractionResult {
           .filter((r: any) => r && Number.isInteger(r.index) && typeof r.text === 'string')
           .map((r: any) => ({ index: r.index, text: String(r.text) }))
       : null,
+    items: Array.isArray(parsed.items)
+      ? parsed.items
+          .filter((r: any) => r && (r.name || r.qty || r.spec))
+          .map((r: any) => ({
+            name: String(r.name ?? '').slice(0, 300),
+            qty: String(r.qty ?? '').slice(0, 120),
+            spec: String(r.spec ?? '').slice(0, 2000),
+          }))
+          .filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim())
+          .slice(0, 50)
+      : null,
+    redactedItems: Array.isArray(parsed.redactedItems)
+      ? parsed.redactedItems
+          .filter((r: any) => r && Number.isInteger(r.index) && (r.name || r.qty || r.spec))
+          .map((r: any) => ({
+            index: r.index,
+            name: String(r.name ?? '').slice(0, 300),
+            qty: String(r.qty ?? '').slice(0, 120),
+            spec: String(r.spec ?? '').slice(0, 2000),
+          }))
+          .slice(0, 50)
+      : null,
   };
 }
 
@@ -146,6 +196,9 @@ export interface RedactedViewCache {
   descHash: string;
   comments: Record<string, { content: string; hash: string }>;
   requirements: Record<number, { text: string; hash: string }>;
+  /** Procurement rewrite of the sales `items` array, by index. Each entry is
+   *  served only when its hash still matches the sales item JSON. */
+  items: Record<number, { name: string; qty: string; spec: string; hash: string }>;
   at: string;
 }
 
@@ -162,7 +215,7 @@ export function redactedCacheKey(enquiryId: string): string {
  */
 export async function extractEnquiryFieldsRobust(
   env: Record<string, unknown>,
-  input: { text: string; title?: string; company?: string },
+  input: { text: string; title?: string; company?: string; description?: string; salesItems?: Array<{ name: string; qty: string; spec: string }> },
   _agents: EnquiryAgentRef[] = [],
 ): Promise<ExtractionResult | null> {
   let gateway: ReturnType<typeof getGateway>;
@@ -196,7 +249,7 @@ export async function extractEnquiryFieldsRobust(
 /** @deprecated Use extractEnquiryFieldsRobust(env, input) instead. */
 export async function extractEnquiryFields(
   _key: string,
-  input: { text: string; title?: string; company?: string },
+  input: { text: string; title?: string; company?: string; description?: string; salesItems?: Array<{ name: string; qty: string; spec: string }> },
   agents: EnquiryAgentRef[] = [],
 ): Promise<ExtractionResult | null> {
   return extractEnquiryFieldsRobust({}, input, agents);

@@ -7,7 +7,8 @@
 //   every-10min → minute % 10 == 0
 //   every-15min → minute % 15 == 0
 //   every-30min → minute % 30 == 0
-//   daily       → 02:30 / 03:30 / 13:30 / 21:30 UTC
+//   daily       → 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC (one slot per job
+//                  family; the `slot` input tells the workflow which jobs run)
 //   neodove-refresh → minute % 5 == 0 (native D1 write; GH egress is blocked by NeoDove)
 //
 // Replaces the cPanel/web-server cron that used to fire workflow_dispatch.
@@ -68,6 +69,19 @@ function isOpsWindow(now: Date): boolean {
   return istMin >= 540 && istMin < 1260;
 }
 
+// Slot map (UTC → IST job family):
+//   02:30 (08:00 IST) → telecalling-distribution + morning-brief
+//   13:30 (19:00 IST) → eod-summary
+//   15:30 (21:00 IST) → telecalling-eod-snatch
+//   19:30 (01:00 IST) → baseline-freeze (+ neodove backfill via 02:30 slot)
+//   21:30 (03:00 IST) → data-retention
+// The workflow gates each job on `inputs.slot` (default 'all' = manual runs
+// execute everything). Never gate on `github.event.schedule` — it is only set
+// for native `schedule:` events, which these workflows don't have, so such a
+// guard silently matches nothing on workflow_dispatch.
+
+export const DAILY_SLOTS = [2 * 60 + 30, 13 * 60 + 30, 15 * 60 + 30, 19 * 60 + 30, 21 * 60 + 30];
+
 /** Which workflows to fire at the current UTC minute. */
 function dueWorkflows(now: Date): string[] {
   const min = now.getUTCMinutes();
@@ -77,8 +91,13 @@ function dueWorkflows(now: Date): string[] {
   if (min % 10 === 0) due.push('every-10min');
   if (min % 15 === 0) due.push('every-15min');
   if (min % 30 === 0) due.push('every-30min');
-  if ([2 * 60 + 30, 3 * 60 + 30, 13 * 60 + 30, 21 * 60 + 30].includes(hhmm)) due.push('daily');
+  if (DAILY_SLOTS.includes(hhmm)) due.push('daily');
   return due;
+}
+
+/** "02:30" style slot label for a UTC-minutes time (matches workflow `slot` input). */
+export function slotLabel(hhmm: number): string {
+  return `${String(Math.floor(hhmm / 60)).padStart(2, '0')}:${String(hhmm % 60).padStart(2, '0')}`;
 }
 
 async function runScheduled(event: { cron?: string; scheduledTime?: number }, env: Bindings, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
@@ -139,7 +158,12 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     }
     const inputs: Record<string, string> = {};
     if (key === 'every-5min') inputs.run_zoho = ops ? 'true' : 'false';
-    if (key === 'daily') inputs.run_neodove = ops ? 'true' : 'false';
+    if (key === 'daily') {
+      inputs.run_neodove = ops ? 'true' : 'false';
+      // Tell the workflow which slot fired so each job runs once/day.
+      // Gated on scheduled (not wall-clock) time, like everything else here.
+      inputs.slot = slotLabel(now.getUTCHours() * 60 + now.getUTCMinutes());
+    }
     runs.push(dispatchGitHubWorkflow(GITHUB_WORKFLOWS[key], token, inputs));
   }
   if (runs.length > 0) {

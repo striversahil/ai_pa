@@ -2,7 +2,7 @@
 // routes/enquiries.ts — live sales-pipeline enquiry tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { enquiryMe, enquirySend, runEnquiryExtraction, EnquiryRoutes, createEnquiryStore, authStore, deps, type Bindings } from '../context';
+import { enquiryMe, enquirySend, runEnquiryExtraction, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, type Bindings } from '../context';
 
 export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/enquiries', async (c) => {
@@ -43,6 +43,38 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         picture: null,
       }));
     return c.json(agents);
+  });
+  app.get('/api/enquiries/clients', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    // Restricted (procurement) viewers get NO client names — the pipeline
+    // hides client PII for them (same rule as the agents roster above).
+    if (c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me)) return c.json([]);
+    const [payload, enquiries] = await Promise.all([
+      getEstimatesPayload().catch(() => ({ estimates: [] as any[] })),
+      createEnquiryStore(c.env).listEnquiries().catch(() => [] as any[]),
+    ]);
+    // Merge Zoho customers (with open-estimate counts) + companies already
+    // used on enquiries (covers "+ New client" entries pre-Zoho-sync).
+    const byKey = new Map<string, { name: string; openEstimates: number; enquiries: number }>();
+    for (const e of (payload as any).estimates ?? []) {
+      const name = String(e?.customerName ?? '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const row = byKey.get(key) ?? { name, openEstimates: 0, enquiries: 0 };
+      row.openEstimates += 1;
+      byKey.set(key, row);
+    }
+    for (const e of (enquiries as any[]) ?? []) {
+      const name = String((e as any)?.clientCompany ?? '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const row = byKey.get(key) ?? { name, openEstimates: 0, enquiries: 0 };
+      row.enquiries += 1;
+      byKey.set(key, row);
+    }
+    const clients = [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return c.json(clients);
   });
   app.post('/api/enquiries', async (c) => {
     const me = await enquiryMe(c);

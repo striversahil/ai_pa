@@ -2,12 +2,17 @@ name: Cron - Daily IST
 
 on:
   # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
-  # workflow_dispatch) at 02:30 / 03:30 / 13:30 / 21:30 UTC. Native schedule
-  # removed — GitHub's own scheduler is unreliable and would double-fire.
-  # Each job's `if` guard still matches on workflow_dispatch, so the dispatch
-  # runs the intended daily jobs.
+  # workflow_dispatch) at 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC — one slot
+  # per job family. Native schedule removed — GitHub's own scheduler is
+  # unreliable and would double-fire.
+  # The Worker passes `inputs.slot` (HH:MM of the slot); each job runs ONLY on
+  # its slot. Manual dispatch defaults slot to 'all' so every job runs.
   workflow_dispatch:
     inputs:
+      slot:
+        description: "Daily slot HH:MM (02:30, 13:30, 15:30, 19:30, 21:30). 'all' runs every job."
+        required: false
+        default: "all"
       neodove_backfill_days:
         description: "Neodove: backfill N past days (1 = yesterday only)"
         required: false
@@ -17,15 +22,16 @@ on:
         type: boolean
         default: true
 
-# Each job only runs at its own scheduled slot — GH triggers ALL jobs on EVERY cron,
-# so without these guards the baseline would re-freeze at random times of day.
+# Each job only runs on its own slot — the Worker fires this workflow 5×/day,
+# so without these guards every job would run 5×/day.
 concurrency:
   group: cron-daily-ist
   cancel-in-progress: true
 
 jobs:
   baseline-freeze:
-    if: github.event.schedule == '30 19 * * *' || github.event_name == 'workflow_dispatch'
+    # 19:30 UTC = 01:00 IST — capture sent-estimate snapshot for the new day.
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '19:30'
     runs-on: ubuntu-latest
     steps:
       - name: baseline-freeze (capture sent-estimate snapshot for today)
@@ -33,7 +39,8 @@ jobs:
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/runner/estimates/baseline" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
 
   data-retention:
-    if: github.event.schedule == '30 21 * * *' || github.event_name == 'workflow_dispatch'
+    # 21:30 UTC = 03:00 IST — purge messages older than 90 days.
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '21:30'
     runs-on: ubuntu-latest
     steps:
       - name: data-retention
@@ -45,7 +52,7 @@ jobs:
     # across active telecallers (Estimate.assignedTelecallerId is the single
     # source of truth). Synchronous on purpose — ?async=1 relies on a Durable
     # Object alarm that has proven unreliable for this automation.
-    if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '02:30'
     runs-on: ubuntu-latest
     steps:
       - name: telecalling round-robin distribution
@@ -54,10 +61,10 @@ jobs:
 
   telecalling-eod-snatch:
     # 9:00 PM IST end-of-day sweep: any estimate whose latest AI verdict is
-    # "unsatisfactory" (no meaningful update) or that went silent > 2 days is
+    # "unsatisfactory" (no meaningful update) or that went silent > 3 days is
     # re-poached to the higher-converting agent. Makes conversion competitive —
     # agents who don't advance their deals lose them at night.
-    if: github.event.schedule == '30 15 * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '15:30'
     runs-on: ubuntu-latest
     steps:
       - name: telecalling EOD snatch sweep
@@ -65,7 +72,8 @@ jobs:
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}"
 
   morning-brief:
-    if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
+    # 02:30 UTC = 08:00 IST — morning briefing.
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '02:30'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +85,8 @@ jobs:
         run: node scripts/morning-brief-runner.js
 
   eod-summary:
-    if: github.event.schedule == '30 13 * * *' || github.event_name == 'workflow_dispatch'
+    # 13:30 UTC = 19:00 IST — end-of-day summary.
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '13:30'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +98,9 @@ jobs:
         run: node scripts/eod-summary-runner.js
 
   neodove-report:
-    if: (github.event.schedule == '0 19 * * *' || (github.event_name == 'workflow_dispatch')) && github.event.inputs.run_neodove != 'false'
+    # 13:30 UTC = 19:00 IST — the only daily slot inside ops hours, so the
+    # run_neodove quiet-hours gate passes. Yesterday's report + N-day backfill.
+    if: (github.event.inputs.slot == 'all' || github.event.inputs.slot == '13:30') && github.event.inputs.run_neodove != 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

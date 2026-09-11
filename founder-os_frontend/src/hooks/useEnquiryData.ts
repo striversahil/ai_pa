@@ -29,6 +29,18 @@ function toEnquiry(raw: any): Enquiry {
   const additionalRequirements = Array.isArray(raw.additionalRequirements)
     ? raw.additionalRequirements.map((r: any) => (typeof r === "string" ? { text: r } : { text: String(r?.text ?? ""), imageUrl: r?.imageUrl || undefined }))
     : [];
+  const items = Array.isArray(raw.items)
+    ? raw.items.map((r: any) => ({
+        name: String(r?.name ?? ""),
+        qty: String(r?.qty ?? ""),
+        spec: String(r?.spec ?? ""),
+        media: Array.isArray(r?.media)
+          ? r.media
+              .map((m: any) => ({ type: m?.type === "video" ? "video" : "image", url: String(m?.url ?? "") }))
+              .filter((m: any) => m.url.length > 0)
+          : [],
+      })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0)
+    : [];
   return {
     id: raw.id,
     estNumber: raw.estNumber || '',
@@ -48,6 +60,7 @@ function toEnquiry(raw: any): Enquiry {
     activities,
     imageUrls,
     additionalRequirements,
+    items,
   };
 }
 
@@ -61,13 +74,15 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [clients, setClients] = useState<Array<{ name: string; openEstimates: number; enquiries: number }>>([]);
   const [loaded, setLoaded] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [enqRes, agentsRes] = await Promise.all([
+      const [enqRes, agentsRes, clientsRes] = await Promise.all([
         fetch(`/api/enquiries${qs}`),
         fetch(`/api/enquiries/agents${qs}`),
+        fetch(`/api/enquiries/clients${qs}`),
       ]);
       if (!enqRes.ok) throw new Error('load failed');
       const data = await enqRes.json();
@@ -85,6 +100,14 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
           color: AGENT_COLORS[i % AGENT_COLORS.length],
           status: 'active',
         })));
+      }
+      if (clientsRes.ok) {
+        const raw = await clientsRes.json();
+        setClients(Array.isArray(raw) ? raw.map((c: any) => ({
+          name: String(c?.name ?? ""),
+          openEstimates: Number(c?.openEstimates ?? 0),
+          enquiries: Number(c?.enquiries ?? 0),
+        })).filter((c: any) => c.name) : []);
       }
     } catch (e) {
       console.error('Failed to load enquiries:', e);
@@ -184,6 +207,12 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
     return saved.requirement;
   }, []);
 
+  const updateItems = useCallback(async (enquiryId: string, items: Array<{ name: string; qty: string; spec: string }>) => {
+    const saved = await persist('PATCH', `/api/enquiries/${enquiryId}`, { items });
+    setEnquiries((prev) => prev.map((x) => (x.id === enquiryId ? toEnquiry(saved) : x)));
+    return saved;
+  }, []);
+
   // Keep a local activity helper for optimistic UI parity.
   const makeActivity = useCallback((type: Activity['type'], text: string, agentId?: string): Activity => ({
     id: `act-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -194,6 +223,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
     enquiries, setEnquiries,
     comments, setComments,
     agents,
+    clients,
     currentAgent,
     loaded,
     syncState,
@@ -202,6 +232,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
     deleteEnquiry,
     addComment,
     addRequirement,
+    updateItems,
     makeActivity,
     refresh: fetchAll,
   };

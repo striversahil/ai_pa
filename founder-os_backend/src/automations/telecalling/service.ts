@@ -288,6 +288,9 @@ async function getRiskItems(): Promise<CachedRiskItem[]> {
 export async function invalidateRiskCache(): Promise<void> {
   await cacheDel(RISK_CACHE_KEY);
   try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
+  // The MIS per-estimate export reads ?converters= from its own cache key —
+  // stale Converted-By survives every close/snatch without this.
+  try { await cacheDelPrefix('telecalling:converters'); } catch { /* non-fatal */ }
 }
 
 /**
@@ -677,6 +680,10 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
     // snatchReason (why the estimate left the previous holder). Fresh deals get
     // a null reason. Lock enforcement is not a snatch — no snatchReason.
     const movedFrom = est.assignedTelecallerId;
+    // Self-hold no-op: best-fit re-picked the current holder (common — the best
+    // converter holds reds). No write, no churn ledger row, no reassigned count,
+    // no −15 — penalising an agent for "snatching" from themselves is a bug.
+    if (wasAssigned && bestId === String(movedFrom)) continue;
     await prisma.estimate.update({
       where: { estimateId: est.estimateId },
       data: { assignedTelecallerId: bestId },
@@ -687,12 +694,15 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       reassigned += 1;
       if (isRoleCorrection) roleCorrected += 1;
       // The agent who lost the estimate at the EOD snatch gets -15 (unsatisfactory
-      // remark or silent > 2 days). Charged to the holder who was re-poached FROM.
+      // remark or silent > 3 days). Charged to the holder who was re-poached FROM.
       // Lock enforcement is NOT a snatch, and neither is losing a TEMP absent-cover
       // hold — nor a role correction (the holder didn't earn the snatch; the
       // creator-first rule dealt it to them). The snatch penalty follows the
-      // MIS "Active Penalty" toggle (runtime Setting — default OFF).
-      if (movedFrom && !locked && !isRoleCorrection && penaltiesEnabled && !openRow?.tempForTelecallerId) {
+      // MIS "Active Penalty" toggle (runtime Setting — default OFF). Fail-open:
+      // the penalty fires only with a confirmed non-temp open row — a failed
+      // lookup (openRow null) or a legacy estimate with no ledger row never
+      // penalises.
+      if (movedFrom && !locked && !isRoleCorrection && penaltiesEnabled && !!openRow && !openRow.tempForTelecallerId) {
         await recordSnatchPenalty(String(movedFrom), est.estimateId, today, reason);
       }
     } else {
@@ -1043,6 +1053,11 @@ export async function markTelecallerPresent(telecallerId: string): Promise<{ ret
           await recordAssignment(row.estimateId, telecallerId, `Returned from absence — back to ${tc.name}`, null);
         }
       }
+    } else {
+      // Temp rows exist but none are still open (all converted/declined while
+      // covered) — nothing to return, but the agent is back: clear the flag
+      // or they stay absent forever with no path forward.
+      await prisma.telecaller.update({ where: { id: telecallerId }, data: { absentSince: null } });
     }
   } else {
     // No temp rows — just clear the flag.
@@ -1260,12 +1275,19 @@ export async function getConvertersMap(sinceDay: string = ''): Promise<Record<st
 /**
  * Charge -15 to the agent who lost an estimate at the EOD snatch. Called when a
  * red/zombie estimate is re-poached away from its current holder.
- */;
+ * Duplicate-guarded: one −15 per holder per estimate per day, so concurrent or
+ * repeated engine runs can never double-charge the same snatch.
+ */
 async function recordSnatchPenalty(telecallerId: string, estimateId: string, day: string, reason: string | null): Promise<void> {
+  try {
+    const existing = await prisma.telecallerScoreEvent.findFirst({
+      where: { telecallerId, estimateId, delta: SNATCH_PENALTY, day },
+    });
+    if (existing) return;
+  } catch { /* lookup failed — fall through and record once rather than skip */ }
   await recordScoreEvent(telecallerId, estimateId, SNATCH_PENALTY, day, reason ?? 'EOD snatch — unsatisfactory remark');
 }
 
-/**
 /** Daily engine: refresh the roster from NeoDove, then deal the sent pool. */
 export async function runLeadConversion(): Promise<{ assigned: number }> {
   await syncTelecallersFromNeodove();
@@ -1316,7 +1338,7 @@ export interface TelecallerDayMetrics {
   // agent). Summed over the period so the weekly view resets to zero naturally.
   points: { closes: number; snatches: number; total: number };
   // Live pipeline risk: open estimates currently red (no meaningful update) or
-  // zombie (silent > 2 days) — the EOD reassignment candidates.
+  // zombie (silent > 3 days) — the EOD reassignment candidates.
   risk: { atRisk: number; zombie: number };
 }
 

@@ -14,6 +14,7 @@ interface EnquiryDetailProps {
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
   onAddRequirement: (id: string, text: string, imageUrl?: string) => Promise<any>;
+  onUpdateItems?: (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video'; url: string }> }>) => void;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
@@ -30,6 +31,7 @@ export default function EnquiryDetail({
   onUpdateAgent,
   onAddComment,
   onAddRequirement,
+  onUpdateItems,
   onDeleteEnquiry,
   onOpenEdit,
   onBack,
@@ -213,6 +215,7 @@ export default function EnquiryDetail({
             selectedEnquiry={selectedEnquiry}
             onOpenLightbox={onOpenLightbox}
             redacted={redacted}
+            onUpdateItems={onUpdateItems ? (items) => onUpdateItems(selectedEnquiry.id, items) : undefined}
           />
 
           {redacted && selectedEnquiry.redactedPending && (

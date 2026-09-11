@@ -8,6 +8,37 @@ export interface EnquiryRequirement {
   imageUrl?: string;
 }
 
+/** One purchasable line item AI-split from the unstructured description
+ *  (Specifications & Scope). Rendered as Item 1..N in both Sales and
+ *  Procurement views; sales can edit/delete/reorder manually. */
+export interface EnquiryMedia {
+  type: 'image' | 'video';
+  url: string;
+}
+
+export interface EnquiryItem {
+  name: string;
+  qty: string;
+  spec: string;
+  media: EnquiryMedia[];
+}
+
+/** ~10MB binary per attachment (base64 inflates ~4/3). Enforced client-side
+ *  and re-checked server-side in routes pick(). */
+export const MAX_ITEM_MEDIA_URL_CHARS = 15_000_000;
+export const MAX_ITEM_MEDIA_COUNT = 10;
+
+export function parseItemMedia(raw: unknown): EnquiryMedia[] {
+  if (!Array.isArray(raw)) return [];
+  const shaped: EnquiryMedia[] = raw.map((m: any) => ({
+    type: (m?.type === 'video' ? 'video' : 'image') as 'image' | 'video',
+    url: String(m?.url ?? ''),
+  }));
+  return shaped
+    .filter((m) => m.url.length > 0 && m.url.length <= MAX_ITEM_MEDIA_URL_CHARS)
+    .slice(0, MAX_ITEM_MEDIA_COUNT);
+}
+
 export interface Enquiry {
   id: string;
   estNumber: string;
@@ -29,6 +60,7 @@ export interface Enquiry {
   imageUrls: string[];
   activities: EnquiryActivity[];
   additionalRequirements: EnquiryRequirement[];
+  items: EnquiryItem[];
 }
 
 export interface EnquiryActivity {
@@ -87,11 +119,30 @@ export function mapEnquiry(row: any): Enquiry | null {
     imageUrls: row.imageUrls ? JSON.parse(row.imageUrls) : [],
     activities: row.activities ? JSON.parse(row.activities) : [],
     additionalRequirements: parseRequirements(row.additionalRequirements),
+    items: parseItems(row.items ?? null),
   };
 }
 
-export function parseRequirements(raw: string | null): EnquiryRequirement[] {
+export function parseItems(raw: string | null): EnquiryItem[] {
   if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((r: any) => ({
+        name: String(r?.name ?? '').slice(0, 300),
+        qty: String(r?.qty ?? '').slice(0, 120),
+        spec: String(r?.spec ?? '').slice(0, 2000),
+        media: parseItemMedia(r?.media),
+      }))
+      .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0)
+      .slice(0, 100);
+  } catch {
+    return [];
+  }
+}
+
+export function parseRequirements(raw: string | null): EnquiryRequirement[] {  if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -138,6 +189,14 @@ export function sanitize(e: any): Enquiry {
     imageUrls: Array.isArray(e.imageUrls) ? e.imageUrls : [],
     activities: Array.isArray(e.activities) ? e.activities : [],
     additionalRequirements: Array.isArray(e.additionalRequirements) ? e.additionalRequirements : [],
+    items: Array.isArray((e as any).items)
+      ? (e as any).items.map((r: any) => ({
+          name: String(r?.name ?? '').slice(0, 300),
+          qty: String(r?.qty ?? '').slice(0, 120),
+          spec: String(r?.spec ?? '').slice(0, 2000),
+          media: parseItemMedia(r?.media),
+        }))
+      : [],
   };
 }
 
@@ -199,12 +258,12 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         e.id, e.estNumber, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
         e.priority, e.status, e.assignedAgentId, e.createdAt, e.updatedAt,
-        JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []),
+        JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []),
       )
       .run();
     return e;
@@ -215,13 +274,13 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
       )
       .bind(
         merged.estNumber, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
         merged.description, merged.priority, merged.status, merged.assignedAgentId,
         merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
-        JSON.stringify(merged.additionalRequirements ?? []), id,
+        JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), id,
       )
       .run();
     return merged;

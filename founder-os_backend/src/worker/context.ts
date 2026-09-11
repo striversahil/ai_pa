@@ -287,8 +287,21 @@ export function runEnquiryExtraction(c: any, enquiryId: string) {
         text,
         title: enquiry.title,
         company: enquiry.clientCompany,
+        description,
+        salesItems: (Array.isArray((enquiry as any).items) ? (enquiry as any).items : []).map((it: any) => ({
+          name: String(it?.name ?? ''),
+          qty: String(it?.qty ?? ''),
+          spec: String(it?.spec ?? ''),
+        })),
       });
       if (!extracted) return;
+      // Effective sales line items: manual edits win — only auto-fill when the
+      // row has none and the AI split the description into items.
+      const existingItems: Array<{ name: string; qty: string; spec: string }> =
+        Array.isArray((enquiry as any).items) ? (enquiry as any).items : [];
+      const salesItems = existingItems.length > 0
+        ? existingItems
+        : (Array.isArray(extracted.items) ? extracted.items : []);
       // Procurement-view cache (v2): AI rewrites for the description + every
       // comment, hashed against their exact source texts. Independent of the
       // field-fill below, so it refreshes even when nothing needed filling.
@@ -307,19 +320,32 @@ export function runEnquiryExtraction(c: any, enquiryId: string) {
             if (src === undefined) continue;
             redactedRequirements[r.index] = { text: r.text, hash: hashText(src) };
           }
+          const { hashItem } = require('../modules/enquiries/routes');
+          const redactedItems: RedactedViewCache['items'] = {};
+          for (const r of (extracted.redactedItems ?? []) as Array<{ index: number; name: string; qty: string; spec: string }>) {
+            const src = (salesItems as any[])[r.index];
+            if (src === undefined) continue;
+            redactedItems[r.index] = {
+              name: String(r.name ?? ''),
+              qty: String(r.qty ?? ''),
+              spec: String(r.spec ?? ''),
+              hash: hashItem(src),
+            };
+          }
           const { cacheSet } = require('../shared/cache');
           const entry: RedactedViewCache = {
             description: extracted.redactedDescription,
             descHash: hashText(description),
             comments: redactedComments,
             requirements: redactedRequirements,
+            items: redactedItems,
             at: new Date().toISOString(),
           };
           await cacheSet(redactedCacheKey(enquiryId), entry, REDACTED_CACHE_TTL_MS);
-          console.log(`enquiry redaction: cached procurement view for ${enquiryId} (${Object.keys(redactedComments).length} comments, ${Object.keys(redactedRequirements).length} requirements)`);
+          console.log(`enquiry redaction: cached procurement view for ${enquiryId} (${Object.keys(redactedComments).length} comments, ${Object.keys(redactedRequirements).length} requirements, ${Object.keys(redactedItems).length} items)`);
         } catch { /* redaction cache is best-effort */ }
       }
-      const updates: Record<string, string> = {};
+      const updates: Record<string, any> = {};
       if (!enquiry.title && extracted.title) updates.title = extracted.title;
       if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;
       if (!enquiry.sourceLead && extracted.sourceLead) updates.sourceLead = extracted.sourceLead;
@@ -328,6 +354,7 @@ export function runEnquiryExtraction(c: any, enquiryId: string) {
       if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
       if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
       if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
+      if (existingItems.length === 0 && salesItems.length > 0) updates.items = salesItems;
       if (Object.keys(updates).length === 0) return;
       const saved = await store.updateEnquiry(enquiryId, updates);
       if (saved) {

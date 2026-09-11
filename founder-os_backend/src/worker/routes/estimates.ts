@@ -3,7 +3,7 @@
 // overrides, baseline snapshots, NeoDove report, Zoho classification, bulk-upsert.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, type Bindings } from '../context';
+import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, type Bindings } from '../context';
 import {
   recordAssignment,
   markTelecallerAbsent,
@@ -101,6 +101,9 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
         neodoveUserName: body.neodoveUserName ?? null,
       },
     });
+    // Roster feeds the cached leaderboard agent list — invalidate + go live.
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(tc, 201);
   });
 
@@ -121,6 +124,10 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     const body = await c.req.json().catch(() => ({}));
     if (typeof body.enabled !== 'boolean') return c.json({ error: 'enabled boolean required' }, 400);
     await setPenaltiesEnabled(body.enabled);
+    // Scores render from the cached dashboard — invalidate + go live so the
+    // flip is visible immediately (was silent: the toggle appeared stuck).
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true, enabled: body.enabled });
   });
 
@@ -140,7 +147,8 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     const body = await c.req.json().catch(() => ({}));
     if (typeof body.enabled !== 'boolean') return c.json({ error: 'enabled boolean required' }, 400);
     await setEodReassignEnabled(body.enabled);
-    notifyLive(c, { type: 'telecalling' });
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true, enabled: body.enabled });
   });
 
@@ -206,6 +214,8 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       if (body.deleted === false && body.assignEstimateFollowUps === undefined) data.assignEstimateFollowUps = false;
     }
     const tc = await prisma.telecaller.update({ where: { id: c.req.param('id') }, data });
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(tc);
   });
 
@@ -216,6 +226,8 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       where: { id: c.req.param('id') },
       data: { deleted: true, assignEstimateFollowUps: false },
     });
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true });
   });
 
@@ -231,7 +243,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     } else {
       result = { absent: true, ...(await markTelecallerAbsent(id)) };
     }
-    notifyLive(c, { type: 'telecalling' });
+    notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true, ...result });
   });
 
@@ -324,7 +336,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       data,
     });
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    notifyLive(c, { type: 'telecalling' });
+    notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(est);
   });
 
@@ -339,7 +351,9 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     const moves = Array.isArray(body.moves) ? body.moves : [];
     if (moves.length === 0) return c.json({ error: 'moves[] required' }, 400);
     const result = await bulkAssignEstimates(moves, { reason: body.reason || 'MIS bulk modification' });
-    if (result.moved.length > 0) notifyLive(c, { type: 'telecalling' });
+    // Broadcast on moves AND flag flips (a follow-up flip with zero moves is
+    // still visible state) — matches the secret-gated runner twin.
+    if (result.moved.length > 0 || result.flagsUpdated.length > 0) notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: result.errors.length === 0, movedCount: result.moved.length, ...result });
   });
 
@@ -568,7 +582,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       // these chips — broadcast both types so each open tab refetches (the
       // telecalling dashboards subscribe narrowly to automation/telecalling).
       notifyLive(c, { type: 'estimates' });
-      notifyLive(c, { type: 'telecalling' });
+      notifyLive(c, { type: LiveEvent.Telecalling });
       // The estimates payload and the telecalling dashboard/risk/KRA caches
       // derive from these rows — invalidate or they go stale for the KV TTL.
       const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');

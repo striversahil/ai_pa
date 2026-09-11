@@ -43,6 +43,8 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
 
   if (activeImages.length === 0 || !activeImage) return null;
 
+  const isVideo = typeof activeImage === "string" && activeImage.startsWith("data:video/");
+
   const handleNext = (e: React.MouseEvent) => {
     e.stopPropagation();
     setCurrentIndex((prev) => (prev + 1) % activeImages.length);
@@ -59,9 +61,9 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
       onClick={onClose}
     >
       {/* Download button */}
-      <a 
-        href={activeImage} 
-        download={`drawing-${currentIndex + 1}.png`}
+      <a
+        href={activeImage}
+        download={isVideo ? `video-${currentIndex + 1}.mp4` : `drawing-${currentIndex + 1}.png`}
         className="absolute top-4 right-16 text-zinc-900 dark:text-white hover:text-zinc-500 dark:hover:text-zinc-400 p-2 cursor-pointer z-50 bg-black/45 rounded-full border border-white/10 transition-colors flex items-center justify-center"
         onClick={(e) => e.stopPropagation()}
         title="Download Image"
@@ -110,12 +112,22 @@ export default function Lightbox({ images, initialIndex = 0, image, onClose }: L
 
       {/* Main Image Container */}
       <div className="relative max-w-[95vw] max-h-[90vh] flex flex-col items-center">
-        <img 
-          src={activeImage} 
-          alt="Preview" 
-          className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl border border-white/10 cursor-default animate-scale-up"
-          onClick={(e) => e.stopPropagation()} 
-        />
+        {isVideo ? (
+          <video
+            src={activeImage}
+            controls
+            autoPlay
+            className="max-w-full max-h-[85vh] rounded-lg shadow-2xl border border-white/10 cursor-default animate-scale-up"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <img
+            src={activeImage}
+            alt="Preview"
+            className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl border border-white/10 cursor-default animate-scale-up"
+            onClick={(e) => e.stopPropagation()}
+          />
+        )}
         
         {/* Caption/Counter */}
         {activeImages.length > 1 && (

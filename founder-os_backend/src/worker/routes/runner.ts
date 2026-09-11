@@ -462,7 +462,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // dashboard subscribes narrowly to automation/telecalling events, so it
     // needs its own broadcast or an open tab never shows the win until a
     // manual refresh. Same dual-notify precedent as the lead-details route.
-    notifyLive(c, { type: 'telecalling' });
+    notifyLive(c, { type: LiveEvent.Telecalling });
     if (updated > 0) {
       const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
       await invalidateDerivedEstimateCaches();
@@ -648,7 +648,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ error: 'moves[] or followUpAgents[] required' }, 400);
     }
     const result = await bulkAssignEstimates(moves, { followUpAgents, reason: body.reason });
-    if (result.moved.length > 0 || result.flagsUpdated.length > 0) notifyLive(c, { type: 'telecalling' });
+    if (result.moved.length > 0 || result.flagsUpdated.length > 0) notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: result.errors.length === 0, movedCount: result.moved.length, ...result });
   });
 
@@ -661,7 +661,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/telecalling/effort-sync', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const result = await syncEffortSnapshots();
-    if (result.ok) notifyLive(c, { type: 'telecalling' });
+    if (result.ok) notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(result);
   });
 }

@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseRequirements } from "./store";
+import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseItems, parseRequirements } from "./store";
 
 // Prisma-backed EnquiryStore for the Express / Postgres runtime. Kept in a
 // separate file so the Prisma client never enters the Cloudflare Worker bundle.
@@ -26,6 +26,7 @@ function mapEnquiry(row: any): Enquiry | null {
     imageUrls: row.imageUrls ? JSON.parse(row.imageUrls) : [],
     activities: row.activities ? JSON.parse(row.activities) : [],
     additionalRequirements: parseRequirements(row.additionalRequirements),
+    items: parseItems((row as any).items ?? null),
   };
 }
 
@@ -60,6 +61,7 @@ export class PrismaEnquiryStore implements EnquiryStore {
         imageUrls: JSON.stringify(data.imageUrls ?? []),
         activities: JSON.stringify(data.activities ?? []),
         additionalRequirements: JSON.stringify(data.additionalRequirements ?? []),
+        items: JSON.stringify((data as any).items ?? []),
       },
     });
     return mapEnquiry(row)!;
@@ -69,6 +71,7 @@ export class PrismaEnquiryStore implements EnquiryStore {
     if (data.imageUrls) data.imageUrls = JSON.stringify(data.imageUrls);
     if (data.activities) data.activities = JSON.stringify(data.activities);
     if (data.additionalRequirements) data.additionalRequirements = JSON.stringify(data.additionalRequirements);
+    if ((data as any).items) data.items = JSON.stringify((data as any).items);
     const row = await this.prisma.enquiry.update({ where: { id }, data }).catch(() => null);
     return row ? mapEnquiry(row) : null;
   }

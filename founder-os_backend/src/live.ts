@@ -28,6 +28,12 @@ export const LiveEvent = {
   Crm: "crm",
   Chat: "chat",
   /**
+   * Telecalling assignment/risk/roster writes (engine runs, MIS controller,
+   * effort-sync). Typed member so refactors are compiler-checked — previously
+   * a raw "telecalling" string at every call site.
+   */
+  Telecalling: "telecalling",
+  /**
    * Generic "data changed somewhere" event, emitted automatically by the
    * auto-live middleware for ANY mutating /api/* request whose handler did not
    * already broadcast a typed event. Frontends that subscribe to everything

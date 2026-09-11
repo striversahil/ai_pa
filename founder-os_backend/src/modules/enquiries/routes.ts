@@ -1,18 +1,33 @@
-import { Enquiry, EnquiryStore } from "./store";
+import { Enquiry, EnquiryStore, parseItemMedia } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
 import { cacheGet } from "../../shared/cache";
 
 /** v1 cache entries (description-only) predate the comments/requirements map —
- *  treat them as missing so they get re-enriched, never served. */
+ *  treat them as missing so they get re-enriched, never served. The `items`
+ *  map (added later) defaults to {} so v2 entries stay valid. */
 function asRedactedViewCache(e: unknown): RedactedViewCache | null {
   if (!e || typeof e !== 'object') return null;
   const v = e as Record<string, unknown>;
   if (typeof v.descHash !== 'string') return null;
   if (!v.comments || typeof v.comments !== 'object') return null;
   if (!v.requirements || typeof v.requirements !== 'object') return null;
-  return e as RedactedViewCache;
+  const out = e as RedactedViewCache;
+  if (!out.items || typeof out.items !== 'object') out.items = {};
+  return out;
+}
+
+/** Stable hash of one sales line item — serve-time freshness check for the
+ *  cached procurement rewrite. Must match the writer (runEnquiryExtraction).
+ *  Media URLs pass through unredacted (technical drawings, same as the
+ *  enquiry-level imageUrls) but ARE part of the hash, so a media change
+ *  re-triggers enrichment and is never served stale. */
+export function hashItem(item: { name: string; qty: string; spec: string; media?: Array<{ type: string; url: string }> }): string {
+  const media = Array.isArray(item?.media)
+    ? item.media.map((m) => `${m?.type === 'video' ? 'v' : 'i'}:${String(m?.url ?? '')}`)
+    : [];
+  return hashText(JSON.stringify([String(item?.name ?? ''), String(item?.qty ?? ''), String(item?.spec ?? ''), media]));
 }
 
 export interface EnquiryResult {
@@ -79,6 +94,17 @@ function pick(data: any): Partial<Enquiry> | null {
       .map((r: any) => (typeof r === "string" ? { text: r } : { text: String(r?.text ?? ""), imageUrl: r?.imageUrl || undefined }))
       .filter((r: any) => r.text.trim().length > 0);
   }
+  if (data.items !== undefined) {
+    out.items = (Array.isArray(data.items) ? data.items : [])
+      .map((r: any) => ({
+        name: String(r?.name ?? '').slice(0, 300),
+        qty: String(r?.qty ?? '').slice(0, 120),
+        spec: String(r?.spec ?? '').slice(0, 2000),
+        media: parseItemMedia(r?.media),
+      }))
+      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0)
+      .slice(0, 100);
+  }
   return Object.keys(out).length ? out : null;
 }
 
@@ -135,12 +161,35 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
         pending = true;
       }
     });
+    // Line items: sales stores the AI-split `items`; procurement gets the
+    // cached per-item rewrite only when its hash still matches the sales item.
+    // Media passes through unredacted (technical drawings, like enquiry-level
+    // imageUrls). Stale/missing pieces are withheld (pending → re-enrichment).
+    const salesItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string }> }> =
+      Array.isArray((e as any).items) ? (e as any).items : [];
+    const servedItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string }> }> = [];
+    salesItems.forEach((it: any, i: number) => {
+      const sales = {
+        name: String(it?.name ?? ''),
+        qty: String(it?.qty ?? ''),
+        spec: String(it?.spec ?? ''),
+        media: parseItemMedia(it?.media),
+      };
+      const cached = entry?.items?.[i];
+      if (cached && cached.hash === hashItem(sales)
+        && typeof cached.name === 'string' && typeof cached.qty === 'string' && typeof cached.spec === 'string') {
+        servedItems.push({ name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media });
+      } else {
+        pending = true;
+      }
+    });
     return {
       entry: { id, pending },
       payload: {
         ...redactEnquiryPII(e),
         description,
         additionalRequirements: servedRequirements,
+        items: servedItems,
         redactedPending: pending,
       },
       servedComments,
@@ -181,6 +230,14 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     additionalRequirements: (Array.isArray(body.additionalRequirements) ? body.additionalRequirements : [])
       .map((r: any) => (typeof r === "string" ? { text: r } : { text: String(r?.text ?? ""), imageUrl: r?.imageUrl || undefined }))
       .filter((r: any) => r.text.trim().length > 0),
+    items: (Array.isArray(body.items) ? body.items : [])
+      .map((r: any) => ({
+        name: String(r?.name ?? '').slice(0, 300),
+        qty: String(r?.qty ?? '').slice(0, 120),
+        spec: String(r?.spec ?? '').slice(0, 2000),
+      }))
+      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim())
+      .slice(0, 100),
   });
   return {
     status: 201,
@@ -208,6 +265,12 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
 export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: string, body: any): Promise<EnquiryResult> {
   const updates = pick(body || {});
   if (!updates) return json(400, { error: "no valid fields" });
+  // Items derive from the description: a description edit (without explicit
+  // items) resets them so the background extraction re-splits fresh.
+  // Explicit item saves (manual edit) carry `items` and are preserved.
+  if ((updates as any).description !== undefined && (updates as any).items === undefined) {
+    (updates as any).items = [];
+  }
   const enquiry = await store.updateEnquiry(id, updates);
   if (!enquiry) return json(404, { error: "not found" });
   return {

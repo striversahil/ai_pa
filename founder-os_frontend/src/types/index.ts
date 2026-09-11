@@ -19,6 +19,19 @@ export interface EnquiryRequirement {
   imageUrl?: string;
 }
 
+/** One purchasable line item AI-split from Specifications & Scope. */
+export interface EnquiryMedia {
+  type: 'image' | 'video';
+  url: string;
+}
+
+export interface EnquiryItem {
+  name: string;
+  qty: string;
+  spec: string;
+  media?: EnquiryMedia[];
+}
+
 export interface Enquiry {
   id: string;
   estNumber: string;
@@ -38,6 +51,8 @@ export interface Enquiry {
   activities: Activity[];
   imageUrls?: string[];
   additionalRequirements?: EnquiryRequirement[];
+  /** AI-split line items (Item 1..N), served redacted in procurement view. */
+  items?: EnquiryItem[];
   /** Procurement view only: true while the AI secure rewrite is still being
    *  prepared (pieces withheld until ready, client refetches on live event). */
   redactedPending?: boolean;

@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
 import { useAuth } from "@/auth/AuthContext";
 import EnquiryList from "@/components/EnquiryList";
+import EnquiryKanban from "@/components/EnquiryKanban";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
 import Lightbox from "@/components/Lightbox";
@@ -18,6 +19,7 @@ export default function EnquiryTracker() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
+  const [boardView, setBoardView] = useState<"list" | "board">("list");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Sales | Procurement scoped views (telecalling pattern: scope-gated tabs)
@@ -38,7 +40,7 @@ export default function EnquiryTracker() {
   const {
     enquiries, comments, agents, currentAgent, loaded,
     syncState, addEnquiry, updateEnquiry, deleteEnquiry,
-    addComment, addRequirement, makeActivity,
+    addComment, addRequirement, updateItems, makeActivity, clients,
   } = useEnquiryData(redacted ? "procurement" : "sales");
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
@@ -116,6 +118,10 @@ export default function EnquiryTracker() {
     await addComment(newComment);
   }, [addComment]);
 
+  const handleUpdateItems = useCallback(async (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video'; url: string }> }>) => {
+    await updateItems(id, items);
+  }, [updateItems]);
+
   const handleExportCSV = useCallback(() => {
     const rows = redacted
       ? [["Title", "Priority"]]
@@ -141,10 +147,22 @@ export default function EnquiryTracker() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Enquiry Tracker</h1>
-        <button onClick={() => { setEditingEnquiry(null); setIsAddModalOpen(true); }}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500">
-          + New Enquiry
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg bg-zinc-100 dark:bg-zinc-900 p-0.5 text-xs font-bold">
+            <button onClick={() => setBoardView("list")}
+              className={`px-3 py-1.5 rounded-md transition-colors ${boardView === "list" ? "bg-[var(--bg-card)] shadow-sm text-[var(--text-primary)]" : "text-zinc-500 dark:text-zinc-400"}`}>
+              List
+            </button>
+            <button onClick={() => setBoardView("board")}
+              className={`px-3 py-1.5 rounded-md transition-colors ${boardView === "board" ? "bg-[var(--bg-card)] shadow-sm text-[var(--text-primary)]" : "text-zinc-500 dark:text-zinc-400"}`}>
+              Board
+            </button>
+          </div>
+          <button onClick={() => { setEditingEnquiry(null); setIsAddModalOpen(true); }}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500">
+            + New Enquiry
+          </button>
+        </div>
       </div>
 
       {(showSalesTab || isProcurementTeam) && (
@@ -171,10 +189,16 @@ export default function EnquiryTracker() {
           onUpdateAgent={(id, a) => void handleUpdateAgent(id, a)}
           onAddComment={(c) => void handleAddComment(c)}
           onAddRequirement={addRequirement}
+          onUpdateItems={(id, items) => void handleUpdateItems(id, items)}
           onDeleteEnquiry={(id) => void handleDeleteEnquiry(id)}
           onOpenEdit={(e) => { setEditingEnquiry(e); setIsAddModalOpen(true); }}
           onBack={() => setSelectedId(null)}
           onOpenLightbox={handleOpenLightbox}
+        />
+      ) : boardView === "board" ? (
+        <EnquiryKanban enquiries={enquiries} agents={agents} redacted={redacted}
+          onViewDetail={(id) => { setSelectedId(id); }}
+          onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
         />
       ) : (
         <EnquiryList enquiries={enquiries} agents={agents} redacted={redacted}
@@ -191,6 +215,7 @@ export default function EnquiryTracker() {
         <EnquiryModal key={editingEnquiry?.id || "new-enquiry"}
           isOpen={isAddModalOpen} onClose={() => { if (!isSaving) { setIsAddModalOpen(false); setEditingEnquiry(null); } }}
           editingEnquiry={editingEnquiry} agents={agents} currentAgent={currentAgent}
+          clients={clients}
           redacted={redacted}
           onSave={(d) => void handleSaveEnquiry(d)}
           isSaving={isSaving} saveError={saveError}

@@ -7,6 +7,7 @@ interface EnquiryModalProps {
   editingEnquiry: Enquiry | null;
   agents: Agent[];
   currentAgent: Agent;
+  clients?: Array<{ name: string; openEstimates: number; enquiries: number }>;
   redacted?: boolean;
   onSave: (data: {
     estNumber: string;
@@ -31,6 +32,7 @@ export default function EnquiryModal({
   editingEnquiry,
   agents,
   currentAgent,
+  clients = [],
   redacted = false,
   onSave,
   isSaving = false,
@@ -92,13 +94,21 @@ export default function EnquiryModal({
             {!redacted && (
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Company Name</label>
-              <input 
-                type="text" 
-                placeholder="e.g. Rajdhani Roller Flour Mills" 
-                value={formCompany} 
-                onChange={(e) => setFormCompany(e.target.value)} 
+              <input
+                type="text"
+                list="enquiry-client-list"
+                placeholder="Select client or type a new one…"
+                value={formCompany}
+                onChange={(e) => setFormCompany(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
               />
+              <datalist id="enquiry-client-list">
+                {clients.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.openEstimates > 0 ? `${c.openEstimates} open estimate${c.openEstimates === 1 ? "" : "s"}` : c.enquiries > 0 ? `${c.enquiries} enquir${c.enquiries === 1 ? "y" : "ies"}` : ""}
+                  </option>
+                ))}
+              </datalist>
             </div>
             )}
 

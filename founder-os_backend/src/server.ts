@@ -236,6 +236,35 @@ app.get('/api/enquiries/agents', async (req, res) => {
       .map((t: any) => ({ id: String(t.id), name: t.name, email: t.email ?? null, picture: null })),
   );
 });
+app.get('/api/enquiries/clients', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  // Restricted (procurement) viewers get NO client names — see worker route.
+  if (req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any)) return res.json([]);
+  const { getEstimatesPayload } = require('./shared/estimates-cache');
+  const [payload, enquiries] = await Promise.all([
+    getEstimatesPayload().catch(() => ({ estimates: [] as any[] })),
+    enquiryStore.listEnquiries().catch(() => [] as any[]),
+  ]);
+  const byKey = new Map<string, { name: string; openEstimates: number; enquiries: number }>();
+  for (const e of (payload as any).estimates ?? []) {
+    const name = String(e?.customerName ?? '').trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const row = byKey.get(key) ?? { name, openEstimates: 0, enquiries: 0 };
+    row.openEstimates += 1;
+    byKey.set(key, row);
+  }
+  for (const e of (enquiries as any[]) ?? []) {
+    const name = String((e as any)?.clientCompany ?? '').trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const row = byKey.get(key) ?? { name, openEstimates: 0, enquiries: 0 };
+    row.enquiries += 1;
+    byKey.set(key, row);
+  }
+  res.json([...byKey.values()].sort((a, b) => a.name.localeCompare(b.name)));
+});
 async function runEnquiryExtraction(id: string) {
   try {
     const enquiry = await enquiryStore.getEnquiry(id);
@@ -259,8 +288,20 @@ async function runEnquiryExtraction(id: string) {
       text,
       title: enquiry.title,
       company: enquiry.clientCompany,
+      description,
+      salesItems: (Array.isArray((enquiry as any).items) ? (enquiry as any).items : []).map((it: any) => ({
+        name: String(it?.name ?? ''),
+        qty: String(it?.qty ?? ''),
+        spec: String(it?.spec ?? ''),
+      })),
     });
     if (!extracted) return;
+    // Effective sales line items: manual edits win — see worker context.ts.
+    const existingItems: Array<{ name: string; qty: string; spec: string }> =
+      Array.isArray((enquiry as any).items) ? (enquiry as any).items : [];
+    const salesItems = existingItems.length > 0
+      ? existingItems
+      : (Array.isArray(extracted.items) ? extracted.items : []);
     // Procurement-view cache (v2) — see worker context.ts runEnquiryExtraction.
     if (extracted.redactedDescription) {
       try {
@@ -277,17 +318,30 @@ async function runEnquiryExtraction(id: string) {
           if (src === undefined) continue;
           redactedRequirements[r.index] = { text: r.text, hash: hashText(src) };
         }
+        const { hashItem } = require('./modules/enquiries/routes');
+        const redactedItems: RedactedViewCache['items'] = {};
+        for (const r of (extracted.redactedItems ?? []) as Array<{ index: number; name: string; qty: string; spec: string }>) {
+          const src = (salesItems as any[])[r.index];
+          if (src === undefined) continue;
+          redactedItems[r.index] = {
+            name: String(r.name ?? ''),
+            qty: String(r.qty ?? ''),
+            spec: String(r.spec ?? ''),
+            hash: hashItem(src),
+          };
+        }
         const entry: RedactedViewCache = {
           description: extracted.redactedDescription,
           descHash: hashText(description),
           comments: redactedComments,
           requirements: redactedRequirements,
+          items: redactedItems,
           at: new Date().toISOString(),
         };
         await cacheSet(redactedCacheKey(id), entry, REDACTED_CACHE_TTL_MS);
       } catch { /* best-effort */ }
     }
-    const updates: Record<string, string> = {};
+    const updates: Record<string, any> = {};
     if (!enquiry.title && extracted.title) updates.title = extracted.title;
     if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;
     if (!enquiry.sourceLead && extracted.sourceLead) updates.sourceLead = extracted.sourceLead;
@@ -296,6 +350,7 @@ async function runEnquiryExtraction(id: string) {
     if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
     if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
     if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
+    if (existingItems.length === 0 && salesItems.length > 0) updates.items = salesItems;
     if (Object.keys(updates).length) await enquiryStore.updateEnquiry(id, updates);
   } catch (e: any) {
     console.error('enquiry extraction failed:', e?.message);

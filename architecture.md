@@ -442,7 +442,8 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
        │     every-10min → minute % 10 == 0
        │     every-15min → minute % 15 == 0
        │     every-30min → minute % 30 == 0
-       │     daily       → 02:30 / 03:30 / 13:30 / 21:30 UTC
+        │     daily       → 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC (one slot per
+        │                     job family; workflow gates each job on inputs.slot)
        │     neodove-refresh → minute % 5 == 0 (native D1 write, ops hours only)
        │     quiet-hours gate → 21:00–09:00 IST pauses Zoho/NeoDove analysis
        │       (10/15-min skipped; 5-min fires with run_zoho=false;

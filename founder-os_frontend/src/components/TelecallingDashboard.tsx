@@ -313,6 +313,13 @@ interface RosterRow {
 
 type View = "dashboard" | "conversion" | "generation" | "controller";
 
+/** Live events that refresh telecalling views: explicit telecalling/automation
+ *  broadcasts PLUS the Zoho estimate writes the risk model derives from
+ *  (comments/status/classification → `estimates`, baseline freeze → `baseline`).
+ *  Narrower than unfiltered (ignores chat/data-changed noise), wider than
+ *  telecalling-only (which missed those upstream writes). */
+const TELECALLING_EVENTS = ["automation", "telecalling", "estimates", "baseline"];
+
 const TABS: { key: View; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "📊" },
   { key: "conversion", label: "Lead Conversion", icon: "📨" },
@@ -323,8 +330,9 @@ const TABS: { key: View; label: string; icon: string }[] = [
 
 function fmtTalk(sec: number): string {
   if (!sec) return "—";
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
+  const totalMin = Math.round(sec / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
@@ -437,7 +445,7 @@ export default function TelecallingDashboard() {
       if (!res.ok) throw new Error(`Failed to load leaderboard (HTTP ${res.status})`);
       return res.json();
     },
-    { events: ["automation", "telecalling"], deps: [period], clearOnError: true },
+    { events: TELECALLING_EVENTS, deps: [period], clearOnError: true },
   );
 
   // Lead Conversion is the default view with no period filtering — it hits the
@@ -449,7 +457,7 @@ export default function TelecallingDashboard() {
       if (!res.ok) throw new Error("Conversion load failed");
       return res.json();
     },
-    { events: ["automation", "telecalling"], clearOnError: true },
+    { events: TELECALLING_EVENTS, clearOnError: true },
   );
 
   // Lead Generation has its OWN period filter — independent of the leaderboard
@@ -462,7 +470,7 @@ export default function TelecallingDashboard() {
       if (!res.ok) throw new Error("Gen load failed");
       return res.json();
     },
-    { events: ["automation", "telecalling"], deps: [genPeriod], clearOnError: true },
+    { events: TELECALLING_EVENTS, deps: [genPeriod], clearOnError: true },
   );
 
   const roster = useLiveQuery<{ telecallers: RosterRow[] }>(
@@ -472,7 +480,7 @@ export default function TelecallingDashboard() {
       if (!res.ok) throw new Error("load failed");
       return res.json();
     },
-    { events: ["telecalling", "automation"] },
+    { events: TELECALLING_EVENTS },
   );
 
   const [editTarget, setEditTarget] = useState<RosterRow | null>(null);
@@ -523,7 +531,7 @@ export default function TelecallingDashboard() {
       );
       return Object.fromEntries(entries);
     },
-    { events: ["automation", "telecalling"], deps: [agentIdsKey], clearOnError: true },
+    { events: TELECALLING_EVENTS, deps: [agentIdsKey], clearOnError: true },
   );
   const agentViewsMap = agentViews.data ?? {};
   const getAgentView = (id: string | null): AgentViewData | null => (id ? agentViewsMap[id] ?? null : null);
@@ -536,9 +544,10 @@ export default function TelecallingDashboard() {
   const refreshAll = useCallback(() => {
     dash.refresh();
     convDash.refresh();
+    genDash.refresh();
     agentViews.refresh();
     roster.refresh();
-  }, [dash, convDash, agentViews, roster]);
+  }, [dash, convDash, genDash, agentViews, roster]);
 
   // ── Deleted agents (MIS Controller) ──────────────────────────────────────
   const [showDeleted, setShowDeleted] = useState(false);
@@ -555,10 +564,17 @@ export default function TelecallingDashboard() {
   }, [showDeleted, loadDeleted]);
   const deleteTelecaller = async (id: string) => {
     setBusy(true);
+    setRosterError(null);
     try {
-      await fetch(`/api/telecallers/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/telecallers/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Delete failed (${res.status})`);
+      }
       refreshAll();
       void loadDeleted();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Delete failed");
     } finally {
       setBusy(false);
     }
@@ -567,14 +583,21 @@ export default function TelecallingDashboard() {
   const [confirmDelete, setConfirmDelete] = useState<RosterRow | null>(null);
   const restoreTelecaller = async (id: string) => {
     setBusy(true);
+    setRosterError(null);
     try {
-      await fetch(`/api/telecallers/${id}`, {
+      const res = await fetch(`/api/telecallers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deleted: false }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Restore failed (${res.status})`);
+      }
       refreshAll();
       void loadDeleted();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Restore failed");
     } finally {
       setBusy(false);
     }
@@ -584,6 +607,7 @@ export default function TelecallingDashboard() {
   const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean }) => {
     if (!updates.name.trim()) return;
     setBusy(true);
+    setRosterError(null);
     try {
       const payload = {
         name: updates.name,
@@ -592,22 +616,26 @@ export default function TelecallingDashboard() {
         whatsapp: updates.whatsapp || null,
         assignEstimateFollowUps: updates.assignEstimateFollowUps,
       };
-      if (editTarget) {
-        await fetch(`/api/telecallers/${editTarget.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        await fetch("/api/telecallers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+      const res = editTarget
+        ? await fetch(`/api/telecallers/${editTarget.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        : await fetch("/api/telecallers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Save failed (${res.status})`);
       }
       setEditTarget(null);
       setRosterModalOpen(false);
       refreshAll();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Save failed");
     } finally {
       setBusy(false);
     }
@@ -615,13 +643,20 @@ export default function TelecallingDashboard() {
 
   const toggleFollowUps = async (id: string, assignEstimateFollowUps: boolean) => {
     setBusy(true);
+    setRosterError(null);
     try {
-      await fetch(`/api/telecallers/${id}`, {
+      const res = await fetch(`/api/telecallers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assignEstimateFollowUps: !assignEstimateFollowUps }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Update failed (${res.status})`);
+      }
       refreshAll();
+    } catch (e: any) {
+      setRosterError(e?.message ?? "Update failed");
     } finally {
       setBusy(false);
     }
@@ -1163,7 +1198,10 @@ export default function TelecallingDashboard() {
                                       )}
                                     </div>
                                     {agentViews.loading && !view && <p className="text-xs text-zinc-500">Loading assigned estimates…</p>}
-                                    {!agentViews.loading && (view?.followUps?.length ?? 0) === 0 && (
+                                    {!agentViews.loading && !view && Boolean(agentViews.error) && (
+                                      <p className="text-xs text-rose-500">Couldn't load this agent's estimates — <button className="underline font-semibold" onClick={() => agentViews.refresh()}>retry</button>.</p>
+                                    )}
+                                    {!agentViews.loading && view && (view?.followUps?.length ?? 0) === 0 && (
                                       <p className="text-xs text-zinc-500">No assigned estimates for this agent.</p>
                                     )}
                                     <div className="grid gap-1.5 sm:grid-cols-2">
@@ -1378,7 +1416,10 @@ export default function TelecallingDashboard() {
                     </div>
                   )}
                   {agentViews.loading && !selectedAgentView && <p className="text-sm text-zinc-500">Loading…</p>}
-                  {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) === 0 && (
+                  {!agentViews.loading && !selectedAgentView && Boolean(agentViews.error) && (
+                    <p className="text-sm text-rose-500">Couldn't load follow-ups — <button className="underline font-semibold" onClick={() => agentViews.refresh()}>retry</button>.</p>
+                  )}
+                  {!agentViews.loading && selectedAgentView && (selectedAgentView?.followUps?.length ?? 0) === 0 && (
                     <p className="text-sm text-zinc-500">No follow-up estimates assigned to this agent.</p>
                   )}
                   {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) > 0 && visibleFollowUps.length === 0 && (
@@ -1405,6 +1446,20 @@ export default function TelecallingDashboard() {
                           </div>
                         </div>
                         <LeadChips f={f} />
+                        {f.latestComment ? (
+                          <p
+                            className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"
+                            title={`${f.latestComment.commentedBy}${f.latestComment.dateFormatted ? ` · ${f.latestComment.dateFormatted}` : ""}\n${f.latestComment.text}`}
+                          >
+                            “{f.latestComment.text}”
+                            <span className="text-zinc-500 dark:text-zinc-400">
+                              {" "}— {f.latestComment.commentedBy}
+                              {f.latestComment.dateFormatted ? ` · ${f.latestComment.dateFormatted}` : ""}
+                            </span>
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">No sales notes yet.</p>
+                        )}
                         {showRisk && (f.risk === "red" || f.risk === "zombie") && f.snatchReason && (
                           <p className="text-[11px] text-rose-600/80 dark:text-rose-400/70 leading-snug line-clamp-2" title={f.snatchReason}>
                             {f.snatchReason}
@@ -1562,6 +1617,9 @@ export default function TelecallingDashboard() {
                   </span>
                 ) : null}
               </p>
+              {Boolean(genDash.error) && !genDash.loading && (
+                <QueryErrorBanner message={String((genDash.error as any)?.message ?? genDash.error)} onRetry={() => genDash.refresh()} />
+              )}
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 relative">
                 {genDash.loading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/40 dark:bg-zinc-950/40 backdrop-blur-[1px]" aria-hidden="true">
@@ -1613,7 +1671,10 @@ export default function TelecallingDashboard() {
                             {open && (
                               <div className="mt-2 space-y-1.5">
                                 {agentViews.loading && !view && <p className="text-[11px] text-zinc-500">Loading…</p>}
-                                {!agentViews.loading && (view?.followUps?.length ?? 0) === 0 && (
+                                {!agentViews.loading && !view && Boolean(agentViews.error) && (
+                                  <p className="text-[11px] text-rose-500">Couldn't load estimates — <button className="underline font-semibold" onClick={() => agentViews.refresh()}>retry</button>.</p>
+                                )}
+                                {!agentViews.loading && view && (view?.followUps?.length ?? 0) === 0 && (
                                   <p className="text-[11px] text-zinc-500">No assigned estimates.</p>
                                 )}
                                 {(view?.followUps ?? []).map((f) => (
@@ -1636,6 +1697,20 @@ export default function TelecallingDashboard() {
                                       </div>
                                     </div>
                                     <LeadChips f={f} />
+                                    {f.latestComment ? (
+                                      <p
+                                        className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"
+                                        title={`${f.latestComment.commentedBy}${f.latestComment.dateFormatted ? ` · ${f.latestComment.dateFormatted}` : ""}\n${f.latestComment.text}`}
+                                      >
+                                        “{f.latestComment.text}”
+                                        <span className="text-zinc-500 dark:text-zinc-400">
+                                          {" "}— {f.latestComment.commentedBy}
+                                          {f.latestComment.dateFormatted ? ` · ${f.latestComment.dateFormatted}` : ""}
+                                        </span>
+                                      </p>
+                                    ) : (
+                                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">No sales notes yet.</p>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1740,11 +1815,14 @@ function EstimateOverridesSection({
       return patch.lockedTelecallerId || patch.skipAssignment ? [patch, ...rest] : rest;
     });
     try {
-      await fetch(`/api/estimates/${est.estimateId}/assignment-override`, {
+      const res = await fetch(`/api/estimates/${est.estimateId}/assignment-override`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lockedTelecallerId: locked || null, skipAssignment: skip }),
       });
+      // A non-OK HTTP status is a failure too — fetch only throws on network
+      // errors, so check explicitly (a 401/403/500 must revert, not persist).
+      if (!res.ok) throw new Error(`Override save failed (${res.status})`);
     } catch {
       // revert on failure so the UI never lies about the saved state
       setResults((prev) => prev.map((r) => (r.estimateId === est.estimateId ? est : r)));
@@ -2293,7 +2371,10 @@ function RosterEditModal({
   const [whatsapp, setWhatsapp] = useState("");
   const [followUps, setFollowUps] = useState(true);
 
+  // Re-sync on open too: cancelling with dirty edits then re-opening the SAME
+  // agent must not resurrect the abandoned values (target identity unchanged).
   useEffect(() => {
+    if (!open) return;
     if (target) {
       setName(target.name);
       setEmail(target.email ?? "");
@@ -2303,7 +2384,7 @@ function RosterEditModal({
     } else {
       setName(""); setEmail(""); setPhone(""); setWhatsapp(""); setFollowUps(true);
     }
-  }, [target]);
+  }, [target, open]);
 
   if (!open) return null;
 
@@ -2373,7 +2454,10 @@ function RosterEditModal({
 function downloadCsv(filename: string, rows: (string | number | null | undefined)[][]) {
   const esc = (v: string | number | null | undefined) => {
     const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    // Formula-injection guard: a cell starting with = + - @ (after optional
+    // whitespace/quote) executes on open in Excel/Sheets — prefix with a tab.
+    const safe = /^[ \t]*[=+\-@]/.test(s) ? `\t${s}` : s;
+    return /[",\n\t]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   const csv = rows.map((r) => r.map(esc).join(",")).join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -2686,7 +2770,8 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
         {error && <span className="text-xs text-rose-500">{error}</span>}
       </div>
       <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
-        Exports respect the current leaderboard period and telecaller filter. Deleted agents and unassigned estimates
+        Exports use their own period picker above (independent of the Dashboard
+        leaderboard filter) plus the telecaller filter. Deleted agents and unassigned estimates
         are excluded. The daily section covers up to 93 days (year periods export the other sections only).
       </p>
     </section>
