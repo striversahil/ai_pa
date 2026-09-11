@@ -394,7 +394,14 @@ async function main() {
   const SLIM_KEYS = ['name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
   const slimItem = (li) => {
     const o = {};
-    for (const k of SLIM_KEYS) if (li[k] !== undefined && li[k] !== '' && li[k] !== null) o[k] = li[k];
+    // Keep display scalars only — Zoho occasionally returns objects/arrays
+    // for these fields, which break React rendering downstream.
+    for (const k of SLIM_KEYS) {
+      const v = li[k];
+      if (v === undefined || v === '' || v === null) continue;
+      if (typeof v === 'object') continue;
+      o[k] = v;
+    }
     return o;
   };
   const materialMap = new Map();
