@@ -294,15 +294,17 @@ async function computeRiskCache(): Promise<RiskCache> {
       snatchReason = buildSnatchReason(e, risk);
     }
     const owner = String(e.assignedTelecallerId);
-    // Effort shield: 2+ effective attempts or a connected call to THIS
-    // customer today (NeoDove-verified, not comment-verified) skips the EOD
-    // −10. Effort counts — failed pickups never punish.
+    // Effort shield: genuine spread effort on THIS customer today — 2+
+    // effective NeoDove attempts at least 3 hours apart (spanH), or a
+    // connected call. Two redials in one burst never shields: n merges
+    // sub-30-min redials and spanH enforces the gap. NeoDove-verified, not
+    // comment-verified — failed pickups with real effort don't punish.
     let effortShielded = false;
     const nid = neodoveIdByTelecaller.get(owner);
     const phone = normPhone10((e as any).contactPhone);
     if (risk === 'red' && nid && phone) {
       const row = effortByKey.get(`${nid}|${phone}`);
-      effortShielded = !!row && (Number(row.n) >= 2 || Number(row.conn) >= 1);
+      effortShielded = !!row && ((Number(row.n) >= 2 && Number(row.spanH) >= 3) || Number(row.conn) >= 1);
     }
     return {
       estimateId: e.estimateId,
@@ -1375,9 +1377,10 @@ export function closePointsFor(total: unknown): number {
   if (v < 500_000) return 100;
   return 200;
 }
-/** Exact 50/50 halves credited per close (generator ceil, closer floor):
- *  50→25/25 · 75→38/37 · 100→50/50 · 200→100/100. */
-const CLOSE_HALVES = new Set([25, 37, 38, 50, 100]);
+/** Exact 20/80 split credited per close (generator 20%, closer 80% — the
+ *  closer carries the penalty risk, so the closer carries the reward):
+ *  50→10/40 · 75→15/60 · 100→20/80 · 200→40/160. */
+const CLOSE_HALVES = new Set([10, 15, 20, 40, 60, 80, 160]);
 /** True for any conversion-close delta (full slabs legacy + split halves). */
 export function isCloseDelta(delta: unknown): boolean {
   const n = Number(delta);
@@ -1385,7 +1388,7 @@ export function isCloseDelta(delta: unknown): boolean {
 }
 export function splitClosePoints(total: unknown): { generator: number; closer: number } {
   const slab = closePointsFor(total);
-  const generator = Math.ceil(slab / 2);
+  const generator = Math.round(slab * 0.2);
   return { generator, closer: slab - generator };
 }
 const SNATCH_PENALTY = -15;
@@ -1467,10 +1470,10 @@ async function recordScoreEvent(telecallerId: string, estimateId: string, delta:
 }
 
 /**
- * Credit the slab-based close points, split 50/50 between the LEAD GENERATOR
- * (Estimate.createdBy — the agent who originated the lead) and the CLOSER
- * (assignedTelecallerId — whoever held the follow-up at conversion). Founder
- * rule: chasing has a prize, not just a penalty to dodge. Falls back to the
+ * Credit the slab-based close points, split 20/80 between the LEAD GENERATOR
+ * (Estimate.createdBy — 20% for creating the lead) and the CLOSER
+ * (assignedTelecallerId — 80% for carrying the follow-up plus all the
+ * penalty risk). Founder rule: risk and reward sit with the same person. Falls back to the
  * current holder when the creator is unknown (old estimates pre-dating creator
  * capture). Same person generating + holding takes a single full-slab row.
  * Duplicate-guarded: close rows (any slab or half delta) per estimate gate
@@ -1746,9 +1749,8 @@ export async function runEodRemarkDeduction(day?: string, opts?: { dryRun?: bool
     if (r.risk !== 'red') continue;
     if (!r.telecallerId) continue;
     if (r.locked || r.skipAssignment) continue;
-    // Effort shield: real NeoDove work on THIS customer today (2+ effective
-    // attempts or a connect) — reported, never charged. Failed pickups don't
-    // punish.
+    // Effort shield: genuine spread effort on THIS customer today (2+
+    // effective attempts 3h apart or a connect) — reported, never charged.
     if ((r as any).effortShielded) {
       shielded += 1;
       previewRow(r).shielded += 1;

@@ -1393,20 +1393,31 @@ export default function TelecallingDashboard() {
                       <div className="absolute right-0 top-10 z-30 hidden group-hover:block w-80 md:w-96">
                         <div className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 shadow-xl p-4 text-left text-[11px] leading-relaxed text-zinc-700 dark:text-zinc-300 space-y-2">
                           <div className="text-sm font-bold text-zinc-900 dark:text-white">📖 Game Rules</div>
-                          <ul className="space-y-1.5 list-none">
-                            <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+50 – +200</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms), scored by its value. Split <span className="font-semibold">50/50</span> between whoever generated the lead and whoever closed the follow-up (same person takes the full slab).
-                              <span className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-2 py-1.5 font-semibold">
-                                <span>₹0 – ₹1L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+50</span></span>
-                                <span>₹1L – ₹2.5L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+75</span></span>
-                                <span>₹2.5L – ₹5L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+100</span></span>
-                                <span>₹5L &amp; above <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+200</span></span>
-                              </span>
-                            </li>
-                            <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
-                            <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−10</span> — each <span className="font-semibold">red (unsatisfactory) estimate</span> you still hold at the 9 PM EOD run (once per estimate per day; working days only — zero NeoDove calls that day means zero deduction for everyone). Two ways out: a <span className="font-semibold">dated next step</span> (📌 — a customer commitment protects through its date) or <span className="font-semibold">real effort</span> (🛡 — 2+ NeoDove attempts or a connect on that customer today skips the charge).</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close split 50/50 generator/closer (by value) · lead +15 · call +0.5 · <span className="text-rose-500">red-hold −10</span>{penaltyMode ? <span> (Active Penalty ON — penalties apply)</span> : <span> (Active Penalty OFF — penalties paused)</span>}. Risk-based re-poaching follows the Controller's 🔁 EOD Reassignment switch (currently OFF — holders keep everything). The table restarts at zero every week so everyone gets a fair shot.<br />Retired rules (−15 snatch, −20 decline, 🛡 shields): no new rows — old rows still count in past totals while ON.</li>
-                          </ul>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-2 py-1.5 text-center">
+                              <div className="text-base font-extrabold text-emerald-500 dark:text-emerald-400 font-mono">+50–200</div>
+                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🤝 Close · split 20/80</div>
+                              <div className="text-[9px] text-zinc-500">generator / closer</div>
+                            </div>
+                            <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 px-2 py-1.5 text-center">
+                              <div className="text-base font-extrabold text-rose-500 dark:text-rose-400 font-mono">−10</div>
+                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🔴 Red hold at 9 PM</div>
+                              <div className="text-[9px] text-zinc-500">per estimate / day</div>
+                            </div>
+                            <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-2 py-1.5 text-center">
+                              <div className="text-base font-extrabold text-amber-500 dark:text-amber-400 font-mono">+15</div>
+                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">✨ New lead</div>
+                            </div>
+                            <div className="rounded-lg border border-indigo-500/25 bg-indigo-500/5 px-2 py-1.5 text-center">
+                              <div className="text-base font-extrabold text-indigo-500 dark:text-indigo-400 font-mono">+0.5</div>
+                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">📞 Connected call</div>
+                            </div>
+                          </div>
+                          <div className="rounded-lg bg-zinc-500/5 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5 text-[10px] font-semibold text-zinc-600 dark:text-zinc-300 space-y-0.5">
+                            <div>Close slabs: ₹0–1L +50 · ₹1–2.5L +75 · ₹2.5–5L +100 · ₹5L+ +200</div>
+                            <div>Dodge −10 with 📌 dated next step or 🛡 2 calls 3h apart / 1 connect</div>
+                            <div>Weekly reset · {penaltyMode ? "penalties ON" : "penalties OFF"} · holders keep everything</div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1858,7 +1869,7 @@ export default function TelecallingDashboard() {
                             <StaleChip staleHours={f.staleHours} />
                             {showRisk && <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} />}
                             {showRisk && f.effortShielded ? (
-                              <span title="Real NeoDove work on this customer today (2+ attempts or a connect) — tonight's EOD −10 is skipped for this estimate" className="inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold px-2 py-0.5 text-[11px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                              <span title="Genuine spread effort on this customer today (2+ attempts 3h apart, or a connect) — tonight's EOD −10 is skipped for this estimate" className="inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold px-2 py-0.5 text-[11px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
                                 🛡 Effort shielded
                               </span>
                             ) : null}

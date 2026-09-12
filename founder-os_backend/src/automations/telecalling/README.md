@@ -156,9 +156,10 @@ reads `red` until chased. With no next step, the classic rules apply:
   → costs −10 at the EOD remark run).
 - **ok** — meaningful AND fresh (<24h).
 
-**Effort shield**: 2+ effective NeoDove attempts (`n`) or a connect (`conn`)
-on that customer today (per-customer snapshot rows, redial-merged) sets
-`effortShielded` — reported, never charged at EOD. Failed pickups don't
+**Effort shield**: 2+ effective NeoDove attempts at least 3 hours apart
+(`spanH`, redial-merged so bursts never count) or a connected call on that
+customer today (per-customer snapshot rows) sets `effortShielded` — reported,
+never charged at EOD. Failed pickups with genuine spread effort don't
 punish.
 
 `latestCommentDates()` prefers `dateFormatted` ("DD/MM/YYYY hh:mm AM/PM",
@@ -187,9 +188,10 @@ everywhere.
   generator** (`Estimate.createdBy`, holder only as fallback when the creator
   is unknown). Points follow the estimate total: ₹0–1L → 50, ₹1L–2.5L → 75,
   ₹2.5L–5L → 100, ₹5L and above → 200 (boundary totals join the higher slab).
-  Split 50/50: the lead generator takes ceil(slab/2) (25/38/50/100), the
-  closer (holder at conversion) takes floor (25/37/50/50); same person takes
-  one full-slab row. "Converted By" export names the generator.
+  Split 20/80: the lead generator takes 20% (10/15/20/40), the closer takes
+  80% (40/60/80/160) — the closer carries the penalty risk, so the closer
+  carries the reward; same person takes one full-slab row. "Converted By"
+  export names the generator.
   Duplicate-guarded (any slab or half delta per estimate gates re-entry).
   ALWAYS recorded, toggle-independent. `catchUpConversionCloses()` (start of
   the EOD run) backfills accepted/confirmed converts that never reached the
