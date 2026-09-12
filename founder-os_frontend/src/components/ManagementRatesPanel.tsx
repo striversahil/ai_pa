@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import type { Enquiry, EnquiryItem } from "@/types";
-import { parseMoneyInput } from "@/types";
+import { parseMoneyInput, historyDateChip } from "@/types";
 import FlagThread from "@/components/FlagThread";
 
 export const RATE_STATUS_LABEL: Record<string, string> = {
@@ -45,6 +45,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [reqs, setReqs] = useState<Record<number, string | null>>({});
   const [reqOpen, setReqOpen] = useState<number | null>(null);
   const [reqNote, setReqNote] = useState("");
+  // Optional per-item management remark (e.g. "valid 7 days", "transport
+  // extra"): saved into the item thread alongside the rates, visible to
+  // Sales under the decided rate.
+  const [remarks, setRemarks] = useState<Record<number, string>>({});
+  const [remarkOpen, setRemarkOpen] = useState<number | null>(null);
   // Bulk decisions: checkboxes select items, then one margin % applies to
   // all, or one combined final ₹ splits proportionally across selected
   // vendor rates (each ceil5; the computed total is shown).
@@ -73,6 +78,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     setReqs({});
     setReqOpen(null);
     setReqNote("");
+    setRemarks({});
+    setRemarkOpen(null);
     setChecked({});
     setBulkPct("");
     setBulkTotal("");
@@ -117,6 +124,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     return { markup: final - rate, finalRate: final, unrounded };
   };
 
+  // Partial-decision completeness: every loop item (correct spec, rate not
+  // already available) needs a vendor + markup/final before the enquiry may
+  // be finalized. Decided items (stored or freshly entered) count — so a
+  // partial "Save rates" is progress, and Finalize unlocks only at 100%.
+  const actionableIdx = items
+    .map((it, i) => ({ it, i }))
+    .filter(({ it }) => !it.specIssue && !it.rateAvailable)
+    .map(({ i }) => i);
+  const decidedCount = actionableIdx.filter((i) => computeItem(i, items[i]) !== null).length;
+  const allDecided = actionableIdx.length > 0 && decidedCount === actionableIdx.length;
+
   const buildItems = (finalize: boolean): EnquiryItem[] =>
     items.map((it, i) => {
       // Held for a sales spec correction, or rate already available: never
@@ -140,6 +158,16 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         out.markup = c.markup;
         out.finalRate = c.finalRate;
         if (finalize) out.finalizedAt = new Date().toISOString();
+      }
+      // Optional management remark: appended to the item thread (the
+      // server keeps client remark entries, crediting the writer's role),
+      // so Sales sees it under the decided rate.
+      const remark = (remarks[i] ?? "").trim();
+      if (remark) {
+        out.thread = [
+          ...(it.thread ?? []),
+          { by: "management" as const, kind: "remark" as const, text: remark.slice(0, 500), at: new Date().toISOString() },
+        ];
       }
       return out;
     });
@@ -220,6 +248,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       setModes({});
       setReqs({});
       setReqOpen(null);
+      setRemarks({});
+      setRemarkOpen(null);
       setSavedTick(true);
     } catch (e: any) {
       setSaveError(e?.message || "Save failed — please retry.");
@@ -248,7 +278,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         <div className="space-y-3">
           {items.some((it) => it.specIssue) && (
             <p className="text-[11px] font-semibold text-amber-400/90">
-              {items.filter((it) => it.specIssue).length} item{items.filter((it) => it.specIssue).length === 1 ? "" : "s"} held — spec correction with Sales (shown again once fixed).
+              {items.filter((it) => it.specIssue).length} item{items.filter((it) => it.specIssue).length === 1 ? "" : "s"} held — spec correction with Sales, shown below read-only (no rate actions until fixed).
             </p>
           )}
           {items.some((it) => it.rateAvailable) && (
@@ -281,7 +311,37 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             {bulkError && <p className="text-[11px] font-semibold text-red-400">{bulkError}</p>}
           </div>
           {items.map((it, i) => {
-            if (it.specIssue) return null; // held out — only correct-spec items are shown
+            // Held for a sales spec correction: visible read-only (spec +
+            // procurement's flag reason) so Management sees what's stuck and
+            // why — no vendor, markup, or request actions until Sales fixes it.
+            if (it.specIssue) {
+              return (
+                <div key={i} className="rounded-xl border border-red-500/25 bg-red-500/5 p-3 space-y-2">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-xs font-extrabold text-white">
+                      Item {i + 1}{it.name ? ` — ${it.name}` : ""}
+                    </span>
+                    {it.qty && (
+                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
+                    )}
+                    <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-red-500/10 text-red-400 border-red-500/30">
+                      Held with sales
+                    </span>
+                  </div>
+                  {it.spec && (
+                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                  )}
+                  <div className="rounded-lg border border-red-500/30 bg-black/20 p-2.5 text-[11px] leading-relaxed">
+                    <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Procurement flagged incorrect spec</p>
+                    <p className="mt-0.5 text-zinc-300 whitespace-pre-wrap">{it.specIssue}</p>
+                    <p className="mt-1 text-zinc-500">
+                      Flagged {historyDateChip(it.specFlaggedAt) || "recently"} · releases automatically when Sales edits the spec.
+                    </p>
+                  </div>
+                  <FlagThread thread={it.thread ?? []} tone="dark" />
+                </div>
+              );
+            }
             if (it.rateAvailable) return null; // rate already available — skips Management entirely
             const rates = it.rates ?? [];
             const vendor = sel[i] ?? it.selectedVendor ?? "";
@@ -434,6 +494,31 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       Flag procurement
                     </button>
                   )}
+                  {remarkOpen === i ? (
+                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+                      <input
+                        value={remarks[i] ?? ""}
+                        onChange={(e) => setRemarks((prev) => ({ ...prev, [i]: e.target.value }))}
+                        placeholder="Remark for sales, saved with the rates (optional)…"
+                        className="w-full px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                      />
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setRemarkOpen(null)}
+                          className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                          Done
+                        </button>
+                        <button type="button" onClick={() => { setRemarks((prev) => ({ ...prev, [i]: "" })); setRemarkOpen(null); }}
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setRemarkOpen(i)}
+                      className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
+                      Add remark{(remarks[i] ?? "").trim() ? " ✓" : ""}
+                    </button>
+                  )}
                 </div>
                 )}
               </div>
@@ -450,6 +535,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         >
           {busy ? "Saving…" : "Save rates"}
         </button>
+        {!locked && actionableIdx.length > 0 && (
+          <span className={`text-[11px] font-bold ${allDecided ? "text-emerald-400" : "text-zinc-500"}`}>
+            Decided {decidedCount} of {actionableIdx.length}
+            {allDecided ? " — ready to finalize." : " — decide every item to unlock Finalize."}
+          </span>
+        )}
         {saveError && (
           <span className="text-[11px] font-semibold text-red-400">{saveError}</span>
         )}
@@ -461,7 +552,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             <>
               <button
                 onClick={() => void doSave(true)}
-                disabled={busy}
+                disabled={busy || !allDecided}
+                title={allDecided ? undefined : `Decide all ${actionableIdx.length} items first (${decidedCount} of ${actionableIdx.length} decided)`}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"
               >
                 Confirm finalize
@@ -477,7 +569,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
           ) : (
             <button
               onClick={() => setConfirming(true)}
-              disabled={busy || actionableCount === 0}
+              disabled={busy || actionableCount === 0 || !allDecided}
+              title={allDecided || actionableCount === 0 ? undefined : `Decide all ${actionableIdx.length} items first (${decidedCount} of ${actionableIdx.length} decided)`}
               className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"
             >
               Finalize rates

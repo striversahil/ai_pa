@@ -59,17 +59,17 @@ jobs:
         run: |
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}"
 
-  telecalling-eod-snatch:
-    # 9:00 PM IST end-of-day sweep: any estimate whose latest AI verdict is
-    # "unsatisfactory" (no meaningful update) or that went silent > 3 days is
-    # re-poached to the higher-converting agent. Makes conversion competitive —
-    # agents who don't advance their deals lose them at night.
+  telecalling-eod-deduction:
+    # 9:00 PM IST end-of-day remark deduction: every red-risk (unsatisfactory)
+    # estimate currently held costs its holder −10 (one charge per estimate per
+    # day, zombies/locked/skipped excluded). Re-poaching is switched OFF —
+    # holders keep everything; this run scores only, never moves estimates.
     if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '15:30'
     runs-on: ubuntu-latest
     steps:
-      - name: telecalling EOD snatch sweep
+      - name: telecalling EOD remark deduction
         run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}"
+          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling/eod" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}"
 
   morning-brief:
     # 02:30 UTC = 08:00 IST — morning briefing.

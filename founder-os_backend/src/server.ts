@@ -12,6 +12,7 @@ import { AIService } from './modules/ai/service';
 import { EmailService } from './modules/email/service';
 import { checkDatabaseConnection, useInMemoryDb, prisma } from './shared/prisma';
 import { SalesCopilotService } from './automations/zoho-sent-analyzer/service';
+import { runEodRemarkDeduction } from './automations/telecalling/service';
 import { BrainService } from './modules/brain/service';
 import { GoogleSheetsService } from './modules/google_sheets/service';
 import { asyncHandler } from './utils/asyncHandler';
@@ -589,6 +590,17 @@ app.post('/api/trigger/briefing', asyncHandler(async (req, res) => {
 app.post('/api/trigger/summary', asyncHandler(async (req, res) => {
   const summary = await SchedulerService.generateAndSaveEveningSummary();
   res.status(200).json({ message: 'Evening summary generated and saved', summary });
+}));
+
+/**
+ * POST /api/trigger/telecalling/eod
+ * EOD remark deduction (−10 per red-risk estimate held). Scores only —
+ * never moves estimates. Mirrors the Worker route of the same path.
+ */
+app.post('/api/trigger/telecalling/eod', asyncHandler(async (req, res) => {
+  const day = typeof req.query.day === 'string' ? req.query.day : undefined;
+  const result = await runEodRemarkDeduction(day);
+  res.status(200).json({ ok: true, ...result });
 }));
 
 /**

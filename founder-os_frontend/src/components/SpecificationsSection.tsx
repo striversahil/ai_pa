@@ -34,9 +34,10 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
   const editable = !!onUpdateItems && !redacted;
   // Vendor-rate collection follows the view mode, not the item-edit flag:
-  // procurement ('edit') collects, management ('view') reviews. The rates
-  // LIST itself is visible read-only in every view (including sales) — only
-  // the add/remove forms stay gated behind ratesEditable.
+  // procurement ('edit') collects, management ('view') reviews. Sales
+  // ('none') never sees vendor quotes — only the decided final rate per
+  // item (partiality is shown once at the enquiry level) plus the
+  // management remarks in the thread below.
   const ratesEditable = !!onUpdateItems && mode === "edit";
   const [rateDrafts, setRateDrafts] = useState<Record<number, { vendor: string; description: string; rate: string; specMode: "same" | "diff"; specDiff: string }>>({});
 
@@ -189,7 +190,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       <input
                         value={draft.qty}
                         onChange={(e) => setDraft({ ...draft, qty: cleanQty(e.target.value) })}
-                        placeholder="Quantity (numbers only)"
+                        placeholder="Quantity (e.g. 3 PCS)"
                         inputMode="decimal"
                         className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
                       />
@@ -281,19 +282,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {!it.specIssue && (it.thread ?? []).length > 0 && (
                         <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} />
                       )}
-                      {mode === "none" && (it.rates ?? []).some((r) => r.specSame === false) && (
-                        <div className="mt-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] leading-relaxed">
-                          <p className="font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wide text-[10px]">
-                            ⚠ Quoted on a different spec
-                          </p>
-                          {(it.rates ?? []).filter((r) => r.specSame === false && r.specDiff).map((r, ri) => (
-                            <p key={ri} className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">
-                              {r.specDiff}
-                            </p>
-                          ))}
-                        </div>
-                      )}
-                      {((it.rates ?? []).length > 0 || ratesEditable) && (
+                      {mode !== "none" && ((it.rates ?? []).length > 0 || ratesEditable) && (
                         <div className="mt-2 space-y-1.5">
                           {(it.rates ?? []).map((r, ri) => (
                             <div key={ri} className="rounded-lg border border-[var(--border-card)]/60 p-2 space-y-1">

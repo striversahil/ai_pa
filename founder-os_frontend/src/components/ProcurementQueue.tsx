@@ -8,7 +8,7 @@ import ProcurementItemCard from "@/components/ProcurementItemCard";
 import Modal from "@/components/Modal";
 import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
-import { GroupCard, ClosedDropdown } from "@/components/QueueGroups";
+import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { enquiryLabel, historyDateChip, itemNeedsRates } from "@/types";
 
@@ -29,35 +29,46 @@ const fmtDate = (iso?: string): string => {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 };
 
-type ItemRow = { enquiry: Enquiry; item: EnquiryItem; itemIdx: number };
+type EnquiryList = Enquiry[];
 
-function ItemStatus({ item }: { item: EnquiryItem }) {
-  const n = (item.rates ?? []).length;
-  if (item.specIssue) {
+function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "history" }) {
+  const items = enquiry.items ?? [];
+  if (mode === "history") {
+    const n = items.filter((it) => (it.rates ?? []).length > 0 && !it.ratesRequested).length;
     return (
-      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-red-500/10 text-red-500 border-red-500/30">
-        Awaiting sales fix
+      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+        {n} quoted
       </span>
     );
   }
-  if (n === 0) {
+  const pendingItems = items.filter(itemNeedsRates);
+  const flagged = pendingItems.filter((it) => it.specIssue).length;
+  const requested = pendingItems.filter((it) => it.ratesRequested && !it.specIssue).length;
+  if (flagged > 0) {
     return (
-      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
-        Needs rates
+      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-red-500/10 text-red-500 border-red-500/30">
+        Awaiting sales fix{pendingItems.length > 1 ? ` (${flagged}/${pendingItems.length})` : ""}
+      </span>
+    );
+  }
+  if (requested > 0) {
+    return (
+      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-indigo-500/10 text-indigo-500 border-indigo-500/30">
+        Rates requested{pendingItems.length > 1 ? ` (${requested}/${pendingItems.length})` : ""}
       </span>
     );
   }
   return (
-    <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-zinc-500/10 text-zinc-500 border-zinc-500/30">
-      {n} rate{n === 1 ? "" : "s"}
+    <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
+      Needs rates{pendingItems.length > 1 ? ` (${pendingItems.length})` : ""}
     </span>
   );
 }
 
 // Procurement Queue dashboard (mounted as the `enquiry-procurement`
-// automation). Pending-only, PII-redacted, TABULAR: one row per item with a
-// click-to-open rates modal carrying the complete information (spec,
-// attachments, given rates, add/edit, incorrect-spec). History below,
+// automation). Pending-only, PII-redacted, TABULAR: one row per enquiry with
+// a click-to-open modal carrying the complete information (all items with
+// spec, attachments, given rates, add/edit, incorrect-spec). History below,
 // read-only and date-wise.
 export default function ProcurementQueue() {
   const { me } = useAuth();
@@ -110,28 +121,20 @@ export default function ProcurementQueue() {
   });
 
   const pending = useMemo(() => enquiries.filter(isProcurementPending).sort(byNewest), [enquiries]);
-  const activeRows: ItemRow[] = useMemo(() => {
-    const out: ItemRow[] = [];
-    for (const e of pending) {
-      (e.items ?? []).forEach((item, itemIdx) => {
-        if (itemNeedsRates(item)) out.push({ enquiry: e, item, itemIdx });
-      });
-    }
-    return out;
-  }, [pending]);
-  // History: every RATED item with no open request — per item, not per
-  // enquiry, so a rate-available (unrated) sibling never hides quoted items.
+  // Total unrated-item count for the header badge (table itself stays one
+  // row per enquiry — item detail lives in the modal).
+  const pendingItemsCount = useMemo(
+    () => pending.reduce((n, e) => n + (e.items ?? []).filter(itemNeedsRates).length, 0),
+    [pending],
+  );
+  // History: enquiries with at least one quoted item and no open request —
+  // per enquiry, so a rate-available (unrated) sibling never hides quoted items.
   const byActivity = (a: Enquiry, b: Enquiry): number =>
     String(b.updatedAt ?? b.createdAt ?? "").localeCompare(String(a.updatedAt ?? a.createdAt ?? ""));
-  const historyRows: ItemRow[] = useMemo(() => {
-    const out: ItemRow[] = [];
-    const sorted = [...enquiries].sort(byActivity);
-    for (const e of sorted) {
-      (e.items ?? []).forEach((item, itemIdx) => {
-        if ((item.rates ?? []).length > 0 && !item.ratesRequested) out.push({ enquiry: e, item, itemIdx });
-      });
-    }
-    return out;
+  const historyEnquiries: EnquiryList = useMemo(() => {
+    return [...enquiries]
+      .filter((e) => (e.items ?? []).some((item) => (item.rates ?? []).length > 0 && !item.ratesRequested))
+      .sort(byActivity);
   }, [enquiries]);
   const emptyEnquiries = useMemo(
     () => pending.filter((e) => (e.items ?? []).length === 0),
@@ -199,11 +202,23 @@ export default function ProcurementQueue() {
 
   const selEnquiry = selectedId ? enquiries.find((e) => e.id === selectedId) ?? null : null;
 
-  const renderRows = (rows: ItemRow[]) => rows.map(({ enquiry: e, item, itemIdx }) => {
-    const latest = (item.rates ?? []).map((r) => r.quotedAt).sort().reverse()[0];
+  // One row per enquiry — item names/rates aggregate in the row, full
+  // item detail (spec, attachments, rate forms) lives in the modal.
+  const renderEnquiryRows = (list: Enquiry[], mode: "active" | "history") => list.map((e) => {
+    const items = e.items ?? [];
+    const quoted = items.filter((it) => (it.rates ?? []).length > 0).length;
+    const needRates = mode === "active"
+      ? items.filter(itemNeedsRates).length
+      : items.filter((it) => (it.rates ?? []).length > 0 && !it.ratesRequested).length;
+    const names = items.map((it, i) => {
+      const n = it.name || `Item ${i + 1}`;
+      return it.qty ? `${n} × ${it.qty}` : n;
+    });
+    const shown = names.slice(0, 3).join(" · ");
+    const rest = names.length > 3 ? ` +${names.length - 3} more` : "";
     return (
       <tr
-        key={`${e.id}-${itemIdx}`}
+        key={e.id}
         onClick={() => setSelectedId(e.id)}
         className="cursor-pointer transition-colors hover:bg-[var(--bg-input)]/40"
       >
@@ -212,60 +227,39 @@ export default function ProcurementQueue() {
           <span className="block text-[11px] text-[var(--text-tertiary)] truncate max-w-[14rem]">{e.title || "Untitled"}</span>
         </td>
         <td className={tdClass}>
-          <span className="font-bold text-[var(--text-primary)]">{item.name || `Item ${itemIdx + 1}`}</span>
-          {item.qty && <span className="ml-2 text-[11px] text-[var(--text-secondary)]">× {item.qty}</span>}
-        </td>
-        <td className={tdClass}>
-          {(item.rates ?? []).length === 0 ? (
-            <span className="text-[11px] text-[var(--text-tertiary)]">—</span>
-          ) : (
-            <span className="flex flex-col gap-0.5">
-              {(item.rates ?? []).map((r, ri) => (
-                <span key={ri} className="text-[11px] whitespace-nowrap">
-                  <span className="font-semibold text-[var(--text-primary)]">{r.vendor}</span>
-                  <span className="font-mono text-[var(--text-secondary)]"> ₹{Number(r.rate).toLocaleString("en-IN")}</span>
-                </span>
-              ))}
-            </span>
+          <span className="font-bold text-[var(--text-primary)]">{items.length} item{items.length === 1 ? "" : "s"}</span>
+          {shown && (
+            <span className="block text-[11px] text-[var(--text-secondary)] truncate max-w-[22rem]">{shown}{rest}</span>
           )}
         </td>
-        <td className="px-4 py-3 border-b border-[var(--border-card)] text-[var(--text-secondary)]">
-          <span className="block text-xs max-w-[22rem] truncate">{item.spec || "—"}</span>
-        </td>
-        <td className={tdClass}><ItemStatus item={item} /></td>
         <td className={tdClass}>
-          <span className="text-[11px] text-[var(--text-tertiary)]">{latest ? historyDateChip(latest) : "—"}</span>
+          <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
+            {mode === "active" ? `${needRates} need rates` : `${needRates} quoted`}
+            <span className="text-[var(--text-tertiary)]"> · {quoted}/{items.length} with rates</span>
+          </span>
+        </td>
+        <td className={tdClass}><EnquiryStatus enquiry={e} mode={mode} /></td>
+        <td className={tdClass}>
+          <span className="text-[11px] text-[var(--text-tertiary)]">{historyDateChip(e.updatedAt ?? e.createdAt) || "—"}</span>
         </td>
       </tr>
     );
   });
 
-  const isEmpty = pending.length === 0 && reqGroups.length === 0 && historyRows.length === 0;
+  const isEmpty = pending.length === 0 && reqGroups.length === 0 && historyEnquiries.length === 0;
 
-  // Club item rows under their enquiry: header expands to the item table.
-  const groupRows = (rows: ItemRow[]) => {
-    const map = new Map<string, { enquiry: Enquiry; rows: ItemRow[] }>();
-    for (const r of rows) {
-      const g = map.get(r.enquiry.id) ?? { enquiry: r.enquiry, rows: [] };
-      g.rows.push(r);
-      map.set(r.enquiry.id, g);
-    }
-    return [...map.values()];
-  };
-
-  const itemTable = (rows: ItemRow[]) => (
+  const enquiryTable = (list: Enquiry[], mode: "active" | "history") => (
     <Table stickyFirst>
       <thead>
         <tr>
           <th className={thClass}>Enquiry</th>
-          <th className={thClass}>Item</th>
+          <th className={thClass}>Items</th>
           <th className={thClass}>Rates</th>
-          <th className={thClass}>Spec</th>
           <th className={thClass}>Status</th>
-          <th className={thClass}>Quoted</th>
+          <th className={thClass}>Updated</th>
         </tr>
       </thead>
-      <tbody>{renderRows(rows)}</tbody>
+      <tbody>{renderEnquiryRows(list, mode)}</tbody>
     </Table>
   );
 
@@ -274,7 +268,7 @@ export default function ProcurementQueue() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Procurement Queue</h1>
         <span className="px-3 py-1 text-xs font-extrabold rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-          {activeRows.length} item{activeRows.length === 1 ? "" : "s"} pending
+          {pending.length} enquir{pending.length === 1 ? "y" : "ies"} · {pendingItemsCount} item{pendingItemsCount === 1 ? "" : "s"} pending
         </span>
       </div>
       {saveError && (
@@ -311,18 +305,12 @@ export default function ProcurementQueue() {
         </div>
       ) : (
         <div className="space-y-6">
-          {activeRows.length > 0 && (
+          {pending.length > 0 && (
             <section className="space-y-2">
               <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-                Active — needs rates ({activeRows.length})
+                Active — needs rates ({pending.length} enquir{pending.length === 1 ? "y" : "ies"})
               </p>
-              {groupRows(activeRows).map((g) => (
-                <GroupCard key={g.enquiry.id}
-                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
-                  count={g.rows.length}>
-                  {itemTable(g.rows)}
-                </GroupCard>
-              ))}
+              {enquiryTable(pending, "active")}
             </section>
           )}
 
@@ -342,15 +330,9 @@ export default function ProcurementQueue() {
             </div>
           )}
 
-          {historyRows.length > 0 && (
-            <ClosedDropdown count={historyRows.length}>
-              {groupRows(historyRows).map((g) => (
-                <GroupCard key={g.enquiry.id} defaultOpen={false}
-                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
-                  count={g.rows.length}>
-                  {itemTable(g.rows)}
-                </GroupCard>
-              ))}
+          {historyEnquiries.length > 0 && (
+            <ClosedDropdown count={historyEnquiries.length}>
+              {enquiryTable(historyEnquiries, "history")}
             </ClosedDropdown>
           )}
 

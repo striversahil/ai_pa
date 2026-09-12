@@ -9,9 +9,11 @@
  *
  * Plus team KPIs and a live daily leaderboard.
  *
- * The handler runs the Lead Conversion engine (assign unassigned + end-of-day
- * reassignment of unsatisfactory estimates). The data() provider aggregates
- * everything for the dashboard.
+ * The handler runs the Lead Conversion engine (deal unassigned estimates to
+ * conversion specialists). Risk re-poaching stays in code behind the MIS "EOD
+ * Reassignment" switch but is switched OFF — holders keep everything, and
+ * red-risk holdings are scored −10 at the EOD remark-deduction run instead.
+ * The data() provider aggregates everything for the dashboard.
  */
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
@@ -35,17 +37,17 @@ function istDate(d: Date = new Date()): string {
 }
 // ── Estimate risk model (live pre-warning) ───────────────────────────────────
 // Real-time risk states over the open `sent` pipeline so trouble is visible
-// BEFORE the end-of-day reassignment sweep:
+// BEFORE the end-of-day remark-deduction run:
 //   zombie  — no comment in > 3 days (the AI already treats stale comments as
 //             not meaningful, so these estimates are dead weight)
 //   red     — latest AI verdict has meaningfulUpdate=false, OR the latest
 //             comment is older than 24h even though it was satisfactory (a
 //             stale-but-positive comment still means nobody chased it today —
-//             eligible for EOD snatch)
+//             costs −10 at the EOD remark run)
 //   pending — no AI verdict yet
 //   ok      — latest comment was meaningful AND fresh (< 24h)
 export const ZOMBIE_DAYS = 3;
-/** A meaningful comment older than this (hours) is still a snatch candidate. */
+/** A meaningful comment older than this (hours) still counts red (costs −10 at EOD). */
 export const FRESH_HOURS = 24;
 const RISK_LIST_CAP = 25;
 
@@ -61,7 +63,7 @@ const ASSIGN_TUNING = {
 
 // ── Accepted-value KPI targets ─────────────────────────────────────────────
 // "Est. Conv ₹" = total ₹ of ACCEPTED estimates closed in the selected period
-// (from the +100 close-event ledger, valued at each estimate's total).
+// (from the slab close-event ledger, valued at each estimate's total).
 // Daily thresholds (founder-set): ₹5L = target hit (celebrate), ₹10L = gold.
 // Period targets scale linearly by working days (Mon–Sat): a week holds up to
 // 6× the daily bar, a month ~26×, so every filter has a fair proportional goal.
@@ -95,7 +97,7 @@ export interface RiskItem {
   reasoning: string | null;
   /** Why this estimate is about to be / was re-poached (surfaced to the agent). */
   snatchReason: string | null;
-  /** Hours remaining until the EOD (21:00 IST) snatch sweep. */
+  /** Hours remaining until the EOD (21:00 IST) remark-deduction run. */
   snatchInHours: number | null;
   /** MIS override: estimate is locked to one agent — never re-poached, even when red/zombie. */
   locked: boolean;
@@ -103,7 +105,7 @@ export interface RiskItem {
   skipAssignment: boolean;
 }
 
-/** Hours until the next EOD snatch sweep (21:00 IST). Null if already past. */
+/** Hours until the next EOD remark-deduction run (21:00 IST). Null if already past. */
 export function hoursUntilEod(now: Date = new Date()): number | null {
   try {
     const istParts = new Intl.DateTimeFormat('en-GB', {
@@ -181,8 +183,8 @@ function classifyRisk(
   if (!cls) return { risk: 'pending', staleHours };
   // A satisfactory comment only keeps the estimate safe while it's FRESH.
   // If the last meaningful comment is older than FRESH_HOURS, nobody has chased
-  // it today — it becomes an EOD snatch candidate (red) even though the AI
-  // verdict was positive.
+  // it today — it counts red (costs −10 at the EOD remark run) even though the
+  // AI verdict was positive.
   if (!cls.meaningfulUpdate || (staleHours !== null && staleHours > FRESH_HOURS)) {
     return { risk: 'red', staleHours };
   }
@@ -190,27 +192,27 @@ function classifyRisk(
 }
 
 /**
- * Why an estimate is being re-poached at EOD. Mirrors the AI verdict so the
- * losing agent sees exactly what lost them the deal. Falls back to the
+ * Why an estimate costs its holder −10 at the EOD remark run. Mirrors the AI
+ * verdict so the agent sees exactly what lost them points. Falls back to the
  * classification reasoning when available (e.g. "customer not answering").
  */
 function buildSnatchReason(
   est: { estimateId: string; classification?: { meaningfulUpdate?: boolean; reasoning?: string | null } | null },
   risk: EstimateRisk,
 ): string {
-  if (risk === 'zombie') return 'No reply in over 3 days — reassigned to a better converter';
+  if (risk === 'zombie') return 'No reply in over 3 days — dead weight on the board';
   // Satisfactory-but-stale: the AI verdict was positive but the last comment is
-  // older than FRESH_HOURS — nobody chased it today, so it's a snatch candidate.
+  // older than FRESH_HOURS — nobody chased it today, so it costs −10 at EOD.
   if (risk === 'red' && est.classification?.meaningfulUpdate) {
-    return 'Last update was satisfactory but stale (older than 24h) — reassigned to a better converter';
+    return 'Last update was satisfactory but stale (older than 24h) — 10 points deducted at EOD';
   }
   const reasoning = est.classification?.reasoning;
   if (reasoning && reasoning.trim() && reasoning.trim() !== 'No sales agent comment found.') {
     const verdict = est.classification?.meaningfulUpdate ? 'meaningful update' : 'unsatisfactory remark';
     const clipped = reasoning.trim().slice(0, 140);
-    return `EOD snatch (${verdict}): ${clipped}`;
+    return `EOD remark penalty (${verdict}): ${clipped}`;
   }
-  return 'Unsatisfactory remark at end of day — reassigned to a better converter';
+  return 'Unsatisfactory remark at end of day — 10 points deducted';
 }
 
 // ── Risk cache (KV-backed, D1 row-read budget protection) ───────────────────
@@ -1230,33 +1232,56 @@ async function inferEstimateCreator(estimateId: string, telecallers: Telecaller[
 }
 
 // ── Event-ledger scoring ─────────────────────────────────────────────────────
-// The leaderboard is driven by an append-only score ledger: +100 when an
-// estimate converts (credited to the LEAD GENERATOR, not the holder), -15
-// per EOD snatch (charged to the agent who lost it for an unsatisfactory
-// remark). Each row records the IST day, so any timeframe (week/month/year) can
+// The leaderboard is driven by an append-only score ledger: a slab-based
+// close credit when an estimate converts (credited to the LEAD GENERATOR,
+// not the holder), -10 per unsatisfactory (red-risk) estimate held at the
+// EOD remark-deduction run, -15 per EOD snatch (legacy — risk re-poaching is
+// removed, so no new −15 rows are written; historical ones still count where
+// read). Each row records the IST day, so any timeframe (week/month/year) can
 // be summed with a simple day-range filter — the weekly view restarts at zero
 // automatically.
-const CLOSE_POINTS = 100;
+/** Conversion close slabs by estimate total (founder rule, ₹):
+ *  ₹0–1L → 50 · ₹1L–2.5L → 75 · ₹2.5L–5L → 100 · ₹5L and above → 200.
+ *  Boundary totals join the higher slab (exactly ₹1L → 75, ₹2.5L → 100,
+ *  ₹5L → 200); zero/unknown totals fall in the lowest slab. The cascading
+ *  `<` checks below implement exactly these between-bands. */
+export const CLOSE_SLABS = [50, 75, 100, 200];
+export function closePointsFor(total: unknown): number {
+  const v = Number(total ?? 0) || 0;
+  if (v < 100_000) return 50;
+  if (v < 250_000) return 75;
+  if (v < 500_000) return 100;
+  return 200;
+}
+/** True for any conversion-close delta (current slabs + legacy +100 rows). */
+export function isCloseDelta(delta: unknown): boolean {
+  return CLOSE_SLABS.includes(Number(delta));
+}
 const SNATCH_PENALTY = -15;
-// The old −20 decline penalty is RETIRED (founder: too heavy) — only the −15
-// EOD snatch remains. recordDeclinePenalty() is deleted; historical −20 rows
-// stay in the ledger but the score loop below ignores any delta that isn't
-// +100/−15, so they no longer affect any board.
-// The −15 snatch is governed at runtime by the MIS "Active Penalty" toggle
-// (Setting `telecalling:penalties_enabled`, default OFF = the historical
-// behaviour: only positive score events are recorded and the leaderboard
-// score ignores penalties). +100 conversion close is ALWAYS credited
-// regardless of the toggle. Temp absent-cover holds are penalty-free even
-// when the toggle is ON (guarded at the call sites).
+/** EOD remark penalty: one −10 per red-risk estimate held, charged daily. */
+const REMARK_PENALTY = -10;
+// The old −20 decline penalty is RETIRED (founder: too heavy) — historical −20
+// rows stay in the ledger but the score loop below ignores any delta that isn't
+// slab-close/−10/−15, so they no longer affect any board.
+// The −15 snatch is legacy (risk re-poaching removed — no new −15 rows are
+// written; historical ones still count). It remains governed at runtime by the
+// MIS "Active Penalty" toggle (Setting `telecalling:penalties_enabled`,
+// default OFF). The −10 remark penalty applies ALWAYS, independent of that
+// toggle. Slab conversion-close credit is ALWAYS recorded regardless of the toggle.
+// Temp absent-cover holds are penalty-free even when the toggle is ON
+// (guarded at the call sites).
 const PENALTIES_SETTING_KEY = 'telecalling:penalties_enabled';
 
-/** Runtime state of the MIS "Active Penalty" toggle. Default: OFF. */
+/** Runtime state of the MIS "Active Penalty" toggle. Default: ON — the master
+ *  switch for every penalty (the −10 EOD remark deduction and the legacy −15
+ *  snatch). Only an explicit 'false' disables. */
 export async function isPenaltiesEnabled(): Promise<boolean> {
   try {
     const row = await prisma.setting.findUnique({ where: { key: PENALTIES_SETTING_KEY } });
-    return String(row?.value ?? '').trim().toLowerCase() === 'true';
+    // Only an explicit 'false' disables — missing/any other value means ON.
+    return String(row?.value ?? '').trim().toLowerCase() !== 'false';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -1311,27 +1336,31 @@ async function recordScoreEvent(telecallerId: string, estimateId: string, delta:
 }
 
 /**
- * Credit +100 to the LEAD GENERATOR (Estimate.createdBy) the moment an
- * estimate converts (status → accepted/confirmed). Founder rule: the agent
- * who generated the lead earns the close, not whoever happened to hold the
- * follow-up at conversion. Falls back to the current holder when the creator
- * is unknown (old estimates pre-dating creator capture); no-op if neither
- * exists. Duplicate-guarded: one +100 per estimate, ever.
+ * Credit the slab-based close points to the LEAD GENERATOR
+ * (Estimate.createdBy) the moment an estimate converts (status →
+ * accepted/confirmed). Founder rule: the agent who generated the lead earns
+ * the close, not whoever happened to hold the follow-up at conversion. Falls
+ * back to the current holder when the creator is unknown (old estimates
+ * pre-dating creator capture); no-op if neither exists. Duplicate-guarded:
+ * one close credit per estimate, ever (any slab delta counts, so a re-run
+ * after a slab change can never double-credit).
  */
 export async function recordConversionClose(estimateId: string): Promise<void> {
   try {
     const est = await prisma.estimate.findUnique({
       where: { estimateId },
-      select: { status: true, assignedTelecallerId: true, createdBy: true },
+      select: { status: true, total: true, assignedTelecallerId: true, createdBy: true },
     });
     if (!est || !(est.status === 'accepted' || est.status === 'confirmed')) return;
     const earner = (est as any).createdBy || est.assignedTelecallerId;
     if (!earner) return;
-    const existing = await prisma.telecallerScoreEvent.findFirst({
-      where: { estimateId, delta: CLOSE_POINTS },
+    const existing = await prisma.telecallerScoreEvent.findMany({
+      where: { estimateId },
+      select: { delta: true },
     });
-    if (existing) return;
-    await recordScoreEvent(String(earner), estimateId, CLOSE_POINTS, istDate(), 'Estimate converted — full points to lead generator');
+    if ((existing as any[]).some((e) => isCloseDelta(e.delta))) return;
+    const points = closePointsFor((est as any).total);
+    await recordScoreEvent(String(earner), estimateId, points, istDate(), `Estimate converted ₹${Math.round(Number((est as any).total ?? 0) || 0).toLocaleString('en-IN')} — ${points} points to lead generator`);
   } catch (e: any) {
     logger.warn({ err: e?.message, estimateId }, 'recordConversionClose failed');
   }
@@ -1339,19 +1368,18 @@ export async function recordConversionClose(estimateId: string): Promise<void> {
 
 /**
  * Converters map for the MIS per-estimate export: estimateId → { name, day }
- * sourced from the +100 close ledger (credited to the lead generator per the
- * founder rule). Only converted estimates ever have a row (duplicate-guarded:
- * one +100 per estimate); declined/open estimates resolve to nothing so the
- * export leaves "Converted By" blank for them.
+ * sourced from the close ledger (slab deltas, credited to the lead generator
+ * per the founder rule). Only converted estimates ever have a row
+ * (duplicate-guarded: one close credit per estimate); declined/open estimates
+ * resolve to nothing so the export leaves "Converted By" blank for them.
  */
 export async function getConvertersMap(sinceDay: string = ''): Promise<Record<string, { name: string; day: string }>> {
   try {
     const events = await prisma.telecallerScoreEvent.findMany({
       where: {
-        delta: CLOSE_POINTS,
         ...(DATE_RE.test(sinceDay) ? { day: { gte: sinceDay } } : {}),
       },
-      select: { telecallerId: true, estimateId: true, day: true },
+      select: { telecallerId: true, estimateId: true, day: true, delta: true },
     });
     const ids = [...new Set((events as any[]).map((e) => String(e.telecallerId ?? '')).filter(Boolean))];
     const nameById = new Map<string, string>();
@@ -1364,8 +1392,9 @@ export async function getConvertersMap(sinceDay: string = ''): Promise<Record<st
     }
     const out: Record<string, { name: string; day: string }> = {};
     for (const e of events as any[]) {
+      if (!isCloseDelta(e.delta)) continue;
       const estId = String(e.estimateId ?? '');
-      if (!estId || out[estId]) continue; // first +100 wins; ledger guards dupes
+      if (!estId || out[estId]) continue; // first close wins; ledger guards dupes
       out[estId] = { name: nameById.get(String(e.telecallerId)) ?? '', day: String(e.day ?? '') };
     }
     return out;
@@ -1391,10 +1420,88 @@ async function recordSnatchPenalty(telecallerId: string, estimateId: string, day
   await recordScoreEvent(telecallerId, estimateId, SNATCH_PENALTY, day, reason ?? 'EOD snatch — unsatisfactory remark');
 }
 
+/**
+ * Charge -10 to the agent holding a red-risk (unsatisfactory) estimate at the
+ * EOD remark-deduction run. Called once per red estimate per day — zombies are
+ * excluded (silence already shows as 0 calls), as are MIS-locked and
+ * skip-assignment estimates (out of the game by founder override).
+ * Duplicate-guarded: one −10 per holder per estimate per day, so repeated
+ * runs can never double-charge. Governed by the MIS "Active Penalty" toggle
+ * (the EOD run skips charging entirely while it is OFF).
+ */
+async function recordRemarkPenalty(telecallerId: string, estimateId: string, day: string, reason: string | null): Promise<boolean> {
+  try {
+    const existing = await prisma.telecallerScoreEvent.findFirst({
+      where: { telecallerId, estimateId, delta: REMARK_PENALTY, day },
+    });
+    if (existing) return false;
+  } catch { /* lookup failed — fall through and record once rather than skip */ }
+  await recordScoreEvent(telecallerId, estimateId, REMARK_PENALTY, day, reason ?? 'EOD remark penalty — unsatisfactory remark');
+  return true;
+}
+
 /** Daily engine: refresh the roster from NeoDove, then deal the sent pool. */
 export async function runLeadConversion(): Promise<{ assigned: number }> {
   await syncTelecallersFromNeodove();
   return assignEstimatesForMaxConversion();
+}
+
+/**
+ * EOD remark deduction: −10 per red-risk estimate currently held, one charge
+ * per estimate per day. Risk re-poaching is removed (holders keep everything),
+ * so this run never moves estimates — it only scores. Zombies, MIS-locked and
+ * skip-assignment estimates are excluded. Gated by the MIS "Active Penalty"
+ * toggle (default ON) — when OFF the run reports red holdings but charges
+ * nothing. Triggered by the 21:00 IST telecalling-eod job via
+ * POST /api/trigger/telecalling/eod.
+ */
+export async function runEodRemarkDeduction(day?: string): Promise<{ deducted: number; agents: number; redHeld: number; day: string; penaltiesEnabled: boolean }> {
+  const today = day && DATE_RE.test(day) ? day : istDate();
+  const penaltiesEnabled = await isPenaltiesEnabled();
+  let items: CachedRiskItem[] = [];
+  try {
+    items = await getRiskItems();
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'eod-deduction: risk items unavailable — deducting nothing');
+    return { deducted: 0, agents: 0, redHeld: 0, day: today, penaltiesEnabled };
+  }
+  let redHeld = 0;
+  for (const r of items) {
+    if (r.risk !== 'red') continue;
+    if (!r.telecallerId) continue;
+    if (r.locked || r.skipAssignment) continue;
+    redHeld += 1;
+  }
+  if (!penaltiesEnabled) {
+    logger.info({ redHeld, day: today }, 'EOD remark deduction skipped — Active Penalty is OFF');
+    return { deducted: 0, agents: 0, redHeld, day: today, penaltiesEnabled };
+  }
+  let deducted = 0;
+  const agents = new Set<string>();
+  for (const r of items) {
+    if (r.risk !== 'red') continue;
+    if (!r.telecallerId) continue;
+    if (r.locked || r.skipAssignment) continue;
+    const reasoning = (r.reasoning ?? '').trim();
+    const reason = reasoning && reasoning !== 'No sales agent comment found.'
+      ? `EOD remark penalty (unsatisfactory): ${reasoning.slice(0, 140)}`
+      : 'Unsatisfactory remark at end of day — 10 points deducted';
+    try {
+      if (await recordRemarkPenalty(String(r.telecallerId), r.estimateId, today, reason)) {
+        deducted += 1;
+        agents.add(String(r.telecallerId));
+      }
+    } catch (e: any) {
+      logger.warn({ err: e?.message, estimateId: r.estimateId }, 'eod-deduction: charge failed — continuing');
+    }
+  }
+  logger.info({ deducted, agents: agents.size, redHeld, day: today }, 'EOD remark deduction complete');
+  if (deducted > 0) {
+    // Leaderboard points changed — bust the dashboard caches so the next read
+    // recomputes (converters map is close-only, unaffected).
+    try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
+  }
+  return { deducted, agents: agents.size, redHeld, day: today, penaltiesEnabled };
 }
 
 export interface TelecallerDayMetrics {
@@ -1408,7 +1515,7 @@ export interface TelecallerDayMetrics {
     conversionRate: number;
     pipelineValue: number;
     // Accepted-value KPI: total ₹ of estimates this agent closed in the period
-    // (valued from +100 close events — the number behind "Est. Conv ₹").
+    // (valued from slab close events — the number behind "Est. Conv ₹").
     acceptedValue: number;
     // Forward-looking: expected closed value given the agent's win rate and the
     // live risk of each open estimate. count = expected number of closes.
@@ -1436,10 +1543,11 @@ export interface TelecallerDayMetrics {
     leadsStatus: 'green' | 'amber' | 'red';
   };
   score: number;
-  // Event-ledger points for the period: +100 per converted estimate (credited
-  // to the lead generator), -15 per EOD snatch (charged to the losing
-  // agent). Summed over the period so the weekly view resets to zero naturally.
-  points: { closes: number; snatches: number; total: number };
+  // Event-ledger points for the period: slab close credit per converted estimate (credited
+  // to the lead generator), -10 per red-risk estimate held at the EOD remark
+  // run, -15 per legacy EOD snatch. Summed over the period so the weekly view
+  // resets to zero naturally.
+  points: { closes: number; snatches: number; remarks: number; total: number };
   // Live pipeline risk: open estimates currently red (no meaningful update) or
   // zombie (silent > 3 days) — the EOD reassignment candidates.
   risk: { atRisk: number; zombie: number };
@@ -1524,6 +1632,8 @@ export interface TelecallingDailyRow {
   /** Declined estimate numbers that day. Day ≈ status-change day (see below). */
   declinedEstimates: string;
   snatches: number;
+  /** EOD remark penalties that day (−10 per red-risk estimate held). */
+  remarks: number;
   callsAttempted: number;
   callsConnected: number;
   callsNotConnected: number;
@@ -1567,11 +1677,12 @@ function istDayOf(val: unknown): string | null {
 
 /**
  * Per-day × per-agent MIS breakdown for an inclusive IST range.
- * Sources per day: +100 close events (accepted-day truth, valued at the
+ * Sources per day: slab close-credit events (accepted-day truth, valued at the
  * estimate total), `declined` estimates whose `lastSyncTime` falls that day
  * (approximation — declined rows are untouched after leaving `sent`, so the
- * watermark ≈ status-change day; holder = current assignee), assignment rows
- * dealt that day, −15 snatch events, and the stored NeoDove day snapshot.
+  * watermark ≈ status-change day; holder = current assignee), assignment rows
+  * dealt that day, −10 remark + −15 legacy snatch events, and the stored
+  * NeoDove day snapshot.
  */
 export async function computeTelecallingDaily(
   from: string,
@@ -1585,14 +1696,14 @@ export async function computeTelecallingDaily(
   const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
 
   type DayAgg = {
-    assigned: number; won: number; snatches: number;
+    assigned: number; won: number; closePoints: number; snatches: number; remarks: number;
     closeIds: string[]; declinedIds: string[];
   };
   const agg = new Map<string, DayAgg>(); // `${day}|${owner}`
   const cell = (day: string, owner: string): DayAgg => {
     const k = `${day}|${owner}`;
     let c = agg.get(k);
-    if (!c) { c = { assigned: 0, won: 0, snatches: 0, closeIds: [], declinedIds: [] }; agg.set(k, c); }
+    if (!c) { c = { assigned: 0, won: 0, closePoints: 0, snatches: 0, remarks: 0, closeIds: [], declinedIds: [] }; agg.set(k, c); }
     return c;
   };
 
@@ -1604,12 +1715,15 @@ export async function computeTelecallingDaily(
     for (const ev of events as any[]) {
       const day = String(ev.day ?? '');
       if (!day) continue;
-      if (ev.delta === CLOSE_POINTS) {
+      if (isCloseDelta(ev.delta)) {
         const c = cell(day, String(ev.telecallerId));
         c.won += 1;
+        c.closePoints += Number(ev.delta) || 0;
         if (ev.estimateId) c.closeIds.push(String(ev.estimateId));
       } else if (ev.delta === SNATCH_PENALTY) {
         cell(day, String(ev.telecallerId)).snatches += 1;
+      } else if (ev.delta === REMARK_PENALTY) {
+        cell(day, String(ev.telecallerId)).remarks += 1;
       }
     }
   } catch (e: any) {
@@ -1692,7 +1806,9 @@ export async function computeTelecallingDaily(
         ? nd.leadsGenerated
         : ((nd?.leadsInProgress ?? 0) + (nd?.leadsConverted ?? 0));
       const won = c?.won ?? 0;
+      const closePoints = c?.closePoints ?? 0;
       const snatches = c?.snatches ?? 0;
+      const remarks = c?.remarks ?? 0;
       const closedValue = Math.round((c?.closeIds ?? []).reduce((s, eid) => s + (valueById.get(eid) ?? 0), 0));
       const declinedIds = c?.declinedIds ?? [];
       out.push({
@@ -1708,13 +1824,14 @@ export async function computeTelecallingDaily(
         declinedValue: Math.round(declinedIds.reduce((s, eid) => s + (valueById.get(eid) ?? 0), 0)),
         declinedEstimates: declinedIds.map((eid) => numberById.get(eid) ?? eid).join(' | '),
         snatches,
+        remarks,
         callsAttempted: nd?.callsAttempted ?? 0,
         callsConnected,
         callsNotConnected: nd?.callsNotConnected ?? 0,
         talkTimeMin: Math.round((nd?.talkTimeSec ?? 0) / 60),
         leadsGenerated,
         leadsConverted: nd?.leadsConverted ?? 0,
-        score: won * 100 + (penaltiesEnabled ? -snatches * 15 : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
+        score: closePoints + (penaltiesEnabled ? (-snatches * 15 + remarks * REMARK_PENALTY) : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
       });
     }
   }
@@ -1732,7 +1849,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   const DASH_TTL_MS = 5 * 60 * 1000;
   // Converters-only shortcut for the MIS per-estimate export
   // (GET /api/automations/telecalling/data?converters=1&since=YYYY-MM-DD):
-  // returns just { converters } from the +100 close ledger and skips the full
+  // returns just { converters } from the slab close ledger and skips the full
   // dashboard aggregation entirely. Same endpoint on both runtimes, no new
   // route needed.
   const wantConverters = String(q.converters ?? '') === '1' || String(q.converters ?? '').toLowerCase() === 'true';
@@ -1886,14 +2003,17 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     }
   }
 
-  // Event-ledger points for the leaderboard period: +100 per converted estimate
-  // (credited to the lead generator), -15 per EOD snatch (charged to the
-  // losing agent). Filtered by day range so the weekly view restarts at zero —
-  // everyone gets a fair shot on the table each week.
+  // Event-ledger points for the leaderboard period: slab close credits per
+  // converted estimate (credited to the lead generator), −10 per red-risk
+  // estimate held at the EOD remark run, −15 per legacy EOD snatch (no new
+  // rows; still counted where present). Penalties count in the composite
+  // score only while the MIS "Active Penalty" toggle is ON. Filtered by day
+  // range so the weekly view restarts at zero — everyone gets a fair shot
+  // on the table each week.
   const pointsFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
   const pointsTo = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
-  const pointsByOwner = new Map<string, { closes: number; snatches: number; total: number }>();
-  // Estimate ids behind each +100 close — valued below into accepted ₹ totals.
+  const pointsByOwner = new Map<string, { closes: number; snatches: number; remarks: number; total: number }>();
+  // Estimate ids behind each close — valued below into accepted ₹ totals.
   const closeIdsByOwner = new Map<string, string[]>();
   try {
     const events = await prisma.telecallerScoreEvent.findMany({
@@ -1901,10 +2021,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       select: { telecallerId: true, delta: true, estimateId: true },
     });
     for (const ev of events) {
-      const cur = pointsByOwner.get(String(ev.telecallerId)) ?? { closes: 0, snatches: 0, total: 0 };
-      // Only live deltas count: +100 closes and −15 snatches. Retired −20
-      // decline rows still sit in the ledger but are ignored everywhere.
-      if (ev.delta === CLOSE_POINTS) {
+      const cur = pointsByOwner.get(String(ev.telecallerId)) ?? { closes: 0, snatches: 0, remarks: 0, total: 0 };
+      // Only live deltas count: slab close credits, −10 remark penalties and
+      // −15 snatches. Retired −20 decline rows still sit in the ledger but are
+      // ignored everywhere.
+      if (isCloseDelta(ev.delta)) {
         cur.closes += 1; cur.total += ev.delta;
         if ((ev as any).estimateId) {
           const arr = closeIdsByOwner.get(String(ev.telecallerId)) ?? [];
@@ -1913,6 +2034,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         }
       }
       else if (ev.delta === SNATCH_PENALTY) { cur.snatches += 1; cur.total += ev.delta; }
+      else if (ev.delta === REMARK_PENALTY) { cur.remarks += 1; cur.total += ev.delta; }
       pointsByOwner.set(String(ev.telecallerId), cur);
     }
   } catch (e: any) {
@@ -1958,7 +2080,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   for (const tc of telecallers as (Telecaller & { neodoveUserName: string | null })[]) {
     // Current workload straight off the single assignment field.
     const open = openByOwner.get(tc.id) ?? { count: 0, value: 0 };
-    // "Won" = estimates actually CONVERTED in this timeframe, from the +100
+    // "Won" = estimates actually CONVERTED in this timeframe, from the slab-close
     // event ledger (day = the day the estimate converted). NOT the count of
     // currently-held accepted/confirmed estimates (that's lifetime and would
     // show wins from weeks ago on "Today"). The weekly view therefore restarts
@@ -1967,7 +2089,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const assignedToday = periodMode && assignedByOwner ? (assignedByOwner.get(tc.id) ?? 0) : open.count;
     const pipelineValue = open.value;
     // Accepted ₹ in this period: sum of totals of the estimates this agent
-    // closed here (valued from the +100 ledger rows above). This is the number
+    // closed here (valued from the slab-close ledger rows above). This is the number
     // behind the "Est. Conv ₹" KPI — actuals, not the projection below.
     const acceptedValue = Math.round(acceptedByOwner.get(tc.id) ?? 0);
     const conversionRate = assignedToday + won > 0 ? Math.round((won / (assignedToday + won)) * 100) : 0;
@@ -2006,10 +2128,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       leadsPct >= 100 ? 'green' : leadsPct >= 60 ? 'amber' : 'red';
 
     // Composite score (tunable, the leaderboard norm): a converted estimate
-    // weighs +100, a generated lead +15 and a connected call +0.5. Snatch
-    // penalties (−15) only count while the MIS "Active Penalty" toggle is ON.
+    // weighs +100, a generated lead +15 and a connected call +0.5. Penalties
+    // (−10 remarks, legacy −15 snatches) only count while the MIS "Active
+    // Penalty" toggle is ON.
     const snatches = pointsByOwner.get(tc.id)?.snatches ?? 0;
-    const score = won * 100 + (penaltiesEnabled ? -snatches * 15 : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5);
+    const remarkTotal = (pointsByOwner.get(tc.id)?.remarks ?? 0) * REMARK_PENALTY;
+    const score = won * 100 + (penaltiesEnabled ? (-snatches * 15 + remarkTotal) : 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5);
 
     kpiAcc.assigned += assignedToday;
     kpiAcc.won += won;
@@ -2062,14 +2186,15 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         leadsStatus,
       },
       score,
-      points: pointsByOwner.get(tc.id) ?? { closes: 0, snatches: 0, total: 0 },
+      points: pointsByOwner.get(tc.id) ?? { closes: 0, snatches: 0, remarks: 0, total: 0 },
       risk: riskByOwner.get(tc.id) ?? { atRisk: 0, zombie: 0 },
     });
   }
 
-  // Rank by event-ledger points first (conversion outcomes: +100 closes, -15
-  // snatches) — the metric that reflects who actually converted pipeline in the
-  // period. Tie-break by accepted closed ₹, then projected value, then score.
+  // Rank by event-ledger points first (conversion outcomes: slab close credits, −10
+  // remarks, legacy −15 snatches) — the metric that reflects who actually
+  // converted pipeline in the period. Tie-break by accepted closed ₹, then
+  // projected value, then score.
   leaderboard.sort((a, b) => {
     const rankA = b.points.total - a.points.total;
     if (rankA !== 0) return rankA;
@@ -2421,10 +2546,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       ...kpiAcc,
       conversionRate: kpiAcc.assigned > 0 ? Math.round((kpiAcc.won / kpiAcc.assigned) * 100) : 0,
     },
-    // Founder pre-warning: open estimates about to be snatched at EOD, sorted
-    // by value. Red = latest AI verdict found no meaningful update; zombie =
-    // silent for more than ZOMBIE_DAYS. Scoped to the signed-in agent when
-    // selfAgentId is present.
+    // Founder pre-warning: open estimates that will cost −10 at the EOD remark
+    // run, sorted by value. Red = latest AI verdict found no meaningful update;
+    // zombie = silent for more than ZOMBIE_DAYS. Scoped to the signed-in agent
+    // when selfAgentId is present.
     risk: {
       counts: {
         open: scopedRiskItems.length,

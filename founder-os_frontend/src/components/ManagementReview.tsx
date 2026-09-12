@@ -7,7 +7,7 @@ import { useAuth } from "@/auth/AuthContext";
 import ManagementRatesPanel from "@/components/ManagementRatesPanel";
 import Modal from "@/components/Modal";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
-import { GroupCard, ClosedDropdown } from "@/components/QueueGroups";
+import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry } from "@/types";
 import { enquiryLabel, historyDateChip, itemNeedsDecision } from "@/types";
 
@@ -18,10 +18,8 @@ export function isManagementPending(e: Enquiry): boolean {
   return (e.items ?? []).some(itemNeedsDecision);
 }
 
-type ItemRow = { enquiry: Enquiry; itemIdx: number };
-
 // Management Review dashboard (mounted as the `enquiry-management`
-// automation). Pending-only, TABULAR: one row per item awaiting a decision
+// automation). Pending-only, TABULAR: one row per enquiry awaiting decisions
 // with a click-to-open review modal carrying the complete information
 // (client, requirements, all items clubbed with their rates, markup +
 // finalize). Decision history below, date-wise.
@@ -68,29 +66,17 @@ export default function ManagementReview() {
   const byActivity = (a: Enquiry, b: Enquiry): number =>
     String(b.updatedAt ?? b.createdAt ?? "").localeCompare(String(a.updatedAt ?? a.createdAt ?? ""));
   const pending = useMemo(() => enquiries.filter(isManagementPending).sort(byActivity), [enquiries]);
-  const pendingRows: ItemRow[] = useMemo(() => {
-    const out: ItemRow[] = [];
-    for (const e of pending) {
-      (e.items ?? []).forEach((it, itemIdx) => {
-        if (itemNeedsDecision(it)) {
-          out.push({ enquiry: e, itemIdx });
-        }
-      });
-    }
-    return out;
-  }, [pending]);
-  // History: finalized, correct-spec items, newest first.
-  const historyRows: ItemRow[] = useMemo(() => {
-    const done = enquiries
+  // Item-level count for the header badge (the table itself stays one row
+  // per enquiry — quote detail lives in the modal).
+  const pendingItemCount = useMemo(
+    () => pending.reduce((n, e) => n + (e.items ?? []).filter(itemNeedsDecision).length, 0),
+    [pending],
+  );
+  // History: enquiries with at least one finalized, correct-spec item.
+  const historyEnquiries: Enquiry[] = useMemo(() => {
+    return enquiries
       .filter((e) => (e.items ?? []).some((it) => it.finalRate !== undefined && it.finalRate !== null && !it.specIssue))
       .sort(byActivity);
-    const out: ItemRow[] = [];
-    for (const e of done) {
-      (e.items ?? []).forEach((it, itemIdx) => {
-        if (it.finalRate !== undefined && it.finalRate !== null && !it.specIssue) out.push({ enquiry: e, itemIdx });
-      });
-    }
-    return out;
   }, [enquiries]);
 
   const leadName = useCallback((agentId: string) => {
@@ -117,113 +103,73 @@ export default function ManagementReview() {
   const sel = selectedId ? enquiries.find((e) => e.id === selectedId) ?? null : null;
 
   // Club rows under their enquiry: header expands to the item table.
-  const groupRows = (rows: ItemRow[]) => {
-    const map = new Map<string, { enquiry: Enquiry; rows: ItemRow[] }>();
-    for (const r of rows) {
-      const g = map.get(r.enquiry.id) ?? { enquiry: r.enquiry, rows: [] };
-      g.rows.push(r);
-      map.set(r.enquiry.id, g);
-    }
-    return [...map.values()];
+  // One row per enquiry — quote detail (vendors, markup inputs) lives in
+  // the modal. Decided items never appear as rows; the progress column
+  // keeps partial work visible ("2 of 5 decided").
+  const itemNames = (e: Enquiry): string => {
+    const names = (e.items ?? []).map((it, idx) => {
+      const n = it.name || `Item ${idx + 1}`;
+      return it.qty ? `${n} \u00d7 ${it.qty}` : n;
+    });
+    if (names.length === 0) return "\u2014";
+    const shown = names.slice(0, 3).join(" \u00b7 ");
+    return names.length > 3 ? `${shown} +${names.length - 3} more` : shown;
   };
 
-  const pendingTable = (rows: ItemRow[]) => (
+  const loopProgress = (e: Enquiry): { done: number; total: number } => {
+    const loop = (e.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable);
+    const done = loop.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
+    return { done, total: loop.length };
+  };
+
+  const renderEnquiryRows = (list: Enquiry[], mode: "active" | "history") => list.map((e) => {
+    const items = e.items ?? [];
+    const { done, total } = loopProgress(e);
+    const held = items.filter((it) => it.specIssue).length;
+    const latest = mode === "history"
+      ? (items.map((it) => it.finalizedAt ?? "").sort().reverse()[0] || undefined)
+      : undefined;
+    return (
+      <tr key={e.id} onClick={() => setSelectedId(e.id)}
+        className="cursor-pointer transition-colors hover:bg-[var(--bg-input)]/40">
+        <td className={tdClass}>
+          <span className="text-[11px] font-extrabold text-[var(--color-brand-indigo)] whitespace-nowrap">{enquiryLabel(e)}</span>
+          <span className="block text-[11px] text-[var(--text-tertiary)] truncate max-w-[14rem]">{e.title || "Untitled"}</span>
+        </td>
+        <td className={tdClass}>
+          <span className="font-semibold text-[var(--text-primary)]">{e.clientCompany || "\u2014"}</span>
+        </td>
+        <td className={tdClass}>
+          <span className="font-bold text-[var(--text-primary)]">{items.length} item{items.length === 1 ? "" : "s"}</span>
+          <span className="block text-[11px] text-[var(--text-secondary)] truncate max-w-[22rem]">{itemNames(e)}</span>
+        </td>
+        <td className={tdClass}>
+          <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
+            {mode === "active" ? `${total - done} awaiting decision` : `${done} decided`}
+            <span className="text-[var(--text-tertiary)]"> · {done}/{total} decided{held > 0 ? ` · ${held} held` : ""}</span>
+          </span>
+        </td>
+        <td className={tdClass}>
+          <span className="text-[11px] text-[var(--text-tertiary)]">{historyDateChip((mode === "history" ? latest : undefined) ?? e.updatedAt ?? e.createdAt)}</span>
+        </td>
+      </tr>
+    );
+  });
+
+  const enquiryTable = (list: Enquiry[], mode: "active" | "history") => (
     <Table stickyFirst>
       <thead>
         <tr>
           <th className={thClass}>Enquiry</th>
           <th className={thClass}>Client</th>
-          <th className={thClass}>Item</th>
-          <th className={thClass}>Quotes</th>
+          <th className={thClass}>Items</th>
+          <th className={thClass}>Decisions</th>
           <th className={thClass}>Updated</th>
         </tr>
       </thead>
-      <tbody>{renderPendingRows(rows)}</tbody>
+      <tbody>{renderEnquiryRows(list, mode)}</tbody>
     </Table>
   );
-
-  const historyTable = (rows: ItemRow[]) => (
-    <Table stickyFirst>
-      <thead>
-        <tr>
-          <th className={thClass}>Enquiry</th>
-          <th className={thClass}>Client</th>
-          <th className={thClass}>Item</th>
-          <th className={thClass}>Vendor</th>
-          <th className={thClass}>Final</th>
-          <th className={thClass}>Date</th>
-        </tr>
-      </thead>
-      <tbody>{renderHistoryRows(rows)}</tbody>
-    </Table>
-  );
-
-  const renderPendingRows = (rows: ItemRow[]) => rows.map(({ enquiry: e, itemIdx }) => {
-    const it = (e.items ?? [])[itemIdx];
-    if (!it) return null;
-    const quotes = (it.rates ?? []).filter((r) => Number.isFinite(Number(r.rate)));
-    return (
-      <tr key={`${e.id}-${itemIdx}`} onClick={() => setSelectedId(e.id)}
-        className="cursor-pointer transition-colors hover:bg-[var(--bg-input)]/40">
-        <td className={tdClass}>
-          <span className="text-[11px] font-extrabold text-[var(--color-brand-indigo)] whitespace-nowrap">{enquiryLabel(e)}</span>
-          <span className="block text-[11px] text-[var(--text-tertiary)] truncate max-w-[14rem]">{e.title || "Untitled"}</span>
-        </td>
-        <td className={tdClass}>
-          <span className="font-semibold text-[var(--text-primary)]">{e.clientCompany || "—"}</span>
-        </td>
-        <td className={tdClass}>
-          <span className="font-bold text-[var(--text-primary)]">{it.name || `Item ${itemIdx + 1}`}</span>
-          {it.qty && <span className="ml-2 text-[11px] text-[var(--text-secondary)]">× {it.qty}</span>}
-        </td>
-        <td className={tdClass}>
-          {quotes.length === 0 ? (
-            <span className="text-xs text-[var(--text-tertiary)]">—</span>
-          ) : (
-            <span className="flex flex-col gap-0.5">
-              {quotes.map((r, ri) => (
-                <span key={ri} className="text-xs whitespace-nowrap">
-                  <span className="text-[var(--text-secondary)]">{r.vendor}</span>
-                  <span className="font-mono font-bold text-[var(--text-primary)]"> ₹{Number(r.rate).toLocaleString("en-IN")}</span>
-                </span>
-              ))}
-            </span>
-          )}
-        </td>
-        <td className={tdClass}>
-          <span className="text-[11px] text-[var(--text-tertiary)]">{historyDateChip(e.updatedAt ?? e.createdAt)}</span>
-        </td>
-      </tr>
-    );
-  });
-
-  const renderHistoryRows = (rows: ItemRow[]) => rows.map(({ enquiry: e, itemIdx }) => {    const it = (e.items ?? [])[itemIdx];
-    if (!it) return null;
-    return (
-      <tr key={`${e.id}-${itemIdx}`} onClick={() => setSelectedId(e.id)}
-        className="cursor-pointer transition-colors hover:bg-[var(--bg-input)]/40">
-        <td className={tdClass}>
-          <span className="text-[11px] font-extrabold text-[var(--color-brand-indigo)] whitespace-nowrap">{enquiryLabel(e)}</span>
-          <span className="block text-[11px] text-[var(--text-tertiary)] truncate max-w-[14rem]">{e.title || "Untitled"}</span>
-        </td>
-        <td className={tdClass}>
-          <span className="font-semibold text-[var(--text-primary)]">{e.clientCompany || "—"}</span>
-        </td>
-        <td className={tdClass}>
-          <span className="font-bold text-[var(--text-primary)]">{it.name || `Item ${itemIdx + 1}`}</span>
-        </td>
-        <td className={tdClass}>
-          <span className="text-xs text-[var(--text-secondary)]">{it.selectedVendor || "—"}</span>
-        </td>
-        <td className={tdClass}>
-          <span className="font-extrabold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">₹{Number(it.finalRate).toLocaleString("en-IN")}</span>
-        </td>
-        <td className={tdClass}>
-          <span className="text-[11px] text-[var(--text-tertiary)]">{historyDateChip(it.finalizedAt ?? e.updatedAt ?? e.createdAt)}</span>
-        </td>
-      </tr>
-    );
-  });
 
   const info: Array<[string, string]> = sel ? ([
     ["Company", sel.clientCompany || ""],
@@ -241,43 +187,29 @@ export default function ManagementReview() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Management Review</h1>
         <span className="px-3 py-1 text-xs font-extrabold rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30">
-          {pendingRows.length} awaiting decision
+          {pending.length} enquir{pending.length === 1 ? "y" : "ies"} · {pendingItemCount} awaiting decision
         </span>
       </div>
 
-      {pendingRows.length === 0 && historyRows.length === 0 ? (
+      {pending.length === 0 && historyEnquiries.length === 0 ? (
         <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
           <p className="text-lg font-bold text-[var(--text-primary)]">Nothing awaiting review 🎉</p>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">Rated items will appear here for markup + finalize automatically.</p>
         </div>
       ) : (
         <div className="space-y-6">
-          {pendingRows.length > 0 && (
+          {pending.length > 0 && (
             <section className="space-y-2">
               <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-                Active — awaiting decision ({pendingRows.length})
+                Active — awaiting decision ({pending.length} enquir{pending.length === 1 ? "y" : "ies"})
               </p>
-              {groupRows(pendingRows).map((g) => (
-                <GroupCard key={g.enquiry.id}
-                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
-                  subtitle={g.enquiry.clientCompany || undefined}
-                  count={g.rows.length}>
-                  {pendingTable(g.rows)}
-                </GroupCard>
-              ))}
+              {enquiryTable(pending, "active")}
             </section>
           )}
 
-          {historyRows.length > 0 && (
-            <ClosedDropdown count={historyRows.length}>
-              {groupRows(historyRows).map((g) => (
-                <GroupCard key={g.enquiry.id} defaultOpen={false}
-                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
-                  subtitle={g.enquiry.clientCompany || undefined}
-                  count={g.rows.length}>
-                  {historyTable(g.rows)}
-                </GroupCard>
-              ))}
+          {historyEnquiries.length > 0 && (
+            <ClosedDropdown count={historyEnquiries.length}>
+              {enquiryTable(historyEnquiries, "history")}
             </ClosedDropdown>
           )}
         </div>

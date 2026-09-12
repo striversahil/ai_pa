@@ -4,6 +4,9 @@ export interface Agent {
   initials: string;
   color: string;
   status: string;
+  /** Roster email (when the backend serves it) — used to match the
+   *  signed-in user to their own agent row. */
+  email?: string | null;
 }
 
 export interface Activity {

@@ -142,11 +142,11 @@ export const isoOrUndefined = (v: unknown): string | undefined => {
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 };
 
-/** Strict quantity: plain digits with an optional decimal part only.
- *  Anything else (units, words, blanks) is rejected to "". */
+/** Quantity keeps digits + units (`3 PCS`): anything without a digit is
+ *  not a quantity and normalizes to "". */
 export function normalizeQty(v: unknown): string {
-  const s = String(v ?? '').trim();
-  return /^\d+(\.\d+)?$/.test(s) ? s : '';
+  const s = String(v ?? '').trim().slice(0, 120);
+  return /\d/.test(s) ? s : '';
 }
 
 /** ~10MB binary per attachment (base64 inflates ~4/3). Enforced client-side

@@ -4,8 +4,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, requireSecret, getEntryOrReload, notifyLive, type Bindings } from '../context';
+import { LiveEvent } from '../../live';
+import { runEodRemarkDeduction } from '../../automations/telecalling/service';
 
 export function registerTriggerRoutes(app: Hono<{ Bindings: Bindings }>): void {
+  // EOD remark deduction (−10 per red-risk estimate held). Fired by the 21:00
+  // IST telecalling-eod job. Never moves estimates — scores only.
+  // Registered before /:slug so the two-segment path can never collide.
+  app.post('/api/trigger/telecalling/eod', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const day = c.req.query('day') || undefined;
+    const result = await runEodRemarkDeduction(day);
+    notifyLive(c, { type: LiveEvent.Telecalling });
+    notifyLive(c, { type: 'automation', slug: 'telecalling' });
+    return c.json({ ok: true, ...result });
+  });
+
   app.post('/api/trigger/:slug', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { AutomationEngine } = deps();

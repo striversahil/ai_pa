@@ -122,6 +122,15 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const [agents, setAgents] = useState<Agent[]>([]);
   const [clients, setClients] = useState<Array<{ name: string; openEstimates: number; enquiries: number }>>([]);
   const [loaded, setLoaded] = useState(false);
+  // Login email (same session as these fetches): resolves the signed-in
+  // sales agent to their own roster row for currentAgent below.
+  const [userEmail, setUserEmail] = useState("");
+  useEffect(() => {
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setUserEmail(String(d?.user?.email ?? "").toLowerCase().trim()))
+      .catch(() => {});
+  }, []);
 
   // Ref-mirrored enquiries + per-enquiry write chains. Rapid successive item
   // writes (e.g. adding vendor A then vendor B) must serialize: each PATCH
@@ -161,6 +170,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
           initials: initialsOf(a.name),
           color: AGENT_COLORS[i % AGENT_COLORS.length],
           status: 'active',
+          email: a?.email ? String(a.email) : null,
         })));
       }
       if (clientsRes.ok) {
@@ -228,8 +238,20 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   }, []);
 
   const currentAgent = useMemo(() => {
-    return agents[0] || { id: '', name: 'Sales Agent', initials: 'SA', color: '#6366f1', status: 'active' as const };
-  }, [agents]);
+    const fallback = { id: '', name: 'Sales Agent', initials: 'SA', color: '#6366f1', status: 'active' as const };
+    if (userEmail) {
+      const local = (e: string): string => e.split('@')[0].trim();
+      // Same roster rule as the backend lead inference: exact email first,
+      // then local-part (bare `buisales4` vs full login), so the signed-in
+      // agent always resolves to their own MIS roster row (e.g. Muskan).
+      const self = agents.find((a) => {
+        const e = String((a as any)?.email ?? '').toLowerCase().trim();
+        return e && (e === userEmail || local(e) === local(userEmail));
+      });
+      if (self) return self;
+    }
+    return agents[0] || fallback;
+  }, [agents, userEmail]);
 
   const selectedEnquiry = useMemo(() => null as Enquiry | null, []);
 

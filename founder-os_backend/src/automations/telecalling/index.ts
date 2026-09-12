@@ -3,9 +3,11 @@ import { runLeadConversion, getTelecallingDashboardData } from './service';
 
 /**
  * Unified telecalling automation. The handler runs the Lead Conversion engine
- * (assign unassigned Zoho estimates round-robin + reassign unsatisfactory ones
- * at end of day). Triggered by GitHub Actions cron → POST /api/trigger/telecalling
- * (and locally by the rule.json cron via node-cron on the Express runtime).
+ * (deal unassigned Zoho estimates to conversion specialists; risk re-poaching
+ * stays behind the MIS "EOD Reassignment" switch, currently OFF). The EOD
+ * remark deduction (−10 per red-risk holding) runs via runEodRemarkDeduction,
+ * triggered by GitHub Actions cron → POST /api/trigger/telecalling/eod
+ * (and locally on the Express runtime via the same path).
  */
 export async function handler(_ctx: AutomationContext): Promise<void> {
   await runLeadConversion();

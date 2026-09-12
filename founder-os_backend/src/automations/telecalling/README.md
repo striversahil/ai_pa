@@ -34,12 +34,14 @@ calls/leads + KRA targets), `score` (composite), `points` (ledger),
 
 - **Rank order** (`service.ts` sort): `points.total` desc → then
   `estimatedConversion.value` desc → then composite `score` desc.
-  `points.total` = +100 closes minus −15 snatches **in the selected period**
-  (see Scoring). A closer always outranks a dialer.
+  `points.total` = +100 closes minus −10 remark penalties (minus legacy −15
+  snatches where present) **in the selected period** (see Scoring). A closer
+  always outranks a dialer.
 - **Composite score** (display + final tie-break only):
-  `won*100 + (penaltiesEnabled ? −snatches*15 : 0) + leadsGenerated*15 +
-  round(callsConnected*0.5)`.
-  When the penalties toggle is OFF (default), snatches contribute 0.
+  `won*100 + (penaltiesEnabled ? −snatches*15 : 0) + remarks*−10 +
+  leadsGenerated*15 + round(callsConnected*0.5)`.
+  Remark penalties always count; when the penalties toggle is OFF (default),
+  snatches contribute 0.
 - **Won** = +100 close events in the period (day the estimate converted),
   NOT currently-held won estimates. Today shows only today's conversions;
   week restarts at zero naturally.
@@ -103,10 +105,11 @@ holder earned protection or exhausted it; null when snapshots unreadable
   `loadCount` increments for the winner within the run. After the run,
   `invalidateRiskCache()` fires if anything moved.
 - **EOD vs every-run**: the engine re-poaches red/zombie on **every**
-  run — there is no 21:00 time gate in the automation. 21:00 IST
-  only drives the `snatchInHours` countdown (`hoursUntilEod()`, null past
-  21:00). "EOD snatch/sweep" wording elsewhere means this standing
-  red/zombie re-poach, not a once-daily job.
+  run while the EOD Reassignment switch is ON (currently OFF — holders keep
+  everything) — there is no 21:00 time gate in the automation. 21:00 IST
+  drives the `snatchInHours` countdown (`hoursUntilEod()`, null past
+  21:00) and the remark-deduction run. "EOD snatch/sweep" wording elsewhere
+  means the legacy standing red/zombie re-poach, not a once-daily job.
 - **Role correction (switch-independent)**: estimates held by a
   non-specialist (`assignEstimateFollowUps=false`, deleted, absent holder)
   are always moved to the best-fit specialist — even when the EOD switch
@@ -147,7 +150,7 @@ estimate (`ZOMBIE_DAYS=3`, `FRESH_HOURS=24`):
 - **pending** — has recent comment but no AI verdict yet.
 - **red** — latest verdict `meaningfulUpdate=false`, **OR verdict true but
   comment older than 24h** (satisfactory-but-stale: nobody chased it today
-  → snatch candidate).
+  → costs −10 at the EOD remark run).
 - **ok** — meaningful AND fresh (<24h).
 
 `latestCommentDates()` prefers `dateFormatted` ("DD/MM/YYYY hh:mm AM/PM",
@@ -155,7 +158,7 @@ parsed as explicit `+05:30`) over date-only `date` (midnight UTC would
 read ~12h stale); keeps the true newest per estimate; on query failure
 degrades to classification-only. `buildSnatchReason()` mirrors the
 verdict: zombie → "No reply in over 3 days…"; red-with-positive-verdict
-→ "satisfactory but stale (older than 24h)…"; else `EOD snatch
+→ "satisfactory but stale (older than 24h)…"; else `EOD remark penalty
 (<verdict>): <first 140 chars of reasoning>` (falls back to generic
 unsatisfactory line; ignores "No sales agent comment found.").
 `RiskItem` also carries `locked` (`lockedTelecallerId` set) and
@@ -164,24 +167,33 @@ unsatisfactory line; ignores "No sales agent comment found.").
 clears it + `telecalling:dashboard*` prefix — call on every estimate/
 comment/status/classification write and after each engine run.
 
-## Event-ledger scoring (+100 / −15, −20 retired)
+## Event-ledger scoring (slab close / −10, −15 legacy, −20 retired)
 
 Append-only `TelecallerScoreEvent` (`telecallerId, estimateId, delta, day`
-IST, reason). Only `+100` and `−15` deltas count — historical −20 decline
-rows stay in the table but the score loop ignores them everywhere.
+IST, reason). Only slab close deltas (50/75/100/200), `−10` and `−15` count —
+historical −20 decline rows stay in the table but the score loop ignores them
+everywhere.
 
-- **+100 close** (`recordConversionClose`, called from the status-sync
+- **Slab close credit** (`recordConversionClose`, called from the status-sync
   route): estimate status → `accepted`/`confirmed`, credited to the **lead
   generator** (`Estimate.createdBy`, holder only as fallback when the creator
-  is unknown). Duplicate-guarded (one +100 per estimate, ever). ALWAYS
-  recorded, toggle-independent.
-- **−15 snatch** (`recordSnatchPenalty`, called from the engine only):
-  charged to the agent re-poached FROM. Gated by the MIS **Active Penalty**
-  toggle (`Setting telecalling:penalties_enabled`, `isPenaltiesEnabled()`,
-  default OFF; `setPenaltiesEnabled()` flips it). OFF = historical
-  behaviour: only positive events recorded, leaderboard ignores snatches.
-  Temp-cover losses never penalised (see guard above); lock enforcement
-  never penalised.
+  is unknown). Points follow the estimate total: ₹0–1L → 50, ₹1L–2.5L → 75,
+  ₹2.5L–5L → 100, ₹5L and above → 200 (boundary totals join the higher slab).
+  Duplicate-guarded (one
+  close credit per estimate, ever). ALWAYS recorded, toggle-independent.
+- **−10 remark** (`recordRemarkPenalty`, called from `runEodRemarkDeduction`
+  at the 21:00 IST EOD run): one charge per red-risk estimate currently held
+  (zombies, MIS-locked and skip-assignment holdings excluded).
+  Duplicate-guarded (one −10 per holder per estimate per day). Governed by the
+  MIS **Active Penalty** toggle (default ON) — the EOD run skips charging
+  entirely while it is OFF, and the composite `score` counts penalties only
+  while it is ON (`points.total` always sums the ledger).
+- **−15 snatch** (`recordSnatchPenalty`, legacy): risk re-poaching is switched
+  OFF, so no new −15 rows are written; historical ones still count. Was gated
+  by the MIS **Active Penalty** toggle (`Setting
+  telecalling:penalties_enabled`, `isPenaltiesEnabled()`, default OFF;
+  `setPenaltiesEnabled()` flips it). Temp-cover losses never penalised;
+  lock enforcement never penalised.
 - Every row stores the IST `day`, so week/month/year sums slice by
   `day >= from && <= to`.
 

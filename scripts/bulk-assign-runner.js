@@ -14,8 +14,8 @@
  *     estimates the mapping claims for someone else (those move).
  *   - Live holdings absent from the mapping stay exactly where they are.
  *   - Samarjeet is flipped back to a follow-up specialist (assignEstimateFollowUps).
- *   - One-time assign: no locks, no score penalties. Tonight's EOD snatch may
- *     still re-poach red/zombie estimates afterwards.
+  *   - One-time assign: no locks, no score penalties. Red holdings still cost
+  *     −10 at tonight's EOD remark run (re-poaching is OFF).
  *
  * Env: WORKER_URL, SHARED_SECRET.
  * Safety: DRY_RUN=1 prints the move list without POSTing anything.

@@ -296,15 +296,16 @@ model EstimateAssignment {
 }
 
 // Event-ledger scoring for the telecalling leaderboard. +100 per converted
-// estimate (credited to the lead generator, holder only as fallback); -15 per
-// EOD snatch (charged to the agent who lost it for an unsatisfactory remark). The
+// estimate (credited to the lead generator, holder only as fallback); -10 per
+// red-risk estimate held at the EOD remark run; -15 legacy EOD snatch rows
+// (re-poaching switched OFF — no new ones written). The
 // day field (IST date) lets any timeframe be summed with a simple filter, so the
 // weekly leaderboard restarts at zero naturally each Sunday/Monday.
 model TelecallerScoreEvent {
   id           String     @id @default(uuid())
   telecallerId String
   estimateId   String
-  delta        Int // +100 close · -15 snatch
+  delta        Int // +100 close · -10 remark · -15 legacy snatch
   day          String // YYYY-MM-DD the event occurred (IST)
   reason       String?
   createdAt    DateTime   @default(now())

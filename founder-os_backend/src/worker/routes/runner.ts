@@ -616,7 +616,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       updated++;
     }
     notifyLive(c, { type: 'estimates' });
-    // A status flip to accepted/confirmed writes a +100 close into the
+    // A status flip to accepted/confirmed writes a slab close credit into the
     // telecalling ledger (recordConversionClose above) — the Telecalling
     // dashboard subscribes narrowly to automation/telecalling events, so it
     // needs its own broadcast or an open tab never shows the win until a

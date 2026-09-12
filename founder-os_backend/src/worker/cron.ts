@@ -72,7 +72,7 @@ function isOpsWindow(now: Date): boolean {
 // Slot map (UTC → IST job family):
 //   02:30 (08:00 IST) → telecalling-distribution + morning-brief
 //   13:30 (19:00 IST) → eod-summary
-//   15:30 (21:00 IST) → telecalling-eod-snatch
+//   15:30 (21:00 IST) → telecalling-eod-deduction
 //   19:30 (01:00 IST) → baseline-freeze (+ neodove backfill via 02:30 slot)
 //   21:30 (03:00 IST) → data-retention
 // The workflow gates each job on `inputs.slot` (default 'all' = manual runs

@@ -15,6 +15,9 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   const finalized = (enq.rateStatus ?? "") === "finalized";
   const sent = (enq.rateStatus ?? "") === "sent";
   const flagged = items.some((it) => it.specIssue);
+  // Management-decided items on an open enquiry = partial rates received
+  // (per-enquiry tag; the per-item rates live in the detail view).
+  const hasPartialRates = !finalized && !sent && items.some((it) => it.finalRate !== undefined && it.finalRate !== null);
   return (
     <div
       className="flex cursor-pointer flex-col items-start gap-3 rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)] p-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:border-[var(--color-brand-indigo)]/50 hover:bg-[var(--bg-input)]/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6"
@@ -47,12 +50,12 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
                 : sent
                 ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
                 : finalized
-                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                : hasRates
-                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                  : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
-            }`}>
-              {flagged ? "Fix Spec" : sent ? "Marked as Sent" : finalized ? "Rates Ready" : hasRates ? "Rating…" : "Awaiting rates"}
+                 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                : hasPartialRates || hasRates
+                   ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                   : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
+             }`}>
+              {flagged ? "Fix Spec" : sent ? "Marked as Sent" : finalized ? "Rates Ready" : hasPartialRates ? "Partial rates" : hasRates ? "Rating…" : "Awaiting rates"}
             </span>
           )}
         </div>

@@ -137,17 +137,31 @@ export function canManageRates(me: MeResponse): boolean {
 }
 
 /** Lead inference (telecalling creator-first pattern): resolve the signed-in
- *  user to a sales agent via their email on the Telecaller roster. Returns
- *  the telecaller id, or null when no roster row matches. */
+ *  user to a sales agent via their email on the Telecaller roster. Falls
+ *  back to Google display-name matching (roster rows often lack an email).
+ *  Returns the telecaller id, or null when no roster row matches. */
 export async function resolveCreatorAgentId(prisma: any, me: MeResponse): Promise<string | null> {
   const email = String((me as any)?.user?.email ?? '').toLowerCase().trim();
-  if (!email) return null;
+  const name = String((me as any)?.user?.name ?? '').toLowerCase().trim();
+  if (!email && !name) return null;
+  // Local-part comparison covers roster emails stored bare (`buisales4`)
+  // vs full logins (`buisales4@…`), and vice versa.
+  const local = (e: string): string => e.split('@')[0].trim();
   try {
     const roster = await prisma.telecaller.findMany();
-    const hit = ((roster as any[]) ?? []).find(
-      (t) => String(t?.email ?? '').toLowerCase().trim() === email && !t?.deleted,
-    );
-    return hit ? String(hit.id) : null;
+    const rows = ((roster as any[]) ?? []).filter((t) => t && !t?.deleted);
+    if (email) {
+      const hit = rows.find((t) => {
+        const e = String(t?.email ?? '').toLowerCase().trim();
+        return e && (e === email || local(e) === local(email));
+      });
+      if (hit) return String(hit.id);
+    }
+    if (name) {
+      const hit = rows.find((t) => String(t?.name ?? '').toLowerCase().trim() === name);
+      if (hit) return String(hit.id);
+    }
+    return null;
   } catch {
     return null;
   }
@@ -308,10 +322,12 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
   // EST No. is OPTIONAL (enter now or later) — only the row itself is created;
   // LLM auto-fill covers the structured fields, so everything is optional.
   const estNumber = String(body?.estNumber ?? "").trim();
-  // Lead of = the agent who created the enquiry (no AI guessing). The creator
-  // is the signed-in user; a provided agent still wins (e.g. root assigning).
-  const creatorAgentId = String(me?.user?.id ?? "");
-  const assignedAgentId = String(body.assignedAgentId || creatorAgentId || "");
+  // Lead of = the agent who created the enquiry (no AI guessing). The
+  // worker/express route pre-resolves the creator's roster row (login email,
+  // then display name); a provided agent still wins (e.g. root assigning).
+  // No roster match = unassigned ("") — never the auth-session id, which
+  // belongs to a different id space and could resolve to the wrong person.
+  const assignedAgentId = String(body.assignedAgentId || "");
   // Daily enquiry number: auto counter, resets every IST day.
   const all = await store.listEnquiries().catch(() => [] as any[]);
   const now = new Date();
@@ -526,6 +542,50 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       base.thread = trail.slice(-50);
       return base;
     }).filter((it: any) => it !== null);
+  }
+  // Auto-advance: a management item save that leaves every loop item
+  // with a final rate flips the enquiry to rates-ready on its own — no
+  // manual Finalize press needed. Only privileged (management) item writes
+  // trigger this; other roles never carry decision fields. finalizedAt is
+  // stamped for items that lack it, mirroring an explicit finalize.
+  if (privileged && (updates as any).rateStatus === undefined && Array.isArray((updates as any).items)) {
+    const merged = (updates as any).items as any[];
+    const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable);
+    const done = loop.filter((it) =>
+      it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
+    if (loop.length > 0 && done.length === loop.length) {
+      const cur = String((storedForItems as any)?.rateStatus ?? '');
+      if (cur === '' || cur === 'rate_pending' || cur === 'rates_received') {
+        const nowIso = new Date().toISOString();
+        (updates as any).items = merged.map((it) =>
+          (!it?.specIssue && !it?.rateAvailable
+            && it?.finalRate !== undefined && it?.finalRate !== null && !it?.finalizedAt)
+            ? { ...it, finalizedAt: nowIso }
+            : it);
+        (updates as any).rateStatus = 'finalized';
+      }
+    }
+  }
+  // Completeness gate (all writers): 'finalized' / 'sent' are enquiry-level
+  // commitments, but decisions are per-item. Refuse to close an enquiry
+  // while any loop item (correct spec, rate not already available) still
+  // lacks a final rate — otherwise a partial finalize/sent looks complete
+  // to Sales and locks the Management panel (locked = finalized || sent)
+  // with undecided items stranded inside it. Partial work must stay on
+  // plain item saves; finalize/sent unlock only at 100%.
+  if ((updates as any).rateStatus === 'finalized' || (updates as any).rateStatus === 'sent') {
+    const merged: any[] = Array.isArray((updates as any).items)
+      ? (updates as any).items
+      : (Array.isArray((storedForItems as any)?.items) ? (storedForItems as any).items : []);
+    const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable);
+    const done = loop.filter((it) =>
+      it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
+    if (done.length < loop.length) {
+      const verb = (updates as any).rateStatus === 'sent' ? 'mark as sent' : 'finalize';
+      return json(400, {
+        error: `Only ${done.length} of ${loop.length} items have final rates — decide every item before you ${verb}`,
+      });
+    }
   }
   if (!privileged) {
     // Sales "Mark as sent": finalized → sent, and only with an EST No. on

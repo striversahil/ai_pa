@@ -225,7 +225,7 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 | `orphaned-message-recovery` | handler | `*/2 * * * *` | Re-enqueue saved-but-unclassified messages |
 | `outbound-intent-recovery` | handler | `*` | Re-defer persisted outbound intents once Redis back |
 | `sla-monitor` | handler | `*` | Flag SLA breaches → Slack |
-| `telecalling` | handler | `*/30 * * * *` rule intent; **production-live via `cron-daily-ist.yml` (08:00 IST round-robin rotation + 21:00 IST EOD snatch) + `cron-every-15min.yml` effort-sync → `/api/runner/telecalling/effort-sync`** | Unified Lead Conversion (programmatic estimate assignment) + Lead Generation (NeoDove, live). **Deterministic — no LLM.** Handler `runLeadConversion()` (service.ts) assigns unassigned + EOD-reassigns red/zombie; `bulkAssignEstimates()` powers MIS bulk-assign. Registered in `registry-worker.ts` as `telecalling`. Triggered in prod by `POST /api/trigger/telecalling` (secret-gated), NOT by in-worker node-cron. |
+| `telecalling` | handler | `*/30 * * * *` rule intent; **production-live via `cron-daily-ist.yml` (08:00 IST round-robin rotation + 21:00 IST EOD remark deduction) + `cron-every-15min.yml` effort-sync → `/api/runner/telecalling/effort-sync`** | Unified Lead Conversion (programmatic estimate assignment) + Lead Generation (NeoDove, live). **Deterministic — no LLM.** Handler `runLeadConversion()` (service.ts) deals unassigned estimates (risk re-poaching switched OFF — holders keep everything); `runEodRemarkDeduction()` charges −10 per red-risk holding at 21:00 IST; `bulkAssignEstimates()` powers MIS bulk-assign. Registered in `registry-worker.ts` as `telecalling`. Triggered in prod by `POST /api/trigger/telecalling` + `/api/trigger/telecalling/eod` (secret-gated), NOT by in-worker node-cron. |
 | `telecalling-agent-analysis` | handler | `*/30 * * * *` | Read Telecalling Agents sheet → per-agent metrics |
 | `telecalling-enquiry-to-dpp` | rule | event+scan | Enquiry messages → DPP |
 | `wa-engine-monitor` | handler | `*` | WA Engine session/health monitor + dashboard |
@@ -405,10 +405,12 @@ Gateway design (one place, both runtimes):
 Telecalling production status: the `telecalling` automation is **production-live and
 fully deterministic (no LLM)** — `runLeadConversion()` in
 `founder-os_backend/src/automations/telecalling/service.ts` (round-robin assignment,
-conversion-weighted routing, risk/ok-red-zombie model, snatch shield from NeoDove
-effort snapshots, `TelecallerScoreEvent` ledger). Live cadence: `cron-daily-ist.yml`
-fires `POST /api/trigger/telecalling` at 08:00 IST (round-robin rotation) and 21:00 IST
-(EOD snatch sweep of red/zombie estimates), while `cron-every-15min.yml` runs
+conversion-weighted routing, risk/ok-red-zombie model, `TelecallerScoreEvent` ledger
+with +100 closes and −10 EOD remark penalties; risk re-poaching is switched OFF).
+Live cadence: `cron-daily-ist.yml`
+fires `POST /api/trigger/telecalling` at 08:00 IST (round-robin rotation) and
+`POST /api/trigger/telecalling/eod` at 21:00 IST (EOD remark deduction — −10 per
+red-risk holding, scores only), while `cron-every-15min.yml` runs
 `scripts/effort-sync-runner.js` → `POST /api/runner/telecalling/effort-sync`, which
 persists per-day NeoDove call-log snapshots (`telecalling:effort:<YYYY-MM-DD>`) that the
 assignment engine reads for the snatch shield. Dashboard: `TelecallingDashboard`

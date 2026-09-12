@@ -188,19 +188,19 @@ function StaleChip({ staleHours, compact = false }: { staleHours: number | null 
   );
 }
 
-/** EOD snatch countdown chip — the "get a meaningful update before 9 PM" signal. */
+/** EOD remark-penalty countdown chip — the "get a meaningful update before 9 PM" signal. */
 function SnatchChip({ risk, snatchInHours, compact = false }: { risk?: string | null; snatchInHours?: number | null; compact?: boolean }) {
   const base = `inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold ${compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]"}`;
   if (risk === "zombie")
     return (
-      <span title="Silent for over 3 days — will be snatched at tonight's EOD sweep" className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+      <span title="Silent for over 3 days — dead weight on the board" className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
         ☠{compact ? "" : " Zombie"}
       </span>
     );
   if (risk === "red")
     return (
-      <span title={`Unsatisfactory remark, or last update older than 24h — snatched at EOD${snatchInHours != null ? ` in ~${snatchInHours}h` : ""}`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
-        ⚠{compact ? "" : ` Snatch in ${snatchInHours != null ? `~${snatchInHours}h` : "EOD"}`}
+      <span title={`Unsatisfactory remark, or last update older than 24h — costs −10 at EOD${snatchInHours != null ? ` in ~${snatchInHours}h` : ""}`} className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>
+        ⚠{compact ? "" : ` −10 in ${snatchInHours != null ? `~${snatchInHours}h` : "EOD"}`}
       </span>
     );
   if (risk === "pending")
@@ -210,7 +210,7 @@ function SnatchChip({ risk, snatchInHours, compact = false }: { risk?: string | 
       </span>
     );
   return (
-    <span title="Meaningful update logged — safe from tonight's sweep" className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>
+    <span title="Meaningful update logged — no EOD deduction" className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>
       🛡{compact ? "" : " Safe"}
     </span>
   );
@@ -1228,8 +1228,8 @@ export default function TelecallingDashboard() {
                     <h3 className="text-lg font-bold">🏆 Leaderboard — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
                     {/* Scoring criteria — the composite score is the ranking norm. */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
-                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-400">
-                        1 close <span className="font-mono">+100</span>
+                      <span title="Close points by estimate value: ₹0–1L → +50 · ₹1L–2.5L → +75 · ₹2.5L–5L → +100 · ₹5L and above → +200" className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-400">
+                        Close <span className="font-mono">+50–200</span>
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-bold text-amber-400">
                         1 lead <span className="font-mono">+15</span>
@@ -1275,10 +1275,18 @@ export default function TelecallingDashboard() {
                         <div className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 shadow-xl p-4 text-left text-[11px] leading-relaxed text-zinc-700 dark:text-zinc-300 space-y-2">
                           <div className="text-sm font-bold text-zinc-900 dark:text-white">📖 Game Rules</div>
                           <ul className="space-y-1.5 list-none">
-                            <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+100</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms). Credited to whoever is holding it at that moment.</li>
+                            <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+50 – +200</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms), scored by its value. Credited to whoever generated the lead.
+                              <span className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-2 py-1.5 font-semibold">
+                                <span>₹0 – ₹1L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+50</span></span>
+                                <span>₹1L – ₹2.5L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+75</span></span>
+                                <span>₹2.5L – ₹5L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+100</span></span>
+                                <span>₹5L &amp; above <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+200</span></span>
+                              </span>
+                            </li>
                             <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
                             <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +100 · lead +15 · call +0.5{penaltyMode ? <span> · <span className="text-rose-500">snatch −15</span> (Active Penalty ON — unsatisfied/red estimates are re-poached at the sweep and the loser is charged)</span> : <span> (snatch −15 applies only while Active Penalty is ON, and only to future snatches)</span>} · <span className="text-emerald-500">🛡 shield</span> (3+ effective calls over 2h+ on the lead protects a red estimate for the day — redials within 30 min count once; grace lasts 2 days, day 3 snatches). Risk-based re-poaching itself follows the Controller's 🔁 EOD Reassignment switch (ON by default). The table restarts at zero every week so everyone gets a fair shot.</li>
+                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−10</span> — each <span className="font-semibold">red (unsatisfactory) estimate</span> you still hold at the 9 PM EOD run (once per estimate per day; always applies).</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +50–200 (by value) · lead +15 · call +0.5 · <span className="text-rose-500">red-hold −10</span>{penaltyMode ? <span> (Active Penalty ON — penalties apply)</span> : <span> (Active Penalty OFF — penalties paused)</span>} · <span className="text-rose-500">legacy snatch −15</span> (no new rows; historical ones still count while ON) · <span className="text-emerald-500">🛡 shield</span> (legacy — re-poaching is OFF, so shields never trigger). Risk-based re-poaching follows the Controller's 🔁 EOD Reassignment switch (currently OFF — holders keep everything). The table restarts at zero every week so everyone gets a fair shot.</li>
                           </ul>
                         </div>
                       </div>
@@ -1786,10 +1794,10 @@ export default function TelecallingDashboard() {
                     <div>
                       <h3 className="text-lg font-bold mb-1">⚖️ Active Penalty</h3>
                       <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xl">
-                        Master switch for the whole roster. OFF (default): no −15 snatch
-                        for anyone — only the +100 conversion close counts. ON: the −15
-                        EOD-snatch penalty applies. Temp absent-cover holds are always
-                        penalty-free.
+                        Master switch for all penalties, ON by default: the −10
+                        EOD remark deduction applies. OFF pauses every penalty
+                        (no −10 charged, penalties ignored in scores). Temp
+                        absent-cover holds are always penalty-free.
                       </p>
                     </div>
                     <button
@@ -1800,7 +1808,7 @@ export default function TelecallingDashboard() {
                           ? "bg-rose-600 hover:bg-rose-500 text-white"
                           : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-700"
                       }`}
-                      title="Toggles whether the EOD-snatch penalty is charged to agents"
+                      title="Toggles whether penalties (−10 EOD remark deduction) apply to agents"
                     >
                       {penaltyMode === null ? "…" : penaltyMode ? "Active Penalty: ON" : "Active Penalty: OFF"}
                     </button>

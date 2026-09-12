@@ -173,23 +173,8 @@ export default function EnquiryModal({
             </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Received Date</label>
-                <div className="px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm text-[var(--text-tertiary)]">
-                  {new Date().toLocaleDateString()}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Lead By</label>
-                <div className="px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm text-[var(--text-tertiary)]">
-                  {editingEnquiry ? (agents.find((a) => String(a.id) === String(editingEnquiry.assignedAgentId))?.name || "Auto-assigned") : "You (auto-detected on save)"}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Source</label>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Source</label>
                 <select
                   value={formSource}
                   onChange={(e) => setFormSource(e.target.value)}
@@ -200,18 +185,19 @@ export default function EnquiryModal({
                   ))}
                 </select>
               </div>
-            </div>
 
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Items ({formItems.length})</label>
               <ItemBoxList items={formItems} onChange={setFormItems} />
             </div>
 
-            <div className="space-y-2">
-              <p className="text-[11px] text-[var(--text-tertiary)]">
-                Attach drawings / photos on each item below — there are no enquiry-level attachments.
-              </p>
-            </div>
+            {formSource !== "B2B" && (
+              <div className="space-y-2">
+                <p className="text-[11px] text-[var(--text-tertiary)]">
+                  Attach drawings / photos on each item below — there are no enquiry-level attachments.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="px-5 py-4 border-t border-[var(--border-card)] flex justify-end gap-2 bg-[var(--bg-input)]/10">

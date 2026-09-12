@@ -61,6 +61,11 @@ export default function EnquiryDetail({
   const [sentBusy, setSentBusy] = useState(false);
   const [sentError, setSentError] = useState<string | null>(null);
   const sentState = String((selectedEnquiry as any).rateStatus ?? "");
+  // Per-enquiry partial tag: management decided some (not all) loop items
+  // while the enquiry is still open. Committed enquiries need no tag.
+  const rateLoopItems = (selectedEnquiry.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable);
+  const decidedRateItems = rateLoopItems.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
+  const showPartialTag = sentState !== "finalized" && sentState !== "sent" && decidedRateItems > 0;
   const doMarkSent = async () => {
     if (!selectedEnquiry.estNumber.trim()) {
       setSentError("Add EST No. before marking as sent.");
@@ -166,6 +171,14 @@ export default function EnquiryDetail({
               <span className="text-xs font-extrabold text-[var(--color-brand-indigo)]">{enquiryLabel(selectedEnquiry)}</span>
               <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
               <span className="text-xs text-[var(--text-secondary)]">Logged {new Date(selectedEnquiry.createdAt).toLocaleString()}</span>
+              {showPartialTag && (
+                <>
+                  <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
+                  <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                    Partial rates received ({decidedRateItems} of {rateLoopItems.length})
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
