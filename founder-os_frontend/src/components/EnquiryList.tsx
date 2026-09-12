@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Agent, Enquiry } from "../mockData";
 import CalendarRibbon from "./CalendarRibbon";
 import FilterControls from "./FilterControls";
@@ -40,6 +40,10 @@ export default function EnquiryList({
     return new Date().toISOString().split("T")[0];
   });
   const [queueOnly, setQueueOnly] = useState(true);
+  // Pagination lives ONLY in the Marked-as-Sent archive view (10/page).
+  const [sentPage, setSentPage] = useState(1);
+  const SENT_PAGE_SIZE = 10;
+  const sentView = ratesFilter === "sent";
 
   const dateInputRef = useRef<HTMLInputElement>(null);
 
@@ -112,7 +116,8 @@ export default function EnquiryList({
       const matchSource = sourceFilter === "all" || (e.source || "TL") === sourceFilter;
       const matchRates = ratesFilter === "all"
         || (ratesFilter === "ready" && (e.rateStatus ?? "") === "finalized")
-        || (ratesFilter === "awaiting" && (e.rateStatus ?? "") !== "finalized");
+        || (ratesFilter === "awaiting" && (e.rateStatus ?? "") !== "finalized" && (e.rateStatus ?? "") !== "sent")
+        || (ratesFilter === "sent" && (e.rateStatus ?? "") === "sent");
 
       const matchDate = !selectedDate || new Date(e.createdAt).toISOString().split("T")[0] === selectedDate;
 
@@ -122,10 +127,19 @@ export default function EnquiryList({
 
   const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 
+  // Pagination lives ONLY in the Marked-as-Sent archive view — reset page on filter change.
+  useEffect(() => { setSentPage(1); }, [ratesFilter, searchQuery, agentFilter, sourceFilter, selectedDate]);
+
+  const sentPages = Math.max(1, Math.ceil(filteredEnquiries.length / SENT_PAGE_SIZE));
+  const sentPageClamped = Math.min(sentPage, sentPages);
+  const visibleEnquiries = sentView
+    ? filteredEnquiries.slice((sentPageClamped - 1) * SENT_PAGE_SIZE, sentPageClamped * SENT_PAGE_SIZE)
+    : filteredEnquiries;
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
       {/* Header — title lives in the tracker shell ("Daily Enquiries") */}
-      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-end gap-4">
+      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-end gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <button 
             onClick={onExportCSV} 
@@ -224,7 +238,7 @@ export default function EnquiryList({
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredEnquiries.map(enq => {
+          {visibleEnquiries.map(enq => {
             const agent = agents.find(a => a.id === enq.assignedAgentId);
             return (
               <EnquiryRowItem
@@ -236,6 +250,15 @@ export default function EnquiryList({
               />
             );
           })}
+          {sentView && sentPages > 1 && (
+            <div className="flex items-center gap-2 pt-1 text-xs font-semibold text-[var(--text-secondary)]">
+              <span>Page {sentPageClamped} of {sentPages} · {filteredEnquiries.length} sent</span>
+              <button type="button" disabled={sentPageClamped <= 1} onClick={() => setSentPage(sentPageClamped - 1)}
+                className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] disabled:opacity-40 cursor-pointer bg-transparent text-[var(--text-primary)]">‹ Prev</button>
+              <button type="button" disabled={sentPageClamped >= sentPages} onClick={() => setSentPage(sentPageClamped + 1)}
+                className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] disabled:opacity-40 cursor-pointer bg-transparent text-[var(--text-primary)]">Next ›</button>
+            </div>
+          )}
         </div>
       )}
     </div>

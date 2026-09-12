@@ -103,12 +103,19 @@ function toEnquiry(raw: any): Enquiry {
   };
 }
 
-export function useEnquiryData(view: "sales" | "procurement" = "sales") {
+export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?: { pageSize?: number }) {
   const AGENT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16'];
   const redactedView = view === "procurement";
+  // Optional server-side pagination for the queue tables (10/50 newest at a
+  // time). 0/absent = full list (sales tracker behaviour, unchanged).
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSizeState] = useState(paging?.pageSize ?? 0);
+  const [total, setTotal] = useState<number | null>(null);
+  const setPageSize = useCallback((n: number) => { setPageSizeState(n); setPage(1); }, []);
   // Procurement tab always reads the server-redacted payload (?view=procurement)
   // so privileged users preview exactly what procurement sees — never raw PII.
   const qs = redactedView ? "?view=procurement" : "";
+  const pageQs = pageSize > 0 ? `${qs ? "&" : "?"}page=${page}&limit=${pageSize}` : "";
 
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -134,7 +141,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
   const fetchAll = useCallback(async () => {
     try {
       const [enqRes, agentsRes, clientsRes] = await Promise.all([
-        fetch(`/api/enquiries${qs}`),
+        fetch(`/api/enquiries${qs}${pageQs}`),
         fetch(`/api/enquiries/agents${qs}`),
         fetch(`/api/enquiries/clients${qs}`),
       ]);
@@ -144,6 +151,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
       const coms = Array.isArray(data.comments) ? data.comments : [];
       setEnquiriesSynced(list.map(toEnquiry));
       setComments(coms.map(toComment));
+      setTotal(typeof data.total === 'number' ? data.total : null);
       if (agentsRes.ok) {
         const raw = await agentsRes.json();
         const sales = Array.isArray(raw) ? raw : [];
@@ -168,7 +176,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
     } finally {
       setLoaded(true);
     }
-  }, [qs]);
+  }, [qs, pageQs]);
 
   useEffect(() => {
     void fetchAll();
@@ -182,6 +190,8 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
   // the just-added rate "disappears" until the next refresh.
   const fetchAllRef = useRef(fetchAll);
   fetchAllRef.current = fetchAll;
+  const pageSizeRef = useRef(pageSize);
+  pageSizeRef.current = pageSize;
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useLiveEvent((e) => {
     if (!e || (e as any).type !== 'enquiries') return;
@@ -191,7 +201,11 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
       return;
     }
     const ev = e as any;
+    // Paged queue tables refetch the page on creates (row counts shift);
+    // updates merge into the visible page when present.
+    const paged = pageSizeRef.current > 0;
     if (ev.action === 'created' && ev.enquiry) {
+      if (paged) { void fetchAllRef.current(); return; }
       setEnquiriesSynced([toEnquiry(ev.enquiry), ...enquiriesRef.current.filter((x) => x.id !== ev.enquiry.id)]);
     } else if (ev.action === 'updated' && ev.enquiry) {
       setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === ev.enquiry.id ? toEnquiry(ev.enquiry) : x)));
@@ -225,7 +239,10 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
       headers: { 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) throw new Error('request failed');
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error((data && (data.error || data.message)) || 'request failed');
+    }
     return res.json();
   };
 
@@ -246,9 +263,26 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
     return saved;
   }, []);
 
+  // Optimistic: applies locally the instant it is made (near-instant UI for
+  // high-speed sales work), then reconciles with server truth; a failure
+  // resyncs from the server so the UI never sits on a lie.
   const updateEnquiry = useCallback(async (id: string, updates: Partial<Enquiry>) => {
-    const saved = await persist('PATCH', `/api/enquiries/${id}`, updates);
-    setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === id ? toEnquiry(saved) : x)));
+    const prev = enquiriesRef.current;
+    const current = prev.find((x) => x.id === id);
+    if (current) {
+      setEnquiriesSynced(prev.map((x) => (x.id === id
+        ? { ...x, ...updates, updatedAt: new Date().toISOString() } as Enquiry
+        : x)));
+    }
+    try {
+      const saved = await persist('PATCH', `/api/enquiries/${id}`, updates);
+      setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === id ? toEnquiry(saved) : x)));
+      return saved;
+    } catch (err) {
+      console.error('updateEnquiry failed, resyncing:', err);
+      void fetchAllRef.current();
+      throw err;
+    }
   }, []);
 
   const deleteEnquiry = useCallback(async (id: string) => {
@@ -315,6 +349,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales") {
     clients,
     currentAgent,
     loaded,
+    total, page, pageSize, setPage, setPageSize,
     syncState,
     addEnquiry,
     updateEnquiry,

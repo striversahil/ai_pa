@@ -10,6 +10,7 @@ export const RATE_STATUS_LABEL: Record<string, string> = {
   rate_pending: "Rate Pending",
   rates_received: "Rates Received",
   finalized: "Finalized",
+  sent: "Sent to Client",
 };
 
 const fmtINR = (n: number | null | undefined): string =>
@@ -44,6 +45,13 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [reqs, setReqs] = useState<Record<number, string | null>>({});
   const [reqOpen, setReqOpen] = useState<number | null>(null);
   const [reqNote, setReqNote] = useState("");
+  // Bulk decisions: checkboxes select items, then one margin % applies to
+  // all, or one combined final ₹ splits proportionally across selected
+  // vendor rates (each ceil5; the computed total is shown).
+  const [checked, setChecked] = useState<Record<number, boolean>>({});
+  const [bulkPct, setBulkPct] = useState("");
+  const [bulkTotal, setBulkTotal] = useState("");
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   useEffect(() => {
     const s: Record<number, string> = {};
@@ -65,11 +73,18 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     setReqs({});
     setReqOpen(null);
     setReqNote("");
+    setChecked({});
+    setBulkPct("");
+    setBulkTotal("");
+    setBulkError(null);
     setConfirming(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enquiry.id]);
 
   const finalized = enquiry.rateStatus === "finalized";
+  // Sent to client = committed quotes: fully locked, like finalized.
+  const sent = enquiry.rateStatus === "sent";
+  const locked = finalized || sent;
   // Rate-available items skip the loop entirely: never shown, never touched,
   // never counted here (same rule as the pending queue predicate).
   const actionableCount = items.filter((it) => !it.specIssue && !it.rateAvailable).length;
@@ -142,6 +157,57 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     setReqNote("");
   };
 
+  const checkedIdx = items
+    .map((it, i) => ({ it, i }))
+    .filter(({ it, i }) => checked[i] && !it.specIssue && !it.rateAvailable)
+    .map(({ i }) => i);
+
+  const applyBulkMargin = () => {
+    const p = parseMoneyInput(bulkPct);
+    if (p === null) { setBulkError("Enter a valid margin %."); return; }
+    if (checkedIdx.length === 0) { setBulkError("Select items first."); return; }
+    setBulkError(null);
+    setPctInputs((prev) => {
+      const next = { ...prev };
+      for (const i of checkedIdx) next[i] = String(p);
+      return next;
+    });
+    setModes((prev) => {
+      const next = { ...prev };
+      for (const i of checkedIdx) next[i] = "percent";
+      return next;
+    });
+  };
+
+  const applyBulkTotal = () => {
+    const total = parseMoneyInput(bulkTotal);
+    if (total === null) { setBulkError("Enter a valid combined final ₹."); return; }
+    if (checkedIdx.length === 0) { setBulkError("Select items first."); return; }
+    const weights = checkedIdx.map((i) => {
+      const vendor = sel[i] ?? items[i].selectedVendor ?? "";
+      return vendorRate(i, vendor);
+    });
+    if (weights.some((w) => w === undefined)) {
+      setBulkError("Select a vendor for every checked item first.");
+      return;
+    }
+    const sum = (weights as number[]).reduce((a, b) => a + b, 0);
+    if (!(sum > 0)) { setBulkError("Vendor rates must be above zero."); return; }
+    setBulkError(null);
+    setFinalInputs((prev) => {
+      const next = { ...prev };
+      checkedIdx.forEach((idx, k) => {
+        next[idx] = String(Math.round(((total * (weights as number[])[k]) / sum) * 100) / 100);
+      });
+      return next;
+    });
+    setModes((prev) => {
+      const next = { ...prev };
+      for (const i of checkedIdx) next[i] = "final";
+      return next;
+    });
+  };
+
   const doSave = async (finalize: boolean) => {
     setBusy(true);
     setSaveError(null);
@@ -190,6 +256,30 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               {items.filter((it) => it.rateAvailable).length} item{items.filter((it) => it.rateAvailable).length === 1 ? "" : "s"} with available rates — skipped (no decision needed).
             </p>
           )}
+          <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 p-2.5 space-y-2">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">Bulk — {checkedIdx.length} selected</p>
+            {locked ? (
+              <p className="text-[11px] text-zinc-500">Locked — decisions are committed.</p>
+            ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <input value={bulkPct} onChange={(e) => setBulkPct(e.target.value)} placeholder="Margin %"
+                inputMode="decimal"
+                className="w-24 px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40" />
+              <button type="button" onClick={applyBulkMargin}
+                className="px-3 py-1.5 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                Apply margin
+              </button>
+              <input value={bulkTotal} onChange={(e) => setBulkTotal(e.target.value)} placeholder="Combined final ₹"
+                inputMode="decimal"
+                className="w-36 px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40" />
+              <button type="button" onClick={applyBulkTotal}
+                className="px-3 py-1.5 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                Split final
+              </button>
+            </div>
+            )}
+            {bulkError && <p className="text-[11px] font-semibold text-red-400">{bulkError}</p>}
+          </div>
           {items.map((it, i) => {
             if (it.specIssue) return null; // held out — only correct-spec items are shown
             if (it.rateAvailable) return null; // rate already available — skips Management entirely
@@ -203,8 +293,15 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             return (
               <div key={i} className="rounded-xl border border-zinc-800 p-3 space-y-2">
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-xs font-extrabold text-white">Item {i + 1}{it.name ? ` — ${it.name}` : ""}</span>
-                  {it.qty && <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>}
+                  <label className="flex items-center gap-2 min-w-0 cursor-pointer">
+                    {!locked && (
+                    <input type="checkbox" checked={!!checked[i]}
+                      onChange={() => setChecked((prev) => ({ ...prev, [i]: !prev[i] }))}
+                      className="accent-indigo-500 h-3.5 w-3.5 flex-shrink-0" />
+                    )}
+                    <span className="text-xs font-extrabold text-white truncate">Item {i + 1}{it.name ? ` — ${it.name}` : ""}</span>
+                  </label>
+                  {it.qty && <span className="text-[11px] text-zinc-400 font-semibold flex-shrink-0">Qty: {it.qty}</span>}
                 </div>
                 <FlagThread thread={it.thread ?? []} tone="dark" />
                 {rates.length === 0 ? (
@@ -227,7 +324,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30">Spec differs</span>
                             )}
                             <span className="font-mono text-zinc-400">₹{Number(r.rate).toLocaleString("en-IN")}</span>
-                            {!finalized && (
+                            {!locked && (
                               <button type="button" onClick={() => dropRate(i, ri)} title="Remove incorrect rate"
                                 className="text-zinc-600 hover:text-red-400 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">×</button>
                             )}
@@ -246,6 +343,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   </div>
                 )}
                 <div className="space-y-1.5">
+                  {locked ? (
+                    <p className="text-[10px] text-zinc-500">Committed — no further edits.</p>
+                  ) : (
+                  <>
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex rounded-lg border border-zinc-700 overflow-hidden text-[11px] font-bold">
                       <button type="button"
@@ -295,7 +396,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       Markup derived: {fmtINR(computed.markup)} over {fmtINR(rate)}
                     </p>
                   )}
-                  {finalized && it.finalRate !== undefined && it.finalRate !== null && (
+                  {(finalized || sent) && it.finalRate !== undefined && it.finalRate !== null && (
                     <span className="block text-[11px] text-zinc-500">Locked at {fmtINR(it.finalRate)}</span>
                   )}
                   {(it.ratesRequested || reqs[i]) && (
@@ -303,7 +404,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       Rates requested from procurement{it.ratesRequested && it.ratesRequested !== "requested" ? `: ${it.ratesRequested}` : "…"}
                     </p>
                   )}
+                  </>
+                  )}
                 </div>
+                {!locked && (
                 <div className="flex flex-wrap items-center gap-2">
                   {reqOpen === i ? (
                     <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-indigo-500/40 p-2">
@@ -331,6 +435,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     </button>
                   )}
                 </div>
+                )}
               </div>
             );
           })}
@@ -340,7 +445,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => void doSave(false)}
-          disabled={busy || actionableCount === 0}
+          disabled={busy || actionableCount === 0 || locked}
           className="px-4 py-2 rounded-xl text-xs font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40"
         >
           {busy ? "Saving…" : "Save rates"}
@@ -351,7 +456,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         {savedTick && !saveError && (
           <span className="text-[11px] font-extrabold text-emerald-400">Saved ✓</span>
         )}
-        {!finalized ? (
+        {!locked ? (
           confirming ? (
             <>
               <button
@@ -379,7 +484,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             </button>
           )
         ) : (
-          <span className="text-[11px] text-emerald-400 font-semibold">Rates finalized — Sales sees them live.</span>
+          <span className="text-[11px] text-emerald-400 font-semibold">
+            {sent ? "Sent to client — locked." : "Rates finalized — Sales sees them live."}
+          </span>
         )}
       </div>
     </div>

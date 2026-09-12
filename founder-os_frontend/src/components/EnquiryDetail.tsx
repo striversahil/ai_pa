@@ -16,6 +16,7 @@ interface EnquiryDetailProps {
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
   onUpdateItems?: (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => void;
+  onMarkSent?: (id: string) => Promise<void>;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
@@ -34,6 +35,7 @@ export default function EnquiryDetail({
   onUpdateAgent,
   onAddComment,
   onUpdateItems,
+  onMarkSent,
   onDeleteEnquiry,
   onOpenEdit,
   onBack,
@@ -55,6 +57,26 @@ export default function EnquiryDetail({
   const [newItems, setNewItems] = useState<EnquiryItem[]>([blankItem()]);
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Mark-as-sent: finalized → sent (EST No. required, server-enforced too).
+  const [sentBusy, setSentBusy] = useState(false);
+  const [sentError, setSentError] = useState<string | null>(null);
+  const sentState = String((selectedEnquiry as any).rateStatus ?? "");
+  const doMarkSent = async () => {
+    if (!selectedEnquiry.estNumber.trim()) {
+      setSentError("Add EST No. before marking as sent.");
+      return;
+    }
+    if (!onMarkSent) return;
+    setSentBusy(true);
+    setSentError(null);
+    try {
+      await onMarkSent(selectedEnquiry.id);
+    } catch (e: any) {
+      setSentError(e?.message || "Mark as sent failed.");
+    } finally {
+      setSentBusy(false);
+    }
+  };
 
   const handleSaveNewItems = () => {
     const fresh = newItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0);
@@ -149,7 +171,32 @@ export default function EnquiryDetail({
         </div>
 
         {!redacted && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {sentState === "sent" ? (
+            <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+              ✓ Marked as sent
+            </span>
+          ) : sentState === "finalized" && onMarkSent ? (
+            <span className="inline-flex items-center gap-1.5">
+              <button
+                onClick={() => void doMarkSent()}
+                disabled={sentBusy}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer disabled:opacity-50"
+                type="button"
+              >
+                {sentBusy ? "Marking…" : "Mark as sent"}
+              </button>
+              {!selectedEnquiry.estNumber.trim() && (
+                <button
+                  onClick={() => onOpenEdit(selectedEnquiry)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-[var(--bg-card)] border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                  type="button"
+                >
+                  Add EST No.
+                </button>
+              )}
+            </span>
+          ) : null}
           <button 
             onClick={() => onOpenEdit(selectedEnquiry)} 
             className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
@@ -172,6 +219,9 @@ export default function EnquiryDetail({
             <span>Delete</span>
           </button>
         </div>
+        )}
+        {sentError && (
+          <p className="mt-2 text-xs font-bold text-red-500">{sentError}</p>
         )}
       </div>
 

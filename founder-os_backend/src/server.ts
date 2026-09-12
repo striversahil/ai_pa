@@ -214,7 +214,17 @@ app.get('/api/enquiries', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const restricted = req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any);
-  const r = await EnquiryRoutes.enquiryList(enquiryStore, me, restricted ? { redact: true } : undefined);
+  const pageQ = req.query.page as string | undefined;
+  const limitQ = req.query.limit as string | undefined;
+  const opts: { redact?: boolean; page?: number; limit?: number } | undefined =
+    restricted || pageQ !== undefined || limitQ !== undefined
+      ? {
+          ...(restricted ? { redact: true } : {}),
+          ...(pageQ !== undefined ? { page: Number(pageQ) } : {}),
+          ...(limitQ !== undefined ? { limit: Number(limitQ) } : {}),
+        }
+      : undefined;
+  const r = await EnquiryRoutes.enquiryList(enquiryStore, me, opts);
   if (restricted) {
     for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
       try { void runEnquiryExtraction(String(id)); } catch { /* ignore */ }

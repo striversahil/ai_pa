@@ -7,6 +7,7 @@ import { useAuth } from "@/auth/AuthContext";
 import ManagementRatesPanel from "@/components/ManagementRatesPanel";
 import Modal from "@/components/Modal";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
+import { GroupCard, ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry } from "@/types";
 import { enquiryLabel, historyDateChip, itemNeedsDecision } from "@/types";
 
@@ -30,7 +31,8 @@ export default function ManagementReview() {
   const allowed = !!me && (me.isAdmin || scopes.includes("mis"));
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const { enquiries, loaded, agents, updateEnquiry } = useEnquiryData("sales");
+  const { enquiries, loaded, agents, updateEnquiry } =
+    useEnquiryData("sales");
 
   // Live intimation: procurement logged fresh vendor rates (act on the item).
   const [toast, setToast] = useState<{ id: string; label: string; title: string } | null>(null);
@@ -114,7 +116,49 @@ export default function ManagementReview() {
 
   const sel = selectedId ? enquiries.find((e) => e.id === selectedId) ?? null : null;
 
-  const renderPendingRows = () => pendingRows.map(({ enquiry: e, itemIdx }) => {
+  // Club rows under their enquiry: header expands to the item table.
+  const groupRows = (rows: ItemRow[]) => {
+    const map = new Map<string, { enquiry: Enquiry; rows: ItemRow[] }>();
+    for (const r of rows) {
+      const g = map.get(r.enquiry.id) ?? { enquiry: r.enquiry, rows: [] };
+      g.rows.push(r);
+      map.set(r.enquiry.id, g);
+    }
+    return [...map.values()];
+  };
+
+  const pendingTable = (rows: ItemRow[]) => (
+    <Table stickyFirst>
+      <thead>
+        <tr>
+          <th className={thClass}>Enquiry</th>
+          <th className={thClass}>Client</th>
+          <th className={thClass}>Item</th>
+          <th className={thClass}>Quotes</th>
+          <th className={thClass}>Updated</th>
+        </tr>
+      </thead>
+      <tbody>{renderPendingRows(rows)}</tbody>
+    </Table>
+  );
+
+  const historyTable = (rows: ItemRow[]) => (
+    <Table stickyFirst>
+      <thead>
+        <tr>
+          <th className={thClass}>Enquiry</th>
+          <th className={thClass}>Client</th>
+          <th className={thClass}>Item</th>
+          <th className={thClass}>Vendor</th>
+          <th className={thClass}>Final</th>
+          <th className={thClass}>Date</th>
+        </tr>
+      </thead>
+      <tbody>{renderHistoryRows(rows)}</tbody>
+    </Table>
+  );
+
+  const renderPendingRows = (rows: ItemRow[]) => rows.map(({ enquiry: e, itemIdx }) => {
     const it = (e.items ?? [])[itemIdx];
     if (!it) return null;
     const quotes = (it.rates ?? []).filter((r) => Number.isFinite(Number(r.rate)));
@@ -153,8 +197,7 @@ export default function ManagementReview() {
     );
   });
 
-  const renderHistoryRows = () => historyRows.map(({ enquiry: e, itemIdx }) => {
-    const it = (e.items ?? [])[itemIdx];
+  const renderHistoryRows = (rows: ItemRow[]) => rows.map(({ enquiry: e, itemIdx }) => {    const it = (e.items ?? [])[itemIdx];
     if (!it) return null;
     return (
       <tr key={`${e.id}-${itemIdx}`} onClick={() => setSelectedId(e.id)}
@@ -214,40 +257,28 @@ export default function ManagementReview() {
               <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
                 Active — awaiting decision ({pendingRows.length})
               </p>
-              <Table stickyFirst>
-                <thead>
-                  <tr>
-                    <th className={thClass}>Enquiry</th>
-                    <th className={thClass}>Client</th>
-                    <th className={thClass}>Item</th>
-                    <th className={thClass}>Quotes</th>
-                    <th className={thClass}>Updated</th>
-                  </tr>
-                </thead>
-                <tbody>{renderPendingRows()}</tbody>
-              </Table>
+              {groupRows(pendingRows).map((g) => (
+                <GroupCard key={g.enquiry.id}
+                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
+                  subtitle={g.enquiry.clientCompany || undefined}
+                  count={g.rows.length}>
+                  {pendingTable(g.rows)}
+                </GroupCard>
+              ))}
             </section>
           )}
 
           {historyRows.length > 0 && (
-            <section className="space-y-2">
-              <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-                Decision history — already finalized ({historyRows.length})
-              </p>
-              <Table stickyFirst>
-                <thead>
-                  <tr>
-                    <th className={thClass}>Enquiry</th>
-                    <th className={thClass}>Client</th>
-                    <th className={thClass}>Item</th>
-                    <th className={thClass}>Vendor</th>
-                    <th className={thClass}>Final</th>
-                    <th className={thClass}>Date</th>
-                  </tr>
-                </thead>
-                <tbody>{renderHistoryRows()}</tbody>
-              </Table>
-            </section>
+            <ClosedDropdown count={historyRows.length}>
+              {groupRows(historyRows).map((g) => (
+                <GroupCard key={g.enquiry.id} defaultOpen={false}
+                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
+                  subtitle={g.enquiry.clientCompany || undefined}
+                  count={g.rows.length}>
+                  {historyTable(g.rows)}
+                </GroupCard>
+              ))}
+            </ClosedDropdown>
           )}
         </div>
       )}

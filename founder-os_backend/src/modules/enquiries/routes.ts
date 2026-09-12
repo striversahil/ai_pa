@@ -124,7 +124,7 @@ function pick(data: any): Partial<Enquiry> | null {
   }
   if (data.rateStatus !== undefined) {
     const rs = String(data.rateStatus ?? '');
-    if (['', 'rate_pending', 'rates_received', 'finalized'].includes(rs)) (out as any).rateStatus = rs;
+    if (['', 'rate_pending', 'rates_received', 'finalized', 'sent'].includes(rs)) (out as any).rateStatus = rs;
   }
   return Object.keys(out).length ? out : null;
 }
@@ -155,11 +155,28 @@ export async function resolveCreatorAgentId(prisma: any, me: MeResponse): Promis
 
 export interface RedactOpts {
   redact?: boolean;
+  /** 1-based page + page size for queue tables (10/50). Omit = full list. */
+  page?: number;
+  limit?: number;
 }
 
 export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: RedactOpts): Promise<EnquiryResult> {
-  const [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
-  if (!opts?.redact) return json(200, { enquiries, comments });
+  const page = Math.max(1, Math.floor(Number(opts?.page) || 0));
+  const lim = Math.min(50, Math.max(1, Math.floor(Number(opts?.limit) || 0)));
+  let enquiries: any[];
+  let comments: any[];
+  let total: number | null = null;
+  if (page > 0 && (opts as any)?.limit !== undefined) {
+    const offset = (page - 1) * lim;
+    const paged = await store.listEnquiriesPaged(offset, lim);
+    enquiries = paged.rows;
+    total = paged.total;
+    comments = await store.listCommentsFor(enquiries.map((e: any) => String(e.id)));
+  } else {
+    [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
+  }
+  const meta = total === null ? {} : { total, page, limit: lim };
+  if (!opts?.redact) return json(200, { enquiries, comments, ...meta });
   // AI-only procurement view: each piece comes from the write-time enrichment
   // cache (RedactedViewCache) and only when its hash still matches the source.
   // Anything missing/stale is WITHHELD with redactedPending=true — the route
@@ -283,6 +300,7 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     comments: redacted.flatMap((r) => r.servedComments),
     // Route layer kicks a background re-enrichment for these (fire-and-forget).
     redactionPendingIds: redacted.filter((r) => r.entry.pending).map((r) => r.entry.id),
+    ...meta,
   });
 }
 
@@ -510,7 +528,20 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     }).filter((it: any) => it !== null);
   }
   if (!privileged) {
-    delete (updates as any).rateStatus;
+    // Sales "Mark as sent": finalized → sent, and only with an EST No. on
+    // the row. Anything else rateStatus-wise stays Management-only.
+    if ((updates as any).rateStatus === 'sent') {
+      const current = await store.getEnquiry(id).catch(() => null);
+      if (!current) return json(404, { error: 'not found' });
+      if (String((current as any).rateStatus ?? '') !== 'finalized') {
+        return json(400, { error: 'Only finalized enquiries can be marked as sent' });
+      }
+      if (!String((current as any).estNumber ?? '').trim()) {
+        return json(400, { error: 'Add EST No. before marking as sent', needEstNumber: true });
+      }
+    } else {
+      delete (updates as any).rateStatus;
+    }
   }
   // Auto-advance the workflow: first vendor rate moves Rate Pending → Received.
   // Finalized is set explicitly by Management (guarded above).

@@ -8,6 +8,7 @@ import ProcurementItemCard from "@/components/ProcurementItemCard";
 import Modal from "@/components/Modal";
 import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
+import { GroupCard, ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { enquiryLabel, historyDateChip, itemNeedsRates } from "@/types";
 
@@ -63,10 +64,13 @@ export default function ProcurementQueue() {
   const scopes = me?.scopes ?? [];
   const allowed = !!me && (me.isAdmin || scopes.includes("mis") || scopes.includes("procurement"));
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
-  const [selected, setSelected] = useState<{ enquiryId: string; itemIdx: number; readOnly: boolean } | null>(null);
+  // Single enquiry modal: opening an enquiry shows ALL its items (rates,
+  // forms, flags) together — never one modal per item.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const { enquiries, loaded, updateItems } = useEnquiryData("procurement");
+  const { enquiries, loaded, updateItems } =
+    useEnquiryData("procurement");
 
   // Live intimations: management rate-requests (act on the item) and sales
   // spec fixes (flagged item reshared with corrections/reference media).
@@ -193,15 +197,14 @@ export default function ProcurementQueue() {
     return <div className="flex min-h-[50vh] items-center justify-center text-zinc-500 animate-pulse">Loading queue…</div>;
   }
 
-  const selEnquiry = selected ? enquiries.find((e) => e.id === selected.enquiryId) ?? null : null;
-  const selItem = selEnquiry ? (selEnquiry.items ?? [])[selected!.itemIdx] ?? null : null;
+  const selEnquiry = selectedId ? enquiries.find((e) => e.id === selectedId) ?? null : null;
 
-  const renderRows = (rows: ItemRow[], readOnly: boolean) => rows.map(({ enquiry: e, item, itemIdx }) => {
+  const renderRows = (rows: ItemRow[]) => rows.map(({ enquiry: e, item, itemIdx }) => {
     const latest = (item.rates ?? []).map((r) => r.quotedAt).sort().reverse()[0];
     return (
       <tr
         key={`${e.id}-${itemIdx}`}
-        onClick={() => setSelected({ enquiryId: e.id, itemIdx, readOnly })}
+        onClick={() => setSelectedId(e.id)}
         className="cursor-pointer transition-colors hover:bg-[var(--bg-input)]/40"
       >
         <td className={tdClass}>
@@ -238,6 +241,33 @@ export default function ProcurementQueue() {
   });
 
   const isEmpty = pending.length === 0 && reqGroups.length === 0 && historyRows.length === 0;
+
+  // Club item rows under their enquiry: header expands to the item table.
+  const groupRows = (rows: ItemRow[]) => {
+    const map = new Map<string, { enquiry: Enquiry; rows: ItemRow[] }>();
+    for (const r of rows) {
+      const g = map.get(r.enquiry.id) ?? { enquiry: r.enquiry, rows: [] };
+      g.rows.push(r);
+      map.set(r.enquiry.id, g);
+    }
+    return [...map.values()];
+  };
+
+  const itemTable = (rows: ItemRow[]) => (
+    <Table stickyFirst>
+      <thead>
+        <tr>
+          <th className={thClass}>Enquiry</th>
+          <th className={thClass}>Item</th>
+          <th className={thClass}>Rates</th>
+          <th className={thClass}>Spec</th>
+          <th className={thClass}>Status</th>
+          <th className={thClass}>Quoted</th>
+        </tr>
+      </thead>
+      <tbody>{renderRows(rows)}</tbody>
+    </Table>
+  );
 
   return (
     <div className="space-y-4">
@@ -286,19 +316,13 @@ export default function ProcurementQueue() {
               <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
                 Active — needs rates ({activeRows.length})
               </p>
-              <Table stickyFirst>
-                <thead>
-                  <tr>
-                    <th className={thClass}>Enquiry</th>
-                    <th className={thClass}>Item</th>
-                    <th className={thClass}>Rates</th>
-                    <th className={thClass}>Spec</th>
-                    <th className={thClass}>Status</th>
-                    <th className={thClass}>Quoted</th>
-                  </tr>
-                </thead>
-                <tbody>{renderRows(activeRows, false)}</tbody>
-              </Table>
+              {groupRows(activeRows).map((g) => (
+                <GroupCard key={g.enquiry.id}
+                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
+                  count={g.rows.length}>
+                  {itemTable(g.rows)}
+                </GroupCard>
+              ))}
             </section>
           )}
 
@@ -319,24 +343,15 @@ export default function ProcurementQueue() {
           )}
 
           {historyRows.length > 0 && (
-            <section className="space-y-2">
-              <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-                Rate history — already quoted ({historyRows.length})
-              </p>
-              <Table stickyFirst>
-                <thead>
-                  <tr>
-                    <th className={thClass}>Enquiry</th>
-                    <th className={thClass}>Item</th>
-                    <th className={thClass}>Rates</th>
-                    <th className={thClass}>Spec</th>
-                    <th className={thClass}>Status</th>
-                    <th className={thClass}>Quoted</th>
-                  </tr>
-                </thead>
-                <tbody>{renderRows(historyRows, true)}</tbody>
-              </Table>
-            </section>
+            <ClosedDropdown count={historyRows.length}>
+              {groupRows(historyRows).map((g) => (
+                <GroupCard key={g.enquiry.id} defaultOpen={false}
+                  title={<><span className="text-[var(--color-brand-indigo)]">{enquiryLabel(g.enquiry)}</span>{" · "}{g.enquiry.title || "Untitled enquiry"}</>}
+                  count={g.rows.length}>
+                  {itemTable(g.rows)}
+                </GroupCard>
+              ))}
+            </ClosedDropdown>
           )}
 
           {reqGroups.length > 0 && (
@@ -376,26 +391,31 @@ export default function ProcurementQueue() {
         </div>
       )}
 
-      {selected && selEnquiry && selItem && (
+      {selEnquiry && (
         <Modal
-          title={`${selItem.name || `Item ${selected.itemIdx + 1}`}${selItem.qty ? ` × ${selItem.qty}` : ""}`}
-          subtitle={`${enquiryLabel(selEnquiry)} · ${selEnquiry.title || "Untitled enquiry"}`}
-          onClose={() => setSelected(null)}
+          title={`${enquiryLabel(selEnquiry)} · ${selEnquiry.title || "Untitled enquiry"}`}
+          subtitle={`${(selEnquiry.items ?? []).length} item${(selEnquiry.items ?? []).length === 1 ? "" : "s"} — vendors, bulk view, flags in one place`}
+          onClose={() => setSelectedId(null)}
           wide
         >
           {(selEnquiry as any).redactedPending && (
             <p className="text-[11px] font-semibold text-zinc-500">Details processing — refreshes live.</p>
           )}
-          <ProcurementItemCard
-            item={selItem}
-            itemIdx={selected.itemIdx}
-            onAddRate={(rate) => handleAddRate(selEnquiry.id, selected.itemIdx, rate)}
-            onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, selected.itemIdx, ri, rate)}
-            onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, selected.itemIdx, ri)}
-            onFlag={(reason) => handleFlag(selEnquiry.id, selected.itemIdx, reason)}
-            onOpenLightbox={handleOpenLightbox}
-            readOnly={selected.readOnly}
-          />
+          <div className="space-y-2.5">
+            {(selEnquiry.items ?? []).map((item, itemIdx) => (
+              <ProcurementItemCard
+                key={itemIdx}
+                item={item}
+                itemIdx={itemIdx}
+                onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
+                onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
+                onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
+                onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
+                onOpenLightbox={handleOpenLightbox}
+                readOnly={item.finalRate !== undefined && item.finalRate !== null}
+              />
+            ))}
+          </div>
         </Modal>
       )}
 

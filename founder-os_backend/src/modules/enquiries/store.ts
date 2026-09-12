@@ -217,7 +217,9 @@ export interface Enquiry {
   description: string;
   priority: string;
   status: string;
-  /** Procurement workflow stage: '' (legacy) | rate_pending | rates_received | finalized. */
+  /** Procurement workflow stage: '' (legacy) | rate_pending | rates_received
+   *  | finalized | sent (sales marked the quoted rates sent to the client;
+   *  requires EST No.). */
   rateStatus: string;
   assignedAgentId: string;
   createdAt: string;
@@ -248,6 +250,10 @@ export interface EnquiryComment {
 
 export interface EnquiryStore {
   listEnquiries(): Promise<Enquiry[]>;
+  /** Newest-first page + total count (queue tables fetch 10/50 at a time). */
+  listEnquiriesPaged(offset: number, limit: number): Promise<{ rows: Enquiry[]; total: number }>;
+  /** Comments for exactly these enquiries (one query per page). */
+  listCommentsFor(enquiryIds: string[]): Promise<EnquiryComment[]>;
   getEnquiry(id: string): Promise<Enquiry | null>;
   createEnquiry(data: Omit<Enquiry, "id" | "createdAt" | "updatedAt">): Promise<Enquiry>;
   updateEnquiry(id: string, updates: Partial<Omit<Enquiry, "id" | "createdAt">>): Promise<Enquiry | null>;
@@ -402,6 +408,14 @@ class MemoryEnquiryStore implements EnquiryStore {
   async listEnquiries() {
     return [...this.enquiries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
+  async listEnquiriesPaged(offset: number, limit: number) {
+    const all = [...this.enquiries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return { rows: all.slice(offset, offset + limit), total: all.length };
+  }
+  async listCommentsFor(enquiryIds: string[]) {
+    const set = new Set(enquiryIds);
+    return this.comments.filter((c) => set.has(c.enquiryId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
   async getEnquiry(id: string) {
     return this.enquiries.find((e) => e.id === id) ?? null;
   }
@@ -441,6 +455,26 @@ class D1EnquiryStore implements EnquiryStore {
   async listEnquiries() {
     const { results } = await this.db.prepare("SELECT * FROM Enquiry ORDER BY createdAt DESC").all();
     return ((results || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[];
+  }
+  async listEnquiriesPaged(offset: number, limit: number) {
+    const off = Math.max(0, Math.floor(offset));
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const [page, count] = await Promise.all([
+      this.db.prepare("SELECT * FROM Enquiry ORDER BY createdAt DESC LIMIT ? OFFSET ?").bind(lim, off).all(),
+      this.db.prepare("SELECT COUNT(*) AS total FROM Enquiry").first(),
+    ]);
+    return {
+      rows: (((page as any).results || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[],
+      total: Number((count as any)?.total ?? 0),
+    };
+  }
+  async listCommentsFor(enquiryIds: string[]) {
+    if (!enquiryIds.length) return [];
+    const placeholders = enquiryIds.map(() => "?").join(",");
+    const { results } = await this.db.prepare(
+      `SELECT * FROM EnquiryComment WHERE enquiryId IN (${placeholders}) ORDER BY createdAt ASC`,
+    ).bind(...enquiryIds).all();
+    return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
   }
   async getEnquiry(id: string) {
     const row = await this.db.prepare("SELECT * FROM Enquiry WHERE id = ?").bind(id).first();

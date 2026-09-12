@@ -236,13 +236,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           Rate available
                         </div>
                       )}
-                      {it.ratesRequested && (
-                        <div className="mt-1 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-2 text-[11px] leading-relaxed">
-                          <p className="font-extrabold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide text-[10px]">Management requested more vendor rates</p>
-                          {it.ratesRequested.trim() && it.ratesRequested.trim() !== "requested" && (
-                            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.ratesRequested}</p>
-                          )}
-                        </div>
+                      {!it.specIssue && (it.thread ?? []).length > 0 && (
+                        <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} hideKinds={["request", "quoted"]} />
                       )}
                       {it.specIssue && !redacted && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">

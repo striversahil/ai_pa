@@ -13,6 +13,7 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   const items = enq.items ?? [];
   const hasRates = items.some((it) => (it.rates ?? []).length > 0);
   const finalized = (enq.rateStatus ?? "") === "finalized";
+  const sent = (enq.rateStatus ?? "") === "sent";
   const flagged = items.some((it) => it.specIssue);
   return (
     <div
@@ -43,13 +44,15 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
             <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
               flagged
                 ? "bg-red-500/10 text-red-500 border-red-500/30"
+                : sent
+                ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
                 : finalized
                 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
                 : hasRates
                   ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
                   : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
             }`}>
-              {flagged ? "Fix Spec" : finalized ? "Rates Ready" : hasRates ? "Rating…" : "Awaiting rates"}
+              {flagged ? "Fix Spec" : sent ? "Marked as Sent" : finalized ? "Rates Ready" : hasRates ? "Rating…" : "Awaiting rates"}
             </span>
           )}
         </div>

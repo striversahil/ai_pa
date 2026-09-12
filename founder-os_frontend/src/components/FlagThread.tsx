@@ -31,9 +31,10 @@ const BY_LABEL: Record<FlagThreadEntry["by"], string> = {
 // remarks are appended by the sales remark box. hideSalesRemarks drops
 // free-text sales remarks in PII-redacted views (flag/fix/request lines are
 // workflow metadata and always safe).
-export default function FlagThread({ thread, hideSalesRemarks = false, tone = "auto" }: { thread: FlagThreadEntry[]; hideSalesRemarks?: boolean; tone?: "auto" | "dark" }) {
+export default function FlagThread({ thread, hideSalesRemarks = false, tone = "auto", hideKinds = [] }: { thread: FlagThreadEntry[]; hideSalesRemarks?: boolean; tone?: "auto" | "dark"; hideKinds?: FlagThreadEntry["kind"][] }) {
   const all = Array.isArray(thread) ? thread : [];
-  const entries = hideSalesRemarks ? all.filter((e) => !(e.by === "sales" && e.kind === "remark")) : all;
+  const hidden = new Set(hideKinds);
+  const entries = all.filter((e) => !hidden.has(e.kind) && !(hideSalesRemarks && e.by === "sales" && e.kind === "remark"));
   if (entries.length === 0) return null;
   const dark = tone === "dark";
   const titleCls = dark ? "text-zinc-100" : "text-[var(--text-primary)]";

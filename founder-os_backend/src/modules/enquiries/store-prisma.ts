@@ -53,6 +53,23 @@ export class PrismaEnquiryStore implements EnquiryStore {
     const rows = await this.prisma.enquiry.findMany({ orderBy: { createdAt: "desc" } });
     return rows.map(mapEnquiry).filter(Boolean) as Enquiry[];
   }
+  async listEnquiriesPaged(offset: number, limit: number) {
+    const off = Math.max(0, Math.floor(offset));
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const [rows, total] = await Promise.all([
+      this.prisma.enquiry.findMany({ orderBy: { createdAt: "desc" }, skip: off, take: lim }),
+      this.prisma.enquiry.count(),
+    ]);
+    return { rows: rows.map(mapEnquiry).filter(Boolean) as Enquiry[], total };
+  }
+  async listCommentsFor(enquiryIds: string[]) {
+    if (!enquiryIds.length) return [];
+    const rows = await this.prisma.enquiryComment.findMany({
+      where: { enquiryId: { in: enquiryIds } },
+      orderBy: { createdAt: "asc" },
+    });
+    return rows.map(mapComment).filter(Boolean) as EnquiryComment[];
+  }
   async getEnquiry(id: string) {
     const row = await this.prisma.enquiry.findUnique({ where: { id } });
     return mapEnquiry(row);

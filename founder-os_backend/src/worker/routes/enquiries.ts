@@ -10,8 +10,19 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     // ?view=procurement lets privileged users (root/MIS) preview exactly what
     // procurement sees — the AI-redacted payload, not their full data.
+    // ?page=&limit= (10/50) pages newest-first for the queue tables.
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
-    const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me, restricted ? { redact: true } : undefined);
+    const pageQ = c.req.query('page');
+    const limitQ = c.req.query('limit');
+    const opts: { redact?: boolean; page?: number; limit?: number } | undefined =
+      restricted || pageQ !== undefined || limitQ !== undefined
+        ? {
+            ...(restricted ? { redact: true } : {}),
+            ...(pageQ !== undefined ? { page: Number(pageQ) } : {}),
+            ...(limitQ !== undefined ? { limit: Number(limitQ) } : {}),
+          }
+        : undefined;
+    const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me, opts);
     return c.json(r.body, r.status as any);
   });
   app.get('/api/enquiries/agents', async (c) => {

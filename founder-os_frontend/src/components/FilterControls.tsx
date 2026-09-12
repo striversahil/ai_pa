@@ -69,6 +69,7 @@ export default function FilterControls({
           <option value="all">All Rates</option>
           <option value="ready">Rates Ready</option>
           <option value="awaiting">Awaiting Rates</option>
+          <option value="sent">Marked as Sent</option>
         </select>
       </div>
       )}
