@@ -232,7 +232,7 @@ function ShieldChip({ shield, compact = false }: {
       </span>
     );
   return (
-    <span title={`${shield.reason} — stays with you, no snatch, no −15`} className={`${base} bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30`}>
+    <span title={`${shield.reason} — stays with you, no re-poaching`} className={`${base} bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30`}>
       🛡{compact ? "" : ` Shield day ${(shield.streak ?? 0) + 1}/2 · ${shield.n} calls`}
     </span>
   );
@@ -1285,8 +1285,8 @@ export default function TelecallingDashboard() {
                             </li>
                             <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
                             <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−10</span> — each <span className="font-semibold">red (unsatisfactory) estimate</span> you still hold at the 9 PM EOD run (once per estimate per day; always applies).</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +50–200 (by value) · lead +15 · call +0.5 · <span className="text-rose-500">red-hold −10</span>{penaltyMode ? <span> (Active Penalty ON — penalties apply)</span> : <span> (Active Penalty OFF — penalties paused)</span>} · <span className="text-rose-500">legacy snatch −15</span> (no new rows; historical ones still count while ON) · <span className="text-emerald-500">🛡 shield</span> (legacy — re-poaching is OFF, so shields never trigger). Risk-based re-poaching follows the Controller's 🔁 EOD Reassignment switch (currently OFF — holders keep everything). The table restarts at zero every week so everyone gets a fair shot.</li>
+                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−10</span> — each <span className="font-semibold">red (unsatisfactory) estimate</span> you still hold at the 9 PM EOD run (once per estimate per day; always applies). This is the <span className="font-semibold">only</span> deduction in play.</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +50–200 (by value) · lead +15 · call +0.5 · <span className="text-rose-500">red-hold −10</span>{penaltyMode ? <span> (Active Penalty ON — penalties apply)</span> : <span> (Active Penalty OFF — penalties paused)</span>}. Risk-based re-poaching follows the Controller's 🔁 EOD Reassignment switch (currently OFF — holders keep everything). The table restarts at zero every week so everyone gets a fair shot.<br />Retired rules (−15 snatch, −20 decline, 🛡 shields): no new rows — old rows still count in past totals while ON.</li>
                           </ul>
                         </div>
                       </div>
