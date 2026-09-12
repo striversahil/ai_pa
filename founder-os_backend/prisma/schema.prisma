@@ -204,6 +204,13 @@ model Estimate {
   callbackDate          String?
   callTagBy             String?
   callTagAt             String?
+  // Dated next step (set by the holder or MIS from the follow-up view):
+  // a concrete customer commitment with a date ("client confirms on 15th").
+  // While nextStepDate is today or future the estimate is protected from the
+  // red-risk/EOD penalty no matter the AI verdict; once past, the missed
+  // commitment reads red until chased. Engines never write or clear these.
+  nextStep              String?
+  nextStepDate          String?
   comments              Comment[]
   classification        Classification?
   assignments           EstimateAssignment[]

@@ -103,6 +103,11 @@ export interface RiskItem {
   locked: boolean;
   /** MIS override: estimate is never assigned to any agent. */
   skipAssignment: boolean;
+  /** Dated customer commitment set by the holder/MIS (null when none). */
+  nextStep: string | null;
+  nextStepDate: string | null;
+  /** True when today's NeoDove effort on this customer shields the EOD −10. */
+  effortShielded: boolean;
 }
 
 /** Hours until the next EOD remark-deduction run (21:00 IST). Null if already past. */
@@ -237,6 +242,11 @@ async function computeRiskCache(): Promise<RiskCache> {
   const nowMs = Date.now();
   const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
   const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+  const neodoveIdByTelecaller = new Map<string, string>();
+  for (const t of telecallers as any[]) {
+    const nid = String(t?.neodoveUserId ?? '');
+    if (nid) neodoveIdByTelecaller.set(String(t.id), nid);
+  }
 
   const sentOpen = await prisma.estimate.findMany({
     where: { status: 'sent', assignedTelecallerId: { not: null } },
@@ -244,11 +254,56 @@ async function computeRiskCache(): Promise<RiskCache> {
   });
   const lastComments = await latestCommentDates(sentOpen.map((e) => e.estimateId));
 
+  // Today's per-customer effort (NeoDove call-log snapshot): holder × customer
+  // phone → effective attempts. Drives the effort shield below.
+  const effortByKey = new Map<string, EffortRow>();
+  try {
+    const effortRows = await readEffortSnapshot(istDate(new Date(nowMs)));
+    for (const r of effortRows ?? []) {
+      if (r?.u && r?.p) effortByKey.set(`${r.u}|${r.p}`, r);
+    }
+  } catch { /* no effort data — no shields */ }
+  const todayIST = istDate(new Date(nowMs));
+
   const items: CachedRiskItem[] = sentOpen.map((e) => {
     const cls = (e as any).classification ?? null;
     const lastCommentDate = lastComments.get(e.estimateId) ?? null;
-    const { risk, staleHours } = classifyRisk(cls, lastCommentDate, nowMs);
+    const nextStep = (e as any).nextStep != null ? String((e as any).nextStep) : null;
+    const nsRaw = (e as any).nextStepDate != null ? String((e as any).nextStepDate) : null;
+    const nextStepDate = nsRaw && DATE_RE.test(nsRaw) ? nsRaw : null;
+    // Next-step discipline beats AI mood-reading: a dated customer commitment
+    // protects the holding through its date; a missed date reads red until
+    // chased. No next step → the existing verdict + freshness rules apply.
+    let risk: EstimateRisk;
+    let staleHours: number | null;
+    let snatchReason: string | null;
+    if (nextStepDate) {
+      const ts = parseCommentDateMs(lastCommentDate);
+      staleHours = ts !== null ? (nowMs - ts) / 3600000 : null;
+      if (nextStepDate >= todayIST) {
+        risk = 'ok';
+        snatchReason = `Next step due ${nextStepDate}${nextStep ? `: ${nextStep.slice(0, 120)}` : ''} — protected from EOD deduction`;
+      } else {
+        risk = 'red';
+        snatchReason = `Next step${nextStep ? ` "${nextStep.slice(0, 120)}"` : ''} was due ${nextStepDate} — commitment missed`;
+      }
+    } else {
+      const c = classifyRisk(cls, lastCommentDate, nowMs);
+      risk = c.risk;
+      staleHours = c.staleHours;
+      snatchReason = buildSnatchReason(e, risk);
+    }
     const owner = String(e.assignedTelecallerId);
+    // Effort shield: 2+ effective attempts or a connected call to THIS
+    // customer today (NeoDove-verified, not comment-verified) skips the EOD
+    // −10. Effort counts — failed pickups never punish.
+    let effortShielded = false;
+    const nid = neodoveIdByTelecaller.get(owner);
+    const phone = normPhone10((e as any).contactPhone);
+    if (risk === 'red' && nid && phone) {
+      const row = effortByKey.get(`${nid}|${phone}`);
+      effortShielded = !!row && (Number(row.n) >= 2 || Number(row.conn) >= 1);
+    }
     return {
       estimateId: e.estimateId,
       estimateNumber: e.estimateNumber,
@@ -260,10 +315,13 @@ async function computeRiskCache(): Promise<RiskCache> {
       lastCommentDate,
       staleHours,
       reasoning: cls?.reasoning ?? null,
-      snatchReason: buildSnatchReason(e, risk),
+      snatchReason,
       snatchInHours: hoursUntilEod(new Date(nowMs)),
       locked: !!(e as any).lockedTelecallerId,
       skipAssignment: !!(e as any).skipAssignment,
+      nextStep,
+      nextStepDate,
+      effortShielded,
     };
   });
   return { items, computedAt: new Date(nowMs).toISOString() };
@@ -358,6 +416,70 @@ export async function setEstimateCallTag(opts: {
   // write is a single-row UPDATE and the next read merges it live, so a tag
   // save never forces the multi-second risk/leaderboard recompute).
   return { ok: true, estimate };
+}
+
+/** Max horizon for a dated next step (IST days out). Commitments further out
+ *  than this are planning noise, not protection. */
+export const NEXT_STEP_MAX_DAYS = 30;
+
+/**
+ * Validate + persist a dated next step (customer commitment) on one estimate.
+ * Holder or MIS only (enforced at the route). Date must be today..today+30
+ * IST; null clears both columns. Engines never write these — the risk model
+ * only reads them (future/today date protects from red + EOD, past date reads
+ * red until chased).
+ */
+export async function setEstimateNextStep(opts: {
+  estimateId: string;
+  date: string | null | undefined;
+  note?: string | null | undefined;
+}): Promise<{ ok: boolean; error?: string; status?: number; estimate?: any }> {
+  const estimateId = String(opts.estimateId || '').trim();
+  if (!estimateId) return { ok: false, error: 'estimate id required', status: 400 };
+  const raw = opts.date === null || opts.date === undefined || opts.date === '' ? null : String(opts.date).trim();
+  let date: string | null = null;
+  if (raw !== null) {
+    if (!DATE_RE.test(raw)) return { ok: false, error: 'date must be YYYY-MM-DD', status: 400 };
+    const today = istDate();
+    const max = istDayPlus(NEXT_STEP_MAX_DAYS);
+    if (raw < today) return { ok: false, error: 'next-step date cannot be in the past', status: 400 };
+    if (raw > max) return { ok: false, error: `next-step date cannot be more than ${NEXT_STEP_MAX_DAYS} days out (max ${max})`, status: 400 };
+    date = raw;
+  }
+  const note = date ? String(opts.note ?? '').trim().slice(0, 200) : null;
+  const exists = await prisma.estimate.findUnique({
+    where: { estimateId },
+    select: { estimateId: true },
+  });
+  if (!exists) return { ok: false, error: 'estimate not found', status: 404 };
+  const estimate = await prisma.estimate.update({
+    where: { estimateId },
+    data: { nextStep: note, nextStepDate: date },
+  });
+  return { ok: true, estimate };
+}
+
+/**
+ * Sheets-style freshness for holder-written next steps (mirrors
+ * overlayCallTags): merges the LIVE nextStep columns onto cached follow-up
+ * rows with one indexed query, so a save is visible on the very next read
+ * without busting the 5-min dashboard cache. Also busts the risk cache — the
+ * risk verdict itself depends on these columns (unlike tags).
+ */
+export async function overlayNextSteps(rows: any[]): Promise<void> {
+  const ids = [...new Set((rows || []).map((r) => String(r?.estimateId || '')).filter(Boolean))];
+  if (ids.length === 0) return;
+  const found = await prisma.estimate.findMany({
+    where: { estimateId: { in: ids } },
+    select: { estimateId: true, nextStep: true, nextStepDate: true },
+  });
+  const byId = new Map((found as any[]).map((e) => [String(e.estimateId), e]));
+  for (const r of rows) {
+    const live = byId.get(String(r?.estimateId ?? ''));
+    if (!live) continue;
+    r.nextStep = (live as any).nextStep ?? null;
+    r.nextStepDate = (live as any).nextStepDate ?? null;
+  }
 }
 
 /**
@@ -1241,7 +1363,7 @@ async function inferEstimateCreator(estimateId: string, telecallers: Telecaller[
 // be summed with a simple day-range filter — the weekly view restarts at zero
 // automatically.
 /** Conversion close slabs by estimate total (founder rule, ₹):
- *  ₹0–1L → 50 · ₹1L–2.5L → 75 · ₹2.5L–5L → 100 · ₹5L and above → 200.
+ *  ₹0–1L → 50 · ₹1L–2.5L → 75 · ₹2.5–5L → 100 · ₹5L and above → 200.
  *  Boundary totals join the higher slab (exactly ₹1L → 75, ₹2.5L → 100,
  *  ₹5L → 200); zero/unknown totals fall in the lowest slab. The cascading
  *  `<` checks below implement exactly these between-bands. */
@@ -1253,9 +1375,18 @@ export function closePointsFor(total: unknown): number {
   if (v < 500_000) return 100;
   return 200;
 }
-/** True for any conversion-close delta (current slabs + legacy +100 rows). */
+/** Exact 50/50 halves credited per close (generator ceil, closer floor):
+ *  50→25/25 · 75→38/37 · 100→50/50 · 200→100/100. */
+const CLOSE_HALVES = new Set([25, 37, 38, 50, 100]);
+/** True for any conversion-close delta (full slabs legacy + split halves). */
 export function isCloseDelta(delta: unknown): boolean {
-  return CLOSE_SLABS.includes(Number(delta));
+  const n = Number(delta);
+  return CLOSE_SLABS.includes(n) || CLOSE_HALVES.has(n);
+}
+export function splitClosePoints(total: unknown): { generator: number; closer: number } {
+  const slab = closePointsFor(total);
+  const generator = Math.ceil(slab / 2);
+  return { generator, closer: slab - generator };
 }
 const SNATCH_PENALTY = -15;
 /** EOD remark penalty: one −10 per red-risk estimate held, charged daily. */
@@ -1336,34 +1467,75 @@ async function recordScoreEvent(telecallerId: string, estimateId: string, delta:
 }
 
 /**
- * Credit the slab-based close points to the LEAD GENERATOR
- * (Estimate.createdBy) the moment an estimate converts (status →
- * accepted/confirmed). Founder rule: the agent who generated the lead earns
- * the close, not whoever happened to hold the follow-up at conversion. Falls
- * back to the current holder when the creator is unknown (old estimates
- * pre-dating creator capture); no-op if neither exists. Duplicate-guarded:
- * one close credit per estimate, ever (any slab delta counts, so a re-run
- * after a slab change can never double-credit).
+ * Credit the slab-based close points, split 50/50 between the LEAD GENERATOR
+ * (Estimate.createdBy — the agent who originated the lead) and the CLOSER
+ * (assignedTelecallerId — whoever held the follow-up at conversion). Founder
+ * rule: chasing has a prize, not just a penalty to dodge. Falls back to the
+ * current holder when the creator is unknown (old estimates pre-dating creator
+ * capture). Same person generating + holding takes a single full-slab row.
+ * Duplicate-guarded: close rows (any slab or half delta) per estimate gate
+ * re-entry, so a re-run after a slab change can never double-credit.
  */
-export async function recordConversionClose(estimateId: string): Promise<void> {
+export async function recordConversionClose(estimateId: string, opts?: { day?: string; backfill?: boolean }): Promise<boolean> {
   try {
     const est = await prisma.estimate.findUnique({
       where: { estimateId },
       select: { status: true, total: true, assignedTelecallerId: true, createdBy: true },
     });
-    if (!est || !(est.status === 'accepted' || est.status === 'confirmed')) return;
-    const earner = (est as any).createdBy || est.assignedTelecallerId;
-    if (!earner) return;
+    if (!est || !(est.status === 'accepted' || est.status === 'confirmed')) return false;
+    const generator = (est as any).createdBy || null;
+    const holder = est.assignedTelecallerId || null;
+    const earner = generator || holder;
+    if (!earner) return false;
     const existing = await prisma.telecallerScoreEvent.findMany({
       where: { estimateId },
       select: { delta: true },
     });
-    if ((existing as any[]).some((e) => isCloseDelta(e.delta))) return;
-    const points = closePointsFor((est as any).total);
-    await recordScoreEvent(String(earner), estimateId, points, istDate(), `Estimate converted ₹${Math.round(Number((est as any).total ?? 0) || 0).toLocaleString('en-IN')} — ${points} points to lead generator`);
+    if ((existing as any[]).some((e) => isCloseDelta(e.delta))) return false;
+    const day = opts?.day && DATE_RE.test(opts.day) ? opts.day : istDate();
+    const total = Math.round(Number((est as any).total ?? 0) || 0);
+    const tag = opts?.backfill ? ' (catch-up)' : '';
+    if (generator && holder && String(generator) !== String(holder)) {
+      const { generator: gPts, closer: cPts } = splitClosePoints((est as any).total);
+      await recordScoreEvent(String(generator), estimateId, gPts, day, `Estimate converted ₹${total.toLocaleString('en-IN')} — ${gPts} points lead-generator share${tag}`);
+      await recordScoreEvent(String(holder), estimateId, cPts, day, `Estimate converted ₹${total.toLocaleString('en-IN')} — ${cPts} points closer share${tag}`);
+    } else {
+      const points = closePointsFor((est as any).total);
+      await recordScoreEvent(String(earner), estimateId, points, day, `Estimate converted ₹${total.toLocaleString('en-IN')} — ${points} points to lead generator${tag}`);
+    }
+    return true;
   } catch (e: any) {
     logger.warn({ err: e?.message, estimateId }, 'recordConversionClose failed');
+    return false;
   }
+}
+
+/**
+ * One-time catch-up: credit accepted/confirmed estimates whose close never
+ * reached the ledger (pre-split era, missing creator links resolved since).
+ * Runs at the start of the EOD deduction (self-healing — later runs no-op via
+ * the close guard). Backfill rows carry the run day with a catch-up note.
+ */
+export async function catchUpConversionCloses(day: string): Promise<{ credited: number; estimates: number }> {
+  let credited = 0;
+  const seen = new Set<string>();
+  try {
+    for (const status of ['accepted', 'confirmed']) {
+      const rows = await prisma.estimate.findMany({
+        where: { status },
+        select: { estimateId: true },
+      }).catch(() => []);
+      for (const r of (rows as any[]) ?? []) {
+        const id = String(r?.estimateId ?? '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        if (await recordConversionClose(id, { day, backfill: true })) credited += 1;
+      }
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'catchUpConversionCloses failed');
+  }
+  return { credited, estimates: seen.size };
 }
 
 /**
@@ -1379,7 +1551,7 @@ export async function getConvertersMap(sinceDay: string = ''): Promise<Record<st
       where: {
         ...(DATE_RE.test(sinceDay) ? { day: { gte: sinceDay } } : {}),
       },
-      select: { telecallerId: true, estimateId: true, day: true, delta: true },
+      select: { telecallerId: true, estimateId: true, day: true, delta: true, reason: true },
     });
     const ids = [...new Set((events as any[]).map((e) => String(e.telecallerId ?? '')).filter(Boolean))];
     const nameById = new Map<string, string>();
@@ -1391,11 +1563,20 @@ export async function getConvertersMap(sinceDay: string = ''): Promise<Record<st
       for (const r of rows as any[]) nameById.set(String(r.id), String(r.name ?? ''));
     }
     const out: Record<string, { name: string; day: string }> = {};
-    for (const e of events as any[]) {
-      if (!isCloseDelta(e.delta)) continue;
-      const estId = String(e.estimateId ?? '');
-      if (!estId || out[estId]) continue; // first close wins; ledger guards dupes
-      out[estId] = { name: nameById.get(String(e.telecallerId)) ?? '', day: String(e.day ?? '') };
+    const isGeneratorRow = (e: any) => String(e?.reason ?? '').includes('lead-generator share')
+      || String(e?.reason ?? '').includes('to lead generator');
+    // Two passes: generator-share rows first (split closes write generator +
+    // closer rows — "Converted By" names the lead generator), then any close
+    // row for the rest (legacy full-slab rows, same-person closes).
+    for (const pass of [true, false]) {
+      for (const e of events as any[]) {
+        if (!isCloseDelta(e.delta)) continue;
+        const estId = String(e.estimateId ?? '');
+        if (!estId || out[estId]) continue;
+        if (pass && !isGeneratorRow(e)) continue;
+        if (!pass && isGeneratorRow(e)) continue;
+        out[estId] = { name: nameById.get(String(e.telecallerId)) ?? '', day: String(e.day ?? '') };
+      }
     }
     return out;
   } catch (e: any) {
@@ -1468,6 +1649,13 @@ async function getNeodoveDayCalls(day: string): Promise<{ attempted: number; con
   }
 }
 
+export interface EodPreviewRow {
+  telecallerId: string;
+  name: string;
+  charges: number;
+  shielded: number;
+}
+
 /**
  * EOD remark deduction: −10 per red-risk estimate currently held, one charge
  * per estimate per day. Risk re-poaching is removed (holders keep everything),
@@ -1476,10 +1664,19 @@ async function getNeodoveDayCalls(day: string): Promise<{ attempted: number; con
  * toggle (default ON) — when OFF the run reports red holdings but charges
  * nothing. Non-working days (zero NeoDove call activity for the day — Sundays,
  * holidays) deduct nothing, even with the toggle ON: no work happened, so no
- * one is punished. Triggered by the 21:00 IST telecalling-eod job via
+ * one is punished. Effort-shielded holdings (2+ NeoDove attempts or a connect
+ * on that customer today) are reported but never charged. dryRun computes the
+ * full preview without writing anything (MIS "what would tonight charge").
+ * The run also sweeps close catch-ups (accepted/confirmed converts that never
+ * reached the ledger). Triggered by the 21:00 IST telecalling-eod job via
  * POST /api/trigger/telecalling/eod.
  */
-export async function runEodRemarkDeduction(day?: string): Promise<{ deducted: number; agents: number; redHeld: number; day: string; penaltiesEnabled: boolean; skipped?: string }> {
+export async function runEodRemarkDeduction(day?: string, opts?: { dryRun?: boolean }): Promise<{
+  deducted: number; agents: number; redHeld: number; shielded: number;
+  closesCredited: number; day: string; penaltiesEnabled: boolean;
+  preview: EodPreviewRow[]; skipped?: string;
+}> {
+  const dryRun = !!opts?.dryRun;
   const today = day && DATE_RE.test(day) ? day : istDate();
   const penaltiesEnabled = await isPenaltiesEnabled();
   let items: CachedRiskItem[] = [];
@@ -1487,7 +1684,7 @@ export async function runEodRemarkDeduction(day?: string): Promise<{ deducted: n
     items = await getRiskItems();
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'eod-deduction: risk items unavailable — deducting nothing');
-    return { deducted: 0, agents: 0, redHeld: 0, day: today, penaltiesEnabled };
+    return { deducted: 0, agents: 0, redHeld: 0, shielded: 0, closesCredited: 0, day: today, penaltiesEnabled, preview: [] };
   }
   let redHeld = 0;
   for (const r of items) {
@@ -1503,39 +1700,91 @@ export async function runEodRemarkDeduction(day?: string): Promise<{ deducted: n
   // work); the empty NeoDove dashboard + this log line surface the breakage.
   const activity = await getNeodoveDayCalls(today);
   if (activity.attempted + activity.connected === 0) {
-    logger.info({ redHeld, day: today, hasReport: activity.hasReport }, 'EOD remark deduction skipped — non-working day (zero NeoDove calls)');
-    return { deducted: 0, agents: 0, redHeld, day: today, penaltiesEnabled, skipped: 'non-working-day' };
+    logger.info({ redHeld, day: today, hasReport: activity.hasReport, dryRun }, 'EOD remark deduction skipped — non-working day (zero NeoDove calls)');
+    return { deducted: 0, agents: 0, redHeld, shielded: 0, closesCredited: 0, day: today, penaltiesEnabled, preview: [], skipped: 'non-working-day' };
   }
   if (!penaltiesEnabled) {
-    logger.info({ redHeld, day: today }, 'EOD remark deduction skipped — Active Penalty is OFF');
-    return { deducted: 0, agents: 0, redHeld, day: today, penaltiesEnabled };
+    logger.info({ redHeld, day: today, dryRun }, 'EOD remark deduction skipped — Active Penalty is OFF');
+    return { deducted: 0, agents: 0, redHeld, shielded: 0, closesCredited: 0, day: today, penaltiesEnabled, preview: [] };
+  }
+  // Close catch-up (self-healing): accepted/confirmed converts that never
+  // reached the ledger get their split credit now. Skipped on dry runs.
+  let closesCredited = 0;
+  if (!dryRun) {
+    try {
+      closesCredited = (await catchUpConversionCloses(today)).credited;
+    } catch { /* non-fatal */ }
+    // Close rows change points too — bust with the deduction below.
   }
   let deducted = 0;
+  let shielded = 0;
   const agents = new Set<string>();
+  const previewByHolder = new Map<string, EodPreviewRow>();
+  // Already charged today (re-run / dry-run accuracy): the live path is
+  // duplicate-guarded inside recordRemarkPenalty, but the preview must not
+  // count rows that would be skipped.
+  const alreadyCharged = new Set<string>();
+  try {
+    const rows = await prisma.telecallerScoreEvent.findMany({
+      where: { day: today, delta: REMARK_PENALTY },
+      select: { telecallerId: true, estimateId: true },
+    });
+    for (const e of (rows as any[]) ?? []) {
+      alreadyCharged.add(`${String(e.telecallerId)}|${String(e.estimateId)}`);
+    }
+  } catch { /* guard best-effort — live path still guards per row */ }
+  const previewRow = (r: CachedRiskItem): EodPreviewRow => {
+    const id = String(r.telecallerId);
+    let row = previewByHolder.get(id);
+    if (!row) {
+      row = { telecallerId: id, name: String((r as any).telecallerName ?? ''), charges: 0, shielded: 0 };
+      previewByHolder.set(id, row);
+    }
+    return row;
+  };
   for (const r of items) {
     if (r.risk !== 'red') continue;
     if (!r.telecallerId) continue;
     if (r.locked || r.skipAssignment) continue;
+    // Effort shield: real NeoDove work on THIS customer today (2+ effective
+    // attempts or a connect) — reported, never charged. Failed pickups don't
+    // punish.
+    if ((r as any).effortShielded) {
+      shielded += 1;
+      previewRow(r).shielded += 1;
+      continue;
+    }
+    if (alreadyCharged.has(`${String(r.telecallerId)}|${String(r.estimateId)}`)) continue;
     const reasoning = (r.reasoning ?? '').trim();
     const reason = reasoning && reasoning !== 'No sales agent comment found.'
       ? `EOD remark penalty (unsatisfactory): ${reasoning.slice(0, 140)}`
       : 'Unsatisfactory remark at end of day — 10 points deducted';
+    if (dryRun) {
+      deducted += 1;
+      agents.add(String(r.telecallerId));
+      previewRow(r).charges += 1;
+      continue;
+    }
     try {
       if (await recordRemarkPenalty(String(r.telecallerId), r.estimateId, today, reason)) {
         deducted += 1;
         agents.add(String(r.telecallerId));
+        previewRow(r).charges += 1;
       }
     } catch (e: any) {
       logger.warn({ err: e?.message, estimateId: r.estimateId }, 'eod-deduction: charge failed — continuing');
     }
   }
-  logger.info({ deducted, agents: agents.size, redHeld, day: today }, 'EOD remark deduction complete');
-  if (deducted > 0) {
-    // Leaderboard points changed — bust the dashboard caches so the next read
-    // recomputes (converters map is close-only, unaffected).
-    try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
+  logger.info({ deducted, agents: agents.size, redHeld, shielded, closesCredited, day: today, dryRun }, 'EOD remark deduction complete');
+  if (!dryRun && (deducted > 0 || closesCredited > 0)) {
+    // Leaderboard points changed — bust the risk + dashboard caches (also the
+    // converters map, which is close-derived) so the next read recomputes.
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
   }
-  return { deducted, agents: agents.size, redHeld, day: today, penaltiesEnabled };
+  return {
+    deducted, agents: agents.size, redHeld, shielded, closesCredited,
+    day: today, penaltiesEnabled, preview: [...previewByHolder.values()],
+  };
 }
 
 export interface TelecallerDayMetrics {
@@ -1751,9 +2000,13 @@ export async function computeTelecallingDaily(
       if (!day) continue;
       if (isCloseDelta(ev.delta)) {
         const c = cell(day, String(ev.telecallerId));
-        c.won += 1;
+        // Split closes write two rows (generator + closer share) — count one
+        // win per estimate, but sum both halves into closePoints.
+        if (ev.estimateId && !c.closeIds.includes(String(ev.estimateId))) {
+          c.won += 1;
+          c.closeIds.push(String(ev.estimateId));
+        }
         c.closePoints += Number(ev.delta) || 0;
-        if (ev.estimateId) c.closeIds.push(String(ev.estimateId));
       } else if (ev.delta === SNATCH_PENALTY) {
         cell(day, String(ev.telecallerId)).snatches += 1;
       } else if (ev.delta === REMARK_PENALTY) {
@@ -1908,7 +2161,10 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   // multi-second full-aggregation recompute a cache bust would force.
   try {
     const rows: any[] = Array.isArray((payload as any)?.followUps) ? (payload as any).followUps : [];
-    if (rows.length > 0) await overlayCallTags(rows);
+    if (rows.length > 0) {
+      await overlayCallTags(rows);
+      await overlayNextSteps(rows);
+    }
   } catch { /* overlay best-effort; cached rows render as-is */ }
   return payload;
 }
@@ -2060,12 +2316,20 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       // −15 snatches. Retired −20 decline rows still sit in the ledger but are
       // ignored everywhere.
       if (isCloseDelta(ev.delta)) {
-        cur.closes += 1; cur.total += ev.delta;
+        // Split closes write two rows per estimate — count one close per
+        // estimate, summing both halves into the total.
         if ((ev as any).estimateId) {
           const arr = closeIdsByOwner.get(String(ev.telecallerId)) ?? [];
-          arr.push(String((ev as any).estimateId));
-          closeIdsByOwner.set(String(ev.telecallerId), arr);
+          const estId = String((ev as any).estimateId);
+          if (!arr.includes(estId)) {
+            arr.push(estId);
+            closeIdsByOwner.set(String(ev.telecallerId), arr);
+            cur.closes += 1;
+          }
+        } else {
+          cur.closes += 1;
         }
+        cur.total += ev.delta;
       }
       else if (ev.delta === SNATCH_PENALTY) { cur.snatches += 1; cur.total += ev.delta; }
       else if (ev.delta === REMARK_PENALTY) { cur.remarks += 1; cur.total += ev.delta; }

@@ -428,6 +428,58 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     });
   });
 
+  // ── Dated next steps (Lead Conversion view) ───────────────────────────────
+  // Holder or MIS sets a concrete customer commitment + date on a follow-up.
+  // While the date is today-or-future the estimate is protected from red-risk
+  // and the EOD −10 no matter the AI verdict; a past date reads red until
+  // chased. Same holder-or-MIS scoping as call tags above.
+  app.put('/api/estimates/:id/next-step', async (c) => {
+    const { prisma } = deps();
+    const body = await c.req.json().catch(() => ({}));
+    let isMis = false;
+    let actorTelecallerId: string | null = null;
+    try {
+      await requireMisScope(c);
+      isMis = true;
+    } catch {
+      const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
+      try {
+        actorTelecallerId = await resolveSelfTelecaller(c);
+      } catch { actorTelecallerId = null; }
+      if (!actorTelecallerId) return c.json({ error: 'only MIS or the assigned sales agent can set next steps' }, 403);
+    }
+    const estimateId = c.req.param('id');
+    if (!isMis) {
+      const current = await prisma.estimate.findUnique({
+        where: { estimateId },
+        select: { assignedTelecallerId: true },
+      });
+      if (!current) return c.json({ error: 'estimate not found' }, 404);
+      if (String(current.assignedTelecallerId ?? '') !== actorTelecallerId) {
+        return c.json({ error: 'you can only set next steps on estimates assigned to you' }, 403);
+      }
+    }
+    const { setEstimateNextStep } = require('../../automations/telecalling/service') as typeof import('../../automations/telecalling/service');
+    const result = await setEstimateNextStep({
+      estimateId,
+      date: body.date ?? null,
+      note: body.note ?? null,
+    });
+    if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as any);
+    try {
+      const { invalidateRiskCache } = require('../../automations/telecalling/service') as typeof import('../../automations/telecalling/service');
+      await invalidateRiskCache();
+    } catch { /* non-fatal */ }
+    const saved: any = result.estimate ?? {};
+    notifyLive(c, { type: LiveEvent.Telecalling, nextStep: { estimateId, nextStep: saved.nextStep ?? null, nextStepDate: saved.nextStepDate ?? null } });
+    return c.json({
+      ok: true,
+      estimateId,
+      nextStep: saved.nextStep ?? null,
+      nextStepDate: saved.nextStepDate ?? null,
+    });
+  });
+
   // ── CRM manual order actions (local override layer) ─────────────────────────
   // MIS operators advance/cancel a sales order from the CRM dashboard. The
   // action is recorded in CrmOrderAction; the next crm-runner tick applies the

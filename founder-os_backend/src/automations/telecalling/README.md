@@ -142,8 +142,11 @@ own lead, but an **absent** creator never receives claims while away.
 
 ## Risk model (live pre-warning)
 
-`classifyRisk(cls, lastCommentDate, nowMs)` per open assigned `sent`
-estimate (`ZOMBIE_DAYS=3`, `FRESH_HOURS=24`):
+Per open assigned `sent` estimate (`ZOMBIE_DAYS=3`, `FRESH_HOURS=24`).
+**Dated next steps beat AI mood-reading**: a valid `nextStepDate`
+(`Estimate.nextStep/nextStepDate`, migration 0028, holder-or-MIS-set, max +30
+days) protects through its date (`ok`) no matter the verdict; a past date
+reads `red` until chased. With no next step, the classic rules apply:
 
 - **zombie** — no parseable comment date, or stale >72h (AI treats stale as
   never meaningful).
@@ -152,6 +155,11 @@ estimate (`ZOMBIE_DAYS=3`, `FRESH_HOURS=24`):
   comment older than 24h** (satisfactory-but-stale: nobody chased it today
   → costs −10 at the EOD remark run).
 - **ok** — meaningful AND fresh (<24h).
+
+**Effort shield**: 2+ effective NeoDove attempts (`n`) or a connect (`conn`)
+on that customer today (per-customer snapshot rows, redial-merged) sets
+`effortShielded` — reported, never charged at EOD. Failed pickups don't
+punish.
 
 `latestCommentDates()` prefers `dateFormatted` ("DD/MM/YYYY hh:mm AM/PM",
 parsed as explicit `+05:30`) over date-only `date` (midnight UTC would
@@ -179,8 +187,13 @@ everywhere.
   generator** (`Estimate.createdBy`, holder only as fallback when the creator
   is unknown). Points follow the estimate total: ₹0–1L → 50, ₹1L–2.5L → 75,
   ₹2.5L–5L → 100, ₹5L and above → 200 (boundary totals join the higher slab).
-  Duplicate-guarded (one
-  close credit per estimate, ever). ALWAYS recorded, toggle-independent.
+  Split 50/50: the lead generator takes ceil(slab/2) (25/38/50/100), the
+  closer (holder at conversion) takes floor (25/37/50/50); same person takes
+  one full-slab row. "Converted By" export names the generator.
+  Duplicate-guarded (any slab or half delta per estimate gates re-entry).
+  ALWAYS recorded, toggle-independent. `catchUpConversionCloses()` (start of
+  the EOD run) backfills accepted/confirmed converts that never reached the
+  ledger, marked catch-up.
 - **−10 remark** (`recordRemarkPenalty`, called from `runEodRemarkDeduction`
   at the 21:00 IST EOD run): one charge per red-risk estimate currently held
   (zombies, MIS-locked and skip-assignment holdings excluded).

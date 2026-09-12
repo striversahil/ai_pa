@@ -135,6 +135,12 @@ interface FollowUp {  estimateId: string;
   callTagByName?: string | null;
   /** ISO timestamp of when the tag was set. */
   callTagAt?: string | null;
+  /** Dated customer commitment (free text, set by holder/MIS). */
+  nextStep?: string | null;
+  /** Date the commitment is due (YYYY-MM-DD, max +30 days). */
+  nextStepDate?: string | null;
+  /** True when today's NeoDove effort on this customer shields the EOD −10. */
+  effortShielded?: boolean | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -462,6 +468,119 @@ function CallTagControl({ f, onSaved, onTag, compact = false }: { f: FollowUp; o
           </button>
         </span>
       )}
+      {err && <span className="text-[10px] text-rose-500">{err}</span>}
+    </div>
+  );
+}
+
+/** Dated next step (customer commitment) editor. While the date is today-or-
+ *  future the estimate is protected from red-risk and the EOD −10 no matter
+ *  the AI verdict; a past date reads red until chased. Holder or MIS only
+ *  (server-enforced); max 30 days out. */
+function NextStepControl({ f, onSaved }: { f: FollowUp; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [date, setDate] = useState(() => f.nextStepDate ?? localIsoDay(1));
+  const [note, setNote] = useState(() => f.nextStep ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const minDay = localIsoDay(0);
+  const maxDay = localIsoDay(30);
+  const chipBase = "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-semibold text-[11px]";
+
+  const save = async (d: string | null, n: string | null) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/estimates/${encodeURIComponent(f.estimateId)}/next-step`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: d, note: n }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Save failed (HTTP ${res.status})`);
+      setEditing(false);
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.message || "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (f.nextStepDate && !editing) {
+    const overdue = f.nextStepDate < minDay;
+    const dueToday = f.nextStepDate === minDay;
+    return (
+      <div className="flex flex-wrap items-center gap-1 pt-0.5">
+        <span
+          title={overdue ? "Commitment date passed — red until chased" : "Customer commitment — protected from EOD deduction through this date"}
+          className={`${chipBase} ${overdue ? "text-rose-500 dark:text-rose-400 border-rose-500/40 bg-rose-500/10" : "text-indigo-500 dark:text-indigo-400 border-indigo-500/40 bg-indigo-500/10"}`}
+        >
+          📌 {f.nextStepDate}{dueToday ? " · today" : ""}{overdue ? " · missed" : ""}
+          {f.nextStep ? ` · ${f.nextStep}` : ""}
+        </span>
+        <button
+          disabled={busy}
+          onClick={() => { setDate(f.nextStepDate ?? localIsoDay(1)); setNote(f.nextStep ?? ""); setEditing(true); }}
+          className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 underline underline-offset-2 hover:text-zinc-800 dark:hover:text-zinc-200 disabled:opacity-50"
+        >
+          change
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => void save(null, null)}
+          title="Clear next step"
+          className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 hover:text-rose-500 disabled:opacity-50"
+        >
+          ✕
+        </button>
+        {err && <span className="text-[10px] text-rose-500">{err}</span>}
+      </div>
+    );
+  }
+
+  if (!editing) {
+    return (
+      <div className="flex flex-wrap items-center gap-1 pt-0.5">
+        <button
+          disabled={busy}
+          onClick={() => { setDate(localIsoDay(1)); setNote(""); setEditing(true); }}
+          title="Set a dated customer commitment — protects this estimate from red-risk and the EOD −10 through that date"
+          className={`${chipBase} text-zinc-500 dark:text-zinc-400 border-dashed border-zinc-400/40 bg-zinc-500/5 hover:opacity-80 disabled:opacity-50`}
+        >
+          📌 + Next step
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 pt-0.5">
+      <input
+        type="date"
+        value={date}
+        min={minDay}
+        max={maxDay}
+        onChange={(e) => setDate(e.target.value)}
+        className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-900 dark:text-zinc-100"
+      />
+      <input
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Commitment (e.g. client confirms)"
+        maxLength={200}
+        className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-900 dark:text-zinc-100 w-44"
+      />
+      <button
+        disabled={busy || !date}
+        onClick={() => void save(date, note.trim() || null)}
+        className="rounded-md bg-indigo-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
+      >
+        {busy ? "…" : "Save"}
+      </button>
+      <button disabled={busy} onClick={() => setEditing(false)} className="text-[10px] text-zinc-500 hover:text-rose-500 disabled:opacity-50">
+        ✕
+      </button>
       {err && <span className="text-[10px] text-rose-500">{err}</span>}
     </div>
   );
@@ -1275,7 +1394,7 @@ export default function TelecallingDashboard() {
                         <div className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 shadow-xl p-4 text-left text-[11px] leading-relaxed text-zinc-700 dark:text-zinc-300 space-y-2">
                           <div className="text-sm font-bold text-zinc-900 dark:text-white">📖 Game Rules</div>
                           <ul className="space-y-1.5 list-none">
-                            <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+50 – +200</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms), scored by its value. Credited to whoever generated the lead.
+                            <li><span className="font-bold text-emerald-500 dark:text-emerald-400">+50 – +200</span> — you <span className="font-semibold">convert</span> an estimate (customer accepts / confirms), scored by its value. Split <span className="font-semibold">50/50</span> between whoever generated the lead and whoever closed the follow-up (same person takes the full slab).
                               <span className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-2 py-1.5 font-semibold">
                                 <span>₹0 – ₹1L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+50</span></span>
                                 <span>₹1L – ₹2.5L <span className="float-right font-mono font-bold text-emerald-500 dark:text-emerald-400">+75</span></span>
@@ -1285,8 +1404,8 @@ export default function TelecallingDashboard() {
                             </li>
                             <li><span className="font-bold text-amber-500 dark:text-amber-400">+15</span> — each <span className="font-semibold">new lead</span> you generate.</li>
                             <li><span className="font-bold text-indigo-500 dark:text-indigo-400">+0.5</span> — each <span className="font-semibold">connected call</span>.</li>
-                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−10</span> — each <span className="font-semibold">red (unsatisfactory) estimate</span> you still hold at the 9 PM EOD run (once per estimate per day; working days only — zero NeoDove calls that day means zero deduction for everyone).</li>
-                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close +50–200 (by value) · lead +15 · call +0.5 · <span className="text-rose-500">red-hold −10</span>{penaltyMode ? <span> (Active Penalty ON — penalties apply)</span> : <span> (Active Penalty OFF — penalties paused)</span>}. Risk-based re-poaching follows the Controller's 🔁 EOD Reassignment switch (currently OFF — holders keep everything). The table restarts at zero every week so everyone gets a fair shot.<br />Retired rules (−15 snatch, −20 decline, 🛡 shields): no new rows — old rows still count in past totals while ON.</li>
+                            <li><span className="font-bold text-rose-500 dark:text-rose-400">−10</span> — each <span className="font-semibold">red (unsatisfactory) estimate</span> you still hold at the 9 PM EOD run (once per estimate per day; working days only — zero NeoDove calls that day means zero deduction for everyone). Two ways out: a <span className="font-semibold">dated next step</span> (📌 — a customer commitment protects through its date) or <span className="font-semibold">real effort</span> (🛡 — 2+ NeoDove attempts or a connect on that customer today skips the charge).</li>
+                            <li className="pt-1 border-t border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-500">🏆 The leaderboard ranks by <span className="font-semibold text-zinc-700 dark:text-zinc-200">composite score</span> = close split 50/50 generator/closer (by value) · lead +15 · call +0.5 · <span className="text-rose-500">red-hold −10</span>{penaltyMode ? <span> (Active Penalty ON — penalties apply)</span> : <span> (Active Penalty OFF — penalties paused)</span>}. Risk-based re-poaching follows the Controller's 🔁 EOD Reassignment switch (currently OFF — holders keep everything). The table restarts at zero every week so everyone gets a fair shot.<br />Retired rules (−15 snatch, −20 decline, 🛡 shields): no new rows — old rows still count in past totals while ON.</li>
                           </ul>
                         </div>
                       </div>
@@ -1490,6 +1609,7 @@ export default function TelecallingDashboard() {
                                             <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
                         <LeadChips f={f} />
                         <CallTagControl f={f} onSaved={() => void refreshOneAgent(t.id)} onTag={applyTagOverride} />
+                        <NextStepControl f={f} onSaved={() => void refreshOneAgent(t.id)} />
                         {f.latestComment ? (
                           <p
                             className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"
@@ -1737,6 +1857,11 @@ export default function TelecallingDashboard() {
                             <SatChip value={f.satisfactory} />
                             <StaleChip staleHours={f.staleHours} />
                             {showRisk && <SnatchChip risk={f.risk} snatchInHours={f.snatchInHours} />}
+                            {showRisk && f.effortShielded ? (
+                              <span title="Real NeoDove work on this customer today (2+ attempts or a connect) — tonight's EOD −10 is skipped for this estimate" className="inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold px-2 py-0.5 text-[11px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                                🛡 Effort shielded
+                              </span>
+                            ) : null}
                             {showRisk && <ShieldChip shield={f.shield} />}
                           </div>
                         </div>
@@ -1749,6 +1874,7 @@ export default function TelecallingDashboard() {
                         </div>
                         <LeadChips f={f} />
                         <CallTagControl f={f} onSaved={() => void refreshOneAgent(agentFilter)} onTag={applyTagOverride} />
+                        <NextStepControl f={f} onSaved={() => void refreshOneAgent(agentFilter)} />
                         {f.latestComment ? (
                           <p
                             className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"
@@ -2000,6 +2126,7 @@ export default function TelecallingDashboard() {
                                     </div>
                                     <LeadChips f={f} />
                                     <CallTagControl f={f} compact onSaved={() => void refreshOneAgent(t.id)} onTag={applyTagOverride} />
+                                    <NextStepControl f={f} onSaved={() => void refreshOneAgent(t.id)} />
                                     {f.latestComment ? (
                                       <p
                                         className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"

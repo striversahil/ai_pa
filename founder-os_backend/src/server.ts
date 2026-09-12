@@ -526,7 +526,8 @@ app.post('/api/trigger/summary', asyncHandler(async (req, res) => {
  */
 app.post('/api/trigger/telecalling/eod', asyncHandler(async (req, res) => {
   const day = typeof req.query.day === 'string' ? req.query.day : undefined;
-  const result = await runEodRemarkDeduction(day);
+  const dryRun = req.query.dry === '1';
+  const result = await runEodRemarkDeduction(day, { dryRun });
   res.status(200).json({ ok: true, ...result });
 }));
 
@@ -617,6 +618,58 @@ app.put('/api/estimates/:id/call-tag', asyncHandler(async (req, res) => {
     estimateId: String(req.params.id),
     callTag: result.estimate?.callTag ?? null,
     callbackDate: result.estimate?.callbackDate ?? null,
+  });
+}));
+
+/**
+ * PUT /api/estimates/:id/next-step
+ * Dated next step (customer commitment) on a conversion follow-up.
+ * Express mirror of the Worker route — same setEstimateNextStep validation.
+ * MIS may set any estimate; a signed-in agent only their own assigned ones.
+ */
+app.put('/api/estimates/:id/next-step', asyncHandler(async (req, res) => {
+  const { setEstimateNextStep, invalidateRiskCache } = require('./automations/telecalling/service');
+  const body = req.body || {};
+  const me = await getMe(authStore, req.headers.cookie || null);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const scopes: string[] = (me as any)?.scopes ?? [];
+  const isMis = !!((me as any)?.isAdmin) || scopes.includes('mis');
+  if (!isMis) {
+    const meEmail = (me as any)?.user?.email ? String((me as any).user.email).toLowerCase().trim() : '';
+    const meName = (me as any)?.user?.name ? String((me as any).user.name).toLowerCase().replace(/\s+/g, '') : '';
+    const tcs = await prisma.telecaller.findMany({ where: { deleted: false } });
+    let actorTelecallerId: string | null = null;
+    if (meEmail) {
+      const byEmail = tcs.find((t: any) => t.email && String(t.email).toLowerCase().trim() === meEmail);
+      if (byEmail) actorTelecallerId = byEmail.id;
+    }
+    if (!actorTelecallerId && meName) {
+      const norm = (n: string) => String(n).toLowerCase().replace(/\s+/g, '');
+      const exact = tcs.find((t: any) => norm(t.name) === meName);
+      if (exact) actorTelecallerId = exact.id;
+    }
+    if (!actorTelecallerId) return res.status(403).json({ error: 'only MIS or the assigned sales agent can set next steps' });
+    const current = await prisma.estimate.findUnique({
+      where: { estimateId: String(req.params.id) },
+      select: { assignedTelecallerId: true },
+    });
+    if (!current) return res.status(404).json({ error: 'estimate not found' });
+    if (String((current as any).assignedTelecallerId ?? '') !== actorTelecallerId) {
+      return res.status(403).json({ error: 'you can only set next steps on estimates assigned to you' });
+    }
+  }
+  const result = await setEstimateNextStep({
+    estimateId: String(req.params.id),
+    date: body.date ?? null,
+    note: body.note ?? null,
+  });
+  if (!result.ok) return res.status(result.status ?? 400).json({ error: result.error });
+  try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+  res.status(200).json({
+    ok: true,
+    estimateId: String(req.params.id),
+    nextStep: result.estimate?.nextStep ?? null,
+    nextStepDate: result.estimate?.nextStepDate ?? null,
   });
 }));
 

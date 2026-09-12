@@ -14,9 +14,14 @@ export function registerTriggerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/trigger/telecalling/eod', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const day = c.req.query('day') || undefined;
-    const result = await runEodRemarkDeduction(day);
-    notifyLive(c, { type: LiveEvent.Telecalling });
-    notifyLive(c, { type: 'automation', slug: 'telecalling' });
+    // ?dry=1 previews tonight's charges (per-agent counts, shields,
+    // close catch-ups) without writing anything — MIS planning + verification.
+    const dryRun = c.req.query('dry') === '1';
+    const result = await runEodRemarkDeduction(day, { dryRun });
+    if (!dryRun) {
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      notifyLive(c, { type: 'automation', slug: 'telecalling' });
+    }
     return c.json({ ok: true, ...result });
   });
 
