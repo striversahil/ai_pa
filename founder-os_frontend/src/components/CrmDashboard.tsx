@@ -15,7 +15,7 @@ import {
 } from "@tanstack/react-table";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import SoAttachments from "@/components/SoAttachments";
+import SoAttachments, { visibleSoAttachments } from "@/components/SoAttachments";
 import { PackageCheck, FileCheck, Truck, CreditCard, CheckCircle2, RefreshCw } from "lucide-react";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -210,12 +210,12 @@ const numINR = (v: any): string => {
 };
 
 // ── Line items sub-row (SO detail on row click) ───────────────────────────────
-function OrderItems({ order, canManage, onChanged }: { order: any; canManage: boolean; onChanged: () => void }) {
+function OrderItems({ order, tab, canManage, onChanged }: { order: any; tab: string; canManage: boolean; onChanged: () => void }) {
   const items = Array.isArray(order?.items) ? order.items : [];
   const docs = (
     <SoAttachments
       so={String(order?.so || "")}
-      attachments={Array.isArray(order?.attachments) ? order.attachments : []}
+      attachments={visibleSoAttachments(order, tab)}
       canManage={canManage}
       onChanged={onChanged}
     />
@@ -419,7 +419,7 @@ function DataTable({
                     main,
                     <tr key={`${row.id}-items`} className="border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/60 dark:bg-zinc-900/40">
                       <td colSpan={cols.length} className="p-0">
-                        {expandRender ? expandRender(row.original) : <OrderItems order={row.original} canManage={false} onChanged={() => {}} />}
+                        {expandRender ? expandRender(row.original) : <OrderItems order={row.original} tab="crm" canManage={false} onChanged={() => {}} />}
                       </td>
                     </tr>,
                   ];
@@ -650,7 +650,7 @@ export default function CrmDashboard() {
             <h3 className="text-sm font-bold text-white mb-3">✅ Recently Closed (paid / cancelled)</h3>
             <DataTable
               columns={[
-                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => (<span className="font-mono">{getValue()}{Number(row?.original?.attachmentCount || 0) > 0 ? <span title={`${row.original.attachmentCount} document(s) attached`}> 📎</span> : null}</span>) },
+                { accessorKey: "so", header: "SO", cell: ({ getValue }: any) => <span className="font-mono">{getValue()}</span> },
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
                 { accessorKey: "total", header: "Value", cell: ({ getValue }: any) => fmtINR(getValue()), sortingFn: (a: any, b: any) => (a.original.total || 0) - (b.original.total || 0) },
@@ -720,7 +720,7 @@ export default function CrmDashboard() {
             <h3 className="text-sm font-bold text-white mb-3">📋 Orders Awaiting Confirmation</h3>
             <DataTable
               columns={[
-                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => (<span className="font-mono">{getValue()}{Number(row?.original?.attachmentCount || 0) > 0 ? <span title={`${row.original.attachmentCount} document(s) attached`}> 📎</span> : null}</span>) },
+                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => { const n = visibleSoAttachments(row?.original, "crm").length; return (<span className="font-mono">{getValue()}{n > 0 ? <span title={`${n} document(s)`}> 📎</span> : null}</span>); } },
                 { accessorKey: "ref", header: "Ref" },
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
@@ -734,7 +734,7 @@ export default function CrmDashboard() {
               emptyState="No orders awaiting confirmation."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-confirm"
-              expandRender={(order: any) => <OrderItems order={order} canManage={canManageDocs} onChanged={refreshDocs} />}
+              expandRender={(order: any) => <OrderItems order={order} tab={view} canManage={canManageDocs} onChanged={refreshDocs} />}
               expandable
             />
           </div>
@@ -755,7 +755,7 @@ export default function CrmDashboard() {
             <h3 className="text-sm font-bold text-white mb-3">📄 To Invoice</h3>
             <DataTable
               columns={[
-                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => (<span className="font-mono">{getValue()}{Number(row?.original?.attachmentCount || 0) > 0 ? <span title={`${row.original.attachmentCount} document(s) attached`}> 📎</span> : null}</span>) },
+                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => { const n = visibleSoAttachments(row?.original, "accounts").length; return (<span className="font-mono">{getValue()}{n > 0 ? <span title={`${n} document(s)`}> 📎</span> : null}</span>); } },
                 { accessorKey: "ref", header: "Ref" },
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
@@ -769,7 +769,7 @@ export default function CrmDashboard() {
               emptyState="No orders to invoice."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-invoice"
-              expandRender={(order: any) => <OrderItems order={order} canManage={canManageDocs} onChanged={refreshDocs} />}
+              expandRender={(order: any) => <OrderItems order={order} tab={view} canManage={canManageDocs} onChanged={refreshDocs} />}
               expandable
             />
           </div>
@@ -778,7 +778,7 @@ export default function CrmDashboard() {
             <h3 className="text-sm font-bold text-white mb-3">💳 Awaiting Payment</h3>
             <DataTable
               columns={[
-                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => (<span className="font-mono">{getValue()}{Number(row?.original?.attachmentCount || 0) > 0 ? <span title={`${row.original.attachmentCount} document(s) attached`}> 📎</span> : null}</span>) },
+                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => { const n = visibleSoAttachments(row?.original, "accounts").length; return (<span className="font-mono">{getValue()}{n > 0 ? <span title={`${n} document(s)`}> 📎</span> : null}</span>); } },
                 { accessorKey: "ref", header: "Ref" },
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
@@ -792,7 +792,7 @@ export default function CrmDashboard() {
               emptyState="No orders awaiting payment."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-payment"
-              expandRender={(order: any) => <OrderItems order={order} canManage={canManageDocs} onChanged={refreshDocs} />}
+              expandRender={(order: any) => <OrderItems order={order} tab={view} canManage={canManageDocs} onChanged={refreshDocs} />}
               expandable
             />
           </div>
@@ -813,7 +813,7 @@ export default function CrmDashboard() {
             <h3 className="text-sm font-bold text-white mb-3">🚚 Orders to Ship</h3>
             <DataTable
               columns={[
-                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => (<span className="font-mono">{getValue()}{Number(row?.original?.attachmentCount || 0) > 0 ? <span title={`${row.original.attachmentCount} document(s) attached`}> 📎</span> : null}</span>) },
+                { accessorKey: "so", header: "SO", cell: ({ getValue, row }: any) => { const n = visibleSoAttachments(row?.original, "dispatch").length; return (<span className="font-mono">{getValue()}{n > 0 ? <span title={`${n} document(s)`}> 📎</span> : null}</span>); } },
                 { accessorKey: "ref", header: "Ref" },
                 { accessorKey: "customer", header: "Customer" },
                 { accessorKey: "salesperson", header: "Salesperson" },
@@ -827,7 +827,7 @@ export default function CrmDashboard() {
               emptyState="No orders to ship."
               initialSorting={[{ id: "ageDays", desc: true }]}
               exportName="crm-ship"
-              expandRender={(order: any) => <OrderItems order={order} canManage={canManageDocs} onChanged={refreshDocs} />}
+              expandRender={(order: any) => <OrderItems order={order} tab={view} canManage={canManageDocs} onChanged={refreshDocs} />}
               expandable
             />
           </div>

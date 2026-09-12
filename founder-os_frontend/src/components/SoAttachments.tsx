@@ -16,11 +16,20 @@ export interface SoAttachment {
   url: string;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  invoice: "🧾 Invoice",
-  lr: "🚚 LR copy",
-  pod: "📦 POD",
-  other: "📎 Doc",
+/** Invoices live in the Accounts tab only — every other tab (CRM Desk,
+ *  Dispatch, SO Materials, Overview) sees operational docs (LR / POD / other).
+ *  Central rule so collapsed-row 📎 badges and expanded lists never disagree. */
+export function visibleSoAttachments(order: any, tab: string): SoAttachment[] {
+  const list: SoAttachment[] = Array.isArray(order?.attachments) ? order.attachments : [];
+  if (tab === "accounts") return list;
+  return list.filter((a) => a.kind !== "invoice");
+}
+
+const KIND_META: Record<string, { label: string; chip: string }> = {
+  invoice: { label: "Invoice", chip: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30" },
+  lr: { label: "LR copy", chip: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30" },
+  pod: { label: "POD", chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" },
+  other: { label: "Doc", chip: "bg-zinc-500/10 text-zinc-500 border-zinc-500/30" },
 };
 
 const fmtSize = (n: number): string => {
@@ -30,15 +39,22 @@ const fmtSize = (n: number): string => {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const fmtDate = (iso?: string): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+};
+
 const isImage = (a: SoAttachment): boolean =>
   a.mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(a.fileName);
 const isPdf = (a: SoAttachment): boolean =>
   a.mime === "application/pdf" || /\.pdf$/i.test(a.fileName);
 
-/** SO documents (invoice PDFs, LR copies, PODs) inside the order's expanded
- *  row. Images open in the native Lightbox, PDFs in the fullscreen iframe
- *  viewer — same big-view components as team chat. Upload/delete is MIS-only
- *  (accounts desk works under the MIS grant); everyone else reads. */
+/** SO documents inside the order's expanded row. Images open in the native
+ *  Lightbox, PDFs in the fullscreen iframe viewer — same big-view components
+ *  as team chat. Upload/delete is MIS-only (accounts desk works under the MIS
+ *  grant); everyone else reads. */
 export default function SoAttachments({
   so,
   attachments,
@@ -54,6 +70,7 @@ export default function SoAttachments({
   const [viewer, setViewer] = useState<{ url: string; name: string } | null>(null);
   const [kind, setKind] = useState<SoAttachmentKind>("invoice");
   const [busy, setBusy] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const list = Array.isArray(attachments) ? attachments : [];
@@ -71,7 +88,7 @@ export default function SoAttachments({
   };
 
   const upload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0 || busy) return;
     const file = files[0];
     if (file.size > 20 * 1024 * 1024) {
       setError(`"${file.name}" exceeds 20MB.`);
@@ -92,6 +109,7 @@ export default function SoAttachments({
       setError(e?.message || "Upload failed — please retry.");
     } finally {
       setBusy(false);
+      setDragOver(false);
     }
   };
 
@@ -109,26 +127,99 @@ export default function SoAttachments({
   };
 
   return (
-    <div className="mt-3 rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/40 p-3">
-      <div className="mb-2 flex items-center justify-between">
+    <div className="mt-3">
+      <div className="mb-2 flex items-center gap-2">
         <span className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-500">
-          📎 Documents ({list.length})
+          Documents
         </span>
-        {canManage && (
-          <label className="flex items-center gap-2">
-            <select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as SoAttachmentKind)}
-              className="px-1.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300"
-            >
-              <option value="invoice">🧾 Invoice</option>
-              <option value="lr">🚚 LR copy</option>
-              <option value="pod">📦 POD</option>
-              <option value="other">📎 Other</option>
-            </select>
-            <span className={`cursor-pointer rounded-lg px-2.5 py-1.5 text-[11px] font-bold ${busy ? "bg-zinc-200 text-zinc-400 dark:bg-zinc-800" : "bg-brand-indigo/10 text-brand-indigo hover:bg-brand-indigo/20"}`}>
-              {busy ? "Uploading…" : "+ Attach"}
-            </span>
+        <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-extrabold text-zinc-500">
+          {list.length}
+        </span>
+      </div>
+
+      {list.length > 0 && (
+        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/60 overflow-hidden rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white dark:bg-zinc-900/60">
+          {list.map((a) => {
+            const meta = KIND_META[a.kind] || KIND_META.other;
+            return (
+              <li
+                key={a.id}
+                onClick={() => openAttachment(a)}
+                className="flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+              >
+                {isImage(a) ? (
+                  <img
+                    src={a.url}
+                    alt={a.fileName}
+                    loading="lazy"
+                    className="h-11 w-11 flex-shrink-0 rounded-lg border border-zinc-200/70 dark:border-zinc-700 object-cover"
+                  />
+                ) : (
+                  <span
+                    className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-xl ${
+                      isPdf(a) ? "bg-red-500/10" : "bg-zinc-500/10"
+                    }`}
+                  >
+                    {isPdf(a) ? "📕" : "📄"}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                    {a.fileName}
+                  </span>
+                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-zinc-500">
+                    <span className={`rounded-full border px-1.5 py-px font-extrabold ${meta.chip}`}>
+                      {meta.label}
+                    </span>
+                    {fmtSize(a.size) && <span>{fmtSize(a.size)}</span>}
+                    {a.uploadedBy && <span>by {a.uploadedBy}</span>}
+                    {fmtDate(a.createdAt) && <span>{fmtDate(a.createdAt)}</span>}
+                  </span>
+                </span>
+                <span className="flex-shrink-0 text-[11px] font-bold text-brand-indigo">
+                  {isImage(a) ? "View" : isPdf(a) ? "Open" : "Download"} →
+                </span>
+                {canManage && (
+                  <button
+                    type="button"
+                    title={`Delete ${a.fileName}`}
+                    onClick={(e) => { e.stopPropagation(); void remove(a.id, a.fileName); }}
+                    className="flex-shrink-0 cursor-pointer rounded-md border-0 bg-transparent px-1.5 py-1 text-xs text-zinc-300 hover:bg-red-500/10 hover:text-red-500 dark:text-zinc-600"
+                  >
+                    ✕
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {canManage && (
+        <div className="mt-2 flex items-stretch gap-2">
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value as SoAttachmentKind)}
+            className="flex-shrink-0 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 text-[11px] font-bold text-zinc-600 dark:text-zinc-300"
+            aria-label="Document kind"
+          >
+            <option value="invoice">🧾 Invoice</option>
+            <option value="lr">🚚 LR copy</option>
+            <option value="pod">📦 POD</option>
+            <option value="other">📎 Other</option>
+          </select>
+          <label
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); void upload(e.dataTransfer.files); }}
+            className={`flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-2.5 text-[11px] font-bold transition-colors ${
+              dragOver
+                ? "border-brand-indigo bg-brand-indigo/10 text-brand-indigo"
+                : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:border-brand-indigo hover:text-brand-indigo"
+            } ${busy ? "pointer-events-none opacity-60" : ""}`}
+          >
+            <span className="text-sm">{busy ? "⏳" : "＋"}</span>
+            {busy ? "Uploading…" : "Drop file here or click to attach (PDF / photo, 20MB max)"}
             <input
               type="file"
               accept="application/pdf,image/*,.pdf"
@@ -137,59 +228,6 @@ export default function SoAttachments({
               onChange={(e) => { void upload(e.target.files); e.target.value = ""; }}
             />
           </label>
-        )}
-      </div>
-
-      {list.length === 0 ? (
-        <p className="text-[11px] text-zinc-500 italic">
-          No documents yet{canManage ? " — attach the invoice PDF, LR copy or POD here." : "."}
-        </p>
-      ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {list.map((a) => (
-            <div
-              key={a.id}
-              className="group relative overflow-hidden rounded-lg border border-zinc-200/70 dark:border-zinc-800 bg-white dark:bg-zinc-900"
-            >
-              {isImage(a) ? (
-                <img
-                  src={a.url}
-                  alt={a.fileName}
-                  loading="lazy"
-                  onClick={() => openAttachment(a)}
-                  className="h-24 w-full cursor-zoom-in object-cover"
-                />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => openAttachment(a)}
-                  className="flex h-24 w-full cursor-pointer flex-col items-center justify-center gap-1 border-0 bg-red-500/5 hover:bg-red-500/10"
-                >
-                  <span className="text-2xl">{isPdf(a) ? "📕" : "📄"}</span>
-                  <span className="px-1.5 text-center text-[10px] font-bold text-zinc-600 dark:text-zinc-300 truncate w-full">
-                    {a.fileName}
-                  </span>
-                </button>
-              )}
-              <div className="flex items-center justify-between gap-1 px-1.5 py-1">
-                <span className="truncate text-[10px] font-bold text-zinc-500">
-                  {KIND_LABEL[a.kind] || KIND_LABEL.other}
-                  {a.uploadedBy ? ` · ${a.uploadedBy}` : ""}
-                  {fmtSize(a.size) ? ` · ${fmtSize(a.size)}` : ""}
-                </span>
-                {canManage && (
-                  <button
-                    type="button"
-                    title={`Delete ${a.fileName}`}
-                    onClick={() => void remove(a.id, a.fileName)}
-                    className="flex-shrink-0 cursor-pointer rounded border-0 bg-transparent px-1 text-[11px] text-zinc-400 hover:text-red-500"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
         </div>
       )}
       {error && <p className="mt-2 text-[11px] font-bold text-red-500">{error}</p>}
