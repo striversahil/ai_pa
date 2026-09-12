@@ -64,6 +64,16 @@ export interface EnquiryItem {
    *  procurement adds or edits a rate. */
   ratesRequested?: string;
   ratesRequestedAt?: string;
+  /** Back-and-forth loop trail (server-authored): flags, remarks, fixes,
+   *  requests — oldest first. Visible in procurement. */
+  thread?: FlagThreadEntry[];
+}
+
+export interface FlagThreadEntry {
+  by: 'sales' | 'procurement' | 'management';
+  kind: 'flag' | 'remark' | 'fix' | 'request' | 'quoted';
+  text: string;
+  at: string;
 }
 
 /** Loop-eligible for Procurement: rate unavailable and (still unquoted OR

@@ -103,6 +103,36 @@ export interface EnquiryItem {
    *  a rate, which clears it. */
   ratesRequested?: string;
   ratesRequestedAt?: string;
+  /** Back-and-forth loop trail (server-authored): every flag, remark, fix
+   *  and request on this item, oldest first. Rendered in procurement so the
+   *  full 2–3 round history stays visible. */
+  thread?: FlagThreadEntry[];
+}
+
+export type FlagThreadBy = 'sales' | 'procurement' | 'management';
+export type FlagThreadKind = 'flag' | 'remark' | 'fix' | 'request' | 'quoted';
+
+export interface FlagThreadEntry {
+  by: FlagThreadBy;
+  kind: FlagThreadKind;
+  text: string;
+  at: string;
+}
+
+const THREAD_BY = new Set(['sales', 'procurement', 'management']);
+const THREAD_KIND = new Set(['flag', 'remark', 'fix', 'request', 'quoted']);
+
+export function parseFlagThread(raw: unknown): FlagThreadEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((e: any) => ({
+      by: (THREAD_BY.has(String(e?.by)) ? String(e.by) : 'sales') as FlagThreadBy,
+      kind: (THREAD_KIND.has(String(e?.kind)) ? String(e.kind) : 'remark') as FlagThreadKind,
+      text: String(e?.text ?? '').slice(0, 2000),
+      at: isoOrUndefined(e?.at) ?? new Date(0).toISOString(),
+    }))
+    .filter((e: FlagThreadEntry) => e.text.trim().length > 0)
+    .slice(-50);
 }
 
 /** ISO instant passthrough (quotedAt/finalizedAt) — invalid values dropped. */
@@ -280,6 +310,7 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
       }))
@@ -354,6 +385,7 @@ export function sanitize(e: any): Enquiry {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         }))

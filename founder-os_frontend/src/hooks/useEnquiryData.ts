@@ -64,6 +64,16 @@ function toEnquiry(raw: any): Enquiry {
         rateAvailable: r?.rateAvailable === true,
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested) : undefined,
         ratesRequestedAt: r?.ratesRequestedAt ? String(r.ratesRequestedAt) : undefined,
+        thread: Array.isArray(r?.thread)
+          ? r.thread
+              .map((e: any) => ({
+                by: e?.by === 'procurement' ? 'procurement' : e?.by === 'management' ? 'management' : 'sales',
+                kind: ['flag', 'remark', 'fix', 'request', 'quoted'].includes(e?.kind) ? e.kind : 'remark',
+                text: String(e?.text ?? ''),
+                at: String(e?.at ?? ''),
+              }))
+              .filter((e: any) => e.text.trim())
+          : [],
       })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
     : [];
   return {

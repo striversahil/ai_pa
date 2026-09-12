@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import type { Enquiry, EnquiryItem } from "@/types";
 import { parseMoneyInput } from "@/types";
+import FlagThread from "@/components/FlagThread";
 
 export const RATE_STATUS_LABEL: Record<string, string> = {
   "": "Rate Pending",
@@ -205,6 +206,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   <span className="text-xs font-extrabold text-white">Item {i + 1}{it.name ? ` — ${it.name}` : ""}</span>
                   {it.qty && <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>}
                 </div>
+                <FlagThread thread={it.thread ?? []} tone="dark" />
                 {rates.length === 0 ? (
                   <p className="text-[11px] text-zinc-500 italic">No vendor rates yet — procurement adds them per item.</p>
                 ) : (

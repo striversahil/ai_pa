@@ -1,4 +1,4 @@
-import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty } from "./store";
+import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty, parseFlagThread, type FlagThreadBy, type FlagThreadEntry } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from "./extract";
@@ -117,6 +117,7 @@ function pick(data: any): Partial<Enquiry> | null {
         rateAvailable: r?.rateAvailable === true,
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
+        thread: parseFlagThread(r?.thread),
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -261,6 +262,8 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
         served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
         if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
       }
+      // Loop trail is live workflow metadata too: always the stored values.
+      served.thread = parseFlagThread((it as any)?.thread);
       servedItems.push(served);
     });
     return {
@@ -470,6 +473,39 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
         base.specIssue = stored.specIssue;
         base.specFlaggedAt = stored.specFlaggedAt;
       }
+      // Loop trail (server-authored, forge-proof): stored history + this
+      // write's transitions. Client-sent flag/fix/request/quoted entries are
+      // ignored — only client remarks are kept (once each). Rendered in
+      // procurement so multi-round back-and-forth stays visible.
+      const role: FlagThreadBy = restricted ? 'procurement' : privileged ? 'management' : 'sales';
+      const storedThread = parseFlagThread((stored as any)?.thread);
+      const seen = new Set(storedThread.map((e) => `${e.at}|${e.kind}|${e.text}`));
+      const trail: FlagThreadEntry[] = [...storedThread];
+      for (const e of parseFlagThread((it as any)?.thread)) {
+        if (e.kind !== 'remark') continue;
+        const key = `${e.at}|${e.kind}|${e.text}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        trail.push({ by: e.by === role ? e.by : role, kind: 'remark', text: e.text, at: e.at });
+      }
+      const nowIso = new Date().toISOString();
+      const flagSet = !stored.specIssue && base.specIssue;
+      const flagCleared = !!stored.specIssue && !base.specIssue;
+      const reqSet = !stored.ratesRequested && base.ratesRequested;
+      const reqCleared = !!stored.ratesRequested && !base.ratesRequested;
+      if (flagSet) trail.push({ by: role, kind: 'flag', text: String(base.specIssue).slice(0, 2000), at: nowIso });
+      if (flagCleared) {
+        trail.push({
+          by: role,
+          kind: 'fix',
+          text: specChanged && mediaChanged ? 'Spec corrected with new references'
+            : mediaChanged ? 'Reference attachments added' : 'Spec corrected',
+          at: nowIso,
+        });
+      }
+      if (reqSet) trail.push({ by: role, kind: 'request', text: String(base.ratesRequested).slice(0, 500), at: nowIso });
+      if (reqCleared) trail.push({ by: role, kind: 'quoted', text: 'New vendor rates added', at: nowIso });
+      base.thread = trail.slice(-50);
       return base;
     }).filter((it: any) => it !== null);
   }

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import ItemRateForm from "@/components/ItemRateForm";
+import FlagThread from "@/components/FlagThread";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { historyDateChip } from "@/types";
 
@@ -113,6 +114,8 @@ export default function ProcurementItemCard({
           </p>
         </div>
       )}
+
+      <FlagThread thread={item.thread ?? []} hideSalesRemarks />
 
       {rates.length > 0 && (
         <ul className="space-y-1">

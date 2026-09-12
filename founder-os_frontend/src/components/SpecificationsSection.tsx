@@ -3,6 +3,7 @@ import { Enquiry, EnquiryItem, EnquiryMedia, parseMoneyInput } from "../mockData
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
+import FlagThread from "./FlagThread";
 
 /** ~10MB per file (stored as data-URI on the item; server re-checks). */
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
@@ -27,14 +28,16 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState<EnquiryItem>({ name: "", qty: "", spec: "" });
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [remarkIdx, setRemarkIdx] = useState<number | null>(null);
+  const [remarkText, setRemarkText] = useState("");
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
   const editable = !!onUpdateItems && !redacted;
   // Vendor-rate collection follows the view mode, not the item-edit flag:
-  // procurement ('edit') collects, management ('view') reviews, sales ('none')
-  // sees finals only.
+  // procurement ('edit') collects, management ('view') reviews. The rates
+  // LIST itself is visible read-only in every view (including sales) — only
+  // the add/remove forms stay gated behind ratesEditable.
   const ratesEditable = !!onUpdateItems && mode === "edit";
-  const showVendorRates = mode !== "none";
   const [rateDrafts, setRateDrafts] = useState<Record<number, { vendor: string; description: string; rate: string; specMode: "same" | "diff"; specDiff: string }>>({});
 
   const blankRateDraft = () => ({ vendor: "", description: "", rate: "", specMode: "same" as const, specDiff: "" });
@@ -119,6 +122,14 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     const next = items.map((it, i) => (i === editingIdx ? { ...draft, media: it.media ?? [] } : it));
     onUpdateItems(next);
     setEditingIdx(null);
+  };
+  const sendRemark = (idx: number) => {
+    const text = remarkText.trim();
+    if (!text || !onUpdateItems) return;
+    const entry = { by: "sales" as const, kind: "remark" as const, text: text.slice(0, 2000), at: new Date().toISOString() };
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, thread: [...(it.thread ?? []), entry] } : it)));
+    setRemarkText("");
+    setRemarkIdx(null);
   };
   const deleteItem = (idx: number) => {
     if (!onUpdateItems) return;
@@ -237,7 +248,32 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
-                          <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below to resolve and release this item for rates.</p>
+                          <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
+                          <FlagThread thread={it.thread ?? []} />
+                          {editable && (
+                            remarkIdx === idx ? (
+                              <div className="mt-2 space-y-1.5">
+                                <textarea
+                                  value={remarkText}
+                                  onChange={(e) => setRemarkText(e.target.value)}
+                                  placeholder="Remark for procurement (keeps the flag until the spec/reference is fixed)…"
+                                  rows={2}
+                                  className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
+                                />
+                                <div className="flex gap-2">
+                                  <button type="button" onClick={() => sendRemark(idx)} disabled={!remarkText.trim()}
+                                    className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">Send remark</button>
+                                  <button type="button" onClick={() => { setRemarkIdx(null); setRemarkText(""); }}
+                                    className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button type="button" onClick={() => { setRemarkIdx(idx); setRemarkText(""); }}
+                                className="mt-1.5 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">
+                                Add remark
+                              </button>
+                            )
+                          )}
                         </div>
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
@@ -246,6 +282,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[11px] font-extrabold">
                           Rate Received: ₹{Number(it.finalRate).toLocaleString("en-IN")}
                         </div>
+                      )}
+                      {!it.specIssue && (it.thread ?? []).length > 0 && (
+                        <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} />
                       )}
                       {mode === "none" && (it.rates ?? []).some((r) => r.specSame === false) && (
                         <div className="mt-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] leading-relaxed">
@@ -259,7 +298,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           ))}
                         </div>
                       )}
-                      {((it.rates ?? []).length > 0 || ratesEditable) && showVendorRates && (
+                      {((it.rates ?? []).length > 0 || ratesEditable) && (
                         <div className="mt-2 space-y-1.5">
                           {(it.rates ?? []).map((r, ri) => (
                             <div key={ri} className="rounded-lg border border-[var(--border-card)]/60 p-2 space-y-1">
