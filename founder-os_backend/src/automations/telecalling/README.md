@@ -188,6 +188,9 @@ everywhere.
   MIS **Active Penalty** toggle (default ON) — the EOD run skips charging
   entirely while it is OFF, and the composite `score` counts penalties only
   while it is ON (`points.total` always sums the ledger).
+  **Non-working days deduct zero**: when the day's NeoDove push totals zero
+  calls (Sunday/holiday — or a missing report), the run reports red holdings
+  but charges nothing (`skipped: 'non-working-day'`).
 - **−15 snatch** (`recordSnatchPenalty`, legacy): risk re-poaching is switched
   OFF, so no new −15 rows are written; historical ones still count. Was gated
   by the MIS **Active Penalty** toggle (`Setting

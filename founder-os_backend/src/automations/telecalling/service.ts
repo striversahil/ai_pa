@@ -1447,15 +1447,39 @@ export async function runLeadConversion(): Promise<{ assigned: number }> {
 }
 
 /**
+ * The day's NeoDove call activity (from the native 5-min report snapshot in
+ * Setting). Drives the non-working-day rule: zero calls pushed that day means
+ * nobody worked, so the EOD run deducts nothing.
+ */
+async function getNeodoveDayCalls(day: string): Promise<{ attempted: number; connected: number; hasReport: boolean }> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: `neodove_user_report:${day}` } });
+    const payload = row?.value ? JSON.parse(String(row.value)) : null;
+    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+    let attempted = 0;
+    let connected = 0;
+    for (const r of rows) {
+      attempted += Number(r?.callsAttempted ?? 0) || 0;
+      connected += Number(r?.callsConnected ?? 0) || 0;
+    }
+    return { attempted, connected, hasReport: rows.length > 0 };
+  } catch {
+    return { attempted: 0, connected: 0, hasReport: false };
+  }
+}
+
+/**
  * EOD remark deduction: −10 per red-risk estimate currently held, one charge
  * per estimate per day. Risk re-poaching is removed (holders keep everything),
  * so this run never moves estimates — it only scores. Zombies, MIS-locked and
  * skip-assignment estimates are excluded. Gated by the MIS "Active Penalty"
  * toggle (default ON) — when OFF the run reports red holdings but charges
- * nothing. Triggered by the 21:00 IST telecalling-eod job via
+ * nothing. Non-working days (zero NeoDove call activity for the day — Sundays,
+ * holidays) deduct nothing, even with the toggle ON: no work happened, so no
+ * one is punished. Triggered by the 21:00 IST telecalling-eod job via
  * POST /api/trigger/telecalling/eod.
  */
-export async function runEodRemarkDeduction(day?: string): Promise<{ deducted: number; agents: number; redHeld: number; day: string; penaltiesEnabled: boolean }> {
+export async function runEodRemarkDeduction(day?: string): Promise<{ deducted: number; agents: number; redHeld: number; day: string; penaltiesEnabled: boolean; skipped?: string }> {
   const today = day && DATE_RE.test(day) ? day : istDate();
   const penaltiesEnabled = await isPenaltiesEnabled();
   let items: CachedRiskItem[] = [];
@@ -1471,6 +1495,16 @@ export async function runEodRemarkDeduction(day?: string): Promise<{ deducted: n
     if (!r.telecallerId) continue;
     if (r.locked || r.skipAssignment) continue;
     redHeld += 1;
+  }
+  // Non-working day: the day's NeoDove push totals zero calls (Sunday,
+  // holiday) — or is entirely missing — so nobody worked and nobody pays.
+  // Read AFTER counting redHeld so the report still shows what WOULD have
+  // been charged. A missing/unreadable report also skips (no evidence of
+  // work); the empty NeoDove dashboard + this log line surface the breakage.
+  const activity = await getNeodoveDayCalls(today);
+  if (activity.attempted + activity.connected === 0) {
+    logger.info({ redHeld, day: today, hasReport: activity.hasReport }, 'EOD remark deduction skipped — non-working day (zero NeoDove calls)');
+    return { deducted: 0, agents: 0, redHeld, day: today, penaltiesEnabled, skipped: 'non-working-day' };
   }
   if (!penaltiesEnabled) {
     logger.info({ redHeld, day: today }, 'EOD remark deduction skipped — Active Penalty is OFF');
