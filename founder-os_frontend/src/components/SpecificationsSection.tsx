@@ -28,6 +28,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState<EnquiryItem>({ name: "", qty: "", spec: "" });
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [rateError, setRateError] = useState<string | null>(null);
   const [remarkIdx, setRemarkIdx] = useState<number | null>(null);
   const [remarkText, setRemarkText] = useState("");
 
@@ -54,7 +55,15 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     const d = rateDrafts[idx] ?? { vendor: "", description: "", rate: "", specMode: "same" as const, specDiff: "" };
     const vendor = d.vendor.trim();
     const rate = parseMoneyInput(d.rate);
-    if (!vendor || rate === null) return;
+    if (!vendor) {
+      setRateError("Enter the vendor name before adding the rate.");
+      return;
+    }
+    if (rate === null) {
+      setRateError(`"${d.rate.trim()}" is not a valid amount — use digits only (e.g. 1200 or 1200.50).`);
+      return;
+    }
+    setRateError(null);
     const specSame = d.specMode !== "diff";
     const next = items.map((it, i) => (i === idx ? { ...it, rates: [...(it.rates ?? []), {
       vendor,
@@ -430,6 +439,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
           )}
           {mediaError && (
             <p className="mt-2 text-[11px] font-semibold text-[var(--color-danger)]">{mediaError}</p>
+          )}
+          {rateError && (
+            <p className="mt-2 text-[11px] font-bold text-red-500">{rateError}</p>
           )}
         </div>
 

@@ -4,8 +4,7 @@
   "description": "Pending-only rate review: rated items awaiting markup + finalize. No daily pipeline — just what needs a decision now.",
   "type": "handler",
   "trigger": {
-    "type": "schedule",
-    "cron": "*/30 * * * *"
+    "type": "manual"
   },
   "enabled": true,
   "scope": "mis"

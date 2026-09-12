@@ -9,13 +9,13 @@ import Modal from "@/components/Modal";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry } from "@/types";
-import { enquiryLabel, historyDateChip, itemNeedsDecision } from "@/types";
+import { enquiryLabel, historyDateChip, itemNeedsDecision, isManagementPendingEnquiry, isManagementHistoryEnquiry } from "@/types";
 
 /** Only correct-spec, rate-UNAVAILABLE, rated-but-unfinalized items need a
  *  decision — flagged items stay with Sales until the spec is fixed, then
  *  flow back here. Rate-available items skip the loop entirely. */
 export function isManagementPending(e: Enquiry): boolean {
-  return (e.items ?? []).some(itemNeedsDecision);
+  return isManagementPendingEnquiry(e);
 }
 
 // Management Review dashboard (mounted as the `enquiry-management`
@@ -46,17 +46,23 @@ export default function ManagementReview() {
     }
   }, [loaded, enquiries]);
   useLiveEvent((e: any) => {
-    if (!e || e.type !== "enquiries" || !e.enquiry) return;
-    const id = String(e.enquiry.id ?? "");
+    // Scope-safe: live events carry summaries only — this is toast-only, the
+    // full payload refetches in useEnquiryData.
+    if (!e || e.type !== "enquiries") return;
+    const s = e.summary ?? e.enquiry;
+    if (!s) return;
+    const id = String(s.id ?? e.id ?? e.enquiryId ?? "");
     if (!id) return;
-    const raw = e.enquiry;
-    const count = ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it?.rates ?? []).length), 0);
+    const raw = e.enquiry ?? {};
+    const count = typeof s.ratesCount === "number"
+      ? s.ratesCount
+      : ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it?.rates ?? []).length), 0);
     if (ratesRef.current[id] !== undefined && count > ratesRef.current[id]) {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       setToast({
         id,
-        label: enquiryLabel({ dailyNo: raw.dailyNo ?? null, createdAt: raw.createdAt ?? "", source: raw.source ?? "TL" }),
-        title: String(raw.title || "Untitled enquiry"),
+        label: enquiryLabel({ dailyNo: s.dailyNo ?? null, createdAt: s.createdAt ?? "", source: s.source ?? "TL" }),
+        title: String(s.title || "Untitled enquiry"),
       });
       toastTimer.current = setTimeout(() => setToast(null), 10000);
     }
@@ -72,11 +78,10 @@ export default function ManagementReview() {
     () => pending.reduce((n, e) => n + (e.items ?? []).filter(itemNeedsDecision).length, 0),
     [pending],
   );
-  // History: enquiries with at least one finalized, correct-spec item.
+  // History: fully decided enquiries — disjoint from pending, so a
+  // partially-decided enquiry never appears twice.
   const historyEnquiries: Enquiry[] = useMemo(() => {
-    return enquiries
-      .filter((e) => (e.items ?? []).some((it) => it.finalRate !== undefined && it.finalRate !== null && !it.specIssue))
-      .sort(byActivity);
+    return enquiries.filter(isManagementHistoryEnquiry).sort(byActivity);
   }, [enquiries]);
 
   const leadName = useCallback((agentId: string) => {

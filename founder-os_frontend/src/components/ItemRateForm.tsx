@@ -22,11 +22,20 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
   const [rate, setRate] = useState(initial?.rate !== undefined ? String(initial.rate) : "");
   const [specMode, setSpecMode] = useState<"same" | "diff">(initial?.specSame === false ? "diff" : "same");
   const [specDiff, setSpecDiff] = useState(initial?.specDiff ?? "");
+  const [formError, setFormError] = useState<string | null>(null);
 
   const submit = () => {
     const v = vendor.trim();
     const r = parseMoneyInput(rate);
-    if (!v || r === null) return;
+    if (!v) {
+      setFormError("Enter the vendor name & address.");
+      return;
+    }
+    if (r === null) {
+      setFormError(`"${rate.trim()}" is not a valid amount — use digits only (e.g. 1200 or 1200.50).`);
+      return;
+    }
+    setFormError(null);
     const same = specMode !== "diff";
     onAdd({
       vendor: v,
@@ -91,6 +100,9 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
           </button>
         )}
       </div>
+      {formError && (
+        <p className="text-[11px] font-bold text-red-500">{formError}</p>
+      )}
       {specMode === "diff" && (
         <textarea
           value={specDiff}

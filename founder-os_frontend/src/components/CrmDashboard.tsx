@@ -167,7 +167,7 @@ const DEPT_META: Record<string, { label: string; icon: string; accent: string }>
   crm: { label: "CRM Desk", icon: "🤝", accent: "text-indigo-400" },
   accounts: { label: "Accounts", icon: "💰", accent: "text-emerald-400" },
   dispatch: { label: "Dispatch", icon: "🚚", accent: "text-amber-400" },
-  procurement: { label: "Procurement", icon: "📦", accent: "text-sky-400" },
+  procurement: { label: "SO Materials", icon: "📦", accent: "text-sky-400" },
 };
 
 type View = "overview" | "crm" | "accounts" | "dispatch" | "procurement";
@@ -177,7 +177,7 @@ const TABS: { key: View; label: string; icon: string }[] = [
   { key: "crm", label: "CRM Desk", icon: "🤝" },
   { key: "accounts", label: "Accounts", icon: "💰" },
   { key: "dispatch", label: "Dispatch", icon: "🚚" },
-  { key: "procurement", label: "Procurement", icon: "📦" },
+  { key: "procurement", label: "SO Materials", icon: "📦" },
 ];
 
 // ── KPI card ──────────────────────────────────────────────────────────────────
@@ -807,7 +807,7 @@ export default function CrmDashboard() {
         </div>
       )}
 
-      {/* ── Procurement ──────────────────────────────────────────────────── */}
+      {/* ── SO Materials (post-sale; distinct from the pre-sale Sourcing Queue) ── */}
       {view === "procurement" && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

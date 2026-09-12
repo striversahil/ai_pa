@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseItems, parseRequirements } from "./store";
+import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseItems, parseRequirements, istDayKey } from "./store";
 
 // Prisma-backed EnquiryStore for the Express / Postgres runtime. Kept in a
 // separate file so the Prisma client never enters the Cloudflare Worker bundle.
@@ -73,6 +73,40 @@ export class PrismaEnquiryStore implements EnquiryStore {
   async getEnquiry(id: string) {
     const row = await this.prisma.enquiry.findUnique({ where: { id } });
     return mapEnquiry(row);
+  }
+  async allocateDailyNo(now: Date = new Date()): Promise<number> {
+    // Atomic-ish counter on the Setting row (Express is the alt runtime — a
+    // single Node process, so a few retries close the concurrent-create race
+    // that the old max+1 scan always lost).
+    const key = `enquiry:daily:${istDayKey(now)}`;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const cur = await (this.prisma as any).setting.findUnique({ where: { key } }).catch(() => null);
+      const next = Number(cur?.value ?? 0) + 1;
+      try {
+        if (cur) {
+          const updated = await (this.prisma as any).setting.updateMany({
+            where: { key, value: String(cur.value) },
+            data: { value: String(next) },
+          });
+          if (updated?.count === 1) return next;
+        } else {
+          await (this.prisma as any).setting.create({ data: { key, value: '1' } });
+          return 1;
+        }
+      } catch { /* lost race — retry */ }
+    }
+    const rows = await this.prisma.enquiry.findMany({ orderBy: { createdAt: 'desc' }, take: 200 });
+    const mapped = rows.map(mapEnquiry).filter(Boolean) as Enquiry[];
+    let max = 0;
+    const today = istDayKey(now);
+    for (const e of mapped) {
+      if (!e.createdAt) continue;
+      const dt = new Date(e.createdAt);
+      if (Number.isNaN(dt.getTime()) || istDayKey(dt) !== today) continue;
+      const n = Number((e as any).dailyNo ?? 0);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    return max + 1;
   }
   async createEnquiry(data) {
     const row = await this.prisma.enquiry.create({

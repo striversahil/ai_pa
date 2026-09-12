@@ -8,7 +8,7 @@
 
 export type AutomationType = 'rule' | 'handler';
 
-export type TriggerType = 'event' | 'schedule' | 'event_plus_scan';
+export type TriggerType = 'event' | 'schedule' | 'event_plus_scan' | 'manual';
 
 export interface AutomationTrigger {
   type: TriggerType;

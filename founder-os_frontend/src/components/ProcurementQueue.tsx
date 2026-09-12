@@ -10,14 +10,12 @@ import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
-import { enquiryLabel, historyDateChip, itemNeedsRates } from "@/types";
+import { enquiryLabel, historyDateChip, itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry } from "@/types";
 
-/** Only rate-UNAVAILABLE items flow through this queue — status-blind, so a
- *  finalized enquiry with a newly added unrated item reappears automatically.
- *  Flagged items (held for a sales spec fix) count as present but need no rates. */
+/** Pending = items still needing rates. Empty enquiries (no items yet) wait
+ *  on sales, not procurement — they render in their own section below. */
 export function isProcurementPending(e: Enquiry): boolean {
-  const items = e.items ?? [];
-  return items.length === 0 || items.some(itemNeedsRates);
+  return isProcurementPendingEnquiry(e);
 }
 
 const byNewest = (a: Enquiry, b: Enquiry): number =>
@@ -80,7 +78,7 @@ export default function ProcurementQueue() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const { enquiries, loaded, updateItems } =
+  const { enquiries, loaded, aiConfigured, updateItems } =
     useEnquiryData("procurement");
 
   // Live intimations: management rate-requests (act on the item) and sales
@@ -98,20 +96,28 @@ export default function ProcurementQueue() {
     }
   }, [loaded, enquiries]);
   useLiveEvent((e: any) => {
-    if (!e || e.type !== "enquiries" || !e.enquiry) return;
-    const id = String(e.enquiry.id ?? "");
+    // Scope-safe: live events carry summaries only (counts, no PII). The
+    // redacted payload itself refetches in useEnquiryData — this is toast-only.
+    if (!e || e.type !== "enquiries") return;
+    const s = e.summary ?? e.enquiry;
+    if (!s) return;
+    const id = String(s.id ?? e.id ?? e.enquiryId ?? "");
     if (!id) return;
-    const raw = e.enquiry;
-    const label = enquiryLabel({ dailyNo: raw.dailyNo ?? null, createdAt: raw.createdAt ?? "", source: raw.source ?? "TL" });
-    const title = String(raw.title || "Untitled enquiry");
-    const requested = ((raw.items ?? []) as any[]).filter((it) => it?.ratesRequested).length;
+    const raw = e.enquiry ?? {};
+    const label = enquiryLabel({ dailyNo: s.dailyNo ?? null, createdAt: s.createdAt ?? "", source: s.source ?? "TL" });
+    const title = String(s.title || "Untitled enquiry");
+    const requested = typeof s.requestedCount === "number"
+      ? s.requestedCount
+      : ((raw.items ?? []) as any[]).filter((it) => it?.ratesRequested).length;
     if (requestedRef.current[id] !== undefined && requested > requestedRef.current[id]) {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       setToast({ id, label, title, kind: "request" });
       toastTimer.current = setTimeout(() => setToast(null), 10000);
     }
     requestedRef.current[id] = requested;
-    const flagged = ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
+    const flagged = typeof s.flaggedCount === "number"
+      ? s.flaggedCount
+      : ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
     if (flaggedRef.current[id] !== undefined && flagged < flaggedRef.current[id]) {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       setToast({ id, label, title, kind: "fixed" });
@@ -127,18 +133,17 @@ export default function ProcurementQueue() {
     () => pending.reduce((n, e) => n + (e.items ?? []).filter(itemNeedsRates).length, 0),
     [pending],
   );
-  // History: enquiries with at least one quoted item and no open request —
-  // per enquiry, so a rate-available (unrated) sibling never hides quoted items.
+  // History: quoted and settled — disjoint from pending, so a partially
+  // quoted enquiry never appears twice. Per enquiry, so a rate-available
+  // (unrated) sibling never hides quoted items.
   const byActivity = (a: Enquiry, b: Enquiry): number =>
     String(b.updatedAt ?? b.createdAt ?? "").localeCompare(String(a.updatedAt ?? a.createdAt ?? ""));
   const historyEnquiries: EnquiryList = useMemo(() => {
-    return [...enquiries]
-      .filter((e) => (e.items ?? []).some((item) => (item.rates ?? []).length > 0 && !item.ratesRequested))
-      .sort(byActivity);
+    return [...enquiries].filter(isProcurementHistoryEnquiry).sort(byActivity);
   }, [enquiries]);
   const emptyEnquiries = useMemo(
-    () => pending.filter((e) => (e.items ?? []).length === 0),
-    [pending],
+    () => [...enquiries].filter((e) => (e.items ?? []).length === 0).sort(byNewest),
+    [enquiries],
   );
   // Enquiry-level requirements grouped by enquiry (legacy rows; new adds land
   // as items). Served text is the AI-redacted copy (withheld while pending).
@@ -273,6 +278,11 @@ export default function ProcurementQueue() {
       </div>
       {saveError && (
         <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-xs font-bold text-red-500">{saveError}</p>
+      )}
+      {!aiConfigured && (
+        <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+          AI redaction is offline — item specs and vendor rates below are live, but client details are withheld until the AI service recovers.
+        </p>
       )}
 
       {toast && (

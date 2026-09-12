@@ -366,31 +366,9 @@ async function main() {
     .update(index.map((e) => [e.so, e.stage, e.paidStatus, e.status, e.total].join('|')).sort().join('\n'))
     .digest('hex');
 
-  // Previous per-SO [stage, itemsSig] (display rows only) — drives delta-fetch.
-  let prevSigs = {};
-  if (!process.env.CRM_FORCE) {
-    try {
-      const fp = await workerRequest('/api/runner/crm/fingerprint');
-      // Stored fingerprints include the items signature suffix after the first
-      // detail run — compare against the order-level prefix for the shortcut.
-      const storedOrderFp = String(fp?.fingerprint || '').split('+')[0];
-      if (storedOrderFp === orderFp && fp?.date === today) {
-        // No change — refresh the snapshot TTL + fetchedAt so the dashboard
-        // stays fresh without a full POST, ledger diff, or live broadcast.
-        await workerRequest('/api/runner/crm/heartbeat', { method: 'POST', body: { date: today, fingerprint: fp.fingerprint, fetchedAt, totalActive, totalValue } });
-        console.log(`crm-runner: no change (fp ${orderFp.slice(0, 8)}), heartbeat sent — ${totalActive} active SOs`);
-        return;
-      }
-      if (fp?.sigs && typeof fp.sigs === 'object') prevSigs = fp.sigs;
-    } catch (e) {
-      console.log(`crm-runner: fingerprint check failed (continuing with POST): ${e.message}`);
-    }
-  }
-
-  // Phase 2 — pipeline moved (or forced): fetch FULL line items, but ONLY for
-  // display-capped rows (every clickable row gets items; backlog beyond the
-  // cap stays item-less). Items are slimmed to display fields — raw Zoho items
-  // carry ~80 keys each and would bloat the KV snapshot by megabytes.
+  // Display-field slimming for detail items (raw Zoho items carry ~80 keys
+  // each and would bloat the KV snapshot by megabytes). Shared by the Phase 2
+  // POST path and the heartbeat background-fill below.
   const SLIM_KEYS = ['name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
   const slimItem = (li) => {
     const o = {};
@@ -404,6 +382,77 @@ async function main() {
     }
     return o;
   };
+  // Per-tick detail budget (12 rows × 10–15s gaps ≈ 2.5 min, inside the 5-min
+  // window). Applies to Phase 2 POST ticks AND heartbeat fill ticks alike.
+  const ITEM_BUDGET = 12;
+
+  // Previous per-SO [stage, itemsSig] (display rows only) — drives delta-fetch.
+  let prevSigs = {};
+  if (!process.env.CRM_FORCE) {
+    try {
+      const fp = await workerRequest('/api/runner/crm/fingerprint');
+      // Stored fingerprints include the items signature suffix after the first
+      // detail run — compare against the order-level prefix for the shortcut.
+      const storedOrderFp = String(fp?.fingerprint || '').split('+')[0];
+      if (storedOrderFp === orderFp && fp?.date === today) {
+        // No change — refresh the snapshot TTL + fetchedAt so the dashboard
+        // stays fresh without a full POST, ledger diff, or live broadcast.
+        await workerRequest('/api/runner/crm/heartbeat', { method: 'POST', body: { date: today, fingerprint: fp.fingerprint, fetchedAt, totalActive, totalValue } });
+        console.log(`crm-runner: no change (fp ${orderFp.slice(0, 8)}), heartbeat sent — ${totalActive} active SOs`);
+        // Background fill: the pipeline is quiet, so spend the idle tick
+        // fetching line items for display rows that still lack them (up to
+        // budget) and merge them via /api/runner/crm/items. Without this,
+        // item coverage froze at whatever the last POST tick fetched and
+        // most dropdowns stayed at "No line-item detail".
+        const missing = [];
+        for (const s of STAGES) {
+          for (const row of stages[s].orders) {
+            const hit = activeBySo.get(row.so);
+            if (!hit) continue;
+            const prev = prevSigs[row.so];
+            if (Array.isArray(prev) && prev[0] === s && prev[1]) continue; // already has items
+            missing.push(hit);
+            if (missing.length >= ITEM_BUDGET) break;
+          }
+          if (missing.length >= ITEM_BUDGET) break;
+        }
+        if (missing.length > 0) {
+          const merged = [];
+          for (const { id, row, entry } of missing) {
+            try {
+              const items = (await fetchOrderItems(id)).map(slimItem);
+              row.items = items;
+              row.lineCount = items.length;
+              entry.itemsSig = itemsSig(items);
+              merged.push({ so: row.so, items, lineCount: items.length, itemsSig: entry.itemsSig });
+            } catch (e) {
+              if (e?.message && !String(e.message).includes('circuit open')) {
+                console.log(`crm-runner: fill fetch failed for ${row.so}: ${e.message}`);
+              }
+            }
+            await sleep(10000 + Math.random() * 5000);
+          }
+          if (merged.length > 0) {
+            try {
+              const res = await workerRequest('/api/runner/crm/items', { method: 'POST', body: { date: today, items: merged } });
+              console.log(`crm-runner: background fill merged items for ${res?.merged ?? merged.length} SO(s)`);
+            } catch (e) {
+              console.log(`crm-runner: items merge failed (retry next tick): ${e.message}`);
+            }
+          }
+        }
+        return;
+      }
+      if (fp?.sigs && typeof fp.sigs === 'object') prevSigs = fp.sigs;
+    } catch (e) {
+      console.log(`crm-runner: fingerprint check failed (continuing with POST): ${e.message}`);
+    }
+  }
+
+  // Phase 2 — pipeline moved (or forced): fetch FULL line items, but ONLY for
+  // display-capped rows (every clickable row gets items; backlog beyond the
+  // cap stays item-less). Items are slimmed to display fields — raw Zoho items
+  // carry ~80 keys each and would bloat the KV snapshot by megabytes.
   const materialMap = new Map();
   // Delta-fetch: a display row hits Zoho ONLY when it is new, moved stage, or
   // was never captured (empty sig). Unchanged rows reuse the previous sig —
@@ -434,7 +483,6 @@ async function main() {
   // budget keeps the tick inside the 5-min window; leftovers ride the next
   // ticks and items ACCUMULATE via worker backfill, so the full set fills in
   // progressively (~12 rows/tick ≈ 40 ticks for a cold start).
-  const ITEM_BUDGET = 12;
   const due = queue.slice(0, ITEM_BUDGET);
   const deferred = queue.length - due.length;
   const t0 = Date.now();

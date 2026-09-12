@@ -69,25 +69,33 @@ export default function EnquiryTracker() {
   }, [loaded, enquiries]);
 
   useLiveEvent((e: any) => {
-    if (!e || e.type !== "enquiries" || !e.enquiry) return;
-    const id = String(e.enquiry.id ?? "");
+    // Scope-safe: live events carry summaries only (this is toast-only — the
+    // full payload refetches in useEnquiryData).
+    if (!e || e.type !== "enquiries") return;
+    const s = e.summary ?? e.enquiry;
+    if (!s) return;
+    const id = String(s.id ?? e.id ?? e.enquiryId ?? "");
     if (!id) return;
-    const raw = e.enquiry;
-    const label = enquiryLabel({ dailyNo: raw.dailyNo ?? null, createdAt: raw.createdAt ?? "", source: raw.source ?? "TL" });
-    const title = String(raw.title || "Untitled enquiry");
-    const next = String(raw.rateStatus ?? "");
+    const raw = e.enquiry ?? {};
+    const label = enquiryLabel({ dailyNo: s.dailyNo ?? null, createdAt: s.createdAt ?? "", source: s.source ?? "TL" });
+    const title = String(s.title || "Untitled enquiry");
+    const next = String(s.rateStatus ?? raw.rateStatus ?? "");
     const prev = rateStatusRef.current[id];
     rateStatusRef.current[id] = next;
     if (next === "finalized" && prev !== undefined && prev !== "finalized") {
       flashRateToast(id, label, title);
     }
-    const flagged = ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
+    const flagged = typeof s.flaggedCount === "number"
+      ? s.flaggedCount
+      : ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
     const prevFlagged = flagCountRef.current[id];
     flagCountRef.current[id] = flagged;
     if (prevFlagged !== undefined && flagged > prevFlagged) {
       flashToast(id, label, title, "spec");
     }
-    const diffs = ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it?.rates ?? []).filter((r: any) => r?.specSame === false).length), 0);
+    const diffs = typeof s.specDiffCount === "number"
+      ? s.specDiffCount
+      : ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it?.rates ?? []).filter((r: any) => r?.specSame === false).length), 0);
     const prevDiffs = specDiffCountRef.current[id];
     specDiffCountRef.current[id] = diffs;
     if (prevDiffs !== undefined && diffs > prevDiffs) {

@@ -186,10 +186,12 @@ export function parseItemRates(raw: unknown): EnquiryItemRate[] {
 
 /** Strict numeric for money fields (rates/markup/finals — margin math runs on
  *  these): plain digits with an optional decimal part only. Rejects empties
- *  (Number('') is 0!), whitespace, hex, exponents and trailing words. */
+ *  (Number('') is 0!), whitespace, hex, exponents and trailing words.
+ *  Currency symbols, thousand separators and spaces are stripped first, so
+ *  "₹1,200.50" parses as 1200.50 instead of being silently dropped. */
 export const strictNum = (v: unknown): number | undefined => {
   if (v === undefined || v === null) return undefined;
-  const s = String(v).trim();
+  const s = String(v).trim().replace(/[₹\s,]/g, '');
   if (!/^\d+(\.\d+)?$/.test(s)) return undefined;
   const n = Number(s);
   return Number.isFinite(n) && n >= 0 ? n : undefined;
@@ -254,6 +256,10 @@ export interface EnquiryStore {
   listEnquiriesPaged(offset: number, limit: number): Promise<{ rows: Enquiry[]; total: number }>;
   /** Comments for exactly these enquiries (one query per page). */
   listCommentsFor(enquiryIds: string[]): Promise<EnquiryComment[]>;
+  /** Atomic daily sequence allocation: next Enquiry No for today (IST).
+   *  Backed by a Setting counter (`enquiry:daily:<YYYY-MM-DD>`), so concurrent
+   *  creates can never share a number (the old max+1 scan raced). */
+  allocateDailyNo(now?: Date): Promise<number>;
   getEnquiry(id: string): Promise<Enquiry | null>;
   createEnquiry(data: Omit<Enquiry, "id" | "createdAt" | "updatedAt">): Promise<Enquiry>;
   updateEnquiry(id: string, updates: Partial<Omit<Enquiry, "id" | "createdAt">>): Promise<Enquiry | null>;
@@ -404,6 +410,14 @@ class MemoryEnquiryStore implements EnquiryStore {
   enquiries: Enquiry[] = [];
   comments: EnquiryComment[] = [];
   seq = 1;
+  private dailyCounters = new Map<string, number>();
+
+  async allocateDailyNo(now: Date = new Date()): Promise<number> {
+    const key = istDayKey(now);
+    const next = (this.dailyCounters.get(key) ?? 0) + 1;
+    this.dailyCounters.set(key, next);
+    return next;
+  }
 
   async listEnquiries() {
     return [...this.enquiries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -475,6 +489,22 @@ class D1EnquiryStore implements EnquiryStore {
       `SELECT * FROM EnquiryComment WHERE enquiryId IN (${placeholders}) ORDER BY createdAt ASC`,
     ).bind(...enquiryIds).all();
     return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
+  }
+  async allocateDailyNo(now: Date = new Date()): Promise<number> {
+    // Single-statement atomic increment on the Setting counter (D1 is a
+    // single writer — concurrent creates serialize here, never share a no).
+    const key = `enquiry:daily:${istDayKey(now)}`;
+    const at = new Date().toISOString();
+    await this.db.prepare(
+      `INSERT INTO Setting(key, value, updatedAt) VALUES(?, '1', ?) ` +
+      `ON CONFLICT(key) DO UPDATE SET value = CAST(Setting.value AS INTEGER) + 1, updatedAt = excluded.updatedAt`,
+    ).bind(key, at).run();
+    const row: any = await this.db.prepare(`SELECT value FROM Setting WHERE key = ?`).bind(key).first();
+    const n = Number(row?.value ?? 1);
+    if (Number.isFinite(n) && n >= 1) return Math.floor(n);
+    // Fallback (counter row unreadable): legacy max+1 scan for today.
+    const all = await this.listEnquiries().catch(() => [] as Enquiry[]);
+    return nextDailyNo(all, now);
   }
   async getEnquiry(id: string) {
     const row = await this.db.prepare("SELECT * FROM Enquiry WHERE id = ?").bind(id).first();

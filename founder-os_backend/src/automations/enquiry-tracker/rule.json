@@ -4,8 +4,7 @@
   "description": "Live sales pipeline: daily enquiries + threaded comments, persisted and pushed to open dashboards.",
   "type": "handler",
   "trigger": {
-    "type": "schedule",
-    "cron": "*/30 * * * *"
+    "type": "manual"
   },
   "enabled": true,
   "scope": "enquiry-tracker"

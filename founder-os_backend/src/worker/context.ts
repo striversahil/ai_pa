@@ -19,7 +19,7 @@ import { createChatStore, resolveLinkedSender } from '../modules/chat/store';
 import * as ChatRoutes from '../modules/chat/routes';
 import { createEnquiryStore } from '../modules/enquiries/store';
 import * as EnquiryRoutes from '../modules/enquiries/routes';
-import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from '../modules/enquiries/extract';
+import { cacheDel } from '../shared/cache';
 import { DASHBOARD_SLUGS } from '../modules/automation/dashboardSlugs';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automations/neodove-refresh';
 import { isSystemGeneratedComment } from '../shared/systemComment';
@@ -252,6 +252,12 @@ export async function enquiryMe(c: any) {
 }
 export function enquirySend(c: any, r: any) {
   if (r.live) broadcastLive(c, r.live.type, r.live.extra);
+  // The tracker dashboard payload is KV-cached (60s) — bust it on every
+  // write so dashboards never sit on a stale snapshot for the TTL.
+  try {
+    const p = cacheDel('enquiry-tracker:data');
+    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') c.executionCtx.waitUntil(p);
+  } catch { /* best-effort */ }
 }
 
 // ── Chat file attachments (Workers KV) ──────────────────────────────────────

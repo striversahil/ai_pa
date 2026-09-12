@@ -111,8 +111,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeState] = useState(paging?.pageSize ?? 0);
   const [total, setTotal] = useState<number | null>(null);
-  const setPageSize = useCallback((n: number) => { setPageSizeState(n); setPage(1); }, []);
-  // Procurement tab always reads the server-redacted payload (?view=procurement)
+  const setPageSize = useCallback((n: number) => { setPageSizeState(n); setPage(1); }, []);  // Procurement tab always reads the server-redacted payload (?view=procurement)
   // so privileged users preview exactly what procurement sees — never raw PII.
   const qs = redactedView ? "?view=procurement" : "";
   const pageQs = pageSize > 0 ? `${qs ? "&" : "?"}page=${page}&limit=${pageSize}` : "";
@@ -122,6 +121,9 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const [agents, setAgents] = useState<Agent[]>([]);
   const [clients, setClients] = useState<Array<{ name: string; openEstimates: number; enquiries: number }>>([]);
   const [loaded, setLoaded] = useState(false);
+  // False when the backend has no AI keys: the redacted view then withholds
+  // free text with an explicit banner (not silent blanks).
+  const [aiConfigured, setAiConfigured] = useState(true);
   // Login email (same session as these fetches): resolves the signed-in
   // sales agent to their own roster row for currentAgent below.
   const [userEmail, setUserEmail] = useState("");
@@ -161,6 +163,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       setEnquiriesSynced(list.map(toEnquiry));
       setComments(coms.map(toComment));
       setTotal(typeof data.total === 'number' ? data.total : null);
+      if (typeof data.aiConfigured === 'boolean') setAiConfigured(data.aiConfigured);
       if (agentsRes.ok) {
         const raw = await agentsRes.json();
         const sales = Array.isArray(raw) ? raw : [];
@@ -192,25 +195,39 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     void fetchAll();
   }, [fetchAll]);
 
-  // Live updates: sales view applies events optimistically; procurement view
-  // refetches the redacted payload instead — live broadcasts carry FULL
-  // enquiry objects, which must never be applied to the redacted screen.
-  // The refetch is trailing-edge debounced: a burst of own-write broadcasts
-  // must settle before re-reading, or a stale read lands after the save and
-  // the just-added rate "disappears" until the next refresh.
+  // Live updates: the backend broadcasts scope-safe SUMMARIES only (counts +
+  // label parts — never PII, free text, or vendor rates), so every view
+  // refetches its own scoped payload here (trailing-edge debounced: a burst
+  // of own-write broadcasts must settle before re-reading, or a stale read
+  // lands after the save and the just-added rate "disappears" until the next
+  // refresh). Legacy full-row events (ev.enquiry) still merge directly for
+  // backwards compatibility.
   const fetchAllRef = useRef(fetchAll);
   fetchAllRef.current = fetchAll;
   const pageSizeRef = useRef(pageSize);
   pageSizeRef.current = pageSize;
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefetch = useCallback((ms: number) => {
+    if (refetchTimer.current) clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(() => { void fetchAllRef.current(); }, ms);
+  }, []);
   useLiveEvent((e) => {
     if (!e || (e as any).type !== 'enquiries') return;
-    if (redactedView) {
-      if (refetchTimer.current) clearTimeout(refetchTimer.current);
-      refetchTimer.current = setTimeout(() => { void fetchAllRef.current(); }, 1200);
+    const ev = e as any;
+    // Summary-only event (current backend): refetch the scoped payload.
+    if (!ev.enquiry && !ev.comment) {
+      scheduleRefetch(redactedView ? 1200 : 800);
       return;
     }
-    const ev = e as any;
+    // Comment-only event (no content — refetch the scoped thread).
+    if (ev.action === 'comment' && ev.comment === undefined) {
+      scheduleRefetch(redactedView ? 1200 : 800);
+      return;
+    }
+    if (redactedView) {
+      scheduleRefetch(1200);
+      return;
+    }
     // Paged queue tables refetch the page on creates (row counts shift);
     // updates merge into the visible page when present.
     const paged = pageSizeRef.current > 0;
@@ -371,6 +388,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     clients,
     currentAgent,
     loaded,
+    aiConfigured,
     total, page, pageSize, setPage, setPageSize,
     syncState,
     addEnquiry,

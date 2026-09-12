@@ -136,6 +136,105 @@ export function canManageRates(me: MeResponse): boolean {
   return ((me as any).scopes || []).includes('mis');
 }
 
+/** Margin fields are Management-only: non-privileged readers (sales AND
+ *  procurement) see final rates but never the chosen vendor / markup that
+ *  produced them. Stored rows are untouched — only the API response. */
+export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T {
+  if (!enquiry || !Array.isArray((enquiry as any).items)) return enquiry;
+  return {
+    ...(enquiry as any),
+    items: (enquiry as any).items.map((it: any) => {
+      if (!it || typeof it !== 'object') return it;
+      const { selectedVendor, markup, ...rest } = it;
+      return rest;
+    }),
+  } as T;
+}
+
+/** Money input normalization shared with validation: strips currency
+ *  symbols, thousand separators and whitespace so "₹1,200.50" saves as
+ *  1200.50 instead of being silently dropped by the strict parser. */
+export function normalizeMoneyInput(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  const s = String(v).trim().replace(/[₹\s,]/g, '');
+  if (!/^\d+(\.\d+)?$/.test(s)) return undefined;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/** Rate validation: a vendor name with an unparseable amount is a 400 with a
+ *  human message — never a silent drop (the old parse-then-filter made quotes
+ *  "save" and then vanish). Vendor-less rows are still ignored. */
+export function validateRatesInput(items: unknown): string | null {
+  if (!Array.isArray(items)) return null;
+  for (let i = 0; i < items.length; i++) {
+    for (const f of ['markup', 'finalRate'] as const) {
+      const raw = (items[i] as any)?.[f];
+      if (raw !== undefined && raw !== null && raw !== '' && normalizeMoneyInput(raw) === undefined) {
+        return `Item ${i + 1}: "${String(raw)}" is not a valid ${f === 'markup' ? 'markup' : 'final rate'} — use digits only`;
+      }
+    }
+    const rates = (items[i] as any)?.rates;
+    if (!Array.isArray(rates)) continue;
+    for (let j = 0; j < rates.length; j++) {
+      const r = rates[j] as any;
+      if (!String(r?.vendor ?? '').trim()) continue;
+      if (normalizeMoneyInput(r?.rate) === undefined) {
+        return `Item ${i + 1}, quote ${j + 1}: "${String(r?.rate ?? '')}" is not a valid amount — use digits only (e.g. 1200 or 1200.50)`;
+      }
+    }
+  }
+  return null;
+}
+
+// ── Scope-safe live summaries ────────────────────────────────────────────────
+// The EventHub fans out GLOBALLY (no per-user filtering), so live payloads
+// must never carry PII or free text: no description, comments, requirements,
+// client fields, or per-vendor rates. Every view refetches its own scoped
+// payload on these events (debounced) instead of applying a full row.
+export interface EnquiryLiveSummary {
+  id: string;
+  dailyNo: number | null;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  rateStatus: string;
+  ratesCount: number;
+  flaggedCount: number;
+  specDiffCount: number;
+  requestedCount: number;
+}
+
+export function summarizeEnquiry(e: any): EnquiryLiveSummary {
+  const items = Array.isArray(e?.items) ? e.items : [];
+  let ratesCount = 0;
+  let flaggedCount = 0;
+  let specDiffCount = 0;
+  let requestedCount = 0;
+  for (const it of items) {
+    ratesCount += Array.isArray((it as any)?.rates) ? (it as any).rates.length : 0;
+    if ((it as any)?.specIssue) flaggedCount += 1;
+    if ((it as any)?.ratesRequested) requestedCount += 1;
+    for (const r of (Array.isArray((it as any)?.rates) ? (it as any).rates : [])) {
+      if ((r as any)?.specSame === false) specDiffCount += 1;
+    }
+  }
+  return {
+    id: String(e?.id ?? ''),
+    dailyNo: e?.dailyNo === undefined || e?.dailyNo === null ? null : Number(e.dailyNo),
+    source: String(e?.source ?? 'TL'),
+    createdAt: String(e?.createdAt ?? ''),
+    updatedAt: String((e as any)?.updatedAt ?? e?.createdAt ?? ''),
+    title: String(e?.title ?? ''),
+    rateStatus: String((e as any)?.rateStatus ?? ''),
+    ratesCount,
+    flaggedCount,
+    specDiffCount,
+    requestedCount,
+  };
+}
+
 /** Lead inference (telecalling creator-first pattern): resolve the signed-in
  *  user to a sales agent via their email on the Telecaller roster. Falls
  *  back to Google display-name matching (roster rows often lack an email).
@@ -172,6 +271,9 @@ export interface RedactOpts {
   /** 1-based page + page size for queue tables (10/50). Omit = full list. */
   page?: number;
   limit?: number;
+  /** False when no AI keys are configured — the redacted view then withholds
+   *  free text with an explicit badge instead of failing silently. */
+  aiConfigured?: boolean;
 }
 
 export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: RedactOpts): Promise<EnquiryResult> {
@@ -190,7 +292,13 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
   }
   const meta = total === null ? {} : { total, page, limit: lim };
-  if (!opts?.redact) return json(200, { enquiries, comments, ...meta });
+  if (!opts?.redact) {
+    // Sales sees final rates but never margin internals (selectedVendor /
+    // markup stay Management-only). Management (MIS) gets the full row.
+    const privileged = canManageRates(me);
+    const out = privileged ? enquiries : enquiries.map(stripMarginFields);
+    return json(200, { enquiries: out, comments, ...meta });
+  }
   // AI-only procurement view: each piece comes from the write-time enrichment
   // cache (RedactedViewCache) and only when its hash still matches the source.
   // Anything missing/stale is WITHHELD with redactedPending=true — the route
@@ -314,6 +422,9 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     comments: redacted.flatMap((r) => r.servedComments),
     // Route layer kicks a background re-enrichment for these (fire-and-forget).
     redactionPendingIds: redacted.filter((r) => r.entry.pending).map((r) => r.entry.id),
+    // Explicit AI-down signal: when false, withheld text is an outage, not a
+    // fresh enquiry — the queue shows a banner instead of silent blanks.
+    aiConfigured: opts?.aiConfigured ?? true,
     ...meta,
   });
 }
@@ -322,16 +433,20 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
   // EST No. is OPTIONAL (enter now or later) — only the row itself is created;
   // LLM auto-fill covers the structured fields, so everything is optional.
   const estNumber = String(body?.estNumber ?? "").trim();
+  // Vendor quotes with junk amounts are rejected with a message — never
+  // silently dropped (the old filter made quotes "save" then vanish).
+  const rateError = validateRatesInput(body?.items);
+  if (rateError) return json(400, { error: rateError });
   // Lead of = the agent who created the enquiry (no AI guessing). The
   // worker/express route pre-resolves the creator's roster row (login email,
   // then display name); a provided agent still wins (e.g. root assigning).
   // No roster match = unassigned ("") — never the auth-session id, which
   // belongs to a different id space and could resolve to the wrong person.
   const assignedAgentId = String(body.assignedAgentId || "");
-  // Daily enquiry number: auto counter, resets every IST day.
-  const all = await store.listEnquiries().catch(() => [] as any[]);
+  // Daily enquiry number: atomic Setting counter, resets every IST day
+  // (concurrent creates can never share a number — the old max+1 scan raced).
   const now = new Date();
-  const dailyNo = nextDailyNo(all as any[], now);
+  const dailyNo = await store.allocateDailyNo(now).catch(() => nextDailyNo([], now));
   const source = normalizeEnquirySource(body.source);
   // No Title field in the form: a blank title becomes the enquiry number text.
   const title = String(body?.title ?? "").trim()
@@ -376,10 +491,14 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     await store.updateEnquiry(created.id, { rateStatus: 'rates_received' } as any);
     created.rateStatus = 'rates_received';
   }
+  // Scope-safe broadcast: a summary only (counts + label parts) — never the
+  // full row, which carries client PII to every connected screen.
+  const summary = summarizeEnquiry(created);
+  const body_ = canManageRates(me) ? enquiry : stripMarginFields(enquiry as any);
   return {
     status: 201,
-    body: enquiry,
-    live: { type: LiveEvent.Enquiries, extra: { action: "created", enquiry } },
+    body: body_,
+    live: { type: LiveEvent.Enquiries, extra: { action: "created", id: created.id, summary } },
   };
 }
 
@@ -409,13 +528,18 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
   return {
     status: 201,
     body: { requirement: { text, imageUrl }, enquiry },
-    live: { type: LiveEvent.Enquiries, extra: { action: "requirement", id, requirement: { text, imageUrl }, enquiry } },
+    live: { type: LiveEvent.Enquiries, extra: { action: "requirement", id, summary: summarizeEnquiry(enquiry) } },
   };
 }
 
 export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: string, body: any): Promise<EnquiryResult> {
   const updates = pick(body || {});
   if (!updates) return json(400, { error: "no valid fields" });
+  // Reject junk quote amounts with a message instead of dropping them.
+  if (Array.isArray((body as any)?.items)) {
+    const rateError = validateRatesInput((body as any).items);
+    if (rateError) return json(400, { error: rateError });
+  }
   // Items derive from manual entry: with AI auto-split OFF, a description
   // edit must preserve them (the reset below only applies when AI splitting
   // is enabled). Explicit item saves carry `items` and are always preserved.
@@ -617,10 +741,11 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
   }
   const enquiry = await store.updateEnquiry(id, updates);
   if (!enquiry) return json(404, { error: "not found" });
+  const canSeeMargins = canManageRates(me);
   return {
     status: 200,
-    body: enquiry,
-    live: { type: LiveEvent.Enquiries, extra: { action: "updated", enquiry } },
+    body: canSeeMargins ? enquiry : stripMarginFields(enquiry as any),
+    live: { type: LiveEvent.Enquiries, extra: { action: "updated", id, summary: summarizeEnquiry(enquiry) } },
   };
 }
 
@@ -649,7 +774,7 @@ export async function enquiryComments(store: EnquiryStore, me: MeResponse, enqui
       pending = true;
     }
   }
-  return json(200, { comments: served, redactionPendingIds: pending ? [enquiryId] : [] });
+  return json(200, { comments: served, redactionPendingIds: pending ? [enquiryId] : [], aiConfigured: opts?.aiConfigured ?? true });
 }
 
 export async function enquiryAddComment(store: EnquiryStore, me: MeResponse, enquiryId: string, body: any): Promise<EnquiryResult> {
@@ -662,9 +787,15 @@ export async function enquiryAddComment(store: EnquiryStore, me: MeResponse, enq
     parentId: body?.parentId ? String(body.parentId) : null,
     imageUrl: body?.imageUrl ? String(body.imageUrl) : undefined,
   });
+  // Scope-safe: comment content is free text (never broadcast); receivers
+  // refetch the scoped thread instead.
+  const updated = await store.getEnquiry(enquiryId).catch(() => null);
   return {
     status: 201,
     body: comment,
-    live: { type: LiveEvent.Enquiries, extra: { action: "comment", comment } },
+    live: {
+      type: LiveEvent.Enquiries,
+      extra: { action: "comment", id: (comment as any).id, enquiryId, summary: updated ? summarizeEnquiry(updated) : undefined },
+    },
   };
 }

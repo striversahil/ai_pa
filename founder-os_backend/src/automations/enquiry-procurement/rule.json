@@ -4,8 +4,7 @@
   "description": "Pending-only vendor-rate queue: items awaiting rates, client PII hidden. No daily pipeline — just what needs rates now.",
   "type": "handler",
   "trigger": {
-    "type": "schedule",
-    "cron": "*/30 * * * *"
+    "type": "manual"
   },
   "enabled": true,
   "scope": "procurement"

@@ -44,6 +44,7 @@ type Automation = {
 function describeTrigger(t: AutomationTrigger | null | undefined): string {
   if (!t) return "—";
   if (t.type === "schedule") return `⏰ every ${t.cron}`;
+  if (t.type === "manual") return "🖥️ on demand (dashboard)";
   if (t.type === "event_plus_scan") return `⚡ ${t.event} + scan ${t.fallbackCron}`;
   if (t.type === "event") return `⚡ ${t.event}`;
   return t.type ?? "—";

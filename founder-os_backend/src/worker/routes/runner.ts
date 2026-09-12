@@ -11,6 +11,34 @@ import { logger } from '../../shared/logger';
 import { bulkAssignEstimates } from '../../automations/telecalling/service';
 import { syncEffortSnapshots } from '../../automations/telecalling/effort-sync';
 
+/** Procurement materials roll-up from final display rows (shared by the CRM
+ *  snapshot POST and the incremental items-merge below, so both report the
+ *  full picture even when only a few rows carry items). */
+function computeCrmMaterials(stages: Record<string, { orders: any[] }>, cap: number): any[] {
+  try {
+    const matMap = new Map<string, { item: string; sku: string; qty: number; orders: number; value: number }>();
+    for (const entry of Object.values(stages)) {
+      for (const o of (entry as any).orders) {
+        for (const li of (Array.isArray(o?.items) ? o.items.slice(0, 50) : [])) {
+          const key = String(li?.sku || li?.item_code || li?.name || li?.description || '');
+          if (!key) continue;
+          const e = matMap.get(key) || { item: String(li?.name || li?.description || key), sku: String(li?.sku || li?.item_code || ''), qty: 0, orders: 0, value: 0 };
+          e.qty += parseFloat(li?.quantity) || 0;
+          e.value += parseFloat(li?.item_total) || 0;
+          e.orders += 1;
+          matMap.set(key, e);
+        }
+      }
+    }
+    return [...matMap.values()]
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, cap)
+      .map((m) => ({ ...m, qty: Math.round(m.qty * 100) / 100, value: Math.round(m.value * 100) / 100 }));
+  } catch {
+    return [];
+  }
+}
+
 export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── whatsapp-digest runner ───────────────────────────────────────────────────
   app.get('/api/runner/messages/unprocessed', async (c) => {
@@ -342,9 +370,14 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // fetched this tick; rows it skipped carry the previous itemsSig with
     // empty items. Copy the stored items over when the sig matches, so the
     // dashboard never loses line detail on delta ticks.
+    // Preserve-on-failure: when a row's fetch FAILED this tick (empty new sig
+    // but a non-empty stored sig + stored items), keep the stored items AND
+    // restore the stored sig in the saved index — otherwise one bad tick
+    // permanently wipes that row's detail and the row is never retried.
     let backfilled = 0;
+    let preserved = 0;
+    const prevSigBySo = new Map<string, string>();
     try {
-      const prevSigBySo = new Map<string, string>();
       for (const o of (Array.isArray(prev?.index) ? prev.index : [])) {
         if (o?.so) prevSigBySo.set(String(o.so), String(o.itemsSig || ''));
       }
@@ -371,6 +404,14 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
               o.items = hit.items;
               o.lineCount = hit.lineCount;
               backfilled++;
+            } else if (!sig && hit && (prevSigBySo.get(so) || '')) {
+              // Fetch failed (or never ran) for a row we HAD detail for:
+              // keep the stored items so the dropdown never goes blank.
+              // The index-sig restore below keeps the old sig, so the row
+              // stays queued for retry instead of being forgotten.
+              o.items = hit.items;
+              o.lineCount = hit.lineCount;
+              preserved++;
             }
           }
         }
@@ -379,27 +420,20 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // Materials are recomputed server-side from the FINAL order rows (fetched
     // + backfilled items), so delta ticks — where the runner only sends items
     // for changed rows — still report the full procurement picture.
-    let materials: any[] = [];
-    try {
-      const matMap = new Map<string, { item: string; sku: string; qty: number; orders: number; value: number }>();
-      for (const entry of Object.values(stages)) {
-        for (const o of (entry as any).orders) {
-          for (const li of (Array.isArray(o?.items) ? o.items.slice(0, 50) : [])) {
-            const key = String(li?.sku || li?.item_code || li?.name || li?.description || '');
-            if (!key) continue;
-            const e = matMap.get(key) || { item: String(li?.name || li?.description || key), sku: String(li?.sku || li?.item_code || ''), qty: 0, orders: 0, value: 0 };
-            e.qty += parseFloat(li?.quantity) || 0;
-            e.value += parseFloat(li?.item_total) || 0;
-            e.orders += 1;
-            matMap.set(key, e);
-          }
+    const materials: any[] = computeCrmMaterials(stages, 300);
+    // Restore stored item sigs for preserve-on-failure rows: the runner sent
+    // an empty sig (fetch failed), but we kept the stored items above — the
+    // saved index must keep pointing at them or the row is never retried and
+    // the next fingerprint check misfires.
+    let storedIndex: any[] = Array.isArray((body as any)?.index) ? (body as any).index.slice(0, 10000) : [];
+    if (preserved > 0) {
+      storedIndex = storedIndex.map((o: any) => {
+        if (o?.so && !String(o?.itemsSig || '') && (prevSigBySo.get(String(o.so)) || '')) {
+          return { ...o, itemsSig: prevSigBySo.get(String(o.so)) };
         }
-      }
-      materials = [...matMap.values()]
-        .sort((a, b) => b.qty - a.qty)
-        .slice(0, 300)
-        .map((m) => ({ ...m, qty: Math.round(m.qty * 100) / 100, value: Math.round(m.value * 100) / 100 }));
-    } catch { materials = Array.isArray(body.materials) ? body.materials.slice(0, 300) : []; }
+        return o;
+      });
+    }
     const snapshotBody = {
       date: body.date,
       fetchedAt: typeof (body as any)?.fetchedAt === 'string' ? (body as any).fetchedAt : null,
@@ -412,7 +446,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       materials,
       salespeople: Array.isArray(body.salespeople) ? body.salespeople.slice(0, 200) : [],
       // Full lightweight index (uncapped) — the next tick's diff source.
-      index: Array.isArray((body as any)?.index) ? (body as any).index.slice(0, 10000) : [],
+      index: storedIndex,
       meta: { ...(body.meta ?? null), withLineItems: materials.length > 0 },
       computedAt: new Date().toISOString(),
     };
@@ -432,7 +466,60 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
       broadcastLive(c, LiveEvent.Crm, { totalActive: snapshotBody.totalActive, events: persisted });
     }
-    return c.json({ ok: true, events: persisted, broadcast: persisted > 0 || totalsChanged, backfilled });
+    return c.json({ ok: true, events: persisted, broadcast: persisted > 0 || totalsChanged, backfilled, preserved });
+  });
+
+  // ── CRM incremental items merge (background fill) ─────────────────────────
+  // The runner fetches line-item details for a bounded batch per tick; on
+  // heartbeat ticks (pipeline unchanged) there is no snapshot POST, so those
+  // batches land here instead. Merges items into the STORED snapshot's
+  // display rows (unknown SOs ignored), refreshes index sigs, recomputes
+  // materials, busts the data cache and broadcasts — no ledger diff (items
+  // don't move pipeline stages, so they never score points).
+  app.post('/api/runner/crm/items', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const body = await c.req.json().catch(() => ({}));
+    const rows: any[] = Array.isArray(body?.items) ? body.items : [];
+    if (rows.length === 0) return c.json({ ok: true, merged: 0 });
+    const { cacheGet, cacheSet, cacheDel } = require('../../shared/cache');
+    const snap: any = await cacheGet(CRM_SNAPSHOT_KEY, 24 * 60 * 60 * 1000);
+    if (!snap) return c.json({ ok: false, error: 'no snapshot to merge into' }, 404);
+    if (typeof body?.date === 'string' && snap?.date && body.date !== snap.date) {
+      return c.json({ ok: false, error: 'snapshot date moved — send a full snapshot instead' }, 409);
+    }
+    const bySo = new Map<string, any>();
+    for (const r of rows) {
+      if (r?.so && Array.isArray(r?.items)) bySo.set(String(r.so), r);
+    }
+    if (bySo.size === 0) return c.json({ ok: true, merged: 0 });
+    let merged = 0;
+    const src = snap?.stages || snap?.byProcess || {};
+    for (const entry of Object.values(src)) {
+      for (const o of (entry as any)?.orders ?? []) {
+        const r = o?.so ? bySo.get(String(o.so)) : null;
+        if (!r) continue;
+        o.items = r.items.slice(0, 200);
+        o.lineCount = Number(r.lineCount) || r.items.length;
+        merged++;
+      }
+    }
+    if (merged === 0) return c.json({ ok: true, merged: 0 });
+    if (Array.isArray(snap.index)) {
+      const sigBySo = new Map<string, string>();
+      for (const r of rows) {
+        if (r?.so && typeof r?.itemsSig === 'string' && r.itemsSig) sigBySo.set(String(r.so), r.itemsSig);
+      }
+      snap.index = snap.index.map((o: any) =>
+        (o?.so && sigBySo.has(String(o.so)) ? { ...o, itemsSig: sigBySo.get(String(o.so)) } : o),
+      );
+    }
+    snap.materials = computeCrmMaterials(snap.stages || {}, 300);
+    snap.meta = { ...(snap.meta ?? null), withLineItems: (snap.materials as any[]).length > 0 };
+    snap.computedAt = new Date().toISOString();
+    await cacheSet(CRM_SNAPSHOT_KEY, snap, 45 * 60 * 1000);
+    await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
+    broadcastLive(c, LiveEvent.Crm, { itemsMerged: merged });
+    return c.json({ ok: true, merged });
   });
 
   // ── CRM fingerprint + heartbeat (no-change fast path) ──────────────────────

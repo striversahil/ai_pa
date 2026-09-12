@@ -38,8 +38,9 @@ import { createChatStore } from './modules/chat/store';
 import * as EnquiryRoutes from './modules/enquiries/routes';
 import { PrismaEnquiryStore } from './modules/enquiries/store-prisma';
 import { createEnquiryStore } from './modules/enquiries/store';
-import { extractEnquiryFieldsRobust, hashText, splitExtractionText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from './modules/enquiries/extract';
-import { cacheSet, cacheDel } from './shared/cache';
+import { runEnquiryExtraction } from './modules/enquiries/enrichment';
+import { getGateway } from './shared/ai-gateway';
+import { cacheDel } from './shared/cache';
 
 
 const app = express();
@@ -217,10 +218,10 @@ app.get('/api/enquiries', async (req, res) => {
   const restricted = req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any);
   const pageQ = req.query.page as string | undefined;
   const limitQ = req.query.limit as string | undefined;
-  const opts: { redact?: boolean; page?: number; limit?: number } | undefined =
+  const opts: { redact?: boolean; page?: number; limit?: number; aiConfigured?: boolean } | undefined =
     restricted || pageQ !== undefined || limitQ !== undefined
       ? {
-          ...(restricted ? { redact: true } : {}),
+          ...(restricted ? { redact: true, aiConfigured: aiConfigured() } : {}),
           ...(pageQ !== undefined ? { page: Number(pageQ) } : {}),
           ...(limitQ !== undefined ? { limit: Number(limitQ) } : {}),
         }
@@ -228,7 +229,7 @@ app.get('/api/enquiries', async (req, res) => {
   const r = await EnquiryRoutes.enquiryList(enquiryStore, me, opts);
   if (restricted) {
     for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
-      try { void runEnquiryExtraction(String(id)); } catch { /* ignore */ }
+      try { void runEnquiryExtractionLocal(String(id)); } catch { /* ignore */ }
     }
   }
   res.status(r.status).json(r.body);
@@ -276,99 +277,19 @@ app.get('/api/enquiries/clients', async (req, res) => {
   }
   res.json([...byKey.values()].sort((a, b) => a.name.localeCompare(b.name)));
 });
-async function runEnquiryExtraction(id: string) {
+function aiConfigured(): boolean {
   try {
-    const enquiry = await enquiryStore.getEnquiry(id);
-    if (!enquiry) return;
-    let comments: any[] = [];
-    try { comments = await enquiryStore.listComments(id); } catch { /* ignore */ }
-    const firstComments = (comments || [])
-      .slice(0, 2)
-      .map((cm: any) => `${cm.content ?? ''}`)
-      .join('\n');
-    const reqTexts = Array.isArray((enquiry as any).additionalRequirements)
-      ? (enquiry as any).additionalRequirements.map((r: any) => (typeof r === 'string' ? r : String(r?.text ?? '')))
-      : [];
-    const { text, description } = splitExtractionText(
-      enquiry.description,
-      firstComments,
-      (comments || []).map((cm: any) => ({ id: String(cm.id ?? ''), content: String(cm.content ?? '') })),
-      reqTexts,
-    );
-    const extracted = await extractEnquiryFieldsRobust(process.env as any, {
-      text,
-      title: enquiry.title,
-      company: enquiry.clientCompany,
-      description,
-      salesItems: (Array.isArray((enquiry as any).items) ? (enquiry as any).items : []).map((it: any) => ({
-        name: String(it?.name ?? ''),
-        qty: String(it?.qty ?? ''),
-        spec: String(it?.spec ?? ''),
-      })),
-    });
-    if (!extracted) return;
-    // Effective sales line items: manual edits win — see worker context.ts.
-    // AI auto-split is OFF (AI_ITEMS_ENABLED); empty rows stay empty.
-    const existingItems: Array<{ name: string; qty: string; spec: string }> =
-      Array.isArray((enquiry as any).items) ? (enquiry as any).items : [];
-    const salesItems = existingItems.length > 0
-      ? existingItems
-      : (AI_ITEMS_ENABLED && Array.isArray(extracted.items) ? extracted.items : []);
-    // Procurement-view cache (v2) — see worker context.ts runEnquiryExtraction.
-    if (extracted.redactedDescription) {
-      try {
-        const byId = new Map(((extracted.redactedComments ?? []) as Array<{ id: string; content: string }>).map((r) => [r.id, r.content]));
-        const redactedComments: RedactedViewCache['comments'] = {};
-        for (const cm of comments || []) {
-          const id = String((cm as any)?.id ?? '');
-          if (!id || !byId.has(id)) continue;
-          redactedComments[id] = { content: byId.get(id) as string, hash: hashText(String((cm as any)?.content ?? '')) };
-        }
-        const redactedRequirements: RedactedViewCache['requirements'] = {};
-        for (const r of (extracted.redactedRequirements ?? []) as Array<{ index: number; text: string }>) {
-          const src = reqTexts[r.index];
-          if (src === undefined) continue;
-          redactedRequirements[r.index] = { text: r.text, hash: hashText(src) };
-        }
-        const { hashItem } = require('./modules/enquiries/routes');
-        const redactedItems: RedactedViewCache['items'] = {};
-        for (const r of (extracted.redactedItems ?? []) as Array<{ index: number; name: string; qty: string; spec: string }>) {
-          const src = (salesItems as any[])[r.index];
-          if (src === undefined) continue;
-          redactedItems[r.index] = {
-            name: String(r.name ?? ''),
-            qty: String(r.qty ?? ''),
-            spec: String(r.spec ?? ''),
-            hash: hashItem(src),
-          };
-        }
-        const entry: RedactedViewCache = {
-          description: extracted.redactedDescription,
-          descHash: hashText(description),
-          comments: redactedComments,
-          requirements: redactedRequirements,
-          items: redactedItems,
-          at: new Date().toISOString(),
-        };
-        await cacheSet(redactedCacheKey(id), entry, REDACTED_CACHE_TTL_MS);
-      } catch { /* best-effort */ }
-    }
-    const updates: Record<string, any> = {};
-    if (!enquiry.title && extracted.title) updates.title = extracted.title;
-    if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;
-    if (!enquiry.sourceLead && extracted.sourceLead) updates.sourceLead = extracted.sourceLead;
-    if (!enquiry.location && extracted.location) updates.location = extracted.location;
-    if (!enquiry.clientCompany && extracted.company) updates.clientCompany = extracted.company;
-    if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
-    if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
-    if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
-    if (existingItems.length === 0 && salesItems.length > 0) updates.items = salesItems;
-    if (Object.keys(updates).length) await enquiryStore.updateEnquiry(id, updates);
-  } catch (e: any) {
-    console.error('enquiry extraction failed:', e?.message);
+    return getGateway(process.env as any).keyCount > 0;
+  } catch {
+    return true;
   }
 }
-
+async function runEnquiryExtractionLocal(id: string) {
+  // Shared edge-safe enrichment (same function the Worker kicks) — the
+  // tracker dashboard cache is busted alongside so the next read is fresh.
+  await runEnquiryExtraction(process.env as any, enquiryStore, id);
+  try { await cacheDel('enquiry-tracker:data'); } catch { /* best-effort */ }
+}
 app.post('/api/enquiries', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
@@ -380,14 +301,14 @@ app.post('/api/enquiries', async (req, res) => {
     } catch { /* fallback (auth id) in enquiryCreate */ }
   }
   const r = await EnquiryRoutes.enquiryCreate(enquiryStore, me, body);
-  if (r.body?.id) void runEnquiryExtraction(r.body.id);
+  if (r.body?.id) void runEnquiryExtractionLocal(r.body.id);
   res.status(r.status).json(r.body);
 });
 app.patch('/api/enquiries/:id', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const r = await EnquiryRoutes.enquiryUpdate(enquiryStore, me, req.params.id, req.body || {});
-  if (r.body?.id) void runEnquiryExtraction(r.body.id);
+  if (r.body?.id) void runEnquiryExtractionLocal(r.body.id);
   res.status(r.status).json(r.body);
 });
 app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {
@@ -398,7 +319,7 @@ app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {
   // New free text needs its procurement-safe rewrite now — otherwise the
   // redacted copy only appears after the next list fetch kicks enrichment.
   if (r.status === 200) {
-    try { void runEnquiryExtraction(String(req.params.id)); } catch { /* ignore */ }
+    try { void runEnquiryExtractionLocal(String(req.params.id)); } catch { /* ignore */ }
   }
 });
 app.delete('/api/enquiries/:id', async (req, res) => {
@@ -407,6 +328,7 @@ app.delete('/api/enquiries/:id', async (req, res) => {
   const r = await EnquiryRoutes.enquiryDelete(enquiryStore, me, req.params.id);
   if (r.status === 200) {
     try { await cacheDel(`enquiry:redacted:${req.params.id}`); } catch { /* best-effort */ }
+    try { await cacheDel('enquiry-tracker:data'); } catch { /* best-effort */ }
   }
   res.status(r.status).json(r.body);
 });
@@ -414,10 +336,10 @@ app.get('/api/enquiries/:id/comments', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const restricted = req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any);
-  const r = await EnquiryRoutes.enquiryComments(enquiryStore, me, req.params.id, restricted ? { redact: true } : undefined);
+  const r = await EnquiryRoutes.enquiryComments(enquiryStore, me, req.params.id, restricted ? { redact: true, aiConfigured: aiConfigured() } : undefined);
   if (restricted) {
     for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
-      try { void runEnquiryExtraction(String(id)); } catch { /* ignore */ }
+      try { void runEnquiryExtractionLocal(String(id)); } catch { /* ignore */ }
     }
   }
   res.status(r.status).json(r.body);
@@ -429,7 +351,7 @@ app.post('/api/enquiries/:id/comments', async (req, res) => {
   res.status(r.status).json(r.body);
   // The agent writes the lead-details block in the first 1–2 comments — run
   // extraction so enquiryNumber/sourceLead/location/company/contact fill in.
-  if (r.body?.enquiryId) void runEnquiryExtraction(r.body.enquiryId);
+  if (r.body?.enquiryId) void runEnquiryExtractionLocal(r.body.enquiryId);
 });
 // File attachments are stored in Workers KV (worker runtime only); the
 // Express/alt runtime is the local/dev path without KV.

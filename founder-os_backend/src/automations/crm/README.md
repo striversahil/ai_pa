@@ -25,7 +25,7 @@ Presents a department control room with horizontal tabs
 | **CRM Desk** | KPIs (pending confirm, points today/week), CRM leaderboard (7d), orders awaiting confirmation |
 | **Accounts** | KPIs, two tables — To Invoice + Awaiting Payment |
 | **Dispatch** | KPIs, orders to ship |
-| **Procurement** | KPIs (distinct materials, total qty, open orders), materials table |
+| **Procurement** | KPIs (distinct materials, total qty, open orders), materials table — post-sale SO line items, labelled **SO Materials** in the UI to distinguish it from the pre-sale Sourcing Queue (`enquiry-procurement`) |
 
 ### Stage → desk ownership
 

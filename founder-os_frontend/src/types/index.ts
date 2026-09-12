@@ -95,6 +95,32 @@ export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "rates
     && !it?.specIssue;
 }
 
+/** Enquiry-level queue predicates — THE single source of truth for all three
+ *  dashboards (backend predicates mirror these; keep them in sync).
+ *  Pending and history are DISJOINT: an enquiry is either awaiting work or
+ *  done, never both. Empty enquiries (no items yet) are sales-only — they
+ *  wait on sales to add items, not on procurement. */
+export function isProcurementPendingEnquiry(e: Pick<Enquiry, "items">): boolean {
+  const items = e.items ?? [];
+  return items.some(itemNeedsRates);
+}
+
+export function isProcurementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean {
+  const items = e.items ?? [];
+  return !isProcurementPendingEnquiry(e)
+    && items.some((it) => (it.rates ?? []).length > 0 && !it.ratesRequested);
+}
+
+export function isManagementPendingEnquiry(e: Pick<Enquiry, "items">): boolean {
+  return (e.items ?? []).some(itemNeedsDecision);
+}
+
+export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean {
+  const items = e.items ?? [];
+  return !isManagementPendingEnquiry(e)
+    && items.some((it) => it.finalRate !== undefined && it.finalRate !== null && !it.specIssue);
+}
+
 export interface Enquiry {
   id: string;
   estNumber: string;
@@ -164,11 +190,12 @@ export function enquiryLabel(e: Pick<Enquiry, "dailyNo" | "createdAt" | "source"
   return `Enquiry No ${no} - ${dd} ${mon} ${e.source || "TL"}`;
 }
 
-/** Strict money parse for rate/markup/final inputs: plain digits with an
- *  optional decimal part only. Rejects empties (Number('') is 0!), hex,
- *  exponents and trailing words — margin math must never see junk. */
+/** Strict money parse for rate/markup/final inputs. Strips currency symbols,
+ *  thousand separators and spaces first (mirrors the backend), so "₹1,200.50"
+ *  parses as 1200.50. Still rejects empties (Number('') is 0!), hex,
+ *  exponents, negatives and trailing words — margin math must never see junk. */
 export function parseMoneyInput(v: string): number | null {
-  const s = String(v ?? "").trim();
+  const s = String(v ?? "").trim().replace(/[₹\s,]/g, "");
   if (!/^\d+(\.\d+)?$/.test(s)) return null;
   const n = Number(s);
   return Number.isFinite(n) && n >= 0 ? n : null;
