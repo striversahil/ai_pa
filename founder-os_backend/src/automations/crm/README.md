@@ -91,11 +91,14 @@ the previous KV snapshot (so→stage map) and writes ledger rows via
   the uncapped index either way.
 - `data()` reads KV `crm:salesorders_snapshot` (45-min TTL) and returns it
   **only when `snapshot.date === today (IST)`** (`{…, fresh:true}`).
-  Stale/absent snapshot → empty pipeline + zeroed scores
-  (`{totalActive:0, totalValue:0, stages:{}, scores:{…all zero},
-  computedAt:null, fresh:false}`) — the dashboard shows a "waiting for first
-  snapshot" state, never yesterday's data. The runner refreshes it on the next
-  tick.
+  When no fresh snapshot exists (Zoho outage / runner failing), `data()` falls
+  back to the last-known snapshot kept 7 days in KV and serves it with
+  `{fresh:false, stale:true, staleSince}` — the dashboard shows a "last-known"
+  banner instead of zeroing out. Only when nothing exists within 7 days does
+  it return the empty `{totalActive:0, …, fresh:false, stale:false}` "waiting
+  for first snapshot" state. The points ledger always reads live D1, so scores
+  never go stale. Snapshot/heartbeat/items-merge writes all use the 7-day KV
+  TTL; freshness is decided by the 45-min read + date gate, never by KV expiry.
 - `data()` also aggregates the score ledger in parallel: today's points (by
   dept), 7-day points, CRM leaderboard (7d, by actor: points/events/
   created/confirmed), and a recent 50-event feed.
@@ -110,18 +113,22 @@ None (read-only dashboard + append-only points ledger).
   `N page(s), M active SOs (₹V) — confirm:a  invoice:b  ship:c  payment:d`.
 - Verify: open the CRM dashboard → KPI strip shows active SO counts + value
   with `fresh:true` (check the payload, not just the numbers).
-- If empty/zeros with `fresh:false`: the runner hasn't posted today's
-  snapshot — check the `cron-every-5min.yml` run for `crm-runner` errors;
+- If empty/zeros with `fresh:false, stale:false`: the runner hasn't posted in
+  7+ days — check the `cron-every-5min.yml` run for `crm-runner` errors;
   verify `zoho_sent/sent_estimates.txt` cookies are fresh; confirm
   `WORKER_URL`/`SHARED_SECRET` GH secrets. (The Zoho "Sales Orders Today"
   tile refreshes on the same 5-min workflow via `SO_ONLY=1`; the full
-  estimates sync still runs every 15 min.)
+  estimates sync still runs every 15 min.) `fresh:false, stale:true` is the
+  expected outage state: last-known pipeline + "Zoho sync is down" banner,
+  scores still live. A Zoho list failure sends a preservative heartbeat (no
+  `fetchedAt` bump, so the badge stays honest) and exits non-zero to alert.
 - **Migration:** `0021_department_score_events.sql` MUST be applied to remote
   D1 before the points ledger works (the snapshot route writes
   `DepartmentScoreEvent` rows; without the table the writes fail best-effort
   and the ledger stays empty).
-- Snapshot KV key is `crm:salesorders_snapshot` (45-min TTL, date-gated as
-  above — TTL expiry alone doesn't cause zeros, a stale `date` does).
+- Snapshot KV key is `crm:salesorders_snapshot` (written with a 7-day KV TTL
+  for outage survival; freshness is decided by the 45-min read + `date` gate
+  in `data()` — TTL expiry alone doesn't cause zeros, a missing 7-day copy does).
 - Data cache key is `crm:data` (60-s TTL, busted on every runner refresh).
 - **No-change fast path:** the runner hashes the full pipeline state
   (`index` rows) and checks `GET /api/runner/crm/fingerprint` first. Unchanged

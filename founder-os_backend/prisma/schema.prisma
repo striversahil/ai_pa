@@ -363,6 +363,25 @@ model CrmOrderAction {
   @@index([action])
 }
 
+// SO document attachments (invoice PDFs, LR copies, POD) uploaded by the
+// accounts team from the CRM dashboard. Metadata lives here (D1/Postgres —
+// durable, keyed by SO number so snapshot refreshes can never wipe it); file
+// bytes live in Workers KV (CHAT_FILES). Merged into the CRM pipeline payload
+// per SO at serve time.
+model SoAttachment {
+  id         String   @id @default(uuid())
+  soNumber   String
+  kind       String   @default("other") // invoice | lr | pod | other
+  fileName   String
+  mime       String   @default("application/octet-stream")
+  size       Int      @default(0)
+  kvKey      String   @unique
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([soNumber])
+}
+
 
 model AuditLog {
   id          String   @id @default(uuid())

@@ -238,7 +238,11 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // Stage → desk ownership: confirm=CRM, invoice=Accounts, ship=Dispatch, payment=Accounts.
   const CRM_SNAPSHOT_KEY = 'crm:salesorders_snapshot';
   const CRM_DATA_CACHE_KEY = 'crm:data';
-  const CRM_STAGES = ['confirm', 'invoice', 'ship', 'payment'];
+  // Freshness window (dashboard "live") vs retention window (outage survival).
+  // The snapshot is always WRITTEN with the 7-day TTL so a Zoho outage serves
+  // the last-known pipeline with a stale badge instead of zeroing out; reads
+  // use the 45-min TTL when they need strictly-fresh data.
+  const CRM_SNAPSHOT_KEEP_MS = 7 * 24 * 60 * 60 * 1000;  const CRM_STAGES = ['confirm', 'invoice', 'ship', 'payment'];
   const STAGE_DEPT: Record<string, string> = { confirm: 'crm', invoice: 'accounts', ship: 'dispatch', payment: 'accounts' };
   // Completing a stage credits these (dept, points, reason) pairs, in order.
   const STAGE_COMPLETION: Record<string, Array<[string, number, string]>> = {
@@ -460,7 +464,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       num(prev?.totalActive) !== snapshotBody.totalActive ||
       num(prev?.totalValue) !== snapshotBody.totalValue ||
       CRM_STAGES.some((s) => num(prevStages?.[s]?.count) !== num(stages?.[s]?.count));
-    await cacheSet(CRM_SNAPSHOT_KEY, snapshotBody, 45 * 60 * 1000);
+    await cacheSet(CRM_SNAPSHOT_KEY, snapshotBody, CRM_SNAPSHOT_KEEP_MS);
     if (persisted > 0 || totalsChanged) {
       // The aggregated data() cache derives from the snapshot + ledger — bust it.
       await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
@@ -516,7 +520,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     snap.materials = computeCrmMaterials(snap.stages || {}, 300);
     snap.meta = { ...(snap.meta ?? null), withLineItems: (snap.materials as any[]).length > 0 };
     snap.computedAt = new Date().toISOString();
-    await cacheSet(CRM_SNAPSHOT_KEY, snap, 45 * 60 * 1000);
+    await cacheSet(CRM_SNAPSHOT_KEY, snap, CRM_SNAPSHOT_KEEP_MS);
     await cacheDel(CRM_DATA_CACHE_KEY).catch(() => {});
     broadcastLive(c, LiveEvent.Crm, { itemsMerged: merged });
     return c.json({ ok: true, merged });
@@ -567,7 +571,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ ok: false, error: 'fingerprint mismatch — POST a full snapshot' }, 409);
     }
     snap.fetchedAt = typeof body?.fetchedAt === 'string' ? body.fetchedAt : snap.fetchedAt;
-    await cacheSet(CRM_SNAPSHOT_KEY, snap, 45 * 60 * 1000);
+    await cacheSet(CRM_SNAPSHOT_KEY, snap, CRM_SNAPSHOT_KEEP_MS);
     return c.json({ ok: true });
   });
 

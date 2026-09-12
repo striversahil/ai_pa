@@ -357,6 +357,11 @@ app.post('/api/enquiries/:id/comments', async (req, res) => {
 // Express/alt runtime is the local/dev path without KV.
 app.post('/api/chat/files', (req, res) => res.status(501).json({ error: 'File upload is only available on the Cloudflare Worker runtime' }));
 app.get('/api/chat/files/:key', (req, res) => res.status(501).json({ error: 'File serving is only available on the Cloudflare Worker runtime' }));
+// SO document attachments (Worker runtime only — same KV-backed locker as chat
+// files; the Express/alt runtime has no KV binding).
+app.post('/api/crm/attachments', (req, res) => res.status(501).json({ error: 'SO attachments are only available on the Cloudflare Worker runtime' }));
+app.get('/api/crm/files/:id', (req, res) => res.status(501).json({ error: 'SO file serving is only available on the Cloudflare Worker runtime' }));
+app.delete('/api/crm/attachments/:id', (req, res) => res.status(501).json({ error: 'SO attachments are only available on the Cloudflare Worker runtime' }));
 
 // --- REST API Endpoints ---
 

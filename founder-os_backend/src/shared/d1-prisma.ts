@@ -42,6 +42,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   EstimateAssignment: [],
   Enquiry: [],
   EnquiryComment: [],
+  SoAttachment: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -70,6 +71,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   EstimateAssignment: ['assignedAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
+  SoAttachment: ['createdAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -107,6 +109,7 @@ const ID_FIELDS: Record<string, string> = {
   EstimateAssignment: 'id',
   Enquiry: 'id',
   EnquiryComment: 'id',
+  SoAttachment: 'id',
   DepartmentScoreEvent: 'id',
   CrmOrderAction: 'id',
   TelecallerScoreEvent: 'id',
@@ -666,6 +669,12 @@ export class D1PrismaClient {
   get estimate() { return this.model('Estimate'); }
   get enquiry() { return this.model('Enquiry'); }
   get enquiryComment() { return this.model('EnquiryComment'); }
+  get soAttachment() { return this.model('SoAttachment'); }
+  // CRM points ledger + manual-action layer (tables created by migrations
+  // 0021/0022 — the getters were missing, so ledger writes and MIS actions
+  // silently failed on the Worker; restored here).
+  get departmentScoreEvent() { return this.model('DepartmentScoreEvent'); }
+  get crmOrderAction() { return this.model('CrmOrderAction'); }
   get comment() { return this.model('Comment'); }
   get classification() { return this.model('Classification'); }
   get auditLog() { return this.model('AuditLog'); }

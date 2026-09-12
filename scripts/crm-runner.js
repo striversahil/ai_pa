@@ -283,6 +283,10 @@ async function main() {
 
   // Page through SOs (Status.All, newest first). Stop when a page has nothing
   // relevant: no active orders AND nothing created inside the scan window.
+  // A Zoho list failure aborts the WHOLE tick (partial pages would corrupt the
+  // fingerprint and wipe items) — instead we send a preservative heartbeat so
+  // the dashboard keeps serving its last-known snapshot with a stale badge.
+  try {
   for (let page = 1; page <= 30; page++) {
     pages++;
     const json = await zohoFetch(buildSalesOrdersUrl(page));
@@ -351,6 +355,20 @@ async function main() {
     }
 
     if (salesorders.length < 200 || relevant === 0) break;
+  }
+  } catch (e) {
+    console.log(`crm-runner: Zoho list fetch failed (${e.message}) — preservative heartbeat, then fail`);
+    try {
+      const fp = await workerRequest('/api/runner/crm/fingerprint');
+      if (fp?.fingerprint) {
+        // No fetchedAt: the stored last-pull time stays honest for the badge.
+        await workerRequest('/api/runner/crm/heartbeat', { method: 'POST', body: { date: fp.date, fingerprint: fp.fingerprint } });
+        console.log('crm-runner: preservative heartbeat sent — last-known snapshot retained');
+      }
+    } catch (e2) {
+      console.log(`crm-runner: preservative heartbeat failed: ${e2.message}`);
+    }
+    process.exit(1);
   }
 
   // Round values (createdToday already a clean boolean from orderRow).
