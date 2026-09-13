@@ -1,6 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Agent, Enquiry, EnquiryItem, ENQUIRY_SOURCES } from "../mockData";
 import ItemBoxList from "./ItemBoxList";
+
+// Enquiry-level image cap mirrors ItemBoxList (10MB per file, data-URI).
+const MAX_ENQUIRY_IMAGE_BYTES = 10 * 1024 * 1024;
 
 interface EnquiryModalProps {
   isOpen: boolean;
@@ -48,17 +51,43 @@ export default function EnquiryModal({
   const [formContactPhone, setFormContactPhone] = useState(() => editingEnquiry?.contactPhone || "");
   // Description has no input in the modal (item-driven enquiries) — the value
   // is preserved on edit and empty on create, submitted through untouched.
-  const [formDescription] = useState(() => editingEnquiry?.description || "");
+  const [formDescription, setFormDescription] = useState(() => editingEnquiry?.description || "");
   const [formSource, setFormSource] = useState<string>(() => editingEnquiry?.source || "TL");
-  // No enquiry-level attachments — media lives per item only. imageUrls pass
-  // through untouched (preserved on edit, empty on create).
-  const [formImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
+  // Unstructured intake (create only): enquiry-level photos for the vision
+  // extractor. Media lives per item on edit; imageUrls pass through there.
+  const [formImages, setFormImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formItems, setFormItems] = useState<EnquiryItem[]>(() => (editingEnquiry?.items || []).map((it) => ({ ...it, media: [...(it.media ?? [])] })));
 
   if (!isOpen) return null;
 
+  const isCreate = !editingEnquiry;
+
+  const handleImages = (files: FileList | null) => {
+    if (!files) return;
+    setImageError(null);
+    for (const f of Array.from(files)) {
+      if (!f.type.startsWith("image/")) { setImageError("Only images can be attached here."); continue; }
+      if (f.size > MAX_ENQUIRY_IMAGE_BYTES) { setImageError(`"${f.name}" exceeds 10MB and was skipped.`); continue; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result || "");
+        if (url) setFormImages((prev) => [...prev, url]);
+      };
+      reader.readAsDataURL(f);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Unstructured intake: AI splits items + extracts lead fields afterwards.
+    // Manual item boxes stay available on modify.
+    const items = isCreate
+      ? []
+      : formItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0);
 
     onSave({
       estNumber: formEst.trim(),
@@ -74,7 +103,7 @@ export default function EnquiryModal({
       assignedAgentId: editingEnquiry?.assignedAgentId || "",
       description: formDescription,
       imageUrls: formImages,
-      items: formItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0),
+      items,
     });
   };
 
@@ -98,7 +127,62 @@ export default function EnquiryModal({
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           <div className="p-5 space-y-4 overflow-y-auto flex-1">
-            {!redacted && (
+            {isCreate ? (
+            <>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Enquiry — type or paste anything</label>
+              <textarea
+                placeholder={"e.g. Rajdhani Flour Mill, Haryana — 24GG Milling Fabric 136cm 50 mtr + conveyor belt fastener 1000 nos…\n\nWrite client + items in your own words; AI splits items, extracts details and checks past prices."}
+                value={formDescription}
+                onChange={(e) => setFormDescription(e.target.value)}
+                rows={8}
+                className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)] resize-y min-h-[160px]"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Photos — nameplate / drawing / chit ({formImages.length})</label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => handleImages(e.target.files)}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex items-center px-3 py-2 border border-dashed border-[var(--border-card)] rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent"
+              >
+                + Attach photos
+              </button>
+              {imageError && <p className="text-[11px] text-red-500 font-semibold">{imageError}</p>}
+              {formImages.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {formImages.map((url, i) => (
+                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-[var(--border-card)]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt={`attachment ${i + 1}`} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        aria-label="Remove photo"
+                        onClick={() => setFormImages((prev) => prev.filter((_, j) => j !== i))}
+                        className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] leading-none cursor-pointer border-0"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-[var(--text-tertiary)]">
+                AI reads the text + photos, splits items and checks past prices. Missing details will be asked right on the enquiry — nothing goes to procurement incomplete.
+              </p>
+            </div>
+            </>
+            ) : null}
+            {(!isCreate && !redacted) && (
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Company Name</label>
               <input
@@ -120,7 +204,7 @@ export default function EnquiryModal({
             )}
 
             <div className="grid grid-cols-2 gap-4">
-              {!redacted && (
+              {!isCreate && !redacted && (
               <div className="space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">EST No.</label>
                 <input 
@@ -133,7 +217,7 @@ export default function EnquiryModal({
               </div>
               )}
 
-              {!redacted && (
+              {!isCreate && !redacted && (
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Contact Person</label>
                 <input 
@@ -147,7 +231,7 @@ export default function EnquiryModal({
               )}
             </div>
 
-            {!redacted && (
+            {!isCreate && !redacted && (
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Contact Email</label>
@@ -186,12 +270,14 @@ export default function EnquiryModal({
                 </select>
               </div>
 
+            {!isCreate && (
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Items ({formItems.length})</label>
               <ItemBoxList items={formItems} onChange={setFormItems} />
             </div>
+            )}
 
-            {formSource !== "B2B" && (
+            {!isCreate && formSource !== "B2B" && (
               <div className="space-y-2">
                 <p className="text-[11px] text-[var(--text-tertiary)]">
                   Attach drawings / photos on each item below — there are no enquiry-level attachments.

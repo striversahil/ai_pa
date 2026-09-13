@@ -1,0 +1,758 @@
+{
+  "version": 1,
+  "generated_at": "2026-09-13T16:24:58.199Z",
+  "categories": [
+    "Conveying Accessories",
+    "Jet Filter Accessories",
+    "Magnets",
+    "Miscellaneous",
+    "Perforated Sheet",
+    "Pipe & Pipe Accessories",
+    "Plansifter Accessories",
+    "Power Transmission Elements",
+    "Roller Mill Accessories",
+    "Wire Mesh"
+  ],
+  "items": [
+    {
+      "category": "Conveying Accessories",
+      "item_name": "AA Type (MS, SS & PP, Nylon)",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Belt Fastener",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Black Rubber Belt",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Bucket Bolt",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Cotton, Nylon, Polyester Belt",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Food Grade Belt",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Hair Belt",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Nylock Nut",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Shovel Type (MS, SS & PP), Nylon",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Special Conveyor Belt Fasteners",
+      "aliases": []
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Transmission Belt",
+      "aliases": []
+    },
+    {
+      "category": "Jet Filter Accessories",
+      "item_name": "Filter Diaphragm",
+      "aliases": []
+    },
+    {
+      "category": "Jet Filter Accessories",
+      "item_name": "Jet Filter Bag",
+      "aliases": []
+    },
+    {
+      "category": "Jet Filter Accessories",
+      "item_name": "Jet Filter Cage",
+      "aliases": []
+    },
+    {
+      "category": "Jet Filter Accessories",
+      "item_name": "Jet Filter Venturi",
+      "aliases": []
+    },
+    {
+      "category": "Jet Filter Accessories",
+      "item_name": "Sequential Timer",
+      "aliases": []
+    },
+    {
+      "category": "Jet Filter Accessories",
+      "item_name": "Solenoid Valve",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Drawer Magnet and Self Cleaning Magnet",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Grill Magnet",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Hump Magnet",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Magnetic De-Stoner",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Online Magnet",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Plate Magnetic Separator",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Plate Magnets",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Rotary Magnet",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Self Cleaning Magnet",
+      "aliases": []
+    },
+    {
+      "category": "Magnets",
+      "item_name": "Three Stage Magnet",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Anti Vibration Mount",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Anti Vibration Rubber Pad",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Bag Closer",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Chakki Stone",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Felt Sheet",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Filter Cloth",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Hammer Mill Beaters",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Moisture Meter",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Rota Meter",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Test Sieves",
+      "aliases": []
+    },
+    {
+      "category": "Miscellaneous",
+      "item_name": "Worm Hanger",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Checkboard Hole",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Dimple Shape",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Herring Bone Hole",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Hexagonal Hole",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Indented Screen",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Lip Shape",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Oblong Slot Hole",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Round Hole",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Square Hole",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Triangle Hole",
+      "aliases": []
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Washer Whizzer Screen",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Divider",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Down Gravity Pipe",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Elbow Bend",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Lock Ring",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Spout Cover",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Tee",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "U Bolt",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "U Clamp",
+      "aliases": []
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Y (Y-Piece)",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Big Triangle Cleaner",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Big Triangle with Brush, Studs",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Blue Cleaner with Brush, Studs",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Brass Brush",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Cotton Cleaner",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Cotton Cleaners",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Double Crimped Mesh",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Felt Seal",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Fiber Rod / Nylon Rod",
+      "aliases": [
+        "plansifter fiber",
+        "nylon rod",
+        "fiberrod"
+      ]
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Gun Tacker",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Milling Fabric",
+      "aliases": [
+        "nylon mesh",
+        "filtration cloth",
+        "Swiss jolly",
+        "Resham ki jali",
+        "bolting cloth",
+        "Nytal bolting cloth",
+        "sieve cloth"
+      ]
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Oval Ball",
+      "aliases": [
+        "dolag ball",
+        "dumbru ball"
+      ]
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Oval Ball Type 1, 2, 3",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Paper Gum Tape",
+      "aliases": [
+        "water-activated tape"
+      ]
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Channel",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Frame",
+      "aliases": [
+        "plansifter wooden frame"
+      ]
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Sleeves",
+      "aliases": [
+        "plansifter socks",
+        "inlet & outlet sleeves",
+        "plansifter small & big bag"
+      ]
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Step Sheet",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter tin sheet",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Tinsheet",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Upper & Lower Housing",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Works (Box)",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Pneumatic Tacker",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Rectangular Sieve Cleaner",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Rubber Ball",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Rubber Ball 16 mm",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Stainless Steel Wire Mesh",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Staple Pin",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Star Type Cleaner",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Star Type Cleaner with Brush, Studs",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Triangle Cleaners",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Triangle with Brush, Plastic Knob, Studs, Metal-Rivet",
+      "aliases": []
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Wire Rope",
+      "aliases": [
+        "plansifter wire rope"
+      ]
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Angular Contact Ball Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Bearing Block",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Bearing Sleeve",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Chain",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Chain Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Chain Sprockets",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Couplings",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Cylindrical Roller Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Deep Groove Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Duplex Chain",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Duplex Chain Sprocket",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Encoder Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Flat Belt Pulley",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Gear Box",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Gear Box and Motor",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Gear Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "HRC Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Motor",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Muff Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Needle Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Oil Seal",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Pin Bush Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Plain Bore V Belt Pulley",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Self Aligning Ball Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Simplex Chain",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Simplex Chain Sprocket",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Spherical Roller Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Star Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Taper Bush V Belt Pulley",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Taper Roller Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Thrust Ball Bearing",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Timing Pulley",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Triplex Chain",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Triplex Chain Sprocket",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Tyre Coupling",
+      "aliases": []
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "V Belt",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Chilled Cast Iron Rolls",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Cleaning Brush Type 1, 2, 3",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Helical Gear",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Brush",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Flat & V Belt Pulley",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Glass",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Helical Gear",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Housing",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Key",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Spring",
+      "aliases": []
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Viewing Glass",
+      "aliases": []
+    },
+    {
+      "category": "Wire Mesh",
+      "item_name": "De-Stoner Mesh",
+      "aliases": []
+    },
+    {
+      "category": "Wire Mesh",
+      "item_name": "Flat & Round Wire Scourer Mesh",
+      "aliases": []
+    },
+    {
+      "category": "Wire Mesh",
+      "item_name": "Mat Type Scourer Mesh",
+      "aliases": []
+    },
+    {
+      "category": "Wire Mesh",
+      "item_name": "Pointed and Round Wire Scourer Mesh",
+      "aliases": []
+    },
+    {
+      "category": "Wire Mesh",
+      "item_name": "Round Wire Scourer Mesh",
+      "aliases": []
+    }
+  ]
+}

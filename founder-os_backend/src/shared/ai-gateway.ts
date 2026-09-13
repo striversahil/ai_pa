@@ -27,9 +27,15 @@ export interface ProviderConfig {
   baseURL: string;
   extraParams?: Record<string, unknown>;
   supportsReasoning: boolean;
+  /** OpenRouter-style reasoning switch (`reasoning: { enabled: true }`). */
+  reasoningObject?: boolean;
   jsonMode?: { type: 'json_object' };
   defaultModel: string;
+  /** Used when a request carries image parts and no explicit model is set. */
+  visionModel?: string;
 }
+
+const OPENROUTER_VISION_MODEL = 'inclusionai/ling-3.0-flash-vl:free';
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
   groq: {
@@ -38,6 +44,19 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     supportsReasoning: true,
     jsonMode: { type: 'json_object' },
     defaultModel: 'openai/gpt-oss-120b',
+    visionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+  },
+  openrouter: {
+    id: 'openrouter',
+    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
+    supportsReasoning: false,
+    reasoningObject: true,
+    // NOTE: ling-3.0-flash-vl rejects response_format (no structured-outputs)
+    // → jsonMode intentionally absent; JSON is enforced via prompt + the
+    // extractJson fallback in completeJson instead.
+    // Text + vision in one model — the enquiry pipeline default.
+    defaultModel: OPENROUTER_VISION_MODEL,
+    visionModel: OPENROUTER_VISION_MODEL,
   },
 };
 
@@ -79,9 +98,13 @@ export type KeyHealth = Pick<
 >;
 
 // ── Request / response ───────────────────────────────────────────────────────
+export interface TextPart { type: 'text'; text: string }
+export interface ImagePart { type: 'image_url'; image_url: { url: string } }
+export type MessageContent = string | Array<TextPart | ImagePart>;
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: MessageContent;
 }
 
 export interface CompletionRequest {
@@ -149,6 +172,7 @@ export class KeyPool {
     // 2. Legacy per-provider env vars (backwards compat).
     for (const key of raw(env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
+    for (const key of raw(env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
     for (const key of raw(env.DEEPSEEK_API_KEYS).split(',')) add('deepseek', key);
     for (const key of raw(env.TOGETHER_API_KEYS).split(',')) add('together', key);
     for (const key of raw(env.OPENAI_API_KEYS).split(',')) add('openai', key);
@@ -224,8 +248,7 @@ export class KeyPool {
     return 0;
   }
 
-  private extractStatus(err: unknown): number | null {
-    if (err && typeof err === 'object') {
+  extractStatus(err: unknown): number | null {    if (err && typeof err === 'object') {
       const e = err as any;
       if (typeof e.status === 'number') return e.status;
       if (typeof e.statusCode === 'number') return e.statusCode;
@@ -242,6 +265,18 @@ export class KeyPool {
     }));
   }
 
+  /** Ms until the earliest cooling key frees up (0 when a key is usable now). */
+  earliestCooldownMs(): number {
+    const now = Date.now();
+    let min = 0;
+    for (const k of this.keys) {
+      if (!k.enabled) continue;
+      const wait = k.cooldownUntil - now;
+      if (wait > 0 && (min === 0 || wait < min)) min = wait;
+    }
+    return min;
+  }
+
   get size(): number {
     return this.keys.length;
   }
@@ -252,13 +287,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class AiGateway {
   private pool = new KeyPool();
+  private visionModelOverride = '';
 
   constructor(env?: Record<string, unknown>) {
-    if (env) this.pool.loadFromEnv(env);
+    if (env) this.configure(env);
   }
 
   configure(env: Record<string, unknown>): void {
     this.pool.loadFromEnv(env);
+    const v = String((env as any)?.VISION_MODEL ?? '').trim();
+    if (v) this.visionModelOverride = v;
   }
 
   get keyCount(): number {
@@ -271,17 +309,30 @@ export class AiGateway {
 
   /**
    * Core completion call. Picks a key, calls the provider, rotates + retries on
-   * transient/provider errors. Throws AiGatewayError only when every key is
-   * exhausted.
+   * transient/provider errors. Rate limits (429) are retried hard — up to
+   * MIN_ATTEMPTS immediate retries — because burst limits wave off within
+   * seconds; other errors rotate keys as before. Throws AiGatewayError only
+   * when every attempt is exhausted.
    */
   async complete(req: CompletionRequest): Promise<CompletionResult> {
-    const maxAttempts = Math.max(3, this.pool.size || 3);
+    // Free-tier burst limits clear in seconds — hammer through them instead of
+    // surfacing an error to the caller.
+    const MIN_ATTEMPTS = 50;
+    const maxAttempts = Math.max(MIN_ATTEMPTS, this.pool.size || MIN_ATTEMPTS);
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const key = req.keyId
         ? this.findKey(req.keyId) ?? this.pool.select(req.provider)
         : this.pool.select(req.provider);
-      if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)', lastErr, attempt);
+      if (!key) {
+        // All keys cooling (429 storm): wait for the earliest one and retry.
+        const waitMs = this.pool.earliestCooldownMs();
+        if (waitMs > 0 && waitMs <= 30_000 && attempt < maxAttempts - 1) {
+          await sleep(Math.min(waitMs, 5_000));
+          continue;
+        }
+        throw new AiGatewayError('No AI key available (pool empty or all disabled)', lastErr, attempt);
+      }
       const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
       try {
         const result = await this.callProvider(provider, key, req);
@@ -289,6 +340,22 @@ export class AiGateway {
         return result;
       } catch (err) {
         lastErr = err;
+        const status = this.pool.extractStatus(err);
+        if (status === 429) {
+          // Immediate retry path: burst limits wave off — short sleep, reuse
+          // the key at once (no long cooldown), keep counting attempts.
+          const retryAfter = this.extractRetryAfter(err);
+          key.failures++;
+          key.lastFailureAt = Date.now();
+          key.cooldownUntil = 0;
+          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}`;
+          logger.warn?.(`[AiGateway] 429 on ${key.id}, immediate retry ${attempt + 1}/${maxAttempts}`);
+          if (attempt < maxAttempts - 1) {
+            await sleep(Math.min(retryAfter ?? 1_500, 5_000));
+            continue;
+          }
+          throw new AiGatewayError(`Rate-limited after ${maxAttempts} immediate retries`, lastErr, maxAttempts);
+        }
         const retryAfter = this.extractRetryAfter(err);
         const cooldown = this.pool.reportFailure(key, err, retryAfter);
         logger.warn?.(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err instanceof Error ? err.message : String(err)}`);
@@ -300,13 +367,17 @@ export class AiGateway {
     throw new AiGatewayError(`All AI keys exhausted after ${maxAttempts} attempts`, lastErr, maxAttempts);
   }
 
-  /** Convenience: complete + parse JSON. */
+  /** Convenience: complete + parse JSON (falls back to extracting the first
+   *  JSON object/array when the model wraps it in prose — providers without
+   *  structured-output support need this). */
   async completeJson<T = unknown>(req: CompletionRequest): Promise<T> {
     const res = await this.complete({ ...req, json: true });
     try {
       return JSON.parse(res.content) as T;
-    } catch (parseErr) {
-      throw new AiGatewayError(`Failed to parse JSON from ${res.provider} response: ${res.content.slice(0, 200)}`, parseErr);
+    } catch {
+      const extracted = extractJson(res.content);
+      if (extracted !== null) return extracted as T;
+      throw new AiGatewayError(`Failed to parse JSON from ${res.provider} response: ${res.content.slice(0, 200)}`);
     }
   }
 
@@ -319,7 +390,11 @@ export class AiGateway {
     key: AiKey,
     req: CompletionRequest,
   ): Promise<CompletionResult> {
-    const model = req.model || provider.defaultModel;
+    // Vision routing: image parts need the vision-capable model (text default
+    // can't see images). Explicit req.model always wins; VISION_MODEL env
+    // overrides the provider default.
+    const wantsVision = req.messages.some((m) => Array.isArray(m.content));
+    const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key.key}`,
@@ -334,7 +409,10 @@ export class AiGateway {
     if (req.json && provider.jsonMode) {
       body.response_format = provider.jsonMode;
     }
-    if (provider.supportsReasoning && req.reasoningEffort) {
+    if (provider.reasoningObject) {
+      // OpenRouter-style reasoning switch (ling models etc.).
+      body.reasoning = { enabled: true };
+    } else if (provider.supportsReasoning && req.reasoningEffort) {
       body.reasoning_effort = req.reasoningEffort;
     }
     const res = await fetch(provider.baseURL, {
@@ -351,7 +429,13 @@ export class AiGateway {
       throw err;
     }
     const data: any = await res.json();
-    const content: string = data?.choices?.[0]?.message?.content ?? '';
+    const rawContent: unknown = data?.choices?.[0]?.message?.content ?? '';
+    // Some vision models return content as parts — flatten to text.
+    const content: string = typeof rawContent === 'string'
+      ? rawContent
+      : Array.isArray(rawContent)
+        ? rawContent.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join('')
+        : '';
     return {
       content, provider: key.provider, keyId: key.id, model,
       jsonParsed: !!req.json, usage: data?.usage,
@@ -373,9 +457,63 @@ export class AiGateway {
   }
 }
 
+/** Extract the first JSON object/array from model prose (fenced block or
+ *  balanced-brace scan). Returns null when nothing parses. */
+export function extractJson(raw: string): unknown | null {
+  const str = String(raw ?? '').trim();
+  if (!str) return null;
+  try {
+    return JSON.parse(str);
+  } catch { /* fall through */ }
+  const fenced = str.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch { /* fall through */ }
+  }
+  let start = str.indexOf('{');
+  if (start === -1) start = str.indexOf('[');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < str.length; i++) {
+    const ch = str[i];
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(str.slice(start, i + 1));
+        } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/** Build a vision user message: text + image URLs (data-URI or https).
+ *  Images beyond maxImages are dropped (caller should send thumbnails). */
+export function buildVisionUserContent(text: string, imageUrls: string[], maxImages = 4): MessageContent {  const imgs = (Array.isArray(imageUrls) ? imageUrls : [])
+    .map((u) => String(u ?? '').trim())
+    .filter((u) => u.length > 0 && (u.startsWith('data:image/') || u.startsWith('http')))
+    .slice(0, Math.max(0, maxImages));
+  if (imgs.length === 0) return text;
+  return [
+    { type: 'text', text },
+    ...imgs.map((url): ImagePart => ({ type: 'image_url', image_url: { url } })),
+  ];
+}
+
 // ── Singleton ────────────────────────────────────────────────────────────────
-let _gateway: AiGateway | null = null;
-export function getGateway(env?: Record<string, unknown>): AiGateway {
+let _gateway: AiGateway | null = null;export function getGateway(env?: Record<string, unknown>): AiGateway {
   if (!_gateway) {
     _gateway = new AiGateway(env);
   } else if (env) {

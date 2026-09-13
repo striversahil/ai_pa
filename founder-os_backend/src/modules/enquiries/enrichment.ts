@@ -10,6 +10,7 @@
  * procurement forever. Both runtimes now call this same function.
  */
 import type { EnquiryStore } from "./store";
+import { normalizeVisibility } from "./store";
 import {
   extractEnquiryFieldsRobust,
   hashText,
@@ -75,6 +76,8 @@ export async function runEnquiryExtraction(env: Record<string, unknown>, store: 
         const byId = new Map(((extracted.redactedComments ?? []) as Array<{ id: string; content: string }>).map((r) => [r.id, r.content]));
         const redactedComments: RedactedViewCache['comments'] = {};
         for (const cm of comments || []) {
+          // Defense in depth: sales-scope rows never enter the procurement cache.
+          if (normalizeVisibility((cm as any)?.visibility) !== 'procurement') continue;
           const cid = String((cm as any)?.id ?? '');
           if (!cid || !byId.has(cid)) continue;
           redactedComments[cid] = { content: byId.get(cid) as string, hash: hashText(String((cm as any)?.content ?? '')) };

@@ -1,4 +1,4 @@
-import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty, parseFlagThread, type FlagThreadBy, type FlagThreadEntry } from "./store";
+import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty, parseFlagThread, normalizeVisibility, type FlagThreadBy, type FlagThreadEntry } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from "./extract";
@@ -304,8 +304,13 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
   // Anything missing/stale is WITHHELD with redactedPending=true — the route
   // layer kicks a background re-enrichment and the client refetches on the
   // live event. Raw text is never served, and no deterministic fallback exists.
+  // Sales-scope comments never enter this payload (procurement sees only the
+  // shared ops thread).
+  const scopeComments = (comments as any[]).filter(
+    (cm) => normalizeVisibility((cm as any)?.visibility) === 'procurement',
+  );
   const commentsByEnquiry = new Map<string, any[]>();
-  for (const cm of comments as any[]) {
+  for (const cm of scopeComments) {
     const key = String(cm.enquiryId);
     if (!commentsByEnquiry.has(key)) commentsByEnquiry.set(key, []);
     commentsByEnquiry.get(key)!.push(cm);
@@ -755,7 +760,11 @@ export async function enquiryDelete(store: EnquiryStore, me: MeResponse, id: str
 }
 
 export async function enquiryComments(store: EnquiryStore, me: MeResponse, enquiryId: string, opts?: RedactOpts): Promise<EnquiryResult> {
-  const list = await store.listComments(enquiryId);
+  const all = await store.listComments(enquiryId);
+  // Procurement sees only the shared ops thread; sales/management see both.
+  const list = opts?.redact
+    ? (all as any[]).filter((cm) => normalizeVisibility((cm as any)?.visibility) === 'procurement')
+    : all;
   if (!opts?.redact) return json(200, list);
   // AI-only: serve cached rewrites whose hashes match; withhold the rest.
   let raw: unknown = null;
@@ -777,16 +786,54 @@ export async function enquiryComments(store: EnquiryStore, me: MeResponse, enqui
   return json(200, { comments: served, redactionPendingIds: pending ? [enquiryId] : [], aiConfigured: opts?.aiConfigured ?? true });
 }
 
+/** Intake panel (unstructured intake → items + price-memory suggestions).
+ *  Stored by the GH intake runner at `enquiry:intake:<id>` (7d TTL).
+ *  Restricted (procurement) viewers get names/routes/missing only — final
+ *  rates stay out of their payload, same margin policy as stripMarginFields. */
+export async function enquiryIntake(me: MeResponse, enquiryId: string): Promise<EnquiryResult> {
+  let raw: unknown = null;
+  try {
+    raw = await cacheGet<Record<string, any>>(`enquiry:intake:${enquiryId}`, 7 * 24 * 60 * 60 * 1000);
+  } catch { raw = null; }
+  if (!raw || typeof raw !== 'object') return json(200, { ready: false });
+  const restricted = isRestrictedViewer(me);
+  const suggestions = (Array.isArray((raw as any).suggestions) ? (raw as any).suggestions : []).map((s: any) => {
+    const base: Record<string, unknown> = {
+      itemIndex: s?.itemIndex, memoryId: s?.memoryId, score: s?.score, name: s?.name, route: s?.route,
+    };
+    if (!restricted && s?.finalRate !== undefined) base.finalRate = s.finalRate;
+    return base;
+  });
+  return json(200, {
+    ready: true,
+    at: (raw as any).at ?? null,
+    suggestions,
+    missing: Array.isArray((raw as any).missing) ? (raw as any).missing : [],
+    candidates: restricted ? [] : (Array.isArray((raw as any).candidates) ? (raw as any).candidates : []),
+  });
+}
 export async function enquiryAddComment(store: EnquiryStore, me: MeResponse, enquiryId: string, body: any): Promise<EnquiryResult> {
   const content = String(body?.content || "").trim();
   if (!content) return json(400, { error: "content required" });
+  // Scope: restricted (procurement) writers can only post to the shared ops
+  // thread; sales/management choose, defaulting to their private thread.
+  // Replies inherit the parent's scope — cross-scope replies are rejected.
+  let visibility = isRestrictedViewer(me) ? 'procurement' : normalizeVisibility(body?.visibility);
+  const parentId = body?.parentId ? String(body.parentId) : null;
+  if (parentId) {
+    const siblings = await store.listComments(enquiryId).catch(() => []);
+    const parent = (siblings as any[]).find((cm) => String(cm?.id) === parentId);
+    if (!parent) return json(400, { error: "parent comment not found" });
+    visibility = normalizeVisibility((parent as any)?.visibility);
+  }
   const comment = await store.addComment({
     enquiryId,
     agentId: Number(body?.agentId) || 0,
     content,
-    parentId: body?.parentId ? String(body.parentId) : null,
+    parentId,
     imageUrl: body?.imageUrl ? String(body.imageUrl) : undefined,
-  });
+    visibility,
+  } as any);
   // Scope-safe: comment content is free text (never broadcast); receivers
   // refetch the scoped thread instead.
   const updated = await store.getEnquiry(enquiryId).catch(() => null);
@@ -795,7 +842,7 @@ export async function enquiryAddComment(store: EnquiryStore, me: MeResponse, enq
     body: comment,
     live: {
       type: LiveEvent.Enquiries,
-      extra: { action: "comment", id: (comment as any).id, enquiryId, summary: updated ? summarizeEnquiry(updated) : undefined },
+      extra: { action: "comment", id: (comment as any).id, enquiryId, visibility, summary: updated ? summarizeEnquiry(updated) : undefined },
     },
   };
 }

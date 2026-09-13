@@ -1,0 +1,3800 @@
+{
+  "version": 1,
+  "generated_at": "2026-09-13T16:24:58.199Z",
+  "merges": [
+    {
+      "canon": "Fiber Rod / Nylon Rod",
+      "match": [
+        "fiberrod",
+        "fiber rod nylon rod"
+      ]
+    },
+    {
+      "canon": "Plansifter Frame",
+      "match": [
+        "plansifter wooden frame",
+        "plansifter frame"
+      ]
+    },
+    {
+      "canon": "Wire Rope",
+      "match": [
+        "plansifter wire rope",
+        "wire rope"
+      ]
+    },
+    {
+      "canon": "Chilled Cast Iron Rolls",
+      "match": [
+        "chilled cast iron rolls"
+      ]
+    }
+  ],
+  "dropped": [
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Sieve & Pan Cleaners",
+      "reason": "non-item row"
+    },
+    {
+      "category": "Plansifter Accessories",
+      "item_name": "Ask knob type: metal or plastic",
+      "reason": "non-item row"
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Jointing Accessories",
+      "reason": "non-item row"
+    },
+    {
+      "category": "Perforated Sheet",
+      "item_name": "Perforated Sheets",
+      "reason": "non-item row"
+    }
+  ],
+  "headers": [
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Elevator Buckets"
+    },
+    {
+      "category": "Conveying Accessories",
+      "item_name": "Conveyor Belts"
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Chain Sprocket"
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Bearing"
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Coupling"
+    },
+    {
+      "category": "Power Transmission Elements",
+      "item_name": "Pulleys"
+    }
+  ],
+  "items": {
+    "Conveying Accessories||AA Type (MS, SS & PP, Nylon)": {
+      "category": "Conveying Accessories",
+      "item_name": "AA Type (MS, SS & PP, Nylon)",
+      "aliases": [],
+      "questions": [
+        "Ask size (width × projection × depth, usually in inches)",
+        "Ask material: MS, SS, PP, or Nylon",
+        "Ask the elevator make/model and mounting hole pattern if known",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Standard \"AA\" profile elevator bucket",
+        "Ask size (width × projection × depth, usually in inches)",
+        "Ask material: MS, SS, PP, or Nylon",
+        "Ask the elevator make/model and mounting hole pattern if known",
+        "Ask quantity",
+        "Offer a reference picture if unsure of size"
+      ],
+      "slots": [
+        "width",
+        "profile",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Belt Fastener": {
+      "category": "Conveying Accessories",
+      "item_name": "Belt Fastener",
+      "aliases": [],
+      "questions": [
+        "Ask belt width (mm) and belt thickness/ply",
+        "Ask quantity — usually sold per set/box covering one joint width"
+      ],
+      "notes": [
+        "Sizes: 8 mm and 10 mm",
+        "8 mm: 1 pack = 50 pieces (MOQ 50)",
+        "10 mm: (specifications needed)",
+        "Used to join conveyor belt ends — ask fastener type: hinged plate, wire-hook, or staple/clipper type",
+        "Ask belt width (mm) and belt thickness/ply",
+        "Ask quantity — usually sold per set/box covering one joint width",
+        "Offer a reference picture if the client is unsure which type they need"
+      ],
+      "slots": [
+        "width",
+        "thickness",
+        "ply",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Black Rubber Belt": {
+      "category": "Conveying Accessories",
+      "item_name": "Black Rubber Belt",
+      "aliases": [],
+      "questions": [
+        "Ask width, number of plies, and top/bottom rubber cover thickness",
+        "Ask length required",
+        "Ask quantity (in meters)"
+      ],
+      "notes": [
+        "Ask width, number of plies, and top/bottom rubber cover thickness",
+        "Ask length required",
+        "Ask quantity (in meters)"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Bucket Bolt": {
+      "category": "Conveying Accessories",
+      "item_name": "Bucket Bolt",
+      "aliases": [],
+      "questions": [
+        "Ask bolt diameter and length (mm), and head type — oval, countersunk, or round",
+        "Ask material: MS or SS",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Three standard sizes: 6 mm dia, 8 mm dia, 10 mm dia",
+        "Non-standard size: 12 mm dia",
+        "Clients may refer to them in inches: 8 mm = 5/16 inch, 10 mm = 3/8 inch",
+        "Length options:",
+        "6 mm dia: 1 inch",
+        "8 mm dia: 1 inch or 1.25 inch",
+        "10 mm dia: 1.5 inch",
+        "Material: GI or stainless steel",
+        "MOQ: 6 mm and 8 mm = 100 pieces per pack; 10 mm = 50 pieces per pack",
+        "Bolts used to fix elevator buckets onto the belt",
+        "Ask bolt diameter and length (mm), and head type — oval, countersunk, or round",
+        "Ask material: MS or SS",
+        "Confirm if nuts and washers are needed with it",
+        "Ask quantity"
+      ],
+      "slots": [
+        "length",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Cotton, Nylon, Polyester Belt": {
+      "category": "Conveying Accessories",
+      "item_name": "Cotton, Nylon, Polyester Belt",
+      "aliases": [],
+      "questions": [
+        "Ask which material the client wants",
+        "Ask width, thickness/ply count, and length",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask which material the client wants",
+        "Ask width, thickness/ply count, and length",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "ply",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Food Grade Belt": {
+      "category": "Conveying Accessories",
+      "item_name": "Food Grade Belt",
+      "aliases": [],
+      "questions": [
+        "Ask width and thickness/ply",
+        "Ask top and bottom cover type/colour",
+        "Ask length required; ordered by the meter",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask width and thickness/ply",
+        "Confirm food-grade certification needed (FDA/FSSAI) — that's what distinguishes it from a standard belt",
+        "Ask top and bottom cover type/colour",
+        "Ask length required; ordered by the meter",
+        "Ask quantity"
+      ],
+      "slots": [
+        "grade",
+        "width",
+        "length",
+        "thickness",
+        "ply",
+        "material",
+        "quantity",
+        "colour"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Hair Belt": {
+      "category": "Conveying Accessories",
+      "item_name": "Hair Belt",
+      "aliases": [],
+      "questions": [
+        "Ask the application (conveying vs machine drive) to settle which one it is",
+        "Ask width, thickness, and length",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Confirm what the client means before quoting — the term gets used locally for two different things: a napped/rough-surface belt for extra grip on inclined conveying, or a woven cotton/hair-cord flat transmission belt for a machine drive",
+        "Ask the application (conveying vs machine drive) to settle which one it is",
+        "Ask width, thickness, and length",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Nylock Nut": {
+      "category": "Conveying Accessories",
+      "item_name": "Nylock Nut",
+      "aliases": [],
+      "questions": [],
+      "notes": [
+        "Sizes: 8 mm or 10 mm",
+        "Sold per piece (any quantity accepted)"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 0,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Shovel Type (MS, SS & PP), Nylon": {
+      "category": "Conveying Accessories",
+      "item_name": "Shovel Type (MS, SS & PP), Nylon",
+      "aliases": [],
+      "questions": [
+        "Ask size and material (MS, SS, PP, or Nylon)",
+        "Ask the elevator make/model",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Shovel-profile bucket — deeper scoop than the AA type",
+        "Ask size and material (MS, SS, PP, or Nylon)",
+        "Ask the elevator make/model",
+        "Ask quantity",
+        "Offer a reference picture if unsure"
+      ],
+      "slots": [
+        "profile",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Special Conveyor Belt Fasteners": {
+      "category": "Conveying Accessories",
+      "item_name": "Special Conveyor Belt Fasteners",
+      "aliases": [],
+      "questions": [],
+      "notes": [
+        "Four sizes: 1.5 number, 2 number, 2.5 number, 3 number"
+      ],
+      "slots": [],
+      "no_slots": true,
+      "confidence": 0.9,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Conveying Accessories||Transmission Belt": {
+      "category": "Conveying Accessories",
+      "item_name": "Transmission Belt",
+      "aliases": [],
+      "questions": [
+        "Ask type: flat or V-belt",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask type: flat or V-belt",
+        "For V-belt: ask section (A/B/C/Z or SPA/SPB/SPZ) and length/belt number",
+        "For flat belt: ask width and thickness",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "profile",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Conveying Accessories"
+      ]
+    },
+    "Jet Filter Accessories||Filter Diaphragm": {
+      "category": "Jet Filter Accessories",
+      "item_name": "Filter Diaphragm",
+      "aliases": [],
+      "questions": [
+        "Ask the valve brand/model it's for, and diaphragm size",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Rubber diaphragm inside the pulse/solenoid valve",
+        "Ask the valve brand/model it's for, and diaphragm size",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Jet Filter Accessories"
+      ]
+    },
+    "Jet Filter Accessories||Jet Filter Bag": {
+      "category": "Jet Filter Accessories",
+      "item_name": "Jet Filter Bag",
+      "aliases": [],
+      "questions": [
+        "Ask bag diameter × length (mm)",
+        "Ask fabric: polyester, PTFE, or Nomex, and micron rating if known",
+        "Ask top/bottom fitting type: snap ring or flange",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask bag diameter × length (mm)",
+        "Ask fabric: polyester, PTFE, or Nomex, and micron rating if known",
+        "Ask top/bottom fitting type: snap ring or flange",
+        "Ask quantity"
+      ],
+      "slots": [
+        "opening",
+        "length",
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.67,
+      "sources": [
+        "Jet Filter Accessories"
+      ]
+    },
+    "Jet Filter Accessories||Jet Filter Cage": {
+      "category": "Jet Filter Accessories",
+      "item_name": "Jet Filter Cage",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Must match the bag size — ask cage diameter × length, and material (GI or SS)",
+        "Ask quantity"
+      ],
+      "slots": [
+        "length",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.67,
+      "sources": [
+        "Jet Filter Accessories"
+      ]
+    },
+    "Jet Filter Accessories||Jet Filter Venturi": {
+      "category": "Jet Filter Accessories",
+      "item_name": "Jet Filter Venturi",
+      "aliases": [],
+      "questions": [
+        "Ask throat/venturi size to match the bag diameter, and material",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask throat/venturi size to match the bag diameter, and material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Jet Filter Accessories"
+      ]
+    },
+    "Jet Filter Accessories||Sequential Timer": {
+      "category": "Jet Filter Accessories",
+      "item_name": "Sequential Timer",
+      "aliases": [],
+      "questions": [
+        "Ask number of outputs/channels needed",
+        "Ask voltage (220V AC or 24V DC) and brand preference",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask number of outputs/channels needed",
+        "Ask voltage (220V AC or 24V DC) and brand preference",
+        "Ask quantity"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity",
+        "motor_spec"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Jet Filter Accessories"
+      ]
+    },
+    "Jet Filter Accessories||Solenoid Valve": {
+      "category": "Jet Filter Accessories",
+      "item_name": "Solenoid Valve",
+      "aliases": [],
+      "questions": [
+        "Ask valve size in inches (e.g. 1\", 1.5\", 2\")",
+        "Ask voltage (220V AC or 24V DC) and brand preference",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask valve size in inches (e.g. 1\", 1.5\", 2\")",
+        "Ask voltage (220V AC or 24V DC) and brand preference",
+        "Ask quantity"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity",
+        "motor_spec"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Jet Filter Accessories"
+      ]
+    },
+    "Magnets||Drawer Magnet and Self Cleaning Magnet": {
+      "category": "Magnets",
+      "item_name": "Drawer Magnet and Self Cleaning Magnet",
+      "aliases": [],
+      "questions": [
+        "Ask duct size (width × height)",
+        "Ask number of magnetic rods/tubes and gauss rating",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask duct size (width × height)",
+        "Ask number of magnetic rods/tubes and gauss rating",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "height",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Grill Magnet": {
+      "category": "Magnets",
+      "item_name": "Grill Magnet",
+      "aliases": [],
+      "questions": [
+        "Ask duct/opening size and number of magnetic rods",
+        "Ask gauss rating and quantity"
+      ],
+      "notes": [
+        "Ask duct/opening size and number of magnetic rods",
+        "Ask gauss rating and quantity"
+      ],
+      "slots": [
+        "opening",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Hump Magnet": {
+      "category": "Magnets",
+      "item_name": "Hump Magnet",
+      "aliases": [],
+      "questions": [
+        "Ask duct size and gauss rating",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask duct size and gauss rating",
+        "Ask quantity"
+      ],
+      "slots": [
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Magnetic De-Stoner": {
+      "category": "Magnets",
+      "item_name": "Magnetic De-Stoner",
+      "aliases": [],
+      "questions": [
+        "Ask capacity (tonnes/hour) and duct size",
+        "Ask the machine make it's a spare for, if applicable",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask capacity (tonnes/hour) and duct size",
+        "Ask the machine make it's a spare for, if applicable",
+        "Ask quantity"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Online Magnet": {
+      "category": "Magnets",
+      "item_name": "Online Magnet",
+      "aliases": [],
+      "questions": [
+        "Ask pipe/duct diameter and gauss rating",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask pipe/duct diameter and gauss rating",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Plate Magnetic Separator": {
+      "category": "Magnets",
+      "item_name": "Plate Magnetic Separator",
+      "aliases": [],
+      "questions": [
+        "Ask plate size (length × width) and gauss rating",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask plate size (length × width) and gauss rating",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Plate Magnets": {
+      "category": "Magnets",
+      "item_name": "Plate Magnets",
+      "aliases": [],
+      "questions": [
+        "Ask size, thickness, and gauss rating",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask size, thickness, and gauss rating",
+        "Ask quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Rotary Magnet": {
+      "category": "Magnets",
+      "item_name": "Rotary Magnet",
+      "aliases": [],
+      "questions": [
+        "Ask drum diameter, duct size, and gauss rating",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask drum diameter, duct size, and gauss rating",
+        "Confirm if a drive/motor is needed with it",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Self Cleaning Magnet": {
+      "category": "Magnets",
+      "item_name": "Self Cleaning Magnet",
+      "aliases": [],
+      "questions": [
+        "Ask duct size and gauss rating",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask duct size and gauss rating",
+        "Confirm the cleaning mechanism wanted (manual pull-out vs self-rotating)",
+        "Ask quantity"
+      ],
+      "slots": [
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Magnets||Three Stage Magnet": {
+      "category": "Magnets",
+      "item_name": "Three Stage Magnet",
+      "aliases": [],
+      "questions": [],
+      "notes": [],
+      "slots": [],
+      "no_slots": true,
+      "confidence": 1,
+      "sources": [
+        "Magnets"
+      ]
+    },
+    "Miscellaneous||Anti Vibration Mount": {
+      "category": "Miscellaneous",
+      "item_name": "Anti Vibration Mount",
+      "aliases": [],
+      "questions": [
+        "Ask the load it needs to carry (kg) per mount, and the machine it's under",
+        "Ask stud/bolt size and mounting height",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask the load it needs to carry (kg) per mount, and the machine it's under",
+        "Ask stud/bolt size and mounting height",
+        "Ask quantity"
+      ],
+      "slots": [
+        "height",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Anti Vibration Rubber Pad": {
+      "category": "Miscellaneous",
+      "item_name": "Anti Vibration Rubber Pad",
+      "aliases": [],
+      "questions": [
+        "Ask size (length × width × thickness) and load per pad",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask size (length × width × thickness) and load per pad",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Bag Closer": {
+      "category": "Miscellaneous",
+      "item_name": "Bag Closer",
+      "aliases": [],
+      "questions": [
+        "Ask hand-operated or machine type, and the thread type used",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask hand-operated or machine type, and the thread type used",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Chakki Stone": {
+      "category": "Miscellaneous",
+      "item_name": "Chakki Stone",
+      "aliases": [],
+      "questions": [
+        "Ask diameter and thickness, and whether it's the top or bottom stone",
+        "Ask the chakki make/model and quantity"
+      ],
+      "notes": [
+        "Traditional flour mill grinding stone",
+        "Ask diameter and thickness, and whether it's the top or bottom stone",
+        "Ask the chakki make/model and quantity"
+      ],
+      "slots": [
+        "thickness",
+        "diameter",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Felt Sheet": {
+      "category": "Miscellaneous",
+      "item_name": "Felt Sheet",
+      "aliases": [],
+      "questions": [
+        "Ask size (length × width), thickness, and density/hardness if known",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask size (length × width), thickness, and density/hardness if known",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Filter Cloth": {
+      "category": "Miscellaneous",
+      "item_name": "Filter Cloth",
+      "aliases": [],
+      "questions": [
+        "Ask micron rating/mesh, width, and material (polyester/PTFE/cotton)",
+        "Ask length required and quantity"
+      ],
+      "notes": [
+        "Ask micron rating/mesh, width, and material (polyester/PTFE/cotton)",
+        "Ask length required and quantity"
+      ],
+      "slots": [
+        "opening",
+        "width",
+        "length",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Hammer Mill Beaters": {
+      "category": "Miscellaneous",
+      "item_name": "Hammer Mill Beaters",
+      "aliases": [],
+      "questions": [
+        "Ask beater size (length × width × thickness), material (MS/manganese steel/SS), and mounting hole spacing",
+        "Ask the hammer mill make/model and quantity"
+      ],
+      "notes": [
+        "Ask beater size (length × width × thickness), material (MS/manganese steel/SS), and mounting hole spacing",
+        "Ask the hammer mill make/model and quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Moisture Meter": {
+      "category": "Miscellaneous",
+      "item_name": "Moisture Meter",
+      "aliases": [],
+      "questions": [
+        "Ask which grain/material it needs to test (wheat, maize, etc.) and the measurement range needed",
+        "Ask digital or analogue, and brand preference",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask which grain/material it needs to test (wheat, maize, etc.) and the measurement range needed",
+        "Ask digital or analogue, and brand preference",
+        "Ask quantity"
+      ],
+      "slots": [
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Rota Meter": {
+      "category": "Miscellaneous",
+      "item_name": "Rota Meter",
+      "aliases": [],
+      "questions": [
+        "Ask the fluid/air it's measuring and the flow range (LPM/CFM) needed",
+        "Ask pipe/line size and quantity"
+      ],
+      "notes": [
+        "Ask the fluid/air it's measuring and the flow range (LPM/CFM) needed",
+        "Ask pipe/line size and quantity"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Test Sieves": {
+      "category": "Miscellaneous",
+      "item_name": "Test Sieves",
+      "aliases": [],
+      "questions": [
+        "Ask the mesh size(s)/aperture needed (in microns or mesh number) and sieve diameter (standard 8\"/200 mm or 12\"/300 mm)",
+        "Ask how many sieves, and whether a lid/pan/shaker is needed too",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask the mesh size(s)/aperture needed (in microns or mesh number) and sieve diameter (standard 8\"/200 mm or 12\"/300 mm)",
+        "Ask how many sieves, and whether a lid/pan/shaker is needed too",
+        "Ask quantity"
+      ],
+      "slots": [
+        "opening",
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Miscellaneous||Worm Hanger": {
+      "category": "Miscellaneous",
+      "item_name": "Worm Hanger",
+      "aliases": [],
+      "questions": [
+        "Ask the shaft/worm size it supports and the machine make/model",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask the shaft/worm size it supports and the machine make/model",
+        "Ask quantity"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Miscellaneous"
+      ]
+    },
+    "Perforated Sheet||Checkboard Hole": {
+      "category": "Perforated Sheet",
+      "item_name": "Checkboard Hole",
+      "aliases": [],
+      "questions": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Round or square holes arranged in a checkerboard (offset) pattern — confirm hole shape",
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Dimple Shape": {
+      "category": "Perforated Sheet",
+      "item_name": "Dimple Shape",
+      "aliases": [],
+      "questions": [
+        "Ask dimple/hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Based on available evidence, this is a raised-dimple/anti-slip pattern rather than a plain punched hole — confirm with the client what they mean before quoting",
+        "Ask dimple/hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Herring Bone Hole": {
+      "category": "Perforated Sheet",
+      "item_name": "Herring Bone Hole",
+      "aliases": [],
+      "questions": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Holes arranged in a zig-zag (herringbone) row pattern",
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Hexagonal Hole": {
+      "category": "Perforated Sheet",
+      "item_name": "Hexagonal Hole",
+      "aliases": [],
+      "questions": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Honeycomb-style hexagonal holes",
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Indented Screen": {
+      "category": "Perforated Sheet",
+      "item_name": "Indented Screen",
+      "aliases": [],
+      "questions": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Embossed/indented hole pattern used in grading and food-processing screens — confirm the machine it's for, since this name is sometimes used loosely",
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Lip Shape": {
+      "category": "Perforated Sheet",
+      "item_name": "Lip Shape",
+      "aliases": [],
+      "questions": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Punched hole with a raised lip/louvre that directs material flow one way — confirm this is the pattern meant before quoting, as the name is sometimes used loosely",
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Oblong Slot Hole": {
+      "category": "Perforated Sheet",
+      "item_name": "Oblong Slot Hole",
+      "aliases": [],
+      "questions": [
+        "Ask slot size (length × width), sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Elongated slot-shaped holes, used for grading by length/width",
+        "Ask slot size (length × width), sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Round Hole": {
+      "category": "Perforated Sheet",
+      "item_name": "Round Hole",
+      "aliases": [],
+      "questions": [
+        "Ask hole diameter, sheet gauge (28 gauge = better quality, 32 gauge = thinner/cheaper), sheet size, material, quantity"
+      ],
+      "notes": [
+        "Ask hole diameter, sheet gauge (28 gauge = better quality, 32 gauge = thinner/cheaper), sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Square Hole": {
+      "category": "Perforated Sheet",
+      "item_name": "Square Hole",
+      "aliases": [],
+      "questions": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Triangle Hole": {
+      "category": "Perforated Sheet",
+      "item_name": "Triangle Hole",
+      "aliases": [],
+      "questions": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "notes": [
+        "Ask hole size, sheet gauge, sheet size, material, quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Perforated Sheet||Washer Whizzer Screen": {
+      "category": "Perforated Sheet",
+      "item_name": "Washer Whizzer Screen",
+      "aliases": [],
+      "questions": [
+        "Ask cylinder/screen size and hole spec, material, quantity"
+      ],
+      "notes": [
+        "Screen specific to the washer-whizzer wheat cleaning/drying machine — not a generic pattern, so ask the machine make/model first",
+        "Ask cylinder/screen size and hole spec, material, quantity"
+      ],
+      "slots": [
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Perforated Sheet"
+      ]
+    },
+    "Pipe & Pipe Accessories||Divider": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Divider",
+      "aliases": [],
+      "questions": [
+        "Ask pipe diameter, number of outlets, and whether a manual or pneumatic damper is needed",
+        "Ask material (GI/MS/SS) and quantity"
+      ],
+      "notes": [
+        "Ask pipe diameter, number of outlets, and whether a manual or pneumatic damper is needed",
+        "Ask material (GI/MS/SS) and quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||Down Gravity Pipe": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Down Gravity Pipe",
+      "aliases": [],
+      "questions": [
+        "Ask diameter, length, and number of bends",
+        "Ask material and quantity"
+      ],
+      "notes": [
+        "Ask diameter, length, and number of bends",
+        "Ask material and quantity"
+      ],
+      "slots": [
+        "length",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||Elbow Bend": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Elbow Bend",
+      "aliases": [],
+      "questions": [
+        "Ask diameter, angle (45° or 90°), and material",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask diameter, angle (45° or 90°), and material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||Lock Ring": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Lock Ring",
+      "aliases": [],
+      "questions": [
+        "Ask diameter to match the pipe it clamps, and material",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask diameter to match the pipe it clamps, and material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||Spout Cover": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Spout Cover",
+      "aliases": [],
+      "questions": [
+        "Ask diameter and material",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask diameter and material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||Tee": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Tee",
+      "aliases": [],
+      "questions": [
+        "Ask diameter, whether equal or reducing, and material",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask diameter, whether equal or reducing, and material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||U Bolt": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "U Bolt",
+      "aliases": [],
+      "questions": [
+        "Ask the pipe/rod diameter it needs to clamp, and material",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask the pipe/rod diameter it needs to clamp, and material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||U Clamp": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "U Clamp",
+      "aliases": [],
+      "questions": [
+        "Ask diameter and width, and material",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask diameter and width, and material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Pipe & Pipe Accessories||Y (Y-Piece)": {
+      "category": "Pipe & Pipe Accessories",
+      "item_name": "Y (Y-Piece)",
+      "aliases": [],
+      "questions": [
+        "Ask diameter, branch angle, and material",
+        "Ask quantity",
+        "Ask duct size and gauss rating per stage"
+      ],
+      "notes": [
+        "Ask diameter, branch angle, and material",
+        "Ask quantity",
+        "Ask duct size and gauss rating per stage"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Pipe & Pipe Accessories"
+      ]
+    },
+    "Plansifter Accessories||Big Triangle Cleaner": {
+      "category": "Plansifter Accessories",
+      "item_name": "Big Triangle Cleaner",
+      "aliases": [],
+      "questions": [
+        "Ask: with brush or with studs",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Used in imported plansifters (Buhler, Turkish, Chinese)",
+        "Ask: with brush or with studs",
+        "Ask quantity"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 0.67,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Big Triangle with Brush, Studs": {
+      "category": "Plansifter Accessories",
+      "item_name": "Big Triangle with Brush, Studs",
+      "aliases": [],
+      "questions": [
+        "Ask brush type, size, and quantity"
+      ],
+      "notes": [
+        "Larger version of the triangle cleaner — confirm it's the \"big\" size vs the standard triangle",
+        "Ask brush type, size, and quantity",
+        "Offer a reference picture if unsure"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 0.6,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Blue Cleaner with Brush, Studs": {
+      "category": "Plansifter Accessories",
+      "item_name": "Blue Cleaner with Brush, Studs",
+      "aliases": [],
+      "questions": [
+        "Ask size and quantity"
+      ],
+      "notes": [
+        "Sold by its colour (\"Blue Cleaner\") — many clients order it by name alone, so confirm size too",
+        "Ask size and quantity",
+        "Offer a reference picture if unsure"
+      ],
+      "slots": [
+        "quantity",
+        "colour"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Brass Brush": {
+      "category": "Plansifter Accessories",
+      "item_name": "Brass Brush",
+      "aliases": [],
+      "questions": [
+        "Ask quantity in pieces"
+      ],
+      "notes": [
+        "Hand-held cleaning brush for nylon mesh",
+        "One size only",
+        "Ask quantity in pieces"
+      ],
+      "slots": [
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Cotton Cleaner": {
+      "category": "Plansifter Accessories",
+      "item_name": "Cotton Cleaner",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "100% cotton pad that sits between the screen and steel mesh to lift flour buildup, with a metal slider",
+        "Based on available evidence (comparable market listings), a common standard size is around 75×58×8 mm sold roughly 500 pieces to a carton — confirm the exact size and pack count against BUI's current stock before quoting",
+        "Ask quantity",
+        "Offer a reference picture if unsure"
+      ],
+      "slots": [
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Cotton Cleaners": {
+      "category": "Plansifter Accessories",
+      "item_name": "Cotton Cleaners",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Variant of the rectangular sieve cleaner",
+        "2 ply (Indian manufacture)",
+        "4 ply (imported, sturdier)",
+        "6 ply light green (70% cotton, 30% polyester)",
+        "6 ply dark green (100% cotton, best quality)",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "ply",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Double Crimped Mesh": {
+      "category": "Plansifter Accessories",
+      "item_name": "Double Crimped Mesh",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Used in the plansifter frame; sometimes sold as spare mesh",
+        "Size: 495 mm × 495 mm",
+        "Wire thickness: generally 1.2 mm",
+        "Opening: 8 mm, 10 mm, or 12 mm per requirement",
+        "Ask quantity"
+      ],
+      "slots": [
+        "opening",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Felt Seal": {
+      "category": "Plansifter Accessories",
+      "item_name": "Felt Seal",
+      "aliases": [],
+      "questions": [
+        "Ask width and quantity; MOQ 100 m per roll"
+      ],
+      "notes": [
+        "Two types: Namda tape and cotton tape (cotton tape = Nivard)",
+        "Namda tape: ask width and thickness; MOQ 100 m (one roll)",
+        "Nivard tape: thickness fixed at 1 mm; ask width; MOQ 50 m (one roll = 50 m)",
+        "Glue-type tape: peel-paper backing with glue, activates when paper removed, pasted onto wooden plansifter frames",
+        "Only available in 3 mm thickness",
+        "Ask width and quantity; MOQ 100 m per roll",
+        "Always ask quantity in meters",
+        "Glue-type tape: peel-paper backing with glue, activates when paper is removed, pasted onto wooden plansifter frames",
+        "Glue-type is only available in 3 mm thickness",
+        "For glue-type, ask width and quantity; MOQ 100 m per roll"
+      ],
+      "slots": [
+        "width",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Fiber Rod / Nylon Rod": {
+      "category": "Plansifter Accessories",
+      "item_name": "Fiber Rod / Nylon Rod",
+      "aliases": [
+        "plansifter fiber",
+        "nylon rod",
+        "fiberrod"
+      ],
+      "questions": [
+        "Ask diameter/thickness, length, quantity",
+        "Ask diameter/thickness, length, and quantity"
+      ],
+      "notes": [
+        "Also called plansifter fiber or nylon rod (fiber and nylon look similar; clients often unsure)",
+        "Ask diameter/thickness, length, quantity",
+        "Request a picture to confirm material",
+        "Also called plansifter fiber or nylon rod (fiber and nylon look similar; clients are often unsure which they have)",
+        "Ask diameter/thickness, length, and quantity",
+        "Request a picture to confirm the material"
+      ],
+      "slots": [
+        "length",
+        "thickness",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Gun Tacker": {
+      "category": "Plansifter Accessories",
+      "item_name": "Gun Tacker",
+      "aliases": [],
+      "questions": [
+        "Ask quantity and any brand preference"
+      ],
+      "notes": [
+        "Two types: manual and pneumatic",
+        "Manual brands: Kangaroo and Max",
+        "Pneumatic: used to punch pins into plansifter frames",
+        "Offer a reference picture if client is unsure",
+        "Ask quantity and any brand preference",
+        "Manual staple gun; brands Kangaroo and Max",
+        "Offer a reference picture if the client is unsure"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Milling Fabric": {
+      "category": "Plansifter Accessories",
+      "item_name": "Milling Fabric",
+      "aliases": [
+        "nylon mesh",
+        "filtration cloth",
+        "Swiss jolly",
+        "Resham ki jali",
+        "bolting cloth",
+        "Nytal bolting cloth",
+        "sieve cloth"
+      ],
+      "questions": [
+        "Ask client: grade, number within the grade, width, quantity in meters",
+        "Ask which fabric family: standard sieving fabric, Milling Forte (heavier thread, same opening, longer life), or heavy-duty XXX grade — trade-off is life vs open area",
+        "Ask width and length; priced and ordered per meter",
+        "Ask the plansifter make — frame/stretching sizes differ by machine (1250×1250 mm and 1500×1500 mm are common)"
+      ],
+      "notes": [
+        "Also known as: nylon mesh, filtration cloth, Swiss jolly, Resham ki jali, bolting cloth",
+        "Authorized distributor for Sefar Nytal (Swiss brand) in India",
+        "Available in 4 grades:",
+        "GG: 6 GG to 74 GG",
+        "XXX: 3 XXX to 17 XXX",
+        "MF: 3 MF to 13 MF",
+        "N (also called double X): 3 N to 25 N",
+        "Available in 3 widths: 115 cm, 136 cm, 158 cm",
+        "Ask client: grade, number within the grade, width, quantity in meters",
+        "Also called Nytal bolting cloth, nylon mesh, or sieve cloth",
+        "Spec is driven by mesh opening in microns, not just a grade number — ask the micron opening if the client knows it, else the flour it's sifting (maida, suji/rava, chokar) so the right opening can be matched",
+        "Ask which fabric family: standard sieving fabric, Milling Forte (heavier thread, same opening, longer life), or heavy-duty XXX grade — trade-off is life vs open area",
+        "Ask width and length; priced and ordered per meter",
+        "Ask the plansifter make — frame/stretching sizes differ by machine (1250×1250 mm and 1500×1500 mm are common)",
+        "Request a picture or a swatch of the old cloth if the client isn't sure of the grade"
+      ],
+      "slots": [
+        "grade",
+        "opening",
+        "width",
+        "length",
+        "diameter",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Oval Ball": {
+      "category": "Plansifter Accessories",
+      "item_name": "Oval Ball",
+      "aliases": [
+        "dolag ball",
+        "dumbru ball"
+      ],
+      "questions": [],
+      "notes": [
+        "Also known as: dolag ball, dumbru ball",
+        "Variants: rubber, nylon (= plastic), PVC (= transparent / penny ball)",
+        "PVC available in food-grade variant",
+        "MOQ: rubber 500 pcs, nylon 200 pcs, PVC 200 pcs",
+        "Order in multiples of MOQ only"
+      ],
+      "slots": [
+        "grade",
+        "material"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Oval Ball Type 1, 2, 3": {
+      "category": "Plansifter Accessories",
+      "item_name": "Oval Ball Type 1, 2, 3",
+      "aliases": [],
+      "questions": [
+        "Ask the plansifter make",
+        "Ask material/hardness of the rubber if known",
+        "Ask quantity (sold per piece/box)"
+      ],
+      "notes": [
+        "Three standard sizes/numbers — ask which type (1/2/3), or the diameter in mm if the client isn't sure",
+        "Ask the plansifter make",
+        "Ask material/hardness of the rubber if known",
+        "Ask quantity (sold per piece/box)",
+        "Offer a reference picture — the three types look alike at a glance",
+        "Rectangular Sieve Cleaner with Metal & Plastic Knob"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Paper Gum Tape": {
+      "category": "Plansifter Accessories",
+      "item_name": "Paper Gum Tape",
+      "aliases": [
+        "water-activated tape"
+      ],
+      "questions": [
+        "Ask width and number of bales"
+      ],
+      "notes": [
+        "Also known as water-activated tape",
+        "Widths: 1 inch, 1.5 inch, 2 inch",
+        "1 inch: 1 bale = 30 rolls × 25 m each",
+        "1.5 inch: 1 bale = 20 rolls × 25 m each",
+        "2 inch: 1 bale = 15 rolls × 25 m each",
+        "Ask width and number of bales"
+      ],
+      "slots": [
+        "width",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter Channel": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Channel",
+      "aliases": [],
+      "questions": [
+        "Ask brand of the plansifter",
+        "Ask size of the channel",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask brand of the plansifter",
+        "Ask size of the channel",
+        "Ask quantity",
+        "Request a picture to confirm"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter Frame": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Frame",
+      "aliases": [
+        "plansifter wooden frame"
+      ],
+      "questions": [
+        "Ask make of the plansifter",
+        "Ask quantity (priced per piece)",
+        "Ask the make of the plansifter"
+      ],
+      "notes": [
+        "Standard size 500 mm × 500 mm",
+        "Variants: plain wooden, or with Sunmica (increases life)",
+        "Mesh underneath: round hole perforated sheet (6 mm), or double crimped mesh",
+        "Perforated sheet gauge: 28 (quality) or 32 (cheaper, thinner)",
+        "Double crimped mesh version also available with or without Sunmica",
+        "Ask make of the plansifter",
+        "Ask quantity (priced per piece)",
+        "Offer/request a picture if client is unsure",
+        "Mesh underneath: round-hole perforated sheet (6 mm), or double crimped mesh",
+        "Perforated sheet gauge: 28 (better quality) or 32 (cheaper, thinner)",
+        "Double crimped mesh version is also available with or without Sunmica",
+        "Ask the make of the plansifter",
+        "Offer/request a picture if the client is unsure"
+      ],
+      "slots": [
+        "thickness",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter Sleeves": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Sleeves",
+      "aliases": [
+        "plansifter socks",
+        "inlet & outlet sleeves",
+        "plansifter small & big bag"
+      ],
+      "questions": [
+        "Ask diameter & length in inches",
+        "Ask quantity of bags required",
+        "Ask diameter and length, or the plansifter make/model — sizes are frame-specific and vary a lot between machines",
+        "Ask quantity in pieces"
+      ],
+      "notes": [
+        "Also known as: plansifter socks, inlet & outlet sleeves, plansifter small & big bag",
+        "Ask diameter & length in inches",
+        "Clarify flat dia vs actual dia (they are different)",
+        "Finishing options: single ring in center, or elastic on top & bottom",
+        "Fabric options: Indian regular, Turkish, or imported (most expensive)",
+        "If client has a specific fabric, request a picture or sample to quote",
+        "Ask quantity of bags required",
+        "Flexible connector sleeves joining plansifter sections/spouts — nylon elastic filter fabric with HDPE/nylon support rings and an elastic strip at both ends for tool-free fitting",
+        "Ask diameter and length, or the plansifter make/model — sizes are frame-specific and vary a lot between machines",
+        "Ask quantity in pieces",
+        "Offer/request a picture — easy to send the wrong size without one"
+      ],
+      "slots": [
+        "length",
+        "diameter",
+        "profile",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter Step Sheet": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Step Sheet",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Variants: with hole or without hole",
+        "Dimensions: 500 mm × 620 mm",
+        "Thickness: generally 28 gauge",
+        "Material: MS (regular iron), or stainless steel if requested",
+        "Ask quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter tin sheet": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter tin sheet",
+      "aliases": [],
+      "questions": [],
+      "notes": [],
+      "slots": [],
+      "no_slots": true,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter Tinsheet": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Tinsheet",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Same tensheet used in the plansifter frame",
+        "Dimensions: 490 mm × 490 mm (fits 500 mm × 500 mm frame)",
+        "Thickness: 28 gauge or 32 gauge",
+        "Material: mild steel standard, or stainless steel if requested",
+        "Ask quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter Upper & Lower Housing": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Upper & Lower Housing",
+      "aliases": [],
+      "questions": [
+        "Ask manufacturer name of the plansifter",
+        "Ask size of the plansifter",
+        "Ask quantity in pieces"
+      ],
+      "notes": [
+        "Large part, made to order (not stocked)",
+        "Ask manufacturer name of the plansifter",
+        "Ask size of the plansifter",
+        "Ask quantity in pieces",
+        "Request pictures to confirm exact product"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Plansifter Works (Box)": {
+      "category": "Plansifter Accessories",
+      "item_name": "Plansifter Works (Box)",
+      "aliases": [],
+      "questions": [
+        "Ask brand of the plansifter",
+        "Ask size of the plansifter",
+        "Ask section of the box (E section or other)",
+        "Ask quantity of boxes"
+      ],
+      "notes": [
+        "Ask brand of the plansifter",
+        "Ask size of the plansifter",
+        "Ask section of the box (E section or other)",
+        "Ask quantity of boxes"
+      ],
+      "slots": [
+        "profile",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Pneumatic Tacker": {
+      "category": "Plansifter Accessories",
+      "item_name": "Pneumatic Tacker",
+      "aliases": [],
+      "questions": [
+        "Ask the working air pressure/compressor capacity available, and the pin/staple size it should take",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Air-powered tacker, used to punch pins into plansifter frames",
+        "Ask the working air pressure/compressor capacity available, and the pin/staple size it should take",
+        "Ask brand preference and quantity",
+        "Offer a reference picture if the client is unsure"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity",
+        "air_pressure"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Rectangular Sieve Cleaner": {
+      "category": "Plansifter Accessories",
+      "item_name": "Rectangular Sieve Cleaner",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Made of PU rubber (polyurethane)",
+        "Variants: metal knob in center, or plastic knob in center",
+        "Standard size: 75 mm L × 52 mm W × 9 mm thickness",
+        "Ask quantity"
+      ],
+      "slots": [
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Rubber Ball": {
+      "category": "Plansifter Accessories",
+      "item_name": "Rubber Ball",
+      "aliases": [],
+      "questions": [
+        "Ask diameter (mm) and hardness if known",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Plain rubber ball, no brush or studs",
+        "Ask diameter (mm) and hardness if known",
+        "Ask quantity",
+        "Offer a reference picture if unsure"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Rubber Ball 16 mm": {
+      "category": "Plansifter Accessories",
+      "item_name": "Rubber Ball 16 mm",
+      "aliases": [],
+      "questions": [],
+      "notes": [
+        "Can replace all the above variants",
+        "Variants: high bounce or medium bounce",
+        "MOQ 500 pcs; order in multiples of 500"
+      ],
+      "slots": [],
+      "no_slots": true,
+      "confidence": 0.9,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Stainless Steel Wire Mesh": {
+      "category": "Plansifter Accessories",
+      "item_name": "Stainless Steel Wire Mesh",
+      "aliases": [],
+      "questions": [
+        "Ask mesh count (holes per inch)",
+        "Ask wire thickness in mm or gauge"
+      ],
+      "notes": [
+        "Can replace nylon mesh / bolting cloth / Resham ki jali",
+        "Ask mesh count (holes per inch)",
+        "If unknown, ask opening in microns or mm (mm = wire-to-wire distance)",
+        "Ask wire thickness in mm or gauge",
+        "Width: standard 4 ft (also 3 ft, 5 ft, 2 m, or higher)",
+        "Quantity = length (in feet or meters)",
+        "Priced per meter",
+        "Grade: 304 standard, 202 cheaper",
+        "If unknown, ask the opening in microns or mm (mm = wire-to-wire distance)",
+        "Quantity = length (in feet or meters); priced per meter"
+      ],
+      "slots": [
+        "grade",
+        "opening",
+        "mesh_count",
+        "width",
+        "length",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Staple Pin": {
+      "category": "Plansifter Accessories",
+      "item_name": "Staple Pin",
+      "aliases": [],
+      "questions": [
+        "Ask number of boxes (1 box = 20 packets)",
+        "Ask leg length and crown width (mm) — must match the tacker brand/model, since pins for one brand's gun don't always fit another",
+        "Ask material: galvanized or stainless",
+        "Ask quantity — usually sold by the box"
+      ],
+      "notes": [
+        "Used in manual or pneumatic gun tacker",
+        "Ask number of boxes (1 box = 20 packets)",
+        "Priced per box",
+        "Pins used with the gun/pneumatic tacker to fix mesh and felt onto the frame",
+        "Ask leg length and crown width (mm) — must match the tacker brand/model, since pins for one brand's gun don't always fit another",
+        "Confirm which tacker/brand the client owns before quoting, to avoid a mismatch",
+        "Ask material: galvanized or stainless",
+        "Ask quantity — usually sold by the box"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Star Type Cleaner": {
+      "category": "Plansifter Accessories",
+      "item_name": "Star Type Cleaner",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Available with brush or with studs",
+        "Polyurethane material",
+        "Ask quantity"
+      ],
+      "slots": [
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Star Type Cleaner with Brush, Studs": {
+      "category": "Plansifter Accessories",
+      "item_name": "Star Type Cleaner with Brush, Studs",
+      "aliases": [],
+      "questions": [
+        "Ask size and quantity"
+      ],
+      "notes": [
+        "Star-shaped body with brush and studs",
+        "Ask size and quantity",
+        "Offer a reference picture if unsure"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Triangle Cleaners": {
+      "category": "Plansifter Accessories",
+      "item_name": "Triangle Cleaners",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Four variants: with brush, with studs, with metal knob, with plastic knob",
+        "Brush variant in 3 qualities: polyurethane, PU, and PU with full internal nylon brush (hidden inside, most expensive)",
+        "Quantity to be ordered in multiples of 100",
+        "Ask quantity"
+      ],
+      "slots": [
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Triangle with Brush, Plastic Knob, Studs, Metal-Rivet": {
+      "category": "Plansifter Accessories",
+      "item_name": "Triangle with Brush, Plastic Knob, Studs, Metal-Rivet",
+      "aliases": [],
+      "questions": [
+        "Ask size and quantity"
+      ],
+      "notes": [
+        "Several trim combinations exist (brush / plastic knob / studs / metal rivet) — ask which combination the client currently has fitted",
+        "Ask size and quantity",
+        "Request a picture or the old part — this design has the most variants in the range"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 1,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Plansifter Accessories||Wire Rope": {
+      "category": "Plansifter Accessories",
+      "item_name": "Wire Rope",
+      "aliases": [
+        "plansifter wire rope"
+      ],
+      "questions": [
+        "Ask thickness of wire/rope",
+        "Ask length/quantity",
+        "Ask material: mild steel or stainless steel",
+        "Ask specific grade if client has a preference",
+        "Ask what it's for — plansifter suspension/hanging vs general lifting/hoisting — the spec needed differs",
+        "Ask diameter (mm), length required, and material/construction (galvanized MS vs stainless)",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask thickness of wire/rope",
+        "Ask length/quantity",
+        "Ask material: mild steel or stainless steel",
+        "Ask specific grade if client has a preference",
+        "Ask what it's for — plansifter suspension/hanging vs general lifting/hoisting — the spec needed differs",
+        "Ask diameter (mm), length required, and material/construction (galvanized MS vs stainless)",
+        "Ask quantity",
+        "Offer a reference picture if unsure of the exact rope needed"
+      ],
+      "slots": [
+        "grade",
+        "length",
+        "thickness",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Plansifter Accessories"
+      ]
+    },
+    "Power Transmission Elements||Angular Contact Ball Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Angular Contact Ball Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore diameter, outer diameter, and width (mm)",
+        "Ask contact angle if known (commonly 15°/25°/40°) and single or double row",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore diameter, outer diameter, and width (mm)",
+        "Ask contact angle if known (commonly 15°/25°/40°) and single or double row",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.67,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Bearing Block": {
+      "category": "Power Transmission Elements",
+      "item_name": "Bearing Block",
+      "aliases": [],
+      "questions": [
+        "Ask bearing block number:",
+        "Ask brand preference (JMC is most common; ask if client requires different brand)",
+        "Ask quantity required",
+        "Ask housing type/series if known (e.g. P or F series), or ask for a picture of the housing",
+        "Ask shaft/bore diameter",
+        "Ask material: cast iron or pressed steel",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask bearing block number:",
+        "S series",
+        "SN series",
+        "Ask brand preference (JMC is most common; ask if client requires different brand)",
+        "Ask quantity required",
+        "Ask housing type/series if known (e.g. P or F series), or ask for a picture of the housing",
+        "Ask shaft/bore diameter",
+        "Ask material: cast iron or pressed steel",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Bearing Sleeve": {
+      "category": "Power Transmission Elements",
+      "item_name": "Bearing Sleeve",
+      "aliases": [],
+      "questions": [
+        "Ask bearing sleeve number:",
+        "Ask brand preference (many brands available; JMC is most common)",
+        "Ask quantity required",
+        "Ask the sleeve number if stamped on it (e.g. H2310), else the shaft diameter it must fit",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask bearing sleeve number:",
+        "H series (bore in mm)",
+        "HE series (bore in inches)",
+        "Ask brand preference (many brands available; JMC is most common)",
+        "Ask quantity required",
+        "Ask the sleeve number if stamped on it (e.g. H2310), else the shaft diameter it must fit",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Chain": {
+      "category": "Power Transmission Elements",
+      "item_name": "Chain",
+      "aliases": [],
+      "questions": [
+        "Ask pitch of the chain: 1/2 in, 3/4 in, 1 in, and so forth",
+        "Ask number of packets required"
+      ],
+      "notes": [
+        "Variants:",
+        "Simplex chain (single tee chain)",
+        "Duplex chain (double tee chain)",
+        "Triplex chain",
+        "Ask pitch of the chain: 1/2 in, 3/4 in, 1 in, and so forth",
+        "Packaging: 1 packet = 3 m (equivalent to 10 ft)",
+        "Sold in packets only",
+        "Ask number of packets required"
+      ],
+      "slots": [],
+      "no_slots": true,
+      "confidence": 0.9,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Chain Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "Chain Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask diameter",
+        "Ask number of teeth",
+        "Ask pitch",
+        "Ask quantity required",
+        "Ask both shaft bore diameters, coupling size (chain pitch/number), and quantity"
+      ],
+      "notes": [
+        "Ask diameter",
+        "Ask number of teeth",
+        "Ask pitch",
+        "Ask quantity required",
+        "Ask both shaft bore diameters, coupling size (chain pitch/number), and quantity",
+        "Send the old coupling's size marking or a picture if unsure"
+      ],
+      "slots": [
+        "diameter",
+        "teeth",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Chain Sprockets": {
+      "category": "Power Transmission Elements",
+      "item_name": "Chain Sprockets",
+      "aliases": [],
+      "questions": [
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Variants:",
+        "Simplex (single-teeth chain sprocket)",
+        "Duplex (double-teeth chain sprocket)",
+        "Triplex chain sprocket",
+        "Mandatory information to ask:",
+        "Number of teeth in the chain sprocket",
+        "Pitch (size of chain): 1/2 in, 3/8 in, 5/8 in, 1 in (standard pitch sizes)",
+        "Optional/extra information client may provide:",
+        "Overall diameter of the chain sprocket",
+        "Hub dia (place where bore is fitted for rod or other equipment to drive the sprocket)",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "diameter",
+        "teeth",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Couplings": {
+      "category": "Power Transmission Elements",
+      "item_name": "Couplings",
+      "aliases": [],
+      "questions": [
+        "Ask coupling number (e.g., L100, L110)",
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Star Coupling",
+        "Ask coupling number (e.g., L100, L110)",
+        "OR ask bore size (e.g., 30 mm, 40 mm)",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Cylindrical Roller Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Cylindrical Roller Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Ask configuration if known (N, NU, NJ, NUP — affects which side takes axial load)",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Ask configuration if known (N, NU, NJ, NUP — affects which side takes axial load)",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Deep Groove Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Deep Groove Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Ask if sealed/shielded (2RS/ZZ) or open is needed",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Ask if sealed/shielded (2RS/ZZ) or open is needed",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Duplex Chain": {
+      "category": "Power Transmission Elements",
+      "item_name": "Duplex Chain",
+      "aliases": [],
+      "questions": [
+        "Ask chain pitch/number, length required, and quantity"
+      ],
+      "notes": [
+        "Ask chain pitch/number, length required, and quantity",
+        "Confirm duplex (double-row) vs simplex before quoting"
+      ],
+      "slots": [
+        "length",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Duplex Chain Sprocket": {
+      "category": "Power Transmission Elements",
+      "item_name": "Duplex Chain Sprocket",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Same asks as simplex sprocket: teeth, bore, chain pitch/number, hub type",
+        "Confirm duplex (double-row) is what's needed",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "teeth",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Encoder Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "Encoder Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask outer diameter",
+        "Ask inner diameter",
+        "Ask length",
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Ask outer diameter",
+        "Ask inner diameter",
+        "Ask length",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "length",
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Flat Belt Pulley": {
+      "category": "Power Transmission Elements",
+      "item_name": "Flat Belt Pulley",
+      "aliases": [],
+      "questions": [
+        "Ask diameter, face width, and bore/shaft size",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask diameter, face width, and bore/shaft size",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Gear Box": {
+      "category": "Power Transmission Elements",
+      "item_name": "Gear Box",
+      "aliases": [],
+      "questions": [
+        "Ask HP (e.g., 2 HP)",
+        "Ask output RPM (e.g., 50)",
+        "Ask brand preference",
+        "Ask mounting type: foot-mounted or flange-mounted",
+        "Ask quantity required",
+        "Ask inches of Gear Box (e.g., 2 inches)",
+        "Ask ratio of Gear Box (e.g., 1:10 or 1:20)"
+      ],
+      "notes": [
+        "Scenario 1: Using HP and Output RPM",
+        "Ask HP (e.g., 2 HP)",
+        "Ask output RPM (e.g., 50)",
+        "Ask brand preference",
+        "Ask mounting type: foot-mounted or flange-mounted",
+        "Ask quantity required",
+        "Scenario 2: Using inches and ratio",
+        "Ask inches of Gear Box (e.g., 2 inches)",
+        "Ask ratio of Gear Box (e.g., 1:10 or 1:20)"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity",
+        "motor_spec"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Gear Box and Motor": {
+      "category": "Power Transmission Elements",
+      "item_name": "Gear Box and Motor",
+      "aliases": [],
+      "questions": [
+        "Ask gearbox type: worm or helical",
+        "Ask reduction ratio, input/output shaft size, and mounting (foot or flange)",
+        "Ask motor power (HP/kW), RPM, and voltage/phase",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask gearbox type: worm or helical",
+        "Ask reduction ratio, input/output shaft size, and mounting (foot or flange)",
+        "Ask motor power (HP/kW), RPM, and voltage/phase",
+        "Ask quantity"
+      ],
+      "slots": [
+        "quantity",
+        "motor_spec"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Gear Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "Gear Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask gear coupling number",
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Ask gear coupling number",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||HRC Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "HRC Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask HRC number (e.g., HRC 90, HRC 100, and so forth)",
+        "Ask quantity required",
+        "Ask HRC size number if known (e.g. HRC 90, 110, 130), else both shaft bore diameters",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask HRC number (e.g., HRC 90, HRC 100, and so forth)",
+        "OR ask bore size",
+        "Ask quantity required",
+        "Ask HRC size number if known (e.g. HRC 90, 110, 130), else both shaft bore diameters",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Motor": {
+      "category": "Power Transmission Elements",
+      "item_name": "Motor",
+      "aliases": [],
+      "questions": [
+        "Ask HP of the motor",
+        "Ask RPM of the motor (e.g., 1 HP at 1,440 rpm)",
+        "Ask brand preference",
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Ask HP of the motor",
+        "Ask RPM of the motor (e.g., 1 HP at 1,440 rpm)",
+        "Ask brand preference",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity",
+        "motor_spec"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Muff Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "Muff Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask diameter",
+        "Ask length of the coupling",
+        "Ask bore that the client wants",
+        "Ask quantity required",
+        "Ask both shaft diameters and the total length/OD of the muff",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask diameter",
+        "Ask length of the coupling",
+        "Ask bore that the client wants",
+        "Ask quantity required",
+        "Ask both shaft diameters and the total length/OD of the muff",
+        "Ask quantity"
+      ],
+      "slots": [
+        "length",
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Needle Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Needle Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore diameter, outer diameter, and width",
+        "Ask whether it's a needle roller with inner ring, without inner ring, or a needle bush/cage",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore diameter, outer diameter, and width",
+        "Ask whether it's a needle roller with inner ring, without inner ring, or a needle bush/cage",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Oil Seal": {
+      "category": "Power Transmission Elements",
+      "item_name": "Oil Seal",
+      "aliases": [],
+      "questions": [
+        "Ask outer diameter (OD)",
+        "Ask inner diameter (ID)",
+        "Ask thickness",
+        "Ask rubber type (optional):",
+        "Ask quantity required",
+        "Ask inner diameter × outer diameter × thickness (mm) — all three are needed for an exact match",
+        "Ask lip type: single or double lip, with or without spring",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask outer diameter (OD)",
+        "Ask inner diameter (ID)",
+        "Ask thickness",
+        "Ask rubber type (optional):",
+        "Neoprene oil seal",
+        "Silicon oil seal",
+        "If not specified: regular black oil seal (default)",
+        "Ask quantity required",
+        "Ask inner diameter × outer diameter × thickness (mm) — all three are needed for an exact match",
+        "Ask lip type: single or double lip, with or without spring",
+        "Ask quantity"
+      ],
+      "slots": [
+        "thickness",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Pin Bush Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "Pin Bush Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask coupling number (BC series: BC1, BC2, BC2A, and so on)",
+        "Ask quantity required",
+        "Ask size number if known, else both shaft bore diameters",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask coupling number (BC series: BC1, BC2, BC2A, and so on)",
+        "OR ask diameter of the entire coupling",
+        "Ask quantity required",
+        "Ask size number if known, else both shaft bore diameters",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Plain Bore V Belt Pulley": {
+      "category": "Power Transmission Elements",
+      "item_name": "Plain Bore V Belt Pulley",
+      "aliases": [],
+      "questions": [
+        "Ask pitch diameter, number of grooves, section (A/B/C), and bore diameter",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask pitch diameter, number of grooves, section (A/B/C), and bore diameter",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "profile",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Self Aligning Ball Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Self Aligning Ball Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Confirm the application needs misalignment tolerance (this type's key feature), so it isn't substituted for a standard deep groove bearing by mistake",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Simplex Chain": {
+      "category": "Power Transmission Elements",
+      "item_name": "Simplex Chain",
+      "aliases": [],
+      "questions": [
+        "Ask chain pitch/number (e.g. 08B, 10B, ANSI 40/50/60)",
+        "Ask length required — in number of links, meters, or \"same as sample\"",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask chain pitch/number (e.g. 08B, 10B, ANSI 40/50/60)",
+        "Ask length required — in number of links, meters, or \"same as sample\"",
+        "Ask quantity"
+      ],
+      "slots": [
+        "length",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Simplex Chain Sprocket": {
+      "category": "Power Transmission Elements",
+      "item_name": "Simplex Chain Sprocket",
+      "aliases": [],
+      "questions": [
+        "Ask number of teeth",
+        "Ask bore size (finished bore + keyway, or \"pilot bore\" if it's to be machined later)",
+        "Ask the chain pitch/number it must match (e.g. 08B, 10B, or ANSI 40/50/60)",
+        "Ask hub type if known, and quantity"
+      ],
+      "notes": [
+        "Ask number of teeth",
+        "Ask bore size (finished bore + keyway, or \"pilot bore\" if it's to be machined later)",
+        "Ask the chain pitch/number it must match (e.g. 08B, 10B, or ANSI 40/50/60)",
+        "Ask hub type if known, and quantity"
+      ],
+      "slots": [
+        "diameter",
+        "teeth",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Spherical Roller Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Spherical Roller Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Ask whether it needs a tapered bore (for adapter-sleeve mounting) or a straight bore",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore, outer diameter, width",
+        "Ask whether it needs a tapered bore (for adapter-sleeve mounting) or a straight bore",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Star Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "Star Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask size number if known, else both shaft bore diameters",
+        "Ask whether just the rubber spider/star element or the full coupling is needed",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask size number if known, else both shaft bore diameters",
+        "Ask whether just the rubber spider/star element or the full coupling is needed",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Taper Bush V Belt Pulley": {
+      "category": "Power Transmission Elements",
+      "item_name": "Taper Bush V Belt Pulley",
+      "aliases": [],
+      "questions": [
+        "Ask pitch diameter, number of grooves, and section",
+        "Ask the taper bush size/number if known, and the finished bore needed in the bush",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask pitch diameter, number of grooves, and section",
+        "Ask the taper bush size/number if known, and the finished bore needed in the bush",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "profile",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Taper Roller Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Taper Roller Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore, outer diameter, width, and cone angle if known",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore, outer diameter, width, and cone angle if known",
+        "Confirm single or double row",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Thrust Ball Bearing": {
+      "category": "Power Transmission Elements",
+      "item_name": "Thrust Ball Bearing",
+      "aliases": [],
+      "questions": [
+        "Ask the bearing number if visible, else bore, outer diameter, and height",
+        "Ask brand preference and quantity"
+      ],
+      "notes": [
+        "Ask the bearing number if visible, else bore, outer diameter, and height",
+        "Confirm it's genuinely for axial load only (thrust bearings don't take radial load) — worth double-checking this is what the machine needs",
+        "Ask brand preference and quantity"
+      ],
+      "slots": [
+        "height",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Timing Pulley": {
+      "category": "Power Transmission Elements",
+      "item_name": "Timing Pulley",
+      "aliases": [],
+      "questions": [
+        "Ask tooth profile/pitch (e.g. T5, T10, AT5, HTD 8M), number of teeth, belt width, and bore size",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask tooth profile/pitch (e.g. T5, T10, AT5, HTD 8M), number of teeth, belt width, and bore size",
+        "Request a picture or the belt sample if unsure of the tooth profile — profiles look similar but aren't interchangeable",
+        "Ask quantity"
+      ],
+      "slots": [
+        "width",
+        "diameter",
+        "teeth",
+        "profile",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Triplex Chain": {
+      "category": "Power Transmission Elements",
+      "item_name": "Triplex Chain",
+      "aliases": [],
+      "questions": [
+        "Ask chain pitch/number, length required, and quantity"
+      ],
+      "notes": [
+        "Ask chain pitch/number, length required, and quantity",
+        "Confirm triplex (triple-row)"
+      ],
+      "slots": [
+        "length",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Triplex Chain Sprocket": {
+      "category": "Power Transmission Elements",
+      "item_name": "Triplex Chain Sprocket",
+      "aliases": [],
+      "questions": [
+        "Ask quantity"
+      ],
+      "notes": [
+        "Same asks as simplex/duplex sprocket: teeth, bore, chain pitch/number, hub type",
+        "Confirm triplex (triple-row) is what's needed",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "teeth",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||Tyre Coupling": {
+      "category": "Power Transmission Elements",
+      "item_name": "Tyre Coupling",
+      "aliases": [],
+      "questions": [
+        "Ask tyre coupling number",
+        "Ask quantity required",
+        "Ask size number if known, else both shaft bore diameters",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Two series: FC series and T series",
+        "Ask tyre coupling number",
+        "Ask quantity required",
+        "Ask size number if known, else both shaft bore diameters",
+        "Ask quantity"
+      ],
+      "slots": [
+        "diameter",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Power Transmission Elements||V Belt": {
+      "category": "Power Transmission Elements",
+      "item_name": "V Belt",
+      "aliases": [],
+      "questions": [
+        "Ask V belt number (every V belt has a number: A70, B110, C, and so forth)",
+        "Ask brand preference (client may specify one or two preferred brands)",
+        "Ask quantity required",
+        "Ask section (A/B/C/Z or SPA/SPB/SPZ) and length or belt number",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask V belt number (every V belt has a number: A70, B110, C, and so forth)",
+        "Ask brand preference (client may specify one or two preferred brands)",
+        "Ask quantity required",
+        "Ask section (A/B/C/Z or SPA/SPB/SPZ) and length or belt number",
+        "Ask quantity"
+      ],
+      "slots": [
+        "length",
+        "profile",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Power Transmission Elements"
+      ]
+    },
+    "Roller Mill Accessories||Chilled Cast Iron Rolls": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Chilled Cast Iron Rolls",
+      "aliases": [],
+      "questions": [
+        "Ask diameter and length",
+        "Ask manufacturing preference: Indian-manufactured or imported (Turkey)",
+        "Ask number of pairs required",
+        "Ask passage type: break passage or polish passage",
+        "Ask roll diameter and working length",
+        "Ask fluting (flutes per inch, if fluted) or plain/smooth",
+        "Ask the roller mill make/model and quantity"
+      ],
+      "notes": [
+        "Ask diameter and length",
+        "Standard sizes:",
+        "250 mm dia: 1000 mm or 1250 mm length",
+        "Non-standard sizes:",
+        "300 mm dia: 1000 mm or 1250 mm length",
+        "Ask manufacturing preference: Indian-manufactured or imported (Turkey)",
+        "Ask number of pairs required",
+        "Ask passage type: break passage or polish passage",
+        "Ask roll diameter and working length",
+        "Ask fluting (flutes per inch, if fluted) or plain/smooth",
+        "Ask the roller mill make/model and quantity"
+      ],
+      "slots": [
+        "length",
+        "diameter",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Roller Mill Accessories",
+        "Miscellaneous"
+      ]
+    },
+    "Roller Mill Accessories||Cleaning Brush Type 1, 2, 3": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Cleaning Brush Type 1, 2, 3",
+      "aliases": [],
+      "questions": [
+        "Ask bristle material: nylon or steel wire",
+        "Ask the roller mill make/model",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Cleans the feed/grinding rolls — ask which type/number, or the roll length (mm) if unsure",
+        "Ask bristle material: nylon or steel wire",
+        "Ask the roller mill make/model",
+        "Ask quantity",
+        "Offer a reference picture if unsure which type"
+      ],
+      "slots": [
+        "length",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Helical Gear": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Helical Gear",
+      "aliases": [],
+      "questions": [
+        "Ask number of teeth, module/pitch, and bore diameter",
+        "Ask the roller mill make/model — gears are usually matched in pairs to keep the correct speed ratio, so confirm if both gears of the pair are needed",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Drives the differential roll speed on the roller mill",
+        "Ask number of teeth, module/pitch, and bore diameter",
+        "Ask the roller mill make/model — gears are usually matched in pairs to keep the correct speed ratio, so confirm if both gears of the pair are needed",
+        "Ask quantity",
+        "Request a picture or the old gear's marking if unsure"
+      ],
+      "slots": [
+        "diameter",
+        "teeth",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Brush": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Brush",
+      "aliases": [],
+      "questions": [
+        "Ask type of brush required",
+        "Ask width of the brush:",
+        "Ask thickness of the wood:",
+        "Ask length of the wood:",
+        "Ask hair height:",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Types of hair:",
+        "Nylon brush",
+        "Peacock feather brush",
+        "Jute brush (also known as Coconut brush)",
+        "Ask type of brush required",
+        "Ask width of the brush:",
+        "Standard: 2 inches",
+        "Non-standard: 1 inch",
+        "Ask thickness of the wood:",
+        "Generally 20 mm (or as specified by client)",
+        "Ask length of the wood:",
+        "Standard: 40 inches or 50 inches",
+        "Can be specified in mm: 1000 mm or 1250 mm",
+        "Ask hair height:",
+        "Generally 1.5 inches",
+        "Custom heights: 2 inches, 2.5 inches, or other",
+        "Ask quantity..."
+      ],
+      "slots": [
+        "width",
+        "length",
+        "height",
+        "thickness",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.67,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Flat & V Belt Pulley": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Flat & V Belt Pulley",
+      "aliases": [],
+      "questions": [
+        "Ask whether a flat or V-groove pulley is needed",
+        "Ask pulley diameter and bore/shaft size",
+        "Ask the roller mill make and quantity"
+      ],
+      "notes": [
+        "Ask whether a flat or V-groove pulley is needed",
+        "For V-groove: ask number of grooves and section (A/B/C)",
+        "Ask pulley diameter and bore/shaft size",
+        "Ask the roller mill make and quantity"
+      ],
+      "slots": [
+        "diameter",
+        "profile",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Glass": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Glass",
+      "aliases": [],
+      "questions": [
+        "Ask size (diameter or dimensions) and whether a frame/gasket is needed with it",
+        "Ask the roller mill make/model",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Sight-glass window on the roller mill housing",
+        "Ask size (diameter or dimensions) and whether a frame/gasket is needed with it",
+        "Ask the roller mill make/model",
+        "Ask quantity",
+        "Offer a reference picture if unsure"
+      ],
+      "slots": [
+        "diameter",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Helical Gear": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Helical Gear",
+      "aliases": [],
+      "questions": [
+        "Ask number of teeth of the gear",
+        "Ask bore size (hole in center): generally 60 mm, or custom size (e.g., 70 mm)",
+        "Ask quantity required",
+        "Ask center distance between big gear and small gear (measured by joining them and measuring center distance from hole to hole)",
+        "Ask bore size: 60 mm or custom size",
+        "Ask number of pairs required"
+      ],
+      "notes": [
+        "Two types:",
+        "Break passage gear",
+        "Polish passage gear",
+        "Scenario 1: Client specifies individually",
+        "Ask number of teeth of the gear",
+        "Ask bore size (hole in center): generally 60 mm, or custom size (e.g., 70 mm)",
+        "Ask quantity required",
+        "Scenario 2: Client needs a pair (proper gear set)",
+        "Ask center distance between big gear and small gear (measured by joining them and measuring center distance from hole to hole)",
+        "Ask bore size: 60 mm or custom size",
+        "Ask number of pairs required"
+      ],
+      "slots": [
+        "diameter",
+        "teeth",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Housing": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Housing",
+      "aliases": [],
+      "questions": [
+        "Ask brand of the roller mill",
+        "Ask bearing number used inside the housing",
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Ask brand of the roller mill",
+        "Ask bearing number used inside the housing",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Key": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Key",
+      "aliases": [],
+      "questions": [
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Taper key used for roller mill gears",
+        "Ask quantity required",
+        "Prefer that client provides a reference picture"
+      ],
+      "slots": [
+        "quantity"
+      ],
+      "no_slots": true,
+      "confidence": 0,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Spring": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Spring",
+      "aliases": [],
+      "questions": [
+        "Ask outer diameter",
+        "Ask inner diameter",
+        "Ask thickness of spring",
+        "Ask length or height of spring",
+        "Ask number of loops",
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Ask outer diameter",
+        "Ask inner diameter",
+        "Ask thickness of spring",
+        "Ask length or height of spring",
+        "Ask number of loops",
+        "Prefer that client provides a reference picture",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "length",
+        "height",
+        "thickness",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Roller Mill Accessories||Roller Mill Viewing Glass": {
+      "category": "Roller Mill Accessories",
+      "item_name": "Roller Mill Viewing Glass",
+      "aliases": [],
+      "questions": [
+        "Ask diameter",
+        "Ask length",
+        "Ask thickness",
+        "Ask quantity required"
+      ],
+      "notes": [
+        "Installed on top of roller mill to ensure material is flowing inside the rolls",
+        "Variants:",
+        "With partition",
+        "Without partition",
+        "Ask diameter",
+        "Ask length",
+        "Ask thickness",
+        "Ask quantity required"
+      ],
+      "slots": [
+        "length",
+        "thickness",
+        "diameter",
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Roller Mill Accessories"
+      ]
+    },
+    "Wire Mesh||De-Stoner Mesh": {
+      "category": "Wire Mesh",
+      "item_name": "De-Stoner Mesh",
+      "aliases": [],
+      "questions": [
+        "Ask deck size (length × width) and mesh/hole spec",
+        "Ask material and quantity",
+        "Ask the destoner make/model"
+      ],
+      "notes": [
+        "Ask deck size (length × width) and mesh/hole spec",
+        "Ask material and quantity",
+        "Ask the destoner make/model"
+      ],
+      "slots": [
+        "width",
+        "length",
+        "material",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Wire Mesh"
+      ]
+    },
+    "Wire Mesh||Flat & Round Wire Scourer Mesh": {
+      "category": "Wire Mesh",
+      "item_name": "Flat & Round Wire Scourer Mesh",
+      "aliases": [],
+      "questions": [
+        "Ask wire profile: flat or round",
+        "Ask mesh count/opening, wire gauge, and sheet size",
+        "Ask the scourer make/model and quantity"
+      ],
+      "notes": [
+        "Ask wire profile: flat or round",
+        "Ask mesh count/opening, wire gauge, and sheet size",
+        "Ask the scourer make/model and quantity"
+      ],
+      "slots": [
+        "opening",
+        "mesh_count",
+        "thickness",
+        "profile",
+        "machine_make",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0.9,
+      "sources": [
+        "Wire Mesh"
+      ]
+    },
+    "Wire Mesh||Mat Type Scourer Mesh": {
+      "category": "Wire Mesh",
+      "item_name": "Mat Type Scourer Mesh",
+      "aliases": [],
+      "questions": [
+        "Ask mat size and mesh spec",
+        "Ask material and quantity"
+      ],
+      "notes": [
+        "Ask mat size and mesh spec",
+        "Ask material and quantity"
+      ],
+      "slots": [
+        "material",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Wire Mesh"
+      ]
+    },
+    "Wire Mesh||Pointed and Round Wire Scourer Mesh": {
+      "category": "Wire Mesh",
+      "item_name": "Pointed and Round Wire Scourer Mesh",
+      "aliases": [],
+      "questions": [
+        "Ask wire profile: pointed or round",
+        "Ask mesh count, sheet size, and quantity"
+      ],
+      "notes": [
+        "Ask wire profile: pointed or round",
+        "Ask mesh count, sheet size, and quantity"
+      ],
+      "slots": [
+        "mesh_count",
+        "profile",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 1,
+      "sources": [
+        "Wire Mesh"
+      ]
+    },
+    "Wire Mesh||Round Wire Scourer Mesh": {
+      "category": "Wire Mesh",
+      "item_name": "Round Wire Scourer Mesh",
+      "aliases": [],
+      "questions": [
+        "Ask mesh count, wire gauge, and sheet size",
+        "Ask quantity"
+      ],
+      "notes": [
+        "Ask mesh count, wire gauge, and sheet size",
+        "Ask quantity"
+      ],
+      "slots": [
+        "mesh_count",
+        "thickness",
+        "quantity"
+      ],
+      "no_slots": false,
+      "confidence": 0,
+      "sources": [
+        "Wire Mesh"
+      ]
+    }
+  }
+}

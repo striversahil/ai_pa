@@ -5,6 +5,7 @@ import { useEnquiryData } from "@/hooks/useEnquiryData";
 import { useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ProcurementItemCard from "@/components/ProcurementItemCard";
+import ProcurementThread from "@/components/ProcurementThread";
 import Modal from "@/components/Modal";
 import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
@@ -78,7 +79,7 @@ export default function ProcurementQueue() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const { enquiries, loaded, aiConfigured, updateItems } =
+  const { enquiries, loaded, aiConfigured, updateItems, comments, addComment, currentAgent } =
     useEnquiryData("procurement");
 
   // Live intimations: management rate-requests (act on the item) and sales
@@ -407,6 +408,12 @@ export default function ProcurementQueue() {
                 readOnly={item.finalRate !== undefined && item.finalRate !== null}
               />
             ))}
+            <ProcurementThread
+              enquiryId={selEnquiry.id}
+              comments={comments}
+              currentAgentId={String(currentAgent?.id ?? "")}
+              onAddComment={(c) => void addComment(c)}
+            />
           </div>
         </Modal>
       )}

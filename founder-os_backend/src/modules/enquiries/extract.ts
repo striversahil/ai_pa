@@ -44,6 +44,11 @@ export interface EnquiryAgentRef {
 
 const MODEL = 'openai/gpt-oss-20b';
 
+/** Enquiry pipeline provider: OpenRouter (ling-3.0-flash-vl, text+vision).
+ *  Falls back to the whole pool (Groq) automatically when no OpenRouter key
+ *  is configured — select() only narrows when matching keys exist. */
+const ENQUIRY_PROVIDER = 'openrouter';
+
 /** AI line-item splitting is KEPT but OFF: sales agents enter items manually
  *  in the modal (Add Item + per-item documents), so the enrichment must never
  *  overwrite them. Flip to true to re-enable auto-split for empty rows. */
@@ -235,13 +240,18 @@ export async function extractEnquiryFieldsRobust(
     return null;
   }
   try {
+    // OpenRouter keys present → drop the Groq-specific model so the provider
+    // default (ling-3.0-flash-vl) applies; otherwise keep the legacy Groq
+    // model and the gateway falls back to the Groq pool automatically.
+    const hasOpenRouter = gateway.health().some((h) => h.provider === 'openrouter');
     const parsed = await gateway.completeJson<any>({
       messages: [
         { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
         { role: 'user', content: buildPrompt(input) },
       ],
       temperature: 0,
-      model: MODEL,
+      ...(hasOpenRouter ? {} : { model: MODEL }),
+      provider: ENQUIRY_PROVIDER,
       json: true,
     });
     return shapeResult(parsed);

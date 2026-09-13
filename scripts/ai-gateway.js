@@ -5,13 +5,16 @@
  * Actions runners (CommonJS, no build step). Mirrors the TS module's surface
  * exactly so both runtimes share one key-management contract:
  *
- *   env.GROQ_API_KEYS = "key1,key2,key3,..."   (THE only LLM key source)
- *     Every key is Groq. The gateway handles least-failures selection, random
- *     rotation, 429 cooldown (honors retry-after), 401/403 disable, 5xx rotate.
- *     No omniroute / no other provider fallbacks — Groq direct only.
+ * Key sources (single contract, both runtimes):
+ *   env.GROQ_API_KEYS = "key1,key2,..." (Groq direct)
+ *   env.OPENROUTER_API_KEYS / env.OPENROUTER_API_KEY = OpenRouter keys
+ *     (default model inclusionai/ling-3.0-flash-vl:free, text+vision)
+ *   env.AI_KEYS = "provider:key:label,..." (either provider)
+ * 429s are retried immediately (up to 50 attempts) — burst limits wave off.
  */
 
-// ── Provider registry (mirror of TS; Groq-only) ──────────────────────────────
+// ── Provider registry (mirror of TS) ─────────────────────────────────────────
+const OPENROUTER_VISION_MODEL = 'inclusionai/ling-3.0-flash-vl:free';
 const PROVIDERS = {
   groq: {
     id: 'groq',
@@ -19,8 +22,71 @@ const PROVIDERS = {
     supportsReasoning: true,
     jsonMode: { type: 'json_object' },
     defaultModel: 'openai/gpt-oss-120b',
+    visionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+  },
+  openrouter: {
+    id: 'openrouter',
+    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
+    supportsReasoning: false,
+    reasoningObject: true,
+    // NOTE: ling-3.0-flash-vl rejects response_format (no structured-outputs)
+    // → jsonMode intentionally absent; JSON enforced via prompt + extractJson.
+    defaultModel: OPENROUTER_VISION_MODEL,
+    visionModel: OPENROUTER_VISION_MODEL,
   },
 };
+
+/** Extract the first JSON object/array from model prose (providers without
+ *  structured-output support wrap JSON in fences or chatter). */
+function extractJsonModule(raw) {
+  const str = String(raw == null ? '' : raw).trim();
+  if (!str) return null;
+  try {
+    return JSON.parse(str);
+  } catch { /* fall through */ }
+  const fenced = str.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch { /* fall through */ }
+  }
+  let start = str.indexOf('{');
+  if (start === -1) start = str.indexOf('[');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < str.length; i++) {
+    const ch = str[i];
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(str.slice(start, i + 1));
+        } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/** Build a vision user message: text + image URLs (data-URI or https). */
+function buildVisionUserContent(text, imageUrls, maxImages) {
+  const imgs = (Array.isArray(imageUrls) ? imageUrls : [])
+    .map((u) => String(u == null ? '' : u).trim())
+    .filter((u) => u.length > 0 && (u.startsWith('data:image/') || u.startsWith('http')))
+    .slice(0, Math.max(0, maxImages === undefined ? 4 : maxImages));
+  if (imgs.length === 0) return text;
+  return [{ type: 'text', text }, ...imgs.map((url) => ({ type: 'image_url', image_url: { url } }))];
+}
 
 class AiGatewayError extends Error {
   constructor(message, cause, attempts) {
@@ -48,9 +114,19 @@ class KeyPool {
       this.keys.push(this.makeKey(provider, k, label));
     };
 
-    // Groq is the ONLY key source. Keys from GROQ_API_KEYS are all Groq; any
-    // AI_KEYS/legacy *_API_KEYS/OMNIROUTE_* env is intentionally IGNORED.
+    // Key sources: GROQ_API_KEYS (groq) + OPENROUTER_API_KEYS/OPENROUTER_API_KEY
+    // (openrouter, singular also accepted). AI_KEYS "provider:key:label" entries
+    // are honored too.
     for (const key of raw(env && env.GROQ_API_KEYS).split(',')) add('groq', key);
+    for (const key of raw(env && env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
+    for (const key of raw(env && env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
+    const aiKeys = raw(env && env.AI_KEYS);
+    if (aiKeys) {
+      for (const entry of aiKeys.split(',')) {
+        const parts = entry.split(':');
+        if (parts.length >= 2) add((parts[0] || '').trim() || 'groq', parts.slice(1).join(':'));
+      }
+    }
 
     console.log(`[AiGateway] loaded ${this.keys.length} keys: ${this.keys.map((k) => `${k.provider}:${k.label}`).join(', ')}`);
   }
@@ -126,6 +202,17 @@ class KeyPool {
     return m ? parseInt(m[1]) : null;
   }
 
+  earliestCooldownMs() {
+    const now = Date.now();
+    let min = 0;
+    for (const k of this.keys) {
+      if (!k.enabled) continue;
+      const wait = k.cooldownUntil - now;
+      if (wait > 0 && (min === 0 || wait < min)) min = wait;
+    }
+    return min;
+  }
+
   health() {
     return this.keys.map((k) => ({
       id: k.id, label: k.label, provider: k.provider, enabled: k.enabled,
@@ -145,11 +232,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 class AiGateway {
   constructor(env) {
     this.pool = new KeyPool();
-    if (env) this.pool.loadFromEnv(env);
+    this.visionModelOverride = '';
+    if (env) this.configure(env);
   }
 
   configure(env) {
     this.pool.loadFromEnv(env);
+    const v = String((env && env.VISION_MODEL) || '').trim();
+    if (v) this.visionModelOverride = v;
   }
 
   get keyCount() {
@@ -161,20 +251,44 @@ class AiGateway {
   }
 
   async complete(req) {
-    const maxAttempts = Math.max(3, this.pool.size || 3);
+    // Free-tier burst limits clear in seconds — hammer through 429s with up to
+    // 50 immediate retries instead of surfacing an error to the caller.
+    const MIN_ATTEMPTS = 50;
+    const maxAttempts = Math.max(MIN_ATTEMPTS, this.pool.size || MIN_ATTEMPTS);
     let lastErr;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const key = req.keyId
         ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider))
         : this.pool.select(req.provider);
-      if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)', lastErr, attempt);
-      const provider = PROVIDERS[key.provider] || PROVIDERS.openai;
+      if (!key) {
+        const waitMs = this.pool.earliestCooldownMs();
+        if (waitMs > 0 && waitMs <= 30000 && attempt < maxAttempts - 1) {
+          await sleep(Math.min(waitMs, 5000));
+          continue;
+        }
+        throw new AiGatewayError('No AI key available (pool empty or all disabled)', lastErr, attempt);
+      }
+      const provider = PROVIDERS[key.provider] || PROVIDERS.groq;
       try {
         const result = await this.callProvider(provider, key, req);
         this.pool.reportSuccess(key);
         return result;
       } catch (err) {
         lastErr = err;
+        const status = this.pool.extractStatus(err);
+        if (status === 429) {
+          key.failures++;
+          key.lastFailureAt = Date.now();
+          key.cooldownUntil = 0;
+          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}`;
+          console.warn(`[AiGateway] 429 on ${key.id}, immediate retry ${attempt + 1}/${maxAttempts}`);
+          if (attempt < maxAttempts - 1) {
+            const ra = err && err.retryAfter;
+            await sleep(Math.min(typeof ra === 'number' ? ra : 1500, 5000));
+            continue;
+          }
+          throw new AiGatewayError(`Rate-limited after ${maxAttempts} immediate retries`, lastErr, maxAttempts);
+        }
         const cooldown = this.pool.reportFailure(key, err, err && err.retryAfter);
         console.warn(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err && err.message ? err.message : err}`);
         if (cooldown > 0 && attempt < maxAttempts - 1) {
@@ -189,13 +303,16 @@ class AiGateway {
     const res = await this.complete({ ...req, json: true });
     try {
       return JSON.parse(res.content);
-    } catch (parseErr) {
-      throw new AiGatewayError(`Failed to parse JSON from ${res.provider} response: ${res.content.slice(0, 200)}`, parseErr);
+    } catch {
+      const extracted = extractJsonModule(res.content);
+      if (extracted !== null) return extracted;
+      throw new AiGatewayError(`Failed to parse JSON from ${res.provider} response: ${res.content.slice(0, 200)}`);
     }
   }
 
   async callProvider(provider, key, req) {
-    const model = req.model || provider.defaultModel;
+    const wantsVision = Array.isArray(req.messages) && req.messages.some((m) => Array.isArray(m.content));
+    const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key.key}`,
@@ -208,7 +325,8 @@ class AiGateway {
       ...(provider.extraParams || {}),
     };
     if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
-    if (provider.supportsReasoning && req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
+    if (provider.reasoningObject) body.reasoning = { enabled: true };
+    else if (provider.supportsReasoning && req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
 
     const res = await fetch(provider.baseURL, {
       method: 'POST',
@@ -224,7 +342,10 @@ class AiGateway {
       throw err;
     }
     const data = await res.json();
-    const content = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    const rawContent = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    const content = typeof rawContent === 'string'
+      ? rawContent
+      : Array.isArray(rawContent) ? rawContent.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join('') : '';
     return {
       content, provider: key.provider, keyId: key.id, model,
       jsonParsed: !!req.json, usage: data && data.usage,
@@ -255,4 +376,6 @@ module.exports = {
   getGateway,
   PROVIDERS,
   AiGatewayError,
+  buildVisionUserContent,
+  extractJson: extractJsonModule,
 };

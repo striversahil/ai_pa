@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../mockData";
 import CommentNode from "./CommentNode";
+import IntakePanel from "./IntakePanel";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
 import ActivityTimeline from "./ActivityTimeline";
@@ -16,6 +17,8 @@ interface EnquiryDetailProps {
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
   onUpdateItems?: (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => void;
+  /** Accept a price-memory suggestion: marks the item rate-available (skips the loop). */
+  onAcceptSuggestion?: (id: string, itemIndex: number) => Promise<void>;
   onMarkSent?: (id: string) => Promise<void>;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
@@ -35,6 +38,7 @@ export default function EnquiryDetail({
   onUpdateAgent,
   onAddComment,
   onUpdateItems,
+  onAcceptSuggestion,
   onMarkSent,
   onDeleteEnquiry,
   onOpenEdit,
@@ -50,6 +54,9 @@ export default function EnquiryDetail({
   const [commentInput, setCommentInput] = useState("");
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [commentImage, setCommentImage] = useState<string | null>(null);
+  // Discussion scope: sales (private) vs procurement (shared ops thread).
+  // Replies always inherit the parent's scope (server-enforced too).
+  const [commentScope, setCommentScope] = useState<"sales" | "procurement">("sales");
 
   // Multi-item add: same item boxes as the B2B form (name/qty/spec/media +
   // duplicate + new-item box), appended to the enquiry's items on save.
@@ -60,6 +67,8 @@ export default function EnquiryDetail({
   // Mark-as-sent: finalized → sent (EST No. required, server-enforced too).
   const [sentBusy, setSentBusy] = useState(false);
   const [sentError, setSentError] = useState<string | null>(null);
+  // Price-memory accept (IntakePanel): one item at a time.
+  const [accepting, setAccepting] = useState(false);
   const sentState = String((selectedEnquiry as any).rateStatus ?? "");
   // Per-enquiry partial tag: management decided some (not all) loop items
   // while the enquiry is still open. Committed enquiries need no tag.
@@ -91,9 +100,11 @@ export default function EnquiryDetail({
     setItemsOpen(false);
   };
 
-  // Nested comment trees calculations
+  // Nested comment trees calculations (scoped: one thread per visibility).
   const nestedComments = useMemo(() => {
-    const enquiryComments = comments.filter(c => c.enquiryId === selectedEnquiry.id);
+    const enquiryComments = comments.filter(
+      (c) => c.enquiryId === selectedEnquiry.id && (c.visibility ?? "sales") === commentScope,
+    );
     const sorted = [...enquiryComments].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
     const commentMap: Record<string, Comment & { replies: Comment[] }> = {};
@@ -116,12 +127,13 @@ export default function EnquiryDetail({
     rootComments.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return rootComments;
-  }, [comments, selectedEnquiry.id]);
+  }, [comments, selectedEnquiry.id, commentScope]);
 
-  // Post Comment / Reply inside thread
+  // Post Comment / Reply inside thread (replies inherit the parent's scope).
   const handlePostComment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentInput.trim()) return;
+    const parent = replyToCommentId ? comments.find((c) => c.id === replyToCommentId) : null;
 
     const newComment: Comment = {
       id: `com-${Date.now()}`,
@@ -130,7 +142,8 @@ export default function EnquiryDetail({
       content: commentInput.trim(),
       createdAt: new Date().toISOString(),
       parentId: replyToCommentId,
-      imageUrl: commentImage || undefined
+      imageUrl: commentImage || undefined,
+      visibility: parent ? (parent.visibility ?? "sales") : commentScope,
     };
 
     onAddComment(newComment);
@@ -303,7 +316,21 @@ export default function EnquiryDetail({
             {/* TAB 1: Threaded Discussion Feed */}
             {activeDetailTab === "comments" && (
               <div className="space-y-5 flex-grow flex flex-col">
-                
+                {!redacted && (
+                <div className="flex gap-1.5">
+                  {(["sales", "procurement"] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => { setCommentScope(s); setReplyToCommentId(null); }}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-full border cursor-pointer ${commentScope === s ? "bg-brand-indigo text-white border-brand-indigo" : "bg-transparent text-[var(--text-secondary)] border-[var(--border-card)] hover:bg-[var(--bg-input)]"}`}
+                      title={s === "sales" ? "Private sales thread" : "Shared with procurement"}
+                    >
+                      {s === "sales" ? "Sales" : "Procurement"}
+                    </button>
+                  ))}
+                </div>
+                )}
                 {/* Input block at the top */}
                 <div className="bg-[var(--bg-input)]/20 p-4 rounded-xl border border-[var(--border-card)] mb-2">
                   {replyToCommentId && (
@@ -377,9 +404,20 @@ export default function EnquiryDetail({
                 agents={agents}
               />
             )}
+            </div>
           </div>
         </div>
-      </div>
+
+        {!redacted && onAcceptSuggestion && (
+          <IntakePanel
+            enquiryId={selectedEnquiry.id}
+            accepting={accepting}
+            onAccept={(idx) => {
+              setAccepting(true);
+              Promise.resolve(onAcceptSuggestion(selectedEnquiry.id, idx)).finally(() => setAccepting(false));
+            }}
+          />
+        )}
 
       {/* Delete confirmation */}
       {confirmDelete && (

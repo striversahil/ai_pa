@@ -344,6 +344,12 @@ app.get('/api/enquiries/:id/comments', async (req, res) => {
   }
   res.status(r.status).json(r.body);
 });
+app.get('/api/enquiries/:id/intake', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryIntake(me as any, req.params.id);
+  res.status(r.status).json(r.body);
+});
 app.post('/api/enquiries/:id/comments', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });

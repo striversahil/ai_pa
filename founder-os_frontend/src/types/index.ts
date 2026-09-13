@@ -164,6 +164,8 @@ export interface Comment {
   parentId: string | null;
   replies?: Comment[];
   imageUrl?: string;
+  /** Discussion scope: 'sales' (private) or 'procurement' (shared ops thread). */
+  visibility?: 'sales' | 'procurement';
 }
 
 export interface StoredData {

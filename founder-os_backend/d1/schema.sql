@@ -414,9 +414,11 @@ CREATE TABLE IF NOT EXISTS EnquiryComment (
   createdAt TEXT NOT NULL,
   parentId TEXT,
   imageUrl TEXT,
+  visibility TEXT NOT NULL DEFAULT 'sales',
   FOREIGN KEY (enquiryId) REFERENCES Enquiry(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_enquiry_comment ON EnquiryComment(enquiryId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_enquiry_comment_scope ON EnquiryComment(enquiryId, visibility, createdAt);
 CREATE TABLE IF NOT EXISTS chat_member (
   channelId TEXT NOT NULL,
   userId TEXT NOT NULL,

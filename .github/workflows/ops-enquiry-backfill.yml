@@ -1,0 +1,37 @@
+name: Ops - Enquiry price-memory backfill
+
+on:
+  # Manual only: first run with dry_run=true to review counts, then uncheck
+  # for the real Pinecone index build. Heavy embedding + upsert runs on the
+  # runner; the worker only serves paged finalized items.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (report only, no Pinecone writes)"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      limit:
+        description: "Cap enquiries scanned (blank = all)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: enquiry-memory backfill
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          HF_API_KEY: ${{ secrets.HF_API_KEY }}
+          PINECONE_HOST: ${{ secrets.PINECONE_HOST }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ inputs.limit }}" ]; then ARGS="$ARGS --limit=${{ inputs.limit }}"; fi
+          node scripts/enquiry-memory-backfill-runner.js $ARGS

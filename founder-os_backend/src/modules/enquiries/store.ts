@@ -240,6 +240,14 @@ export interface EnquiryActivity {
   agentId?: number;
 }
 
+export type CommentVisibility = 'sales' | 'procurement';
+
+/** Normalize a visibility value from any writer (server-authored, forge-proof:
+ *  anything but an explicit 'procurement' becomes 'sales'). */
+export function normalizeVisibility(v: unknown): CommentVisibility {
+  return String(v ?? '').trim().toLowerCase() === 'procurement' ? 'procurement' : 'sales';
+}
+
 export interface EnquiryComment {
   id: string;
   enquiryId: string;
@@ -248,6 +256,8 @@ export interface EnquiryComment {
   createdAt: string;
   parentId: string | null;
   imageUrl?: string;
+  /** Discussion scope: 'sales' (private) or 'procurement' (shared ops thread). */
+  visibility?: CommentVisibility;
 }
 
 export interface EnquiryStore {
@@ -355,6 +365,7 @@ export function mapComment(row: any): EnquiryComment | null {
     createdAt: row.createdAt,
     parentId: row.parentId ?? null,
     imageUrl: row.imageUrl ?? undefined,
+    visibility: normalizeVisibility((row as any).visibility),
   };
 }
 
@@ -551,10 +562,10 @@ class D1EnquiryStore implements EnquiryStore {
     return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
   }
   async addComment(data) {
-    const c: EnquiryComment = { ...data, id: newId(), createdAt: new Date().toISOString() };
+    const c: EnquiryComment = { ...data, visibility: normalizeVisibility((data as any)?.visibility), id: newId(), createdAt: new Date().toISOString() };
     await this.db
-      .prepare("INSERT INTO EnquiryComment (id, enquiryId, agentId, content, createdAt, parentId, imageUrl) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(c.id, c.enquiryId, c.agentId, c.content, c.createdAt, c.parentId, c.imageUrl ?? null)
+      .prepare("INSERT INTO EnquiryComment (id, enquiryId, agentId, content, createdAt, parentId, imageUrl, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(c.id, c.enquiryId, c.agentId, c.content, c.createdAt, c.parentId, c.imageUrl ?? null, c.visibility ?? 'sales')
       .run();
     return c;
   }

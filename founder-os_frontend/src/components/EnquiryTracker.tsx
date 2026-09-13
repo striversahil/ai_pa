@@ -185,6 +185,14 @@ export default function EnquiryTracker() {
     await updateEnquiry(id, { rateStatus: 'sent' });
   }, [updateEnquiry]);
 
+  // Price-memory accept: item already has a known rate — skip the loop.
+  const handleAcceptSuggestion = useCallback(async (id: string, itemIndex: number) => {
+    const target = enquiries.find((e) => e.id === id);
+    if (!target) return;
+    const items = (target.items ?? []).map((it, i) => (i === itemIndex ? { ...it, rateAvailable: true } : it));
+    await updateEnquiry(id, { items });
+  }, [enquiries, updateEnquiry]);
+
   const handleExportCSV = useCallback(() => {
     const rows = [["EST No.", "Company", "Contact", "Title", "Status", "Priority"]];
     for (const e of enquiries) {
@@ -215,6 +223,7 @@ export default function EnquiryTracker() {
           onUpdateAgent={(id, a) => void handleUpdateAgent(id, a)}
           onAddComment={(c) => void handleAddComment(c)}
           onUpdateItems={(id, items) => void handleUpdateItems(id, items)}
+          onAcceptSuggestion={(id, idx) => handleAcceptSuggestion(id, idx)}
           onMarkSent={(id) => handleMarkSent(id)}
           onDeleteEnquiry={(id) => void handleDeleteEnquiry(id)}
           onOpenEdit={(e) => { setEditingEnquiry(e); setIsAddModalOpen(true); }}

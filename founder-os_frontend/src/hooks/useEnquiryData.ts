@@ -16,6 +16,7 @@ function toComment(raw: any): Comment {
     createdAt: raw.createdAt,
     parentId: raw.parentId ?? null,
     imageUrl: raw.imageUrl || undefined,
+    visibility: raw.visibility === 'procurement' ? 'procurement' : 'sales',
   };
 }
 
@@ -333,7 +334,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const addComment = useCallback(async (comment: Comment) => {
     const saved = await persist('POST', `/api/enquiries/${comment.enquiryId}/comments`, {
       agentId: comment.agentId, content: comment.content, parentId: comment.parentId,
-      imageUrl: comment.imageUrl,
+      imageUrl: comment.imageUrl, visibility: comment.visibility || undefined,
     });
     setComments((prev) => (prev.some((x) => x.id === saved.id) ? prev : [...prev, toComment(saved)]));
   }, []);

@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseItems, parseRequirements, istDayKey } from "./store";
+import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseItems, parseRequirements, istDayKey, normalizeVisibility } from "./store";
 
 // Prisma-backed EnquiryStore for the Express / Postgres runtime. Kept in a
 // separate file so the Prisma client never enters the Cloudflare Worker bundle.
@@ -43,6 +43,7 @@ function mapComment(row: any): EnquiryComment | null {
     createdAt: row.createdAt.toISOString(),
     parentId: row.parentId,
     imageUrl: row.imageUrl ?? undefined,
+    visibility: normalizeVisibility((row as any).visibility),
   };
 }
 
@@ -140,7 +141,9 @@ export class PrismaEnquiryStore implements EnquiryStore {
     return rows.map(mapComment).filter(Boolean) as EnquiryComment[];
   }
   async addComment(data) {
-    const row = await this.prisma.enquiryComment.create({ data: { ...data, createdAt: new Date() } });
+    const row = await this.prisma.enquiryComment.create({
+      data: { ...data, visibility: normalizeVisibility((data as any)?.visibility), createdAt: new Date() } as any,
+    });
     return mapComment(row)!;
   }
   async listAllComments() {

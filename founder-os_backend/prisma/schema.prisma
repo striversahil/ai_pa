@@ -749,6 +749,8 @@ model EnquiryComment {
   createdAt DateTime @default(now())
   parentId  String?
   imageUrl  String?
+  // Discussion scope: 'sales' (private) or 'procurement' (shared ops thread).
+  visibility String  @default("sales")
 
   @@index([enquiryId, createdAt])
 }

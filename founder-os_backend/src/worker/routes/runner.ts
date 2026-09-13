@@ -5,9 +5,10 @@
 // endpoints are SHARED_SECRET gated and stay well under the 30s CPU limit.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, type Bindings } from '../context';
+import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, createEnquiryStore, type Bindings } from '../context';
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
+import { cacheSet, cacheDel } from '../../shared/cache';
 import { bulkAssignEstimates } from '../../automations/telecalling/service';
 import { syncEffortSnapshots } from '../../automations/telecalling/effort-sync';
 
@@ -913,5 +914,151 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const result = await syncEffortSnapshots();
     if (result.ok) notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(result);
+  });
+
+  // ── enquiry price-memory backfill (GH runner, paged) ─────────────────────────
+  // Returns finalized line items (finalRate set, spec undisputed) for Pinecone
+  // indexing. Paged over enquiries newest-first: ?offset=&limit= (max 100).
+  app.get('/api/runner/enquiry-memory/finalized', async (c) => {    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const offset = Math.max(0, Math.floor(Number(c.req.query('offset')) || 0));
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(c.req.query('limit')) || 50)));
+    const store = createEnquiryStore(c.env);
+    const page = await store.listEnquiriesPaged(offset, limit);
+    const rows: any[] = [];
+    for (const e of (page.rows as any[]) ?? []) {
+      const items = Array.isArray((e as any).items) ? (e as any).items : [];
+      items.forEach((it: any, idx: number) => {
+        const rate = it?.finalRate;
+        if (rate === undefined || rate === null || !Number.isFinite(Number(rate))) return;
+        if (it?.specIssue) return;
+        rows.push({
+          enquiryId: String((e as any).id),
+          itemIndex: idx,
+          name: String(it?.name ?? ''),
+          qty: String(it?.qty ?? ''),
+          spec: String(it?.spec ?? ''),
+          rates: Array.isArray(it?.rates) ? it.rates.map((r: any) => ({ vendor: String(r?.vendor ?? ''), rate: Number(r?.rate) })) : [],
+          finalRate: Number(rate),
+          markup: it?.markup !== undefined && it?.markup !== null ? Number(it.markup) : undefined,
+          selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
+          finalizedAt: it?.finalizedAt ? String(it.finalizedAt) : String((e as any).updatedAt ?? (e as any).createdAt ?? ''),
+        });
+      });
+    }
+    return c.json({ rows, nextOffset: offset + page.rows.length, total: page.total });
+  });
+
+  // ── enquiry intake queue (GH intake runner) ────────────────────────────────
+  // GET pending: enquiries with updatedAt newer than the intake watermark.
+  // Returns full rows (secret-gated; PII never leaves server-to-runner).
+  // Media is capped (4 images/enq, <=2M chars each) so the payload stays small;
+  // oversized items are flagged mediaTruncated for the runner to note.
+  app.get('/api/runner/enquiry-intake/pending', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(c.req.query('limit')) || 20)));
+    const wm = await prisma.setting.findUnique({ where: { key: 'enquiry:intake:watermark' } }).catch(() => null);
+    const watermark = String((wm as any)?.value ?? '1970-01-01T00:00:00.000Z');
+    const store = createEnquiryStore(c.env);
+    const rows: any[] = [];
+    let offset = 0;
+    const MAX_IMAGE_CHARS = 2_000_000;
+    const MAX_IMAGES = 4;
+    for (let page = 0; page < 4 && rows.length < limit; page++) {
+      const res = await store.listEnquiriesPaged(offset, 50);
+      if (res.rows.length === 0) break;
+      for (const e of (res.rows as any[]) ?? []) {
+        if (String((e as any).updatedAt ?? '') <= watermark) continue;
+        const items = Array.isArray((e as any).items) ? (e as any).items : [];
+        let images = 0;
+        let mediaTruncated = false;
+        const takeImage = (url: unknown, name?: unknown): { type: string; url: string; name?: string } | null => {
+          if (typeof url !== 'string' || (!url.startsWith('data:image/') && !url.startsWith('http'))) return null;
+          if (images >= MAX_IMAGES || url.length > MAX_IMAGE_CHARS) { mediaTruncated = true; return null; }
+          images++;
+          return name ? { type: 'image', url, name: String(name) } : { type: 'image', url };
+        };
+        // Enquiry-level photos first (unstructured intake), then per-item media.
+        const enquiryImages: Array<{ type: string; url: string }> = [];
+        try {
+          const rawUrls = (e as any).imageUrls ? JSON.parse(String((e as any).imageUrls)) : [];
+          for (const u of (Array.isArray(rawUrls) ? rawUrls : []).slice(0, MAX_IMAGES)) {
+            const kept = takeImage(typeof u === 'string' ? u : (u as any)?.url);
+            if (kept) enquiryImages.push(kept);
+          }
+        } catch { /* imageUrls unparseable — item media still flows */ }
+        const slimItems = items.slice(0, 30).map((it: any) => {
+          const media = Array.isArray(it?.media) ? it.media : [];
+          const kept: Array<{ type: string; url: string; name?: string }> = [];
+          for (const m of media) {
+            if (m?.type !== 'image') continue;
+            const k = takeImage(m?.url, m?.name);
+            if (k) kept.push(k);
+            else if (typeof m?.url === 'string') mediaTruncated = true;
+          }
+          return { name: String(it?.name ?? ''), qty: String(it?.qty ?? ''), spec: String(it?.spec ?? ''), media: kept };
+        });
+        rows.push({ ...(e as any), items: slimItems, enquiryImages, mediaTruncated });
+        if (rows.length >= limit) break;
+      }
+      offset += res.rows.length;
+      if (offset >= (res as any).total) break;
+    }
+    return c.json({ rows, watermark });
+  });
+
+  // POST result: applies vision-extraction output. Fill-empty-only semantics:
+  // structured fields only when blank, items only when the row has none,
+  // suggestions + missing slots go to KV for the sales UI. Never prices.
+  app.post('/api/runner/enquiry-intake/result', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const body = await c.req.json().catch(() => ({}));
+    const enquiryId = String(body?.enquiryId ?? '');
+    if (!enquiryId) return c.json({ error: 'enquiryId required' }, 400);
+    const store = createEnquiryStore(c.env);
+    const existing: any = await store.getEnquiry(enquiryId).catch(() => null);
+    if (!existing) return c.json({ error: 'not found' }, 404);
+    const updates: Record<string, any> = {};
+    for (const f of ['title', 'clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead', 'enquiryNumber']) {
+      const v = String((body.fields as any)?.[f] ?? '').trim();
+      if (v && !String(existing[f] ?? '').trim()) (updates as any)[f] = v.slice(0, 300);
+    }
+    const incomingItems = Array.isArray(body.items) ? body.items : [];
+    const existingItems = Array.isArray(existing.items) ? existing.items : [];
+    if (existingItems.length === 0 && incomingItems.length > 0) {
+      (updates as any).items = incomingItems.slice(0, 50).map((it: any) => ({
+        name: String(it?.name ?? '').slice(0, 300),
+        qty: String(it?.qty ?? '').slice(0, 120),
+        spec: String(it?.spec ?? '').slice(0, 2000),
+        media: [],
+        ...(it?.category ? { category: String(it.category).slice(0, 120) } : {}),
+      }));
+    }
+    let updated: any = existing;
+    if (Object.keys(updates).length > 0) {
+      updated = await store.updateEnquiry(enquiryId, updates).catch(() => null) ?? existing;
+    }
+    try {
+      await cacheSet(`enquiry:intake:${enquiryId}`, {
+        at: new Date().toISOString(),
+        suggestions: Array.isArray(body.suggestions) ? body.suggestions.slice(0, 25) : [],
+        missing: Array.isArray(body.missing) ? body.missing.slice(0, 25).map((s: any) => String(s).slice(0, 300)) : [],
+        candidates: Array.isArray(body.candidates) ? body.candidates.slice(0, 10) : [],
+      }, 7 * 24 * 60 * 60 * 1000);
+    } catch { /* best-effort */ }
+    if (body.advanceWatermark) {
+      const stamp = String(existing.updatedAt ?? new Date().toISOString());
+      await prisma.setting.upsert({
+        where: { key: 'enquiry:intake:watermark' },
+        update: { value: stamp },
+        create: { key: 'enquiry:intake:watermark', value: stamp },
+      }).catch(() => null);
+    }
+    if (Object.keys(updates).length > 0) {
+      try {
+        await cacheDel('enquiry-tracker:data');
+      } catch { /* best-effort */ }
+      notifyLive(c, { type: LiveEvent.Enquiries });
+    }
+    return c.json({ ok: true, appliedFields: Object.keys(updates).filter((k) => k !== 'items'), appliedItems: (updates as any).items?.length ?? 0 });
   });
 }

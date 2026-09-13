@@ -154,14 +154,19 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
     return c.json(r.body, r.status as any);
   });
-  app.get('/api/enquiries/:id/comments', async (c) => {
-    const me = await enquiryMe(c);
+  app.get('/api/enquiries/:id/comments', async (c) => {    const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
     const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '', restricted ? { redact: true, aiConfigured: aiConfigured(c) } : undefined);
     if (restricted) {
       for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
     }
+    return c.json(r.body, r.status as any);
+  });
+  app.get('/api/enquiries/:id/intake', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    const r = await EnquiryRoutes.enquiryIntake(me, c.req.param('id') ?? '');
     return c.json(r.body, r.status as any);
   });
   app.post('/api/enquiries/:id/comments', async (c) => {
