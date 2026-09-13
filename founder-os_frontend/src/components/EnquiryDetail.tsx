@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../mockData";
 import CommentNode from "./CommentNode";
 import IntakePanel from "./IntakePanel";
+import EnquiryChat from "./EnquiryChat";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
 import ActivityTimeline from "./ActivityTimeline";
@@ -417,6 +418,10 @@ export default function EnquiryDetail({
               Promise.resolve(onAcceptSuggestion(selectedEnquiry.id, idx)).finally(() => setAccepting(false));
             }}
           />
+        )}
+
+        {!redacted && (
+          <EnquiryChat enquiryId={selectedEnquiry.id} />
         )}
 
       {/* Delete confirmation */}

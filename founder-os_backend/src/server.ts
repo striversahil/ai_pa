@@ -350,6 +350,25 @@ app.get('/api/enquiries/:id/intake', async (req, res) => {
   const r = await EnquiryRoutes.enquiryIntake(me as any, req.params.id);
   res.status(r.status).json(r.body);
 });
+app.post('/api/enquiries/:id/chat', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const message = String(req.body?.message ?? '').trim().slice(0, 2000);
+  if (!message) return res.status(400).json({ error: 'message required' });
+  const { chatTurn } = await import('./modules/enquiries/chat');
+  const out = await chatTurn(process.env as any, enquiryStore, me as any, req.params.id, message);
+  res.json(out);
+});
+app.post('/api/enquiries/:id/chat/execute', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const { executeProposal } = await import('./modules/enquiries/chat');
+  const { result, applied } = await executeProposal(
+    enquiryStore, me as any, req.params.id,
+    (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
+  );
+  res.status((result as any).status).json({ ...((result as any).body as any), applied });
+});
 app.post('/api/enquiries/:id/comments', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });

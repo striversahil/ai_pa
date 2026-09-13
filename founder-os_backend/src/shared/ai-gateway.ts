@@ -103,8 +103,22 @@ export interface ImagePart { type: 'image_url'; image_url: { url: string } }
 export type MessageContent = string | Array<TextPart | ImagePart>;
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: MessageContent;
+  /** Tool-result linkage (agentic loops). Passed through verbatim. */
+  tool_call_id?: string;
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+}
+
+export interface ToolDefinition {
+  type: 'function';
+  function: { name: string; description?: string; parameters?: Record<string, unknown> };
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 export interface CompletionRequest {
@@ -117,6 +131,9 @@ export interface CompletionRequest {
   model?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
   signal?: AbortSignal;
+  /** OpenAI-style function tools (passed through verbatim). */
+  tools?: ToolDefinition[];
+  toolChoice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
 }
 
 export interface CompletionResult {
@@ -126,6 +143,7 @@ export interface CompletionResult {
   model: string;
   jsonParsed: boolean;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  toolCalls?: ToolCall[];
 }
 
 // ── Key pool ─────────────────────────────────────────────────────────────────
@@ -404,6 +422,8 @@ export class AiGateway {
       messages: req.messages,
       temperature: req.temperature ?? 0.2,
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+      ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
+      ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
       ...provider.extraParams,
     };
     if (req.json && provider.jsonMode) {
@@ -429,16 +449,27 @@ export class AiGateway {
       throw err;
     }
     const data: any = await res.json();
-    const rawContent: unknown = data?.choices?.[0]?.message?.content ?? '';
+    const msg: any = data?.choices?.[0]?.message ?? {};
+    const rawContent: unknown = msg?.content ?? '';
     // Some vision models return content as parts — flatten to text.
     const content: string = typeof rawContent === 'string'
       ? rawContent
       : Array.isArray(rawContent)
         ? rawContent.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join('')
         : '';
+    const toolCalls: ToolCall[] | undefined = Array.isArray(msg?.tool_calls)
+      ? msg.tool_calls
+        .filter((t: any) => t?.function?.name)
+        .map((t: any) => ({
+          id: String(t?.id ?? ''),
+          name: String(t.function.name),
+          arguments: typeof t.function.arguments === 'string' ? t.function.arguments : JSON.stringify(t.function.arguments ?? {}),
+        }))
+      : undefined;
     return {
       content, provider: key.provider, keyId: key.id, model,
       jsonParsed: !!req.json, usage: data?.usage,
+      ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
 

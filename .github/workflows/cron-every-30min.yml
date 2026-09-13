@@ -21,20 +21,6 @@ jobs:
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
         run: node scripts/email-brain-index-runner.js
 
-  enquiry-intake:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: enquiry-intake (vision split + KYP slots + price-memory route)
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
-          HF_API_KEY: ${{ secrets.HF_API_KEY }}
-          PINECONE_HOST: ${{ secrets.PINECONE_HOST }}
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-        run: node scripts/enquiry-intake-runner.js --limit 25
-
   light-triggers:
     runs-on: ubuntu-latest
     steps:

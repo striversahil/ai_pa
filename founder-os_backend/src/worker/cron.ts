@@ -31,6 +31,7 @@ import { getTelecallingDashboardData } from '../automations/telecalling/service'
 const GITHUB_REPO = 'striversahil/ai_pa';
 const GITHUB_REF = 'main';
 const GITHUB_WORKFLOWS: Record<string, string> = {
+  'every-1min': 'cron-every-1min.yml',
   'every-5min': 'cron-every-5min.yml',
   'every-10min': 'cron-every-10min.yml',
   'every-15min': 'cron-every-15min.yml',
@@ -87,6 +88,10 @@ function dueWorkflows(now: Date): string[] {
   const min = now.getUTCMinutes();
   const hhmm = now.getUTCHours() * 60 + min;
   const due: string[] = [];
+  // every-1min fires each tick (enquiry vision intake — watermark-gated, so
+  // empty ticks are one cheap D1 page; NOT quiet-hours gated: sales enquiries
+  // land around the clock and intake is not Zoho/NeoDove-backed).
+  due.push('every-1min');
   if (min % 5 === 0) due.push('every-5min');
   if (min % 10 === 0) due.push('every-10min');
   if (min % 15 === 0) due.push('every-15min');

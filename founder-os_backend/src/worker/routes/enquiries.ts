@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, type Bindings } from '../context';
+import { chatTurn, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
@@ -168,6 +169,28 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryIntake(me, c.req.param('id') ?? '');
     return c.json(r.body, r.status as any);
+  });
+  // Per-enquiry copilot: agentic sidebar chat (OpenRouter-only tools loop).
+  app.post('/api/enquiries/:id/chat', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    const body = await c.req.json().catch(() => ({}));
+    const message = String(body?.message ?? '').trim().slice(0, 2000);
+    if (!message) return c.json({ error: 'message required' }, 400);
+    const out = await chatTurn(c.env as any, createEnquiryStore(c.env), me, c.req.param('id') ?? '', message);
+    return c.json(out);
+  });
+  // Execute a chat proposal the user confirmed (re-validated server-side).
+  app.post('/api/enquiries/:id/chat/execute', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    const body = await c.req.json().catch(() => ({}));
+    const { result, applied } = await executeProposal(
+      createEnquiryStore(c.env), me, c.req.param('id') ?? '',
+      (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
+    );
+    if (applied !== 'none' && (result as any).live) enquirySend(c, result as any);
+    return c.json({ ...(result.body as any), applied }, (result as any).status as any);
   });
   app.post('/api/enquiries/:id/comments', async (c) => {
     const me = await enquiryMe(c);

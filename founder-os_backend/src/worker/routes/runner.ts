@@ -1020,7 +1020,11 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const updates: Record<string, any> = {};
     for (const f of ['title', 'clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead', 'enquiryNumber']) {
       const v = String((body.fields as any)?.[f] ?? '').trim();
-      if (v && !String(existing[f] ?? '').trim()) (updates as any)[f] = v.slice(0, 300);
+      if (!v || String(existing[f] ?? '').trim()) continue;
+      // "Lead of <agent>" is the owning salesperson, not a lead source —
+      // drop anything that smells like an agent reference.
+      if (f === 'sourceLead' && /sales|lead\s*of|agent/i.test(v)) continue;
+      (updates as any)[f] = v.slice(0, 300);
     }
     const incomingItems = Array.isArray(body.items) ? body.items : [];
     const existingItems = Array.isArray(existing.items) ? existing.items : [];

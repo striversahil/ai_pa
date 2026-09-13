@@ -83,12 +83,12 @@ function resolveTaxonomy(category, itemName) {
 
 const SYSTEM = `You are a B2B industrial-spare extractor for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
 For EACH item return: {"category": exact category from the list, "item_name": exact item name from the list, "qty": "quantity with unit or empty", "dims": "dimensions as written", "spec": "material/variant/spec detail", "confidence": 0-1}.
+Also extract the lead block: {"lead": {"clientCompany": "customer company, or empty", "contactName": "contact person, or empty", "contactEmail": "or empty", "contactPhone": "mobile/phone, or empty", "location": "city/state, or empty", "sourceLead": "lead source like IndiaMART/reference, or empty"}} — NEVER invent; empty when not stated. The sales agent's own name ("Lead of ...") is NOT the customer — ignore it.
 Also return "missing": ["what is still needed, e.g. 'Milling Fabric needs grade no.'"].
 Rules: pick ONLY from the taxonomy list (never invent names); write category and
 item_name EXACTLY as shown before any parenthesis (parenthesised words are
-aliases, not names); never invent quantities or dimensions — if absent, leave
-empty and note in missing; one entry per distinct product; return STRICT JSON
-{"items":[...],"missing":[...]} with no other text.`;
+aliases, not names); never invent quantities, dimensions or contact details — if absent, leave empty and note in missing; one entry per distinct product; return STRICT JSON
+{"items":[...],"lead":{...},"missing":[...]} with no other text.`;
 
 function slotCheck(item) {
   const key = `${item.category}||${item.item_name}`;
@@ -182,6 +182,13 @@ async function processEnquiry(gateway, eq) {
   }).filter((it) => it.name) : [];
   const missing = [...(Array.isArray(parsed.missing) ? parsed.missing : [])];
   for (const it of items) missing.push(...slotCheck(it));
+  // Lead block: trimmed strings only; the worker applies fill-empty-only.
+  const leadRaw = (parsed.lead && typeof parsed.lead === 'object') ? parsed.lead : {};
+  const fields = {};
+  for (const f of ['clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead']) {
+    const v = String(leadRaw[f] || '').trim().slice(0, 300);
+    if (v) fields[f] = v;
+  }
 
   // Price-memory lookup per item (best-effort; failures → miss).
   const suggestions = [];
@@ -203,7 +210,7 @@ async function processEnquiry(gateway, eq) {
       suggestions.push({ itemIndex: i, memoryId: best.memoryId, score: best.score, finalRate: best.finalRate, name: best.name, route: best.route });
     }
   }
-  return { items, missing: [...new Set(missing)].slice(0, 25), suggestions, candidates: candidates.slice(0, 10) };
+  return { items, fields, missing: [...new Set(missing)].slice(0, 25), suggestions, candidates: candidates.slice(0, 10) };
 }
 
 async function main() {
@@ -225,7 +232,7 @@ async function main() {
     if (!DRY_RUN) {
       const res = await workerRequest('/api/runner/enquiry-intake/result', {
         method: 'POST',
-        body: { enquiryId: eq.id, fields: {}, items: out.items, suggestions: out.suggestions, missing: out.missing, candidates: out.candidates, advanceWatermark: true },
+        body: { enquiryId: eq.id, fields: out.fields || {}, items: out.items, suggestions: out.suggestions, missing: out.missing, candidates: out.candidates, advanceWatermark: true },
       });
       if (res && res.ok) { processed++; lastStamp = eq.updatedAt; }
     }

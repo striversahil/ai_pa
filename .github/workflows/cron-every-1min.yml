@@ -1,0 +1,29 @@
+name: Cron - Every 1 min
+
+on:
+  # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
+  # workflow_dispatch, every tick). Native schedule removed to avoid
+  # double-firing. Runs 1440×/day — keep this workflow to ONE cheap job;
+  # the intake runner exits after a single D1 page when the watermark shows
+  # nothing new.
+  workflow_dispatch:
+
+# Only one run at a time; a new tick cancels a stale in-progress run.
+concurrency:
+  group: cron-every-1min
+  cancel-in-progress: true
+
+jobs:
+  enquiry-intake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: enquiry-intake (vision split + KYP slots + price-memory route)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          HF_API_KEY: ${{ secrets.HF_API_KEY }}
+          PINECONE_HOST: ${{ secrets.PINECONE_HOST }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        run: node scripts/enquiry-intake-runner.js --limit 10
