@@ -178,7 +178,7 @@ export default function EnquiryTracker() {
   }, [addComment]);
 
   const handleUpdateItems = useCallback(async (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => {
-    await updateItems(id, items);
+    await updateItems(id, items, "sales");
   }, [updateItems]);
 
   const handleMarkSent = useCallback(async (id: string) => {

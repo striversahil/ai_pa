@@ -172,7 +172,9 @@ export default function ProcurementQueue() {
   ) => {
     setSaveError(null);
     try {
-      await updateItems(enquiryId, fn);
+      // Procurement surface: privileged writers acting here stamp Procurement
+      // (not Management), and attaching photos never clears the spec flag.
+      await updateItems(enquiryId, fn, "procurement");
     } catch (e: any) {
       setSaveError(e?.message || "Save failed — please retry.");
     }

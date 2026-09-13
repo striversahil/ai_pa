@@ -49,15 +49,18 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMsgs([]);
     setConfirmed(new Set());
   }, [enquiryId]);
 
+  // Container-local autoscroll: never scrollIntoView (that yanks the whole
+  // page when the docked rail updates).
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [msgs, busy, open]);
 
   if (!open) return null;
@@ -111,7 +114,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
 
   const body = (
     <>
-      <div className={docked ? "flex-1 min-h-0 overflow-y-auto px-3 py-2.5 space-y-2" : "flex-1 overflow-y-auto px-4 py-3 space-y-2.5"}>
+      <div ref={scrollRef} className={docked ? "flex-1 min-h-0 overflow-y-auto px-3 py-2.5 space-y-2" : "flex-1 overflow-y-auto px-4 py-3 space-y-2.5"}>
         {msgs.length === 0 && !busy && (
           <div className="space-y-2">
             <p className="text-xs text-[var(--text-secondary)]">Ask about specs, missing details, past prices, or the thread — I’ll check the enquiry and show my work.</p>
@@ -182,14 +185,13 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
             )}
           </div>
         ))}
-        {busy && (
-          <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)] animate-pulse">
-            <span className="inline-block h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-            Consulting the enquiry…
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
+          {busy && (
+            <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)] animate-pulse">
+              <span className="inline-block h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              Consulting the enquiry…
+            </div>
+          )}
+        </div>
 
       <form
         onSubmit={(e) => { e.preventDefault(); void send(input); }}

@@ -270,7 +270,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         />
                       )}
                       {!it.specIssue && (it.thread ?? []).length > 0 && (
-                        <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} hideKinds={["request", "quoted"]} />
+                        <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} />
                       )}
                       {it.specIssue && !redacted && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
@@ -310,9 +310,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[11px] font-extrabold">
                           Rate Received: ₹{Number(it.finalRate).toLocaleString("en-IN")}
                         </div>
-                      )}
-                      {!it.specIssue && (it.thread ?? []).length > 0 && (
-                        <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} />
                       )}
                       {mode !== "none" && ((it.rates ?? []).length > 0 || ratesEditable) && (
                         <div className="mt-2 space-y-1.5">

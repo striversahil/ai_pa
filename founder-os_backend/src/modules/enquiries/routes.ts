@@ -553,6 +553,12 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
   }
   const privileged = canManageRates(me);
   const restricted = isRestrictedViewer(me);
+  // Acting surface: privileged writers (MIS/admin) working inside the
+  // procurement queue declare `surface: 'procurement'` so their trail stamps
+  // read Procurement instead of Management. One-way only — a non-privileged
+  // writer can never claim a higher role than their scopes allow.
+  const declaredSurface = String((body as any)?.surface ?? '').trim().toLowerCase();
+  const actingProcurement = restricted || (privileged && declaredSurface === 'procurement');
   const storedForItems = await store.getEnquiry(id).catch(() => null);
   const storedItems: any[] = Array.isArray((storedForItems as any)?.items) ? (storedForItems as any).items : [];
   if (Array.isArray((updates as any).items)) {
@@ -606,16 +612,19 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
         }
       }
       // Spec-dispute lifecycle (all writers):
-      // - a spec text change OR fresh reference media (client-shared photo /
-      //   drawing / video) clears an open flag — that is the sales-correction
-      //   reshare path: the fixed item (with its new attachments) flows back
-      //   into the procurement → management loop via the normal predicates;
+      // - a spec text change clears an open flag from any surface;
+      // - fresh reference media clears it ONLY from a non-procurement surface
+      //   (the sales-correction reshare path). Procurement attaching photos
+      //   (vendor refs, site pics) must never resolve its own flag — the flag
+      //   stays until sales fixes the spec;
       // - otherwise an open flag survives even if the write omits it;
       // - finalized items can't be newly flagged.
       const hadFlag = !!stored.specIssue;
       const specChanged = String(base.spec ?? "") !== String(stored.spec ?? "");
-      const mediaChanged = JSON.stringify(parseItemMedia(base.media ?? [])) !== JSON.stringify(parseItemMedia(stored.media ?? []));
-      const fixed = specChanged || mediaChanged;
+      const mediaKey = (m: any): string => `${m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image'}:${String(m?.url ?? '')}`;
+      const storedUrls = new Set(parseItemMedia(stored.media ?? []).map(mediaKey));
+      const mediaAdded = parseItemMedia(base.media ?? []).map(mediaKey).some((u) => !storedUrls.has(u));
+      const fixed = specChanged || (mediaAdded && !actingProcurement);
       if (stored.finalRate !== undefined && stored.finalRate !== null) {
         // Privileged re-flag (incorrect rates / need other vendors): reopen
         // the item — the flag attaches and the previous decision clears, so
@@ -639,8 +648,10 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       // Loop trail (server-authored, forge-proof): stored history + this
       // write's transitions. Client-sent flag/fix/request/quoted entries are
       // ignored — only client remarks are kept (once each). Rendered in
-      // procurement so multi-round back-and-forth stays visible.
-      const role: FlagThreadBy = restricted ? 'procurement' : privileged ? 'management' : 'sales';
+      // procurement so multi-round back-and-forth stays visible. The stamp
+      // follows the acting surface (procurement queue work reads Procurement
+      // even when the writer holds MIS/admin).
+      const role: FlagThreadBy = actingProcurement ? 'procurement' : privileged ? 'management' : 'sales';
       const storedThread = parseFlagThread((stored as any)?.thread);
       const seen = new Set(storedThread.map((e) => `${e.at}|${e.kind}|${e.text}`));
       const trail: FlagThreadEntry[] = [...storedThread];
@@ -661,8 +672,8 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
         trail.push({
           by: role,
           kind: 'fix',
-          text: specChanged && mediaChanged ? 'Spec corrected with new references'
-            : mediaChanged ? 'Reference attachments added' : 'Spec corrected',
+          text: specChanged && mediaAdded ? 'Spec corrected with new references'
+            : mediaAdded ? 'Reference attachments added' : 'Spec corrected',
           at: nowIso,
         });
       }

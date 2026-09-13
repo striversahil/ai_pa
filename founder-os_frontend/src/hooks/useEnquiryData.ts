@@ -354,6 +354,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const updateItems = useCallback(async (
     enquiryId: string,
     itemsOrFn: EnquiryItem[] | ((items: EnquiryItem[]) => EnquiryItem[]),
+    surface?: "sales" | "procurement" | "management",
   ) => {
     const run = async () => {
       const base = enquiriesRef.current.find((x) => x.id === enquiryId)?.items ?? [];
@@ -361,7 +362,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       setEnquiriesSynced(enquiriesRef.current.map((x) =>
         x.id === enquiryId ? { ...x, items: items as EnquiryItem[] } : x));
       try {
-        const saved = await persist('PATCH', `/api/enquiries/${enquiryId}`, { items });
+        const saved = await persist('PATCH', `/api/enquiries/${enquiryId}`, surface ? { items, surface } : { items });
         setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? toEnquiry(saved) : x)));
         return saved;
       } catch (err) {
