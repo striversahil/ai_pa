@@ -111,7 +111,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
 
   const body = (
     <>
-      <div className={docked ? "max-h-[52vh] overflow-y-auto px-3 py-2.5 space-y-2" : "flex-1 overflow-y-auto px-4 py-3 space-y-2.5"}>
+      <div className={docked ? "flex-1 min-h-0 overflow-y-auto px-3 py-2.5 space-y-2" : "flex-1 overflow-y-auto px-4 py-3 space-y-2.5"}>
         {msgs.length === 0 && !busy && (
           <div className="space-y-2">
             <p className="text-xs text-[var(--text-secondary)]">Ask about specs, missing details, past prices, or the thread — I’ll check the enquiry and show my work.</p>
@@ -215,7 +215,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
 
   if (docked) {
     return (
-      <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-sm flex flex-col overflow-hidden">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-sm flex flex-col overflow-hidden h-full min-h-[480px]">
         <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--border-card)] bg-[var(--bg-input)]/30">
           <div className="flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-indigo/15 text-xs">✨</span>

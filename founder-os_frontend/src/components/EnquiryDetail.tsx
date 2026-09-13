@@ -434,11 +434,11 @@ export default function EnquiryDetail({
 
           {/* Copilot rail — third grid column on xl screens, collapsible */}
           {!redacted && (
-            <div className="hidden xl:block min-w-0">
-              <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-                {copilotOpen ? (
-                  <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
-                ) : (
+          <div className="hidden xl:block min-w-0">
+            <div className="sticky top-4 h-[calc(100vh-2rem)]">
+              {copilotOpen ? (
+                <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
+              ) : (
                   <button
                     type="button"
                     onClick={() => toggleCopilot(true)}
