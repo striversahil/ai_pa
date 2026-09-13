@@ -217,7 +217,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
 
   if (docked) {
     return (
-      <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-sm flex flex-col overflow-hidden h-full min-h-[480px]">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-sm flex flex-col overflow-hidden h-full min-h-[320px]">
         <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--border-card)] bg-[var(--bg-input)]/30">
           <div className="flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-indigo/15 text-xs">✨</span>
