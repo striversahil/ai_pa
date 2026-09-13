@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Enquiry, EnquiryItem, EnquiryMedia, parseMoneyInput } from "../mockData";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
+import IntakeItemMeta from "./IntakeItemMeta";
+import { missingForItem, unmatchedMissing, type IntakeSuggestion } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import FlagThread from "./FlagThread";
 
@@ -20,9 +22,13 @@ interface SpecificationsSectionProps {
   /** Vendor-rate visibility per view: sales sees finals only ('none');
    *  procurement collects rates ('edit'); management reviews them ('view'). */
   ratesMode?: "none" | "edit" | "view";
+  /** AI intake (suggestions + missing slots) rendered per item row. */
+  intake?: { suggestions: IntakeSuggestion[]; missing: string[] } | null;
+  /** Sales 1-click quote-from-memory (marks rateAvailable on the item). */
+  onAcceptSuggestion?: (itemIndex: number) => void;
 }
 
-export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox, onAddRequirement, onUpdateItems, redacted = false, ratesMode }: SpecificationsSectionProps) {
+export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox, onAddRequirement, onUpdateItems, redacted = false, ratesMode, intake, onAcceptSuggestion }: SpecificationsSectionProps) {
   const mode: "none" | "edit" | "view" = ratesMode ?? (!!onUpdateItems ? "edit" : "none");
   const [isAddReqOpen, setIsAddReqOpen] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -179,6 +185,15 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
           <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">
             Items ({items.length})
           </span>
+          {intake && unmatchedMissing(intake.missing ?? [], items).length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-2">
+              {unmatchedMissing(intake.missing ?? [], items).map((m, i) => (
+                <span key={i} className="px-1.5 py-px text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  {m}
+                </span>
+              ))}
+            </div>
+          )}
           {items.length === 0 ? (
             <p className="text-xs text-[var(--text-tertiary)] font-medium bg-[var(--bg-input)]/25 p-3 rounded-xl border border-[var(--border-card)]/50">
               {redacted ? "Preparing secure view…" : "No items yet — add the first one below."}
@@ -245,6 +260,14 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 text-[11px] font-extrabold">
                           Rate available
                         </div>
+                      )}
+                      {intake && (
+                        <IntakeItemMeta
+                          itemIndex={idx}
+                          suggestions={intake.suggestions ?? []}
+                          missing={missingForItem(intake.missing ?? [], it.name ?? "", idx)}
+                          onAccept={onAcceptSuggestion}
+                        />
                       )}
                       {!it.specIssue && (it.thread ?? []).length > 0 && (
                         <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} hideKinds={["request", "quoted"]} />

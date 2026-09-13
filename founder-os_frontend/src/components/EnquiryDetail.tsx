@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../mockData";
 import CommentNode from "./CommentNode";
-import IntakePanel from "./IntakePanel";
 import EnquiryChat from "./EnquiryChat";
+import { useIntake } from "../hooks/useIntake";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
 import ActivityTimeline from "./ActivityTimeline";
@@ -68,9 +68,11 @@ export default function EnquiryDetail({
   // Mark-as-sent: finalized → sent (EST No. required, server-enforced too).
   const [sentBusy, setSentBusy] = useState(false);
   const [sentError, setSentError] = useState<string | null>(null);
-  // Price-memory accept (IntakePanel): one item at a time.
-  const [accepting, setAccepting] = useState(false);
   const sentState = String((selectedEnquiry as any).rateStatus ?? "");
+  // Copilot slide-over (per-enquiry AI sidebar).
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  // Per-item AI intake (suggestions + missing slots, written by the runner).
+  const intake = useIntake(selectedEnquiry.id, (selectedEnquiry as any).updatedAt);
   // Per-enquiry partial tag: management decided some (not all) loop items
   // while the enquiry is still open. Committed enquiries need no tag.
   const rateLoopItems = (selectedEnquiry.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable);
@@ -234,6 +236,14 @@ export default function EnquiryDetail({
             </svg>
             <span>Edit Details</span>
           </button>
+          <button
+            onClick={() => setCopilotOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand-indigo/10 border border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
+            type="button"
+          >
+            <span>✨</span>
+            <span>Copilot</span>
+          </button>
 
           <button 
             onClick={() => setConfirmDelete(true)} 
@@ -287,6 +297,8 @@ export default function EnquiryDetail({
             redacted={redacted}
             ratesMode={ratesMode}
             onUpdateItems={onUpdateItems ? (items) => onUpdateItems(selectedEnquiry.id, items) : undefined}
+            intake={intake}
+            onAcceptSuggestion={onAcceptSuggestion ? (idx) => void onAcceptSuggestion(selectedEnquiry.id, idx) : undefined}
           />
 
           {redacted && selectedEnquiry.redactedPending && (
@@ -409,19 +421,8 @@ export default function EnquiryDetail({
           </div>
         </div>
 
-        {!redacted && onAcceptSuggestion && (
-          <IntakePanel
-            enquiryId={selectedEnquiry.id}
-            accepting={accepting}
-            onAccept={(idx) => {
-              setAccepting(true);
-              Promise.resolve(onAcceptSuggestion(selectedEnquiry.id, idx)).finally(() => setAccepting(false));
-            }}
-          />
-        )}
-
         {!redacted && (
-          <EnquiryChat enquiryId={selectedEnquiry.id} />
+          <EnquiryChat enquiryId={selectedEnquiry.id} open={copilotOpen} onClose={() => setCopilotOpen(false)} />
         )}
 
       {/* Delete confirmation */}

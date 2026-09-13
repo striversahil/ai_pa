@@ -509,6 +509,60 @@ label:has(input[type="radio"]) {
   animation: scale-up 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Markdown (AI replies) */
+.md-text {
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.md-text > *:first-child { margin-top: 0; }
+.md-text > *:last-child { margin-bottom: 0; }
+.md-text p { margin: 0.35em 0; }
+.md-text h1, .md-text h2, .md-text h3 {
+  font-weight: 800;
+  margin: 0.6em 0 0.3em;
+  line-height: 1.35;
+}
+.md-text h1 { font-size: 14px; }
+.md-text h2 { font-size: 13px; }
+.md-text h3 { font-size: 12px; }
+.md-text ul, .md-text ol {
+  margin: 0.35em 0;
+  padding-left: 1.2em;
+}
+.md-text li { margin: 0.15em 0; }
+.md-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
+}
+.md-text pre {
+  margin: 0.4em 0;
+  padding: 0.6em 0.75em;
+  border-radius: 10px;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+}
+.md-text pre code {
+  background: none;
+  padding: 0;
+}
+.md-text a {
+  color: var(--color-brand-indigo);
+  text-decoration: underline;
+}
+
 .animate-fade-in {
   animation: fade-in 0.25s ease-out forwards;
 }

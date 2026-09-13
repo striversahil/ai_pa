@@ -38,9 +38,16 @@ export interface ChatProposal {
   label: string;
 }
 
+/** Audible-visible step for the UI chime: which tool ran + one-line outcome. */
+export interface ChatActivity {
+  tool: string;
+  label: string;
+}
+
 export interface ChatReply {
   reply: string;
   proposals: ChatProposal[];
+  activity: ChatActivity[];
 }
 
 interface Ctx {
@@ -119,6 +126,32 @@ function toolDefs(ctx: Ctx): ToolDefinition[] {
     });
   }
   return tools;
+}
+
+/** Human chime label per tool + args (shown in the sidebar while answering). */
+function activityLabel(name: string, args: Record<string, any>, out: { result: unknown }): string {
+  const r = (out.result ?? {}) as Record<string, any>;
+  switch (name) {
+    case 'get_enquiry_summary': {
+      const n = Array.isArray(r.items) ? r.items.length : 0;
+      return `Read enquiry · ${n} item${n === 1 ? '' : 's'}`;
+    }
+    case 'search_price_memory': {
+      const n = Array.isArray(r.matches) ? r.matches.length : 0;
+      const best = n > 0 ? r.matches[0]?.route : null;
+      return `Searched price memory · ${n} match${n === 1 ? '' : 'es'}${best ? ` (best: ${best})` : ''}`;
+    }
+    case 'read_thread': {
+      const n = Array.isArray(r.comments) ? r.comments.length : 0;
+      return `Read ${args.scope || 'full'} thread · ${n} note${n === 1 ? '' : 's'}`;
+    }
+    case 'propose_comment':
+      return r.error ? 'Comment draft failed' : 'Drafted a comment for confirm';
+    case 'propose_spec_fix':
+      return r.error ? 'Spec draft failed' : 'Drafted a spec fix for confirm';
+    default:
+      return `Ran ${name}`;
+  }
 }
 
 function parseArgs(raw: string): Record<string, any> {
@@ -250,7 +283,7 @@ export async function chatTurn(
 ): Promise<ChatReply> {
   const gateway = getGateway(env);
   if (!gateway.health().some((h) => h.provider === 'openrouter')) {
-    return { reply: 'AI chat is not configured (no OpenRouter key).', proposals: [] };
+    return { reply: 'AI chat is not configured (no OpenRouter key).', proposals: [], activity: [] };
   }
   const ctx: Ctx = {
     env, store, me, enquiryId,
@@ -281,6 +314,7 @@ export async function chatTurn(
 
   const chatModel = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || undefined;
   const proposals: ChatProposal[] = [];
+  const activity: ChatActivity[] = [];
   let reply = '';
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await gateway.complete({
@@ -304,6 +338,7 @@ export async function chatTurn(
           out = { result: { error: String(e?.message ?? e).slice(0, 200) } };
         }
         if (out.proposals) proposals.push(...out.proposals);
+        activity.push({ tool: tc.name, label: activityLabel(tc.name, args, out) });
         messages.push({
           role: 'tool',
           content: JSON.stringify(out.result).slice(0, 3000),
@@ -321,7 +356,7 @@ export async function chatTurn(
   try {
     await cacheSet(key, next, THREAD_TTL_MS);
   } catch { /* best-effort */ }
-  return { reply, proposals: proposals.slice(0, 5) };
+  return { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
 }
 
 /** Execute a confirmed proposal through the guarded route functions. */
