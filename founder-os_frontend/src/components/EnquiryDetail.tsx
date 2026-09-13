@@ -180,7 +180,7 @@ export default function EnquiryDetail({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={`space-y-6 animate-fade-in ${!redacted && copilotOpen ? "xl:pr-[346px]" : ""}`}>
       {/* Header / Actions */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-[var(--border-card)]">
         <div className="flex items-center gap-3">
@@ -275,7 +275,7 @@ export default function EnquiryDetail({
       </div>
 
       {/* Split View */}
-      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] xl:grid-cols-[360px_minmax(0,1fr)_330px] gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
         
         {/* Left Column Profile panel */}
         <ClientProfile
@@ -432,24 +432,25 @@ export default function EnquiryDetail({
             </div>
           </div>
 
-          {/* Copilot rail — third grid column on xl screens, collapsible */}
+          {/* Copilot dock — fixed viewport box on xl (independent of page
+              layout, so the input is always visible); collapses to a slim tab */}
           {!redacted && (
-          <div className="hidden xl:block min-w-0">
-            <div className="sticky top-4 h-[calc(100vh_-_2rem)] min-h-[320px]">
+            <div className="hidden xl:block">
               {copilotOpen ? (
-                <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
+                <div className="fixed top-4 bottom-4 right-4 w-[330px] z-30">
+                  <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
+                </div>
               ) : (
-                  <button
-                    type="button"
-                    onClick={() => toggleCopilot(true)}
-                    title="Open copilot"
-                    className="w-full flex flex-col items-center gap-2 py-4 rounded-2xl border border-dashed border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/5 cursor-pointer bg-transparent"
-                  >
-                    <span className="text-lg">✨</span>
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider" style={{ writingMode: "vertical-rl" }}>Copilot</span>
-                  </button>
-                )}
-              </div>
+                <button
+                  type="button"
+                  onClick={() => toggleCopilot(true)}
+                  title="Open copilot"
+                  className="fixed top-1/3 right-4 z-30 flex flex-col items-center gap-2 py-4 px-2 rounded-2xl border border-dashed border-brand-indigo/40 bg-[var(--bg-card)] text-brand-indigo hover:bg-brand-indigo/5 cursor-pointer"
+                >
+                  <span className="text-lg">✨</span>
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider" style={{ writingMode: "vertical-rl" }}>Copilot</span>
+                </button>
+              )}
             </div>
           )}
         </div>
