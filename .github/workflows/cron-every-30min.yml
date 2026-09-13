@@ -29,7 +29,6 @@ jobs:
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
           HF_API_KEY: ${{ secrets.HF_API_KEY }}
           PINECONE_HOST: ${{ secrets.PINECONE_HOST }}

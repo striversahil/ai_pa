@@ -15,8 +15,9 @@
  *   POST /api/runner/enquiry-intake/result applies fill-empty-only updates +
  *     KV suggestions for the sales UI.
  *
- * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (vision is paid per-token),
- *   HF_API_KEY, PINECONE_HOST, PINECONE_API_KEY.
+ * Env: WORKER_URL, SHARED_SECRET, OPENROUTER_API_KEYS / OPENROUTER_API_KEY
+ *   (OpenRouter-only; Groq is never used in this workflow), HF_API_KEY,
+ *   PINECONE_HOST, PINECONE_API_KEY.
  *   VISION_MODEL override supported by the gateway (default llama-4-scout).
  * Flags: --limit N (cap enquiries per run), --dry-run (no result POSTs).
  */
@@ -33,9 +34,10 @@ const CAP = limitArg ? Math.max(1, parseInt(limitArg.split('=')[1], 10)) : 25;
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-// Enquiry vision runs on OpenRouter (paid per-token); Groq stays as fallback.
-if (!process.env.OPENROUTER_API_KEYS && !process.env.OPENROUTER_API_KEY && !process.env.GROQ_API_KEYS) {
-  missing.push('OPENROUTER_API_KEYS (or OPENROUTER_API_KEY / GROQ_API_KEYS fallback)');
+// Enquiry vision runs on OpenRouter ONLY (paid per-token) — Groq is never
+// used in this workflow.
+if (!process.env.OPENROUTER_API_KEYS && !process.env.OPENROUTER_API_KEY) {
+  missing.push('OPENROUTER_API_KEYS (or OPENROUTER_API_KEY — Groq is not used here)');
 }
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
@@ -207,6 +209,11 @@ async function processEnquiry(gateway, eq) {
 async function main() {
   const gateway = getGateway(process.env);
   if (gateway.keyCount === 0) { console.error('No AI keys configured'); process.exit(1); }
+  // OpenRouter-only: refuse to run on Groq keys.
+  if (!gateway.health().some((h) => h.provider === 'openrouter')) {
+    console.error('No OpenRouter key in pool — refusing to run on Groq keys');
+    process.exit(1);
+  }
   const pending = await workerRequest(`/api/runner/enquiry-intake/pending?limit=${CAP}`);
   const rows = Array.isArray(pending.rows) ? pending.rows : [];
   console.log(`intake: ${rows.length} pending (watermark ${pending.watermark})`);

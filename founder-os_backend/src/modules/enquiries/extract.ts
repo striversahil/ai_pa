@@ -42,11 +42,9 @@ export interface EnquiryAgentRef {
   name: string;
 }
 
-const MODEL = 'openai/gpt-oss-20b';
-
 /** Enquiry pipeline provider: OpenRouter (ling-3.0-flash-vl, text+vision).
- *  Falls back to the whole pool (Groq) automatically when no OpenRouter key
- *  is configured — select() only narrows when matching keys exist. */
+ *  Groq is NEVER used here — without an OpenRouter key the extraction skips
+ *  (returns null) instead of falling back. */
 const ENQUIRY_PROVIDER = 'openrouter';
 
 /** AI line-item splitting is KEPT but OFF: sales agents enter items manually
@@ -240,17 +238,19 @@ export async function extractEnquiryFieldsRobust(
     return null;
   }
   try {
-    // OpenRouter keys present → drop the Groq-specific model so the provider
-    // default (ling-3.0-flash-vl) applies; otherwise keep the legacy Groq
-    // model and the gateway falls back to the Groq pool automatically.
+    // OpenRouter-only: skip when no OpenRouter key is configured — never
+    // fall back to Groq for enquiry processing.
     const hasOpenRouter = gateway.health().some((h) => h.provider === 'openrouter');
+    if (!hasOpenRouter) {
+      console.warn('[extract] no OpenRouter key configured — skipping extraction (Groq fallback disabled)');
+      return null;
+    }
     const parsed = await gateway.completeJson<any>({
       messages: [
         { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
         { role: 'user', content: buildPrompt(input) },
       ],
       temperature: 0,
-      ...(hasOpenRouter ? {} : { model: MODEL }),
       provider: ENQUIRY_PROVIDER,
       json: true,
     });
