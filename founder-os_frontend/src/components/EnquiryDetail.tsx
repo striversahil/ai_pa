@@ -69,8 +69,20 @@ export default function EnquiryDetail({
   const [sentBusy, setSentBusy] = useState(false);
   const [sentError, setSentError] = useState<string | null>(null);
   const sentState = String((selectedEnquiry as any).rateStatus ?? "");
-  // Copilot slide-over (per-enquiry AI sidebar).
-  const [copilotOpen, setCopilotOpen] = useState(false);
+  // Copilot rail (per-enquiry AI sidebar) — open by default, persisted.
+  const [copilotOpen, setCopilotOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("enquiry-copilot-open") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleCopilot = (next: boolean) => {
+    setCopilotOpen(next);
+    try {
+      localStorage.setItem("enquiry-copilot-open", next ? "1" : "0");
+    } catch { /* ignore */ }
+  };
   // Per-item AI intake (suggestions + missing slots, written by the runner).
   const intake = useIntake(selectedEnquiry.id, (selectedEnquiry as any).updatedAt);
   // Per-enquiry partial tag: management decided some (not all) loop items
@@ -237,8 +249,8 @@ export default function EnquiryDetail({
             <span>Edit Details</span>
           </button>
           <button
-            onClick={() => setCopilotOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand-indigo/10 border border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
+            onClick={() => toggleCopilot(!copilotOpen)}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 border font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer ${copilotOpen ? "bg-brand-indigo text-white border-brand-indigo hover:opacity-90" : "bg-brand-indigo/10 border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/20"}`}
             type="button"
           >
             <span>✨</span>
@@ -263,7 +275,7 @@ export default function EnquiryDetail({
       </div>
 
       {/* Split View */}
-      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] xl:grid-cols-[360px_minmax(0,1fr)_330px] gap-6 items-start">
         
         {/* Left Column Profile panel */}
         <ClientProfile
@@ -421,8 +433,31 @@ export default function EnquiryDetail({
           </div>
         </div>
 
+        {/* Copilot rail — always docked on xl screens, collapsible */}
         {!redacted && (
-          <EnquiryChat enquiryId={selectedEnquiry.id} open={copilotOpen} onClose={() => setCopilotOpen(false)} />
+          <div className="hidden xl:block">
+            <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+              {copilotOpen ? (
+                <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => toggleCopilot(true)}
+                  title="Open copilot"
+                  className="w-full flex flex-col items-center gap-2 py-4 rounded-2xl border border-dashed border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/5 cursor-pointer bg-transparent"
+                >
+                  <span className="text-lg">✨</span>
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider" style={{ writingMode: "vertical-rl" }}>Copilot</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!redacted && (
+          <div className="xl:hidden">
+            <EnquiryChat enquiryId={selectedEnquiry.id} open={copilotOpen} onClose={() => toggleCopilot(false)} />
+          </div>
         )}
 
       {/* Delete confirmation */}
