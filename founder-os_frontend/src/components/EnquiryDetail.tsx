@@ -287,7 +287,7 @@ export default function EnquiryDetail({
         />
 
 {/* Right Column with Requirements & discussion thread */}
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
 
           <div className="flex items-center justify-between">
             <h3 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Requirements</h3>
@@ -431,28 +431,28 @@ export default function EnquiryDetail({
             )}
             </div>
           </div>
-        </div>
 
-        {/* Copilot rail — always docked on xl screens, collapsible */}
-        {!redacted && (
-          <div className="hidden xl:block">
-            <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-              {copilotOpen ? (
-                <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => toggleCopilot(true)}
-                  title="Open copilot"
-                  className="w-full flex flex-col items-center gap-2 py-4 rounded-2xl border border-dashed border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/5 cursor-pointer bg-transparent"
-                >
-                  <span className="text-lg">✨</span>
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider" style={{ writingMode: "vertical-rl" }}>Copilot</span>
-                </button>
-              )}
+          {/* Copilot rail — third grid column on xl screens, collapsible */}
+          {!redacted && (
+            <div className="hidden xl:block min-w-0">
+              <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+                {copilotOpen ? (
+                  <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleCopilot(true)}
+                    title="Open copilot"
+                    className="w-full flex flex-col items-center gap-2 py-4 rounded-2xl border border-dashed border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/5 cursor-pointer bg-transparent"
+                  >
+                    <span className="text-lg">✨</span>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider" style={{ writingMode: "vertical-rl" }}>Copilot</span>
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {!redacted && (
           <div className="xl:hidden">
