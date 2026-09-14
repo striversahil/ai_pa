@@ -15,9 +15,11 @@ interface ProcurementItemCardProps {
   onRemoveRate: (rateIdx: number) => void;
   onFlag: (reason: string) => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
-  /** Vendor reference attachments (photos/drawings/PDFs). Append-only —
-   *  procurement can never edit or remove stored media. */
-  onAddMedia?: (media: NonNullable<EnquiryItem["media"]>) => void;
+  /** Management-internal handoff (MIS-gated by the parent): mark the item
+   *  for management sourcing, or return it to the procurement queue. */
+  canMarkInternal?: boolean;
+  onMarkInternal?: () => void;
+  onUnmarkInternal?: () => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
 }
@@ -27,14 +29,15 @@ interface ProcurementItemCardProps {
 // collapsed behind buttons so the queue stays scannable. A flagged item shows
 // its hold banner and no rate actions until Sales corrects the spec.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddMedia, readOnly = false,
+  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox,
+  canMarkInternal = false, onMarkInternal, onUnmarkInternal, readOnly = false,
 }: ProcurementItemCardProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [editingRate, setEditingRate] = useState<number | null>(null);
   const [showFlag, setShowFlag] = useState(false);
   const [flagReason, setFlagReason] = useState("");
-  const [mediaError, setMediaError] = useState<string | null>(null);
-  const [mediaDragOver, setMediaDragOver] = useState(false);
+  const [refError, setRefError] = useState<string | null>(null);
+  const [refDropRi, setRefDropRi] = useState<number | null>(null);
 
   const rates = item.rates ?? [];
   const flagged = !!item.specIssue;
@@ -50,12 +53,24 @@ export default function ProcurementItemCard({
     setShowFlag(false);
   };
 
-  const attachMedia = async (files: FileList | File[] | null) => {
-    if (!files || files.length === 0 || !onAddMedia) return;
-    setMediaError(null);
+  // Per-vendor reference attachments: each quote carries its own photos /
+  // drawings / PDFs. The selected vendor's refs forward to sales with the
+  // final rate; losing quotes' refs stay internal.
+  const attachRateRefs = async (ri: number, files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
+    setRefError(null);
     const { media, skipped } = await filesToMedia(files);
-    if (skipped.length > 0) setMediaError(`Skipped: ${skipped.join(", ")}`);
-    if (media.length > 0) onAddMedia(media);
+    if (skipped.length > 0) setRefError(`Skipped: ${skipped.join(", ")}`);
+    if (media.length === 0) return;
+    const cur = rates[ri];
+    if (!cur) return;
+    onEditRate(ri, { ...cur, references: [...(cur.references ?? []), ...media] });
+  };
+
+  const removeRateRef = (ri: number, mi: number) => {
+    const cur = rates[ri];
+    if (!cur) return;
+    onEditRate(ri, { ...cur, references: (cur.references ?? []).filter((_, j) => j !== mi) });
   };
 
   return (
@@ -79,6 +94,11 @@ export default function ProcurementItemCard({
         {item.rateAvailable && (
           <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-indigo-500/10 text-indigo-500 border-indigo-500/30">
             Rate available
+          </span>
+        )}
+        {item.internalRates && (
+          <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-violet-500/10 text-violet-500 border-violet-500/30">
+            Internal — management
           </span>
         )}
       </div>
@@ -129,29 +149,20 @@ export default function ProcurementItemCard({
         </div>
       )}
 
-      {onAddMedia && !readOnly && (
-        <div
-          onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setMediaDragOver(true); } }}
-          onDragLeave={() => setMediaDragOver(false)}
-          onDrop={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setMediaDragOver(false); void attachMedia(e.dataTransfer.files); } }}
-          className={`flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-2 py-1.5 transition-colors ${mediaDragOver ? "border-brand-indigo bg-brand-indigo/10" : "border-[var(--border-card)]"}`}
-        >
-          <label className="inline-flex items-center gap-1 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
-            + Vendor reference
-            <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
-              onChange={(e) => { void attachMedia(e.target.files); e.target.value = ""; }} />
-          </label>
-          <span className="text-[10px] text-[var(--text-tertiary)]">photos / drawings / PDF — or drop files here</span>
-          {mediaError && <span className="text-[10px] font-semibold text-[var(--color-danger)]">{mediaError}</span>}
-        </div>
-      )}
-
       <FlagThread thread={item.thread ?? []} hideSalesRemarks />
 
       {rates.length > 0 && (
         <ul className="space-y-1">
-          {rates.map((r, ri) => (
-            <li key={ri} className="rounded-lg border border-[var(--border-card)]/60 px-2 py-1.5">
+          {rates.map((r, ri) => {
+            const refs = r.references ?? [];
+            const refImages = refs.filter((m) => m.type !== "video" && m.type !== "pdf").map((m) => m.url).filter(Boolean);
+            return (
+            <li key={ri}
+              onDragOver={!readOnly ? (e) => { if (dragHasFiles(e)) { e.preventDefault(); if (refDropRi !== ri) setRefDropRi(ri); } } : undefined}
+              onDragLeave={!readOnly ? () => { if (refDropRi === ri) setRefDropRi(null); } : undefined}
+              onDrop={!readOnly ? (e) => { if (dragHasFiles(e)) { e.preventDefault(); setRefDropRi(null); void attachRateRefs(ri, e.dataTransfer.files); } } : undefined}
+              className={`rounded-lg border px-2 py-1.5 transition-colors ${!readOnly && refDropRi === ri ? "border-brand-indigo bg-brand-indigo/10" : "border-[var(--border-card)]/60"}`}
+            >
               {editingRate === ri ? (
                 <ItemRateForm
                   initial={r}
@@ -189,8 +200,45 @@ export default function ProcurementItemCard({
                   <span className="font-bold">Their spec: </span>{r.specDiff}
                 </p>
               )}
+              {editingRate !== ri && (
+                <div className="mt-1 space-y-1">
+                  {refs.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {refs.map((m, mi) => (
+                        <div key={mi} className="relative flex-shrink-0">
+                          {m.type === "video" ? (
+                            <video src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
+                          ) : m.type === "pdf" ? (
+                            <a href={m.url} download={m.name || `vendor-ref-${mi + 1}.pdf`}
+                              className="block px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 transition-colors text-[10px] font-bold text-[var(--text-primary)] truncate max-w-[8rem]">
+                              {m.name || "PDF"}
+                            </a>
+                          ) : (
+                            <img src={m.url} alt={`Vendor reference ${mi + 1}`}
+                              className="w-12 h-12 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in"
+                              onClick={() => onOpenLightbox(m.url, refImages.length > 0 ? refImages : [m.url], Math.max(0, refImages.indexOf(m.url)))} />
+                          )}
+                          {!readOnly && (
+                            <button type="button" onClick={() => removeRateRef(ri, mi)} title="Remove reference"
+                              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold cursor-pointer border border-white/20">×</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {!readOnly && (
+                    <label className="inline-flex items-center gap-1 text-[10px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
+                      + Reference
+                      <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
+                        onChange={(e) => { void attachRateRefs(ri, e.target.files); e.target.value = ""; }} />
+                    </label>
+                  )}
+                  {refError && <p className="text-[10px] font-semibold text-[var(--color-danger)]">{refError}</p>}
+                </div>
+              )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
 
@@ -237,6 +285,24 @@ export default function ProcurementItemCard({
                 Incorrect Spec
               </button>
             )
+          )}
+        </div>
+      )}
+
+      {canMarkInternal && !locked && (
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          {item.internalRates ? (
+            <button type="button" onClick={onUnmarkInternal}
+              title="Return this item to the procurement queue"
+              className="px-2.5 py-1.5 bg-transparent border border-violet-500/40 text-violet-500 hover:bg-violet-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
+              Return to procurement
+            </button>
+          ) : (
+            <button type="button" onClick={onMarkInternal}
+              title="Management sources this item's rates itself — leaves the procurement queue"
+              className="px-2.5 py-1.5 bg-violet-500/10 text-violet-500 hover:bg-violet-500/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+              Handle internally
+            </button>
           )}
         </div>
       )}

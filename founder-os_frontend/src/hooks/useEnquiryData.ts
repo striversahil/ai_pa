@@ -55,6 +55,15 @@ function toEnquiry(raw: any): Enquiry {
                 specSame: q?.specSame === false ? false : true,
                 specDiff: q?.specSame === false && q?.specDiff ? String(q.specDiff) : undefined,
                 quotedAt: q?.quotedAt ? String(q.quotedAt) : undefined,
+                references: Array.isArray(q?.references)
+                  ? q.references
+                      .map((m: any) => ({
+                        type: m?.type === "video" ? "video" : m?.type === "pdf" ? "pdf" : "image",
+                        url: String(m?.url ?? ""),
+                        name: m?.name ? String(m.name) : undefined,
+                      }))
+                      .filter((m: any) => m.url.length > 0)
+                  : [],
               }))
               .filter((q: any) => q.vendor.trim() && Number.isFinite(q.rate))
           : [],
@@ -65,6 +74,8 @@ function toEnquiry(raw: any): Enquiry {
         specIssue: r?.specIssue ? String(r.specIssue) : undefined,
         specFlaggedAt: r?.specFlaggedAt ? String(r.specFlaggedAt) : undefined,
         rateAvailable: r?.rateAvailable === true,
+        internalRates: r?.internalRates === true,
+        internalRatesAt: r?.internalRatesAt ? String(r.internalRatesAt) : undefined,
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested) : undefined,
         ratesRequestedAt: r?.ratesRequestedAt ? String(r.ratesRequestedAt) : undefined,
         thread: Array.isArray(r?.thread)

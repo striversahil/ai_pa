@@ -117,6 +117,8 @@ function pick(data: any): Partial<Enquiry> | null {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        internalRates: r?.internalRates === true,
+        internalRatesAt: isoOrUndefined(r?.internalRatesAt),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         thread: parseFlagThread(r?.thread),
@@ -595,6 +597,12 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
         const seenMedia = new Set(storedMedia.map((m: any) => `${m.type}:${m.url}`));
         base.media = [...storedMedia, ...incomingMedia.filter((m: any) => !seenMedia.has(`${m.type}:${m.url}`))];
         base.rateAvailable = stored.rateAvailable === true;
+        // Internal handling is Management-only: procurement and sales writes
+        // follow the stored flag so neither surface can claim or drop it.
+        if (!privileged) {
+          base.internalRates = stored.internalRates === true;
+          base.internalRatesAt = stored.internalRatesAt ?? undefined;
+        }
         // A fresh/edited rate answers Management's request — clear it.
         // Untouched rates keep a pending request alive.
         const ratesChanged = JSON.stringify(base.rates ?? []) !== JSON.stringify(stored.rates ?? []);
@@ -608,6 +616,8 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       if (!privileged && !restricted) {
         base.ratesRequested = stored.ratesRequested;
         base.ratesRequestedAt = stored.ratesRequestedAt;
+        base.internalRates = stored.internalRates === true;
+        base.internalRatesAt = stored.internalRatesAt ?? undefined;
       } else {
         // Submitted value stands (privileged set it, or the restricted
         // branch above already resolved it) — but a concurrent rate change
@@ -695,6 +705,20 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       }
       if (reqSet) trail.push({ by: role, kind: 'request', text: String(base.ratesRequested).slice(0, 500), at: nowIso });
       if (reqCleared) trail.push({ by: role, kind: 'quoted', text: 'New vendor rates added', at: nowIso });
+      // Internal-handling lifecycle (privileged only — other roles are
+      // pinned to stored above): stamp the handoff, trail the transition.
+      if (privileged) {
+        const internalSet = !stored.internalRates && base.internalRates;
+        const internalCleared = !!stored.internalRates && !base.internalRates;
+        if (internalSet) {
+          base.internalRatesAt = base.internalRatesAt || nowIso;
+          trail.push({ by: role, kind: 'remark', text: 'Taken up internally by management', at: nowIso });
+        }
+        if (internalCleared) {
+          base.internalRatesAt = undefined;
+          trail.push({ by: role, kind: 'remark', text: 'Returned to the procurement queue', at: nowIso });
+        }
+      }
       base.thread = trail.slice(-50);
       return base;
     }).filter((it: any) => it !== null);

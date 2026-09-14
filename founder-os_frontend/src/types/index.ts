@@ -38,6 +38,9 @@ export interface EnquiryItemRate {
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
   specDiff?: string;
+  /** Per-vendor reference attachments (photos/drawings/PDFs backing THIS
+   *  quote). The selected vendor's refs forward to sales with the final rate. */
+  references?: EnquiryMedia[];
   /** ISO instant the quote was logged (older rows lack it). */
   quotedAt?: string;
 }
@@ -65,6 +68,10 @@ export interface EnquiryItem {
   /** Rate availability (sales-marked): true = rate already available, the item
    *  skips the procurement→management loop. False/absent = rate unavailable. */
   rateAvailable?: boolean;
+  /** Management-internal handling: true = management sources this item's
+   *  rates itself; the procurement queue skips it. Management-only flag. */
+  internalRates?: boolean;
+  internalRatesAt?: string;
   /** Management → procurement request: present = management asked for (more)
    *  vendor rates (incorrect quote / different vendor needed). Cleared when
    *  procurement adds or edits a rate. */
@@ -82,11 +89,12 @@ export interface FlagThreadEntry {
   at: string;
 }
 
-/** Loop-eligible for Procurement: rate unavailable and (still unquoted OR
- *  management asked for more quotes). Spec-held items (specIssue) stay
- *  visible via the pending enquiry — the row chip shows their hold state. */
-export function itemNeedsRates(it: Pick<EnquiryItem, "rateAvailable" | "rates" | "ratesRequested">): boolean {
-  return !it?.rateAvailable && (((it?.rates ?? []).length === 0) || !!it?.ratesRequested);
+/** Loop-eligible for Procurement: rate unavailable, NOT management-internal,
+ *  and (still unquoted OR management asked for more quotes). Spec-held items
+ *  (specIssue) stay visible via the pending enquiry — the row chip shows
+ *  their hold state. */
+export function itemNeedsRates(it: Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "ratesRequested">): boolean {
+  return !it?.rateAvailable && !it?.internalRates && (((it?.rates ?? []).length === 0) || !!it?.ratesRequested);
 }
 
 /** Submitted to management: the explicit procurement handoff. Only
@@ -95,11 +103,12 @@ export function isSubmitted(e: { procurementSubmittedAt?: string }): boolean {
   return !!String(e?.procurementSubmittedAt ?? "").trim();
 }
 
-/** Loop-eligible for Management: rate unavailable, quoted, not finalized,
- *  spec undisputed. */
-export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "rates" | "finalRate" | "specIssue">): boolean {
+/** Loop-eligible for Management: rate unavailable, spec undisputed, not
+ *  finalized — and either quoted OR management-internal (management enters
+ *  the rate itself in the review panel). */
+export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate" | "specIssue">): boolean {
   return !it?.rateAvailable
-    && ((it?.rates ?? []).length > 0)
+    && (((it?.rates ?? []).length > 0) || it?.internalRates === true)
     && (it?.finalRate === undefined || it?.finalRate === null)
     && !it?.specIssue;
 }
@@ -123,15 +132,19 @@ export function isProcurementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean 
 }
 
 export function isManagementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
-  if (!isSubmitted(e)) return false;
-  return (e.items ?? []).some(itemNeedsDecision);
+  const items = e.items ?? [];
+  if (!items.some(itemNeedsDecision)) return false;
+  // Unsubmitted enquiries reach management ONLY through their internal
+  // items — procurement's queue still owns everything else.
+  if (isSubmitted(e)) return true;
+  return items.some((it) => it?.internalRates === true && itemNeedsDecision(it));
 }
 
 /** Submit readiness: every quotable loop item (correct spec, rate not
- *  already available) carries at least one vendor rate. Flagged items stay
- *  out — they are sales' problem, not procurement's. */
+ *  already available, not management-internal) carries at least one vendor
+ *  rate. Flagged items stay out — they are sales' problem, not procurement's. */
 export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
-  const loop = (e.items ?? []).filter((it) => !it?.specIssue && !it?.rateAvailable);
+  const loop = (e.items ?? []).filter((it) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
   if (loop.length === 0) return { ok: false, reason: "No quotable items yet" };
   const unrated = loop.filter((it) => (it?.rates ?? []).length === 0).length;
   if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates` };

@@ -266,7 +266,10 @@ export async function invalidateAccountsCache(): Promise<void> {
   } catch { /* older cache module without prefix del */ }
 }
 
-async function computeDashboard(dateStr: string) {
+async function computeDashboard(
+  dateStr: string,
+  scope: { scope: LaneScope | null; isAdmin: boolean } | null = null,
+) {
   await ensureInstances(dateStr);
   const [roster, templates, logs] = await Promise.all([
     prisma.accountant.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
@@ -285,7 +288,14 @@ async function computeDashboard(dateStr: string) {
     : [];
   const byTemplate = new Map((logs as any[]).map((l) => [String(l.templateId), l]));
   const active = (templates as any[]).filter((t) => !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')));
-  const dueTemplates = active.filter((t) => isDueOn(t, dateStr));
+  // Lane enforcement: non-MIS viewers only receive their own lane (their role
+  // plus shared). Admins, and logged-out callers where the auth gate is off
+  // (local/dev), receive everything. Logged-in non-roster viewers receive
+  // nothing but the team board.
+  const laneRole = scope && !scope.isAdmin ? (scope.scope?.selfRole ?? null) : null;
+  const laneEnforced = !!scope && !scope.isAdmin;
+  const inLane = (t: any) => !laneEnforced || (laneRole !== null && (t.ownerRole === 'either' || t.ownerRole === laneRole));
+  const dueTemplates = active.filter((t) => inLane(t) && isDueOn(t, dateStr));
   const carried = await getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr);
   const filesByLog = new Map<string, any[]>();
   for (const f of attachments as any[]) {
@@ -333,7 +343,7 @@ async function computeDashboard(dateStr: string) {
   // Reference tasks with no fixed date (variable_per_item / to_be_decided):
   // always visible, never auto-instantiated, never overdue.
   const unscheduled = (templates as any[])
-    .filter((t) => UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')))
+    .filter((t) => inLane(t) && UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')))
     .map((t) => ({
       templateId: t.id,
       title: t.title,
@@ -356,6 +366,10 @@ async function computeDashboard(dateStr: string) {
       done: doneCount,
       overdue: overdueCount,
       generatedAt: new Date().toISOString(),
+      isAdmin: scope?.isAdmin ?? true,
+      self: scope && !scope.isAdmin && scope.scope
+        ? { id: scope.scope.selfId, name: scope.scope.selfName, role: scope.scope.selfRole }
+        : null,
     },
     roster: (roster as any[]).map((r) => ({
       // Public team slice: identity + lane only (no emails/phones — those stay
@@ -363,8 +377,8 @@ async function computeDashboard(dateStr: string) {
       // the Who-picker, lane labels, and the team board.
       id: r.id, name: r.name, role: r.role, order: r.order,
     })),
-    senior: split('senior'),
-    junior: split('junior'),
+    senior: laneEnforced && laneRole !== 'senior' ? [] : split('senior'),
+    junior: laneEnforced && laneRole !== 'junior' ? [] : split('junior'),
     items,
     unscheduled,
     team: await computeTeam(dateStr, carried, { roster, todayLogs: logs }),
@@ -373,7 +387,11 @@ async function computeDashboard(dateStr: string) {
 
 export async function getAccountsDashboardData(query: Record<string, any> = {}) {
   const date = String(query.date || '').slice(0, 10) || istDateStr();
-  return cached(`${DATA_CACHE_PREFIX}${date}`, DATA_TTL_MS, () => computeDashboard(date));
+  // Scope is part of the cache key: a junior must never be served a payload
+  // computed for MIS (or vice versa).
+  const scope = (query.scope ?? null) as { scope: LaneScope | null; isAdmin: boolean } | null;
+  const scopeKey = !scope || scope.isAdmin ? 'all' : scope.scope ? `self:${scope.scope.selfId}` : 'unassigned';
+  return cached(`${DATA_CACHE_PREFIX}${date}:${scopeKey}`, DATA_TTL_MS, () => computeDashboard(date, scope));
 }
 
 // ── MIS export: past-N-days full ledger ─────────────────────────────────────
@@ -446,6 +464,54 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
     }
   }
   return { from, to: today, days, total: rows.length, rows };
+}
+
+// ── Identity scoping (lane enforcement) ─────────────────────────────────────
+// Non-MIS viewers only ever receive their own lane (role + shared). Mirrors
+// the telecalling selfAgentId pattern: the frontend ALSO hides other tabs,
+// but the payload itself is scoped so tab-switching can't leak lanes.
+export interface LaneScope {
+  selfId: string;
+  selfRole: string;
+  selfName: string;
+}
+
+function normId(s: unknown): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+export async function resolveSelfAccountant(
+  asId: unknown,
+  me: { user?: { email?: string | null; name?: string | null } } | null,
+): Promise<LaneScope | null> {
+  const roster = (await prisma.accountant.findMany({ where: { deleted: false } })) as any[];
+  // Declared identity first (the "Acting as" picker — authoritative for
+  // shared logins). Must be a live roster row.
+  if (asId) {
+    const hit = roster.find((r) => String(r.id) === String(asId));
+    if (hit) return { selfId: String(hit.id), selfRole: String(hit.role), selfName: String(hit.name) };
+  }
+  if (!me) return null;
+  const meEmail = normId(me.user?.email);
+  if (meEmail) {
+    const byEmail = roster.filter((r) => r.email && normId(r.email) === meEmail);
+    if (byEmail.length === 1) {
+      const h = byEmail[0];
+      return { selfId: String(h.id), selfRole: String(h.role), selfName: String(h.name) };
+    }
+  }
+  const meName = normId(me.user?.name);
+  if (meName.length >= 3) {
+    const hits = roster.filter((r) => {
+      const rn = normId(r.name);
+      return rn && (rn === meName || rn.startsWith(meName) || meName.startsWith(rn));
+    });
+    if (hits.length === 1) {
+      const h = hits[0];
+      return { selfId: String(h.id), selfRole: String(h.role), selfName: String(h.name) };
+    }
+  }
+  return null;
 }
 
 // ── Roster (MIS writes) ──────────────────────────────────────────────────────
@@ -586,12 +652,13 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
   // Marking done without naming anyone credits the signed-in user.
   if (status === 'done' && !data.doneBy && actor) data.doneBy = String(actor).slice(0, 200);
   if (data.accountantId) {
-    // Never credit a removed (or unknown) roster entry: the name trail in
-    // doneBy is preserved, but the id link is dropped so ghosts can't collect
-    // points or appear as owners. Fail-open on read errors.
+    // Never credit a removed (or unknown) roster entry: the id link is
+    // dropped so ghosts can't collect points or appear as owners — but their
+    // name is kept in doneBy as the history trail. Fail-open on read errors.
     try {
       const acc: any = await prisma.accountant.findUnique({ where: { id: String(data.accountantId) } });
       if (!acc || acc.deleted) {
+        if (status === 'done' && !data.doneBy && acc?.name) data.doneBy = String(acc.name).slice(0, 200);
         data.accountantId = null;
       } else if (status === 'done' && !data.doneBy && acc.name) {
         data.doneBy = String(acc.name).slice(0, 200);

@@ -73,6 +73,10 @@ export default function ProcurementQueue() {
   const { me } = useAuth();
   const scopes = me?.scopes ?? [];
   const allowed = !!me && (me.isAdmin || scopes.includes("mis") || scopes.includes("procurement"));
+  // Internal handoff is management-only: MIS holders working this queue may
+  // mark items; pure procurement writers never see the buttons (the server
+  // pins the flag for non-privileged writers regardless).
+  const canMarkInternal = !!me && (me.isAdmin || scopes.includes("mis"));
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   // Single enquiry modal: opening an enquiry shows ALL its items (rates,
   // forms, flags) together — never one modal per item.
@@ -196,6 +200,14 @@ export default function ProcurementQueue() {
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, specIssue: reason, specFlaggedAt: new Date().toISOString() } : it)), [patchItems]);
 
+  const handleMarkInternal = useCallback((enquiryId: string, itemIdx: number) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) =>
+      i === itemIdx ? { ...it, internalRates: true, internalRatesAt: new Date().toISOString() } : it)), [patchItems]);
+
+  const handleUnmarkInternal = useCallback((enquiryId: string, itemIdx: number) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) =>
+      i === itemIdx ? { ...it, internalRates: false, internalRatesAt: undefined } : it)), [patchItems]);
+
   // Final handoff: only an explicit submit concludes procurement and routes
   // the enquiry to management. Late vendor quotes stay addable until then.
   const handleSubmit = useCallback(async (enquiryId: string) => {
@@ -207,10 +219,6 @@ export default function ProcurementQueue() {
       setSaveError(e?.message || "Submit failed — please retry.");
     }
   }, [updateEnquiry]);
-
-  const handleAddMedia = useCallback((enquiryId: string, itemIdx: number, media: EnquiryItem["media"]) =>
-    void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...it, media: [...(it.media ?? []), ...(media ?? [])] } : it)), [patchItems]);
 
   if (!allowed) {
     return (
@@ -451,9 +459,11 @@ export default function ProcurementQueue() {
                   onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
                   onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
                   onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
-                  onAddMedia={(media) => handleAddMedia(selEnquiry.id, itemIdx, media)}
+                  canMarkInternal={canMarkInternal}
+                  onMarkInternal={() => handleMarkInternal(selEnquiry.id, itemIdx)}
+                  onUnmarkInternal={() => handleUnmarkInternal(selEnquiry.id, itemIdx)}
                   onOpenLightbox={handleOpenLightbox}
-                  readOnly={submitted || (item.finalRate !== undefined && item.finalRate !== null)}
+                  readOnly={submitted || item.internalRates === true || (item.finalRate !== undefined && item.finalRate !== null)}
                 />
               ));
             })()}

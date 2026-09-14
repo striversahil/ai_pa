@@ -128,6 +128,24 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
           }
         } catch { /* no session → unscoped */ }
       }
+      // For the accounts taskbar, non-admin viewers are scoped to their OWN
+      // lane (telecalling-style): the payload only contains their role +
+      // shared tasks, so other lanes can't leak through tab-switching or
+      // direct API calls. Identity = explicit `?as=` (the "Acting as" picker,
+      // authoritative for shared logins) with session matching as fallback.
+      if (c.req.param('slug') === 'accounts') {
+        try {
+          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis');
+          if (me && !isAdmin) {
+            const { resolveSelfAccountant } = await import('../../automations/accounts/service');
+            const self = await resolveSelfAccountant(query.as ?? null, me as any);
+            query.scope = { scope: self, isAdmin: false };
+          } else if (me) {
+            query.scope = { scope: null, isAdmin: true };
+          }
+        } catch { /* no session → unscoped (auth gate normally blocks first) */ }
+      }
       const data = await AutomationEngine.getData(c.req.param('slug'), query);
       return c.json(data);
     } catch (e: any) {

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import type { Enquiry, EnquiryItem } from "@/types";
+import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { parseMoneyInput, historyDateChip } from "@/types";
 import FlagThread from "@/components/FlagThread";
+import ItemRateForm from "@/components/ItemRateForm";
 
 export const RATE_STATUS_LABEL: Record<string, string> = {
   "": "Rate Pending",
@@ -179,6 +180,20 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     );
   };
 
+  // Management-internal sourcing: add the internally-obtained rate directly
+  // (vendor = management's own source). Markup + finalize continue as usual.
+  const addInternalRate = async (i: number, rate: EnquiryItemRate) => {
+    setSaveError(null);
+    try {
+      await onSave(
+        items.map((it, j) => (j === i ? { ...it, rates: [...(it.rates ?? []), rate] } : it)),
+        false,
+      );
+    } catch (e: any) {
+      setSaveError(e?.message || "Save failed — please retry.");
+    }
+  };
+
   const submitRequest = (i: number) => {
     setReqs((prev) => ({ ...prev, [i]: reqNote.trim() }));
     setReqOpen(null);
@@ -343,6 +358,35 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               );
             }
             if (it.rateAvailable) return null; // rate already available — skips Management entirely
+            // Management-internal with no rate yet: enter the sourced rate
+            // here, then mark up + finalize as usual. (Rated internal items
+            // render through the standard flow below.)
+            if (it.internalRates && (it.rates ?? []).length === 0 && !locked) {
+              return (
+                <div key={i} className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-xs font-extrabold text-white">
+                      Item {i + 1}{it.name ? ` — ${it.name}` : ""}
+                    </span>
+                    {it.qty && (
+                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
+                    )}
+                    <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-violet-500/10 text-violet-400 border-violet-500/30">
+                      Internal — management
+                    </span>
+                  </div>
+                  {it.spec && (
+                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                  )}
+                  <FlagThread thread={it.thread ?? []} tone="dark" />
+                  <ItemRateForm
+                    submitLabel="Add internal rate"
+                    onAdd={(rate) => void addInternalRate(i, rate)}
+                  />
+                  <p className="text-[10px] text-zinc-500">Rate sourced by management — markup and finalize continue below once added.</p>
+                </div>
+              );
+            }
             const rates = it.rates ?? [];
             const vendor = sel[i] ?? it.selectedVendor ?? "";
             const rate = rates.find((r) => r.vendor === vendor)?.rate;
@@ -395,6 +439,23 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           {r.specSame === false && r.specDiff && (
                             <span className="block text-amber-400/90 whitespace-pre-wrap leading-relaxed mt-0.5">
                               <span className="font-bold">Their spec: </span>{r.specDiff}
+                            </span>
+                          )}
+                          {(r.references ?? []).length > 0 && (
+                            <span className="flex flex-wrap gap-1.5 mt-1">
+                              {(r.references ?? []).map((m, mi) => (
+                                m.type === "video" ? (
+                                  <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" />
+                                ) : m.type === "pdf" ? (
+                                  <a key={mi} href={m.url} download={m.name || `vendor-ref-${mi + 1}.pdf`} onClick={(e) => e.stopPropagation()}
+                                    className="px-2 py-1.5 rounded-lg border border-zinc-700 bg-red-500/10 hover:bg-red-500/20 transition-colors text-[10px] font-bold text-zinc-200 truncate max-w-[8rem]">
+                                    {m.name || "PDF"}
+                                  </a>
+                                ) : (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-zinc-700" />
+                                )
+                              ))}
                             </span>
                           )}
                         </span>

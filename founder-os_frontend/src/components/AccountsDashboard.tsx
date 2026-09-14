@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 
@@ -99,7 +99,7 @@ interface TeamData {
 }
 
 interface DashData {
-  meta: { date: string; today: string; total: number; open: number; done: number; overdue: number; generatedAt: string };
+  meta: { date: string; today: string; total: number; open: number; done: number; overdue: number; generatedAt: string; isAdmin?: boolean; self?: { id: string; name: string; role: string } | null };
   roster: RosterRow[];
   senior: TaskItem[];
   junior: TaskItem[];
@@ -321,16 +321,10 @@ function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: Ros
   );
 }
 
-type AccountsView = "dashboard" | "tasks" | "senior" | "junior" | "controller";
+type AccountsView = "dashboard" | "tasks" | "senior" | "junior" | "my" | "controller";
 
-const TABS: { key: AccountsView; label: string; icon: string }[] = [
-  { key: "dashboard", label: "Dashboard", icon: "📊" },
-  { key: "tasks", label: "All Tasks", icon: "📋" },
-  { key: "senior", label: "Senior", icon: "👔" },
-  { key: "junior", label: "Junior", icon: "🧾" },
-  // MIS-only controller tab (filtered out of the nav without the `mis` scope).
-  { key: "controller", label: "Controller", icon: "🎛️" },
-];
+// NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
+// (MIS/root see every lane; others see Dashboard + their own "My Tasks").
 
 function fmtToday(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -352,7 +346,9 @@ export default function AccountsDashboard() {
   // the 30s hook timeout turns it into an error and the next poll recovers.
   // Loading renders non-destructively (spinner only before first payload).
   const dash = useLiveDashboard<DashData>(async () => {
-    const res = await fetch("/api/automations/accounts/data");
+    // Identity rides along so the backend scopes the payload to the viewer's
+    // own lane (MIS/root skip scoping server-side).
+    const res = await fetch(`/api/automations/accounts/data${actorPick ? `?as=${encodeURIComponent(actorPick)}` : ""}`);
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
   }, { pollMs: 60000 });
@@ -373,6 +369,14 @@ export default function AccountsDashboard() {
       else localStorage.removeItem(ACTOR_KEY);
     } catch { /* private mode */ }
   };
+  // Identity drives backend lane scoping — refetch as the new person
+  // (skipped on mount; the initial load already runs).
+  const mounted = useRef(false);
+  React.useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    dash.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actorPick]);
   const defaultWho = actorPick || selfId;
   // A remembered identity can go stale (person removed from the roster):
   // drop it so "Acting as" never credits a deleted accountant.
@@ -383,6 +387,8 @@ export default function AccountsDashboard() {
     if (!data) return [];
     if (view === "senior") return data.senior;
     if (view === "junior") return data.junior;
+    // Scoped "My Tasks" and the admin "All Tasks" both render the payload's
+    // items, which the backend already lane-filtered for non-admin viewers.
     return data.items;
   }, [data, view]);
   const visible = useMemo(() => {
@@ -394,6 +400,41 @@ export default function AccountsDashboard() {
   const pendingCount = lane.filter((t) => t.status === "pending" || t.status === "overdue").length;
   const inprogCount = lane.filter((t) => t.status === "inprogress").length;
   const doneCount = lane.filter((t) => t.status === "done").length;
+
+  // Identity-aware nav: MIS/root see every lane; everyone else sees Dashboard
+  // + exactly their own lane ("My Tasks"). The backend already scopes the
+  // payload, so this is display-layer enforcement to match.
+  const selfRole = data?.meta?.self && !data?.meta?.isAdmin ? data.meta.self.role : null;
+  const showAllLanes = !data || data.meta.isAdmin;
+  const visibleTabs: { key: AccountsView; label: string; icon: string }[] = !data
+    ? [{ key: "dashboard", label: "Dashboard", icon: "📊" }]
+    : showAllLanes
+      ? [
+        { key: "dashboard", label: "Dashboard", icon: "📊" },
+        { key: "tasks", label: "All Tasks", icon: "📋" },
+        { key: "senior", label: "Senior", icon: "👔" },
+        { key: "junior", label: "Junior", icon: "🧾" },
+        { key: "controller", label: "Controller", icon: "🎛️" },
+      ]
+      : selfRole
+        ? [
+          { key: "dashboard", label: "Dashboard", icon: "📊" },
+          { key: "my", label: "My Tasks", icon: selfRole === "senior" ? "👔" : "🧾" },
+        ]
+        : [{ key: "dashboard", label: "Dashboard", icon: "📊" }];
+  const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
+  // Reference items follow the same lane visibility as tasks.
+  const inUnscheduled = (u: UnscheduledItem) => {
+    if (view === "my") return !selfRole || u.ownerRole === "either" || u.ownerRole === selfRole;
+    if (view === "tasks") return true;
+    return u.ownerRole === "either" || u.ownerRole === view;
+  };
+  // If the visible tabs narrow (e.g. identity picked/cleared), drop a
+  // now-unreachable view back to the dashboard.
+  React.useEffect(() => {
+    if (data && !visibleTabs.some((t) => t.key === view)) setView("dashboard");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, view]);
 
   return (
     <div className="space-y-4 text-zinc-900 dark:text-zinc-100">
@@ -421,10 +462,11 @@ export default function AccountsDashboard() {
       </div>
 
       <div className="flex flex-col gap-6">
-        {/* Tabs (full-width horizontal row, like Telecalling) */}
+        {/* Tabs (full-width horizontal row, like Telecalling). Non-MIS viewers
+            only get Dashboard + their own lane — other lanes never render. */}
         <aside className="w-full shrink-0">
           <nav className="flex flex-row flex-wrap gap-2">
-            {TABS.filter((t) => t.key !== "controller" || canMIS).map((t) => {
+            {visibleTabs.filter((t) => t.key !== "controller" || canMIS).map((t) => {
               const active = view === t.key;
               return (
                 <button
@@ -451,7 +493,7 @@ export default function AccountsDashboard() {
       {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
       {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
 
-      {data && (view === "tasks" || view === "senior" || view === "junior") && (
+      {data && (isTaskView) && (
         <div className="flex flex-wrap gap-1.5">
           {([
             { key: "pending", label: `● Pending (${pendingCount})` },
@@ -466,18 +508,18 @@ export default function AccountsDashboard() {
         </div>
       )}
 
-      {data && (view === "tasks" || view === "senior" || view === "junior") && (
+      {data && (isTaskView) && (
         <div className="grid gap-3 md:grid-cols-2">
           {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onLogged={() => dash.refresh()} />)}
           {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done in this view yet — today's completions will appear here." : statusFilter === "inprogress" ? "Nothing in progress — tap ▶ In Progress on a pending task to start it." : "No pending tasks in this view."}</div>}
         </div>
       )}
 
-      {data && (view === "tasks" || view === "senior" || view === "junior") && (data.unscheduled ?? []).filter((u) => view === "tasks" || u.ownerRole === "either" || u.ownerRole === view).length > 0 && (
+      {data && (isTaskView) && (data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📌 No fixed date — reference ({(data.unscheduled ?? []).filter((u) => view === "tasks" || u.ownerRole === "either" || u.ownerRole === view).length})</h3>
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📌 No fixed date — reference ({(data.unscheduled ?? []).filter(inUnscheduled).length})</h3>
           <div className="grid gap-2 md:grid-cols-2">
-            {(data.unscheduled ?? []).filter((u) => view === "tasks" || u.ownerRole === "either" || u.ownerRole === view).map((u) => (
+            {(data.unscheduled ?? []).filter(inUnscheduled).map((u) => (
               <div key={u.templateId} className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-3 text-xs">
                 <div className="font-semibold text-zinc-800 dark:text-zinc-200">{u.title}</div>
                 {(u.note || u.dueLabel) && <div className="text-zinc-500 mt-0.5">{[u.note, u.dueLabel].filter(Boolean).join(" · ")}</div>}

@@ -43,6 +43,9 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
       description: description.trim() || undefined,
       specSame: same,
       specDiff: !same && specDiff.trim() ? specDiff.trim() : undefined,
+      // Edit mode preserves the quote's reference attachments (the form
+      // doesn't edit them — refs attach on the rate row itself).
+      references: initial?.references,
       quotedAt: initial?.quotedAt ?? new Date().toISOString(),
     });
     if (initial) return; // edit mode: parent closes the form

@@ -65,12 +65,15 @@ export interface EnquiryMedia {
 export interface EnquiryItemRate {
   vendor: string;
   rate: number;
-  /** Vendor description / address / contact as entered by Procurement. */
+  /** Per-quote vendor description (address/contact/terms). */
   description?: string;
-  /** False when this vendor's spec differs from the item spec (see specDiff). */
+  /** False when this quote's spec differs from the item spec. */
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
   specDiff?: string;
+  /** Per-vendor reference attachments (photos/drawings/PDFs backing THIS
+   *  quote). The selected vendor's refs forward to sales with the final rate. */
+  references?: EnquiryMedia[];
   /** IST instant the quote was logged (stamped on add; older rows lack it). */
   quotedAt?: string;
 }
@@ -102,6 +105,10 @@ export interface EnquiryItem {
    *  skips the procurement→management loop. False/absent = rate unavailable,
    *  flows to Procurement for quoting and then Management for finalize. */
   rateAvailable?: boolean;
+  /** Management-internal handling: true = management sources this item's
+   *  rates itself; the procurement queue skips it. Management-only flag. */
+  internalRates?: boolean;
+  internalRatesAt?: string;
   /** Management → procurement request: present = management asked for (more)
    *  vendor rates (incorrect quote / different vendor needed). The item
    *  returns to the procurement active queue until procurement adds or edits
@@ -182,6 +189,7 @@ export function parseItemRates(raw: unknown): EnquiryItemRate[] {
         description: r?.description ? String(r.description).slice(0, 2000) : undefined,
         specSame,
         specDiff: !specSame && r?.specDiff ? String(r.specDiff).slice(0, 2000) : undefined,
+        references: parseItemMedia(r?.references),
         quotedAt: isoOrUndefined(r?.quotedAt),
       };
     })
@@ -344,6 +352,8 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        internalRates: r?.internalRates === true,
+        internalRatesAt: isoOrUndefined(r?.internalRatesAt),
         thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
@@ -423,6 +433,8 @@ export function sanitize(e: any): Enquiry {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        internalRates: r?.internalRates === true,
+        internalRatesAt: isoOrUndefined(r?.internalRatesAt),
         thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
