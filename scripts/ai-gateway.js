@@ -78,9 +78,11 @@ function extractJsonModule(raw) {
   return null;
 }
 
-/** Build a vision user message: text + image URLs (data-URI or https). */
+/** Build a vision user message: text + image URLs (data-URI or https).
+ *  Accepts raw URL strings or { url } objects (e.g. worker slim payloads). */
 function buildVisionUserContent(text, imageUrls, maxImages) {
   const imgs = (Array.isArray(imageUrls) ? imageUrls : [])
+    .map((u) => (u != null && typeof u === 'object' ? u.url : u))
     .map((u) => String(u == null ? '' : u).trim())
     .filter((u) => u.length > 0 && (u.startsWith('data:image/') || u.startsWith('http')))
     .slice(0, Math.max(0, maxImages === undefined ? 4 : maxImages));

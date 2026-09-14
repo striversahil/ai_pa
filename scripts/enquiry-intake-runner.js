@@ -191,6 +191,12 @@ async function processEnquiry(gateway, eq) {
     ? eq.enquiryImages.map((m) => m.url)
     : [];
   const fullContent = _poolNote.length > 0 ? buildVisionUserContent(text, [..._poolNote, ...images], 4) : content;
+  // Visibility: never silently drop images — a text-only call on an
+  // image enquiry yields zero lines and looks like an AI failure.
+  const attachedImgs = Array.isArray(fullContent) ? fullContent.filter((b) => b && b.type === 'image_url').length : 0;
+  if (_poolNote.length + images.length > 0 && attachedImgs === 0) {
+    console.log(`- ${eq.id}: WARNING ${ _poolNote.length + images.length} image(s) present but none attached to vision call`);
+  }
   let routed;
   try {
     routed = await gateway.completeJson({
