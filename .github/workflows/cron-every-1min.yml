@@ -23,6 +23,7 @@ jobs:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          OPENROUTER_FREE_MODELS: ${{ secrets.OPENROUTER_FREE_MODELS }}
           HF_API_KEY: ${{ secrets.HF_API_KEY }}
           PINECONE_HOST: ${{ secrets.PINECONE_HOST }}
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}

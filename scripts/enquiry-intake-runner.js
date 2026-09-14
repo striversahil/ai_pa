@@ -16,7 +16,9 @@
  *     KV suggestions for the sales UI.
  *
  * Env: WORKER_URL, SHARED_SECRET, OPENROUTER_API_KEYS / OPENROUTER_API_KEY
- *   (OpenRouter-only; Groq is never used in this workflow), HF_API_KEY,
+ *   (OpenRouter-only; Groq is never used in this workflow),
+ *   OPENROUTER_FREE_MODELS (comma-separated free-model rotation for text;
+ *   vision stays on ling-3.0-flash-vl), HF_API_KEY,
  *   PINECONE_HOST, PINECONE_API_KEY.
  *   VISION_MODEL override supported by the gateway (default llama-4-scout).
  * Flags: --limit N (cap enquiries per run), --dry-run (no result POSTs).

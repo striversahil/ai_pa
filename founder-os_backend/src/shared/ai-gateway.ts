@@ -306,6 +306,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class AiGateway {
   private pool = new KeyPool();
   private visionModelOverride = '';
+  /** Rotating OpenRouter free-model list (OPENROUTER_FREE_MODELS). Text
+   *  requests cycle through these as 429s persist; vision stays pinned. */
+  private openrouterModels: string[] = [OPENROUTER_VISION_MODEL];
+  private modelIdx = 0;
 
   constructor(env?: Record<string, unknown>) {
     if (env) this.configure(env);
@@ -315,6 +319,11 @@ export class AiGateway {
     this.pool.loadFromEnv(env);
     const v = String((env as any)?.VISION_MODEL ?? '').trim();
     if (v) this.visionModelOverride = v;
+    const models = String((env as any)?.OPENROUTER_FREE_MODELS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (models.length > 0) this.openrouterModels = [...new Set(models)];
   }
 
   get keyCount(): number {
@@ -337,6 +346,14 @@ export class AiGateway {
     // surfacing an error to the caller.
     const MIN_ATTEMPTS = 50;
     const maxAttempts = Math.max(MIN_ATTEMPTS, this.pool.size || MIN_ATTEMPTS);
+    const wantsVision = req.messages.some((m) => Array.isArray(m.content));
+    // Model rotation (OpenRouter text requests only): every ROTATE_EVERY
+    // consecutive 429s moves to the next OPENROUTER_FREE_MODELS entry,
+    // spreading quota. Explicit req.model, vision requests, and non-OpenRouter
+    // providers never rotate.
+    const ROTATE_EVERY = 5;
+    let streak429 = 0;
+    let rotatedModel: string | undefined;
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const key = req.keyId
@@ -353,7 +370,7 @@ export class AiGateway {
       }
       const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
       try {
-        const result = await this.callProvider(provider, key, req);
+        const result = await this.callProvider(provider, key, rotatedModel ? { ...req, model: rotatedModel } : req);
         this.pool.reportSuccess(key);
         return result;
       } catch (err) {
@@ -362,11 +379,20 @@ export class AiGateway {
         if (status === 429) {
           // Immediate retry path: burst limits wave off — short sleep, reuse
           // the key at once (no long cooldown), keep counting attempts.
+          streak429++;
+          if (
+            !req.model && !wantsVision && provider.id === 'openrouter' &&
+            this.openrouterModels.length > 1 && streak429 % ROTATE_EVERY === 0
+          ) {
+            this.modelIdx = (this.modelIdx + 1) % this.openrouterModels.length;
+            rotatedModel = this.openrouterModels[this.modelIdx];
+            logger.warn?.(`[AiGateway] 429 streak x${streak429} — rotating OpenRouter model to ${rotatedModel}`);
+          }
           const retryAfter = this.extractRetryAfter(err);
           key.failures++;
           key.lastFailureAt = Date.now();
           key.cooldownUntil = 0;
-          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}`;
+          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''}`;
           logger.warn?.(`[AiGateway] 429 on ${key.id}, immediate retry ${attempt + 1}/${maxAttempts}`);
           if (attempt < maxAttempts - 1) {
             await sleep(Math.min(retryAfter ?? 1_500, 5_000));
