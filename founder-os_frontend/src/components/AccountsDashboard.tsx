@@ -29,6 +29,7 @@ interface TaskItem {
   remark: string | null;
   doneBy: string | null;
   timeSpentMin?: number | null;
+  dueDate?: string | null;
   accountantId: string | null;
   accountantName: string | null;
   attachments?: FileItem[];
@@ -105,6 +106,7 @@ interface DashData {
   senior: TaskItem[];
   junior: TaskItem[];
   items: TaskItem[];
+  overdueList?: TaskItem[];
   unscheduled?: UnscheduledItem[];
   team?: TeamData | null;
 }
@@ -179,7 +181,7 @@ export function matchSelfRoster(me: { user: { email: string; name: string } } | 
 
 const ACTOR_KEY = "accounts_actor_id";
 
-function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: RosterRow[]; defaultWho: string; onLogged: () => void }) {
+function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; roster: RosterRow[]; defaultWho: string; onLogged: () => void; today?: string }) {
   const [remark, setRemark] = useState(t.remark ?? "");
   // Time taken, entered as hours + minutes, stored as integer minutes.
   // Prefilled from the recorded value so it can be corrected later.
@@ -287,6 +289,11 @@ function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: Ros
                 📌 {t.dueLabel}
               </span>
             )}
+            {t.dueDate && t.dueDate !== today && (
+              <span title={`Originally due ${t.dueDate} — still unresolved`} className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-500 dark:text-rose-400">
+                📅 due {fmtShort(t.dueDate)}
+              </span>
+            )}
             {(t.missed ?? []).length > 0 && (
               <span title={`Not completed on: ${(t.missed ?? []).join(", ")}`} className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-500 dark:text-rose-400">
                 ⚠ missed {(t.missed ?? []).slice(0, 3).map(fmtShort).join(", ")}{(t.missed ?? []).length > 3 ? ` +${(t.missed ?? []).length - 3} more` : ""}
@@ -357,7 +364,7 @@ function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: Ros
   );
 }
 
-type AccountsView = "dashboard" | "tasks" | "senior" | "junior" | "my" | "controller";
+type AccountsView = "dashboard" | "tasks" | "overdue" | "senior" | "junior" | "my" | "controller";
 
 // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
 // (MIS/root see every lane; others see Dashboard + their own "My Tasks").
@@ -423,6 +430,7 @@ export default function AccountsDashboard() {
     if (!data) return [];
     if (view === "senior") return data.senior;
     if (view === "junior") return data.junior;
+    if (view === "overdue") return [];
     // Scoped "My Tasks" and the admin "All Tasks" both render the payload's
     // items, which the backend already lane-filtered for non-admin viewers.
     return data.items;
@@ -448,6 +456,7 @@ export default function AccountsDashboard() {
       ? [
         { key: "dashboard", label: "Dashboard", icon: "📊" },
         { key: "tasks", label: "All Tasks", icon: "📋" },
+        { key: "overdue", label: "Overdue", icon: "⚠" },
         { key: "senior", label: "Senior", icon: "👔" },
         { key: "junior", label: "Junior", icon: "🧾" },
         { key: "controller", label: "Controller", icon: "🎛️" },
@@ -456,9 +465,24 @@ export default function AccountsDashboard() {
         ? [
           { key: "dashboard", label: "Dashboard", icon: "📊" },
           { key: "my", label: "My Tasks", icon: selfRole === "senior" ? "👔" : "🧾" },
+          { key: "overdue", label: "Overdue", icon: "⚠" },
         ]
-        : [{ key: "dashboard", label: "Dashboard", icon: "📊" }];
+        : [
+          { key: "dashboard", label: "Dashboard", icon: "📊" },
+          { key: "overdue", label: "Overdue", icon: "⚠" },
+        ];
   const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
+  const isOverdueView = view === "overdue";
+  // Overdue tab shows the full backlog (past-due unresolved logs). The payload
+  // is already lane-scoped server-side, so admins see everything and everyone
+  // else sees their own lane — no further narrowing by lane tab.
+  const overdueCount = data?.overdueList?.length ?? 0;
+  const overdueTray = useMemo(() => {
+    const list = data?.overdueList ?? [];
+    if (isOverdueView || view === "tasks") return list;
+    if (view === "my") return selfRole ? list.filter((t) => t.ownerRole === "either" || t.ownerRole === selfRole) : list;
+    return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
+  }, [data, view, selfRole, isOverdueView]);
   // Reference items follow the same lane visibility as tasks.
   const inUnscheduled = (u: UnscheduledItem) => {
     if (view === "my") return !selfRole || u.ownerRole === "either" || u.ownerRole === selfRole;
@@ -504,6 +528,7 @@ export default function AccountsDashboard() {
           <nav className="flex flex-row flex-wrap gap-2">
             {visibleTabs.filter((t) => t.key !== "controller" || canMIS).map((t) => {
               const active = view === t.key;
+              const count = t.key === "overdue" ? overdueCount : null;
               return (
                 <button
                   key={t.key}
@@ -516,6 +541,11 @@ export default function AccountsDashboard() {
                 >
                   <span className="text-base leading-none">{t.icon}</span>
                   {t.label}
+                  {count !== null && count > 0 && (
+                    <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-extrabold ${active ? "bg-white/25 text-white" : "bg-rose-500/15 text-rose-500 dark:text-rose-400"}`}>
+                      {count}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -528,6 +558,26 @@ export default function AccountsDashboard() {
 
       {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
       {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
+
+      {data && isOverdueView && (
+        <div className="space-y-2 rounded-xl border border-rose-500/40 bg-rose-500/[0.05] p-3">
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-rose-500 dark:text-rose-400">⚠ Overdue — still unresolved ({overdueTray.length})</h3>
+          {overdueTray.length > 0 ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              {overdueTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onLogged={() => dash.refresh()} />)}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — nothing overdue in this view. 🎉</div>
+          )}
+        </div>
+      )}
+
+      {data && isTaskView && !isOverdueView && overdueTray.length > 0 && (
+        <button onClick={() => setView("overdue")} className="w-full flex items-center justify-between gap-2 rounded-xl border border-rose-500/40 bg-rose-500/[0.05] px-3 py-2.5 text-xs font-bold text-rose-500 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer">
+          <span>⚠ {overdueTray.length} overdue — still unresolved</span>
+          <span>View tab →</span>
+        </button>
+      )}
 
       {data && (isTaskView) && (
         <div className="flex flex-wrap gap-1.5">

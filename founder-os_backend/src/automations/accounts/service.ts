@@ -357,6 +357,62 @@ async function computeDashboard(
       isShared: !!t.isShared,
       employeeRaw: t.employeeRaw ?? null,
     }));
+  // Overdue tray: every unresolved instance BEFORE today (same 120-day window
+  // as carryover, capped). The today-only taskbar would otherwise hide a
+  // skipped daily/weekly until its next due date — this list stays visible
+  // until each row is done, and honours the same lane scoping as items.
+  const overdueLogs = await (prisma as any).accountsTaskLog.findMany({
+    where: {
+      dueDate: { gte: addDays(dateStr, -120), lt: dateStr },
+      status: { in: ['pending', 'overdue', 'inprogress'] },
+    },
+    include: { template: true, accountant: true },
+    orderBy: { dueDate: 'asc' },
+    take: 200,
+  }).catch(() => []);
+  const overdueIds = (overdueLogs as any[]).map((l: any) => String(l.id)).filter(Boolean);
+  const overdueFiles = overdueIds.length
+    ? await (prisma as any).accountsTaskAttachment.findMany({
+      where: { logId: { in: overdueIds } },
+      orderBy: { createdAt: 'asc' },
+    }).catch(() => [])
+    : [];
+  const overdueFilesByLog = new Map<string, any[]>();
+  for (const f of overdueFiles as any[]) {
+    const k = String(f.logId);
+    if (!overdueFilesByLog.has(k)) overdueFilesByLog.set(k, []);
+    overdueFilesByLog.get(k)!.push(f);
+  }
+  const overdueList = (overdueLogs as any[])
+    .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
+    .map((log: any) => {
+      const t: any = log.template;
+      return {
+        templateId: t.id,
+        title: t.title,
+        description: t.description,
+        frequency: t.frequency,
+        ownerRole: t.ownerRole,
+        dueDay: t.dueDay,
+        dueMonth: t.dueMonth,
+        ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
+        dueLabel: t.rawText ?? null,
+        isShared: !!t.isShared,
+        employeeRaw: t.employeeRaw ?? null,
+        logId: log.id,
+        dueDate: String(log.dueDate),
+        status: log.status,
+        remark: log.remark ?? null,
+        doneBy: log.doneBy ?? null,
+        timeSpentMin: log.timeSpentMin ?? null,
+        accountantId: log.accountantId ?? null,
+        accountantName: log.accountant?.name ?? null,
+        updatedAt: log.updatedAt ?? null,
+        attachments: overdueFilesByLog.get(String(log.id)) ?? [],
+        missed: [],
+        overdue: true,
+      };
+    });
   return {
     meta: {
       date: dateStr,
@@ -381,6 +437,7 @@ async function computeDashboard(
     senior: laneEnforced && laneRole !== 'senior' ? [] : split('senior'),
     junior: laneEnforced && laneRole !== 'junior' ? [] : split('junior'),
     items,
+    overdueList,
     unscheduled,
     team: await computeTeam(dateStr, carried, { roster, todayLogs: logs }),
   };
