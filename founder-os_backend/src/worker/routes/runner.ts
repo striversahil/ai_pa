@@ -1105,6 +1105,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
         spec: String(it?.spec ?? '').slice(0, 2000),
         media: [],
         ...(it?.category ? { category: String(it.category).slice(0, 120) } : {}),
+        ...(it?.verbatim ? { verbatim: String(it.verbatim).slice(0, 500) } : {}),
       }));
     }
     let updated: any = existing;

@@ -36,9 +36,12 @@ The dashboard payload (`data()`) is KV-cached 60s and busted on every write.
 The unstructured enquiry (`description` + enquiry-level photos) is AI-split
 into `items: [{ name, qty, spec, media, category }]` by the GH intake runner
 (`scripts/enquiry-intake-runner.js`, every 30 min via `cron-every-30min.yml`):
-vision extraction (text + up to 4 images) grounded on the slim KYP taxonomy
-(`data/kyp_taxonomy.json`, ~4k tokens — never the full KYP), deterministic
-slot check vs `data/kyp_slots.json`, then a price-memory lookup. Results land
+two-stage grounding on `data/know_your_product_v2.json` ONLY (136 items,
+10 categories — no derived taxonomy/slot files): Stage A routes each line to
+a category from a slim `Category: item, …` list (~680 tokens, client wording
+kept verbatim) with vision; Stage B grounds each routed category with that
+category's full aliases + `required_attributes` (worst ~4k tokens) to the
+exact `item_name`, verbatim spec, and `missing[]`. Then a price-memory lookup. Results land
 fill-empty-only (manual edits always win) plus KV suggestions at
 `enquiry:intake:<id>` (7d TTL) for the sales `IntakePanel`. Stored on the row;
 sales can edit/delete/add manually. Each item carries `media:

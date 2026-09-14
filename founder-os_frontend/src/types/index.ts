@@ -46,6 +46,9 @@ export interface EnquiryItem {
   name: string;
   qty: string;
   spec: string;
+  /** Client's own wording for this line (AI intake); shown under the
+   *  canonical name so sales can see what was actually asked for. */
+  verbatim?: string;
   media?: EnquiryMedia[];
   /** Vendor rates collected by Procurement. */
   rates?: EnquiryItemRate[];

@@ -256,6 +256,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           </span>
                         )}
                       </div>
+                      {it.verbatim && it.verbatim.trim() && it.verbatim.trim().toLowerCase() !== (it.name ?? "").trim().toLowerCase() && (
+                        <p className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">Client wrote: <span className="font-semibold text-[var(--text-secondary)]">{it.verbatim}</span></p>
+                      )}
                       {it.rateAvailable && (
                         <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 text-[11px] font-extrabold">
                           Rate available
