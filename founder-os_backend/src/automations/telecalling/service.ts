@@ -25,6 +25,17 @@ import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
 import { evaluateShield } from './effort-shield';
 import { normPhone10, readEffortSnapshot, type EffortRow } from './effort-sync';
 
+// ── D1 bound-variable cap ────────────────────────────────────────────────────
+// D1 allows max 100 bound SQL variables per statement (the shim already batches
+// relation IN-clauses at 90 — see d1-prisma.ts attachIncludes), but raw
+// `where: { id: { in: [...] } }` filters are inlined as bound params. ANY such
+// list longer than ~90 throws "too many SQL variables" — and several readers
+// below swallow the throw (graceful degradation), so an unchunked query fails
+// SILENTLY (e.g. the risk model degrading to classification-only with ∅ stale
+// chips on every row once the open pipeline crossed 100 estimates). Every bulk
+// read in this file chunks its id list at IN_BATCH.
+const IN_BATCH = 90;
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function istDate(d: Date = new Date()): string {
@@ -156,20 +167,23 @@ async function latestCommentDates(estimateIds: string[]): Promise<Map<string, st
   const out = new Map<string, string>();
   if (estimateIds.length === 0) return out;
   try {
-    const comments = await prisma.comment.findMany({
-      where: { estimateId: { in: estimateIds } },
-      select: { estimateId: true, date: true, dateFormatted: true },
-    });
-    for (const c of comments) {
-      if (!c?.estimateId) continue;
-      // Prefer the full IST timestamp (has time-of-day); the plain `date` is
-      // date-only and would read as midnight UTC. Keep the true newest comment
-      // per estimate (orderBy date is ambiguous within a day).
-      const raw = c.dateFormatted ?? c.date ?? '';
-      const ts = parseCommentDateMs(raw);
-      const cur = out.get(c.estimateId);
-      const curTs = cur ? parseCommentDateMs(cur) : null;
-      if (curTs === null || (ts !== null && ts > curTs)) out.set(c.estimateId, raw);
+    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement (see above).
+    for (let i = 0; i < estimateIds.length; i += IN_BATCH) {
+      const comments = await prisma.comment.findMany({
+        where: { estimateId: { in: estimateIds.slice(i, i + IN_BATCH) } },
+        select: { estimateId: true, date: true, dateFormatted: true },
+      });
+      for (const c of comments) {
+        if (!c?.estimateId) continue;
+        // Prefer the full IST timestamp (has time-of-day); the plain `date` is
+        // date-only and would read as midnight UTC. Keep the true newest comment
+        // per estimate (orderBy date is ambiguous within a day).
+        const raw = c.dateFormatted ?? c.date ?? '';
+        const ts = parseCommentDateMs(raw);
+        const cur = out.get(c.estimateId);
+        const curTs = cur ? parseCommentDateMs(cur) : null;
+        if (curTs === null || (ts !== null && ts > curTs)) out.set(c.estimateId, raw);
+      }
     }
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'latestCommentDates failed — risk model degrades to classification only');
@@ -471,11 +485,15 @@ export async function setEstimateNextStep(opts: {
 export async function overlayNextSteps(rows: any[]): Promise<void> {
   const ids = [...new Set((rows || []).map((r) => String(r?.estimateId || '')).filter(Boolean))];
   if (ids.length === 0) return;
-  const found = await prisma.estimate.findMany({
-    where: { estimateId: { in: ids } },
-    select: { estimateId: true, nextStep: true, nextStepDate: true },
-  });
-  const byId = new Map((found as any[]).map((e) => [String(e.estimateId), e]));
+  const byId = new Map<string, any>();
+  // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+  for (let i = 0; i < ids.length; i += IN_BATCH) {
+    const found = await prisma.estimate.findMany({
+      where: { estimateId: { in: ids.slice(i, i + IN_BATCH) } },
+      select: { estimateId: true, nextStep: true, nextStepDate: true },
+    });
+    for (const e of found as any[]) byId.set(String(e.estimateId), e);
+  }
   for (const r of rows) {
     const live = byId.get(String(r?.estimateId ?? ''));
     if (!live) continue;
@@ -494,11 +512,15 @@ export async function overlayNextSteps(rows: any[]): Promise<void> {
 export async function overlayCallTags(rows: any[]): Promise<void> {
   const ids = [...new Set((rows || []).map((r) => String(r?.estimateId || '')).filter(Boolean))];
   if (ids.length === 0) return;
-  const found = await prisma.estimate.findMany({
-    where: { estimateId: { in: ids } },
-    select: { estimateId: true, callTag: true, callbackDate: true, callTagBy: true, callTagAt: true },
-  });
-  const byId = new Map((found as any[]).map((e) => [String(e.estimateId), e]));
+  const byId = new Map<string, any>();
+  // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+  for (let i = 0; i < ids.length; i += IN_BATCH) {
+    const found = await prisma.estimate.findMany({
+      where: { estimateId: { in: ids.slice(i, i + IN_BATCH) } },
+      select: { estimateId: true, callTag: true, callbackDate: true, callTagBy: true, callTagAt: true },
+    });
+    for (const e of found as any[]) byId.set(String(e.estimateId), e);
+  }
   let names: Map<string, string> | null = null;
   for (const r of rows) {
     const live = byId.get(String(r?.estimateId ?? ''));
@@ -1000,9 +1022,10 @@ export async function bulkAssignEstimates(
   const openByEstimate = new Map<string, string>();
   if (plan.length > 0) {
     const ids = plan.map((p) => p.estimateId);
-    for (let i = 0; i < ids.length; i += 400) {
+    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+    for (let i = 0; i < ids.length; i += IN_BATCH) {
       const rows = await prisma.estimateAssignment.findMany({
-        where: { estimateId: { in: ids.slice(i, i + 400) }, status: 'assigned' },
+        where: { estimateId: { in: ids.slice(i, i + IN_BATCH) }, status: 'assigned' },
       });
       for (const r of rows as any[]) openByEstimate.set(r.estimateId, r.id);
     }
@@ -1135,10 +1158,14 @@ export async function markTelecallerAbsent(telecallerId: string): Promise<{ redi
   // someone else who's away and must NOT be swept into this redistribution —
   // otherwise two agents would both pull it back on return.
   const heldIds = held.map((e) => e.estimateId);
-  const openRows = await prisma.estimateAssignment.findMany({
-    where: { estimateId: { in: heldIds }, status: 'assigned' },
-    select: { id: true, estimateId: true, tempForTelecallerId: true },
-  });
+  // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+  const openRows: any[] = [];
+  for (let i = 0; i < heldIds.length; i += IN_BATCH) {
+    openRows.push(...await prisma.estimateAssignment.findMany({
+      where: { estimateId: { in: heldIds.slice(i, i + IN_BATCH) }, status: 'assigned' },
+      select: { id: true, estimateId: true, tempForTelecallerId: true },
+    }));
+  }
   const openByEstimate = new Map(openRows.map((r) => [r.estimateId, r.id]));
   const tempCovered = new Set(
     openRows.filter((r) => (r as any).tempForTelecallerId != null).map((r) => r.estimateId),
@@ -1236,10 +1263,14 @@ export async function markTelecallerPresent(telecallerId: string): Promise<{ ret
   let returned = 0;
   if (tempRows.length > 0) {
     const estIds = tempRows.map((r) => r.estimateId);
-    const estRows = await prisma.estimate.findMany({
-      where: { estimateId: { in: estIds } },
-      select: { estimateId: true, status: true },
-    });
+    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+    const estRows: any[] = [];
+    for (let i = 0; i < estIds.length; i += IN_BATCH) {
+      estRows.push(...await prisma.estimate.findMany({
+        where: { estimateId: { in: estIds.slice(i, i + IN_BATCH) } },
+        select: { estimateId: true, status: true },
+      }));
+    }
     const statusByEstimate = new Map(estRows.map((e) => [e.estimateId, e.status]));
     const openTempRows = tempRows.filter((r) => statusByEstimate.get(r.estimateId) === 'sent');
 
@@ -1558,9 +1589,10 @@ export async function getConvertersMap(sinceDay: string = ''): Promise<Record<st
     });
     const ids = [...new Set((events as any[]).map((e) => String(e.telecallerId ?? '')).filter(Boolean))];
     const nameById = new Map<string, string>();
-    for (let i = 0; i < ids.length; i += 500) {
+    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+    for (let i = 0; i < ids.length; i += IN_BATCH) {
       const rows = await prisma.telecaller.findMany({
-        where: { id: { in: ids.slice(i, i + 500) } },
+        where: { id: { in: ids.slice(i, i + IN_BATCH) } },
         select: { id: true, name: true },
       });
       for (const r of rows as any[]) nameById.set(String(r.id), String(r.name ?? ''));
@@ -2037,8 +2069,9 @@ export async function computeTelecallingDaily(
   const numberById = new Map<string, string>();
   try {
     const ids = [...new Set([...agg.values()].flatMap((c) => c.closeIds))];
-    for (let i = 0; i < ids.length; i += 500) {
-      const chunk = ids.slice(i, i + 500);
+    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+    for (let i = 0; i < ids.length; i += IN_BATCH) {
+      const chunk = ids.slice(i, i + IN_BATCH);
       if (chunk.length === 0) continue;
       const rows = await prisma.estimate.findMany({
         where: { estimateId: { in: chunk } },
@@ -2266,9 +2299,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const estIds = [...new Set(assignRows.map((r: any) => r.estimateId))];
     const estById = new Map<string, any>();
     if (estIds.length > 0) {
-      // Chunk to stay under SQLite's ~999 bound-parameter limit per query.
-      for (let i = 0; i < estIds.length; i += 500) {
-        const chunk = estIds.slice(i, i + 500);
+      // Chunked at IN_BATCH — D1 caps bound variables at 100/statement
+      // (NOT 999 — that is the SQLite default; D1 enforces 100).
+      for (let i = 0; i < estIds.length; i += IN_BATCH) {
+        const chunk = estIds.slice(i, i + IN_BATCH);
         try {
           const ests = await prisma.estimate.findMany({
             where: { estimateId: { in: chunk } },
@@ -2346,8 +2380,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const valueByEstimate = new Map<string, number>();
   try {
     const allCloseIds = [...new Set([...closeIdsByOwner.values()].flat())];
-    for (let i = 0; i < allCloseIds.length; i += 500) {
-      const chunk = allCloseIds.slice(i, i + 500);
+    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+    for (let i = 0; i < allCloseIds.length; i += IN_BATCH) {
+      const chunk = allCloseIds.slice(i, i + IN_BATCH);
       if (chunk.length === 0) continue;
       const rows = await prisma.estimate.findMany({
         where: { estimateId: { in: chunk } },
@@ -2572,10 +2607,14 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     try {
       const ids = followUpEsts.map((e) => e.estimateId);
       if (ids.length > 0) {
-        const rows = await prisma.comment.findMany({
-          where: { estimateId: { in: ids } },
-          select: { estimateId: true, description: true, commentedBy: true, date: true, dateFormatted: true },
-        });
+        // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+        const rows: any[] = [];
+        for (let i = 0; i < ids.length; i += IN_BATCH) {
+          rows.push(...await prisma.comment.findMany({
+            where: { estimateId: { in: ids.slice(i, i + IN_BATCH) } },
+            select: { estimateId: true, description: true, commentedBy: true, date: true, dateFormatted: true },
+          }));
+        }
         const best = new Map<string, { ts: number; v: { text: string; commentedBy: string; dateFormatted: string | null } }>();
         for (const c of rows as any[]) {
           const text = String(c.description || '').trim();
@@ -2765,9 +2804,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     } else {
       const ids = [...new Set(reds.map((r) => r.estimateId))];
       const phoneById = new Map<string, string>();
-      for (let i = 0; i < ids.length; i += 500) {
+      // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
+      for (let i = 0; i < ids.length; i += IN_BATCH) {
         const chunkRows: any[] = await prisma.estimate.findMany({
-          where: { estimateId: { in: ids.slice(i, i + 500) } },
+          where: { estimateId: { in: ids.slice(i, i + IN_BATCH) } },
           select: { estimateId: true, contactPhone: true },
         });
         for (const e of chunkRows) phoneById.set(e.estimateId, String(e.contactPhone ?? ''));

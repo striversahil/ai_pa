@@ -14,6 +14,10 @@ export interface AccountsSeedTask {
   ruleType: string;
   ruleJson: string;
   rawText: string | null;
+  isShared: boolean;
+  employeeRaw: string | null;
+  department: string | null;
+  sheetStatus: string | null;
   active: boolean;
   order: number;
 }
@@ -30,6 +34,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 2
   },
@@ -44,6 +52,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 3
   },
@@ -58,6 +70,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 4
   },
@@ -72,6 +88,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": true,
+    "employeeRaw": "Senior Account/ Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 5
   },
@@ -86,6 +106,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 6
   },
@@ -100,6 +124,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 7
   },
@@ -114,6 +142,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 8
   },
@@ -128,6 +160,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 9
   },
@@ -142,6 +178,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": true,
+    "employeeRaw": "Senior Account/ Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 10
   },
@@ -156,6 +196,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 11
   },
@@ -170,6 +214,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 12
   },
@@ -184,6 +232,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 13
   },
@@ -198,6 +250,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 14
   },
@@ -212,6 +268,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "not_applicable",
     "ruleJson": "{\"type\":\"not_applicable\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 15
   },
@@ -226,6 +286,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "fixed_day",
     "ruleJson": "{\"type\":\"fixed_day\",\"day\":15,\"month\":null}",
     "rawText": "15th of Every Month",
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 16
   },
@@ -240,6 +304,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "day_range",
     "ruleJson": "{\"type\":\"day_range\",\"start_day\":15,\"end_day\":18,\"month\":null}",
     "rawText": "15th -18th",
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 17
   },
@@ -254,6 +322,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "fixed_day",
     "ruleJson": "{\"type\":\"fixed_day\",\"day\":7,\"month\":null}",
     "rawText": "7th",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 18
   },
@@ -268,6 +340,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "fixed_day",
     "ruleJson": "{\"type\":\"fixed_day\",\"day\":18,\"month\":null}",
     "rawText": "18th",
+    "isShared": true,
+    "employeeRaw": "Senior Account/ Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 19
   },
@@ -282,6 +358,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "multiple_days",
     "ruleJson": "{\"type\":\"multiple_days\",\"days\":[8,11,13],\"month\":null}",
     "rawText": ",8th11th & 13th",
+    "isShared": true,
+    "employeeRaw": "Senior Account/ Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 20
   },
@@ -296,6 +376,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "day_range",
     "ruleJson": "{\"type\":\"day_range\",\"start_day\":5,\"end_day\":10,\"month\":null}",
     "rawText": "5th -10th",
+    "isShared": true,
+    "employeeRaw": "Senior Account/ Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 21
   },
@@ -310,6 +394,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "to_be_decided",
     "ruleJson": "{\"type\":\"to_be_decided\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 22
   },
@@ -324,6 +412,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "day_range",
     "ruleJson": "{\"type\":\"day_range\",\"start_day\":5,\"end_day\":7,\"month\":null}",
     "rawText": "5th-7th of Every month",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 23
   },
@@ -338,6 +430,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "fixed_day",
     "ruleJson": "{\"type\":\"fixed_day\",\"day\":30,\"month\":null}",
     "rawText": "30th of Every Month",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 24
   },
@@ -352,6 +448,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "fixed_day",
     "ruleJson": "{\"type\":\"fixed_day\",\"day\":3,\"month\":null}",
     "rawText": "3rd of Every month",
+    "isShared": false,
+    "employeeRaw": null,
+    "department": null,
+    "sheetStatus": null,
     "active": true,
     "order": 25
   },
@@ -366,6 +466,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "multiple_days",
     "ruleJson": "{\"type\":\"multiple_days\",\"days\":[15,30],\"month\":null}",
     "rawText": "15th & 30th of Month",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 26
   },
@@ -380,6 +484,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "multi_occurrence",
     "ruleJson": "{\"type\":\"multi_occurrence\",\"occurrences\":[{\"type\":\"day_range\",\"start_day\":10,\"end_day\":15,\"month\":\"June\"},{\"type\":\"fixed_day\",\"day\":15,\"month\":\"September\"},{\"type\":\"fixed_day\",\"day\":15,\"month\":\"December\"},{\"type\":\"fixed_day\",\"day\":15,\"month\":\"March\"}]}",
     "rawText": "10th-15 June , 15September,15December,15March",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 27
   },
@@ -394,6 +502,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "multi_occurrence",
     "ruleJson": "{\"type\":\"multi_occurrence\",\"occurrences\":[{\"type\":\"day_range\",\"start_day\":10,\"end_day\":12,\"month\":\"July\"},{\"type\":\"fixed_day\",\"day\":12,\"month\":\"October\"},{\"type\":\"fixed_day\",\"day\":12,\"month\":\"January\"},{\"type\":\"fixed_day\",\"day\":15,\"month\":\"March\"}]}",
     "rawText": "10-12 July , 12October,12January,15March",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 28
   },
@@ -408,6 +520,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "weekday",
     "ruleJson": "{\"type\":\"weekday\",\"weekday\":\"Thursday\",\"occurrence\":\"every\"}",
     "rawText": "Thrusday",
+    "isShared": false,
+    "employeeRaw": "Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 29
   },
@@ -422,6 +538,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "multiple_days",
     "ruleJson": "{\"type\":\"multiple_days\",\"days\":[10,20,30],\"month\":null}",
     "rawText": "10, 20 ,30 of every month",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 30
   },
@@ -436,6 +556,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "variable_per_item",
     "ruleJson": "{\"type\":\"variable_per_item\",\"note\":\"Every card has its own statement generation date\"}",
     "rawText": "Every Card Is having its own  Generation Date, ",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 31
   },
@@ -450,6 +574,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "weekday",
     "ruleJson": "{\"type\":\"weekday\",\"weekday\":\"Thursday\",\"occurrence\":\"every\"}",
     "rawText": "Every Thrusday of Month",
+    "isShared": true,
+    "employeeRaw": "Senior Account/ Junior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 32
   },
@@ -464,6 +592,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "multi_occurrence",
     "ruleJson": "{\"type\":\"multi_occurrence\",\"occurrences\":[{\"type\":\"week_of_month\",\"week_number\":1,\"month\":\"February\"},{\"type\":\"month_day_range\",\"start\":{\"day\":1,\"month\":\"June\"},\"end\":{\"day\":14,\"month\":\"August\"}}]}",
     "rawText": "1st week of  Feb,,1st June- 14th August",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 33
   },
@@ -478,6 +610,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "month_day_range",
     "ruleJson": "{\"type\":\"month_day_range\",\"start\":{\"day\":30,\"month\":\"September\"},\"end\":{\"day\":31,\"month\":\"October\"}}",
     "rawText": "30 september- 31st october",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 34
   },
@@ -492,6 +628,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "month_day_range",
     "ruleJson": "{\"type\":\"month_day_range\",\"start\":{\"day\":30,\"month\":\"November\"},\"end\":{\"day\":15,\"month\":\"December\"}}",
     "rawText": "30 Nov-15 December",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 35
   },
@@ -506,6 +646,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "month_day_range",
     "ruleJson": "{\"type\":\"month_day_range\",\"start\":{\"day\":15,\"month\":\"March\"},\"end\":{\"day\":30,\"month\":\"April\"}}",
     "rawText": "15th March-30 April",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 36
   },
@@ -520,6 +664,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "month_day_range",
     "ruleJson": "{\"type\":\"month_day_range\",\"start\":{\"day\":15,\"month\":\"June\"},\"end\":{\"day\":31,\"month\":\"July\"}}",
     "rawText": "15 jUne-31st July",
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 37
   },
@@ -534,6 +682,10 @@ export const SEED_TASKS: AccountsSeedTask[] = [
     "ruleType": "to_be_decided",
     "ruleJson": "{\"type\":\"to_be_decided\"}",
     "rawText": null,
+    "isShared": false,
+    "employeeRaw": "Senior Account",
+    "department": "Accounts",
+    "sheetStatus": "Ok",
     "active": true,
     "order": 38
   }

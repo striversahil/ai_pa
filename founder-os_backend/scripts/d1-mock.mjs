@@ -127,6 +127,10 @@ export function fakeD1() {
             const limit = spec.includes('?') ? vals[vals.length - 1] : parseInt(spec);
             rows = rows.slice(0, limit);
           }
+          if (/COUNT\(\*\)/i.test(q)) {
+            const alias = (q.match(/COUNT\(\*\)\s+as\s+(\w+)/i) || [])[1] || 'c';
+            return { results: [{ [alias]: rows.length }] };
+          }
           return { results: rows };
         },
         async raw() {
@@ -154,6 +158,21 @@ function matchWhere(row, where, vals, startIdx) {
   const conds = where.split(/\s+AND\s+/i);
   for (let cond of conds) {
     cond = cond.trim();
+    // Tautologies emitted for empty filters (buildWhere returns `1 = 1`).
+    if (/^1\s*=\s*1$/.test(cond)) continue;
+    if (/^1\s*=\s*0$/.test(cond)) return false;
+    // IN-list (positional ? params are consumed in order, like a real DB).
+    const inM = cond.match(/^"?(\w+)"?\s+IN\s*\(([^)]*)\)$/i);
+    if (inM) {
+      const set = [];
+      for (const p of inM[2].split(',')) {
+        const t = p.trim();
+        if (t === '?') set.push(vals[vi++]);
+        else if (t) set.push(t.replace(/^['"]|['"]$/g, ''));
+      }
+      if (!set.map(String).includes(String(row[inM[1]]))) return false;
+      continue;
+    }
     const m = cond.match(/^"?(\w+)"?\s*(=|!=|<>|LIKE|>=|<=|>|<|IS NOT|IS)\s*(.+)$/i);
     if (!m) continue;
     const col = m[1];

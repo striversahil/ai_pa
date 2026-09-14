@@ -390,10 +390,15 @@ export class SalesCopilotService implements AnalysisEngine {
     //    metadata sync and the AI change-detection below — previously we did one
     //    findUnique per estimate on top of the metadata writes, so a full tick ran
     //    ~200 sequential DB queries even when nothing had changed.
-    const existingRows = await prisma.estimate.findMany({
-      where: { estimateId: { in: estimates.map(e => e.estimate_id) } },
-      include: { classification: true }
-    });
+    // Chunked at 90 — D1 caps bound SQL variables at 100/statement, and the
+    // active estimate list grows past that as the pipeline scales.
+    const existingRows: any[] = [];
+    for (let i = 0; i < estimates.length; i += 90) {
+      existingRows.push(...await prisma.estimate.findMany({
+        where: { estimateId: { in: estimates.slice(i, i + 90).map(e => e.estimate_id) } },
+        include: { classification: true }
+      }));
+    }
     const existingByEstId = new Map<string, any>();
     for (const row of existingRows) existingByEstId.set(row.estimateId, row);
 

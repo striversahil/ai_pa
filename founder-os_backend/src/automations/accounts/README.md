@@ -37,7 +37,12 @@ the dashboard's "No fixed date" reference section. Templates without
 
 Seeds: `node scripts/gen-accounts-seed.mjs` regenerates `seed-tasks.ts`
 (fresh-DB fallback) + `migrations/0032*` from the JSON. Live seed = the
-migration; `ensureSeedTemplates()` only fires on empty tables.
+migration; `ensureSeedTemplates()` only fires on empty tables. The generator
+validates `schema_version === "1.0"`, every `expected_completion.type`
+against `date_type_legend`, and required `row_number`/`task` — then maps every
+per-task field: `assigned_to` → ownerRole, `is_shared_task` → isShared,
+`employee_raw` → employeeRaw, `department`, `status` → sheetStatus,
+`expected_completion` → ruleType/ruleJson + `raw_text` → rawText.
 
 ## Endpoints (worker `routes/accounts.ts`, mirrored in Express)
 

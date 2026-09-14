@@ -4,7 +4,10 @@ import { cached, cacheDel } from '../../shared/cache';
 
 export const FREQUENCIES = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
 export const OWNER_ROLES = ['senior', 'junior', 'either'] as const;
-export const LOG_STATUSES = ['pending', 'done', 'skipped', 'overdue'] as const;
+// Live workflow: pending → inprogress → done. `skipped` is legacy (old UI
+// offered it; no longer offered, still rendered). `overdue` is materialised
+// by the rollover for stale pendings/in-progress rows.
+export const LOG_STATUSES = ['pending', 'inprogress', 'done', 'skipped'] as const;
 
 const DATA_TTL_MS = 60 * 1000;
 const DATA_CACHE_PREFIX = 'accounts:dashboard:';
@@ -207,6 +210,36 @@ export async function flagOverdue(todayStr: string): Promise<number> {
   return n;
 }
 
+/**
+ * Carryover: unresolved (pending/overdue/inprogress) instances of the given
+ * templates from BEFORE `dateStr` (lookback window). The today-only taskbar
+ * would otherwise hide a missed window day behind today's fresh instance —
+ * this map lets today's row wear a "missed 15th" badge and count as overdue.
+ */
+export async function getCarriedOverdue(
+  templateIds: string[], dateStr: string, lookbackDays = 120,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (!templateIds.length) return out;
+  const from = addDays(dateStr, -lookbackDays);
+  const rows = await (prisma as any).accountsTaskLog.findMany({
+    where: {
+      templateId: { in: templateIds },
+      dueDate: { gte: from, lt: dateStr },
+      status: { in: ['pending', 'overdue', 'inprogress'] },
+    },
+    select: { templateId: true, dueDate: true },
+    orderBy: { dueDate: 'asc' },
+    take: 2000,
+  }).catch(() => []);
+  for (const r of rows as any[]) {
+    const k = String(r.templateId);
+    if (!out.has(k)) out.set(k, []);
+    out.get(k)!.push(String(r.dueDate));
+  }
+  return out;
+}
+
 export async function runDailyRollover(): Promise<{ date: string; created: number; overdue: number }> {
   const today = istDateStr();
   const created = await ensureInstances(today);
@@ -233,14 +266,29 @@ async function computeDashboard(dateStr: string) {
       include: { template: true, accountant: true },
     }),
   ]);
+  const logIds = (logs as any[]).map((l) => String(l.id)).filter(Boolean);
+  const attachments = logIds.length
+    ? await (prisma as any).accountsTaskAttachment.findMany({
+      where: { logId: { in: logIds } },
+      orderBy: { createdAt: 'asc' },
+    }).catch(() => [])
+    : [];
   const byTemplate = new Map((logs as any[]).map((l) => [String(l.templateId), l]));
   const active = (templates as any[]).filter((t) => !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')));
+  const dueTemplates = active.filter((t) => isDueOn(t, dateStr));
+  const carried = await getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr);
+  const filesByLog = new Map<string, any[]>();
+  for (const f of attachments as any[]) {
+    const k = String(f.logId);
+    if (!filesByLog.has(k)) filesByLog.set(k, []);
+    filesByLog.get(k)!.push(toAttachmentJson(f));
+  }
   // Include due-but-not-yet-instantiated templates defensively.
-  const items = active
-    .filter((t) => isDueOn(t, dateStr))
+  const items = dueTemplates
     .map((t) => {
       const log = byTemplate.get(String(t.id));
       const status = log?.status ?? 'pending';
+      const missed = carried.get(String(t.id)) ?? [];
       return {
         templateId: t.id,
         title: t.title,
@@ -251,6 +299,8 @@ async function computeDashboard(dateStr: string) {
         dueMonth: t.dueMonth,
         ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
         dueLabel: t.rawText ?? null,
+        isShared: !!t.isShared,
+        employeeRaw: t.employeeRaw ?? null,
         logId: log?.id ?? null,
         status,
         remark: log?.remark ?? null,
@@ -258,11 +308,16 @@ async function computeDashboard(dateStr: string) {
         accountantId: log?.accountantId ?? null,
         accountantName: log?.accountant?.name ?? null,
         updatedAt: log?.updatedAt ?? null,
-        overdue: status === 'overdue' || (status === 'pending' && String(dateStr) < istDateStr()),
+        attachments: log ? (filesByLog.get(String(log.id)) ?? []) : [],
+        // Missed earlier window days (carryover) + stale materialised rows.
+        missed,
+        overdue: missed.length > 0 || status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr()),
       };
     });
+  const OPEN = new Set(['pending', 'inprogress', 'overdue']);
   const overdueCount = items.filter((i) => i.overdue && i.status !== 'done' && i.status !== 'skipped').length;
-  const openCount = items.filter((i) => i.status === 'pending' || i.status === 'overdue').length;
+  const openCount = items.filter((i) => OPEN.has(i.status)).length;
+  const inProgressCount = items.filter((i) => i.status === 'inprogress').length;
   const doneCount = items.filter((i) => i.status === 'done').length;
   const split = (role: string) => items.filter((i) => i.ownerRole === role || i.ownerRole === 'either');
   // Reference tasks with no fixed date (variable_per_item / to_be_decided):
@@ -278,6 +333,8 @@ async function computeDashboard(dateStr: string) {
       ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
       note: (() => { try { return JSON.parse(String(t.ruleJson || '{}')).note ?? null; } catch { return null; } })(),
       dueLabel: t.rawText ?? null,
+      isShared: !!t.isShared,
+      employeeRaw: t.employeeRaw ?? null,
     }));
   return {
     meta: {
@@ -285,6 +342,7 @@ async function computeDashboard(dateStr: string) {
       today: istDateStr(),
       total: items.length,
       open: openCount,
+      inProgress: inProgressCount,
       done: doneCount,
       overdue: overdueCount,
       generatedAt: new Date().toISOString(),
@@ -296,12 +354,85 @@ async function computeDashboard(dateStr: string) {
     junior: split('junior'),
     items,
     unscheduled,
+    team: await computeTeam(dateStr, carried),
   };
 }
 
 export async function getAccountsDashboardData(query: Record<string, any> = {}) {
   const date = String(query.date || '').slice(0, 10) || istDateStr();
   return cached(`${DATA_CACHE_PREFIX}${date}`, DATA_TTL_MS, () => computeDashboard(date));
+}
+
+// ── MIS export: past-N-days full ledger ─────────────────────────────────────
+// One row per (date × due task): status, who, remark, attachment links.
+// Read-only (never creates instances) — a complete view of what was
+// pending / in-progress / done per senior-junior lane, for the MIS export.
+function addDays(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12) + n * 86400000).toISOString().slice(0, 10);
+}
+
+export async function getAccountsExport(daysRaw: unknown, origin: string) {
+  const days = Math.min(93, Math.max(1, Math.floor(Number(daysRaw) || 30)));
+  const today = istDateStr();
+  const dates: string[] = [];
+  for (let i = 0; i < days; i++) dates.push(addDays(today, -i));
+  const from = dates[dates.length - 1];
+  await ensureSeedTemplates();
+  const [templates, logs] = await Promise.all([
+    prisma.accountsTaskTemplate.findMany({ orderBy: { order: 'asc' } }),
+    prisma.accountsTaskLog.findMany({
+      where: { dueDate: { gte: from, lte: today } },
+      include: { template: true, accountant: true },
+      orderBy: { dueDate: 'desc' },
+      take: 5000,
+    }).catch(() => []),
+  ]);
+  const logIds = (logs as any[]).map((l) => String(l.id));
+  const files = logIds.length
+    ? await (prisma as any).accountsTaskAttachment.findMany({
+      where: { logId: { in: logIds } },
+      orderBy: { createdAt: 'asc' },
+    }).catch(() => [])
+    : [];
+  const filesByLog = new Map<string, any[]>();
+  for (const f of files as any[]) {
+    const k = String(f.logId);
+    if (!filesByLog.has(k)) filesByLog.set(k, []);
+    filesByLog.get(k)!.push(f);
+  }
+  const base = String(origin || '').replace(/\/$/, '');
+  const rows: Record<string, unknown>[] = [];
+  for (const date of dates) {
+    const due = (templates as any[]).filter(
+      (t) => t.active && !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')) && isDueOn(t, date),
+    );
+    const byTemplate = new Map((logs as any[]).filter((l) => String(l.dueDate) === date).map((l) => [String(l.templateId), l]));
+    for (const t of due) {
+      const log: any = byTemplate.get(String(t.id));
+      const status = log?.status ?? 'not-logged';
+      const open = status === 'pending' || status === 'inprogress' || status === 'overdue' || status === 'not-logged';
+      rows.push({
+        date,
+        task: t.title,
+        frequency: t.frequency,
+        lane: t.ownerRole,
+        shared: !!t.isShared,
+        due: t.rawText ?? null,
+        status,
+        overdue: status === 'overdue' || (open && date < today),
+        doneBy: log?.doneBy ?? null,
+        accountant: log?.accountant?.name ?? null,
+        remark: log?.remark ?? null,
+        attachments: ((log ? filesByLog.get(String(log.id)) ?? [] : []) as any[]).map((f) => ({
+          name: String(f.fileName || ''),
+          url: `${base}/api/accounts/files/${String(f.id || '')}`,
+        })),
+        updatedAt: log?.updatedAt instanceof Date ? log.updatedAt.toISOString() : (log?.updatedAt ? String(log.updatedAt) : null),
+      });
+    }
+  }
+  return { from, to: today, days, total: rows.length, rows };
 }
 
 // ── Roster (MIS writes) ──────────────────────────────────────────────────────
@@ -395,6 +526,10 @@ function cleanTemplateInput(input: Record<string, any>, partial = false) {
     }
   }
   if (input.rawText !== undefined) data.rawText = input.rawText ? String(input.rawText).slice(0, 500) : null;
+  if (input.isShared !== undefined) data.isShared = !!input.isShared;
+  if (input.employeeRaw !== undefined) data.employeeRaw = input.employeeRaw ? String(input.employeeRaw).slice(0, 200) : null;
+  if (input.department !== undefined) data.department = input.department ? String(input.department).slice(0, 100) : null;
+  if (input.sheetStatus !== undefined) data.sheetStatus = input.sheetStatus ? String(input.sheetStatus).slice(0, 50) : null;
   if (input.active !== undefined) data.active = !!input.active;
   if (input.order !== undefined) data.order = Number(input.order);
   return data;
@@ -412,15 +547,179 @@ export async function updateTemplate(id: string, input: Record<string, any>) {
   return row;
 }
 
-// ── Logging (taskbar write: status + remark) ─────────────────────────────────
+// ── Logging (taskbar write: status + remark + optional proof files) ─────────
+// Status bar: pending → inprogress → done. EVERY status change must carry a
+// recorded reason: an empty remark on a transition is rejected (400) unless
+// the log already holds one (which is then preserved, never wiped).
 export async function logTask(logId: string, input: Record<string, any>, actor: string | null) {
   const status = String(input.status || '');
-  if (!['pending', 'done', 'skipped'].includes(status)) throw new Error('status must be pending|done|skipped');
-  const data: Record<string, any> = { status, updatedBy: actor };
-  if (input.remark !== undefined) data.remark = input.remark ? String(input.remark).slice(0, 2000) : null;
+  // `overdue` is system-set by the rollover; users move pending/inprogress/done
+  // (`skipped` accepted for legacy API compat — the UI no longer offers it).
+  if (!['pending', 'inprogress', 'done', 'skipped'].includes(status)) {
+    throw new Error('status must be pending|inprogress|done');
+  }
+  const current: any = await prisma.accountsTaskLog.findUnique({ where: { id: logId } });
+  if (!current) throw new Error('task log not found');
+  let remark: string | null = input.remark !== undefined
+    ? (input.remark ? String(input.remark).slice(0, 2000) : null)
+    : (current.remark ?? null);
+  if (status !== String(current.status) && !remark?.trim()) {
+    if (String(current.remark || '').trim()) remark = current.remark; // preserve recorded reason
+    else throw new Error('A remark (reason) is required to change status');
+  }
+  const data: Record<string, any> = { status, remark, updatedBy: actor };
   if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
   if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
+  // Marking done without naming anyone credits the signed-in user.
+  if (status === 'done' && !data.doneBy && actor) data.doneBy = String(actor).slice(0, 200);
+  if (status === 'done' && data.accountantId && !data.doneBy) {
+    try {
+      const acc: any = await prisma.accountant.findUnique({ where: { id: String(data.accountantId) } });
+      if (acc?.name) data.doneBy = String(acc.name).slice(0, 200);
+    } catch { /* name best-effort */ }
+  }
   const row = await prisma.accountsTaskLog.update({ where: { id: logId }, data });
   await invalidateAccountsCache();
   return row;
+}
+
+// ── Proof attachments (bytes in CHAT_FILES KV; rows here) ────────────────────
+export function toAttachmentJson(row: any) {
+  return {
+    id: String(row?.id ?? ''),
+    logId: String(row?.logId ?? ''),
+    fileName: String(row?.fileName ?? ''),
+    mime: String(row?.mime ?? 'application/octet-stream'),
+    size: Number(row?.size ?? 0),
+    uploadedBy: String(row?.uploadedBy ?? ''),
+    createdAt: row?.createdAt instanceof Date ? row.createdAt.toISOString() : String(row?.createdAt ?? ''),
+    url: `/api/accounts/files/${String(row?.id ?? '')}`,
+  };
+}
+
+export async function createAttachmentRecord(input: {
+  logId: string; fileName: string; mime: string; size: number; kvKey: string; uploadedBy: string | null;
+}) {
+  const log: any = await prisma.accountsTaskLog.findUnique({ where: { id: input.logId } });
+  if (!log) throw new Error('task log not found');
+  const row = await (prisma as any).accountsTaskAttachment.create({
+    data: {
+      logId: input.logId,
+      fileName: input.fileName.slice(0, 200),
+      mime: input.mime,
+      size: Math.max(0, Math.floor(input.size)),
+      kvKey: input.kvKey,
+      uploadedBy: String(input.uploadedBy || '').slice(0, 200),
+      createdAt: new Date(),
+    },
+  });
+  await invalidateAccountsCache();
+  return row;
+}
+
+export async function getAttachment(id: string) {
+  return (prisma as any).accountsTaskAttachment.findUnique({ where: { id } });
+}
+
+export async function deleteAttachmentRecord(id: string) {
+  const row: any = await (prisma as any).accountsTaskAttachment.findUnique({ where: { id } });
+  if (!row) throw new Error('Attachment not found');
+  await (prisma as any).accountsTaskAttachment.delete({ where: { id } });
+  await invalidateAccountsCache();
+  return row;
+}
+
+// ── Team scoreboard (motivation: tasks done per person) ──────────────────────
+function normName(s: unknown): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function mondayOf(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12));
+  const wd = dt.getUTCDay(); // 0 Sun … 6 Sat
+  const back = (wd + 6) % 7; // days since Monday
+  return new Date(dt.getTime() - back * 86400000).toISOString().slice(0, 10);
+}
+
+async function computeTeam(todayStr: string, carried?: Map<string, string[]>) {
+  const weekStart = mondayOf(todayStr);
+  const monthStart = `${todayStr.slice(0, 7)}-01`;
+  const roster = (await prisma.accountant.findMany({
+    where: { deleted: false }, orderBy: { order: 'asc' },
+  })) as any[];
+  const [doneLogs, todayLogs] = await Promise.all([
+    (prisma as any).accountsTaskLog.findMany({
+      where: { status: 'done', dueDate: { gte: monthStart } },
+      include: { accountant: true, template: true },
+    }).catch(() => []),
+    prisma.accountsTaskLog.findMany({
+      where: { dueDate: todayStr },
+      include: { template: true },
+    }).catch(() => []),
+  ]);
+  // Attribute each done log to a roster member: explicit accountantId first,
+  // then fuzzy doneBy-name match (covers logs made before roster mapping).
+  const credit = new Map<string, { today: number; week: number; month: number }>();
+  for (const r of roster) credit.set(String(r.id), { today: 0, week: 0, month: 0 });
+  const matchByName = (name: unknown): string | null => {
+    const n = normName(name);
+    if (!n || n.length < 3) return null;
+    const hits = roster.filter((r) => {
+      const rn = normName(r.name);
+      const em = normName(r.email);
+      return (rn && (rn === n || rn.startsWith(n) || n.startsWith(rn))) ||
+        (em && (em === n || em.split('@')[0] === n));
+    });
+    return hits.length === 1 ? String(hits[0].id) : null;
+  };
+  for (const l of doneLogs as any[]) {
+    const id = (l.accountantId && credit.has(String(l.accountantId)))
+      ? String(l.accountantId)
+      : matchByName(l.doneBy);
+    if (!id || !credit.has(id)) continue;
+    const c = credit.get(id)!;
+    c.month += 1;
+    if (String(l.dueDate) >= weekStart) c.week += 1;
+    if (String(l.dueDate) === todayStr) c.today += 1;
+  }
+  // Open items in each member's role lane today (shared context, not assignment).
+  const openByRole = { senior: 0, junior: 0 };
+  let doneToday = 0;
+  let openToday = 0;
+  let inProgressToday = 0;
+  let overdueToday = 0;
+  for (const l of todayLogs as any[]) {
+    if (l.status === 'done') { doneToday += 1; continue; }
+    if (l.status === 'skipped') continue;
+    if (l.status === 'overdue') { overdueToday += 1; continue; }
+    openToday += 1;
+    if (l.status === 'inprogress') inProgressToday += 1;
+    const role = String(l.template?.ownerRole || 'either');
+    if (role === 'senior' || role === 'either') openByRole.senior += 1;
+    if (role === 'junior' || role === 'either') openByRole.junior += 1;
+  }
+  const completionPct = doneToday + openToday > 0 ? Math.round((doneToday / (doneToday + openToday)) * 100) : 100;
+  const members = roster.map((r) => {
+    const c = credit.get(String(r.id))!;
+    const lane = r.role === 'senior' ? openByRole.senior : openByRole.junior;
+    return {
+      id: r.id, name: r.name, role: r.role,
+      doneToday: c.today, doneWeek: c.week, doneMonth: c.month,
+      openLaneToday: lane,
+    };
+  }).sort((a, b) => b.doneMonth - a.doneMonth || b.doneWeek - a.doneWeek || b.doneToday - a.doneToday);
+  let weekDone = 0;
+  let monthDone = 0;
+  for (const l of doneLogs as any[]) {
+    monthDone += 1;
+    if (String(l.dueDate) >= weekStart) weekDone += 1;
+  }
+  return {
+    date: todayStr, weekStart, monthStart,
+    doneToday, openToday, inProgressToday,
+    overdueToday: overdueToday + (carried ? carried.size : 0),
+    completionPct, weekDone, monthDone,
+    members,
+  };
 }

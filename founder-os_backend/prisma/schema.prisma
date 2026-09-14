@@ -791,6 +791,11 @@ model AccountsTaskTemplate {
   ruleType    String?
   ruleJson    String?
   rawText     String?
+  // Verbatim sheet-fidelity columns (data/accounts_follow_up.json per-task fields).
+  isShared    Boolean  @default(false)
+  employeeRaw String?
+  department  String?
+  sheetStatus String?
   active      Boolean  @default(true)
   order       Int      @default(0)
   createdAt   DateTime @default(now())
@@ -820,6 +825,24 @@ model AccountsTaskLog {
   @@unique([templateId, dueDate])
   @@index([dueDate, status])
   @@index([accountantId])
+  attachments      AccountsTaskAttachment[]
+}
+
+// Proof files attached to a task log (bank reco PDFs, challans, screenshots).
+// Metadata is durable in D1; bytes live in Workers KV (CHAT_FILES, same locker
+// as team-chat + SO files). Listed on the taskbar next to the remark.
+model AccountsTaskAttachment {
+  id         String   @id @default(uuid())
+  logId      String
+  log        AccountsTaskLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String   @default("application/octet-stream")
+  size       Int      @default(0)
+  kvKey      String   @unique
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([logId])
 }
 
 // ── WhatsApp Business Autopilot ──────────────────────────────────────────────

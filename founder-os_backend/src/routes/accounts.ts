@@ -6,7 +6,7 @@ import { AuthError } from '../modules/auth/types';
 import { PrismaAuthStore } from '../modules/auth/store-prisma';
 import {
   listAccountants, createAccountant, updateAccountant,
-  listTemplates, createTemplate, updateTemplate, logTask,
+  listTemplates, createTemplate, updateTemplate, logTask, getAccountsExport,
 } from '../automations/accounts/service';
 
 void prisma;
@@ -55,11 +55,22 @@ router.delete('/templates/:id', misGuard, asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+router.get('/export', misGuard, asyncHandler(async (req, res) => {
+  const origin = `${req.protocol}://${req.get('host')}`;
+  try { res.json(await getAccountsExport(req.query.days, origin)); }
+  catch (e: any) { res.status(400).json({ error: e?.message ?? 'export failed' }); }
+}));
+
 router.patch('/logs/:id', asyncHandler(async (req, res) => {
   const me = await getMe(store as any, req.headers.cookie || null).catch(() => null);
   const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? null;
   try { res.json(await logTask(String(req.params.id), req.body || {}, actor)); }
   catch (e: any) { res.status(400).json({ error: e?.message ?? 'log failed' }); }
 }));
+
+// Proof-file bytes live in Workers KV — worker-only runtime (mirrors CRM).
+router.post('/logs/:id/files', (_req, res) => res.status(501).json({ error: 'Account file upload is only available on the Cloudflare Worker runtime' }));
+router.get('/files/:id', (_req, res) => res.status(501).json({ error: 'Account file serving is only available on the Cloudflare Worker runtime' }));
+router.delete('/files/:id', (_req, res) => res.status(501).json({ error: 'Account file delete is only available on the Cloudflare Worker runtime' }));
 
 export default router;

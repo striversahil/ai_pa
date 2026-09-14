@@ -16,8 +16,13 @@ export async function handler() {
     if (batch.length === 0) break;
 
     const ids = batch.map((b) => b.id);
-    const res = await prisma.message.deleteMany({ where: { id: { in: ids } } });
-    batchDeleted = res.count;
+    // Chunked at 90 — D1 caps bound SQL variables at 100/statement.
+    let batchDeletedInner = 0;
+    for (let i = 0; i < ids.length; i += 90) {
+      const res = await prisma.message.deleteMany({ where: { id: { in: ids.slice(i, i + 90) } } });
+      batchDeletedInner += res.count;
+    }
+    batchDeleted = batchDeletedInner;
     totalDeleted += batchDeleted;
   } while (batchDeleted > 0);
 

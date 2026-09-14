@@ -34,6 +34,10 @@ export const LiveEvent = {
    */
   Telecalling: "telecalling",
   /**
+   * Accounts taskbar writes (daily logging, remarks, attachments, MIS
+   * roster/template changes). Typed member so refactors are compiler-checked.
+   */
+  Accounts: "accounts",  /**
    * Agent call-disposition tag tap (Lead Conversion view). Deliberately NOT
    * "telecalling": dashboards refetch wholesale on that type, and a tag save
    * would fan out into ~20 requests (leaderboard + generation + roster + every

@@ -104,10 +104,12 @@ Sole taxonomy source: `founder-os_backend/data/know_your_product_v2.json`
   never invented (empty when absent; `Lead of …` agent references ignored).
   Numbered categories were adopted after live testing showed the model echoing
   material/item words (`"Nylon"`) as the category — digits route deterministically.
-- **Stage B — grounder** (text-only, one call per routed category with that
-  category's full aliases + `required_attributes`, worst ~4k tokens):
-  verbatim lines → exact v2 `item_name` + verbatim `spec` + `missing[]` derived
-  from the catalogue's `needs`. Unknown lines pass through verbatim (never invented).
+- **Stage B — VERBATIM-ONLY, grounder LLM call disabled**: it hallucinated
+  catalogue matches (COTTON PAD → Cotton Cleaner, HOUSING PIN dropped), so
+  each router line now becomes one item with the client's exact wording
+  (qty/dims/spec split, layout cleaned). The v2 catalogue stays the category
+  reference for routing + price-memory namespacing, never a rename source.
+  Re-enable grounding only with a confidence threshold + UNMATCHED passthrough.
 - **Server guard**: only exact v2 category names are stored; anything else is
   re-resolved via full-index fuzzy match or parked under `Uncategorized`.
 - **Result apply** (`POST /api/runner/enquiry-intake/result`, fill-empty-only):

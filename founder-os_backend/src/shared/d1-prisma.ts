@@ -44,8 +44,9 @@ const BOOL_FIELDS: Record<string, string[]> = {
   EnquiryComment: [],
   SoAttachment: [],
   Accountant: ['deleted'],
-  AccountsTaskTemplate: ['active'],
+  AccountsTaskTemplate: ['active', 'isShared'],
   AccountsTaskLog: [],
+  AccountsTaskAttachment: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -75,6 +76,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   Accountant: ['createdAt'],
   AccountsTaskTemplate: ['createdAt', 'updatedAt'],
   AccountsTaskLog: ['createdAt', 'updatedAt'],
+  AccountsTaskAttachment: ['createdAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
   SoAttachment: ['createdAt'],
@@ -127,6 +129,7 @@ const ID_FIELDS: Record<string, string> = {
   Accountant: 'id',
   AccountsTaskTemplate: 'id',
   AccountsTaskLog: 'id',
+  AccountsTaskAttachment: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -192,6 +195,10 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   AccountsTaskLog: {
     template: { model: 'AccountsTaskTemplate', fk: 'templateId', one: true },
     accountant: { model: 'Accountant', fk: 'accountantId', one: true },
+    attachments: { model: 'AccountsTaskAttachment', fk: 'logId' },
+  },
+  AccountsTaskAttachment: {
+    log: { model: 'AccountsTaskLog', fk: 'logId', one: true },
   },
 };
 
@@ -714,6 +721,7 @@ export class D1PrismaClient {
   get accountant() { return this.model('Accountant'); }
   get accountsTaskTemplate() { return this.model('AccountsTaskTemplate'); }
   get accountsTaskLog() { return this.model('AccountsTaskLog'); }
+  get accountsTaskAttachment() { return this.model('AccountsTaskAttachment'); }
 
   $on() {}
   $disconnect() {}
