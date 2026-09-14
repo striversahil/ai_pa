@@ -89,6 +89,12 @@ export function itemNeedsRates(it: Pick<EnquiryItem, "rateAvailable" | "rates" |
   return !it?.rateAvailable && (((it?.rates ?? []).length === 0) || !!it?.ratesRequested);
 }
 
+/** Submitted to management: the explicit procurement handoff. Only
+ *  submitted enquiries conclude in procurement and enter review. */
+export function isSubmitted(e: { procurementSubmittedAt?: string }): boolean {
+  return !!String(e?.procurementSubmittedAt ?? "").trim();
+}
+
 /** Loop-eligible for Management: rate unavailable, quoted, not finalized,
  *  spec undisputed. */
 export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "rates" | "finalRate" | "specIssue">): boolean {
@@ -102,8 +108,10 @@ export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "rates
  *  dashboards (backend predicates mirror these; keep them in sync).
  *  Pending and history are DISJOINT: an enquiry is either awaiting work or
  *  done, never both. Empty enquiries (no items yet) are sales-only — they
- *  wait on sales to add items, not on procurement. */
-export function isProcurementPendingEnquiry(e: Pick<Enquiry, "items">): boolean {
+ *  wait on sales to add items, not on procurement. Procurement pending
+ *  additionally requires NOT submitted: the handoff concludes the queue. */
+export function isProcurementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
+  if (isSubmitted(e)) return false;
   const items = e.items ?? [];
   return items.some(itemNeedsRates);
 }
@@ -114,8 +122,22 @@ export function isProcurementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean 
     && items.some((it) => (it.rates ?? []).length > 0 && !it.ratesRequested);
 }
 
-export function isManagementPendingEnquiry(e: Pick<Enquiry, "items">): boolean {
+export function isManagementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
+  if (!isSubmitted(e)) return false;
   return (e.items ?? []).some(itemNeedsDecision);
+}
+
+/** Submit readiness: every quotable loop item (correct spec, rate not
+ *  already available) carries at least one vendor rate. Flagged items stay
+ *  out — they are sales' problem, not procurement's. */
+export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
+  const loop = (e.items ?? []).filter((it) => !it?.specIssue && !it?.rateAvailable);
+  if (loop.length === 0) return { ok: false, reason: "No quotable items yet" };
+  const unrated = loop.filter((it) => (it?.rates ?? []).length === 0).length;
+  if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates` };
+  const flagged = (e.items ?? []).filter((it) => it?.specIssue).length;
+  if (flagged > 0) return { ok: false, reason: `${flagged} item${flagged === 1 ? "" : "s"} awaiting sales spec fix` };
+  return { ok: true, reason: "" };
 }
 
 export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean {
@@ -145,6 +167,9 @@ export interface Enquiry {
   status: 'new' | 'contacted' | 'qualified' | 'proposal' | 'negotiation' | 'won' | 'lost';
   /** Procurement workflow: '' | rate_pending | rates_received | finalized. */
   rateStatus?: string;
+  /** Explicit procurement handoff: ISO instant of "Submit to Management".
+   *  Only submitted enquiries enter the management queue. */
+  procurementSubmittedAt?: string;
   assignedAgentId: string;
   createdAt: string;
   updatedAt?: string;

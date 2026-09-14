@@ -21,8 +21,10 @@ async function actorName(c: any): Promise<string | null> {
 }
 
 export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // ── Roster (reads: accounts scope; writes: MIS-only, like telecallers) ──
+  // ── Roster (MIS-only, like /api/telecallers: reads and writes) ──────────
+  // The dashboard gets the names it needs via data().roster (no emails).
   app.get('/api/accounts/roster', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     const { prisma } = deps();
     void prisma;
     const rows = await listAccountants(c.req.query('deleted') === '1');
@@ -56,8 +58,9 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     return c.json({ ok: true });
   });
 
-  // ── Templates (reads: accounts scope; writes: MIS-only) ──
+  // ── Templates (MIS-only reads/writes; dashboard reads via data()) ──────
   app.get('/api/accounts/templates', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     const rows = await listTemplates(c.req.query('all') === '1');
     return c.json({ templates: rows });
   });

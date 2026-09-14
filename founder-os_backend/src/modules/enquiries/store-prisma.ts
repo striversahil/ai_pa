@@ -23,6 +23,7 @@ function mapEnquiry(row: any): Enquiry | null {
     priority: row.priority,
     status: row.status,
     rateStatus: (row as any).rateStatus ?? "",
+    procurementSubmittedAt: String((row as any).procurementSubmittedAt ?? ""),
     assignedAgentId: String(row.assignedAgentId ?? ""),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

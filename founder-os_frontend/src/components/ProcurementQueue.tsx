@@ -11,7 +11,7 @@ import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
-import { enquiryLabel, historyDateChip, itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry } from "@/types";
+import { enquiryLabel, historyDateChip, itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, procurementSubmittable } from "@/types";
 
 /** Pending = items still needing rates. Empty enquiries (no items yet) wait
  *  on sales, not procurement — they render in their own section below. */
@@ -79,7 +79,7 @@ export default function ProcurementQueue() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const { enquiries, loaded, aiConfigured, updateItems, comments, addComment, currentAgent } =
+  const { enquiries, loaded, aiConfigured, updateItems, updateEnquiry, comments, addComment, currentAgent } =
     useEnquiryData("procurement");
 
   // Live intimations: management rate-requests (act on the item) and sales
@@ -195,6 +195,22 @@ export default function ProcurementQueue() {
   const handleFlag = useCallback((enquiryId: string, itemIdx: number, reason: string) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, specIssue: reason, specFlaggedAt: new Date().toISOString() } : it)), [patchItems]);
+
+  // Final handoff: only an explicit submit concludes procurement and routes
+  // the enquiry to management. Late vendor quotes stay addable until then.
+  const handleSubmit = useCallback(async (enquiryId: string) => {
+    setSaveError(null);
+    try {
+      await updateEnquiry(enquiryId, { procurementSubmittedAt: new Date().toISOString() });
+      setSelectedId(null);
+    } catch (e: any) {
+      setSaveError(e?.message || "Submit failed — please retry.");
+    }
+  }, [updateEnquiry]);
+
+  const handleAddMedia = useCallback((enquiryId: string, itemIdx: number, media: EnquiryItem["media"]) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) =>
+      i === itemIdx ? { ...it, media: [...(it.media ?? []), ...(media ?? [])] } : it)), [patchItems]);
 
   if (!allowed) {
     return (
@@ -396,20 +412,51 @@ export default function ProcurementQueue() {
           {(selEnquiry as any).redactedPending && (
             <p className="text-[11px] font-semibold text-zinc-500">Details processing — refreshes live.</p>
           )}
+          {(() => {
+            const submitted = isSubmitted(selEnquiry);
+            const gate = procurementSubmittable(selEnquiry);
+            if (submitted) {
+              return (
+                <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                  Submitted to management — vendor rates are locked. Late quotes reopen via a management rate request.
+                </p>
+              );
+            }
+            return (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)]/25 px-3 py-2">
+                <button
+                  type="button"
+                  disabled={!gate.ok}
+                  onClick={() => void handleSubmit(selEnquiry.id)}
+                  title={gate.ok ? "Conclude procurement and send to management" : gate.reason}
+                  className="px-3.5 py-2 bg-brand-indigo text-white font-bold text-xs rounded-xl cursor-pointer border-0 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Submit to Management
+                </button>
+                {!gate.ok && (
+                  <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{gate.reason} — the enquiry stays open for late vendor quotes until you submit.</span>
+                )}
+              </div>
+            );
+          })()}
           <div className="space-y-2.5">
-            {(selEnquiry.items ?? []).map((item, itemIdx) => (
-              <ProcurementItemCard
-                key={itemIdx}
-                item={item}
-                itemIdx={itemIdx}
-                onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
-                onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
-                onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
-                onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
-                onOpenLightbox={handleOpenLightbox}
-                readOnly={item.finalRate !== undefined && item.finalRate !== null}
-              />
-            ))}
+            {(() => {
+              const submitted = isSubmitted(selEnquiry);
+              return (selEnquiry.items ?? []).map((item, itemIdx) => (
+                <ProcurementItemCard
+                  key={itemIdx}
+                  item={item}
+                  itemIdx={itemIdx}
+                  onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
+                  onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
+                  onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
+                  onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
+                  onAddMedia={(media) => handleAddMedia(selEnquiry.id, itemIdx, media)}
+                  onOpenLightbox={handleOpenLightbox}
+                  readOnly={submitted || (item.finalRate !== undefined && item.finalRate !== null)}
+                />
+              ));
+            })()}
             <ProcurementThread
               enquiryId={selEnquiry.id}
               comments={comments}

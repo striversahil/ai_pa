@@ -5,6 +5,7 @@ import ItemRateForm from "@/components/ItemRateForm";
 import FlagThread from "@/components/FlagThread";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { historyDateChip } from "@/types";
+import { filesToMedia, dragHasFiles } from "@/lib/imageFiles";
 
 interface ProcurementItemCardProps {
   item: EnquiryItem;
@@ -14,6 +15,9 @@ interface ProcurementItemCardProps {
   onRemoveRate: (rateIdx: number) => void;
   onFlag: (reason: string) => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
+  /** Vendor reference attachments (photos/drawings/PDFs). Append-only —
+   *  procurement can never edit or remove stored media. */
+  onAddMedia?: (media: NonNullable<EnquiryItem["media"]>) => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
 }
@@ -23,12 +27,14 @@ interface ProcurementItemCardProps {
 // collapsed behind buttons so the queue stays scannable. A flagged item shows
 // its hold banner and no rate actions until Sales corrects the spec.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, readOnly = false,
+  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddMedia, readOnly = false,
 }: ProcurementItemCardProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [editingRate, setEditingRate] = useState<number | null>(null);
   const [showFlag, setShowFlag] = useState(false);
   const [flagReason, setFlagReason] = useState("");
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [mediaDragOver, setMediaDragOver] = useState(false);
 
   const rates = item.rates ?? [];
   const flagged = !!item.specIssue;
@@ -42,6 +48,14 @@ export default function ProcurementItemCard({
     onFlag(reason);
     setFlagReason("");
     setShowFlag(false);
+  };
+
+  const attachMedia = async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0 || !onAddMedia) return;
+    setMediaError(null);
+    const { media, skipped } = await filesToMedia(files);
+    if (skipped.length > 0) setMediaError(`Skipped: ${skipped.join(", ")}`);
+    if (media.length > 0) onAddMedia(media);
   };
 
   return (
@@ -112,6 +126,23 @@ export default function ProcurementItemCard({
           <p className="mt-1 text-[var(--text-tertiary)]">
             Add or edit a rate below to answer — the request clears automatically.
           </p>
+        </div>
+      )}
+
+      {onAddMedia && !readOnly && (
+        <div
+          onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setMediaDragOver(true); } }}
+          onDragLeave={() => setMediaDragOver(false)}
+          onDrop={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setMediaDragOver(false); void attachMedia(e.dataTransfer.files); } }}
+          className={`flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-2 py-1.5 transition-colors ${mediaDragOver ? "border-brand-indigo bg-brand-indigo/10" : "border-[var(--border-card)]"}`}
+        >
+          <label className="inline-flex items-center gap-1 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
+            + Vendor reference
+            <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
+              onChange={(e) => { void attachMedia(e.target.files); e.target.value = ""; }} />
+          </label>
+          <span className="text-[10px] text-[var(--text-tertiary)]">photos / drawings / PDF — or drop files here</span>
+          {mediaError && <span className="text-[10px] font-semibold text-[var(--color-danger)]">{mediaError}</span>}
         </div>
       )}
 

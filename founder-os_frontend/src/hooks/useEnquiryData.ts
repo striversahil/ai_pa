@@ -35,6 +35,8 @@ function toEnquiry(raw: any): Enquiry {
         name: String(r?.name ?? ""),
         qty: String(r?.qty ?? ""),
         spec: String(r?.spec ?? ""),
+        category: r?.category ? String(r.category) : undefined,
+        verbatim: r?.verbatim ? String(r.verbatim) : undefined,
         media: Array.isArray(r?.media)
           ? r.media
               .map((m: any) => ({
@@ -94,6 +96,7 @@ function toEnquiry(raw: any): Enquiry {
     priority: raw.priority || 'medium',
     status: raw.status || 'new',
     rateStatus: raw.rateStatus || '',
+    procurementSubmittedAt: raw.procurementSubmittedAt ? String(raw.procurementSubmittedAt) : undefined,
     assignedAgentId: String(raw.assignedAgentId ?? ''),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt || raw.createdAt,

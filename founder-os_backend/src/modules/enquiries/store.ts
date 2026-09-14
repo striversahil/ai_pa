@@ -228,6 +228,10 @@ export interface Enquiry {
    *  | finalized | sent (sales marked the quoted rates sent to the client;
    *  requires EST No.). */
   rateStatus: string;
+  /** Explicit procurement handoff: ISO instant procurement pressed
+   *  "Submit to Management". Only submitted enquiries enter the management
+   *  queue; cleared when management requests more rates (reopen). */
+  procurementSubmittedAt: string;
   assignedAgentId: string;
   createdAt: string;
   updatedAt: string;
@@ -308,6 +312,7 @@ export function mapEnquiry(row: any): Enquiry | null {
     priority: row.priority,
     status: row.status,
     rateStatus: (row as any).rateStatus ?? "",
+    procurementSubmittedAt: String((row as any).procurementSubmittedAt ?? ""),
     assignedAgentId: String(row.assignedAgentId ?? ""),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -397,6 +402,7 @@ export function sanitize(e: any): Enquiry {
     priority: str(e.priority),
     status: str(e.status),
     rateStatus: str((e as any).rateStatus),
+    procurementSubmittedAt: isoOrUndefined((e as any).procurementSubmittedAt) ?? "",
     assignedAgentId: str(e.assignedAgentId),
     imageUrls: Array.isArray(e.imageUrls) ? e.imageUrls : [],
     activities: Array.isArray(e.activities) ? e.activities : [],
@@ -535,11 +541,11 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         e.id, e.estNumber, e.dailyNo, e.source, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
-        e.priority, e.status, e.rateStatus, e.assignedAgentId, e.createdAt, e.updatedAt,
+        e.priority, e.status, e.rateStatus, e.procurementSubmittedAt, e.assignedAgentId, e.createdAt, e.updatedAt,
         JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []),
       )
       .run();
@@ -551,11 +557,11 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
       )
       .bind(
         merged.estNumber, merged.dailyNo, merged.source, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
-        merged.description, merged.priority, merged.status, merged.rateStatus, merged.assignedAgentId,
+        merged.description, merged.priority, merged.status, merged.rateStatus, merged.procurementSubmittedAt, merged.assignedAgentId,
         merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
         JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), id,
       )

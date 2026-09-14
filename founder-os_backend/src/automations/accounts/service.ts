@@ -9,7 +9,7 @@ export const OWNER_ROLES = ['senior', 'junior', 'either'] as const;
 // by the rollover for stale pendings/in-progress rows.
 export const LOG_STATUSES = ['pending', 'inprogress', 'done', 'skipped'] as const;
 
-const DATA_TTL_MS = 60 * 1000;
+const DATA_TTL_MS = 5 * 60 * 1000;
 const DATA_CACHE_PREFIX = 'accounts:dashboard:';
 
 export function istDateStr(d = new Date()): string {
@@ -182,15 +182,25 @@ export async function ensureInstances(dateStr: string): Promise<number> {
     select: { templateId: true },
   });
   const have = new Set((existing as any[]).map((r) => String(r.templateId)));
-  let created = 0;
-  for (const t of due as any[]) {
-    if (have.has(String(t.id))) continue;
-    try {
-      await prisma.accountsTaskLog.create({ data: { templateId: t.id, dueDate: dateStr, status: 'pending' } });
-      created++;
-    } catch { /* unique race — ignore */ }
+  const missing = (due as any[]).filter((t) => !have.has(String(t.id)));
+  if (missing.length === 0) return 0;
+  // One batched INSERT + one re-read (2 round trips total). Unique
+  // (templateId, dueDate) keeps concurrent rollovers idempotent — on conflict
+  // the batch throws and we fall back to idempotent per-row creates.
+  try {
+    const rows = await (prisma as any).accountsTaskLog.createManyAndReturn({
+      data: missing.map((t: any) => ({ templateId: String(t.id), dueDate: dateStr, status: 'pending' })),
+    });
+    return Array.isArray(rows) ? rows.length : missing.length;
+  } catch {
+    const results = await Promise.all(missing.map(async (t: any) => {
+      try {
+        await prisma.accountsTaskLog.create({ data: { templateId: t.id, dueDate: dateStr, status: 'pending' } });
+        return 1;
+      } catch { return 0; /* unique race — ignore */ }
+    }));
+    return results.reduce<number>((a, b) => a + b, 0);
   }
-  return created;
 }
 
 /** Mark stale pending rows overdue (materialised reminder state). */
@@ -348,13 +358,16 @@ async function computeDashboard(dateStr: string) {
       generatedAt: new Date().toISOString(),
     },
     roster: (roster as any[]).map((r) => ({
-      id: r.id, name: r.name, email: r.email, phone: r.phone, role: r.role, order: r.order,
+      // Public team slice: identity + lane only (no emails/phones — those stay
+      // behind the MIS-only roster endpoint, telecalling-parity). Enough for
+      // the Who-picker, lane labels, and the team board.
+      id: r.id, name: r.name, role: r.role, order: r.order,
     })),
     senior: split('senior'),
     junior: split('junior'),
     items,
     unscheduled,
-    team: await computeTeam(dateStr, carried),
+    team: await computeTeam(dateStr, carried, { roster, todayLogs: logs }),
   };
 }
 
@@ -572,11 +585,18 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
   if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
   // Marking done without naming anyone credits the signed-in user.
   if (status === 'done' && !data.doneBy && actor) data.doneBy = String(actor).slice(0, 200);
-  if (status === 'done' && data.accountantId && !data.doneBy) {
+  if (data.accountantId) {
+    // Never credit a removed (or unknown) roster entry: the name trail in
+    // doneBy is preserved, but the id link is dropped so ghosts can't collect
+    // points or appear as owners. Fail-open on read errors.
     try {
       const acc: any = await prisma.accountant.findUnique({ where: { id: String(data.accountantId) } });
-      if (acc?.name) data.doneBy = String(acc.name).slice(0, 200);
-    } catch { /* name best-effort */ }
+      if (!acc || acc.deleted) {
+        data.accountantId = null;
+      } else if (status === 'done' && !data.doneBy && acc.name) {
+        data.doneBy = String(acc.name).slice(0, 200);
+      }
+    } catch { /* keep the id on read failure */ }
   }
   const row = await prisma.accountsTaskLog.update({ where: { id: logId }, data });
   await invalidateAccountsCache();
@@ -642,18 +662,25 @@ function mondayOf(dateStr: string): string {
   return new Date(dt.getTime() - back * 86400000).toISOString().slice(0, 10);
 }
 
-async function computeTeam(todayStr: string, carried?: Map<string, string[]>) {
+async function computeTeam(
+  todayStr: string,
+  carried?: Map<string, string[]>,
+  pre?: { roster: any[]; todayLogs: any[] },
+) {
   const weekStart = mondayOf(todayStr);
   const monthStart = `${todayStr.slice(0, 7)}-01`;
-  const roster = (await prisma.accountant.findMany({
+  // Reuse the dashboard's already-fetched roster + today logs when provided —
+  // only the month-to-date done ledger needs its own query (no includes: just
+  // raw attribution fields, one round trip).
+  const roster = (pre?.roster ?? await prisma.accountant.findMany({
     where: { deleted: false }, orderBy: { order: 'asc' },
   })) as any[];
   const [doneLogs, todayLogs] = await Promise.all([
     (prisma as any).accountsTaskLog.findMany({
       where: { status: 'done', dueDate: { gte: monthStart } },
-      include: { accountant: true, template: true },
+      select: { accountantId: true, doneBy: true, dueDate: true },
     }).catch(() => []),
-    prisma.accountsTaskLog.findMany({
+    pre?.todayLogs ?? prisma.accountsTaskLog.findMany({
       where: { dueDate: todayStr },
       include: { template: true },
     }).catch(() => []),

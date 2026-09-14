@@ -23,7 +23,7 @@ const misGuard = asyncHandler(async (req, res, next) => {
   }
 });
 
-router.get('/roster', asyncHandler(async (req, res) => {
+router.get('/roster', misGuard, asyncHandler(async (req, res) => {
   res.json({ accountants: await listAccountants(req.query.deleted === '1') });
 }));
 router.post('/roster', misGuard, asyncHandler(async (req, res) => {
@@ -39,7 +39,7 @@ router.delete('/roster/:id', misGuard, asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
-router.get('/templates', asyncHandler(async (req, res) => {
+router.get('/templates', misGuard, asyncHandler(async (req, res) => {
   res.json({ templates: await listTemplates(req.query.all === '1') });
 }));
 router.post('/templates', misGuard, asyncHandler(async (req, res) => {

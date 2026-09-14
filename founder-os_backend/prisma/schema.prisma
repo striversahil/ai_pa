@@ -734,6 +734,8 @@ model Enquiry {
   additionalRequirements String?
   // Procurement workflow stage: '' (legacy) | rate_pending | rates_received | finalized.
   rateStatus       String   @default("")
+  // Explicit procurement handoff: ISO instant of "Submit to Management".
+  procurementSubmittedAt String @default("")
   // Manual line items (JSON array text): [{ name, qty, spec, media, rates, markup... }].
   // [{ name, qty, spec }] — one entry per purchasable item in the enquiry.
   items          String?

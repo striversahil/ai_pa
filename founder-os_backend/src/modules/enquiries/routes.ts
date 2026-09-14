@@ -107,6 +107,8 @@ function pick(data: any): Partial<Enquiry> | null {
         qty: normalizeQty(r?.qty).slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
         media: parseItemMedia(r?.media),
+        category: r?.category ? String(r.category).slice(0, 120) : undefined,
+        verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
         rates: parseItemRates(r?.rates),
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         markup: numOrUndefined(r?.markup),
@@ -126,6 +128,12 @@ function pick(data: any): Partial<Enquiry> | null {
     const rs = String(data.rateStatus ?? '');
     if (['', 'rate_pending', 'rates_received', 'finalized', 'sent'].includes(rs)) (out as any).rateStatus = rs;
   }
+  // Procurement handoff flag: ISO instant or '' (clear). Scope-enforced in
+  // enquiryUpdate (sales can never touch it); validated here only.
+  if (data.procurementSubmittedAt !== undefined) {
+    const v = String(data.procurementSubmittedAt ?? '').trim();
+    (out as any).procurementSubmittedAt = v ? (isoOrUndefined(v) ?? '') : '';
+  }
   return Object.keys(out).length ? out : null;
 }
 
@@ -137,15 +145,16 @@ export function canManageRates(me: MeResponse): boolean {
 }
 
 /** Margin fields are Management-only: non-privileged readers (sales AND
- *  procurement) see final rates but never the chosen vendor / markup that
- *  produced them. Stored rows are untouched — only the API response. */
+ *  procurement) see final rates AND the chosen vendor name, but never the
+ *  markup (or the losing quotes' detail beyond the list). Stored rows are
+ *  untouched — only the API response. */
 export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T {
   if (!enquiry || !Array.isArray((enquiry as any).items)) return enquiry;
   return {
     ...(enquiry as any),
     items: (enquiry as any).items.map((it: any) => {
       if (!it || typeof it !== 'object') return it;
-      const { selectedVendor, markup, ...rest } = it;
+      const { markup, ...rest } = it;
       return rest;
     }),
   } as T;
@@ -577,7 +586,14 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
         base.name = stored.name ?? "";
         base.qty = stored.qty ?? "";
         base.spec = stored.spec ?? "";
-        base.media = stored.media ?? [];
+        // Procurement may APPEND vendor reference media (photos/drawings)
+        // but never edit or remove stored media — identity still follows
+        // the stored row. Vendor refs never resolve the spec flag (see the
+        // mediaAdded rule below — only non-procurement surfaces clear it).
+        const storedMedia = parseItemMedia(stored.media ?? []);
+        const incomingMedia = parseItemMedia(base.media ?? []);
+        const seenMedia = new Set(storedMedia.map((m: any) => `${m.type}:${m.url}`));
+        base.media = [...storedMedia, ...incomingMedia.filter((m: any) => !seenMedia.has(`${m.type}:${m.url}`))];
         base.rateAvailable = stored.rateAvailable === true;
         // A fresh/edited rate answers Management's request — clear it.
         // Untouched rates keep a pending request alive.
@@ -682,6 +698,27 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       base.thread = trail.slice(-50);
       return base;
     }).filter((it: any) => it !== null);
+  }
+  // Submit-to-Management lifecycle (enquiry-level handoff flag):
+  // - sales (plain) writers can never touch it — follows stored;
+  // - procurement (restricted) may stamp it (submit) but never clear it;
+  // - management (privileged) may stamp or clear it.
+  if ((updates as any).procurementSubmittedAt !== undefined) {
+    if (!privileged && !restricted) {
+      if (storedForItems) (updates as any).procurementSubmittedAt = String((storedForItems as any).procurementSubmittedAt ?? '');
+      else delete (updates as any).procurementSubmittedAt;
+    } else if (restricted) {
+      const v = String((updates as any).procurementSubmittedAt ?? '');
+      if (!v && storedForItems) (updates as any).procurementSubmittedAt = String((storedForItems as any).procurementSubmittedAt ?? '');
+    }
+    // Privileged value stands as sent (stamp or clear).
+  }
+  // A fresh management rates-request reopens the enquiry for procurement:
+  // the handoff clears so both queues gate it back until re-submit.
+  if (privileged && Array.isArray((updates as any).items)) {
+    const reopens = ((updates as any).items as any[]).some((it: any, idx: number) =>
+      it?.ratesRequested && !(storedItems[idx]?.ratesRequested));
+    if (reopens) (updates as any).procurementSubmittedAt = '';
   }
   // Auto-advance: a management item save that leaves every loop item
   // with a final rate flips the enquiry to rates-ready on its own — no

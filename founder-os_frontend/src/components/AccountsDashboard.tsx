@@ -51,8 +51,8 @@ interface UnscheduledItem {
 interface RosterRow {
   id: string;
   name: string;
-  email: string | null;
-  phone: string | null;
+  email?: string | null;
+  phone?: string | null;
   role: string;
   order: number;
   deleted?: boolean;
@@ -148,27 +148,32 @@ function fmtShort(iso: string): string {
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]}`;
 }
 
-/** Match the signed-in user to a roster entry (email exact, then name prefix). */
+/** Match the signed-in user to a roster entry by NAME only (never email —
+ *  the team shares logins, so email can't distinguish humans). Session name,
+ *  then session email local-part, each accepted only on a single clear hit.
+ *  Returns "" when ambiguous — the "Acting as" picker then decides. */
 export function matchSelfRoster(me: { user: { email: string; name: string } } | null, roster: RosterRow[]): string {
   if (!me) return "";
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const meEmail = norm(me.user.email || "");
-  const meName = norm(me.user.name || "");
-  const byEmail = roster.find((r) => r.email && norm(r.email) === meEmail);
-  if (byEmail) return byEmail.id;
-  if (meName.length >= 3) {
+  const candidates = [norm(me.user.name || ""), norm((me.user.email || "").split("@")[0])].filter((s) => s.length >= 3);
+  for (const n of candidates) {
     const hits = roster.filter((r) => {
       const rn = norm(r.name);
-      return rn && (rn === meName || rn.startsWith(meName) || meName.startsWith(rn));
+      return rn && (rn === n || rn.startsWith(n) || n.startsWith(rn));
     });
     if (hits.length === 1) return hits[0].id;
   }
   return "";
 }
 
-function TaskRow({ t, roster, selfId, onLogged }: { t: TaskItem; roster: RosterRow[]; selfId: string; onLogged: () => void }) {
+const ACTOR_KEY = "accounts_actor_id";
+
+function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: RosterRow[]; defaultWho: string; onLogged: () => void }) {
   const [remark, setRemark] = useState(t.remark ?? "");
-  const [whoId, setWhoId] = useState(t.accountantId ?? selfId);
+  // Explicit per-row override; otherwise the log's recorded owner, otherwise
+  // the device's "Acting as" identity. Never goes stale: derived every render.
+  const [whoOverride, setWhoOverride] = useState("");
+  const whoId = whoOverride || t.accountantId || defaultWho || "";
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const dirty = remark !== (t.remark ?? "");
@@ -285,7 +290,7 @@ function TaskRow({ t, roster, selfId, onLogged }: { t: TaskItem; roster: RosterR
           placeholder="Remark — e.g. paid via HDFC, ref 4821…"
           className="flex-1 min-w-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
         />
-        <select value={whoId} onChange={(e) => setWhoId(e.target.value)} title="Who did this task" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1.5 text-xs max-w-[130px]">
+        <select value={whoId} onChange={(e) => setWhoOverride(e.target.value)} title="Who did this task" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1.5 text-xs max-w-[130px]">
           <option value="">Who?…</option>
           {lane.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
@@ -316,6 +321,17 @@ function TaskRow({ t, roster, selfId, onLogged }: { t: TaskItem; roster: RosterR
   );
 }
 
+type AccountsView = "dashboard" | "tasks" | "senior" | "junior" | "controller";
+
+const TABS: { key: AccountsView; label: string; icon: string }[] = [
+  { key: "dashboard", label: "Dashboard", icon: "📊" },
+  { key: "tasks", label: "All Tasks", icon: "📋" },
+  { key: "senior", label: "Senior", icon: "👔" },
+  { key: "junior", label: "Junior", icon: "🧾" },
+  // MIS-only controller tab (filtered out of the nav without the `mis` scope).
+  { key: "controller", label: "Controller", icon: "🎛️" },
+];
+
 function fmtToday(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
@@ -329,24 +345,46 @@ function fmtToday(iso: string): string {
 export default function AccountsDashboard() {
   const { me } = useAuth();
   const canMIS = !!me && (me.isAdmin || me.scopes.includes("mis"));
-  const [tab, setTab] = useState<"all" | "senior" | "junior" | "team" | "controller">("all");
+  const [view, setView] = useState<AccountsView>("dashboard");
 
   // Today only — no date filter. The backend serves the current IST day.
+  // pollMs safety net: a stalled request can never wedge the view forever —
+  // the 30s hook timeout turns it into an error and the next poll recovers.
+  // Loading renders non-destructively (spinner only before first payload).
   const dash = useLiveDashboard<DashData>(async () => {
     const res = await fetch("/api/automations/accounts/data");
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  });
+  }, { pollMs: 60000 });
 
   const data = dash.data;
   const [statusFilter, setStatusFilter] = useState<"pending" | "inprogress" | "done" | "all">("pending");
   const selfId = useMemo(() => matchSelfRoster(me as any, data?.roster ?? []), [me, data]);
+  // Shared logins can't be told apart by auth — each device declares its human
+  // once ("Acting as"), remembered in localStorage. Every Done/remark/file is
+  // credited to this identity unless a row overrides it.
+  const [actorPick, setActorPick] = useState(() => {
+    try { return localStorage.getItem(ACTOR_KEY) || ""; } catch { return ""; }
+  });
+  const pickActor = (id: string) => {
+    setActorPick(id);
+    try {
+      if (id) localStorage.setItem(ACTOR_KEY, id);
+      else localStorage.removeItem(ACTOR_KEY);
+    } catch { /* private mode */ }
+  };
+  const defaultWho = actorPick || selfId;
+  // A remembered identity can go stale (person removed from the roster):
+  // drop it so "Acting as" never credits a deleted accountant.
+  React.useEffect(() => {
+    if (actorPick && data && !data.roster.some((r) => r.id === actorPick)) pickActor("");
+  }, [actorPick, data]);
   const lane = useMemo(() => {
     if (!data) return [];
-    if (tab === "senior") return data.senior;
-    if (tab === "junior") return data.junior;
+    if (view === "senior") return data.senior;
+    if (view === "junior") return data.junior;
     return data.items;
-  }, [data, tab]);
+  }, [data, view]);
   const visible = useMemo(() => {
     if (statusFilter === "inprogress") return lane.filter((t) => t.status === "inprogress");
     if (statusFilter === "done") return lane.filter((t) => t.status === "done");
@@ -356,14 +394,6 @@ export default function AccountsDashboard() {
   const pendingCount = lane.filter((t) => t.status === "pending" || t.status === "overdue").length;
   const inprogCount = lane.filter((t) => t.status === "inprogress").length;
   const doneCount = lane.filter((t) => t.status === "done").length;
-
-  const tabs: { key: typeof tab; label: string; icon: string; mis?: boolean }[] = [
-    { key: "all", label: "All tasks", icon: "📋" },
-    { key: "senior", label: "Senior", icon: "👔" },
-    { key: "junior", label: "Junior", icon: "🧾" },
-    { key: "team", label: "Team", icon: "🏆" },
-    ...(canMIS ? [{ key: "controller" as const, label: "MIS Controller", icon: "🎛️", mis: true }] : []),
-  ];
 
   return (
     <div className="space-y-4 text-zinc-900 dark:text-zinc-100">
@@ -379,20 +409,49 @@ export default function AccountsDashboard() {
             </div>
           )}
         </div>
+        {data && data.roster.length > 0 && (
+          <label className="flex items-center gap-1.5 text-[11px] text-zinc-500 shrink-0" title="Shared login? Pick who is using this device — credits go to this person">
+            Acting as:
+            <select value={actorPick} onChange={(e) => pickActor(e.target.value)} className="rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-2 py-1.5 text-xs font-bold text-indigo-300 outline-none">
+              <option value="">Auto{selfId && data.roster.find((r) => r.id === selfId) ? ` (${data.roster.find((r) => r.id === selfId)!.name})` : ""}</option>
+              {data.roster.map((r) => <option key={r.id} value={r.id}>{r.name} · {r.role}</option>)}
+            </select>
+          </label>
+        )}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        {tabs.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={`px-3 py-1.5 text-xs font-bold rounded-lg cursor-pointer border-0 ${tab === t.key ? "bg-indigo-600 text-white" : "bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"}`}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
+      <div className="flex flex-col gap-6">
+        {/* Tabs (full-width horizontal row, like Telecalling) */}
+        <aside className="w-full shrink-0">
+          <nav className="flex flex-row flex-wrap gap-2">
+            {TABS.filter((t) => t.key !== "controller" || canMIS).map((t) => {
+              const active = view === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setView(t.key)}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors text-left ${
+                    active
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  <span className="text-base leading-none">{t.icon}</span>
+                  {t.label}
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
 
-      {dash.loading && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
+        {/* Content (seamless switch — queries stay mounted) */}
+        <div className="flex-1 min-w-0">
+          {data && view === "dashboard" && <TeamBoard team={data.team ?? null} />}
+
+      {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
       {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
 
-      {data && tab !== "controller" && tab !== "team" && (
+      {data && (view === "tasks" || view === "senior" || view === "junior") && (
         <div className="flex flex-wrap gap-1.5">
           {([
             { key: "pending", label: `● Pending (${pendingCount})` },
@@ -407,20 +466,18 @@ export default function AccountsDashboard() {
         </div>
       )}
 
-      {data && tab !== "controller" && tab !== "team" && (
+      {data && (view === "tasks" || view === "senior" || view === "junior") && (
         <div className="grid gap-3 md:grid-cols-2">
-          {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} selfId={selfId} onLogged={() => dash.refresh()} />)}
+          {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onLogged={() => dash.refresh()} />)}
           {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done in this view yet — today's completions will appear here." : statusFilter === "inprogress" ? "Nothing in progress — tap ▶ In Progress on a pending task to start it." : "No pending tasks in this view."}</div>}
         </div>
       )}
 
-      {data && tab === "team" && <TeamBoard team={data.team ?? null} />}
-
-      {data && tab !== "controller" && tab !== "team" && (data.unscheduled ?? []).filter((u) => tab === "all" || u.ownerRole === "either" || u.ownerRole === tab).length > 0 && (
+      {data && (view === "tasks" || view === "senior" || view === "junior") && (data.unscheduled ?? []).filter((u) => view === "tasks" || u.ownerRole === "either" || u.ownerRole === view).length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📌 No fixed date — reference ({(data.unscheduled ?? []).filter((u) => tab === "all" || u.ownerRole === "either" || u.ownerRole === tab).length})</h3>
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📌 No fixed date — reference ({(data.unscheduled ?? []).filter((u) => view === "tasks" || u.ownerRole === "either" || u.ownerRole === view).length})</h3>
           <div className="grid gap-2 md:grid-cols-2">
-            {(data.unscheduled ?? []).filter((u) => tab === "all" || u.ownerRole === "either" || u.ownerRole === tab).map((u) => (
+            {(data.unscheduled ?? []).filter((u) => view === "tasks" || u.ownerRole === "either" || u.ownerRole === view).map((u) => (
               <div key={u.templateId} className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-3 text-xs">
                 <div className="font-semibold text-zinc-800 dark:text-zinc-200">{u.title}</div>
                 {(u.note || u.dueLabel) && <div className="text-zinc-500 mt-0.5">{[u.note, u.dueLabel].filter(Boolean).join(" · ")}</div>}
@@ -434,7 +491,9 @@ export default function AccountsDashboard() {
         </div>
       )}
 
-      {data && tab === "controller" && (canMIS ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to MIS-level users.</div>)}
+      {data && view === "controller" && (canMIS ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to MIS-level users.</div>)}
+        </div>
+      </div>
     </div>
   );
 }
@@ -444,25 +503,25 @@ function TeamBoard({ team }: { team: TeamData | null }) {
   const maxMonth = Math.max(1, ...team.members.map((m) => m.doneMonth));
   const medal = (i: number) => (i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`);
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Done today", value: team.doneToday, icon: "✓", tone: "text-emerald-500" },
-          { label: "In progress", value: team.inProgressToday ?? 0, icon: "▶", tone: "text-blue-500" },
-          { label: "Open today", value: team.openToday, icon: "●", tone: "text-amber-500" },
-          { label: "Overdue", value: team.overdueToday, icon: "⚠", tone: "text-rose-500" },
-          { label: "Completion", value: `${team.completionPct}%`, icon: "🎯", tone: "text-indigo-400" },
-          { label: "Done this week", value: team.weekDone, icon: "🗓", tone: "text-zinc-700 dark:text-zinc-200" },
-          { label: "Done this month", value: team.monthDone, icon: "📆", tone: "text-zinc-700 dark:text-zinc-200" },
+          { label: "Done today", value: team.doneToday, accent: "text-emerald-400" },
+          { label: "In progress", value: team.inProgressToday ?? 0, accent: "text-blue-400" },
+          { label: "Open today", value: team.openToday, accent: "text-amber-300" },
+          { label: "Overdue", value: team.overdueToday, accent: "text-rose-400" },
+          { label: "Completion", value: `${team.completionPct}%`, accent: "text-indigo-300" },
+          { label: "Done this week", value: team.weekDone, accent: "text-zinc-900 dark:text-zinc-100" },
+          { label: "Done this month", value: team.monthDone, accent: "text-zinc-900 dark:text-zinc-100" },
         ].map((k) => (
-          <div key={k.label} className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900 p-3 text-center">
-            <div className={`text-2xl font-extrabold font-mono ${k.tone}`}>{k.value}</div>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 mt-0.5">{k.icon} {k.label}</div>
+          <div key={k.label} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">{k.label}</div>
+            <div className={`text-2xl font-extrabold mt-1 ${k.accent}`}>{k.value}</div>
           </div>
         ))}
       </div>
-      <div className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 overflow-hidden">
-        <div className="px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
+        <div className="px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider text-zinc-600 dark:text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
           🏆 Leaderboard · tasks done per person <span className="normal-case font-medium">(week starts Monday)</span>
         </div>
         {team.members.length === 0 && <div className="p-6 text-center text-xs text-zinc-500">No accountants on the roster yet — MIS adds them from the Controller tab.</div>}
