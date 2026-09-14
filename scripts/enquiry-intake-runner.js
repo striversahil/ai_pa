@@ -209,6 +209,9 @@ async function processEnquiry(gateway, eq) {
   } catch (e) {
     return { error: `vision failed: ${e.message}`, items: [], missing: [], suggestions: [], candidates: [] };
   }
+  if (!Array.isArray(routed.lines) || routed.lines.length === 0) {
+    console.log(`- ${eq.id}: router returned 0 lines (lead: ${JSON.stringify(routed.lead || {}).slice(0, 300)})`);
+  }
   const lines = (Array.isArray(routed.lines) ? routed.lines : []).slice(0, 30).map((l) => ({
     verbatim: String(l.verbatim || l.spec || '').slice(0, 500),
     category: String(l.category || 'Uncategorized').slice(0, 120),
