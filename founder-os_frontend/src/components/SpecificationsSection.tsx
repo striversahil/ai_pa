@@ -315,13 +315,18 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {it.finalRate !== undefined && it.finalRate !== null && (
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[11px] font-extrabold">
-                            Rate Received: ₹{Number(it.finalRate).toLocaleString("en-IN")}
+                            {it.internalRates ? "Rate available internally" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
                           </span>
                           {it.selectedVendor && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-[var(--bg-input)] border border-[var(--border-card)] text-[var(--text-secondary)] text-[11px] font-bold">
                               via {it.selectedVendor}
                             </span>
                           )}
+                        </div>
+                      )}
+                      {it.internalRates && (it.finalRate === undefined || it.finalRate === null) && (
+                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-violet-500/10 border border-violet-500/30 text-violet-600 dark:text-violet-400 text-[11px] font-extrabold">
+                          Handled internally — rate to follow
                         </div>
                       )}
                       {(() => {

@@ -194,6 +194,23 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     }
   };
 
+  // Take an item into management-internal sourcing (leaves the procurement
+  // queue), or return it. Saves immediately; markup flow continues.
+  const toggleInternal = (i: number, next: boolean) => {
+    setSaveError(null);
+    const at = new Date().toISOString();
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, internalRates: next, internalRatesAt: next ? at : undefined } : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Save failed — please retry.");
+      }
+    })();
+  };
+
   const submitRequest = (i: number) => {
     setReqs((prev) => ({ ...prev, [i]: reqNote.trim() }));
     setReqOpen(null);
@@ -384,6 +401,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     onAdd={(rate) => void addInternalRate(i, rate)}
                   />
                   <p className="text-[10px] text-zinc-500">Rate sourced by management — markup and finalize continue below once added.</p>
+                  <button type="button" onClick={() => toggleInternal(i, false)}
+                    className="px-2 py-1 bg-transparent border-0 text-[11px] font-bold text-violet-400 hover:text-violet-300 cursor-pointer">
+                    ← Return to procurement instead
+                  </button>
                 </div>
               );
             }
@@ -404,6 +425,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       className="accent-indigo-500 h-3.5 w-3.5 flex-shrink-0" />
                     )}
                     <span className="text-xs font-extrabold text-white truncate">Item {i + 1}{it.name ? ` — ${it.name}` : ""}</span>
+                  {it.internalRates && (
+                    <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-violet-500/10 text-violet-400 border-violet-500/30 flex-shrink-0">
+                      Internal
+                    </span>
+                  )}
                   </label>
                   {it.qty && <span className="text-[11px] text-zinc-400 font-semibold flex-shrink-0">Qty: {it.qty}</span>}
                 </div>
@@ -553,6 +579,19 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     <button type="button" onClick={() => { setReqOpen(i); setReqNote(""); }}
                       className="px-2.5 py-1.5 bg-transparent border border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
                       Flag procurement
+                    </button>
+                  )}
+                  {it.internalRates ? (
+                    <button type="button" onClick={() => toggleInternal(i, false)}
+                      title="Return this item to the procurement queue"
+                      className="px-2.5 py-1.5 bg-transparent border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
+                      Return to procurement
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => toggleInternal(i, true)}
+                      title="Management sources this item's rates itself — leaves the procurement queue"
+                      className="px-2.5 py-1.5 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                      Handle internally
                     </button>
                   )}
                   {remarkOpen === i ? (
