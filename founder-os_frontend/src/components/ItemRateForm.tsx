@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import type { EnquiryItemRate } from "@/types";
+import type { EnquiryItemRate, EnquiryMedia } from "@/types";
 import { parseMoneyInput } from "@/types";
+import { filesToMedia } from "@/lib/imageFiles";
 
 interface ItemRateFormProps {
   onAdd: (rate: EnquiryItemRate) => void;
@@ -23,6 +24,17 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
   const [specMode, setSpecMode] = useState<"same" | "diff">(initial?.specSame === false ? "diff" : "same");
   const [specDiff, setSpecDiff] = useState(initial?.specDiff ?? "");
   const [formError, setFormError] = useState<string | null>(null);
+  // Per-vendor reference attachments (photos/drawings/PDFs for THIS quote).
+  const [refs, setRefs] = useState<EnquiryMedia[]>(() => [...(initial?.references ?? [])]);
+  const [refError, setRefError] = useState<string | null>(null);
+
+  const attachRefs = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setRefError(null);
+    const { media, skipped } = await filesToMedia(files);
+    if (skipped.length > 0) setRefError(`Skipped: ${skipped.join(", ")}`);
+    if (media.length > 0) setRefs((prev) => [...prev, ...media]);
+  };
 
   const submit = () => {
     const v = vendor.trim();
@@ -43,9 +55,8 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
       description: description.trim() || undefined,
       specSame: same,
       specDiff: !same && specDiff.trim() ? specDiff.trim() : undefined,
-      // Edit mode preserves the quote's reference attachments (the form
-      // doesn't edit them — refs attach on the rate row itself).
-      references: initial?.references,
+      // Reference attachments ride with the quote (add + edit alike).
+      references: refs.length > 0 ? refs : undefined,
       quotedAt: initial?.quotedAt ?? new Date().toISOString(),
     });
     if (initial) return; // edit mode: parent closes the form
@@ -114,6 +125,36 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
           rows={2}
           className="w-full px-2.5 py-2 bg-amber-500/5 border border-amber-500/30 rounded-lg outline-none focus:border-amber-500 text-xs resize-y text-[var(--text-primary)]"
         />
+      )}
+      {refs.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {refs.map((m, mi) => (
+            <div key={mi} className="relative flex-shrink-0">
+              {m.type === "video" ? (
+                <video src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
+              ) : m.type === "pdf" ? (
+                <span className="block px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 text-[10px] font-bold text-[var(--text-primary)] truncate max-w-[8rem]">
+                  {m.name || "PDF"}
+                </span>
+              ) : (
+                <img src={m.url} alt={`Reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-[var(--border-card)]" />
+              )}
+              <button type="button" onClick={() => setRefs((prev) => prev.filter((_, j) => j !== mi))} title="Remove reference"
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold cursor-pointer border border-white/20">×</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <label className="inline-flex items-center gap-1 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
+          + Reference
+          <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden"
+            onChange={(e) => { void attachRefs(e.target.files); e.target.value = ""; }} />
+        </label>
+        <span className="text-[10px] text-[var(--text-tertiary)]">photos / drawings / PDF for this vendor's quote</span>
+      </div>
+      {refError && (
+        <p className="text-[11px] font-bold text-red-500">{refError}</p>
       )}
     </div>
   );

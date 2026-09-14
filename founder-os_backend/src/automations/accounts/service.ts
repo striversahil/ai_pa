@@ -325,6 +325,7 @@ async function computeDashboard(
         status,
         remark: log?.remark ?? null,
         doneBy: log?.doneBy ?? null,
+        timeSpentMin: log?.timeSpentMin ?? null,
         accountantId: log?.accountantId ?? null,
         accountantName: log?.accountant?.name ?? null,
         updatedAt: log?.updatedAt ?? null,
@@ -398,6 +399,15 @@ export async function getAccountsDashboardData(query: Record<string, any> = {}) 
 // One row per (date × due task): status, who, remark, attachment links.
 // Read-only (never creates instances) — a complete view of what was
 // pending / in-progress / done per senior-junior lane, for the MIS export.
+// Minutes → "1h 20m" / "45m" for the MIS export. NULL/0 → null.
+function fmtMins(v: unknown): string | null {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const h = Math.floor(n / 60);
+  const m = n % 60;
+  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+}
+
 function addDays(dateStr: string, n: number): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d, 12) + n * 86400000).toISOString().slice(0, 10);
@@ -455,6 +465,8 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
         doneBy: log?.doneBy ?? null,
         accountant: log?.accountant?.name ?? null,
         remark: log?.remark ?? null,
+        timeSpentMin: log?.timeSpentMin ?? null,
+        timeSpent: fmtMins(log?.timeSpentMin),
         attachments: ((log ? filesByLog.get(String(log.id)) ?? [] : []) as any[]).map((f) => ({
           name: String(f.fileName || ''),
           url: `${base}/api/accounts/files/${String(f.id || '')}`,
@@ -649,6 +661,16 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
   const data: Record<string, any> = { status, remark, updatedBy: actor };
   if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
   if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
+  // Time taken (hours+minutes in the UI, integer minutes here). Optional and
+  // editable on any status — correcting logged time never needs a transition.
+  if (input.timeSpentMin !== undefined) {
+    const mins = input.timeSpentMin === null || input.timeSpentMin === ''
+      ? null
+      : Math.max(0, Math.min(6000, Math.floor(Number(input.timeSpentMin))));
+    if (mins === null) data.timeSpentMin = null;
+    else if (Number.isFinite(mins)) data.timeSpentMin = mins;
+    else throw new Error('timeSpentMin must be minutes (0-6000) or null');
+  }
   // Marking done without naming anyone credits the signed-in user.
   if (status === 'done' && !data.doneBy && actor) data.doneBy = String(actor).slice(0, 200);
   if (data.accountantId) {

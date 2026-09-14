@@ -28,6 +28,7 @@ interface TaskItem {
   status: string;
   remark: string | null;
   doneBy: string | null;
+  timeSpentMin?: number | null;
   accountantId: string | null;
   accountantName: string | null;
   attachments?: FileItem[];
@@ -140,6 +141,16 @@ function fmtSize(n: number): string {
   return `${n}B`;
 }
 
+/** Minutes → "1h 20m" / "45m" for the time-taken chip. */
+function fmtDur(mins: number | null | undefined): string | null {
+  if (mins === null || mins === undefined) return null;
+  const n = Math.floor(Number(mins));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const h = Math.floor(n / 60);
+  const m = n % 60;
+  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ""}` : `${m}m`;
+}
+
 /** "2026-09-15" → "15 Sep" for missed-day chips. */
 function fmtShort(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -170,13 +181,26 @@ const ACTOR_KEY = "accounts_actor_id";
 
 function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: RosterRow[]; defaultWho: string; onLogged: () => void }) {
   const [remark, setRemark] = useState(t.remark ?? "");
+  // Time taken, entered as hours + minutes, stored as integer minutes.
+  // Prefilled from the recorded value so it can be corrected later.
+  const initHrs = t.timeSpentMin != null ? String(Math.floor(Number(t.timeSpentMin) / 60)) : "";
+  const initMins = t.timeSpentMin != null ? String(Math.floor(Number(t.timeSpentMin) % 60)) : "";
+  const [hrs, setHrs] = useState(initHrs);
+  const [mins, setMins] = useState(initMins);
+  const timeTotal = (() => {
+    if (hrs.trim() === "" && mins.trim() === "") return null;
+    const h = Math.max(0, Math.floor(Number(hrs) || 0));
+    const m = Math.max(0, Math.floor(Number(mins) || 0));
+    return h * 60 + m;
+  })();
+  const timeInit = t.timeSpentMin ?? null;
   // Explicit per-row override; otherwise the log's recorded owner, otherwise
   // the device's "Acting as" identity. Never goes stale: derived every render.
   const [whoOverride, setWhoOverride] = useState("");
   const whoId = whoOverride || t.accountantId || defaultWho || "";
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const dirty = remark !== (t.remark ?? "");
+  const dirty = remark !== (t.remark ?? "") || timeTotal !== timeInit;
   const lane = roster.filter((r) => t.ownerRole === "either" || r.role === t.ownerRole);
   const whoName = lane.find((r) => r.id === whoId)?.name ?? roster.find((r) => r.id === whoId)?.name ?? null;
 
@@ -192,6 +216,7 @@ function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: Ros
           remark: remark.trim() || null,
           accountantId: whoId || null,
           doneBy: status === "done" ? whoName : undefined,
+          timeSpentMin: timeTotal,
         }),
       });
       if (!res.ok) throw new Error(await res.text());

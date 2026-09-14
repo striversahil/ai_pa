@@ -818,6 +818,9 @@ model AccountsTaskLog {
   status       String   @default("pending") // pending | done | skipped | overdue
   remark       String?
   doneBy       String?
+  // Time taken to finish, entered as hours+minutes on the taskbar and stored
+  // as integer minutes. NULL = not recorded (optional, never blocks Done).
+  timeSpentMin Int?
   accountantId String?
   accountant   Accountant? @relation(fields: [accountantId], references: [id], onDelete: SetNull)
   updatedBy    String?
