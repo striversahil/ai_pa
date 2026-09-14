@@ -290,6 +290,16 @@ async function runEnquiryExtractionLocal(id: string) {
   await runEnquiryExtraction(process.env as any, enquiryStore, id);
   try { await cacheDel('enquiry-tracker:data'); } catch { /* best-effort */ }
 }
+// Event-driven intake: fire the GH intake workflow the moment an enquiry is
+// logged (the 30-min sweep stays as backstop). Best-effort, never throws.
+async function kickIntakeNowLocal(): Promise<void> {
+  try {
+    const token = String(process.env.GITHUB_ACCESS_TOKEN ?? '').trim();
+    if (!token) return;
+    const { dispatchGitHubWorkflow, INTAKE_WORKFLOW } = await import('./worker/cron');
+    await dispatchGitHubWorkflow(INTAKE_WORKFLOW, token);
+  } catch { /* intake dispatch never fails a request */ }
+}
 app.post('/api/enquiries', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
@@ -301,14 +311,20 @@ app.post('/api/enquiries', async (req, res) => {
     } catch { /* fallback (auth id) in enquiryCreate */ }
   }
   const r = await EnquiryRoutes.enquiryCreate(enquiryStore, me, body);
-  if (r.body?.id) void runEnquiryExtractionLocal(r.body.id);
+  if (r.body?.id) {
+    void runEnquiryExtractionLocal(r.body.id);
+    void kickIntakeNowLocal();
+  }
   res.status(r.status).json(r.body);
 });
 app.patch('/api/enquiries/:id', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const r = await EnquiryRoutes.enquiryUpdate(enquiryStore, me, req.params.id, req.body || {});
-  if (r.body?.id) void runEnquiryExtractionLocal(r.body.id);
+  if (r.body?.id) {
+    void runEnquiryExtractionLocal(r.body.id);
+    if ((req.body as any)?.description !== undefined) void kickIntakeNowLocal();
+  }
   res.status(r.status).json(r.body);
 });
 app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {

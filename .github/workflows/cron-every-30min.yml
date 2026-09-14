@@ -21,6 +21,23 @@ jobs:
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
         run: node scripts/email-brain-index-runner.js
 
+  # Backstop for the event-driven intake (ops-enquiry-intake.yml): catches any
+  # enquiry the on-log dispatch missed. Watermark-gated — exits fast when idle.
+  enquiry-intake-backstop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: enquiry-intake backstop (same runner, queue drain only)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          OPENROUTER_FREE_MODELS: ${{ secrets.OPENROUTER_FREE_MODELS }}
+          HF_API_KEY: ${{ secrets.HF_API_KEY }}
+          PINECONE_HOST: ${{ secrets.PINECONE_HOST }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        run: node scripts/enquiry-intake-runner.js --limit 25
+
   light-triggers:
     runs-on: ubuntu-latest
     steps:

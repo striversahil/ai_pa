@@ -30,8 +30,11 @@ import { getTelecallingDashboardData } from '../automations/telecalling/service'
 
 const GITHUB_REPO = 'striversahil/ai_pa';
 const GITHUB_REF = 'main';
+// Event-driven intake target (fired by kickIntakeNow on enquiry create, NOT
+// by the cron router — there is no per-minute tick). The every-30min workflow
+// carries the same job as a backstop for missed dispatches.
+export const INTAKE_WORKFLOW = 'ops-enquiry-intake.yml';
 const GITHUB_WORKFLOWS: Record<string, string> = {
-  'every-1min': 'cron-every-1min.yml',
   'every-5min': 'cron-every-5min.yml',
   'every-10min': 'cron-every-10min.yml',
   'every-15min': 'cron-every-15min.yml',
@@ -40,7 +43,7 @@ const GITHUB_WORKFLOWS: Record<string, string> = {
 };
 
 /** Fire one GitHub Actions workflow_dispatch (best-effort; never throws). */
-async function dispatchGitHubWorkflow(workflowFile: string, token: string, inputs?: Record<string, string>): Promise<void> {
+export async function dispatchGitHubWorkflow(workflowFile: string, token: string, inputs?: Record<string, string>): Promise<void> {
   try {
     const res = await fetch(
       `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${workflowFile}/dispatches`,
@@ -88,10 +91,6 @@ function dueWorkflows(now: Date): string[] {
   const min = now.getUTCMinutes();
   const hhmm = now.getUTCHours() * 60 + min;
   const due: string[] = [];
-  // every-1min fires each tick (enquiry vision intake — watermark-gated, so
-  // empty ticks are one cheap D1 page; NOT quiet-hours gated: sales enquiries
-  // land around the clock and intake is not Zoho/NeoDove-backed).
-  due.push('every-1min');
   if (min % 5 === 0) due.push('every-5min');
   if (min % 10 === 0) due.push('every-10min');
   if (min % 15 === 0) due.push('every-15min');

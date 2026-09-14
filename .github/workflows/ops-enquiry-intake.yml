@@ -1,16 +1,17 @@
-name: Cron - Every 1 min
+name: Ops - Enquiry intake (event-driven)
 
 on:
-  # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
-  # workflow_dispatch, every tick). Native schedule removed to avoid
-  # double-firing. Runs 1440×/day — keep this workflow to ONE cheap job;
-  # the intake runner exits after a single D1 page when the watermark shows
-  # nothing new.
+  # Event-driven ONLY: fired by kickIntakeNow() in the worker the moment an
+  # enquiry is logged (POST /api/enquiries) or its free text is edited —
+  # plus manual runs from the Actions tab. No schedule: block, no cron tick.
+  # (The every-30min workflow carries the same job as a backstop for missed
+  # dispatches.)
   workflow_dispatch:
 
-# Only one run at a time; a new tick cancels a stale in-progress run.
+# One run at a time; a newer log cancels a stale in-progress run (the next
+# run re-pages the watermark queue, so nothing is lost).
 concurrency:
-  group: cron-every-1min
+  group: ops-enquiry-intake
   cancel-in-progress: true
 
 jobs:

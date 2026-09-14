@@ -7,6 +7,24 @@ import { chatTurn, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
+import { dispatchGitHubWorkflow, INTAKE_WORKFLOW } from '../cron';
+
+// Fire the intake workflow the moment an enquiry is logged (event-driven;
+// the 30-min backstop sweep covers anything the dispatch misses).
+// Best-effort via waitUntil —
+// never blocks or fails the request; no token locally means skip silently.
+function kickIntakeNow(c: any): void {
+  try {
+    const token = String((c.env as any)?.GITHUB_ACCESS_TOKEN ?? '').trim();
+    if (!token) return;
+    const task = dispatchGitHubWorkflow(INTAKE_WORKFLOW, token);
+    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+      c.executionCtx.waitUntil(task);
+    } else {
+      void task;
+    }
+  } catch { /* intake dispatch never fails a request */ }
+}
 
 function aiConfigured(c: any): boolean {
   try {
@@ -124,15 +142,26 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     enquirySend(c, r);
     // New free text needs its procurement-safe rewrite now — otherwise the
     // redacted copy only appears after the next list fetch kicks enrichment.
-    if ((r as any).status === 201 && (r.body as any)?.id) kick(c, String((r.body as any).id));
+    if ((r as any).status === 201 && (r.body as any)?.id) {
+      kick(c, String((r.body as any).id));
+      // ...and the vision intake starts NOW (event-driven) instead of waiting
+      // for the next 1-minute sweep.
+      kickIntakeNow(c);
+    }
     return c.json(r.body, r.status as any);
   });
   app.patch('/api/enquiries/:id', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await EnquiryRoutes.enquiryUpdate(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+    const patchBody = await c.req.json().catch(() => ({}));
+    const r = await EnquiryRoutes.enquiryUpdate(createEnquiryStore(c.env), me, c.req.param('id') ?? '', patchBody);
     enquirySend(c, r);
-    if ((r as any).status === 200 && (r.body as any)?.id) kick(c, String((r.body as any).id));
+    if ((r as any).status === 200 && (r.body as any)?.id) {
+      kick(c, String((r.body as any).id));
+      // Fresh free text → re-run vision intake now (item-only saves skip it;
+      // the sweep still covers everything).
+      if ((patchBody as any)?.description !== undefined) kickIntakeNow(c);
+    }
     return c.json(r.body, r.status as any);
   });
   app.post('/api/enquiries/:id/additional-requirements', async (c) => {
