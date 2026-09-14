@@ -17,6 +17,11 @@ export interface IntakeData {
   missing: string[];
 }
 
+/** Kill-switch for AI intake remarks (missing-detail questions) in sales UI.
+ *  OFF for now — flip to true to re-enable. Past-price suggestion cards
+ *  are unaffected. */
+export const SHOW_INTAKE_REMARKS = false;
+
 /** AI intake payload for one enquiry (KV, written by the intake runner).
  *  Refetches when the enquiry row changes (result POSTs bump updatedAt). */
 export function useIntake(enquiryId: string | null, updatedAt?: string): IntakeData | null {

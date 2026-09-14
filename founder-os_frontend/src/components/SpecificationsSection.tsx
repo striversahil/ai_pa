@@ -3,7 +3,7 @@ import { Enquiry, EnquiryItem, EnquiryMedia, parseMoneyInput } from "../mockData
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
 import IntakeItemMeta from "./IntakeItemMeta";
-import { missingForItem, unmatchedMissing, type IntakeSuggestion } from "../hooks/useIntake";
+import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS, type IntakeSuggestion } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import FlagThread from "./FlagThread";
 
@@ -185,7 +185,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
           <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">
             Items ({items.length})
           </span>
-          {intake && unmatchedMissing(intake.missing ?? [], items).length > 0 && (
+          {intake && SHOW_INTAKE_REMARKS && unmatchedMissing(intake.missing ?? [], items).length > 0 && (
             <div className="flex flex-wrap gap-1 mb-2">
               {unmatchedMissing(intake.missing ?? [], items).map((m, i) => (
                 <span key={i} className="px-1.5 py-px text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">

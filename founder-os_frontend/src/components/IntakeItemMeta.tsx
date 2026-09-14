@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import type { IntakeSuggestion } from "@/hooks/useIntake";
+import { SHOW_INTAKE_REMARKS } from "@/hooks/useIntake";
 
 interface IntakeItemMetaProps {
   itemIndex: number;
@@ -16,7 +17,7 @@ interface IntakeItemMetaProps {
 export default function IntakeItemMeta({ itemIndex, suggestions, missing, onAccept }: IntakeItemMetaProps) {
   const [busy, setBusy] = useState(false);
   const mine = (suggestions ?? []).filter((s) => Number(s.itemIndex ?? -1) === itemIndex);
-  if (mine.length === 0 && missing.length === 0) return null;
+  if (mine.length === 0 && (!SHOW_INTAKE_REMARKS || missing.length === 0)) return null;
 
   const accept = async (idx: number) => {
     if (!onAccept || busy) return;
@@ -30,7 +31,7 @@ export default function IntakeItemMeta({ itemIndex, suggestions, missing, onAcce
 
   return (
     <div className="mt-1.5 space-y-1.5">
-      {missing.length > 0 && (
+      {SHOW_INTAKE_REMARKS && missing.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {missing.map((m, i) => (
             <span key={i} className="px-1.5 py-px text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
