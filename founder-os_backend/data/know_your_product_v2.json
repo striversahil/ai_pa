@@ -1,0 +1,2511 @@
+{
+  "meta": {
+    "source": "BUI Know Your Product (KYP) workbook, restructured pass 2",
+    "previous_version_item_count": 156,
+    "current_item_count": 136,
+    "note": "This is a restructuring + enrichment pass over the original 156-item KYP extraction. Three kinds of change were made to every item: (1) DEDUP -- near-duplicate entries that the original free-text parser had split apart (same physical part described twice at different confidence scores, or a generic 'parent' entry duplicating a specific sibling item) were merged; merged items carry a 'merged_from' field listing what was folded in. (2) RESTRUCTURE -- concrete spec options and business rules (grades, dimensions, materials, MOQs) that used to live only in free-text 'notes' were moved into 'required_attributes' as part of the actual ask-instruction, so notes now hold only background/context, not actionable spec detail. (3) ENRICH -- aliases were extended with genuine Indian trade/vernacular terms and global/international milling-industry terminology, drawn from general domain knowledge rather than the sheet alone. 5 items are entirely new (not present in the original KYP sheet at all) and are flagged added_from_domain_knowledge=true -- these are well-established parts in the flour-milling trade but have NOT been verified against BUI's actual stock, so confirm them before publishing. Every other alias/attribute addition is general industry terminology, not fabricated specifics -- no invented dimensions, grades, or part numbers were added anywhere; only real numbers already present in the original sheet were restructured.",
+    "schema": {
+      "item_name": "string",
+      "subcategory": "string",
+      "aliases": "list[string] -- alternate names, including Indian trade/vernacular terms and global/international technical synonyms",
+      "required_attributes": "list[string] -- everything needed to correctly identify, spec, and quote the item: dimensions, materials, variant options with their real values, MOQ/pack-size rules, compatibility questions",
+      "notes": "list[string] -- background/context only: what the part is, where it's used, why it matters, distributor/brand info, common points of confusion. No 'ask ___' instructions live here anymore.",
+      "match_confidence": "float 0-1, or null for items added outside the original KYP sheet",
+      "in_short_taxonomy_list": "bool",
+      "merged_from": "optional list[string] -- present only on items formed by merging duplicate source entries",
+      "added_from_domain_knowledge": "optional bool -- present and true only on items with no original KYP source at all"
+    }
+  },
+  "categories": [
+    {
+      "category": "Plansifter Accessories",
+      "general_notes": [
+        "Sieve & Pan Cleaners (subcategory): loose objects that sit on top of or below the sieve mesh inside a plansifter compartment and bounce/vibrate to stop flour from blinding (clogging) the mesh. Across this whole subcategory, the plansifter make matters because compartment/screen depth decides which size fits, and it is genuinely hard to tell several of these apart over the phone -- always offer to send or request a reference picture."
+      ],
+      "folded_generic_entries": [
+        "Sieve & Pan Cleaners"
+      ],
+      "items": [
+        {
+          "item_name": "Milling Fabric",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "nylon mesh",
+            "filtration cloth",
+            "Swiss jolly",
+            "Resham ki jali",
+            "reshmi jaali",
+            "bolting cloth",
+            "Nytal bolting cloth",
+            "sieve cloth",
+            "sieving gauze",
+            "sifting cloth",
+            "gauze cloth"
+          ],
+          "required_attributes": [
+            "Ask grade and the number within the grade -- 4 grade families exist: GG (6 GG to 74 GG), XXX (3 XXX to 17 XXX), MF (3 MF to 13 MF), N / double-X (3 N to 25 N)",
+            "Ask fabric family: standard sieving fabric, Milling Forte (heavier thread, same opening, longer life), or heavy-duty XXX grade -- trade-off is service life vs open (sifting) area",
+            "Ask width: 3 standard widths stocked -- 115 cm, 136 cm, 158 cm",
+            "Ask length in meters -- priced and ordered per meter",
+            "Ask the plansifter make -- frame/stretching sizes differ by machine (1250x1250 mm and 1500x1500 mm are common)",
+            "Ask the micron opening if the client knows it; if not, ask what flour it is sifting (maida, suji/rava, chokar/bran) so the opening can be matched to the product, since spec is really driven by micron opening rather than the grade number alone",
+            "If the client is unsure of the grade, request a picture or a physical swatch of the old cloth"
+          ],
+          "notes": [
+            "Authorized distributor for Sefar Nytal (Swiss brand) in India -- this is the reference brand for bolting cloth in Indian roller flour mills",
+            "'Resham ki jali' (literally 'silk mesh') is the common bazaar/vernacular name even though the fabric is nylon, not silk -- a holdover from when sieving cloth genuinely was silk"
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plansifter Sleeves",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "plansifter socks",
+            "inlet and outlet sleeves",
+            "plansifter small and big bag",
+            "connector sleeves",
+            "spout sleeves",
+            "bellows sleeve"
+          ],
+          "required_attributes": [
+            "Ask diameter and length in inches, being clear whether it is flat diameter or actual (inflated) diameter -- these two numbers are different and easy to mix up",
+            "Ask finishing option: single ring in the center, or elastic on both top and bottom",
+            "Ask fabric option: Indian regular, Turkish, or imported (most expensive)",
+            "Ask the plansifter make/model as an alternative to exact dimensions -- sizes are frame-specific and vary a lot between machines",
+            "Ask quantity of bags/pieces required",
+            "If the client has a specific fabric or the exact old sleeve, request a picture or a sample -- easy to send the wrong size without one"
+          ],
+          "notes": [
+            "Flexible connector that joins plansifter sections/spouts together -- nylon elastic filter fabric with HDPE/nylon support rings and an elastic strip at both ends for tool-free fitting"
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Manual Gun Tacker",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "staple gun",
+            "hand tacker",
+            "manual stapler gun",
+            "tacker gun"
+          ],
+          "required_attributes": [
+            "Ask quantity and any brand preference -- Kangaroo and Max are the common manual brands stocked",
+            "If unsure, offer a reference picture"
+          ],
+          "notes": [
+            "Manual (hand-squeeze) staple gun used to punch pins into plansifter frames to fix mesh and felt in place. See also Pneumatic Tacker for the air-powered version, and Staple Pin for the consumable pins it fires."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "renamed_from": "Gun Tacker"
+        },
+        {
+          "item_name": "Pneumatic Tacker",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "air tacker",
+            "pneumatic staple gun",
+            "air stapler"
+          ],
+          "required_attributes": [
+            "Ask the working air pressure / compressor capacity available at the client's site",
+            "Ask the pin/staple size the tool should take (see Staple Pin)",
+            "Ask brand preference and quantity",
+            "If unsure, offer a reference picture"
+          ],
+          "notes": [
+            "Air-powered version of the gun tacker, used the same way -- to punch pins into plansifter frames to fix mesh and felt."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Felt Seal",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "namda tape",
+            "felt tape",
+            "Nivard tape",
+            "gasket felt"
+          ],
+          "required_attributes": [
+            "Ask which type: Namda tape, cotton tape (Nivard), or glue-backed (peel-paper) tape -- construction and MOQ differ by type",
+            "Namda tape: ask width and thickness; MOQ 100 m per roll",
+            "Nivard (cotton) tape: thickness is fixed at 1 mm, so only ask width; MOQ 50 m per roll",
+            "Glue-type tape: only available in 3 mm thickness; ask width and quantity; MOQ 100 m per roll",
+            "Always confirm quantity in meters"
+          ],
+          "notes": [
+            "Felt/tape sealing strip used around plansifter frames to stop flour leaking at the joints. Glue-type has a peel-paper backing that activates on removal and is pasted directly onto wooden plansifter frames."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Fiber Rod / Nylon Rod",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "plansifter fiber",
+            "nylon rod",
+            "fibre rod"
+          ],
+          "required_attributes": [
+            "Ask diameter/thickness, length, and quantity",
+            "Request a picture to confirm the material -- fiber and nylon look near-identical and clients are often unsure which they actually have"
+          ],
+          "notes": [
+            "Structural rod running through the plansifter stack; also called plansifter fiber."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "FiberRod"
+          ]
+        },
+        {
+          "item_name": "Plansifter Wooden Frame",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "sieve frame",
+            "plansifter frame",
+            "chalni frame"
+          ],
+          "required_attributes": [
+            "Ask the make of the plansifter -- frame size is machine-specific",
+            "Ask finish: plain wooden, or with Sunmica laminate (increases service life)",
+            "Ask what sits underneath the mesh: round-hole perforated sheet (6 mm holes) or double crimped mesh, and for the perforated option ask gauge -- 28 gauge (better quality) or 32 gauge (cheaper, thinner)",
+            "Ask quantity, priced per piece",
+            "If unsure, offer/request a picture"
+          ],
+          "notes": [
+            "Standard size 500 mm x 500 mm. The double-crimped-mesh version is also available with or without Sunmica."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Plansifter Frame"
+          ]
+        },
+        {
+          "item_name": "Stainless Steel Wire Mesh",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "SS wire mesh",
+            "SS jaali",
+            "stainless sieve mesh",
+            "woven wire cloth"
+          ],
+          "required_attributes": [
+            "Ask mesh count (holes per inch); if the client does not know it, ask the opening in microns or mm (mm = wire-to-wire distance)",
+            "Ask wire thickness in mm or gauge",
+            "Ask width -- standard is 4 ft (3 ft, 5 ft, 2 m, or wider also available)",
+            "Ask length required; quantity is priced per meter",
+            "Ask grade: 304 (standard, corrosion-resistant) or 202 (cheaper, lower corrosion resistance)"
+          ],
+          "notes": [
+            "Can substitute for nylon mesh / bolting cloth / Resham ki jali where a metal (non-fabric) sieve surface is wanted."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Staple Pin",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "tacker pin",
+            "staples",
+            "gun tacker pin"
+          ],
+          "required_attributes": [
+            "Ask leg length and crown width (mm) -- must match the tacker brand/model, since pins for one gun brand do not always fit another; confirm which tacker/brand the client owns before quoting",
+            "Ask material: galvanized or stainless",
+            "Ask number of boxes required -- 1 box = 20 packets, and it is priced/sold per box"
+          ],
+          "notes": [
+            "Pins fired by the manual or pneumatic gun tacker to fix mesh and felt onto the plansifter frame."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plansifter Wire Rope",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "suspension rope",
+            "hanging wire rope",
+            "sifter suspension cable"
+          ],
+          "required_attributes": [
+            "Ask what it is for -- plansifter suspension/hanging vs general lifting/hoisting -- since the spec needed differs by use",
+            "Ask thickness/diameter of the wire rope (mm)",
+            "Ask length/quantity required",
+            "Ask material/construction: mild steel (galvanized) or stainless steel, and specific grade if the client has a preference",
+            "If unsure of the exact rope needed, offer a reference picture"
+          ],
+          "notes": [
+            "Plansifters are typically suspended from the building structure on wire ropes/canes that let the whole machine gyrate freely, so this rope has to handle a cyclic swinging load, not just a static one."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Wire Rope"
+          ]
+        },
+        {
+          "item_name": "Paper Gum Tape",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "water-activated tape",
+            "gummed paper tape",
+            "kraft tape"
+          ],
+          "required_attributes": [
+            "Ask width: 1 inch, 1.5 inch, or 2 inch",
+            "Ask number of bales -- 1 inch = 30 rolls x 25 m per bale; 1.5 inch = 20 rolls x 25 m per bale; 2 inch = 15 rolls x 25 m per bale"
+          ],
+          "notes": [
+            "Water-activated paper tape used to seal plansifter sieve frame edges/joints."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plansifter Upper & Lower Housing",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "plansifter casing",
+            "sifter body",
+            "upper and lower body"
+          ],
+          "required_attributes": [
+            "Ask the manufacturer name of the plansifter",
+            "Ask the size of the plansifter",
+            "Ask quantity in pieces",
+            "Request pictures to confirm the exact part -- this is a large, made-to-order part, not stocked"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plansifter Step Sheet",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "step plate",
+            "plansifter step plate"
+          ],
+          "required_attributes": [
+            "Ask variant: with hole or without hole",
+            "Ask material: MS (regular iron), or stainless steel if requested",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Standard dimensions 500 mm x 620 mm, generally 28 gauge thickness."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plansifter Tin Sheet",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "tensheet",
+            "plansifter tin plate"
+          ],
+          "required_attributes": [
+            "Ask material: mild steel (standard) or stainless steel if requested",
+            "Ask gauge: 28 gauge or 32 gauge",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Fits the plansifter wooden frame; standard dimensions 490 mm x 490 mm (to fit a 500 mm x 500 mm frame)."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Plansifter Tinsheet",
+            "Plansifter tin sheet (taxonomy-list-only entry)"
+          ]
+        },
+        {
+          "item_name": "Double Crimped Mesh",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "crimped wire mesh",
+            "woven crimp mesh"
+          ],
+          "required_attributes": [
+            "Ask opening size: 8 mm, 10 mm, or 12 mm",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Used in the plansifter frame (as an alternative to perforated sheet under the sieve), sometimes sold as spare mesh on its own. Standard panel size 495 mm x 495 mm, generally 1.2 mm wire thickness."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plansifter Channel",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "sifter channel bracket"
+          ],
+          "required_attributes": [
+            "Ask brand of the plansifter",
+            "Ask size of the channel",
+            "Ask quantity",
+            "Request a picture to confirm"
+          ],
+          "notes": [],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": false
+        },
+        {
+          "item_name": "Brass Brush",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "mesh cleaning brush"
+          ],
+          "required_attributes": [
+            "Ask quantity in pieces -- one size only, no size question needed"
+          ],
+          "notes": [
+            "Hand-held brush used to clean nylon mesh."
+          ],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": false
+        },
+        {
+          "item_name": "Plansifter Works (Box)",
+          "subcategory": "Plansifter Accessories",
+          "aliases": [
+            "sifter box assembly",
+            "plansifter compartment box"
+          ],
+          "required_attributes": [
+            "Ask brand of the plansifter",
+            "Ask size of the plansifter",
+            "Ask section of the box (E section or other)",
+            "Ask quantity of boxes"
+          ],
+          "notes": [],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": false
+        },
+        {
+          "item_name": "Oval Ball",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "dolag ball",
+            "dumbru ball",
+            "sieve cleaning ball"
+          ],
+          "required_attributes": [
+            "Ask the plansifter make -- three standard sizes/numbers (Type 1/2/3) exist and fit differs by machine; ask which type, or the diameter in mm, if the client is unsure",
+            "Ask material: rubber, nylon (= plastic), or PVC (clear, also called penny ball); PVC is also available in a food-grade variant",
+            "Ask material/hardness of the rubber if known",
+            "Ask quantity -- MOQ differs by material: rubber 500 pcs, nylon 200 pcs, PVC 200 pcs; order strictly in multiples of the MOQ",
+            "Offer a reference picture -- the three types look alike at a glance"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Oval Ball Type 1, 2, 3"
+          ]
+        },
+        {
+          "item_name": "Rectangular Sieve Cleaner",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "PU rectangular cleaner"
+          ],
+          "required_attributes": [
+            "Ask knob type: metal or plastic in the center",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Made of PU rubber (polyurethane). Standard size 75 mm L x 52 mm W x 9 mm thick."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Triangle Cleaner (Standard)",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "triangle sieve cleaner"
+          ],
+          "required_attributes": [
+            "Ask which trim combination the client currently has fitted: with brush, with studs, with metal knob, or with plastic knob",
+            "If the brush variant, ask quality: polyurethane, PU, or PU with a full internal nylon brush hidden inside (most expensive)",
+            "Ask size (length x width, mm) and quantity -- ordered in multiples of 100",
+            "Request a picture or the old part -- this design has the most variants in the range"
+          ],
+          "notes": [],
+          "match_confidence": 0.95,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Triangle Cleaners",
+            "Triangle with Brush, Plastic Knob, Studs, Metal-Rivet",
+            "Ask knob type: metal or plastic (mis-parsed entry)"
+          ]
+        },
+        {
+          "item_name": "Big Triangle Cleaner",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "large triangle cleaner"
+          ],
+          "required_attributes": [
+            "Confirm it is genuinely the 'big' size vs the standard triangle cleaner",
+            "Ask trim: with brush or with studs, and brush type if applicable",
+            "Ask size and quantity",
+            "Offer a reference picture if unsure"
+          ],
+          "notes": [
+            "Used in imported plansifters (Buhler, Turkish, Chinese makes)."
+          ],
+          "match_confidence": 0.65,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Big Triangle with Brush, Studs"
+          ]
+        },
+        {
+          "item_name": "Star Type Cleaner",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "star sieve cleaner"
+          ],
+          "required_attributes": [
+            "Ask trim: with brush or with studs",
+            "Ask size and quantity"
+          ],
+          "notes": [
+            "Star-shaped body, polyurethane material."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Star Type Cleaner with Brush, Studs"
+          ]
+        },
+        {
+          "item_name": "Rubber Ball",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "plain rubber ball"
+          ],
+          "required_attributes": [
+            "Ask diameter (mm) -- 16 mm is the standard/default size -- and hardness if known",
+            "Ask bounce type: high bounce or medium bounce",
+            "Ask quantity -- MOQ 500 pcs, order in multiples of 500"
+          ],
+          "notes": [
+            "Plain rubber ball with no brush or studs -- can substitute for the other sieve-cleaner variants above."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Rubber Ball 16 mm"
+          ]
+        },
+        {
+          "item_name": "Cotton Cleaner",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "cotton sieve pad",
+            "cotton cleaner pad"
+          ],
+          "required_attributes": [
+            "Ask ply/grade: 2 ply (Indian manufacture), 4 ply (imported, sturdier), 6 ply light green (70% cotton / 30% polyester), or 6 ply dark green (100% cotton, best quality)",
+            "Ask quantity",
+            "Offer a reference picture if unsure -- a common market size is roughly 75x58x8 mm sold about 500 pieces to a carton, but confirm the exact size and pack count before quoting"
+          ],
+          "notes": [
+            "Cotton pad (variant of the rectangular sieve cleaner) that sits between the screen and steel mesh with a metal slider, lifting flour buildup off the mesh to stop blinding."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Cotton Cleaners"
+          ]
+        },
+        {
+          "item_name": "Blue Cleaner with Brush, Studs",
+          "subcategory": "Sieve & Pan Cleaners",
+          "aliases": [
+            "blue cleaner"
+          ],
+          "required_attributes": [
+            "Confirm size -- many clients order this by colour name alone ('Blue Cleaner'), so size still needs confirming",
+            "Ask quantity",
+            "Offer a reference picture if unsure"
+          ],
+          "notes": [],
+          "match_confidence": 0.6,
+          "in_short_taxonomy_list": false
+        }
+      ]
+    },
+    {
+      "category": "Conveying Accessories",
+      "general_notes": [
+        "Elevator Buckets (subcategory): covers both bucket profiles sold -- AA Type (double-A, default shape when the client doesn't specify) and Shovel Type (deeper scoop). For metal buckets (MS/SS), thickness is asked in gauge: 18, 16, 14, 12, or 10 gauge.",
+        "Conveyor Belts (subcategory): the full range of belt materials stocked is black rubber, white/food-grade rubber, cotton, nylon-cotton, polyester, PVC, PU, yellow nylon, hair (camel-hair transmission), and sandwich (two-colour, different top/bottom) belting. See the individual belt items below for material-specific thickness options; all are ultimately asked for width, length (in feet or meters), open-end vs endless, and quantity.",
+        "Jointing Accessories (subcategory): fasteners and hardware used to join conveyor belt ends and fix elevator buckets to the belt -- see Bucket Bolt, Nylock Nut, Belt Fastener, and Special Conveyor Belt Fasteners below."
+      ],
+      "folded_generic_entries": [
+        "Elevator Buckets",
+        "Conveyor Belts",
+        "Jointing Accessories"
+      ],
+      "items": [
+        {
+          "item_name": "Elevator Bucket - AA Type",
+          "subcategory": "Elevator Buckets",
+          "aliases": [
+            "AA-style bucket",
+            "double A bucket",
+            "elevator cups",
+            "grain elevator buckets"
+          ],
+          "required_attributes": [
+            "Ask size (width x projection x depth, usually in inches)",
+            "Ask material: mild steel, stainless steel, PP, or Nylon -- MS/SS ask gauge too (18, 16, 14, 12, or 10 gauge)",
+            "Ask the elevator make/model and mounting hole pattern if known",
+            "Ask quantity",
+            "If unsure of size, offer a reference picture"
+          ],
+          "notes": [
+            "Standard 'AA' profile bucket -- the default shape assumed if the client does not specify otherwise. In grain-handling trade jargon the whole bucket elevator machine is often just called 'the leg.'"
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "renamed_from": "AA Type (MS, SS & PP, Nylon)"
+        },
+        {
+          "item_name": "Elevator Bucket - Shovel Type",
+          "subcategory": "Elevator Buckets",
+          "aliases": [
+            "shovel bucket",
+            "deep scoop bucket"
+          ],
+          "required_attributes": [
+            "Ask size and material: MS, SS, PP, or Nylon -- MS/SS ask gauge too (18, 16, 14, 12, or 10 gauge)",
+            "Ask the elevator make/model",
+            "Ask quantity",
+            "If unsure, offer a reference picture"
+          ],
+          "notes": [
+            "Shovel-profile bucket -- deeper scoop than the AA type, generally used for free-flowing, lighter-density material."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "renamed_from": "Shovel Type (MS, SS & PP), Nylon"
+        },
+        {
+          "item_name": "Black Rubber Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "rubber conveyor belt",
+            "black belting"
+          ],
+          "required_attributes": [
+            "Ask width required",
+            "Ask plies/thickness: 3 ply (8 mm), 4 ply (10 mm), or 5 ply (12 mm)",
+            "Ask top/bottom rubber cover thickness",
+            "Ask length required, and whether it should be supplied open-ended or as an endless (spliced) loop",
+            "Ask quantity (in meters)"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Food Grade Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "white rubber belt",
+            "hygienic belt",
+            "FDA-grade belt",
+            "FSSAI belt"
+          ],
+          "required_attributes": [
+            "Ask width required",
+            "Ask plies/thickness: 3 ply (8 mm), 4 ply (10 mm), or 5 ply (12 mm)",
+            "Confirm food-grade certification needed (FDA / FSSAI) -- this is what distinguishes it from a standard black rubber belt",
+            "Ask top and bottom cover type/colour",
+            "Ask length required (ordered by the meter) and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Cotton, Nylon, Polyester Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "fabric conveyor belt",
+            "nylon-cotton belting"
+          ],
+          "required_attributes": [
+            "Ask which material the client wants: cotton, nylon-cotton, or polyester -- thickness is fixed at 8 mm for all three",
+            "Ask width, ply count, and length",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "PVC / PU Conveyor Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "polyurethane belt",
+            "PVC belting",
+            "PU belting",
+            "plastic conveyor belt"
+          ],
+          "required_attributes": [
+            "Ask material: PVC or PU (polyurethane)",
+            "Ask thickness: 1 mm, 2 mm, 3 mm, or up to 5 mm",
+            "Ask width and length required",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Smooth plastic-surface belting, generally used where a washable/low-friction/oil-resistant surface is needed rather than a rubber or fabric belt."
+          ],
+          "match_confidence": 0.8,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Yellow Nylon Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "yellow belting"
+          ],
+          "required_attributes": [
+            "Ask thickness",
+            "Ask width and length required",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.6,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Sandwich Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "two-tone conveyor belt",
+            "dual colour belt"
+          ],
+          "required_attributes": [
+            "Ask thickness",
+            "Ask top-surface and bottom-surface colours/materials -- top and bottom differ by design",
+            "Ask width and length required",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.6,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Hair Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "camel hair belt",
+            "camel hair belting",
+            "woven cotton transmission belt"
+          ],
+          "required_attributes": [
+            "Ask the application first to settle which product is actually meant -- the term gets used locally for two different things: a napped/rough-surface belt for extra grip on inclined conveying, or a woven cotton/'camel hair' flat transmission belt used to drive a machine",
+            "If conveying: ask width, thickness (8 mm or 10 mm), and length",
+            "If machine drive: ask width, thickness, and length to suit the pulleys",
+            "Ask quantity"
+          ],
+          "notes": [
+            "'Camel hair belting' is the traditional trade name for the woven cotton flat transmission-belt version."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Transmission Belt",
+          "subcategory": "Conveyor Belts",
+          "aliases": [
+            "drive belt",
+            "machine drive belt"
+          ],
+          "required_attributes": [
+            "Ask type: flat belt or V-belt",
+            "If V-belt: ask section (A/B/C/Z or SPA/SPB/SPZ) and length/belt number",
+            "If flat belt: ask width and thickness",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Bucket Bolt",
+          "subcategory": "Jointing Accessories",
+          "aliases": [
+            "elevator bolt",
+            "oval neck bolt",
+            "carriage-type bucket bolt"
+          ],
+          "required_attributes": [
+            "Ask diameter: 6 mm, 8 mm, or 10 mm are the three standard sizes (12 mm is a non-standard size also available); clients may refer to these in inches -- 8 mm = 5/16 inch, 10 mm = 3/8 inch",
+            "Ask length: 6 mm dia = 1 inch; 8 mm dia = 1 inch or 1.25 inch; 10 mm dia = 1.5 inch",
+            "Ask head type: oval, countersunk, or round",
+            "Ask material: GI or stainless steel",
+            "Confirm whether nuts and washers are needed with it",
+            "Ask quantity -- MOQ is 100 pieces per pack for 6 mm and 8 mm, 50 pieces per pack for 10 mm"
+          ],
+          "notes": [
+            "Bolts used to fix elevator buckets onto the belt. In US hardware trade this bolt type (oval/countersunk head, square neck) is generically called an 'elevator bolt' precisely because of this application."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Nylock Nut",
+          "subcategory": "Jointing Accessories",
+          "aliases": [
+            "nyloc nut",
+            "nylon insert lock nut",
+            "self-locking nut"
+          ],
+          "required_attributes": [
+            "Ask size: 8 mm or 10 mm (to match the Bucket Bolt diameter)",
+            "Ask quantity -- sold per piece, any quantity accepted"
+          ],
+          "notes": [
+            "Nylon-insert locknut used with the bucket bolt to stop it vibrating loose."
+          ],
+          "match_confidence": 0.85,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Belt Fastener",
+          "subcategory": "Jointing Accessories",
+          "aliases": [
+            "belt lacing",
+            "hinged plate fastener",
+            "belt clipper"
+          ],
+          "required_attributes": [
+            "Ask fastener type: hinged plate, wire-hook, or staple/clipper type",
+            "Ask size: 8 mm or 10 mm (8 mm packs = 50 pieces, MOQ 50)",
+            "Ask belt width (mm) and belt thickness/ply to match",
+            "Ask quantity -- usually sold per set/box covering one joint width",
+            "If unsure which type is needed, offer a reference picture"
+          ],
+          "notes": [
+            "Used to join conveyor belt ends into a loop, as an alternative to a vulcanized (glued/heat) splice."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Special Conveyor Belt Fasteners",
+          "subcategory": "Jointing Accessories",
+          "aliases": [
+            "clipper lacing",
+            "wire hook fastener"
+          ],
+          "required_attributes": [
+            "Ask fastener size/number: 1.5 number, 2 number, 2.5 number, or 3 number",
+            "Ask belt width and thickness/ply to match",
+            "Ask quantity"
+          ],
+          "notes": [
+            "A numbered wire-hook/clipper-style lacing system, sized by fastener number rather than mm."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        }
+      ]
+    },
+    {
+      "category": "Roller Mill Accessories",
+      "general_notes": [],
+      "folded_generic_entries": [],
+      "items": [
+        {
+          "item_name": "Roller Mill Brush",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "roll cleaning brush",
+            "mill hand brush"
+          ],
+          "required_attributes": [
+            "Ask hair/bristle type: nylon brush, peacock feather brush, or jute brush (also called coconut brush)",
+            "Ask width of the brush: 2 inch (standard) or 1 inch (non-standard)",
+            "Ask thickness of the wood: generally 20 mm, or as specified by the client",
+            "Ask length of the wood: 40 inch or 50 inch standard (can also be specified in mm: 1000 mm or 1250 mm)",
+            "Ask hair height: generally 1.5 inch; custom heights of 2 inch, 2.5 inch, or other available",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.8,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Roller Mill Helical Gear",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "differential gear",
+            "roll drive gear",
+            "speed differential gear set"
+          ],
+          "required_attributes": [
+            "Ask which passage the gear is for: break passage or polish passage -- gearing differs by passage since break and polish rolls run at different differential ratios",
+            "If the client is specifying a single gear: ask number of teeth, bore size (hole in center -- generally 60 mm, or custom e.g. 70 mm), and quantity required",
+            "If the client needs a matched pair (proper gear set): ask the center distance between the big and small gear (measured by joining them and measuring hole-to-hole), the bore size, and number of pairs required",
+            "Request a picture or the old gear's marking if unsure",
+            "Ask the roller mill make/model -- gears are usually matched in pairs to keep the correct differential speed ratio between the fast and slow roll"
+          ],
+          "notes": [
+            "Drives the differential roll speed on the roller mill -- the fast and slow rolls turn at different RPM (a ratio commonly around 2.5:1) to create the shearing/grinding action, and this gear pair sets that ratio."
+          ],
+          "match_confidence": 0.95,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Helical Gear"
+          ]
+        },
+        {
+          "item_name": "Roller Mill Viewing Glass",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "sight glass",
+            "inspection glass",
+            "roller mill window"
+          ],
+          "required_attributes": [
+            "Ask diameter, length, and thickness",
+            "Ask variant: with partition or without partition",
+            "Ask whether a frame/gasket is needed with it",
+            "Ask the roller mill make/model",
+            "Ask quantity required"
+          ],
+          "notes": [
+            "Installed on top of the roller mill so the operator can visually confirm material is flowing evenly into the rolls."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Roller Mill Glass"
+          ]
+        },
+        {
+          "item_name": "Chilled Cast Iron Rolls",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "CI rolls",
+            "chill rolls",
+            "chilled rolls",
+            "fluted rolls",
+            "corrugated rolls",
+            "break rolls",
+            "reduction rolls",
+            "smooth rolls"
+          ],
+          "required_attributes": [
+            "Ask diameter and length -- standard sizes are 250 mm dia in 1000 mm or 1250 mm length; a 300 mm dia is also available (non-standard) in 1000 mm or 1250 mm length",
+            "Ask passage type: break passage (fluted/corrugated roll) or polish/reduction passage (usually smooth roll)",
+            "If fluted, ask fluting spec: flutes per inch (FPI/TPI), and spiral angle if the client knows it -- flute count and angle are what actually set the grind, not just diameter",
+            "Ask manufacturing preference: Indian-manufactured or imported (Turkey)",
+            "Ask number of pairs required (rolls are always ordered and fitted as a matched fast/slow pair)"
+          ],
+          "notes": [
+            "The grinding element of the roller mill. 'Chilled' refers to the casting process (rapid surface cooling gives a hard, wear-resistant outer shell over a tougher core) -- this is what 'chilled cast iron' means as opposed to a plain cast or forged roll."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Chilled Cast Iron Rolls (duplicate entry originally filed under Miscellaneous)"
+          ]
+        },
+        {
+          "item_name": "Roller Mill Spring",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "roll pressure spring",
+            "compression spring"
+          ],
+          "required_attributes": [
+            "Ask outer diameter",
+            "Ask inner diameter",
+            "Ask thickness (wire gauge) of the spring",
+            "Ask length/height of the spring",
+            "Ask number of coils/loops",
+            "Ask quantity required",
+            "Prefer that the client provide a reference picture"
+          ],
+          "notes": [
+            "Provides the closing/loading pressure that holds the two rolls together against the grinding load."
+          ],
+          "match_confidence": 0.8,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Roller Mill Housing",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "roll bearing housing",
+            "chock"
+          ],
+          "required_attributes": [
+            "Ask brand of the roller mill",
+            "Ask bearing number used inside the housing",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 0.8,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Roller Mill Key",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "taper key",
+            "gear key"
+          ],
+          "required_attributes": [
+            "Ask quantity required",
+            "Prefer that the client provide a reference picture"
+          ],
+          "notes": [
+            "Taper key used to lock the roller mill's drive gears onto the roll shaft."
+          ],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Roll Cleaning Brush Type 1, 2, 3",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "roll scraper brush",
+            "feed roll brush"
+          ],
+          "required_attributes": [
+            "Ask which type/number, or the roll length (mm), if the client is unsure which of the 3 types is needed",
+            "Ask bristle material: nylon or steel wire",
+            "Ask the roller mill make/model",
+            "Ask quantity",
+            "Offer a reference picture if unsure which type"
+          ],
+          "notes": [
+            "Cleans the feed/grinding rolls in operation -- distinct from the general-purpose Roller Mill Brush (hand-held hair brush) above."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "renamed_from": "Cleaning Brush Type 1, 2, 3"
+        },
+        {
+          "item_name": "Roller Mill Flat & V Belt Pulley",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "roll drive pulley"
+          ],
+          "required_attributes": [
+            "Ask whether a flat or V-groove pulley is needed",
+            "If V-groove: ask number of grooves and section (A/B/C)",
+            "Ask pulley diameter and bore/shaft size",
+            "Ask the roller mill make and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.8,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Doctor Blade (Roll Scraper)",
+          "subcategory": "Roller Mill Accessories",
+          "aliases": [
+            "scraper blade",
+            "doctor knife"
+          ],
+          "required_attributes": [
+            "Ask blade length to match the roll's working length, and material (spring steel is standard)",
+            "Ask the roller mill make/model and which roll (fast or slow) it mounts against",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Not in the original KYP sheet -- added from general roller-mill domain knowledge. The doctor blade is a spring-steel strip held against the roll surface to continuously scrape off ground material and stop it building up; it is a standard, regularly-replaced wear part on virtually every roller mill. Verify BUI actually stocks this before publishing."
+          ],
+          "match_confidence": null,
+          "in_short_taxonomy_list": false,
+          "added_from_domain_knowledge": true
+        }
+      ]
+    },
+    {
+      "category": "Power Transmission Elements",
+      "general_notes": [
+        "Bearing (subcategory): where possible, always ask for the bearing number stamped on the old bearing (e.g. 6205, 32210, 22218) first -- it is the fastest and most reliable way to match exactly, faster than working back from bore/OD/width dimensions.",
+        "Coupling (subcategory): couplings join two shafts that are often different diameters -- always ask both shaft (bore) sizes, not just one, and ask for the size/model number off the old coupling where possible.",
+        "Chain & Chain Sprocket (subcategory): chain and sprocket must be quoted together against the same pitch/number -- always confirm simplex (single row), duplex (double row), or triplex (triple row) before quoting, since it is easy to mix these up over the phone. Standard chain pitches are 1/2 in, 3/8 in, 5/8 in, and 1 in; a packet of chain is conventionally 3 m (about 10 ft) and is sold in packets, not by the meter.",
+        "Pulleys (subcategory): see Flat Belt Pulley, Plain Bore V Belt Pulley, Taper Bush V Belt Pulley, and Timing Pulley below."
+      ],
+      "folded_generic_entries": [
+        "Bearing",
+        "Coupling",
+        "Chain Sprockets",
+        "Chain Sprocket",
+        "Chain",
+        "Pulleys"
+      ],
+      "items": [
+        {
+          "item_name": "Oil Seal",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "rotary shaft seal",
+            "lip seal",
+            "grease seal",
+            "oil seal ring"
+          ],
+          "required_attributes": [
+            "Ask inner diameter (ID) x outer diameter (OD) x thickness, all three in mm -- all three are needed for an exact match",
+            "Ask lip type: single or double lip, with or without spring",
+            "Ask rubber type: neoprene, silicon, or regular black (default if not specified)",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "V Belt",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "wedge belt",
+            "vee belt",
+            "V-patti"
+          ],
+          "required_attributes": [
+            "Ask V-belt number (every V-belt has a number, e.g. A70, B110) or section (A/B/C/Z or SPA/SPB/SPZ) plus length/belt number",
+            "Ask brand preference -- client may specify one or two preferred brands",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Bearing Sleeve",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "adapter sleeve",
+            "withdrawal sleeve"
+          ],
+          "required_attributes": [
+            "Ask the sleeve number if stamped on it (e.g. H2310), else the shaft diameter it must fit",
+            "Ask series if known: H series (bore in mm) or HE series (bore in inches)",
+            "Ask brand preference -- many brands available, JMC is the most common",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Bearing Block",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "pillow block bearing",
+            "plummer block",
+            "bearing housing unit"
+          ],
+          "required_attributes": [
+            "Ask the bearing block number if known: S series or SN series",
+            "Ask housing type/series if known (e.g. P or F series), or ask for a picture of the housing",
+            "Ask shaft/bore diameter",
+            "Ask material: cast iron or pressed steel",
+            "Ask brand preference -- JMC is most common; ask if the client requires a different brand",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Gear Box",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "speed reducer",
+            "reducer gearbox",
+            "worm reducer"
+          ],
+          "required_attributes": [
+            "Ask which way the client will specify it -- by HP + output RPM, or by frame size (inches) + ratio -- and gather accordingly:",
+            "If by HP/RPM: ask HP (e.g. 2 HP) and output RPM (e.g. 50)",
+            "If by inches/ratio: ask the gearbox size in inches (e.g. 2 inch) and the ratio (e.g. 1:10 or 1:20)",
+            "Ask mounting type: foot-mounted or flange-mounted",
+            "Ask brand preference",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Motor",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "electric motor",
+            "induction motor"
+          ],
+          "required_attributes": [
+            "Ask HP of the motor",
+            "Ask RPM of the motor (e.g. 1 HP at 1,440 rpm)",
+            "Ask brand preference",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 0.85,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Gear Box and Motor",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "gearmotor",
+            "geared motor"
+          ],
+          "required_attributes": [
+            "Ask gearbox type: worm or helical",
+            "Ask reduction ratio, input/output shaft size, and mounting (foot or flange)",
+            "Ask motor power (HP/kW), RPM, and voltage/phase",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Combined, pre-assembled gearbox + motor unit, as distinct from ordering the Gear Box and Motor separately."
+          ],
+          "match_confidence": 0.85,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "HRC Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "Highly Resilient Coupling",
+            "rubber spider coupling",
+            "jaw coupling"
+          ],
+          "required_attributes": [
+            "Ask HRC size number if known (e.g. HRC 90, 100, 110, 130), else both shaft bore diameters",
+            "Ask quantity required"
+          ],
+          "notes": [
+            "HRC stands for Highly Resilient Coupling -- two hubs joined by a rubber 'spider' element that flexes to absorb misalignment and shock."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Pin Bush Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "pin and bush coupling",
+            "flexible pin bush coupling"
+          ],
+          "required_attributes": [
+            "Ask coupling number if known (BC series: BC1, BC2, BC2A, and so on), else the overall coupling diameter",
+            "Ask size number if known, else both shaft bore diameters",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Tyre Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "tire coupling",
+            "rubber tyre coupling"
+          ],
+          "required_attributes": [
+            "Ask tyre coupling number if known -- two series exist, FC series and T series",
+            "Ask size number if known, else both shaft bore diameters",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Muff Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "sleeve coupling",
+            "solid sleeve coupling"
+          ],
+          "required_attributes": [
+            "Ask both shaft diameters and the bore the client wants",
+            "Ask the total length/OD of the muff",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Chain Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "roller chain coupling"
+          ],
+          "required_attributes": [
+            "Ask both shaft bore diameters",
+            "Ask coupling size: number of teeth, pitch, or the chain pitch/number it uses",
+            "Ask quantity required",
+            "Send the old coupling's size marking or a picture if unsure"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Encoder Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "beam coupling",
+            "servo coupling",
+            "flexible shaft coupling"
+          ],
+          "required_attributes": [
+            "Ask outer diameter",
+            "Ask inner diameter (both shaft ends)",
+            "Ask length",
+            "Ask quantity required"
+          ],
+          "notes": [
+            "Small, low-torque flexible coupling used between a shaft and a sensor/encoder -- distinct from the heavier drive couplings above."
+          ],
+          "match_confidence": 0.6,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Gear Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "toothed coupling"
+          ],
+          "required_attributes": [
+            "Ask gear coupling number if known, else both shaft bore diameters",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 0.6,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Star Coupling",
+          "subcategory": "Coupling",
+          "aliases": [
+            "jaw coupling (Lovejoy-type)",
+            "L-type coupling"
+          ],
+          "required_attributes": [
+            "Ask coupling number (e.g. L100, L110) if known, else bore size (e.g. 30 mm, 40 mm) and confirm both shaft bore diameters",
+            "Ask whether just the rubber spider/star element is needed, or the full coupling (both hubs)",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 0.85,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Couplings (mis-parsed duplicate entry)"
+          ]
+        },
+        {
+          "item_name": "Simplex Chain Sprocket",
+          "subcategory": "Chain Sprocket",
+          "aliases": [
+            "single row sprocket"
+          ],
+          "required_attributes": [
+            "Ask number of teeth",
+            "Ask bore size: finished bore + keyway, or 'pilot bore' if it is to be machined later; optionally also overall diameter and hub diameter",
+            "Ask the chain pitch/number it must match, e.g. 08B, 10B, or ANSI 40/50/60 (standard pitches: 1/2 in, 3/8 in, 5/8 in, 1 in)",
+            "Ask hub type if known",
+            "Ask quantity required"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Simplex Chain",
+          "subcategory": "Chain Sprocket",
+          "aliases": [
+            "single row roller chain"
+          ],
+          "required_attributes": [
+            "Ask chain pitch/number, e.g. 08B, 10B, ANSI 40/50/60, or 1/2 in - 3/4 in - 1 in pitch",
+            "Ask length required -- in number of links, meters, or 'same as sample'; note it is sold in packets, 1 packet = 3 m (about 10 ft)",
+            "Ask number of packets required"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Chain (generic parent entry)"
+          ]
+        },
+        {
+          "item_name": "Duplex Chain Sprocket",
+          "subcategory": "Chain Sprocket",
+          "aliases": [
+            "double row sprocket"
+          ],
+          "required_attributes": [
+            "Confirm duplex (double-row) is what is needed, then ask the same as simplex: number of teeth, bore, chain pitch/number, hub type",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Duplex Chain",
+          "subcategory": "Chain Sprocket",
+          "aliases": [
+            "double row roller chain"
+          ],
+          "required_attributes": [
+            "Confirm duplex (double-row) vs simplex before quoting",
+            "Ask chain pitch/number, length required, and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Triplex Chain Sprocket",
+          "subcategory": "Chain Sprocket",
+          "aliases": [
+            "triple row sprocket"
+          ],
+          "required_attributes": [
+            "Confirm triplex (triple-row) is what is needed, then ask the same as simplex/duplex: number of teeth, bore, chain pitch/number, hub type",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Triplex Chain",
+          "subcategory": "Chain Sprocket",
+          "aliases": [
+            "triple row roller chain"
+          ],
+          "required_attributes": [
+            "Confirm triplex (triple-row)",
+            "Ask chain pitch/number, length required, and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Angular Contact Ball Bearing",
+          "subcategory": "Bearing",
+          "aliases": [
+            "ACBB"
+          ],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore diameter, outer diameter, and width (mm)",
+            "Ask contact angle if known (commonly 15deg/25deg/40deg) and single or double row",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Cylindrical Roller Bearing",
+          "subcategory": "Bearing",
+          "aliases": [
+            "CRB"
+          ],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore, outer diameter, width",
+            "Ask configuration if known (N, NU, NJ, NUP -- affects which side takes axial load)",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Deep Groove Bearing",
+          "subcategory": "Bearing",
+          "aliases": [
+            "deep groove ball bearing",
+            "DGBB",
+            "Conrad bearing",
+            "ball bearing"
+          ],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore, outer diameter, width",
+            "Ask if sealed/shielded (2RS/ZZ) or open is needed",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Needle Bearing",
+          "subcategory": "Bearing",
+          "aliases": [
+            "needle roller bearing"
+          ],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore diameter, outer diameter, and width",
+            "Ask whether it is a needle roller with inner ring, without inner ring, or a needle bush/cage",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Self Aligning Ball Bearing",
+          "subcategory": "Bearing",
+          "aliases": [
+            "SABB"
+          ],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore, outer diameter, width",
+            "Confirm the application needs misalignment tolerance (this type's key feature), so it is not substituted for a standard deep groove bearing by mistake",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Spherical Roller Bearing",
+          "subcategory": "Bearing",
+          "aliases": [
+            "SRB",
+            "barrel roller bearing"
+          ],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore, outer diameter, width",
+            "Ask whether it needs a tapered bore (for adapter-sleeve mounting) or a straight bore",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Taper Roller Bearing",
+          "subcategory": "Bearing",
+          "aliases": [
+            "TRB",
+            "Timken bearing",
+            "tapered roller bearing"
+          ],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore, outer diameter, width, and cone angle if known",
+            "Confirm single or double row",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [
+            "'Timken bearing' is used generically in the Indian bearing trade for this type, similar to how a brand name becomes the everyday word for the product."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Thrust Ball Bearing",
+          "subcategory": "Bearing",
+          "aliases": [],
+          "required_attributes": [
+            "Ask the bearing number if visible, else bore, outer diameter, and height",
+            "Confirm it is genuinely for axial load only (thrust bearings do not take radial load) -- worth double-checking this is what the machine needs",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.6,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Flat Belt Pulley",
+          "subcategory": "Pulleys",
+          "aliases": [],
+          "required_attributes": [
+            "Ask diameter, face width, and bore/shaft size",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plain Bore V Belt Pulley",
+          "subcategory": "Pulleys",
+          "aliases": [
+            "fixed bore V-pulley"
+          ],
+          "required_attributes": [
+            "Ask pitch diameter, number of grooves, section (A/B/C), and bore diameter",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Taper Bush V Belt Pulley",
+          "subcategory": "Pulleys",
+          "aliases": [
+            "taper lock pulley"
+          ],
+          "required_attributes": [
+            "Ask pitch diameter, number of grooves, and section",
+            "Ask the taper bush size/number if known, and the finished bore needed in the bush",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Timing Pulley",
+          "subcategory": "Pulleys",
+          "aliases": [
+            "toothed pulley",
+            "synchronous pulley"
+          ],
+          "required_attributes": [
+            "Ask tooth profile/pitch (e.g. T5, T10, AT5, HTD 8M), number of teeth, belt width, and bore size",
+            "Request a picture or the belt sample if unsure of the tooth profile -- profiles look similar but are not interchangeable",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Circlip (Retaining Ring)",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "snap ring",
+            "retaining ring",
+            "C-clip"
+          ],
+          "required_attributes": [
+            "Ask shaft (external) or bore (internal) type",
+            "Ask diameter to match the shaft/bore, and thickness",
+            "Ask material: spring steel (standard) or stainless",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Not in the original KYP sheet -- added from general machine-element domain knowledge, since circlips are a near-universal small spare alongside bearings and couplings. Verify BUI actually stocks this before publishing."
+          ],
+          "match_confidence": null,
+          "in_short_taxonomy_list": false,
+          "added_from_domain_knowledge": true
+        },
+        {
+          "item_name": "Grease Nipple",
+          "subcategory": "Power Transmission Elements",
+          "aliases": [
+            "zerk fitting",
+            "grease fitting",
+            "lubrication nipple"
+          ],
+          "required_attributes": [
+            "Ask thread size and type (metric or BSP) and angle (straight, 45deg, or 90deg)",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Not in the original KYP sheet -- added from general domain knowledge; a small, high-turnover consumable used on every grease-lubricated bearing block. 'Zerk fitting' is the standard US/global name for the same part. Verify BUI actually stocks this before publishing."
+          ],
+          "match_confidence": null,
+          "in_short_taxonomy_list": false,
+          "added_from_domain_knowledge": true
+        }
+      ]
+    },
+    {
+      "category": "Pipe & Pipe Accessories",
+      "general_notes": [],
+      "folded_generic_entries": [],
+      "items": [
+        {
+          "item_name": "Divider",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "flow divider",
+            "diverter valve",
+            "multi-way divider"
+          ],
+          "required_attributes": [
+            "Ask pipe diameter and number of outlets",
+            "Ask whether a manual or pneumatic damper/flap is needed to select the outlet",
+            "Ask material: GI, MS, or SS",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Down Gravity Pipe",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "gravity chute",
+            "down spout"
+          ],
+          "required_attributes": [
+            "Ask diameter, length, and number of bends",
+            "Ask material and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Elbow Bend",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "elbow",
+            "pipe bend"
+          ],
+          "required_attributes": [
+            "Ask diameter, angle (45deg or 90deg), and material",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Lock Ring",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "pipe clamp ring",
+            "band clamp"
+          ],
+          "required_attributes": [
+            "Ask diameter to match the pipe it clamps, and material",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Spout Cover",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "spout cap"
+          ],
+          "required_attributes": [
+            "Ask diameter and material",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Tee",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "T-piece",
+            "T-joint"
+          ],
+          "required_attributes": [
+            "Ask diameter, whether equal or reducing, and material",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "U Bolt",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [],
+          "required_attributes": [
+            "Ask the pipe/rod diameter it needs to clamp, and material",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "U Clamp",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "saddle clamp"
+          ],
+          "required_attributes": [
+            "Ask diameter and width, and material",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Y (Y-Piece)",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "wye fitting",
+            "Y-branch"
+          ],
+          "required_attributes": [
+            "Ask diameter, branch angle, and material",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Reducer",
+          "subcategory": "Pipe & Pipe Accessories",
+          "aliases": [
+            "pipe reducer",
+            "concentric/eccentric reducer"
+          ],
+          "required_attributes": [
+            "Ask both diameters (larger end and smaller end)",
+            "Ask concentric (centered) or eccentric (offset) type, and material",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Not in the original KYP sheet -- added from general domain knowledge as a basic pipe fitting used to join two different duct/pipe diameters. Verify BUI actually stocks this before publishing."
+          ],
+          "match_confidence": null,
+          "in_short_taxonomy_list": false,
+          "added_from_domain_knowledge": true
+        }
+      ]
+    },
+    {
+      "category": "Jet Filter Accessories",
+      "general_notes": [
+        "The 'jet filter' itself is what's globally called a pulse-jet dust collector or baghouse -- compressed-air pulses periodically clean dust off a bank of fabric bags so the collector keeps running continuously."
+      ],
+      "folded_generic_entries": [],
+      "items": [
+        {
+          "item_name": "Filter Diaphragm",
+          "subcategory": "Jet Filter Accessories",
+          "aliases": [
+            "valve diaphragm",
+            "pulse valve diaphragm"
+          ],
+          "required_attributes": [
+            "Ask the valve brand/model it is for, and diaphragm size",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Rubber diaphragm inside the pulse/solenoid valve that fires the compressed-air cleaning pulse."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Jet Filter Bag",
+          "subcategory": "Jet Filter Accessories",
+          "aliases": [
+            "filter sock",
+            "dust collector bag",
+            "pulse jet bag"
+          ],
+          "required_attributes": [
+            "Ask bag diameter x length (mm)",
+            "Ask fabric: polyester, PTFE, or Nomex, and micron rating if known",
+            "Ask top/bottom fitting type: snap ring or flange",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Jet Filter Cage",
+          "subcategory": "Jet Filter Accessories",
+          "aliases": [
+            "bag cage",
+            "filter basket"
+          ],
+          "required_attributes": [
+            "Ask cage diameter x length, and material (GI or SS) -- must match the Jet Filter Bag size",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Wire cage that the filter bag fits over, holding it open against the vacuum."
+          ],
+          "match_confidence": 0.7,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Jet Filter Venturi",
+          "subcategory": "Jet Filter Accessories",
+          "aliases": [
+            "venturi nozzle"
+          ],
+          "required_attributes": [
+            "Ask throat/venturi size to match the bag diameter, and material",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Sits above the bag/cage and directs the compressed-air cleaning pulse down into the bag."
+          ],
+          "match_confidence": 0.65,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Sequential Timer",
+          "subcategory": "Jet Filter Accessories",
+          "aliases": [
+            "pulse jet timer",
+            "pulse controller"
+          ],
+          "required_attributes": [
+            "Ask number of outputs/channels needed",
+            "Ask voltage (220V AC or 24V DC) and brand preference",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Controls the firing sequence and interval of the solenoid/pulse valves."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Solenoid Valve",
+          "subcategory": "Jet Filter Accessories",
+          "aliases": [
+            "pulse valve"
+          ],
+          "required_attributes": [
+            "Ask valve size in inches (e.g. 1 in, 1.5 in, 2 in)",
+            "Ask voltage (220V AC or 24V DC) and brand preference",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        }
+      ]
+    },
+    {
+      "category": "Magnets",
+      "general_notes": [
+        "Across nearly every item in this category the core spec triangle is the same: duct/opening size (to fit the machine), gauss rating (magnet strength), and quantity -- the differences between items below are mainly about magnet geometry and cleaning mechanism."
+      ],
+      "folded_generic_entries": [],
+      "items": [
+        {
+          "item_name": "Drawer Magnet",
+          "subcategory": "Magnets",
+          "aliases": [
+            "magnetic drawer separator",
+            "grid magnet drawer"
+          ],
+          "required_attributes": [
+            "Ask duct size (width x height)",
+            "Ask number of magnetic rods/tubes and gauss rating",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Pull-out drawer housing a set of magnetic rods, fitted into the material flow duct to trap tramp metal."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Grill Magnet",
+          "subcategory": "Magnets",
+          "aliases": [
+            "magnetic grill",
+            "grid magnet"
+          ],
+          "required_attributes": [
+            "Ask duct/opening size and number of magnetic rods",
+            "Ask gauss rating and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Hump Magnet",
+          "subcategory": "Magnets",
+          "aliases": [
+            "magnetic hump",
+            "chute magnet"
+          ],
+          "required_attributes": [
+            "Ask duct size and gauss rating",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Magnet mounted on a raised 'hump' in a gravity chute so material spreads thin as it passes over, improving tramp-metal capture."
+          ],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Magnetic De-Stoner",
+          "subcategory": "Magnets",
+          "aliases": [
+            "magnetic gravity separator"
+          ],
+          "required_attributes": [
+            "Ask capacity (tonnes/hour) and duct size",
+            "Ask the machine make it is a spare for, if applicable",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Online Magnet",
+          "subcategory": "Magnets",
+          "aliases": [
+            "in-line magnet",
+            "pipeline magnet"
+          ],
+          "required_attributes": [
+            "Ask pipe/duct diameter and gauss rating",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Plate Magnetic Separator",
+          "subcategory": "Magnets",
+          "aliases": [
+            "plate magnet",
+            "magnetic plate"
+          ],
+          "required_attributes": [
+            "Ask plate size (length x width) and thickness",
+            "Ask gauss rating",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Plate Magnets"
+          ]
+        },
+        {
+          "item_name": "Rotary Magnet",
+          "subcategory": "Magnets",
+          "aliases": [
+            "drum magnet",
+            "magnetic drum separator"
+          ],
+          "required_attributes": [
+            "Ask drum diameter, duct size, and gauss rating",
+            "Confirm if a drive/motor is needed with it",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.9,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Self Cleaning Magnet",
+          "subcategory": "Magnets",
+          "aliases": [
+            "self-cleaning magnetic separator"
+          ],
+          "required_attributes": [
+            "Ask duct size and gauss rating",
+            "Confirm the cleaning mechanism wanted: manual pull-out vs self-rotating",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 0.95,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Drawer Magnet and Self Cleaning Magnet (partial)"
+          ]
+        },
+        {
+          "item_name": "Three Stage Magnet",
+          "subcategory": "Magnets",
+          "aliases": [
+            "multi-stage magnetic separator",
+            "cascade magnet"
+          ],
+          "required_attributes": [
+            "Ask duct size",
+            "Ask number of magnetic rods per stage and gauss rating per stage",
+            "Ask quantity"
+          ],
+          "notes": [
+            "No original notes existed for this item in the source sheet -- required_attributes filled in by analogy with the other magnet items above, all of which ask the same duct-size/rod-count/gauss pattern. Confirm with BUI staff before relying on this one."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true,
+          "added_from_domain_knowledge": true
+        }
+      ]
+    },
+    {
+      "category": "Wire Mesh",
+      "general_notes": [],
+      "folded_generic_entries": [],
+      "items": [
+        {
+          "item_name": "De-Stoner Mesh",
+          "subcategory": "Wire Mesh",
+          "aliases": [
+            "destoner deck mesh",
+            "gravity separator mesh"
+          ],
+          "required_attributes": [
+            "Ask deck size (length x width) and mesh/hole spec",
+            "Ask the destoner make/model",
+            "Ask material and quantity"
+          ],
+          "notes": [
+            "Fits the oscillating deck of a destoner (gravity separator), the machine that separates stones from grain by density."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Flat & Round Wire Scourer Mesh",
+          "subcategory": "Wire Mesh",
+          "aliases": [
+            "scourer wire mesh"
+          ],
+          "required_attributes": [
+            "Ask wire profile: flat or round",
+            "Ask mesh count/opening, wire gauge, and sheet size",
+            "Ask the scourer make/model and quantity"
+          ],
+          "notes": [
+            "Fits a grain scourer/scarifier -- the abrasive-mesh drum that scours the outer bran layer and cleans the wheat surface before milling."
+          ],
+          "match_confidence": 0.95,
+          "in_short_taxonomy_list": true,
+          "merged_from": [
+            "Round Wire Scourer Mesh"
+          ]
+        },
+        {
+          "item_name": "Mat Type Scourer Mesh",
+          "subcategory": "Wire Mesh",
+          "aliases": [
+            "scourer mat"
+          ],
+          "required_attributes": [
+            "Ask mat size and mesh spec",
+            "Ask material and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Pointed and Round Wire Scourer Mesh",
+          "subcategory": "Wire Mesh",
+          "aliases": [],
+          "required_attributes": [
+            "Ask wire profile: pointed or round",
+            "Ask mesh count, sheet size, and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        }
+      ]
+    },
+    {
+      "category": "Perforated Sheet",
+      "general_notes": [
+        "Every pattern below is asked the same core way: hole/opening size, sheet gauge/thickness, sheet size, material (MS/GI/SS), quantity in sheets, and the machine make where the pattern is machine-specific. Several patterns look alike, so always offer to send or request a picture/sample."
+      ],
+      "folded_generic_entries": [
+        "Perforated Sheets"
+      ],
+      "items": [
+        {
+          "item_name": "Checkboard Hole",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "checkerboard perforation"
+          ],
+          "required_attributes": [
+            "Confirm hole shape: round or square holes arranged in a checkerboard (offset) pattern",
+            "Ask hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Dimple Shape",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "raised dimple sheet",
+            "anti-slip dimple sheet"
+          ],
+          "required_attributes": [
+            "Confirm with the client whether they mean a raised-dimple/anti-slip pattern or a plain punched hole -- the name is used loosely",
+            "Ask dimple/hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Herring Bone Hole",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "herringbone perforation"
+          ],
+          "required_attributes": [
+            "Ask hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [
+            "Holes arranged in a zig-zag (herringbone) row pattern."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Hexagonal Hole",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "honeycomb perforation"
+          ],
+          "required_attributes": [
+            "Ask hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [
+            "Honeycomb-style hexagonal holes."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Indented Screen",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "embossed screen"
+          ],
+          "required_attributes": [
+            "Confirm the exact machine it is for, since this name is sometimes used loosely",
+            "Ask hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [
+            "Embossed/indented hole pattern used in grading and food-processing screens."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Lip Shape",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "louvre perforation",
+            "lip/louvre hole"
+          ],
+          "required_attributes": [
+            "Confirm this is the pattern meant before quoting, as the name is sometimes used loosely",
+            "Ask hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [
+            "Punched hole with a raised lip/louvre that directs material flow one way."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Oblong Slot Hole",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "slotted hole sheet"
+          ],
+          "required_attributes": [
+            "Ask slot size (length x width), sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [
+            "Elongated slot-shaped holes, used for grading by length/width."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Round Hole",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "round perforated sheet"
+          ],
+          "required_attributes": [
+            "Ask hole diameter",
+            "Ask sheet gauge: 28 gauge (better quality) or 32 gauge (thinner/cheaper)",
+            "Ask sheet size, material, quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Square Hole",
+          "subcategory": "Perforated Sheet",
+          "aliases": [],
+          "required_attributes": [
+            "Ask hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Triangle Hole",
+          "subcategory": "Perforated Sheet",
+          "aliases": [],
+          "required_attributes": [
+            "Ask hole size, sheet gauge, sheet size, material, quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Washer Whizzer Screen",
+          "subcategory": "Perforated Sheet",
+          "aliases": [
+            "washer-whizzer wheat cleaning screen"
+          ],
+          "required_attributes": [
+            "Ask the machine make/model first -- not a generic pattern",
+            "Ask cylinder/screen size and hole spec, material, quantity"
+          ],
+          "notes": [
+            "Screen specific to the washer-whizzer wheat washing/drying machine used in wheat pre-cleaning."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        }
+      ]
+    },
+    {
+      "category": "Miscellaneous",
+      "general_notes": [],
+      "folded_generic_entries": [],
+      "items": [
+        {
+          "item_name": "Anti Vibration Mount",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "AVM",
+            "vibration isolator mount",
+            "rubber shock mount"
+          ],
+          "required_attributes": [
+            "Ask the load it needs to carry (kg) per mount, and the machine it is under",
+            "Ask stud/bolt size and mounting height",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Anti Vibration Rubber Pad",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "vibration damping pad",
+            "isolation pad"
+          ],
+          "required_attributes": [
+            "Ask size (length x width x thickness) and load per pad",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Bag Closer",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "bag stitching machine",
+            "bag sewing machine"
+          ],
+          "required_attributes": [
+            "Ask hand-operated or machine (powered) type, and the thread type used",
+            "Ask brand preference and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Chakki Stone",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "millstone",
+            "grinding stone",
+            "emery stone",
+            "chakki ka patthar"
+          ],
+          "required_attributes": [
+            "Ask diameter and thickness",
+            "Ask whether it is the top or bottom stone -- traditional chakkis use a fixed bottom stone and a rotating top stone, and they are not always identical",
+            "Ask the chakki make/model",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Traditional flour mill grinding stone -- two stones (a fixed bottom and rotating top) together form the 'chakki' itself. Many present-day small chakkis use a manufactured emery-composite stone rather than a natural quarried stone."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Felt Sheet",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "felt gasket sheet"
+          ],
+          "required_attributes": [
+            "Ask size (length x width), thickness, and density/hardness if known",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Filter Cloth",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "filtration fabric"
+          ],
+          "required_attributes": [
+            "Ask micron rating/mesh, width, and material (polyester/PTFE/cotton)",
+            "Ask length required and quantity"
+          ],
+          "notes": [
+            "General-purpose filtration fabric, as distinct from the plansifter-specific Milling Fabric in the Plansifter Accessories category."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Hammer Mill Beaters",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "hammer mill hammers",
+            "swing hammers"
+          ],
+          "required_attributes": [
+            "Ask beater size (length x width x thickness), material (MS, manganese steel, or SS), and mounting hole spacing",
+            "Ask the hammer mill make/model and quantity"
+          ],
+          "notes": [
+            "'Hammers' is the more common global term for these swinging beating elements inside a hammer mill; 'beaters' is the common Indian trade term for the same part."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Moisture Meter",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "grain moisture tester",
+            "moisture analyzer"
+          ],
+          "required_attributes": [
+            "Ask which grain/material it needs to test (wheat, maize, etc.) and the measurement range needed",
+            "Ask digital or analogue, and brand preference",
+            "Ask quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Rota Meter",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "rotameter",
+            "variable area flowmeter"
+          ],
+          "required_attributes": [
+            "Ask the fluid/air it is measuring and the flow range (LPM/CFM) needed",
+            "Ask pipe/line size and quantity"
+          ],
+          "notes": [],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Test Sieves",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "laboratory test sieves",
+            "ASTM/BSS test sieves",
+            "sieve shaker sieves"
+          ],
+          "required_attributes": [
+            "Ask the mesh size(s)/aperture needed (in microns or mesh number)",
+            "Ask sieve diameter: standard 8 in/200 mm or 12 in/300 mm",
+            "Ask how many sieves, and whether a lid/pan/shaker is needed too",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Lab-grade sieves used to check flour/grain particle size distribution against a standard (e.g. ASTM E11 / BS 410 mesh series), rather than production sieves used inside a plansifter."
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        },
+        {
+          "item_name": "Worm Hanger",
+          "subcategory": "Miscellaneous",
+          "aliases": [
+            "hanger bearing",
+            "screw conveyor hanger bearing"
+          ],
+          "required_attributes": [
+            "Ask the shaft/worm size it supports and the machine make/model",
+            "Ask quantity"
+          ],
+          "notes": [
+            "Intermediate support bearing for a screw (worm) conveyor shaft -- globally known as a 'hanger bearing.'"
+          ],
+          "match_confidence": 1.0,
+          "in_short_taxonomy_list": true
+        }
+      ]
+    }
+  ]
+}
