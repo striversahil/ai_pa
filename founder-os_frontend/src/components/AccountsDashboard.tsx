@@ -294,6 +294,11 @@ function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: Ros
             )}
             {t.doneBy && <span className="text-[11px] text-zinc-500">by {t.doneBy}</span>}
             {t.accountantName && t.accountantName !== t.doneBy && <span className="text-[11px] text-zinc-500">· {t.accountantName}</span>}
+            {fmtDur(t.timeSpentMin) && (
+              <span title="Time taken to finish this task" className="inline-flex items-center gap-1 rounded-full border border-teal-500/30 bg-teal-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-teal-500 dark:text-teal-400">
+                ⏱ {fmtDur(t.timeSpentMin)}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex gap-1.5 shrink-0">
@@ -319,6 +324,12 @@ function TaskRow({ t, roster, defaultWho, onLogged }: { t: TaskItem; roster: Ros
           <option value="">Who?…</option>
           {lane.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
+        <span title="Time taken to finish (hours + minutes) — optional, saved with Done" className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500">
+          ⏱
+          <input value={hrs} onChange={(e) => setHrs(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="h" inputMode="numeric" aria-label="Hours taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
+          <span className="text-zinc-400">:</span>
+          <input value={mins} onChange={(e) => setMins(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="m" inputMode="numeric" aria-label="Minutes taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
+        </span>
         <button disabled={busy || !dirty || !t.logId} onClick={() => save(t.status)} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0">Save</button>
       </div>
       {files.length > 0 && (

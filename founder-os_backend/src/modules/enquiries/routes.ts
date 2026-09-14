@@ -583,6 +583,17 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       // Markup decisions + finalize (+ its timestamp) are Management-only.
       const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = it;
       const base: any = privileged ? it : rest;
+      if (!privileged) {
+        // Non-management writers can never decide — but they must never WIPE
+        // a decision either (e.g. a sales EST-No. edit echoing items back
+        // silently cleared final rates). Stored decision fields always
+        // survive their writes; only the privileged surface below may set
+        // or clear them.
+        base.selectedVendor = stored.selectedVendor;
+        base.markup = stored.markup;
+        base.finalRate = stored.finalRate;
+        base.finalizedAt = stored.finalizedAt;
+      }
       if (restricted) {
         // Procurement owns rates + spec flags only: identity (name/qty/spec/
         // media) always follows the stored row, so specs can't be edited or
