@@ -53,18 +53,26 @@ calls/leads + KRA targets), `score` (composite), `points` (ledger),
   Rules card are display only.
 - Leaderboard renders **above** the "🔥 At Risk" panel.
 
-### Lead Generation + KRA
+### Lead Generation + KRA (enquiry-sourced)
 
-Per agent from NeoDove daily reports, matched by `neodoveUserName` then
-`neodoveUserId`. Fields: attempted/connected/not-connected, in/outgoing,
-talkTimeSec, leadsConverted/InProgress/Lost, followupLeads, `leadsGenerated`
-(true get-leads count; fallback `inProgress + converted` for old snapshots).
+Per-agent **leads generated = enquiries created that day** (Sales Enquiries
+dashboard: `Enquiry.createdAt` × `assignedAgentId`), NOT NeoDove get-leads.
+NeoDove still feeds calls (attempted/connected/not-connected, in/outgoing,
+talkTimeSec), call outcomes (converted/InProgress/Lost, followupLeads), the
+effort-shield snapshots and the EOD non-working-day gate — only the
+leads-generated numerator moved. Fields per agent: enquiry count for the day
+(or summed across the period range), plus the NeoDove call/outcome columns.
+`meta.unattributedLeads` = enquiries in the window with empty
+`assignedAgentId` (no roster match — MIS should fix attribution; they count
+nowhere on the boards).
 Targets scale by working days: `CONNECTED_CALLS_PER_DAY * workingDays`,
 `LEADS_PER_AGENT_PER_DAY * workingDays`. Traffic light: 🟢 ≥100% · 🟡 60–99%
 · 🔴 <60%. `workingDaysBetween()` = Mon–Sat inclusive (Sunday excluded,
-min 1). Period mode sums stored daily reports across the range
-(`getNeodoveRangeMap`); today mode uses `getNeodoveAgentMap(day)` with
-fallback to latest stored NeoDove day (`usingLatestAvailable=true`).
+min 1). Period mode sums stored daily NeoDove reports across the range
+(`getNeodoveRangeMap`) for calls, and counts enquiries in range for leads;
+today mode uses `getNeodoveAgentMap(day)` with fallback to latest stored
+NeoDove day (`usingLatestAvailable=true`) for calls, exact-day enquiry counts
+for leads (no fallback needed).
 
 ### At-Risk panel + chips
 
@@ -125,7 +133,7 @@ holder earned protection or exhausted it; null when snapshots unreadable
   penaltiesEnabled && !openRow.tempForTelecallerId && !isRoleCorrection`.
   Temp absent-cover holders and role-corrected holders are never charged.
 
-### Creator-first lead assignment
+### Creator-first lead assignment (enquiry link is primary)
 
 `Estimate.createdBy` ("Lead of" / "By") comes ENTIRELY from the mapping B2B
 enquiry (`Enquiry.estNumber = Estimate.estimateNumber` → `assignedAgentId`).

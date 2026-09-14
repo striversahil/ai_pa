@@ -1344,6 +1344,135 @@ export async function markTelecallerPresent(telecallerId: string): Promise<{ ret
 // of" / "By") is written ONLY from the mapping B2B enquiry
 // (modules/enquiries/estimate-link.ts) — never inferred from comments.
 
+// ── Enquiry-linked lead attribution ──────────────────────────────────────────
+// Lead-by-estimate flows through the Sales Enquiries dashboard (NOT NeoDove and
+// NOT Zoho comment signatures): an enquiry carrying a Zoho estimate number
+// (Enquiry.estNumber — optional in the New Enquiry form, mandatory at
+// Mark-as-sent) links that estimate to the enquiry's agent
+// (Enquiry.assignedAgentId, a Telecaller id auto-resolved from the creator's
+// login). Rules: assign ONLY when the estimate is free (unassigned `sent`);
+// never steal a held/converted/locked/skipped estimate; fill `createdBy`
+// (generator credit) ONLY when empty so historical AI-signature credits stand.
+// A missing estimate (Zoho hasn't synced it yet) is simply skipped here — the
+// daily sweep below picks it up once it arrives.
+
+export interface EnquiryLinkResult {
+  linked: boolean;
+  reason: string;
+}
+
+export async function linkEnquiryEstimate(opts: {
+  estimateNumber: string;
+  agentId: string;
+  label?: string;
+}): Promise<EnquiryLinkResult> {
+  const estNo = String(opts.estimateNumber ?? '').trim();
+  const agentId = String(opts.agentId ?? '').trim();
+  if (!estNo) return { linked: false, reason: 'empty-estimate-number' };
+  if (!agentId) return { linked: false, reason: 'empty-agent' };
+  try {
+    const tc = await prisma.telecaller.findUnique({ where: { id: agentId } });
+    if (!tc || (tc as any).deleted || (tc as any).absentSince) {
+      return { linked: false, reason: 'agent-invalid' };
+    }
+    // Exact match first, then an uppercase fallback for typo'd entries.
+    let est: any = await prisma.estimate.findFirst({ where: { estimateNumber: estNo } });
+    if (!est && estNo !== estNo.toUpperCase()) {
+      est = await prisma.estimate.findFirst({ where: { estimateNumber: estNo.toUpperCase() } });
+    }
+    if (!est) return { linked: false, reason: 'not-synced' };
+    if (est.status !== 'sent') return { linked: false, reason: `status-${est.status}` };
+    if ((est as any).skipAssignment) return { linked: false, reason: 'skip-assignment' };
+    if ((est as any).lockedTelecallerId) return { linked: false, reason: 'locked' };
+    const holder = (est as any).assignedTelecallerId ? String((est as any).assignedTelecallerId) : null;
+    if (holder && holder !== agentId) return { linked: false, reason: 'held' };
+    const updates: Record<string, unknown> = {};
+    if (!holder) updates.assignedTelecallerId = agentId;
+    if (!(est as any).createdBy) updates.createdBy = agentId;
+    if (Object.keys(updates).length === 0) return { linked: false, reason: 'already-linked' };
+    await prisma.estimate.update({ where: { estimateId: est.estimateId }, data: updates });
+    if (!holder) {
+      await recordAssignment(
+        est.estimateId,
+        agentId,
+        `Enquiry link — ${est.estimateNumber}${opts.label ? ` (${opts.label})` : ''}`,
+      );
+    }
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    logger.info({ estimateNumber: est.estimateNumber, agentId }, 'enquiry-estimate link applied');
+    return { linked: true, reason: 'linked' };
+  } catch (e: any) {
+    logger.warn({ err: e?.message, estNo }, 'linkEnquiryEstimate failed');
+    return { linked: false, reason: 'error' };
+  }
+}
+
+/**
+ * Daily self-heal: resolve every enquiry→estimate link whose estimate has
+ * since synced (or that predates this feature). Idempotent — already-held or
+ * already-linked rows no-op. Runs inside runLeadConversion so no new cron or
+ * sync-code hook is needed; the pending queue is simply "enquiries with an
+ * estNumber whose estimate isn't linked yet".
+ */
+export async function sweepEnquiryEstimateLinks(): Promise<{ linked: number; scanned: number }> {
+  let linked = 0;
+  let scanned = 0;
+  try {
+    const enquiries = await prisma.enquiry.findMany({
+      select: { estNumber: true, assignedAgentId: true, enquiryNumber: true },
+    });
+    const withEst = ((enquiries as any[]) ?? []).filter(
+      (e) => String(e?.estNumber ?? '').trim() && String(e?.assignedAgentId ?? '').trim(),
+    );
+    scanned = withEst.length;
+    for (const e of withEst) {
+      const r = await linkEnquiryEstimate({
+        estimateNumber: String(e.estNumber).trim(),
+        agentId: String(e.assignedAgentId).trim(),
+        label: `enquiry ${String(e.enquiryNumber ?? '').trim() || 'row'}`,
+      });
+      if (r.linked) linked += 1;
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'sweepEnquiryEstimateLinks failed');
+  }
+  if (linked > 0) logger.info({ linked, scanned }, 'enquiry-estimate sweep linked estimates');
+  return { linked, scanned };
+}
+
+// ── Enquiry-sourced lead generation ──────────────────────────────────────────
+// "Leads generated" = enquiries created per agent per IST day (Sales Enquiries
+// dashboard: Enquiry.createdAt × assignedAgentId). This REPLACES the NeoDove
+// get-leads count on the telecalling boards. NeoDove still feeds calls,
+// talk-time, call outcomes, the effort-shield snapshots and the EOD
+// non-working-day gate — only the leads-generated numerator moved.
+
+/** Day → agent lead counts for an inclusive IST range. Key `${day}|${agentId}`.
+ *  Unattributed rows (assignedAgentId empty — no roster match) are counted
+ *  under the UNATTRIBUTED_LEADS_KEY sentinel so they surface in meta instead
+ *  of vanishing silently. Callers must skip the sentinel when attributing. */
+export const UNATTRIBUTED_LEADS_KEY = '|unattributed';
+async function getEnquiryLeadCounts(from: string, to: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  try {
+    // Unfiltered read + JS-side IST-day gate (portable across D1/Postgres
+    // date storage; the Enquiry table is small).
+    const rows = await prisma.enquiry.findMany({
+      select: { assignedAgentId: true, createdAt: true },
+    });
+    for (const r of (rows as any[]) ?? []) {
+      const d = istDayOf(r?.createdAt);
+      if (!d || d < from || d > to) continue;
+      const agent = String(r?.assignedAgentId ?? '').trim();
+      const k = agent ? `${d}|${agent}` : UNATTRIBUTED_LEADS_KEY;
+      out.set(k, (out.get(k) ?? 0) + 1);
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'enquiry lead counts read failed — leads show 0');
+  }
+  return out;
+}
+
 // ── Event-ledger scoring ─────────────────────────────────────────────────────
 // The leaderboard is driven by an append-only score ledger: a slab-based
 // close credit when an estimate converts (credited to the LEAD GENERATOR,
@@ -1614,9 +1743,10 @@ async function recordRemarkPenalty(telecallerId: string, estimateId: string, day
   return true;
 }
 
-/** Daily engine: refresh the roster from NeoDove, then deal the sent pool. */
+/** Daily engine: refresh the roster, resolve pending enquiry→estimate links, then deal the sent pool. */
 export async function runLeadConversion(): Promise<{ assigned: number }> {
   await syncTelecallersFromNeodove();
+  try { await sweepEnquiryEstimateLinks(); } catch { /* non-fatal — engine still deals */ }
   return assignEstimatesForMaxConversion();
 }
 
@@ -2073,6 +2203,9 @@ export async function computeTelecallingDaily(
   }
 
   const out: TelecallingDailyRow[] = [];
+  // Enquiry-sourced leads (replaces NeoDove get-leads): one count map for the
+  // whole range, looked up per (day, agent) cell below.
+  const enquiryLeadsDaily = await getEnquiryLeadCounts(from, to).catch(() => new Map<string, number>());
   for (const d of dates) {
     const neoMap = neoByDay.get(d) ?? {};
     for (const tc of telecallers as any[]) {
@@ -2082,9 +2215,8 @@ export async function computeTelecallingDaily(
         || (tc.neodoveUserId && neoMap[tc.neodoveUserId])
         || undefined;
       const callsConnected = nd?.callsConnected ?? 0;
-      const leadsGenerated = typeof nd?.leadsGenerated === 'number'
-        ? nd.leadsGenerated
-        : ((nd?.leadsInProgress ?? 0) + (nd?.leadsConverted ?? 0));
+      // Enquiry-sourced (Sales Enquiries dashboard) — not NeoDove get-leads.
+      const leadsGenerated = enquiryLeadsDaily.get(`${d}|${id}`) ?? 0;
       const won = c?.won ?? 0;
       const closePoints = c?.closePoints ?? 0;
       const snatches = c?.snatches ?? 0;
@@ -2357,6 +2489,22 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   }
 
   const leaderboard: TelecallerDayMetrics[] = [];
+  // Enquiry-sourced leads (Sales Enquiries dashboard — replaces NeoDove
+  // get-leads): per-agent enquiry-creation totals over the leaderboard window.
+  // The UNATTRIBUTED_LEADS_KEY sentinel is peeled off into unattributedLeads
+  // (meta) — never attributed to an agent id of ''.
+  const leadFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
+  const leadTo = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
+  const leadsByAgent = new Map<string, number>();
+  let unattributedLeads = 0;
+  try {
+    const enquiryLeads = await getEnquiryLeadCounts(leadFrom, leadTo);
+    for (const [k, n] of enquiryLeads) {
+      if (k === UNATTRIBUTED_LEADS_KEY) { unattributedLeads += n; continue; }
+      const agent = k.slice(k.indexOf('|') + 1);
+      leadsByAgent.set(agent, (leadsByAgent.get(agent) ?? 0) + n);
+    }
+  } catch { /* getEnquiryLeadCounts already warns — leads default 0 */ }
   // Lead Generation targets scale with the period's working days (6-day work
   // week, Mon–Sat) — a week target is one day × working days, never 1×.
   const workingDays = periodMode && periodRangeInfo ? workingDaysBetween(periodRangeInfo.from, periodRangeInfo.to) : 1;
@@ -2403,11 +2551,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const leadsInProgress = nd?.leadsInProgress ?? 0;
     const leadsLost = nd?.leadsLost ?? 0;
     const followupLeads = nd?.followupLeads ?? 0;
-    // True "leads generated" count from the get-leads API (stored on the
-    // NeoDove agent row). Fall back to the legacy leadsInProgress +
-    // leadsConverted for snapshots predating the field.
-    const leadsGenerated =
-      typeof nd?.leadsGenerated === 'number' ? nd.leadsGenerated : leadsInProgress + leadsConverted;
+    // Leads generated = enquiries this agent created in the window (Sales
+    // Enquiries dashboard). NeoDove-sourced call outcomes below are untouched.
+    const leadsGenerated = leadsByAgent.get(tc.id) ?? 0;
 
     // Lead Generation KRA vs NeoDove daily benchmarks (exact same interface as
     // the NeoDove telecaller report): traffic light 🟢 ≥100% · 🟡 60–99% · 🔴 <60%.
@@ -2813,6 +2959,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       telecallerCount: telecallers.length,
       activeCount,
       agents: agentList,
+      // Enquiries in the window with no roster match (assignedAgentId empty).
+      // Surfaced so MIS can fix attribution instead of silently undercounting.
+      unattributedLeads,
       targets: {
         connectedCallsPerDay: CONNECTED_CALLS_PER_DAY * workingDays,
         leadsPerAgentPerDay: LEADS_PER_AGENT_PER_DAY * workingDays,

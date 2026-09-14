@@ -19,7 +19,10 @@
  *   - ≥ 120 connected calls / agent / day
  *   - ≥ 5 leads generated / agent / day (true "leads generated" count from
  *     the get-leads API, see neodove-refresh / neodove-report-runner; older
- *     snapshots fall back to leadsInProgress + leadsConverted)
+ *     snapshots fall back to leadsInProgress + leadsConverted). NOTE: this is
+ *     the STANDALONE NeoDove dashboard's numerator — the Telecalling boards
+ *     source leadsGenerated from Enquiry rows (getEnquiryLeadCounts), so the
+ *     two dashboards can legitimately differ.
  *   - Zoho sent-estimates pipeline attributed per agent via an optional
  *     name mapping (Setting key `kra:zoho_name_map`, JSON:
  *     { "Zoho Commenter": "NeoDove UserName", ... }).

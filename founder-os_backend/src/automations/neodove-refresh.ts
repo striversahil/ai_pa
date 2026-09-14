@@ -253,8 +253,10 @@ export async function refreshNeodoveReport(dateStr?: string): Promise<{
   const all = Array.isArray(json?.data?.data) ? json.data.data : [];
   const filtered = all.filter((r: any) => rowDateStr(r) === reportDate);
 
-  // 3b. true "leads generated" per telecaller via get-leads (replaces the
-  // buggy leadsInProgress + leadsConverted heuristic). Degrades to 0 on error.
+  // 3b. true "leads generated" per telecaller via get-leads. This feeds the
+  // STANDALONE NeoDove dashboard (neodove-telecaller-report → computeAgentKra)
+  // ONLY — the Telecalling boards source leadsGenerated from Enquiry rows
+  // (getEnquiryLeadCounts). Degrades to 0 on error.
   let leadsByUser: Record<string, number> = {};
   try {
     leadsByUser = await fetchLeadsGenerated(token, reportDate, userIds);

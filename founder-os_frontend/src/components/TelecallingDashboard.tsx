@@ -1214,7 +1214,7 @@ export default function TelecallingDashboard() {
                   Telecalling
                 </h1>
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Daily performance · Lead Conversion (estimates) + Lead Generation (NeoDove, live)
+                  Daily performance · Lead Conversion (estimates) + Lead Generation (enquiries, live)
                   {dash.data?.meta?.usingLatestAvailable ? (
                     <span className="ml-1 text-amber-400/90">
                       (today's NeoDove push is empty — showing latest available day)
@@ -1258,6 +1258,11 @@ export default function TelecallingDashboard() {
             {dash.data?.meta?.telecallerCount !== undefined && dash.data.meta.telecallerCount !== dash.data.meta.activeCount && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 shadow-sm">
                 {dash.data.meta.telecallerCount} total
+              </span>
+            )}
+            {(dash.data?.meta as any)?.unattributedLeads > 0 && (
+              <span title="Enquiries with no roster match — MIS should fix attribution" className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400 shadow-sm">
+                {(dash.data?.meta as any).unattributedLeads} unattributed leads
               </span>
             )}
           </div>
@@ -2027,7 +2032,7 @@ export default function TelecallingDashboard() {
                 <div>
                   <h3 className="text-lg font-bold mb-1">📞 Lead Generation</h3>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Per-telecaller NeoDove performance (live) — sourced from the NeoDove worker database.
+                    Per-agent enquiries created (live) + NeoDove call performance — calls from the NeoDove worker database.
                   </p>
                 </div>
                 {/* Independent period filter for Lead Generation */}
@@ -2053,7 +2058,7 @@ export default function TelecallingDashboard() {
                     Benchmarks per agent for <span className="font-bold">{genDash.data.meta.periodLabel ?? "Today"}</span>
                     {genDash.data.meta.workingDays && genDash.data.meta.workingDays > 1 ? ` (${genDash.data.meta.workingDays} working days × daily target)` : ""}:{" "}
                     <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {genDash.data.meta.targets.connectedCallsPerDay} connected calls</span> ·{" "}
-                    <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {genDash.data.meta.targets.leadsPerAgentPerDay} leads</span> (in-progress + converted). Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
+                    <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {genDash.data.meta.targets.leadsPerAgentPerDay} leads</span> (enquiries created). Traffic light: 🟢 ≥100% · 🟡 60–99% · 🔴 &lt;60%
                   </span>
                 ) : null}
               </p>

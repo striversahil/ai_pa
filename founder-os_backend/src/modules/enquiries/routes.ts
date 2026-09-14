@@ -3,6 +3,7 @@ import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
 import { cacheGet } from "../../shared/cache";
+import { linkEnquiryEstimate } from "../../automations/telecalling/service";
 
 /** v1 cache entries (description-only) predate the comments/requirements map —
  *  treat them as missing so they get re-enriched, never served. The `items`
@@ -482,18 +483,20 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     estNumber,
     dailyNo,
     source,
-    enquiryNumber: body.enquiryNumber,
-    sourceLead: body.sourceLead,
-    location: body.location,
-    clientCompany: body.clientCompany,
-    contactName: body.contactName,
-    contactEmail: body.contactEmail || "",
-    contactPhone: body.contactPhone || "",
+    enquiryNumber: String(body?.enquiryNumber ?? ""),
+    sourceLead: String(body?.sourceLead ?? ""),
+    location: String(body?.location ?? ""),
+    clientCompany: String(body?.clientCompany ?? ""),
+    contactName: String(body?.contactName ?? ""),
+    contactEmail: String(body?.contactEmail ?? ""),
+    contactPhone: String(body?.contactPhone ?? ""),
     title,
-    description: body.description,
-    priority: body.priority || "medium",
-    status: body.status || "new",
+    description: String(body?.description ?? ""),
+    priority: String(body?.priority ?? "medium"),
+    status: String(body?.status ?? "new"),
     assignedAgentId,
+    rateStatus: 'rate_pending',
+    procurementSubmittedAt: "",
     imageUrls: Array.isArray(body.imageUrls) ? body.imageUrls : [],
     activities: Array.isArray(body.activities) ? body.activities : [],
     additionalRequirements: (Array.isArray(body.additionalRequirements) ? body.additionalRequirements : [])
@@ -510,13 +513,22 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100),
-    // New requirements arrive as Rate Pending (upgraded below if rates came along).
-    rateStatus: 'rate_pending',
-  });
+    });
   const created = enquiry as any;
   if ((created.items ?? []).some((it: any) => (it.rates ?? []).length > 0)) {
     await store.updateEnquiry(created.id, { rateStatus: 'rates_received' } as any);
     created.rateStatus = 'rates_received';
+  }
+  // Enquiry-linked estimate attribution: a Zoho estimate number on the row
+  // assigns that estimate to this enquiry's agent when it is free (never
+  // steals, never fails the save — a not-yet-synced estimate is picked up by
+  // the daily sweep in runLeadConversion).
+  if (estNumber && assignedAgentId) {
+    await linkEnquiryEstimate({
+      estimateNumber: estNumber,
+      agentId: assignedAgentId,
+      label: `enquiry ${String(created.enquiryNumber ?? created.id)}`,
+    }).catch(() => undefined);
   }
   // Scope-safe broadcast: a summary only (counts + label parts) — never the
   // full row, which carries client PII to every connected screen.
