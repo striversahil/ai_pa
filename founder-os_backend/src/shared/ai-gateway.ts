@@ -557,8 +557,10 @@ export function extractJson(raw: string): unknown | null {
 }
 
 /** Build a vision user message: text + image URLs (data-URI or https).
- *  Images beyond maxImages are dropped (caller should send thumbnails). */
-export function buildVisionUserContent(text: string, imageUrls: string[], maxImages = 4): MessageContent {  const imgs = (Array.isArray(imageUrls) ? imageUrls : [])
+ *  Images beyond maxImages are dropped (caller should send thumbnails).
+ *  Accepts raw URL strings or { url } objects. */
+export function buildVisionUserContent(text: string, imageUrls: Array<string | { url?: unknown }>, maxImages = 4): MessageContent {  const imgs = (Array.isArray(imageUrls) ? imageUrls : [])
+    .map((u) => (u != null && typeof u === 'object' ? (u as { url?: unknown }).url : u))
     .map((u) => String(u ?? '').trim())
     .filter((u) => u.length > 0 && (u.startsWith('data:image/') || u.startsWith('http')))
     .slice(0, Math.max(0, maxImages));

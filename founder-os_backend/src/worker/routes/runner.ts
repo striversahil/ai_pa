@@ -994,7 +994,11 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // Enquiry-level photos first (unstructured intake), then per-item media.
     const enquiryImages: Array<{ type: string; url: string }> = [];
     try {
-      const rawUrls = (e as any).imageUrls ? JSON.parse(String((e as any).imageUrls)) : [];
+      // The D1 store returns imageUrls as a parsed array; older shapes may
+      // carry the raw JSON string — accept both (a String(array) is NOT
+      // valid JSON, so guessing wrong silently drops every image).
+      const raw = (e as any).imageUrls;
+      const rawUrls = Array.isArray(raw) ? raw : (raw ? JSON.parse(String(raw)) : []);
       for (const u of (Array.isArray(rawUrls) ? rawUrls : []).slice(0, MAX_IMAGES)) {
         const kept = takeImage(typeof u === 'string' ? u : (u as any)?.url);
         if (kept) enquiryImages.push(kept);
