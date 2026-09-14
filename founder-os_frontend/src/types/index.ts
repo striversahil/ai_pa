@@ -41,6 +41,9 @@ export interface EnquiryItemRate {
   /** Per-vendor reference attachments (photos/drawings/PDFs backing THIS
    *  quote). The selected vendor's refs forward to sales with the final rate. */
   references?: EnquiryMedia[];
+  /** Server-set on the management-chosen quote for non-privileged readers
+   *  (locates the selected quote without exposing the vendor name). */
+  selected?: boolean;
   /** ISO instant the quote was logged (older rows lack it). */
   quotedAt?: string;
 }

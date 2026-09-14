@@ -55,6 +55,7 @@ function toEnquiry(raw: any): Enquiry {
                 specSame: q?.specSame === false ? false : true,
                 specDiff: q?.specSame === false && q?.specDiff ? String(q.specDiff) : undefined,
                 quotedAt: q?.quotedAt ? String(q.quotedAt) : undefined,
+                selected: q?.selected === true,
                 references: Array.isArray(q?.references)
                   ? q.references
                       .map((m: any) => ({

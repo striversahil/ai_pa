@@ -317,11 +317,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[11px] font-extrabold">
                             {it.internalRates ? "Rate available internally" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
                           </span>
-                          {it.selectedVendor && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-[var(--bg-input)] border border-[var(--border-card)] text-[var(--text-secondary)] text-[11px] font-bold">
-                              via {it.selectedVendor}
-                            </span>
-                          )}
                         </div>
                       )}
                       {it.internalRates && (it.finalRate === undefined || it.finalRate === null) && (
@@ -332,7 +327,10 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {(() => {
                         // Only the SELECTED vendor's reference attachments travel
                         // to sales with the final rate — losing quotes stay internal.
-                        const selRate = (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor);
+                        // Never the vendor name (server strips it; `selected`
+                        // flag locates the quote — filenames stay generic too).
+                        const selRate = (it.rates ?? []).find((r) => (r as any).selected === true)
+                          ?? (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor);
                         const refs = selRate?.references ?? [];
                         if (refs.length === 0) return null;
                         const refImages = refs.filter((m) => m.type !== "video" && m.type !== "pdf").map((m) => m.url).filter(Boolean);
@@ -342,9 +340,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                               m.type === "video" ? (
                                 <video key={mi} src={m.url} controls preload="metadata" className="w-24 h-14 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
                               ) : m.type === "pdf" ? (
-                                <a key={mi} href={m.url} download={m.name || `vendor-ref-${mi + 1}.pdf`}
+                                <a key={mi} href={m.url} download={`reference-${mi + 1}.pdf`}
                                   className="px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 transition-colors text-[10px] font-bold text-[var(--text-primary)] truncate max-w-[10rem]">
-                                  {m.name || "PDF"}
+                                  Reference PDF
                                 </a>
                               ) : (
                                 <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`}

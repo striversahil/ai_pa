@@ -147,16 +147,21 @@ export function canManageRates(me: MeResponse): boolean {
 }
 
 /** Margin fields are Management-only: non-privileged readers (sales AND
- *  procurement) see final rates AND the chosen vendor name, but never the
- *  markup (or the losing quotes' detail beyond the list). Stored rows are
- *  untouched — only the API response. */
+ *  procurement) see final rates but never the chosen vendor NAME or the
+ *  markup. The chosen quote is flagged vendor-free (`selected: true`) so
+ *  sales can render its reference attachments without ever seeing the name.
+ *  Stored rows are untouched — only the API response. */
 export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T {
   if (!enquiry || !Array.isArray((enquiry as any).items)) return enquiry;
   return {
     ...(enquiry as any),
     items: (enquiry as any).items.map((it: any) => {
       if (!it || typeof it !== 'object') return it;
-      const { markup, ...rest } = it;
+      const { selectedVendor, markup, ...rest } = it;
+      if (selectedVendor && Array.isArray((rest as any).rates)) {
+        (rest as any).rates = (rest as any).rates.map((r: any) =>
+          r && typeof r === 'object' && r.vendor === selectedVendor ? { ...r, selected: true } : r);
+      }
       return rest;
     }),
   } as T;
