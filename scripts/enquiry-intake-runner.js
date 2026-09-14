@@ -225,21 +225,51 @@ async function main() {
   }
   const pending = await workerRequest(`/api/runner/enquiry-intake/pending?limit=${CAP}`);
   const rows = Array.isArray(pending.rows) ? pending.rows : [];
-  console.log(`intake: ${rows.length} pending (watermark ${pending.watermark})`);
-  let processed = 0;
-  let lastStamp = null;
-  for (const eq of rows) {
-    const out = await processEnquiry(gateway, eq);
-    console.log(`- ${eq.id}: items=${out.items.length} missing=${out.missing.length} suggestions=${(out.suggestions || []).length}${out.error ? ` ERROR=${out.error}` : ''}`);
-    if (!DRY_RUN) {
-      const res = await workerRequest('/api/runner/enquiry-intake/result', {
-        method: 'POST',
-        body: { enquiryId: eq.id, fields: out.fields || {}, items: out.items, suggestions: out.suggestions, missing: out.missing, candidates: out.candidates, advanceWatermark: true },
-      });
-      if (res && res.ok) { processed++; lastStamp = eq.updatedAt; }
+  // Claim first (parallel runners split the queue; stale claims expire in
+  // 10 min so crashed runs never block anyone).
+  let claimed = rows.map((r) => r.id);
+  if (!DRY_RUN && claimed.length > 0) {
+    try {
+      const res = await workerRequest('/api/runner/enquiry-intake/claim', { method: 'POST', body: { ids: claimed } });
+      claimed = Array.isArray(res.claimed) ? res.claimed : [];
+    } catch (e) {
+      console.error(`intake: claim failed (${e.message}) — processing unclaimed`);
     }
   }
-  console.log(JSON.stringify({ mode: DRY_RUN ? 'dry-run' : 'intake', pending: rows.length, processed, lastStamp }, null, 2));
+  const mine = rows.filter((r) => DRY_RUN || claimed.includes(r.id));
+  console.log(`intake: ${rows.length} pending, ${mine.length} claimed by this run`);
+  let processed = 0;
+  let failed = 0;
+  // 4-way parallel vision+lookup (each item also fans out internally).
+  const PARALLEL = 4;
+  for (let i = 0; i < mine.length; i += PARALLEL) {
+    const batch = mine.slice(i, i + PARALLEL);
+    const results = await Promise.allSettled(batch.map(async (eq) => {
+      const out = await processEnquiry(gateway, eq);
+      if (DRY_RUN) return { eq, out, posted: false };
+      const res = await workerRequest('/api/runner/enquiry-intake/result', {
+        method: 'POST',
+        body: {
+          enquiryId: eq.id, seenUpdatedAt: String(eq.updatedAt || ''),
+          fields: out.fields || {}, items: out.items,
+          suggestions: out.suggestions, missing: out.missing, candidates: out.candidates,
+        },
+      });
+      return { eq, out, posted: !!(res && res.ok) };
+    }));
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        const { eq, out, posted } = r.value;
+        console.log(`- ${eq.id}: items=${out.items.length} missing=${out.missing.length} suggestions=${(out.suggestions || []).length}${out.error ? ` ERROR=${out.error}` : ''}${posted ? '' : ' (not posted)'}`);
+        if (posted) processed++;
+        else failed++;
+      } else {
+        failed++;
+        console.log(`- batch item FAILED: ${String(r.reason && r.reason.message || r.reason).slice(0, 200)}`);
+      }
+    }
+  }
+  console.log(JSON.stringify({ mode: DRY_RUN ? 'dry-run' : 'intake', pending: rows.length, claimed: mine.length, processed, failed }, null, 2));
 }
 
 main().catch((e) => { console.error(`enquiry-intake-runner failed: ${e.message}`); process.exit(1); });

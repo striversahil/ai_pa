@@ -948,62 +948,132 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json({ rows, nextOffset: offset + page.rows.length, total: page.total });
   });
 
-  // ── enquiry intake queue (GH intake runner) ────────────────────────────────
-  // GET pending: enquiries with updatedAt newer than the intake watermark.
-  // Returns full rows (secret-gated; PII never leaves server-to-runner).
+  // ── enquiry intake queue (GH intake runner, parallel-safe) ──────────────────
+  // Per-enquiry done/claim markers in Setting (NOT a time watermark — parallel
+  // runners completing out of order can never strand an enquiry):
+  //   enquiry:intake:done:<id>  = updatedAt already processed (reprocesses
+  //                               when the row gets newer than this)
+  //   enquiry:intake:claim:<id> = runner claim instant (fresh < 10 min means
+  //                               another runner owns it; stale claims are
+  //                               ignored so crashed runs never block the queue)
+  // GET pending: candidate rows for claiming (full rows, secret-gated).
   // Media is capped (4 images/enq, <=2M chars each) so the payload stays small;
   // oversized items are flagged mediaTruncated for the runner to note.
+  const INTAKE_DONE = 'enquiry:intake:done:';
+  const INTAKE_CLAIM = 'enquiry:intake:claim:';
+  const CLAIM_TTL_MS = 10 * 60 * 1000;
+
+  async function readSettingMap(db: any, keys: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (!db || keys.length === 0) return out;
+    for (let i = 0; i < keys.length; i += 100) {
+      const chunk = keys.slice(i, i + 100);
+      try {
+        const res = await db
+          .prepare(`SELECT key, value FROM Setting WHERE key IN (${chunk.map(() => '?').join(',')})`)
+          .bind(...chunk)
+          .all();
+        for (const r of (res as any).results ?? []) out.set(String((r as any).key), String((r as any).value ?? ''));
+      } catch { /* best-effort */ }
+    }
+    return out;
+  }
+
+  function slimEnquiry(e: any): any {
+    const MAX_IMAGE_CHARS = 2_000_000;
+    const MAX_IMAGES = 4;
+    const items = Array.isArray((e as any).items) ? (e as any).items : [];
+    let images = 0;
+    let mediaTruncated = false;
+    const takeImage = (url: unknown, name?: unknown): { type: string; url: string; name?: string } | null => {
+      if (typeof url !== 'string' || (!url.startsWith('data:image/') && !url.startsWith('http'))) return null;
+      if (images >= MAX_IMAGES || url.length > MAX_IMAGE_CHARS) { mediaTruncated = true; return null; }
+      images++;
+      return name ? { type: 'image', url, name: String(name) } : { type: 'image', url };
+    };
+    // Enquiry-level photos first (unstructured intake), then per-item media.
+    const enquiryImages: Array<{ type: string; url: string }> = [];
+    try {
+      const rawUrls = (e as any).imageUrls ? JSON.parse(String((e as any).imageUrls)) : [];
+      for (const u of (Array.isArray(rawUrls) ? rawUrls : []).slice(0, MAX_IMAGES)) {
+        const kept = takeImage(typeof u === 'string' ? u : (u as any)?.url);
+        if (kept) enquiryImages.push(kept);
+      }
+    } catch { /* imageUrls unparseable — item media still flows */ }
+    const slimItems = items.slice(0, 30).map((it: any) => {
+      const media = Array.isArray(it?.media) ? it.media : [];
+      const kept: Array<{ type: string; url: string; name?: string }> = [];
+      for (const m of media) {
+        if (m?.type !== 'image') continue;
+        const k = takeImage(m?.url, m?.name);
+        if (k) kept.push(k);
+        else if (typeof m?.url === 'string') mediaTruncated = true;
+      }
+      return { name: String(it?.name ?? ''), qty: String(it?.qty ?? ''), spec: String(it?.spec ?? ''), media: kept };
+    });
+    return { ...(e as any), items: slimItems, enquiryImages, mediaTruncated };
+  }
+
   app.get('/api/runner/enquiry-intake/pending', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const limit = Math.min(50, Math.max(1, Math.floor(Number(c.req.query('limit')) || 20)));
-    const wm = await prisma.setting.findUnique({ where: { key: 'enquiry:intake:watermark' } }).catch(() => null);
-    const watermark = String((wm as any)?.value ?? '1970-01-01T00:00:00.000Z');
     const store = createEnquiryStore(c.env);
-    const rows: any[] = [];
+    // Scan newest-first for candidates (cap the scan; the queue drains over ticks).
+    const candidates: any[] = [];
     let offset = 0;
-    const MAX_IMAGE_CHARS = 2_000_000;
-    const MAX_IMAGES = 4;
-    for (let page = 0; page < 4 && rows.length < limit; page++) {
+    for (let page = 0; page < 4 && candidates.length < limit * 4; page++) {
       const res = await store.listEnquiriesPaged(offset, 50);
       if (res.rows.length === 0) break;
-      for (const e of (res.rows as any[]) ?? []) {
-        if (String((e as any).updatedAt ?? '') <= watermark) continue;
-        const items = Array.isArray((e as any).items) ? (e as any).items : [];
-        let images = 0;
-        let mediaTruncated = false;
-        const takeImage = (url: unknown, name?: unknown): { type: string; url: string; name?: string } | null => {
-          if (typeof url !== 'string' || (!url.startsWith('data:image/') && !url.startsWith('http'))) return null;
-          if (images >= MAX_IMAGES || url.length > MAX_IMAGE_CHARS) { mediaTruncated = true; return null; }
-          images++;
-          return name ? { type: 'image', url, name: String(name) } : { type: 'image', url };
-        };
-        // Enquiry-level photos first (unstructured intake), then per-item media.
-        const enquiryImages: Array<{ type: string; url: string }> = [];
-        try {
-          const rawUrls = (e as any).imageUrls ? JSON.parse(String((e as any).imageUrls)) : [];
-          for (const u of (Array.isArray(rawUrls) ? rawUrls : []).slice(0, MAX_IMAGES)) {
-            const kept = takeImage(typeof u === 'string' ? u : (u as any)?.url);
-            if (kept) enquiryImages.push(kept);
-          }
-        } catch { /* imageUrls unparseable — item media still flows */ }
-        const slimItems = items.slice(0, 30).map((it: any) => {
-          const media = Array.isArray(it?.media) ? it.media : [];
-          const kept: Array<{ type: string; url: string; name?: string }> = [];
-          for (const m of media) {
-            if (m?.type !== 'image') continue;
-            const k = takeImage(m?.url, m?.name);
-            if (k) kept.push(k);
-            else if (typeof m?.url === 'string') mediaTruncated = true;
-          }
-          return { name: String(it?.name ?? ''), qty: String(it?.qty ?? ''), spec: String(it?.spec ?? ''), media: kept };
-        });
-        rows.push({ ...(e as any), items: slimItems, enquiryImages, mediaTruncated });
-        if (rows.length >= limit) break;
-      }
+      candidates.push(...((res.rows as any[]) ?? []));
       offset += res.rows.length;
       if (offset >= (res as any).total) break;
     }
-    return c.json({ rows, watermark });
+    const now = Date.now();
+    const keys: string[] = [];
+    for (const e of candidates) {
+      keys.push(INTAKE_DONE + String((e as any).id), INTAKE_CLAIM + String((e as any).id));
+    }
+    const markers = await readSettingMap((c.env as any).DB, keys);
+    const rows: any[] = [];
+    for (const e of candidates) {
+      if (rows.length >= limit) break;
+      const id = String((e as any).id);
+      const updatedAt = String((e as any).updatedAt ?? (e as any).createdAt ?? '');
+      const done = markers.get(INTAKE_DONE + id);
+      if (done && done >= updatedAt) continue;
+      const claim = markers.get(INTAKE_CLAIM + id);
+      if (claim && now - new Date(claim).getTime() < CLAIM_TTL_MS) continue;
+      rows.push(slimEnquiry(e));
+    }
+    return c.json({ rows });
+  });
+
+  // POST claim: stake out ids for this runner (best-effort, idempotent).
+  app.post('/api/runner/enquiry-intake/claim', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const body = await c.req.json().catch(() => ({}));
+    const ids = (Array.isArray(body?.ids) ? body.ids : []).map((v: any) => String(v ?? '')).filter(Boolean).slice(0, 25);
+    if (ids.length === 0) return c.json({ claimed: [] });
+    const now = new Date().toISOString();
+    const db = (c.env as any).DB;
+    const claimed: string[] = [];
+    const markers = await readSettingMap(db, ids.map((id) => INTAKE_CLAIM + id));
+    const stmts: any[] = [];
+    for (const id of ids) {
+      const claim = markers.get(INTAKE_CLAIM + id);
+      if (claim && Date.now() - new Date(claim).getTime() < CLAIM_TTL_MS) continue;
+      stmts.push(
+        db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`)
+          .bind(INTAKE_CLAIM + id, now, now),
+      );
+      claimed.push(id);
+    }
+    for (let i = 0; i < stmts.length; i += 50) {
+      try {
+        await db.batch(stmts.slice(i, i + 50));
+      } catch { /* best-effort */ }
+    }
+    return c.json({ claimed });
   });
 
   // POST result: applies vision-extraction output. Fill-empty-only semantics:
@@ -1049,14 +1119,21 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
         candidates: Array.isArray(body.candidates) ? body.candidates.slice(0, 10) : [],
       }, 7 * 24 * 60 * 60 * 1000);
     } catch { /* best-effort */ }
-    if (body.advanceWatermark) {
-      const stamp = String(existing.updatedAt ?? new Date().toISOString());
-      await prisma.setting.upsert({
-        where: { key: 'enquiry:intake:watermark' },
-        update: { value: stamp },
-        create: { key: 'enquiry:intake:watermark', value: stamp },
-      }).catch(() => null);
-    }
+    // Mark done at the post-write updatedAt (edits landing after our write
+    // stay newer and reprocess); release our claim with an expired stamp.
+    const doneAt = String((updated as any)?.updatedAt ?? existing.updatedAt ?? new Date().toISOString());
+    const nowIso = new Date().toISOString();
+    const expired = new Date(Date.now() - CLAIM_TTL_MS - 1000).toISOString();
+    try {
+      await (c.env as any).DB.batch([
+        (c.env as any).DB.prepare(
+          `INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+        ).bind(INTAKE_DONE + enquiryId, doneAt, nowIso),
+        (c.env as any).DB.prepare(
+          `INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+        ).bind(INTAKE_CLAIM + enquiryId, expired, nowIso),
+      ]);
+    } catch { /* best-effort */ }
     if (Object.keys(updates).length > 0) {
       try {
         await cacheDel('enquiry-tracker:data');

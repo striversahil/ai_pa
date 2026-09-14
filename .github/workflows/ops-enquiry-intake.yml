@@ -8,11 +8,11 @@ on:
   # dispatches.)
   workflow_dispatch:
 
-# One run at a time; a newer log cancels a stale in-progress run (the next
-# run re-pages the watermark queue, so nothing is lost).
-concurrency:
-  group: ops-enquiry-intake
-  cancel-in-progress: true
+  # No concurrency block on purpose: overlapping runs are SAFE and wanted.
+  # Runners claim disjoint enquiry sets via /claim (stale claims expire in
+  # 10 min), so 5–6 simultaneous sales logs process in parallel instead of
+  # queueing behind — or cancelling — each other.
+
 
 jobs:
   enquiry-intake:
