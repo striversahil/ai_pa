@@ -80,6 +80,11 @@ export interface EnquiryItem {
   qty: string;
   spec: string;
   media: EnquiryMedia[];
+  /** KYP category assigned by AI intake (exact v2 name or Uncategorized). */
+  category?: string;
+  /** Client's own wording for this line (AI intake); shown under the
+   *  canonical name so sales can see what was actually asked for. */
+  verbatim?: string;
   /** Vendor rates collected by Procurement (multiple vendors per item). */
   rates?: EnquiryItemRate[];
   /** Management decision: chosen vendor + markup + finalized rate. */
@@ -324,6 +329,8 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         qty: normalizeQty(r?.qty).slice(0, 120),
         spec: String(r?.spec ?? '').slice(0, 2000),
         media: parseItemMedia(r?.media),
+        category: r?.category ? String(r.category).slice(0, 120) : undefined,
+        verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
         rates: parseItemRates(r?.rates),
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         markup: numOrUndefined(r?.markup),
