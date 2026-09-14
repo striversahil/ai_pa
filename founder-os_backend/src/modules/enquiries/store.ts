@@ -407,6 +407,8 @@ export function sanitize(e: any): Enquiry {
           qty: normalizeQty(r?.qty).slice(0, 120),
           spec: String(r?.spec ?? '').slice(0, 2000),
           media: parseItemMedia(r?.media),
+          category: r?.category ? String(r.category).slice(0, 120) : undefined,
+          verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
           rates: parseItemRates(r?.rates),
           selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
           markup: numOrUndefined(r?.markup),
