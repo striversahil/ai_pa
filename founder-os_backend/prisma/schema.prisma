@@ -755,6 +755,73 @@ model EnquiryComment {
   @@index([enquiryId, createdAt])
 }
 
+// ── Accounts (recurring compliance taskbar: senior / junior + MIS control) ──
+// Roster of accountants. MIS maps each person to senior|junior (role field);
+// the dashboard splits the taskbar into Senior / Junior sections by it.
+model Accountant {
+  id        String    @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  role      String    @default("junior") // senior | junior
+  order     Int       @default(0)
+  deleted   Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  logs      AccountsTaskLog[]
+
+  @@index([deleted, order])
+}
+
+// Recurring task definition. MIS-owned: daily / weekly / monthly /
+// quarterly / yearly cadence, owner role (senior|junior|either), optional
+// dueDay (monthly: 1-31, yearly: day-of-month) + dueMonth (yearly: 1-12).
+model AccountsTaskTemplate {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  frequency   String   @default("daily") // daily | weekly | monthly | quarterly | yearly
+  ownerRole   String   @default("either") // senior | junior | either
+  dueDay      Int? // legacy/simple rule: monthly day, yearly day, weekly weekday (0-6 Sun=0)
+  dueMonth    Int? // legacy/simple rule: yearly month (1-12)
+  // Rich schedule grammar (see data/accounts_follow_up.json legend):
+  // not_applicable | fixed_day | day_range | multiple_days | weekday |
+  // week_of_month | month_day_range | multi_occurrence |
+  // variable_per_item | to_be_decided. Engine evaluates ruleJson; the
+  // legacy dueDay/dueMonth path covers simple MIS-created tasks (ruleType null).
+  ruleType    String?
+  ruleJson    String?
+  rawText     String?
+  active      Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  logs        AccountsTaskLog[]
+
+  @@index([active, frequency])
+}
+
+// One concrete task instance per (template, due date). Status + remark is the
+// daily logging surface: accountants tick done/skip with a remark; overdue is
+// derived (dueDate < today AND status = pending).
+model AccountsTaskLog {
+  id           String               @id @default(uuid())
+  templateId   String
+  template     AccountsTaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  dueDate      String // YYYY-MM-DD (IST)
+  status       String   @default("pending") // pending | done | skipped | overdue
+  remark       String?
+  doneBy       String?
+  accountantId String?
+  accountant   Accountant? @relation(fields: [accountantId], references: [id], onDelete: SetNull)
+  updatedBy    String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+
+  @@unique([templateId, dueDate])
+  @@index([dueDate, status])
+  @@index([accountantId])
+}
+
 // ── WhatsApp Business Autopilot ──────────────────────────────────────────────
 // Structured business-operating layer under the WhatsApp conversation flow
 // (see whatsapp-business-autopilot-architecture.md). The core loop runs on the

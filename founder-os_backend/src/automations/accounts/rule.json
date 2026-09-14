@@ -1,0 +1,10 @@
+{
+  "name": "Accounts",
+  "description": "Recurring accounts taskbar: daily/monthly/yearly compliance tasks with senior/junior logging, remarks, and MIS controller (roster + templates).",
+  "type": "handler",
+  "trigger": {
+    "type": "schedule",
+    "cron": "30 3 * * *"
+  },
+  "scope": "accounts"
+}

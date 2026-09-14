@@ -1,17 +1,15 @@
 import React, { useState } from "react";
-import { Enquiry, EnquiryItem, EnquiryMedia, parseMoneyInput } from "../mockData";
+import { Enquiry, EnquiryItem, parseMoneyInput } from "../mockData";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
 import IntakeItemMeta from "./IntakeItemMeta";
 import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS, type IntakeSuggestion } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import FlagThread from "./FlagThread";
+import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
 
 /** ~10MB per file (stored as data-URI on the item; server re-checks). */
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
-
-const mediaKind = (f: File): EnquiryMedia["type"] =>
-  f.type.startsWith("video/") ? "video" : (f.type === "application/pdf" || /\.pdf$/i.test(f.name) ? "pdf" : "image");
 
 interface SpecificationsSectionProps {
   selectedEnquiry: Enquiry;
@@ -94,32 +92,30 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     onOpenLightbox(url, list.length > 0 ? list : [url], Math.max(0, list.indexOf(url)));
   };
 
-  const addItemMedia = (idx: number, files: FileList | null) => {
+  const addItemMedia = async (idx: number, files: FileList | File[] | null) => {
     if (!files || files.length === 0 || !onUpdateItems) return;
     setMediaError(null);
-    const accepted = Array.from(files).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/") || f.type === "application/pdf" || /\.pdf$/i.test(f.name));
-    const tooBig = Array.from(files).find((f) => f.size > MAX_MEDIA_BYTES);
+    const list = Array.from(files);
+    const tooBig = list.find((f) => f.size > MAX_MEDIA_BYTES);
     if (tooBig) {
       setMediaError(`"${tooBig.name}" exceeds 10MB and was skipped.`);
     }
-    const todo = accepted.filter((f) => f.size <= MAX_MEDIA_BYTES);
-    if (todo.length === 0) return;
-    const loaded: EnquiryMedia[] = [];
-    let processed = 0;
-    todo.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        if (evt.target?.result) {
-          loaded.push({ type: mediaKind(file), url: evt.target.result as string, name: file.name });
-        }
-        processed++;
-        if (processed === todo.length) {
-          const next = items.map((it, i) => (i === idx ? { ...it, media: [...(it.media ?? []), ...loaded] } : it));
-          onUpdateItems(next);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    const { media, skipped } = await filesToMedia(list.filter((f) => f.size <= MAX_MEDIA_BYTES));
+    if (skipped.length > 0) {
+      setMediaError((prev) => [prev, `Skipped: ${skipped.join(", ")}`].filter(Boolean).join(" "));
+    }
+    if (media.length === 0) return;
+    const next = items.map((it, i) => (i === idx ? { ...it, media: [...(it.media ?? []), ...media] } : it));
+    onUpdateItems(next);
+  };
+
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+
+  const handleItemDrop = (idx: number, e: React.DragEvent) => {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    setDropIdx(null);
+    void addItemMedia(idx, e.dataTransfer.files);
   };
 
   const removeItemMedia = (idx: number, mediaIdx: number) => {
@@ -201,7 +197,14 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
           ) : (
             <ul className="space-y-2">
               {items.map((it, idx) => (
-                <li key={idx} className="text-xs md:text-sm bg-[var(--bg-input)]/25 p-3 rounded-xl border border-[var(--border-card)]/50">
+                <li
+                  key={idx}
+                  onDragOver={(e) => { if (editable && dragHasFiles(e)) { e.preventDefault(); if (dropIdx !== idx) setDropIdx(idx); } }}
+                  onDragLeave={() => { if (dropIdx === idx) setDropIdx(null); }}
+                  onDrop={(e) => { if (editable) handleItemDrop(idx, e); }}
+                  title={editable ? "Tip: you can also drag & drop photo files onto this item" : undefined}
+                  className={`text-xs md:text-sm p-3 rounded-xl border transition-colors ${dropIdx === idx ? "border-brand-indigo bg-brand-indigo/10" : "bg-[var(--bg-input)]/25 border-[var(--border-card)]/50"}`}
+                >
                   {editingIdx === idx && editable ? (
                     <div className="space-y-2">
                       <textarea

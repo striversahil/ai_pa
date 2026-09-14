@@ -25,6 +25,7 @@ import { registerTriggerRoutes } from './worker/routes/triggers';
 import { registerRunnerRoutes } from './worker/routes/runner';
 import { registerAutopilotRoutes } from './worker/routes/autopilot';
 import { registerAutomationRoutes, registerMarketingRoutes } from './worker/routes/automations';
+import { registerAccountsRoutes } from './worker/routes/accounts';
 import { registerEventsRoute } from './worker/routes/events';
 import { scheduled } from './worker/cron';
 
@@ -43,6 +44,7 @@ registerTriggerRoutes(app);
 registerRunnerRoutes(app);
 registerAutopilotRoutes(app);
 registerAutomationRoutes(app);
+registerAccountsRoutes(app);
 registerMarketingRoutes(app);
 registerEventsRoute(app);
 

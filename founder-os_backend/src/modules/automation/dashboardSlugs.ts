@@ -17,6 +17,7 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'whatsapp-marketing',
   'neodove-telecaller-report',
   'telecalling',
+  'accounts',
   'whatsapp-autopilot',
   'enquiry-tracker',
   'enquiry-procurement',

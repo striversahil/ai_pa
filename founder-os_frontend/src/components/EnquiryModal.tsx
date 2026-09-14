@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react";
 import { Agent, Enquiry, EnquiryItem, ENQUIRY_SOURCES } from "../mockData";
 import ItemBoxList from "./ItemBoxList";
+import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
 
 // Enquiry-level image cap mirrors ItemBoxList (10MB per file, data-URI).
 const MAX_ENQUIRY_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -57,6 +58,7 @@ export default function EnquiryModal({
   // extractor. Media lives per item on edit; imageUrls pass through there.
   const [formImages, setFormImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [photoDragOver, setPhotoDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [formItems, setFormItems] = useState<EnquiryItem[]>(() => (editingEnquiry?.items || []).map((it) => ({ ...it, media: [...(it.media ?? [])] })));
 
@@ -64,20 +66,31 @@ export default function EnquiryModal({
 
   const isCreate = !editingEnquiry;
 
-  const handleImages = (files: FileList | null) => {
-    if (!files) return;
+  const handleImages = async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
     setImageError(null);
-    for (const f of Array.from(files)) {
-      if (!f.type.startsWith("image/")) { setImageError("Only images can be attached here."); continue; }
-      if (f.size > MAX_ENQUIRY_IMAGE_BYTES) { setImageError(`"${f.name}" exceeds 10MB and was skipped.`); continue; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = String(reader.result || "");
-        if (url) setFormImages((prev) => [...prev, url]);
-      };
-      reader.readAsDataURL(f);
+    const list = Array.from(files);
+    const tooBig = list.find((f) => f.size > MAX_ENQUIRY_IMAGE_BYTES);
+    // Downscaled photos land at ~200-500KB — always under the intake vision
+    // cap, so dropped images actually reach the AI (not just the gallery).
+    const { media, skipped } = await filesToMedia(list.filter((f) => f.size <= MAX_ENQUIRY_IMAGE_BYTES));
+    if (tooBig || skipped.length > 0) {
+      setImageError(
+        [tooBig ? `"${tooBig.name}" exceeds 10MB and was skipped.` : null, skipped.length > 0 ? `Skipped: ${skipped.join(", ")}` : null]
+          .filter(Boolean)
+          .join(" ")
+      );
     }
+    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
+    if (urls.length > 0) setFormImages((prev) => [...prev, ...urls]);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handlePhotoDrop = (e: React.DragEvent) => {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    setPhotoDragOver(false);
+    void handleImages(e.dataTransfer.files);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -140,7 +153,12 @@ export default function EnquiryModal({
               />
             </div>
 
-            <div className="space-y-2">
+            <div
+              className={`space-y-2 rounded-xl p-2 -m-2 transition-colors ${photoDragOver ? "bg-brand-indigo/10 outline-2 outline-dashed outline-brand-indigo" : ""}`}
+              onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setPhotoDragOver(true); } }}
+              onDragLeave={() => setPhotoDragOver(false)}
+              onDrop={handlePhotoDrop}
+            >
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Photos — nameplate / drawing / chit ({formImages.length})</label>
               <input
                 ref={fileInputRef}
@@ -177,7 +195,7 @@ export default function EnquiryModal({
                 </div>
               )}
               <p className="text-[11px] text-[var(--text-tertiary)]">
-                AI reads the text + photos, splits items and checks past prices. Missing details will be asked right on the enquiry — nothing goes to procurement incomplete.
+                Attach photos or drag &amp; drop them here. AI reads the text + photos, splits items and checks past prices. Missing details will be asked right on the enquiry — nothing goes to procurement incomplete.
               </p>
             </div>
             </>

@@ -43,6 +43,9 @@ const BOOL_FIELDS: Record<string, string[]> = {
   Enquiry: [],
   EnquiryComment: [],
   SoAttachment: [],
+  Accountant: ['deleted'],
+  AccountsTaskTemplate: ['active'],
+  AccountsTaskLog: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -69,6 +72,9 @@ const DATE_FIELDS: Record<string, string[]> = {
   Token: ['createdAt', 'updatedAt'],
   Telecaller: ['createdAt', 'absentSince'],
   EstimateAssignment: ['assignedAt'],
+  Accountant: ['createdAt'],
+  AccountsTaskTemplate: ['createdAt', 'updatedAt'],
+  AccountsTaskLog: ['createdAt', 'updatedAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
   SoAttachment: ['createdAt'],
@@ -118,6 +124,9 @@ const ID_FIELDS: Record<string, string> = {
   WaTaskHistory: 'id',
   WaAction: 'id',
   OverrideLog: 'id',
+  Accountant: 'id',
+  AccountsTaskTemplate: 'id',
+  AccountsTaskLog: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -177,6 +186,12 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   OverrideLog: {
     task: { model: 'WaTask', fk: 'taskId', one: true },
+  },
+  Accountant: { logs: { model: 'AccountsTaskLog', fk: 'accountantId' } },
+  AccountsTaskTemplate: { logs: { model: 'AccountsTaskLog', fk: 'templateId' } },
+  AccountsTaskLog: {
+    template: { model: 'AccountsTaskTemplate', fk: 'templateId', one: true },
+    accountant: { model: 'Accountant', fk: 'accountantId', one: true },
   },
 };
 
@@ -695,6 +710,10 @@ export class D1PrismaClient {
   get waTaskHistory() { return this.model('WaTaskHistory'); }
   get waAction() { return this.model('WaAction'); }
   get overrideLog() { return this.model('OverrideLog'); }
+  // Accounts automation (migration 0030).
+  get accountant() { return this.model('Accountant'); }
+  get accountsTaskTemplate() { return this.model('AccountsTaskTemplate'); }
+  get accountsTaskLog() { return this.model('AccountsTaskLog'); }
 
   $on() {}
   $disconnect() {}

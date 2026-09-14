@@ -62,6 +62,7 @@ export const DASHBOARD_SCOPES = [
   "sheet-analysis",
   "autopilot",
   "telecalling",
+  "accounts",
   "enquiry-tracker",
   "crm",
   "sales",

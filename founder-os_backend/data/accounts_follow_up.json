@@ -1,0 +1,803 @@
+{
+    "schema_version": "1.0",
+    "date_type_legend": {
+        "not_applicable": {
+            "description": "No specific date needed (e.g. Daily tasks done every working day).",
+            "fields": {}
+        },
+        "fixed_day": {
+            "description": "A single fixed day number, repeating every month unless 'month' is set.",
+            "fields": {
+                "day": "int (1-31)",
+                "month": "string or null (null = every month)"
+            }
+        },
+        "day_range": {
+            "description": "A window between two day numbers within a month (e.g. 10 to 15).",
+            "fields": {
+                "start_day": "int",
+                "end_day": "int",
+                "month": "string or null (null = every month)"
+            }
+        },
+        "multiple_days": {
+            "description": "Several specific day numbers in the same month (e.g. 8th, 11th & 13th).",
+            "fields": {
+                "days": "list of int",
+                "month": "string or null (null = every month)"
+            }
+        },
+        "weekday": {
+            "description": "Tied to a day of the week rather than a date (e.g. every Thursday).",
+            "fields": {
+                "weekday": "Monday..Sunday",
+                "occurrence": "'every' | 'first' | 'last' etc."
+            }
+        },
+        "week_of_month": {
+            "description": "A relative week within a specific month (e.g. 1st week of February).",
+            "fields": {
+                "week_number": "int (1-5)",
+                "month": "string"
+            }
+        },
+        "month_day_range": {
+            "description": "A date range that can span two different months (e.g. 30 Sept - 31 Oct).",
+            "fields": {
+                "start": {
+                    "day": "int",
+                    "month": "string"
+                },
+                "end": {
+                    "day": "int",
+                    "month": "string"
+                }
+            }
+        },
+        "multi_occurrence": {
+            "description": "A list of separate date rules that all apply (e.g. quarterly dates, or a mix of week-of-month + date-range).",
+            "fields": {
+                "occurrences": "list of any of the other type objects"
+            }
+        },
+        "variable_per_item": {
+            "description": "Date differs per sub-item and is not a single fixed rule (e.g. each credit card has its own statement generation date).",
+            "fields": {
+                "note": "string explanation"
+            }
+        },
+        "to_be_decided": {
+            "description": "Expected date has not been finalised yet.",
+            "fields": {}
+        }
+    },
+    "tasks": [
+        {
+            "row_number": 2,
+            "task": "Bank Recon.(Bank Update And Bank Entry Reconciliation ) (of all companies ) 1 P.M",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 3,
+            "task": "Bank Recon.(Bank Update And Bank Entry Reconciliation ) (of all companies ) 6:30 P.M",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 4,
+            "task": "Update Sales in Tally (Offline + Online)",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 5,
+            "task": "Update Purchase Invoices ( Of All companies if needed)",
+            "assigned_to": [
+                "Senior Account",
+                "Junior Account"
+            ],
+            "is_shared_task": true,
+            "employee_raw": "Senior Account/ Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 6,
+            "task": "Dispatch Details Of material invoiced (Offline) ( Of All companies if needed)-Need to Mention No. of Invoices Generated",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 7,
+            "task": "Purchase Order generation for requirement if any ( of all companies )-No. of PO Generated",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 8,
+            "task": "Daily Gross Profit Sheet",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 9,
+            "task": "All Work regarding Bank-Free Text",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 10,
+            "task": "Cash sheet update with expense (Chawri) ( Of All companies if needed)",
+            "assigned_to": [
+                "Senior Account",
+                "Junior Account"
+            ],
+            "is_shared_task": true,
+            "employee_raw": "Senior Account/ Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 11,
+            "task": "Suspenses to be cleared of payment / reciepts on Daily basis ( Of All companies if needed)",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 12,
+            "task": "Stock sheet update (Of All companies if needed)-Need to Handover this to Shubham Chawri",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 13,
+            "task": "Giving Stock Confirmation for Daily Sales Orders of BUI to CRM",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 14,
+            "task": "Send Reply Mails of Sefar or Any other concerned mails (if any)",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 15,
+            "task": "Telephone Recharges, Mobile Postpaid bill payment , LPG bill payments -Kishan Ji Has the sheet",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Daily",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "not_applicable",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 16,
+            "task": "Salary Computation of previous month Get it Approved And Send to Account for Transfer by creating cms-Checker, 13th to get Cash",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "fixed_day",
+                "day": 15,
+                "month": null,
+                "raw_text": "15th of Every Month"
+            }
+        },
+        {
+            "row_number": 17,
+            "task": "GSTR - 2B Reconcilation With Tally ( Of All Companies)-",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "day_range",
+                "start_day": 15,
+                "end_day": 18,
+                "month": null,
+                "raw_text": "15th -18th"
+            }
+        },
+        {
+            "row_number": 18,
+            "task": "TDS/TCS Payment of all companies if any",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "fixed_day",
+                "day": 7,
+                "month": null,
+                "raw_text": "7th"
+            }
+        },
+        {
+            "row_number": 19,
+            "task": "GST Form - 3B ( Of All companies )",
+            "assigned_to": [
+                "Senior Account",
+                "Junior Account"
+            ],
+            "is_shared_task": true,
+            "employee_raw": "Senior Account/ Junior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "fixed_day",
+                "day": 18,
+                "month": null,
+                "raw_text": "18th"
+            }
+        },
+        {
+            "row_number": 20,
+            "task": "GSTR - 1 Outward Supply ( Of All Companies)- First Reminder -8th & 11th",
+            "assigned_to": [
+                "Senior Account",
+                "Junior Account"
+            ],
+            "is_shared_task": true,
+            "employee_raw": "Senior Account/ Junior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "multiple_days",
+                "days": [
+                    8,
+                    11,
+                    13
+                ],
+                "month": null,
+                "raw_text": ",8th11th & 13th"
+            }
+        },
+        {
+            "row_number": 21,
+            "task": "Reconciled list of Online invoices with P and L returns, Ad Return and claim loss, if any) on 25th ( Of BUI and Silver)",
+            "assigned_to": [
+                "Senior Account",
+                "Junior Account"
+            ],
+            "is_shared_task": true,
+            "employee_raw": "Senior Account/ Junior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "day_range",
+                "start_day": 5,
+                "end_day": 10,
+                "month": null,
+                "raw_text": "5th -10th"
+            }
+        },
+        {
+            "row_number": 22,
+            "task": "All Electricity Bill Payments to be done on timely basis of Both office and Samarth sir and Bade Sir House",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "to_be_decided",
+                "raw_text": null
+            }
+        },
+        {
+            "row_number": 23,
+            "task": "Rent , 1st Office 313, Bhikaji - 95000 , 10th of every month, 2nd  House (Samarth Sir ) Bhikaji - 1,89,000, 3rd Chawri Office - 12,375 , 4th  House (Bade Sir ) Bhikaji - 1,08,045",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "day_range",
+                "start_day": 5,
+                "end_day": 7,
+                "month": null,
+                "raw_text": "5th-7th of Every month"
+            }
+        },
+        {
+            "row_number": 24,
+            "task": "EMI s Payment to be done on timely basis (Car , Business Loan)",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "fixed_day",
+                "day": 30,
+                "month": null,
+                "raw_text": "30th of Every Month"
+            }
+        },
+        {
+            "row_number": 25,
+            "task": "EMI s Payment to be done on timely basis,House",
+            "assigned_to": [],
+            "is_shared_task": false,
+            "employee_raw": null,
+            "department": null,
+            "frequency": "Monthly",
+            "status": null,
+            "expected_completion": {
+                "type": "fixed_day",
+                "day": 3,
+                "month": null,
+                "raw_text": "3rd of Every month"
+            }
+        },
+        {
+            "row_number": 26,
+            "task": "Debtor Reconcilation sheet make with CRM (of all companies )",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Daliy",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "multiple_days",
+                "days": [
+                    15,
+                    30
+                ],
+                "month": null,
+                "raw_text": "15th & 30th of Month"
+            }
+        },
+        {
+            "row_number": 27,
+            "task": "Advance Tax Payment ( Of All companies if needed)",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Quarterly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "multi_occurrence",
+                "occurrences": [
+                    {
+                        "type": "day_range",
+                        "start_day": 10,
+                        "end_day": 15,
+                        "month": "June"
+                    },
+                    {
+                        "type": "fixed_day",
+                        "day": 15,
+                        "month": "September"
+                    },
+                    {
+                        "type": "fixed_day",
+                        "day": 15,
+                        "month": "December"
+                    },
+                    {
+                        "type": "fixed_day",
+                        "day": 15,
+                        "month": "March"
+                    }
+                ],
+                "raw_text": "10th-15 June , 15September,15December,15March"
+            }
+        },
+        {
+            "row_number": 28,
+            "task": "TDS Quarterly Return (collect docs) ( Of All companies if needed)",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Quarterly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "multi_occurrence",
+                "occurrences": [
+                    {
+                        "type": "day_range",
+                        "start_day": 10,
+                        "end_day": 12,
+                        "month": "July"
+                    },
+                    {
+                        "type": "fixed_day",
+                        "day": 12,
+                        "month": "October"
+                    },
+                    {
+                        "type": "fixed_day",
+                        "day": 12,
+                        "month": "January"
+                    },
+                    {
+                        "type": "fixed_day",
+                        "day": 15,
+                        "month": "March"
+                    }
+                ],
+                "raw_text": "10-12 July , 12October,12January,15March"
+            }
+        },
+        {
+            "row_number": 29,
+            "task": "List of Total Payment Collection for the month ( BUI )",
+            "assigned_to": [
+                "Junior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Junior Account",
+            "department": "Accounts",
+            "frequency": "Weekly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "weekday",
+                "weekday": "Thursday",
+                "occurrence": "every",
+                "raw_text": "Thrusday"
+            }
+        },
+        {
+            "row_number": 30,
+            "task": "List of outstanding debtors and creditors as per FIFO Sheet ( Of All companies)",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Weekly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "to_be_decided",
+                "raw_text": "10, 20 ,30 of every month"
+            }
+        },
+        {
+            "row_number": 31,
+            "task": "Credit card statment Entry ( Of All Cards )",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Monthly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "variable_per_item",
+                "note": "Every card has its own statement generation date",
+                "raw_text": "Every Card Is having its own  Generation Date, "
+            }
+        },
+        {
+            "row_number": 32,
+            "task": "Weekly payment of Client s Bills through CMS creation on every Thursday-Sheet Should be ready one day before---",
+            "assigned_to": [
+                "Senior Account",
+                "Junior Account"
+            ],
+            "is_shared_task": true,
+            "employee_raw": "Senior Account/ Junior Account",
+            "department": "Accounts",
+            "frequency": "Weekly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "weekday",
+                "weekday": "Thursday",
+                "occurrence": "every",
+                "raw_text": "Every Thrusday of Month"
+            }
+        },
+        {
+            "row_number": 33,
+            "task": "Finalise Trial Balance",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Yearly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "multi_occurrence",
+                "occurrences": [
+                    {
+                        "type": "week_of_month",
+                        "week_number": 1,
+                        "month": "February"
+                    },
+                    {
+                        "type": "month_day_range",
+                        "start": {
+                            "day": 1,
+                            "month": "June"
+                        },
+                        "end": {
+                            "day": 14,
+                            "month": "August"
+                        }
+                    }
+                ],
+                "raw_text": "1st week of  Feb,,1st June- 14th August"
+            }
+        },
+        {
+            "row_number": 34,
+            "task": "Income Tax Return ( Of All companies )",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Yearly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "month_day_range",
+                "start": {
+                    "day": 30,
+                    "month": "September"
+                },
+                "end": {
+                    "day": 31,
+                    "month": "October"
+                },
+                "raw_text": "30 september- 31st october"
+            }
+        },
+        {
+            "row_number": 35,
+            "task": "GSTR - 9 Annual Return ( Of All companies )",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Yearly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "month_day_range",
+                "start": {
+                    "day": 30,
+                    "month": "November"
+                },
+                "end": {
+                    "day": 15,
+                    "month": "December"
+                },
+                "raw_text": "30 Nov-15 December"
+            }
+        },
+        {
+            "row_number": 36,
+            "task": "TDS Annual Return (collect and send docs) ( ( Of All companies if needed)",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Yearly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "month_day_range",
+                "start": {
+                    "day": 15,
+                    "month": "March"
+                },
+                "end": {
+                    "day": 30,
+                    "month": "April"
+                },
+                "raw_text": "15th March-30 April"
+            }
+        },
+        {
+            "row_number": 37,
+            "task": "Property Tax All companies and individual ",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Yearly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "month_day_range",
+                "start": {
+                    "day": 15,
+                    "month": "June"
+                },
+                "end": {
+                    "day": 31,
+                    "month": "July"
+                },
+                "raw_text": "15 jUne-31st July"
+            }
+        },
+        {
+            "row_number": 38,
+            "task": "Insurance Renewals on respective dates- Need to Create sheet-Car, Health,, 9 policies",
+            "assigned_to": [
+                "Senior Account"
+            ],
+            "is_shared_task": false,
+            "employee_raw": "Senior Account",
+            "department": "Accounts",
+            "frequency": "Yearly",
+            "status": "Ok",
+            "expected_completion": {
+                "type": "to_be_decided",
+                "raw_text": null
+            }
+        }
+    ]
+}

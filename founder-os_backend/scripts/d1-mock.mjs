@@ -10,7 +10,7 @@ export function fakeD1() {
   }
 
   function parseColumnsInsert(sql) {
-    const m = sql.match(/INSERT INTO (\w+)\s*\(([^)]*)\)\s*VALUES\s*\((.*)\)/i);
+    const m = sql.match(/INSERT INTO "?(\w+)"?\s*\(([^)]*)\)\s*VALUES\s*\((.*)\)/i);
     if (!m) return null;
     const table = m[1];
     const cols = m[2].split(',').map((c) => c.trim().replace(/"/g, ''));
@@ -64,11 +64,11 @@ export function fakeD1() {
             return { success: true, meta: { changes: 1, last_row_id: table.length } };
           }
           if (/^update/i.test(q)) {
-            const m = q.match(/UPDATE (\w+)\s+SET\s+([\s\S]*?)\s+WHERE\s+([\s\S]*)/i);
+            const m = q.match(/UPDATE "?(\w+)"?\s+SET\s+([\s\S]*?)\s+WHERE\s+([\s\S]*)/i);
             if (!m) return { success: true, meta: { changes: 0 } };
             const table = ensure(m[1]);
             const setParts = m[2].split(',').map((s) => s.trim());
-            const setCols = setParts.map((s) => s.match(/^(\w+)\s*=/)[1]);
+            const setCols = setParts.map((s) => s.match(/^"?(\w+)"?\s*=/)[1]);
             const setVals = setParts.map((s) => (s.includes('?') ? undefined : s.replace(/^[^=]+=\s*/, '').replace(/^['"]|['"]$/g, '')));
             let vi = 0;
             const setResolved = setCols.map((c) => {
@@ -95,7 +95,7 @@ export function fakeD1() {
         async all() {
           const q = prep._q;
           const vals = prep._values;
-          const m = q.match(/FROM (\w+)/i);
+          const m = q.match(/FROM "?(\w+)"?/i);
           if (!m) return { results: [] };
           const table = ensure(m[1]);
           let rows = [...table];
@@ -112,7 +112,8 @@ export function fakeD1() {
           const orderIdx = q.toUpperCase().indexOf(' ORDER BY ');
           if (orderIdx >= 0) {
             const orderSpec = q.slice(orderIdx + 10).split(' LIMIT ')[0].trim();
-            const [col, dir] = orderSpec.split(/\s+/);
+            const [colRaw, dir] = orderSpec.split(/\s+/);
+            const col = String(colRaw).replace(/"/g, '');
             rows.sort((a, b) => {
               const av = a[col]; const bv = b[col];
               if (av === bv) return 0;
@@ -153,7 +154,7 @@ function matchWhere(row, where, vals, startIdx) {
   const conds = where.split(/\s+AND\s+/i);
   for (let cond of conds) {
     cond = cond.trim();
-    const m = cond.match(/^(\w+)\s*(=|!=|<>|LIKE|>=|<=|>|<|IS NOT|IS)\s*(.+)$/i);
+    const m = cond.match(/^"?(\w+)"?\s*(=|!=|<>|LIKE|>=|<=|>|<|IS NOT|IS)\s*(.+)$/i);
     if (!m) continue;
     const col = m[1];
     const op = m[2].toUpperCase();

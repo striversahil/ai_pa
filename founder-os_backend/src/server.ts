@@ -26,6 +26,7 @@ import healthRouter from './routes/health';
 import whatsappMarketingRouter from './routes/whatsapp-marketing';
 import pendingItemsRouter from './routes/pending-items';
 import telecallersRouter from './routes/telecallers';
+import accountsRouter from './routes/accounts';
 import { automationRouter } from './modules/automation';
 import * as AuthRoutes from './modules/auth/routes';
 import { PrismaAuthStore } from './modules/auth/store-prisma';
@@ -108,6 +109,9 @@ app.use('/api/pending-items', pendingItemsRouter);
 
 // --- Telecaller roster (estimate auto-assignment) ---
 app.use('/api/telecallers', telecallersRouter);
+
+// --- Accounts roster + templates + taskbar logging ---
+app.use('/api/accounts', accountsRouter);
 
 // --- Google Auth (routes + root user management) ---
 app.get('/api/auth/google', (req, res) => sendAuth(res, AuthRoutes.authLogin(config, publicOriginOf(req))));

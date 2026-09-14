@@ -47,6 +47,9 @@ const tests = [
   ['POST /api/runner/estimates/baseline auth', '/api/runner/estimates/baseline', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
   ['POST /api/runner/telecalling/effort-sync no-auth', '/api/runner/telecalling/effort-sync', { method: 'POST', headers: { Authorization: 'Bearer wrong' } }],
   ['POST /api/runner/telecalling/effort-sync auth', '/api/runner/telecalling/effort-sync', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
+  ['GET /api/automations/accounts/data', '/api/automations/accounts/data'],
+  ['GET /api/accounts/roster', '/api/accounts/roster'],
+  ['GET /api/accounts/templates', '/api/accounts/templates'],
   ['GET /nope', '/nope'],
 ];
 
@@ -60,4 +63,32 @@ for (const [name, path, opts] of tests) {
   if (r.status === 'ERR' || !ok) {
     console.log('     ', r.body);
   }
+}
+
+// ── Accounts deep check: seed → instances → dashboard payload → log write ──
+try {
+  const req = new Request('http://local/api/automations/accounts/data');
+  const res = await app.fetch(req, env, {});
+  const data = await res.json();
+  const items = data?.items ?? [];
+  const okShape = res.status === 200 && Array.isArray(items) && items.length > 0
+    && Array.isArray(data?.senior) && Array.isArray(data?.junior) && Array.isArray(data?.roster)
+    && items.every((t) => t.templateId && t.title && t.frequency && t.ownerRole && 'status' in t);
+  console.log(`${okShape ? 'PASS' : '???'}  accounts data payload (seeds+instances) -> ${res.status} items=${items.length}`);
+  const first = items.find((t) => t.logId);
+  if (first) {
+    const patch = new Request(`http://local/api/accounts/logs/${first.logId}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'done', remark: 'smoke verify' }),
+    });
+    const pres = await app.fetch(patch, env, {});
+    const pbody = await pres.json().catch(() => ({}));
+    const okPatch = pres.status === 200 && pbody.status === 'done';
+    console.log(`${okPatch ? 'PASS' : '???'}  accounts log PATCH done+remark -> ${pres.status}`);
+    if (!okPatch) console.log('     ', JSON.stringify(pbody).slice(0, 200));
+  } else {
+    console.log('???  accounts log PATCH skipped — no logId in payload');
+  }
+} catch (e) {
+  console.log('???  accounts deep check threw:', String(e?.message || e).slice(0, 200));
 }

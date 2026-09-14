@@ -24,6 +24,7 @@ import * as telecallingEnquiryToDpp from '../../automations/telecalling-enquiry-
 import * as waEngineMonitor from '../../automations/wa-engine-monitor';
 import * as whatsappMarketing from '../../automations/whatsapp-marketing';
 import * as telecalling from '../../automations/telecalling';
+import * as accounts from '../../automations/accounts';
 import * as whatsappAutopilot from '../../automations/whatsapp-autopilot';
 import * as crm from '../../automations/crm';
 
@@ -43,6 +44,7 @@ const MODULES: Record<string, AutomationModule> = {
   'wa-engine-monitor': waEngineMonitor as AutomationModule,
   'whatsapp-marketing': whatsappMarketing as AutomationModule,
   'telecalling': telecalling as AutomationModule,
+  'accounts': accounts as AutomationModule,
   'whatsapp-autopilot': whatsappAutopilot as AutomationModule,
   'crm': crm as AutomationModule,
 };
@@ -110,6 +112,9 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'telecalling': {
     id: 'telecalling', name: 'Telecalling', description: 'Unified daily telecaller performance: Lead Conversion (estimate assignment) + Lead Generation (NeoDove calls/leads, live), with KPIs and leaderboard.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'telecalling', enabled: true,
+  },
+  'accounts': {
+    id: 'accounts', name: 'Accounts', description: 'Recurring accounts taskbar: daily/monthly/yearly compliance tasks with senior/junior logging, remarks, and MIS controller.', type: 'handler', trigger: { type: 'schedule', cron: '30 3 * * *' }, scope: 'accounts', enabled: true,
   },
   'whatsapp-autopilot': {
     id: 'whatsapp-autopilot', name: 'WhatsApp Autopilot', description: 'Structured business layer under WhatsApp: message lineage, per-chat task queue, LLM state transitions. Core loop runs on GH Actions (shadow mode — nothing sends).', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, scope: 'autopilot', enabled: true,

@@ -14,6 +14,7 @@ const WhatsAppMarketingDashboard = dynamic(() => import("./WhatsAppMarketingDash
 const EnterpriseOperationsDashboard = dynamic(() => import("./EnterpriseOperationsDashboard"), { ssr: false });
 const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDashboard"), { ssr: false });
 const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
+const AccountsDashboard = dynamic(() => import("./AccountsDashboard"), { ssr: false });
 const AutopilotDashboard = dynamic(() => import("./AutopilotDashboard"), { ssr: false });
 const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false });
 const ProcurementQueue = dynamic(() => import("./ProcurementQueue"), { ssr: false });
@@ -123,6 +124,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "whatsapp-marketing") return <WhatsAppMarketingDashboard />;
     if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
     if (selected === "telecalling") return <TelecallingDashboard />;
+    if (selected === "accounts") return <AccountsDashboard />;
     if (selected === "whatsapp-autopilot") return <AutopilotDashboard />;
     if (selected === "enquiry-tracker") return <EnquiryTracker />;
     if (selected === "enquiry-procurement") return <ProcurementQueue />;

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { filesToMedia } from "../lib/imageFiles";
 
 interface AdditionalRequirementModalProps {
   isOpen: boolean;
@@ -22,22 +23,13 @@ export default function AdditionalRequirementModal({ isOpen, onClose, onSave }: 
     onClose();
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const fileList = Array.from(files);
-    const loaded: string[] = [];
-    let processed = 0;
-    fileList.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        if (evt.target?.result) loaded.push(evt.target.result as string);
-        processed++;
-        if (processed === fileList.length) setImages((prev) => [...prev, ...loaded]);
-      };
-      reader.readAsDataURL(file);
-    });
     e.target.value = "";
+    if (!files || files.length === 0) return;
+    const { media } = await filesToMedia(files);
+    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
+    if (urls.length > 0) setImages((prev) => [...prev, ...urls]);
   };
 
   return (

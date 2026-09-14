@@ -3,12 +3,10 @@
 import React, { useState, useMemo } from "react";
 import { EnquiryItem, EnquiryMedia } from "../mockData";
 import ToggleSwitch from "./ToggleSwitch";
+import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
 
 /** ~10MB per item file (stored as data-URI on the item; server re-checks). */
 const MAX_ITEM_FILE_BYTES = 10 * 1024 * 1024;
-
-const itemMediaKind = (f: File): EnquiryMedia["type"] =>
-  f.type.startsWith("video/") ? "video" : (f.type === "application/pdf" || /\.pdf$/i.test(f.name) ? "pdf" : "image");
 
 export const blankItem = (): EnquiryItem => ({ name: "", qty: "", spec: "", media: [] });
 
@@ -101,27 +99,27 @@ export default function ItemBoxList({ items, onChange, showRateToggle = true }: 
   const copyItem = (idx: number) =>
     onChange([...items.slice(0, idx + 1), duplicateItem(items[idx]), ...items.slice(idx + 1)]);
 
-  const addItemFiles = (idx: number, files: FileList | null) => {
+  const addItemFiles = async (idx: number, files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     setFileError(null);
-    const accepted = Array.from(files).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/") || f.type === "application/pdf" || /\.pdf$/i.test(f.name));
-    const tooBig = Array.from(files).find((f) => f.size > MAX_ITEM_FILE_BYTES);
+    const list = Array.from(files);
+    const tooBig = list.find((f) => f.size > MAX_ITEM_FILE_BYTES);
     if (tooBig) setFileError(`"${tooBig.name}" exceeds 10MB and was skipped.`);
-    const todo = accepted.filter((f) => f.size <= MAX_ITEM_FILE_BYTES);
-    if (todo.length === 0) return;
-    const loaded: EnquiryMedia[] = [];
-    let processed = 0;
-    todo.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        if (evt.target?.result) loaded.push({ type: itemMediaKind(file), url: evt.target.result as string, name: file.name });
-        processed++;
-        if (processed === todo.length) {
-          onChange(items.map((it, i) => (i === idx ? { ...it, media: [...(it.media ?? []), ...loaded] } : it)));
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    const { media, skipped } = await filesToMedia(list.filter((f) => f.size <= MAX_ITEM_FILE_BYTES));
+    if (skipped.length > 0) {
+      setFileError((prev) => [prev, `Skipped: ${skipped.join(", ")}`].filter(Boolean).join(" "));
+    }
+    if (media.length === 0) return;
+    onChange(items.map((it, i) => (i === idx ? { ...it, media: [...(it.media ?? []), ...media] } : it)));
+  };
+
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+
+  const handleCardDrop = (idx: number, e: React.DragEvent) => {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    setDropIdx(null);
+    void addItemFiles(idx, e.dataTransfer.files);
   };
 
   const removeItemFile = (idx: number, mediaIdx: number) =>
@@ -130,7 +128,14 @@ export default function ItemBoxList({ items, onChange, showRateToggle = true }: 
   return (
     <div className="space-y-2">
       {items.map((it, idx) => (
-        <div key={idx} className="p-3 rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/25 space-y-2">
+        <div
+          key={idx}
+          onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); if (dropIdx !== idx) setDropIdx(idx); } }}
+          onDragLeave={() => { if (dropIdx === idx) setDropIdx(null); }}
+          onDrop={(e) => handleCardDrop(idx, e)}
+          title="Tip: you can also drag & drop photo files onto this item"
+          className={`p-3 rounded-xl border space-y-2 transition-colors ${dropIdx === idx ? "border-brand-indigo bg-brand-indigo/10" : "border-[var(--border-card)]/60 bg-[var(--bg-input)]/25"}`}
+        >
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-extrabold text-[var(--text-primary)]">Item {idx + 1}</span>
             <span className="flex items-center gap-2">
