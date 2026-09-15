@@ -13,7 +13,6 @@ export interface RedactedComment {
 
 export interface ExtractionResult {
   title?: string | null;
-  enquiryNumber?: string | null;
   sourceLead?: string | null;
   location?: string | null;
   company?: string | null;
@@ -64,7 +63,6 @@ function buildPrompt(input: { text: string; title?: string; company?: string; de
 
 {
   "title": "a concise enquiry title, or null",
-  "enquiryNumber": "the enquiry/inquiry number as written (e.g. 'Inquiry 1 - 7 SEP'), or null",
   "sourceLead": "the lead source (e.g. 'company data', 'IndiaMART', 'reference'), or null",
   "location": "the customer location/city/state (e.g. 'Haryana'), or null",
   "company": "client company name, or null",
@@ -96,7 +94,7 @@ that section is present — otherwise it must cover every entry of "items" by
 position. Every sales item needs exactly one redacted entry.${itemsSection}
 
 Rules:
-- Match the labels loosely: 'Enquiry Number', 'Inquiry No', 'Source Lead', 'Lead Source',
+- Match the labels loosely: 'Source Lead', 'Lead Source',
   'Lead of' (that is the owning agent, NOT the customer — ignore it), 'Company Name',
   'Contact Person', 'Mobile Number', 'Location'.
 - If a field is already provided and correct, keep it; otherwise extract from the text.
@@ -142,7 +140,6 @@ export function splitExtractionText(
 function shapeResult(parsed: any): ExtractionResult {
   return {
     title: parsed.title ? String(parsed.title) : null,
-    enquiryNumber: parsed.enquiryNumber ? String(parsed.enquiryNumber) : null,
     sourceLead: parsed.sourceLead ? String(parsed.sourceLead) : null,
     location: parsed.location ? String(parsed.location) : null,
     company: parsed.company ? String(parsed.company) : null,

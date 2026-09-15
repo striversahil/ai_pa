@@ -466,8 +466,14 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
   const assignedAgentId = String(body.assignedAgentId || "");
   // Daily enquiry number: atomic Setting counter, resets every IST day
   // (concurrent creates can never share a number — the old max+1 scan raced).
+  // Root test enquiries skip the sequence (founder rule): Enquiry No is for
+  // sales staff only, and root never takes the By. Null renders as "–" in
+  // the shared label, so test rows stay visibly distinct. Sales numbering
+  // is untouched — the counter only advances on sales creates.
   const now = new Date();
-  const dailyNo = await store.allocateDailyNo(now).catch(() => nextDailyNo([], now));
+  const dailyNo = me.isRoot
+    ? null
+    : await store.allocateDailyNo(now).catch(() => nextDailyNo([], now));
   const source = normalizeEnquirySource(body.source);
   // No Title field in the form: a blank title becomes the enquiry number text.
   const title = String(body?.title ?? "").trim()
@@ -632,7 +638,8 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     }
   }
   // Auto-advance the workflow: first vendor rate moves Rate Pending → Received.
-  // Finalized is set explicitly by Management (guarded above).
+  // Finalized is set explicitly by Management (guarded above) — except the
+  // all-available case below, which no role can produce by hand.
   if ((updates as any).rateStatus === undefined) {
     const current = await store.getEnquiry(id).catch(() => null);
     const mergedItems = Array.isArray((updates as any).items)
@@ -641,6 +648,33 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     const cur = String((current as any)?.rateStatus ?? '');
     if ((cur === '' || cur === 'rate_pending') && mergedItems.some((it: any) => ((it as any).rates ?? []).length > 0)) {
       (updates as any).rateStatus = 'rates_received';
+    }
+    // All-quoted shortcut (any writer): every item rate-available with no
+    // open spec flag means nothing left to decide — no procurement queue,
+    // no management decision. Flip straight to finalized so Mark as Sent
+    // enables in realtime on the same save. Empty rows and flagged rows
+    // never flip (flags must resolve first).
+    if ((cur === '' || cur === 'rate_pending' || cur === 'rates_received')
+      && mergedItems.length > 0
+      && mergedItems.every((it: any) => it?.rateAvailable === true)
+      && !mergedItems.some((it: any) => it?.specIssue)) {
+      (updates as any).rateStatus = 'finalized';
+    }
+    // Late-quote reopen (any writer): a new vendor quote on a finalized row
+    // clears that item's committed decision (see update.ts) and drops the
+    // enquiry back to rates_received — sales is notified via live event,
+    // management re-decides. Sent rows never reopen.
+    if (cur === 'finalized') {
+      const { applyLateQuoteReopen } = await import('./update');
+      if (
+        applyLateQuoteReopen(updates, {
+          storedItems,
+          storedRateStatus: cur,
+          actedBy: actingProcurement ? 'procurement' : privileged ? 'management' : 'sales',
+        })
+      ) {
+        (updates as any).rateStatus = 'rates_received';
+      }
     }
   }
   const enquiry = await store.updateEnquiry(id, updates);

@@ -197,6 +197,57 @@ export interface RateWriteCtx {
 }
 
 /**
+ * Late-quote reopen (any writer): a NEW vendor quote appended to an item
+ * whose decision is committed (finalRate set) clears that item's decision
+ * (selectedVendor/markup/finalRate/finalizedAt) and stamps a quoted trail
+ * entry — the caller drops the enquiry back to rates_received so sales is
+ * notified and management re-decides. Only fires when:
+ * - the enquiry is currently `finalized` (sent rows never reopen), AND
+ * - the write carries no explicit rateStatus (a same-save finalize wins), AND
+ * - at least one genuinely new vendor+amount pair arrived (edits/removals
+ *   don't reopen).
+ * Returns true when any item reopened.
+ */
+export function applyLateQuoteReopen(
+  updates: any,
+  ctx: { storedItems: any[]; storedRateStatus: string; actedBy: FlagThreadBy },
+): boolean {
+  if (ctx.storedRateStatus !== 'finalized') return false;
+  if ((updates as any).rateStatus !== undefined) return false;
+  const items = (updates as any).items;
+  if (!Array.isArray(items)) return false;
+  let reopened = false;
+  (updates as any).items = items.map((it: any, idx: number) => {
+    const stored = ctx.storedItems[idx] ?? {};
+    if (stored.finalRate === undefined || stored.finalRate === null) return it;
+    const oldRates = Array.isArray(stored.rates) ? stored.rates : [];
+    const newRates = Array.isArray(it?.rates) ? it.rates : [];
+    const added = newRates.filter(
+      (r: any) =>
+        r &&
+        String(r.vendor ?? '').trim() &&
+        !oldRates.some((o: any) => String(o.vendor) === String(r.vendor) && Number(o.rate) === Number(r.rate)),
+    );
+    if (added.length === 0) return it;
+    reopened = true;
+    const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = it;
+    void selectedVendor;
+    void markup;
+    void finalRate;
+    void finalizedAt;
+    const thread = Array.isArray((rest as any).thread) ? [...(rest as any).thread] : [];
+    thread.push({
+      by: ctx.actedBy,
+      kind: 'quoted',
+      text: `Late vendor quote (${added.map((r: any) => String(r.vendor)).join(', ')}) — decision reopened`,
+      at: new Date().toISOString(),
+    });
+    return { ...rest, thread: thread.slice(-50) };
+  });
+  return reopened;
+}
+
+/**
  * Submit-to-Management lifecycle (enquiry-level handoff flag):
  * - sales (plain) writers can never touch it — follows stored;
  * - procurement (restricted) may stamp it (submit) but never clear it;

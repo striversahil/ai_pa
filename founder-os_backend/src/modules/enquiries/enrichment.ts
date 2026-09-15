@@ -107,7 +107,6 @@ export async function runEnquiryExtraction(env: Record<string, unknown>, store: 
     }
     const updates: Record<string, any> = {};
     if (!enquiry.title && extracted.title) updates.title = extracted.title;
-    if (!enquiry.enquiryNumber && extracted.enquiryNumber) updates.enquiryNumber = extracted.enquiryNumber;
     if (!enquiry.sourceLead && extracted.sourceLead) updates.sourceLead = extracted.sourceLead;
     if (!enquiry.location && extracted.location) updates.location = extracted.location;
     if (!enquiry.clientCompany && extracted.company) updates.clientCompany = extracted.company;

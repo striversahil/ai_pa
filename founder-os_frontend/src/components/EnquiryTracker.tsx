@@ -24,13 +24,13 @@ export default function EnquiryTracker() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Live intimations: toast when an enquiry transitions to finalized
   // (rates ready) or gains a spec flag (needs correction) while open.
-  const [rateToast, setRateToast] = useState<{ id: string; label: string; title: string; kind: "rates" | "spec" | "specdiff" } | null>(null);
+  const [rateToast, setRateToast] = useState<{ id: string; label: string; title: string; kind: "rates" | "spec" | "specdiff" | "reopened" } | null>(null);
   const rateStatusRef = useRef<Record<string, string>>({});
   const flagCountRef = useRef<Record<string, number>>({});
   const specDiffCountRef = useRef<Record<string, number>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flashToast = useCallback((id: string, label: string, title: string, kind: "rates" | "spec" | "specdiff") => {
+  const flashToast = useCallback((id: string, label: string, title: string, kind: "rates" | "spec" | "specdiff" | "reopened") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setRateToast({ id, label, title, kind });
     toastTimer.current = setTimeout(() => setRateToast(null), 10000);
@@ -84,6 +84,12 @@ export default function EnquiryTracker() {
     rateStatusRef.current[id] = next;
     if (next === "finalized" && prev !== undefined && prev !== "finalized") {
       flashRateToast(id, label, title);
+    }
+    // Late-quote reopen: a finalized row dropped back to rates_received means
+    // a new vendor quote (or management alternate) cleared the decision —
+    // sales can revise the quoted price from here once re-decided.
+    if (prev === "finalized" && next === "rates_received") {
+      flashToast(id, label, title, "reopened");
     }
     const flagged = typeof s.flaggedCount === "number"
       ? s.flaggedCount
@@ -253,16 +259,16 @@ export default function EnquiryTracker() {
 
       {rateToast && (
         <div className={`fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)] ${
-          rateToast.kind === "spec" ? "border-red-500/40" : rateToast.kind === "specdiff" ? "border-amber-500/40" : "border-emerald-500/40"
+          rateToast.kind === "spec" ? "border-red-500/40" : rateToast.kind === "specdiff" ? "border-amber-500/40" : rateToast.kind === "reopened" ? "border-amber-500/40" : "border-emerald-500/40"
         }`}>
           <div className="flex items-start gap-3">
             <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base ${
-              rateToast.kind === "spec" ? "bg-red-500/15" : rateToast.kind === "specdiff" ? "bg-amber-500/15" : "bg-emerald-500/15"
-            }`}>{rateToast.kind === "spec" ? "🚩" : rateToast.kind === "specdiff" ? "⚠" : "💰"}</span>
+              rateToast.kind === "spec" ? "bg-red-500/15" : rateToast.kind === "specdiff" ? "bg-amber-500/15" : rateToast.kind === "reopened" ? "bg-amber-500/15" : "bg-emerald-500/15"
+            }`}>{rateToast.kind === "spec" ? "🚩" : rateToast.kind === "specdiff" ? "⚠" : rateToast.kind === "reopened" ? "🔔" : "💰"}</span>
             <div className="min-w-0 flex-1">
               <p className={`text-xs font-extrabold ${
-                rateToast.kind === "spec" ? "text-red-500" : rateToast.kind === "specdiff" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
-              }`}>{rateToast.kind === "spec" ? "Spec flagged — correction needed" : rateToast.kind === "specdiff" ? "Vendor quoted a different spec" : "Rates ready"}</p>
+                rateToast.kind === "spec" ? "text-red-500" : rateToast.kind === "specdiff" ? "text-amber-600 dark:text-amber-400" : rateToast.kind === "reopened" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+              }`}>{rateToast.kind === "spec" ? "Spec flagged — correction needed" : rateToast.kind === "specdiff" ? "Vendor quoted a different spec" : rateToast.kind === "reopened" ? "New vendor rates — decision reopened" : "Rates ready"}</p>
               <p className="truncate text-sm font-bold text-[var(--text-primary)]">{rateToast.title}</p>
               <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{rateToast.label}</p>
               <div className="mt-2 flex gap-2">

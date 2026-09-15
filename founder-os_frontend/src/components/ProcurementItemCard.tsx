@@ -22,6 +22,10 @@ interface ProcurementItemCardProps {
   onUnmarkInternal?: () => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
+  /** Late-quote window: the row is finalized (committed) but still accepting
+   *  NEW vendor quotes — each addition reopens the decision automatically.
+   *  Edit/remove/flag stay locked; only the Add form opens. */
+  lateQuote?: boolean;
 }
 
 // One compact procurement work card: spec + attachments on top, already-given
@@ -31,6 +35,7 @@ interface ProcurementItemCardProps {
 export default function ProcurementItemCard({
   item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox,
   canMarkInternal = false, onMarkInternal, onUnmarkInternal, readOnly = false,
+  lateQuote = false,
 }: ProcurementItemCardProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [editingRate, setEditingRate] = useState<number | null>(null);
@@ -242,8 +247,11 @@ export default function ProcurementItemCard({
         </ul>
       )}
 
-      {!flagged && !readOnly && (
+      {!flagged && (!readOnly || lateQuote) && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          {lateQuote && readOnly && (
+            <p className="w-full text-[10px] font-semibold text-amber-600 dark:text-amber-400">Finalized row — a new quote reopens the decision for management.</p>
+          )}
           {showAdd ? (
             <div className="flex-1 min-w-[12rem]">
               <ItemRateForm

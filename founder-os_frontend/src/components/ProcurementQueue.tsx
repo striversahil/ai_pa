@@ -422,14 +422,22 @@ export default function ProcurementQueue() {
           )}
           {(() => {
             const submitted = isSubmitted(selEnquiry);
-            const gate = procurementSubmittable(selEnquiry);
-            if (submitted) {
+            const lateQuoteEnquiry = selEnquiry.rateStatus === "finalized";
+            if (submitted && !lateQuoteEnquiry) {
               return (
                 <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
                   Submitted to management — vendor rates are locked. Late quotes reopen via a management rate request.
                 </p>
               );
             }
+            if (submitted && lateQuoteEnquiry) {
+              return (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                  Finalized — new vendor quotes are welcome here and reopen the decision automatically.
+                </p>
+              );
+            }
+            const gate = procurementSubmittable(selEnquiry);
             return (
               <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)]/25 px-3 py-2">
                 <button
@@ -450,11 +458,13 @@ export default function ProcurementQueue() {
           <div className="space-y-2.5">
             {(() => {
               const submitted = isSubmitted(selEnquiry);
+              const lateQuoteEnquiry = selEnquiry.rateStatus === "finalized";
               return (selEnquiry.items ?? []).map((item, itemIdx) => (
                 <ProcurementItemCard
                   key={itemIdx}
                   item={item}
                   itemIdx={itemIdx}
+                  lateQuote={lateQuoteEnquiry}
                   onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
                   onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
                   onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}

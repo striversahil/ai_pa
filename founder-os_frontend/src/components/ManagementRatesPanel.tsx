@@ -433,6 +433,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   </label>
                   {it.qty && <span className="text-[11px] text-zinc-400 font-semibold flex-shrink-0">Qty: {it.qty}</span>}
                 </div>
+                {it.spec && (
+                  <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                )}
                 <FlagThread thread={it.thread ?? []} tone="dark" />
                 {rates.length === 0 ? (
                   <p className="text-[11px] text-zinc-500 italic">No vendor rates yet — procurement adds them per item.</p>
@@ -491,7 +494,18 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 )}
                 <div className="space-y-1.5">
                   {locked ? (
+                    <>
                     <p className="text-[10px] text-zinc-500">Committed — no further edits.</p>
+                    {finalized && !sent && (
+                      <div className="space-y-1 rounded-lg border border-dashed border-amber-500/40 p-2">
+                        <p className="text-[10px] font-semibold text-amber-400/90">Alternate rate? Adding one reopens this item — re-decide below.</p>
+                        <ItemRateForm
+                          submitLabel="Add alternate rate"
+                          onAdd={(rate) => void addInternalRate(i, rate)}
+                        />
+                      </div>
+                    )}
+                    </>
                   ) : (
                   <>
                   <div className="flex flex-wrap items-center gap-2">

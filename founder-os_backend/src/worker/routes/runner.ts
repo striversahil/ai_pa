@@ -1075,7 +1075,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const existing: any = await store.getEnquiry(enquiryId).catch(() => null);
     if (!existing) return c.json({ error: 'not found' }, 404);
     const updates: Record<string, any> = {};
-    for (const f of ['title', 'clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead', 'enquiryNumber']) {
+    for (const f of ['title', 'clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead']) {
       const v = String((body.fields as any)?.[f] ?? '').trim();
       if (!v || String(existing[f] ?? '').trim()) continue;
       // "Lead of <agent>" is the owning salesperson, not a lead source —

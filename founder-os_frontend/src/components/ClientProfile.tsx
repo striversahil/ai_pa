@@ -47,13 +47,6 @@ export default function ClientProfile({
             </div>
           )}
 
-          {selectedEnquiry.enquiryNumber && (
-            <div>
-              <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Enquiry Number</span>
-              <span className="font-semibold text-sm mt-0.5 block text-[var(--text-primary)]">{selectedEnquiry.enquiryNumber}</span>
-            </div>
-          )}
-
           {selectedEnquiry.sourceLead && (
             <div>
               <span className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Source Lead</span>
