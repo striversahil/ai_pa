@@ -756,6 +756,14 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
     return a + w > 0 ? w / (a + w) : 0;
   };
 
+  // Enquiry → creator map (PRIMARY source for Lead of): Enquiry.estNumber =
+  // Estimate.estimateNumber. Fail-open — falls back to createdBy / comment
+  // inference below when no enquiry maps.
+  let enquiryCreatorByEst = new Map<string, string>();
+  try {
+    const { enquiryAgentByEstNumber } = await import('../../modules/enquiries/estimate-link');
+    enquiryCreatorByEst = await enquiryAgentByEstNumber(sent.map((e) => String((e as any).estimateNumber ?? '')));
+  } catch { /* fallback below */ }
   // Current load = healthy open estimates the agent already owns (not the ones
   // about to be re-poached). Count-normalised so the penalty is comparable.
   const loadCount = new Map<string, number>();
@@ -840,9 +848,22 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       // Creator-first (founder rule): a NEVER-ASSIGNED estimate generated TODAY
       // is dealt to the agent who generated it — whether lead-gen or converter —
       // before any best-fit routing. The generator owns the fresh relationship.
+      // The ONLY source is the mapping B2B enquiry (Enquiry.estNumber); there
+      // is no comment-inference fallback — unmapped rows go best-fit.
       // Older unassigned estimates keep best-fit conversion routing.
       if (!wasAssigned) {
-        const knownCreator = String((est as any).createdBy ?? '');
+        const enquiryCreator = enquiryCreatorByEst.get(String((est as any).estimateNumber ?? '').trim()) ?? '';
+        const knownCreator = enquiryCreator || String((est as any).createdBy ?? '');
+        // Self-heal: enquiry mapping always wins for createdBy.
+        if (enquiryCreator && String((est as any).createdBy ?? '') !== enquiryCreator) {
+          try {
+            await prisma.estimate.update({
+              where: { estimateId: est.estimateId },
+              data: { createdBy: enquiryCreator },
+            });
+            (est as any).createdBy = enquiryCreator;
+          } catch { /* best-effort */ }
+        }
         const creatorPresent = !!knownCreator
           && (allTelecallers as any[]).some((t) => String(t.id) === knownCreator);
         const generatedToday = String((est as any).date ?? '').slice(0, 10) === today;
@@ -852,18 +873,6 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
             { estimateId: est.estimateId, creator: knownCreator },
             'creator-first: today\'s lead dealt to its generator',
           );
-        } else if (!knownCreator) {
-          // Sole-creator first claim: a never-assigned estimate whose first comments
-          // name a sales agent is dealt to that agent (he generated the lead), before
-          // falling back to best-fit conversion routing for unassigned estimates.
-          const creatorId = await inferEstimateCreator(est.estimateId, allTelecallers);
-          if (creatorId) {
-            bestId = creatorId;
-            await prisma.estimate.update({
-              where: { estimateId: est.estimateId },
-              data: { createdBy: creatorId },
-            });
-          }
         }
       }
     }
@@ -1329,62 +1338,11 @@ export async function markTelecallerPresent(telecallerId: string): Promise<{ ret
   return { returned };
 }
 
-// ── Creator inference ────────────────────────────────────────────────────────
-// When a new estimate is created, sales agents usually write their name in the
-// first 1-2 comments (e.g. "muskan", "samar" for Samarjeet). Infer which active
-// telecaller created it so the estimate is saved to him and he gets first claim
-// as the sole creator of that lead generation.
-
-/** Normalise a name for fuzzy matching (lowercase, strip non-alpha). */
-function normName(s: string): string {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-/** Match a comment author name against a telecaller name (prefix/substring
- * tolerant so "samar" matches "Samarjeet"). Requires a minimum length to avoid
- * false positives from initials. */
-function creatorMatches(author: string, name: string): boolean {
-  const a = normName(author);
-  const b = normName(name);
-  if (!a || !b) return false;
-  if (a === b) return true;
-  // prefix match: samar → samarjeet (either direction)
-  if (a.length >= 3 && (b.startsWith(a) || a.startsWith(b))) return true;
-  // token match: "samarjeet s" vs "samarjeet" — check each whitespace token
-  const aTokens = a.split(' ').filter((t) => t.length >= 3);
-  const bTokens = b.split(' ').filter((t) => t.length >= 3);
-  return aTokens.some((t) => bTokens.some((bt) => bt.startsWith(t) || t.startsWith(bt)));
-}
-
-/**
- * Infer which active telecaller created this estimate from its first real sales
- * comments (skipping Zoho system auto-logs). Returns the telecaller id, or null
- * when the author can't be matched to any active telecaller.
- */
-async function inferEstimateCreator(estimateId: string, telecallers: Telecaller[]): Promise<string | null> {
-  try {
-    const comments = await prisma.comment.findMany({
-      where: { estimateId },
-      orderBy: { date: 'asc' },
-      take: 3,
-      select: { description: true, commentedBy: true },
-    });
-    for (const c of comments) {
-      if (isSystemGeneratedComment(c.description, c.commentedBy)) continue;
-      const author = (c.commentedBy || '').trim();
-      if (!author) continue;
-      for (const tc of telecallers) {
-        if (creatorMatches(author, tc.name) || creatorMatches(author, tc.neodoveUserName ?? '')) {
-          return tc.id;
-        }
-      }
-    }
-    return null;
-  } catch (e: any) {
-    logger.warn({ err: e?.message, estimateId }, 'inferEstimateCreator failed');
-    return null;
-  }
-}
+// ── Creator resolution ───────────────────────────────────────────────────────
+// REMOVED (founder rule): first-Zoho-comment creator inference
+// (normName/creatorMatches/inferEstimateCreator). Estimate.createdBy ("Lead
+// of" / "By") is written ONLY from the mapping B2B enquiry
+// (modules/enquiries/estimate-link.ts) — never inferred from comments.
 
 // ── Event-ledger scoring ─────────────────────────────────────────────────────
 // The leaderboard is driven by an append-only score ledger: a slab-based

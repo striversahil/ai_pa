@@ -338,7 +338,7 @@ app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {
   res.status(r.status).json(r.body);
   // New free text needs its procurement-safe rewrite now — otherwise the
   // redacted copy only appears after the next list fetch kicks enrichment.
-  if (r.status === 200) {
+  if (r.status === 201) {
     try { void runEnquiryExtractionLocal(String(req.params.id)); } catch { /* ignore */ }
   }
 });
@@ -397,6 +397,67 @@ app.post('/api/enquiries/:id/comments', async (req, res) => {
   // The agent writes the lead-details block in the first 1–2 comments — run
   // extraction so enquiryNumber/sourceLead/location/company/contact fill in.
   if (r.body?.enquiryId) void runEnquiryExtractionLocal(r.body.enquiryId);
+});
+// B2B EST-No. Check & Assign (Express mirror of the Worker route).
+app.post('/api/enquiries/:id/claim-estimate', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    const enquiry: any = await enquiryStore.getEnquiry(req.params.id).catch(() => null);
+    if (!enquiry) return res.status(404).json({ error: 'enquiry not found' });
+    const estNumber = String((req.body as any)?.estNumber ?? (enquiry as any)?.estNumber ?? '').trim();
+    const agentId = String((enquiry as any)?.assignedAgentId ?? '').trim();
+    if (!estNumber) return res.status(400).json({ error: 'Add EST No. first' });
+    if (!agentId) return res.status(400).json({ error: 'Enquiry has no Lead By agent' });
+    const { claimEstimateForAgent } = await import('./modules/enquiries/estimate-link');
+    const out = await claimEstimateForAgent(estNumber, agentId, `B2B enquiry claim (${String((enquiry as any)?.enquiryNumber ?? req.params.id).slice(0, 40)})`);
+    return res.status(out.ok ? 200 : out.alreadyAssigned ? 409 : 404).json(out);
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || 'claim failed' });
+  }
+});
+app.get('/api/estimates/lookup', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const num = String((req.query as any)?.number ?? (req.query as any)?.estNumber ?? '');
+  if (!num.trim()) return res.status(400).json({ found: false, error: 'number required' });
+  try {
+    const { lookupEstimateStatus } = await import('./modules/enquiries/estimate-link');
+    return res.json(await lookupEstimateStatus(num));
+  } catch (e: any) {
+    return res.status(500).json({ found: false, error: e?.message || 'lookup failed' });
+  }
+});
+// Runner write endpoints (Express mirror — same shared handlers as the Worker
+// routes; local convention: open like /api/trigger/*, production runners use
+// the Worker). Status flips credit telecalling closes via the shared module.
+app.post('/api/runner/zoho/status', async (req, res) => {
+  try {
+    const { applyStatusUpdates } = await import('./modules/estimates/status-sync');
+    const updates = Array.isArray((req.body as any)?.updates) ? (req.body as any).updates : [];
+    const { updated, closesCredited } = await applyStatusUpdates(updates);
+    try {
+      const { invalidateDerivedEstimateCaches } = require('./shared/estimates-cache');
+      if (updated > 0) await invalidateDerivedEstimateCaches();
+    } catch { /* non-fatal */ }
+    return res.json({ ok: true, count: updated, closesCredited });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || 'status sync failed' });
+  }
+});
+app.post('/api/runner/estimates/lead-details', async (req, res) => {
+  try {
+    const { applyLeadDetails } = await import('./modules/estimates/lead-details');
+    const rows = Array.isArray((req.body as any)?.rows) ? (req.body as any).rows : [];
+    const { updated, attempted, failed } = await applyLeadDetails(rows);
+    try {
+      const { invalidateDerivedEstimateCaches } = require('./shared/estimates-cache');
+      if (updated > 0 || failed > 0) await invalidateDerivedEstimateCaches();
+    } catch { /* non-fatal */ }
+    return res.json({ ok: true, count: updated, attempted, failed });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || 'lead-details failed' });
+  }
 });
 // File attachments are stored in Workers KV (worker runtime only); the
 // Express/alt runtime is the local/dev path without KV.

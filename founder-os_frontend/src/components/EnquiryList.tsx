@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Agent, Enquiry } from "../mockData";
+import { Agent, Enquiry } from "../types";
 import CalendarRibbon from "./CalendarRibbon";
 import FilterControls from "./FilterControls";
 import EnquiryRowItem from "./EnquiryRowItem";

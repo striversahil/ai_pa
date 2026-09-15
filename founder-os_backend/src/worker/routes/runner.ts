@@ -686,27 +686,10 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
 
   app.post('/api/runner/zoho/status', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     const updates = Array.isArray(body.updates) ? body.updates : [];
-    let updated = 0;
-    for (const u of updates) {
-      if (!u.estimateId || !u.status) continue;
-      await prisma.estimate.update({
-        where: { estimateId: u.estimateId },
-        data: { status: u.status, lastSyncTime: new Date() },
-      });
-      if (u.status === 'accepted' || u.status === 'confirmed') {
-        try {
-          const { recordConversionClose } = require('../../automations/telecalling/service');
-          await recordConversionClose(u.estimateId);
-        } catch (e: any) {
-          console.warn({ err: e?.message, estimateId: u.estimateId }, 'recordConversionClose failed');
-        }
-      }
-      // Declines carry no penalty (retired) — status sync only.
-      updated++;
-    }
+    const { applyStatusUpdates } = await import('../../modules/estimates/status-sync');
+    const { updated } = await applyStatusUpdates(updates);
     notifyLive(c, { type: 'estimates' });
     // A status flip to accepted/confirmed writes a slab close credit into the
     // telecalling ledger (recordConversionClose above) — the Telecalling

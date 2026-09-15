@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Agent, Enquiry } from "../mockData";
+import { Agent, Enquiry } from "../types";
 
 interface ClientProfileProps {
   selectedEnquiry: Enquiry;

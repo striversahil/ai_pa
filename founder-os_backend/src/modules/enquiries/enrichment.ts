@@ -17,7 +17,6 @@ import {
   splitExtractionText,
   redactedCacheKey,
   REDACTED_CACHE_TTL_MS,
-  AI_ITEMS_ENABLED,
   type RedactedViewCache,
 } from "./extract";
 import { cacheSet } from "../../shared/cache";
@@ -63,13 +62,9 @@ export async function runEnquiryExtraction(env: Record<string, unknown>, store: 
       })),
     });
     if (!extracted) return;
-    // Effective sales line items: manual edits win. AI auto-split is OFF
-    // (AI_ITEMS_ENABLED); empty rows stay empty.
-    const existingItems: Array<{ name: string; qty: string; spec: string }> =
+    // Sales line items are manual-only (AI auto-split permanently OFF).
+    const salesItems: Array<{ name: string; qty: string; spec: string }> =
       Array.isArray((enquiry as any).items) ? (enquiry as any).items : [];
-    const salesItems = existingItems.length > 0
-      ? existingItems
-      : (AI_ITEMS_ENABLED && Array.isArray(extracted.items) ? extracted.items : []);
     // Procurement-view cache (v2): AI rewrites keyed by source hashes.
     if (extracted.redactedDescription) {
       try {
@@ -119,7 +114,6 @@ export async function runEnquiryExtraction(env: Record<string, unknown>, store: 
     if (!enquiry.contactName && extracted.contactName) updates.contactName = extracted.contactName;
     if (!enquiry.contactEmail && extracted.contactEmail) updates.contactEmail = extracted.contactEmail;
     if (!enquiry.contactPhone && extracted.contactPhone) updates.contactPhone = extracted.contactPhone;
-    if (existingItems.length === 0 && salesItems.length > 0) updates.items = salesItems;
     if (Object.keys(updates).length) await store.updateEnquiry(id, updates);
   } catch (e: any) {
     try { console.error('enquiry extraction failed:', e?.message); } catch { /* noop */ }

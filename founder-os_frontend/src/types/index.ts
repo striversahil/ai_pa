@@ -259,14 +259,7 @@ export function historyDateChip(iso?: string): string {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
 }
 
-export const INITIAL_AGENTS: Agent[] = [
-  { id: '1', name: 'Alice Vance', initials: 'AV', color: '#6366f1', status: 'active' },
-  { id: '2', name: 'Bob Miller', initials: 'BM', color: '#10b981', status: 'active' },
-  { id: '3', name: 'Charlie Song', initials: 'CS', color: '#f59e0b', status: 'active' },
-  { id: '4', name: 'Diana Prince', initials: 'DP', color: '#f43f5e', status: 'active' },
-];
-
-// Legacy mock seed data removed — the enquiry tracker is fully backend-driven
-// (/api/enquiries). INITIAL_AGENTS above is only a dev/fallback roster.
+// Fully backend-driven (/api/enquiries) — no mock seed data. Agent identity
+// resolves from the live roster + session email (see useEnquiryData).
 export const INITIAL_ENQUIRIES: Enquiry[] = [];
 export const INITIAL_COMMENTS: Comment[] = [];

@@ -107,6 +107,7 @@ Worker + GitHub Actions.
 ├── local-runner.js                     # local AI classification loop (drains waba-worker)
 ├── scripts/                            # GH Actions file-based runners (heavy AI runs HERE)
 │   ├── runner-lib.js                   # shared helpers (workerRequest, groq/groqJson direct-Groq primary + omniroute fallback, extractJson)
+│   ├── zoho-sync/                      # zoho-sent-runner split: fetch.js (Zoho reads) / diff.js (pure change detection) / persist.js (worker writes) / analyze.js (only AI spender) / comments.js (shared pure helpers) — see its README
 │   ├── whatsapp-digest-runner.js
 │   ├── morning-brief-runner.js
 │   ├── eod-summary-runner.js
@@ -419,7 +420,7 @@ EventHub `telecalling` events).
 
 | Workflow | Cadence (UTC) | Jobs |
 |----------|---------------|------|
-| `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI), `crm-runner.js` (sales-orders snapshot — 5-min new-SO latency), `zoho-sent-runner.js` (full sync + AI; `force` dispatch reclassifies all active) |
+| `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI), `crm-runner.js` (sales-orders snapshot — 5-min new-SO latency), `zoho-sent-runner.js` (full sync + AI: All-status 2-page fetch, transitions, gated AI — see `scripts/zoho-sync/README.md`; `force` dispatch reprocesses all eligible) |
 | `cron-every-10min.yml` | `*/10` | `neodove-report-runner.js` (today, intraday overwrite — GH egress fallback; primary population is the native in-worker refresh every 5 min) |
 | `cron-every-15min.yml` | `*/15` | `effort-sync-runner.js` (NeoDove call-log snapshots for the telecalling snatch shield) |
 | `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |

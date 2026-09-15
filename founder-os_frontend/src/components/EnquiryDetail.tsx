@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../mockData";
+import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../types";
 import CommentNode from "./CommentNode";
 import EnquiryChat from "./EnquiryChat";
 import { useIntake } from "../hooks/useIntake";

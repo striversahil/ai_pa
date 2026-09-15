@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { Agent, Comment } from "../mockData";
+import { Agent, Comment } from "../types";
 
 interface CommentNodeProps {
   comment: Comment & { replies: Comment[] };

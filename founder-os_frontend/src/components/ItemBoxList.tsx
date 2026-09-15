@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { EnquiryItem, EnquiryMedia } from "../mockData";
+import { EnquiryItem, EnquiryMedia } from "../types";
 import ToggleSwitch from "./ToggleSwitch";
 import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
 

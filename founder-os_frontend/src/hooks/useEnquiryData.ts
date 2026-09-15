@@ -265,11 +265,6 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     }
   });
 
-  const syncState = useCallback((updatedEnquiries: Enquiry[], updatedComments: Comment[], _updatedAgents: Agent[]) => {
-    setEnquiriesSynced(updatedEnquiries);
-    setComments(updatedComments);
-  }, []);
-
   const currentAgent = useMemo(() => {
     const fallback = { id: '', name: 'Sales Agent', initials: 'SA', color: '#6366f1', status: 'active' as const };
     if (userEmail) {
@@ -285,8 +280,6 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     }
     return agents[0] || fallback;
   }, [agents, userEmail]);
-
-  const selectedEnquiry = useMemo(() => null as Enquiry | null, []);
 
   const persist = async (method: string, path: string, body?: any) => {
     const res = await fetch(path, {
@@ -399,7 +392,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   }), []);
 
   return {
-    enquiries, setEnquiries,
+    enquiries,
     comments, setComments,
     agents,
     clients,
@@ -407,7 +400,6 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     loaded,
     aiConfigured,
     total, page, pageSize, setPage, setPageSize,
-    syncState,
     addEnquiry,
     updateEnquiry,
     deleteEnquiry,

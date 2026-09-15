@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { Agent, Enquiry, EnquiryItem, ENQUIRY_SOURCES } from "../mockData";
+import { Agent, Enquiry, EnquiryItem, ENQUIRY_SOURCES } from "../types";
 import ItemBoxList from "./ItemBoxList";
 import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
 
@@ -61,6 +61,59 @@ export default function EnquiryModal({
   const [photoDragOver, setPhotoDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [formItems, setFormItems] = useState<EnquiryItem[]>(() => (editingEnquiry?.items || []).map((it) => ({ ...it, media: [...(it.media ?? [])] })));
+  // B2B EST-No. Check & Assign: verify the Zoho estimate exists; if free,
+  // assign it to this enquiry's Lead By agent (creator). Held estimates are
+  // reported only — never stolen.
+  const [claimMsg, setClaimMsg] = useState<string | null>(null);
+  const [claimTone, setClaimTone] = useState<"ok" | "warn" | "err">("ok");
+  const [claimBusy, setClaimBusy] = useState(false);
+  const leadAgentId = editingEnquiry?.assignedAgentId || "";
+  const leadAgentName = agents.find((a) => String((a as any).id) === String(leadAgentId))?.name || "";
+  const handleCheckAssign = async () => {
+    const num = formEst.trim();
+    if (!num) { setClaimTone("warn"); setClaimMsg("Enter EST No. first"); return; }
+    if (!editingEnquiry?.id) { setClaimTone("warn"); setClaimMsg("Save the enquiry first, then check"); return; }
+    if (!leadAgentId) { setClaimTone("warn"); setClaimMsg("Enquiry has no Lead By agent"); return; }
+    setClaimBusy(true);
+    setClaimMsg(null);
+    try {
+      const lookRes = await fetch(`/api/estimates/lookup?number=${encodeURIComponent(num)}`);
+      const look = await lookRes.json().catch(() => ({}));
+      if (!look?.found) { setClaimTone("warn"); setClaimMsg("Not found in Zoho sync yet"); return; }
+      const holder = String(look.assignedTelecallerId ?? "");
+      if (holder && holder !== String(leadAgentId)) {
+        setClaimTone("warn");
+        setClaimMsg(`Already held by ${look.holderName || "another agent"}`);
+        return;
+      }
+      if (holder === String(leadAgentId)) {
+        setClaimTone("ok");
+        setClaimMsg(`Already assigned to ${look.holderName || leadAgentName || "this lead"}`);
+        return;
+      }
+      const claimRes = await fetch(`/api/enquiries/${encodeURIComponent(editingEnquiry.id)}/claim-estimate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estNumber: num }),
+      });
+      const claimed = await claimRes.json().catch(() => ({}));
+      if (claimed?.ok) {
+        setClaimTone("ok");
+        setClaimMsg(claimed.alreadyMine ? `Already assigned to ${leadAgentName || "this lead"}` : `Assigned to ${leadAgentName || "lead agent"}`);
+      } else if (claimed?.alreadyAssigned) {
+        setClaimTone("warn");
+        setClaimMsg(`Already held by ${claimed.holderName || "another agent"}`);
+      } else {
+        setClaimTone("err");
+        setClaimMsg(claimed?.error || "Assign failed");
+      }
+    } catch (e: any) {
+      setClaimTone("err");
+      setClaimMsg(e?.message || "Check failed");
+    } finally {
+      setClaimBusy(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -225,13 +278,32 @@ export default function EnquiryModal({
               {!isCreate && !redacted && (
               <div className="space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">EST No.</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. EST-2026-0001" 
-                  value={formEst} 
-                  onChange={(e) => setFormEst(e.target.value)} 
-                  className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
+                <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. EST-2026-0001"
+                  value={formEst}
+                  onChange={(e) => { setFormEst(e.target.value); setClaimMsg(null); }}
+                  className="flex-1 min-w-0 px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo focus:bg-[var(--bg-card)] text-sm text-[var(--text-primary)]"
                 />
+                <button
+                  type="button"
+                  onClick={handleCheckAssign}
+                  disabled={claimBusy || isSaving}
+                  title={leadAgentName ? `Check Zoho estimate and assign to ${leadAgentName} if free` : "Check Zoho estimate"}
+                  className="shrink-0 inline-flex items-center px-3 py-2 border border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/10 font-bold text-xs rounded-xl cursor-pointer bg-transparent disabled:opacity-50"
+                >
+                  {claimBusy ? "Checking…" : "Check & Assign"}
+                </button>
+                </div>
+                {claimMsg && (
+                  <p className={`text-[11px] font-semibold ${claimTone === "ok" ? "text-emerald-600" : claimTone === "warn" ? "text-amber-600" : "text-red-500"}`}>
+                    {claimMsg}{claimTone === "ok" && leadAgentName ? "" : ""}
+                  </p>
+                )}
+                {leadAgentName && !claimMsg && (
+                  <p className="text-[11px] text-[var(--text-tertiary)]">Lead By: {leadAgentName} — free estimates assign to them</p>
+                )}
               </div>
               )}
 

@@ -229,4 +229,35 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if ((r as any).status === 201) kick(c, String(c.req.param('id') ?? ''));
     return c.json(r.body, r.status as any);
   });
+  // B2B EST-No. Check & Assign button: check the Zoho estimate exists; if
+  // free, assign it to this enquiry's agent (Lead By) + stamp creator.
+  // If held by someone else, report the holder only — never steal.
+  app.post('/api/enquiries/:id/claim-estimate', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    const id = c.req.param('id') ?? '';
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const store = createEnquiryStore(c.env);
+      const enquiry: any = await store.getEnquiry(id).catch(() => null);
+      if (!enquiry) return c.json({ error: 'enquiry not found' }, 404);
+      const estNumber = String((body as any)?.estNumber ?? (enquiry as any)?.estNumber ?? '').trim();
+      const agentId = String((enquiry as any)?.assignedAgentId ?? '').trim();
+      if (!estNumber) return c.json({ error: 'Add EST No. first' }, 400);
+      if (!agentId) return c.json({ error: 'Enquiry has no Lead By agent' }, 400);
+      const { claimEstimateForAgent } = await import('../../modules/enquiries/estimate-link');
+      const out = await claimEstimateForAgent(estNumber, agentId, `B2B enquiry claim (${String((enquiry as any)?.enquiryNumber ?? id).slice(0, 40)})`);
+      if (out.ok) {
+        const { LiveEvent } = await import('../../live');
+        enquirySend(c, { status: 200, body: { ok: true }, live: { type: LiveEvent.Enquiries, extra: { action: 'estimate-claimed', id } } } as any);
+        try {
+          const { notifyLive, LiveEvent: LE } = await import('../context');
+          notifyLive(c, { type: (LE as any).Telecalling });
+        } catch { /* best-effort */ }
+      }
+      return c.json(out, out.ok ? 200 : out.alreadyAssigned ? 409 : 404);
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message || 'claim failed' }, 500);
+    }
+  });
 }

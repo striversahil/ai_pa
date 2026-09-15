@@ -1,10 +1,11 @@
 # Zoho Sent Analyzer
 
 Incremental Zoho Books estimate sync + comment analysis + AI classification.
-Runs every 5 minutes. The full analyzer lives **in this folder**
-(`service.ts` = `SalesCopilotService`); the heavy LLM work runs in GitHub
-Actions (`scripts/zoho-sent-runner.js`). The frontend Zoho Estimates board
-is this automation's dashboard.
+The full analyzer lives **in this folder** (`service.ts` =
+`SalesCopilotService`); the heavy LLM work runs in GitHub Actions
+(`scripts/zoho-sent-runner.js`, thin orchestrator over
+`scripts/zoho-sync/*` — see that folder's README). The frontend Zoho
+Estimates board is this automation's dashboard.
 
 Files:
 
@@ -20,7 +21,7 @@ Files:
 | Path | Where | Does what |
 |---|---|---|
 | In-worker (`service.ts runSync`) | Worker `/api/trigger` or local node-cron | Zoho fetch → fingerprint fast-path → metadata sync → closed-status sync → comment diff → **deterministic** classify only; non-matching estimates marked `__PENDING_AI__` (no LLM on the worker) |
-| GH runner (`scripts/zoho-sent-runner.js`, `cron-every-5min.yml` → `workflow_dispatch`) | GitHub Actions, unlimited CPU | Same fetch + fingerprint (via `/api/runner/zoho/fingerprint`) → metadata upsert (`/api/estimates/bulk-upsert`) → closed sync → comment refresh → deterministic classify → **Groq LLM fallback** (`openai/gpt-oss-120b`, HIGH reasoning, `GROQ_API_KEYS` rotation — omniroute avoided, ~12h outages) → lead-details extraction → watermark advance |
+| GH runner (`scripts/zoho-sent-runner.js` + `scripts/zoho-sync/*`, 15-min full sync / 5-min sales-orders tick → `workflow_dispatch`) | GitHub Actions, unlimited CPU | All-status 2-page fetch (`Status.All`, newest-modified first) → fingerprint (via `/api/runner/zoho/fingerprint`) → status transitions (`/api/runner/zoho/status`, credits closes) → metadata upsert (`/api/estimates/bulk-upsert`, status excluded) → gated comment refresh → **Groq LLM** (`openai/gpt-oss-120b`, HIGH reasoning, `GROQ_API_KEYS` rotation — omniroute avoided, ~12h outages) → lead-details extraction → watermark advance. Module map: `fetch.js` (Zoho reads) / `diff.js` (pure change detection) / `persist.js` (worker writes) / `analyze.js` (only AI spender) / `comments.js` (shared pure helpers). Full contract in `scripts/zoho-sync/README.md` |
 
 Both compute the **same fingerprint** and share the KV key
 `zoho:analyzer:state_fingerprint` (24h TTL), so they stay in sync.
@@ -34,9 +35,12 @@ active estimates.
    OAuth fallback → local `zoho_sent/sent_estimates.txt` (dev). Same parser
    (`parseCurlContent`: URL + `-H` headers + `organization_id`). Runner
    reads only the `zoho_sent/sent_estimates.txt` file.
-2. **Fetch estimates** (network): active `sent` list from Zoho Books.
-3. **Fetch comments** for every active estimate (network, concurrency 6,
-   before ANY DB read): `estimates/:id/comments?organization_id=`.
+2. **Fetch estimates** (network): all-status list (`Status.All`, 2 pages ×
+   200, newest-`last_modified_time` first — any status move lands in-window).
+   Drafts persist as metadata for visibility but never enter AI/comment work.
+3. **Fetch comments** for sent + ex-sent rows only (close-out coverage;
+   brand-new drafts get metadata only). Concurrency 6, before ANY DB read:
+   `estimates/:id/comments?organization_id=`.
 4. **Fingerprint fast-path**: deterministic JSON `{v:2, byEst:{estimateId:
    {m, ids}}}` (sorted keys → plain `===` compare), where `m` =
    `status|total|last_modified_time` and `ids` = the FULL sorted real-sales
@@ -48,18 +52,23 @@ active estimates.
    Legacy plain-string values auto-migrate (one transitional full pass).
 5. **Metadata sync** (always, before AI): single `findMany` of existing rows
    reused for change detection; field-wise compare
-   (number/customer/total/date/status) → `upsert` only changed rows.
-6. **Closed-status sync**: local `sent` rows missing from Zoho's active list
-   are re-fetched individually (`estimates/:id`); status updated on change;
-   their comments re-synced + classified (same deterministic/pending path,
-   `movingSlow='No'` for closed).
+   (number/customer/total/date) → `upsert` only changed rows. Status is
+   EXCLUDED — every flip flows through step 6 so wins are ledger-credited,
+   never applied silently.
+6. **Status transitions** (replaces the old per-estimate closed-status
+   detail loop): any move in any direction comes straight from the
+   All-status listing → `/api/runner/zoho/status` (accepted/confirmed
+   credit the telecalling close ledger, idempotent). DB-`sent` rows missing
+   from both pages get one detail check (deleted in Zoho → last-known
+   status kept).
 7. **Comment diff**: `comment.groupBy(estimateId, max commentId)` vs Zoho's
    max **real-sales** comment id → `hasNew` per estimate.
 8. **Change detection** per estimate: `force || statusChanged ||
    neverAnalyzed || modifiedSinceLastSync (last_modified_time >
    lastSyncTime) || hasNewComments`. Else skipped (keeps old `lastSyncTime`
    so downtime catch-up works on the next tick).
-9. **processEstimate** (parallel pool, concurrency 6, one retry after 5 min):
+9. **processEstimate** (runner pool: 2 workers + 2s pacing per estimate —
+   Groq quotas saturate above that — one retry round after 5s):
    upsert all comments (HTML cleaned: `<br>`/`</p>` → newline, tags
    stripped), collect real-sales timeline (latest-first by comment
    **timestamp** — `date_formatted` parsed as IST, `date` fallback, id
@@ -76,9 +85,13 @@ active estimates.
 11. Overlap guard: `isSyncRunning` — concurrent (manual force + cron) runs
     throw instead of double-spending AI credits.
 
-## Classification (deterministic-first, LLM fallback)
+## Classification (worker: deterministic-first; runner: LLM-only)
 
-Order per estimate: deterministic rules → LLM → pending marker.
+Order per estimate depends on the path. In-worker (`service.ts`):
+deterministic rules → `__PENDING_AI__` marker (no LLM on the worker).
+GH runner (`analyze.js`): Groq LLM directly for every work item — the old
+ported deterministic block was dead code (never called) and has been
+removed; do not re-add it here.
 
 - **Deterministic** (`modules/ai/deterministicClassifier.ts`, ported into
   the runner): 100% repeatable regexes over the latest comment —

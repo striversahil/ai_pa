@@ -1,5 +1,5 @@
 import React from "react";
-import { Agent, Enquiry, enquiryLabel } from "../mockData";
+import { Agent, Enquiry, enquiryLabel } from "../types";
 import { StatusBadge, PriorityBadge } from "./ui";
 
 interface EnquiryRowItemProps {

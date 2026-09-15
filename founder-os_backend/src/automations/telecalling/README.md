@@ -127,18 +127,18 @@ holder earned protection or exhausted it; null when snapshots unreadable
 
 ### Creator-first lead assignment
 
-Never-assigned estimates with no `createdBy` get sole-creator inference
-before best-fit routing: `inferEstimateCreator()` reads the **first 3
-comments** (date asc), skips Zoho system auto-logs via
-`isSystemGeneratedComment()` ("Quote sent", "status changed", "created
-for", etc.), and the first real comment whose author matches a roster
-name wins. `creatorMatches()` = normalised lowercase alphanumeric,
-exact/prefix either direction, or whitespace-token prefix, min 3 chars
-("samar" → "Samarjeet"; initials never match). Matches against both
-`name` and `neodoveUserName`. Winner gets `Estimate.createdBy` set and
-the deal. Candidate pool for matching = all non-deleted, present
-telecallers — a lead-gen (non-specialist) creator can still claim their
-own lead, but an **absent** creator never receives claims while away.
+`Estimate.createdBy` ("Lead of" / "By") comes ENTIRELY from the mapping B2B
+enquiry (`Enquiry.estNumber = Estimate.estimateNumber` → `assignedAgentId`).
+Sync points (enquiry is the ONLY writer): enquiry save
+(`modules/enquiries/estimate-link.ts:syncEstimateCreatorFromEnquiry`), the
+B2B form Check & Assign button (`claimEstimateForAgent`: free → assign +
+stamp creator; held → report holder only), and the engine itself (re-stamps
+`createdBy` from the enquiry map before routing).
+
+There is NO comment-inference fallback — first-Zoho-comment creator
+inference was removed outright (founder rule). Unmapped estimates show no
+By and route best-fit. Historical comment-sourced values were wiped
+one-time via D1 (135 rows, Sep 2026); only enquiry-mapped rows kept theirs.
 
 ## Risk model (live pre-warning)
 

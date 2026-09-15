@@ -1,763 +1,107 @@
 #!/usr/bin/env node
 
 /**
- * zoho-sent-runner.js — full Zoho sent-estimate sync + AI analysis ON the GH
- * Actions runner (unlimited CPU), replacing the old worker trigger + the
- * separate zoho-ai-classify.js step.
+ * zoho-sent-runner.js — Zoho estimate sync + AI analysis on the GH Actions
+ * runner (unlimited CPU). Thin orchestrator over scripts/zoho-sync/*:
+ *
+ *   fetch.js   — Zoho reads (All-status 2-page list + comments + roster + sales orders)
+ *   diff.js    — pure change detection (fingerprint, metadata, transitions, work items)
+ *   persist.js — worker writes (bulk-upsert, status, comments, classification)
+ *   analyze.js — LLM classification + lead-details capture (AI spend, gated)
+ *   comments.js — shared pure comment helpers
  *
  * Flow:
- *  1. Fetch active sent estimates from Zoho Books API (runner-side, direct).
- *  2. Fetch current DB state from the worker (estimates + classifications +
- *     max comment id per estimate).
- *  3. Metadata upsert → POST /api/estimates/bulk-upsert.
- *  4. Closed-status sync for estimates no longer "sent" in Zoho.
- *  5. Comment refresh for every active estimate (parallel, small concurrency).
- *  6. Change detection → deterministic classify → LLM fallback → POST results.
- *  7. Advance the last-complete-sync watermark when the pass fully succeeds.
+ *  1. Sales-orders-today snapshot (every tick — independent of estimates).
+ *  2. Fetch all-status estimates (2 pages, newest-modified first) from Zoho.
+ *  3. Fetch DB state; fingerprint fast path (zero DB writes when unchanged).
+ *  4. Comments for sent/transitioned rows only (drafts never burn Zoho reads).
+ *  5. Status transitions → /api/runner/zoho/status (credits conversion closes).
+ *  6. Metadata convergence → /api/estimates/bulk-upsert (status excluded —
+ *     flips must flow through step 5 or wins go uncredited).
+ *  7. Vanished-row fallback: DB-sent rows missing from both pages get one
+ *     detail check (deleted in Zoho → last-known status kept).
+ *  8. AI classification + lead-details (sent + just-transitioned only).
+ *  9. Watermark + fingerprint on a fully-complete pass.
  *
- * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (comma-separated, rotated,
- * model openai/gpt-oss-120b with HIGH reasoning — the omniroute gateway is
- * avoided because it goes down ~every 12 h). Zoho credentials are inferred
- * automatically from the curl export at zoho_sent/sent_estimates.txt.
- * SO_ONLY=1: lightweight 5-min tick — refreshes ONLY sales-orders-today
- * (no GROQ_API_KEYS needed) and exits before the estimates fetch.
+ * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (comma-separated, rotated).
+ * Zoho credentials are inferred from the curl export at
+ * zoho_sent/sent_estimates.txt (list scope derived programmatically).
+ * SO_ONLY=1: manual lightweight tick — sales-orders-today only, then exit.
+ * (The scheduled cron-every-5min.yml job runs the FULL sync; no separate
+ * SO_ONLY job is needed since the full sync refreshes sales-orders first.)
+ * ZOHO_FORCE=1: reprocess every eligible row.
  */
 
-const { requireEnv, workerRequest, groqJson } = require('./runner-lib');
-const fs = require('fs');
-const path = require('path');
+const fetch = require('./zoho-sync/fetch');
+const diff = require('./zoho-sync/diff');
+const persist = require('./zoho-sync/persist');
+const analyze = require('./zoho-sync/analyze');
 
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-// SO_ONLY=1 (5-min sales-orders-today tick) needs no LLM keys.
+// SO_ONLY=1 (manual sales-orders-today tick) needs no LLM keys.
 if (process.env.SO_ONLY !== '1' && !process.env.GROQ_API_KEYS) missing.push('GROQ_API_KEYS');
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
   process.exit(1);
 }
 
-/**
- * Parses the Zoho Books credentials from the curl export file
- * (zoho_sent/sent_estimates.txt). Returns { url, headers, orgId }.
- */
-function parseCurlFile() {
-  const candidates = [
-    path.join(__dirname, '..', 'zoho_sent', 'sent_estimates.txt'),
-    path.join(process.cwd(), 'zoho_sent', 'sent_estimates.txt'),
-    '/app/zoho_sent/sent_estimates.txt',
-  ];
-  let curlFile = candidates.find((p) => fs.existsSync(p));
-  if (!curlFile) throw new Error(`Zoho credentials file not found (tried: ${candidates.join(', ')})`);
-
-  const content = fs.readFileSync(curlFile, 'utf-8');
-  const urlMatch = content.match(/curl\s+'([^']+)'/) || content.match(/curl\s+"([^"]+)"/) || content.match(/curl\s+([^\s\\]+)/);
-  if (!urlMatch) throw new Error('Could not extract URL from sent_estimates.txt');
-  const url = urlMatch[1];
-
-  const headers = {};
-  const headerMatches = content.matchAll(/-H\s+'([^:]+):\s*(.*?)'(?=\s|\\|$)/g);
-  for (const m of headerMatches) headers[m[1].trim()] = m[2].trim().replace(/\\$/, '').trim();
-  if (Object.keys(headers).length === 0) {
-    const double = content.matchAll(/-H\s+"([^:]+):\s*(.*?)"(?=\s|\\|$)/g);
-    for (const m of double) headers[m[1].trim()] = m[2].trim().replace(/\\$/, '').trim();
-  }
-
-  let orgId = '';
-  const orgMatch = url.match(/organization_id=([0-9]+)/);
-  if (orgMatch) orgId = orgMatch[1];
-
-  if (headers['Accept-Encoding']) headers['Accept-Encoding'] = 'gzip, deflate';
-  return { url, headers, orgId };
-}
-
-const zohoCreds = parseCurlFile();
-const ZOHO_BOOKS_SENT_URL = zohoCreds.url;
-const ZOHO_HEADERS = zohoCreds.headers;
-const orgId = zohoCreds.orgId;
-
-// Lead-details extraction from Zoho comments via robust Groq (groqJson in
-// runner-lib — openai/gpt-oss-120b, HIGH reasoning, JSON mode, random key
-// rotation + 5 attempts). Extracts the full lead block including email and the
-// "Lead generated by" agent (backfills Estimate.createdBy).
-async function extractLeadDetails(input) {
-  const prompt = `You are a B2B industrial-sales data extractor. Sales agents write a lead-details block in the first comments of an estimate. From the text below extract ONLY these fields and return STRICT JSON (no markdown):
-{
-  "enquiryNumber": "enquiry/inquiry number as written (e.g. 'Inquiry 1 - 7 SEP'), or null",
-  "sourceLead": "lead source (e.g. 'company data', 'IndiaMART', 'reference'), or null",
-  "location": "customer location/city/state (e.g. 'Haryana'), or null",
-  "company": "client company name, or null",
-  "contactName": "contact person / POC name, or null",
-  "contactPhone": "contact mobile/phone number, or null",
-  "contactEmail": "contact email address, or null",
-  "leadGeneratedBy": "the SALES AGENT (company employee) who generated/owns this lead — from 'Lead of:', 'Lead generated by:', 'Generated by:', or the agent's name signed at the end of the comment. This is NOT the customer. Return the name as written, or null"
-}
-Rules:
-- Match labels loosely: 'Enquiry Number', 'Inquiry No', 'Source Lead', 'Lead Source', 'Company Name', 'Contact Person', 'POC', 'Mobile Number', 'Email', 'Location'.
-- 'Lead of' / 'Lead generated by' is the owning AGENT (company employee) → leadGeneratedBy. The customer's name goes in contactName.
-- If company is already provided and correct keep it; otherwise extract.
-- NEVER rewrite/summarize the text. Return JSON only.
-Company (given): ${input.company || '?'}
-Text:
-"""${(input.text || '').slice(0, 3000)}"""`;
-  const parsed = await groqJson(
-    'Extract structured sales-enquiry fields as JSON. Never alter client wording or invent values.',
-    prompt,
-    { temperature: 0, reasoningEffort: 'high' },
-  );
-  return {
-    enquiryNumber: parsed.enquiryNumber ? String(parsed.enquiryNumber) : null,
-    sourceLead: parsed.sourceLead ? String(parsed.sourceLead) : null,
-    location: parsed.location ? String(parsed.location) : null,
-    contactName: parsed.contactName ? String(parsed.contactName) : null,
-    contactPhone: parsed.contactPhone ? String(parsed.contactPhone) : null,
-    contactEmail: parsed.contactEmail ? String(parsed.contactEmail) : null,
-    leadGeneratedBy: parsed.leadGeneratedBy ? String(parsed.leadGeneratedBy) : null,
-  };
-}
-
-// ── Deterministic classifier (ported from deterministicClassifier.ts) ────────
-const YES_COMMIT = /\b(will|going to|will be|shall)\b.{0,40}\b(confirm|finalize|finalise|place( the)? order|send( the)? po|send( the)? p\.o\.?|give( the)? order|share( the)? po|update us|update me|revert)\b/i;
-const CONFIRMED = /\b(order (is|has been|was) (final|confirmed|placed)|confirmed( the)? order|order final|po received|po (is )?received|placed( the)? order|order placed|final(iz|is)ed the order)\b/i;
-const ACTIVE_ORDER = /\b(is|will be|he is|she is|they are)\s+ordering( for| the)?\b|\border(ing|ed)? (in )?(process|progress)\b|\bin the process of ordering\b/i;
-const FIRM_COMMIT = /\b(will|going to)\b.{0,30}\b(confirm|finalize|finalise|place|send (the )?po|give|decide|share|visit|come|reach|check samples)\b/i;
-const INTERNAL_HANDOFF = /\b(sir|ma'am|madam)\s+(will|is going to|will be)\s+(deal|handle|take (care|over)|manage)\b/i;
-const UNDER_DISCUSSION = /\b(under discussion|negotiat|discuss(ing)? with (his|their|her) (management|partner|team|owner|boss)|price (not )?match(ing)?|match( the|ing)? (the )?price|rates are not matching|will match)\b/i;
-const FUTURE_DATE = /(\b\d{1,2}(st|nd|rd|th)?(\s+of)?\s+(aug|sep|sept|oct|nov|dec|jan|feb|mar|apr|may|jun|jul|august|september|october|november|december|january|february|march|april|june|july)\b)|(\b\d{1,2}-\d{1,2}-\d{4}\b)|(\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)|(\b(today|tomorrow)\b)|(\b(after|in|within)\s+\d{1,2}(\s|-)?(days?|weeks?)\b)|(\bnext\s+(week|month)\b)|(\bafter\s+(\d{1,2}(st|nd|rd|th)?\b))/i;
-const VAGUE_REVERT = /\b(will|wll|willl|wil|going to|have to)\b.{0,50}\b(check|see|look|let( (me|us))? know|intimate|inform|say|update|revert|confirm|take some time|not (have|has) (checked|seen)|hasn'?t (checked|seen)|get back|come back)\b/i;
-const NOT_ANSWERING = /\b(not answering|not answer|unable to connect|unreachable|out of reach|switched off|couldn'?t reach|not connected|not conne+cted|disconnect(ed|ing)?|didn'?t pick|did not pick|busy( on another call)?|on another call|call(ed)? back to later|call back later|no answer|not reachable|incoming service is not available|service is not available)\b/i;
-const REJECTION = /\b(not require|not needed|no requirement|doesn'?t need|do not need|declined|decline|price inquiry|price enquiry|just (a )?price)\b/i;
-const BARE_ACTION = /\b(called|call(ed)? him|message(ed)? sent|whatsapp sent|whatsapp message sent|left (a )?message|sent (the )?quotation|quotation (was )?sent|quote (was )?sent|email(ed)? sent|shared (the )?quotation)\b/i;
-const QUOTATION_ONLY = /\b(enquiry|enq\.?|quote (created|updated)|rates?\s+pending|product (spec|details?)|specifications?)\b/i;
-const SPEC_BLOCK = /\b(thickness|width|length|dia|diameter|ply|pc(s)?|meter|metre|feet|inch(es)?|mm|airlock|belt|gear|pulley|bucket|grade|application)\b[\s\S]{0,200}\b(thickness|width|length|dia|diameter|ply|pc(s)?|meter|metre|feet|inch(es)?|mm|airlock|belt|gear|pulley|bucket)\b/i;
-const PURCHASED_ELSEWHERE = /\b(purchased? (from|at) (local )?(shop|market)|buy(ing)? from (local )?(shop|market)|already (bought|purchased) (from )?(elsewhere|other))\b/i;
-const SYSTEM_AUTO = /\b(quote (marked as sent|created|updated|sent)|amount changed from|converted to sales order|quote emailed to|quote viewed|viewed the quote)\b/i;
-
-const WEEKDAYS = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
-
-function parseFutureDate(comment, today) {
-  const lower = comment.toLowerCase();
-  const dayMatch = /\b(\d{1,2})(st|nd|rd|th)?(\s+of)?\s+(aug|sep|sept|oct|nov|dec|jan|feb|mar|apr|may|jun|jul)/.exec(lower);
-  if (dayMatch) {
-    const monthNames = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
-    const d = new Date(today.getFullYear(), monthNames[dayMatch[4]], parseInt(dayMatch[1], 10));
-    if (d.getMonth() !== monthNames[dayMatch[4]]) return null;
-    return d;
-  }
-  const isoMatch = /(\d{1,2})-(\d{1,2})-(\d{4})/.exec(lower);
-  if (isoMatch) return new Date(parseInt(isoMatch[3], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[1], 10));
-  const weekdayMatch = /(?:on\s+|this\s+|next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/.exec(lower);
-  if (weekdayMatch) {
-    const target = WEEKDAYS[weekdayMatch[1]];
-    const nowDay = today.getDay();
-    let diff = (target - nowDay + 7) % 7;
-    if (/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/.test(lower)) diff += 7;
-    if (diff === 0) diff = 7;
-    const d = new Date(today);
-    d.setDate(d.getDate() + diff);
-    return d;
-  }
-  const relDays = /(?:after|in|within)\s+(\d{1,2})\s*(days?|weeks?)/.exec(lower);
-  if (relDays) {
-    const n = parseInt(relDays[1], 10);
-    const mult = relDays[2].startsWith('week') ? 7 : 1;
-    const d = new Date(today);
-    d.setDate(d.getDate() + n * mult);
-    return d;
-  }
-  if (/\btoday\b/.test(lower)) return new Date(today);
-  if (/\btomorrow\b/.test(lower)) { const d = new Date(today); d.setDate(d.getDate() + 1); return d; }
-  return null;
-}
-
-function hasPassedDueDate(comment, estimateDate, today) {
-  const created = new Date(estimateDate);
-  const estOlderThan3Days = today.getTime() - created.getTime() > 3 * 24 * 60 * 60 * 1000;
-  const parsed = parseFutureDate(comment, today);
-  const startOfToday = new Date(today);
-  startOfToday.setHours(0, 0, 0, 0);
-  if (parsed && parsed.getTime() < startOfToday.getTime()) return true;
-  if (!FUTURE_DATE.test(comment) && estOlderThan3Days) return true;
-  return false;
-}
-
-function classifyDeterministic(latestComment, estimateDate) {
-  const comment = (latestComment || '').trim();
-  const today = new Date();
-  if (!comment) return null;
-  if (SYSTEM_AUTO.test(comment)) {
-    return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: system-generated comment (not a sales agent note).` };
-  }
-  if (CONFIRMED.test(comment)) {
-    return { meaningful_update: true, not_answering: false, under_discussion: false, confirm: true, confirm_date: today.toISOString().split('T')[0], reasoning: `Deterministic rule: comment indicates order confirmation ("${comment.slice(0, 80)}").` };
-  }
-  if (YES_COMMIT.test(comment) || FIRM_COMMIT.test(comment) || ACTIVE_ORDER.test(comment)) {
-    return { meaningful_update: true, not_answering: false, under_discussion: UNDER_DISCUSSION.test(comment), confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: customer made a firm commitment ("${comment.slice(0, 80)}").` };
-  }
-  // A bare retry date after failing to reach the customer is NOT progress —
-  // not-answering takes precedence over the future-date rule (the agent's own
-  // retry plan names a date but records no customer contact).
-  if (FUTURE_DATE.test(comment) && !NOT_ANSWERING.test(comment)) {
-    const passed = hasPassedDueDate(comment, estimateDate, today);
-    if (!passed) return { meaningful_update: true, not_answering: false, under_discussion: UNDER_DISCUSSION.test(comment), confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: comment sets a specific future follow-up date ("${comment.slice(0, 80)}").` };
-    return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: follow-up date mentioned has already passed ("${comment.slice(0, 80)}").` };
-  }
-  if (NOT_ANSWERING.test(comment)) return { meaningful_update: false, not_answering: true, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: comment shows the customer did not answer / was unreachable ("${comment.slice(0, 80)}").` };
-  if (REJECTION.test(comment)) return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: customer declined or stated no requirement ("${comment.slice(0, 80)}").` };
-  if (INTERNAL_HANDOFF.test(comment)) return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: internal handoff note ("${comment.slice(0, 80)}").` };
-  if (VAGUE_REVERT.test(comment) && !FUTURE_DATE.test(comment)) return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: vague promise to revert with no follow-up date ("${comment.slice(0, 80)}").` };
-  if (BARE_ACTION.test(comment)) return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: comment records an action with no outcome or next step ("${comment.slice(0, 80)}").` };
-  if (QUOTATION_ONLY.test(comment) || SPEC_BLOCK.test(comment)) return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: quotation-only / spec / enquiry entry ("${comment.slice(0, 80)}").` };
-  if (PURCHASED_ELSEWHERE.test(comment)) return { meaningful_update: false, not_answering: false, under_discussion: false, confirm: false, confirm_date: 'None', reasoning: `Deterministic rule: customer purchased from another source ("${comment.slice(0, 80)}").` };
-  return null;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function cleanHtml(rawHtml) {
-  if (!rawHtml) return '';
-  let text = rawHtml.replace(/<\/p>|<br\s*\/?>/gi, '\n');
-  text = text.replace(/<[^>]+>/g, '');
-  text = text.replace(/\n\s*\n/g, '\n');
-  return text.trim();
-}
-
-const SYSTEM_PHRASES = [
-  'estimate has been created', 'estimate has been sent', 'estimate sent', 'email sent to',
-  'mail sent to', 'status changed from', 'quote created', 'quote sent', 'quote updated',
-  'quote marked as', 'quote emailed to', 'quote converted', 'quote viewed', 'viewed the quote',
-  'amount changed from', 'sent status', 'created by', 'updated by', 'viewed in mail',
-  'client viewed', 'accepted by', 'declined by', 'payment received', 'has been printed',
-  'marked as sent', 'marked as declined', 'created for',
-];
-
-function isSystemGeneratedComment(description, commentedBy) {
-  if ((commentedBy || '').toLowerCase().includes('system')) return true;
-  const desc = (description || '').toLowerCase();
-  for (const phrase of SYSTEM_PHRASES) if (desc.includes(phrase)) return true;
-  return false;
-}
-
-function isRealSalesComment(desc, commentedBy, commentType) {
-  if (!desc) return false;
-  if (commentType !== 'internal') return false;
-  if (isSystemGeneratedComment(desc, commentedBy)) return false;
-  return true;
-}
-
-// ── Comment timestamp ordering ─────────────────────────────────────────────
-// Zoho comment_ids are NOT chronological (observed: 10/09 comments with SMALLER
-// ids than 09/09 comments on the same estimate, e.g. EST-023377) — so "latest"
-// must come from the timestamp, never from id order. date_formatted
-// ("DD/MM/YYYY hh:mm AM", IST) carries time-of-day; the plain `date` is
-// date-only (midnight UTC would read ~12h stale and can't order same-day
-// comments). Id order is only the final tiebreak.
-function commentTsMs(c) {
-  const fmt = c.date_formatted ?? c.dateFormatted ?? c.dateFmt ?? null;
-  if (fmt) {
-    const m = String(fmt).match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-    if (m) {
-      let h = parseInt(m[4], 10);
-      if (m[6].toUpperCase() === 'PM' && h !== 12) h += 12;
-      if (m[6].toUpperCase() === 'AM' && h === 12) h = 0;
-      const t = Date.parse(`${m[3]}-${m[2]}-${m[1]}T${String(h).padStart(2, '0')}:${m[5]}:00+05:30`);
-      if (!Number.isNaN(t)) return t;
-    }
-  }
-  if (c.date) {
-    const t = Date.parse(String(c.date));
-    if (!Number.isNaN(t)) return t;
-  }
-  return null;
-}
-function commentIdStr(c) {
-  return String(c.id ?? c.comment_id ?? '');
-}
-// Newest first (badge "latest" + journey history order).
-function latestFirst(a, b) {
-  const ta = commentTsMs(a);
-  const tb = commentTsMs(b);
-  if (ta !== null && tb !== null && ta !== tb) return tb - ta;
-  if (ta !== null && tb === null) return -1;
-  if (ta === null && tb !== null) return 1;
-  return commentIdStr(b).localeCompare(commentIdStr(a));
-}
-// Oldest first (lead-details capture reads the FIRST real comments).
-function oldestFirst(a, b) {
-  const ta = commentTsMs(a);
-  const tb = commentTsMs(b);
-  if (ta !== null && tb !== null && ta !== tb) return ta - tb;
-  if (ta !== null && tb === null) return -1;
-  if (ta === null && tb !== null) return 1;
-  return commentIdStr(a).localeCompare(commentIdStr(b));
-}
-
-/**
- * Id-order-proof fingerprint of the Zoho payload the runner just fetched.
- *
- * Zoho comment_ids are NOT chronological (observed: newer comments with
- * SMALLER ids, e.g. EST-023207/EST-023377), so a max-id fingerprint is blind
- * to newcomers that sort below the current max — normal ticks would never
- * reprocess them. Instead the fingerprint is a deterministic JSON string
- * {v:2, byEst:{estimateId:[sorted real comment ids]}} (sorted keys → plain
- * === compares). Any added comment, whatever its id, changes the string.
- * byEst doubles as the per-estimate baseline for exact newcomer detection
- * (zero DB reads). Legacy plain-string values fail the shape check and are
- * treated as a mismatch (one transitional full pass, max-id fallback).
- */
-function buildFingerprint(estimates, fetchedByEst) {
-  const byEst = {};
-  for (const est of [...estimates].sort((a, b) => String(a.estimate_id).localeCompare(String(b.estimate_id)))) {
-    const ids = [];
-    const bucket = fetchedByEst.get(est.estimate_id);
-    for (const c of bucket?.comments || []) {
-      if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
-      ids.push(String(c.comment_id));
-    }
-    // m = estimate metadata (status/total/lastmod): a metadata-only change
-    // must also break the fingerprint even when no comment arrived.
-    byEst[est.estimate_id] = {
-      m: [est.status, est.total, est.last_modified_time].join('|'),
-      ids: [...new Set(ids)].sort(),
-    };
-  }
-  const fp = JSON.stringify({ v: 2, byEst });
-  const map = new Map(Object.entries(byEst).map(([k, v]) => [k, new Set(v.ids)]));
-  return { fp, byEst: map };
-}
-
-/** Parse a stored fingerprint back into per-estimate id sets. Null when the
- *  value is legacy-shaped or corrupt → caller falls back to max-id compare. */
-function parseFingerprint(raw) {
+async function syncSalesOrders() {
   try {
-    if (typeof raw !== 'string' || !raw.startsWith('{')) return null;
-    const obj = JSON.parse(raw);
-    if (!obj || obj.v !== 2 || !obj.byEst || typeof obj.byEst !== 'object') return null;
-    return new Map(Object.entries(obj.byEst).map(([k, v]) => [k, new Set((v?.ids || []).map(String))]));
-  } catch {
-    return null;
-  }
-}
-
-async function zohoFetch(url) {
-  const res = await fetch(url, { headers: ZOHO_HEADERS });
-  if (!res.ok) throw new Error(`Zoho ${res.status} for ${url}`);
-  return res.json();
-}
-
-// ── Prompts (ported from zoho-ai-classify.js) ────────────────────────────────
-
-/**
- * Fetches the unique NeoDove sales-agent roster so the LLM can attribute each
- * estimate's latest comment to an agent. Order: today's live report →
- * yesterday's snapshot → NEODOVE_AGENT_NAMES env → empty roster.
- */
-async function fetchAgentRoster() {
-  // Env names are ADDITIVE: NeoDove call data misses agents who work Zoho-only
-  // (e.g. Muskan) — keep them listed in NEODOVE_AGENT_NAMES.
-  const envNames = (process.env.NEODOVE_AGENT_NAMES || '')
-    .split(',').map((s) => s.trim()).filter(Boolean);
-  const fromReport = (rows) => [...new Set((rows || [])
-    .map((r) => (r && typeof r.userName === 'string' ? r.userName.trim() : ''))
-    .filter(Boolean))];
-  const dynamicNames = [];
-  try {
-    // Defaults to the LATEST stored day when no date is passed.
-    // Response shape: { meta, agents: [...] } (older builds exposed .data).
-    const data = await workerRequest('/api/automations/neodove-telecaller-report/data');
-    dynamicNames.push(...fromReport(data?.agents ?? data?.data));
-  } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch failed: ${err.message}`); }
-  if (!dynamicNames.length) {
-    try {
-      // No date param → endpoint serves the latest stored day automatically,
-      // so a missing yesterday-snapshot can't leave us rosterless.
-      const data = await workerRequest(`/api/neodove/report`);
-      dynamicNames.push(...fromReport(data?.rows));
-    } catch (err) { console.warn(`zoho-sent-runner: neodove roster fetch (latest) failed: ${err.message}`); }
-  }
-  return [...new Set([...dynamicNames, ...envNames])];
-}
-
-function badgePrompt(agentRoster) {
-  const rosterLine = agentRoster.length
-    ? `Sales Agent Roster (the company's callers): ${agentRoster.join(', ')}.`
-    : `No sales agent roster is available right now.`;
-  return `You are a strict manager reviewing the LATEST sales comment on a work estimate.
-Today's Date is: ${new Date().toISOString().split('T')[0]} (refer to this to check if the comment is older than 2 days).
-
-You will receive exactly ONE comment, which is the most recent comment on the estimate.
-The current status of the estimate is determined SOLELY by this single latest comment.
-Do NOT consider any older comments — you do not have access to them.
-
-${rosterLine}
-Sales agents are instructed to write their own name next to the comments they leave on an
-estimate. Identify which sales agent from the roster wrote THIS comment:
-- Match the name even with minor spelling/case variations (e.g. "deepak" → "Deepak").
-- Return the name EXACTLY as written in the roster.
-- If no roster name appears in the comment (or the roster is unavailable), output "Unassigned".
-- Never invent a name that is not in the roster.
-
-Evaluate this single latest comment and output the following keys:
-1. meaningful_update: true ONLY if THIS comment records a substantive customer outcome or a CUSTOMER-committed next step — price agreed, order/PO received or confirmed, a decision given, the customer says they will confirm/place the order, or a sample/quote requested by the customer. Anything less is false.
-2. Chip Mapping keys (true or false):
-   - not_answering: true if THIS comment states the customer did not answer, is not replying, or call was not picked up. Else false.
-   - under_discussion: true if THIS comment shows active discussions are ongoing (e.g. price negotiation, technical configuration review, requirement clarification, or visiting plans being finalized). Else false.
-   - confirm: true if THIS comment shows the order/estimate has been confirmed, final verbal approval is given, payment details are being shared, or purchase order is expected. Else false.
-   - confirm_date: The date (YYYY-MM-DD format) of THIS comment if 'confirm' is true. If 'confirm' is false, output "None".
-3. reasoning: A short sentence explaining the assessment, quoting THIS single comment, and why the flags were set.
-4. sales_agent: The roster name of the agent who wrote THIS comment, or "Unassigned".
-
-Strict Decision Rules:
-- Base EVERY chip decision ONLY on the single latest comment provided. Do not infer anything from earlier history.
-- Mark meaningful_update as false if the latest comment is older than 2 days.
-- "Shopping around" is NOT progress: when THIS comment only shows the customer comparing vendors / taking rates / "will confirm in N days" with no firm order, PO, decision, or agreed price, meaningful_update MUST be false. under_discussion may still be true while the negotiation is live.
-- A bare deferral is NOT progress: when THIS comment only moves the call to another date/day/time ("call on Monday", "call after 2 days", "will follow up") with no customer substance behind it, meaningful_update MUST be false — even when it names a date. A follow-up date/day/time counts toward meaningful_update ONLY when the CUSTOMER asked for or agreed to it (e.g. "customer asked to call back Friday", "he said call after 15th", "customer will revert tomorrow") AND the comment carries a substantive customer response beyond the date itself. A date the AGENT set alone is a retry reminder, not progress.
-- meaningful_update MUST be false when THIS comment reports failed contact with no customer response (not answering / not connected / unreachable / switched off / call not picked up / busy) — even if it names a retry date. Set not_answering=true in that case.
-- meaningful_update MUST be false when the customer puts the deal on HOLD or tells the agent to stop calling ("hold for now", "do not call again", "stop calling", "call after 1 week" said with annoyance) — a stalled deal with negative sentiment is not progress, even with a timeline. not_answering stays false if the customer was actually reached; under_discussion stays false (a unilateral hold is not an active negotiation).
-- If the latest comment only records an action (calling, messaging, sending a quotation) without presenting any outcome, next step, or decision, meaningful_update must be false.
-- If meaningful_update is true, then not_answering must be false. If meaningful_update is false, not_answering may be true or false as the comment dictates. under_discussion can be true regardless.
-
-Response Format:
-Return only a valid JSON object matching the JSON structure:
-{
-  "meaningful_update": false,
-  "not_answering": false,
-  "under_discussion": false,
-  "confirm": false,
-  "confirm_date": "None",
-  "sales_agent": "Unassigned",
-  "reasoning": ""
-}
-Do not include explanations or markdown outside the JSON object.`;
-}
-
-function journeyPrompt() {
-  return `You are a sales operations analyst summarizing the full comment history (timeline) of a work estimate.
-Today's Date is: ${new Date().toISOString().split('T')[0]}.
-
-You will receive the complete chronological history of sales comments, ordered from NEWEST (top) to OLDEST (bottom).
-Use the ENTIRE history to understand the conversation journey.
-
-Your ONLY job is to produce:
-1. summary: A concise summary of the estimate's journey — the main crux only, in at most 2 short sentences, maximum 250 characters total. Capture the current stage and where things stand (e.g., what was quoted, key customer response, latest follow-up date, whether it is confirmed/pending/negotiating). Do NOT list every touchpoint or comment; do NOT include critical judgments like "follow-up is missing", "what was not done", or "deadline passed". Keep it tight and to the point.
-2. intent_score: An integer between 1 and 10 measuring the TOTAL amount of effort the sales team has invested in converting the enquiry across the entire timeline.
-   Consider these guidelines:
-   - 1–2: Minimal effort; little or no follow-up.
-   - 3–4: Basic engagement; initial communication only.
-   - 5–6: Moderate effort; regular follow-ups and quotation shared.
-   - 7–8: High effort; multiple touchpoints, active negotiation, and strong customer engagement.
-   - 9–10: Exceptional effort; persistent follow-ups, proactive problem-solving, decision-maker engagement, and every reasonable action taken.
-
-Response Format:
-Return only a valid JSON object matching the JSON structure:
-{
-  "summary": "",
-  "intent_score": 0
-}
-Do not include explanations or markdown outside the JSON object.`;
-}
-
-async function classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster) {
-  let badgeResult;
-  try {
-    badgeResult = await groqJson(
-      badgePrompt(agentRoster || []),
-      `Customer Name: ${custName}\nTotal Amount: ${total}\nEstimate Created Date: ${dateVal}\n\nLatest Comment:\n${latestComment}`,
-      { temperature: 0, reasoningEffort: 'high' },
-    );
-  } catch (err) {
-    throw new Error(`Groq badge classification failed: ${err.message}`);
-  }
-  let journeyResult;
-  try {
-    journeyResult = commentHistory
-      ? await groqJson(journeyPrompt(), `Comment History:\n${commentHistory}`, { temperature: 0, reasoningEffort: 'high' })
-      : { summary: 'No sales agent comment found.', intent_score: 2 };
-  } catch (err) {
-    throw new Error(`Groq journey summary failed: ${err.message}`);
-  }
-  return { badgeResult, journeyResult };
-}
-
-function finalConfirm(badgeResult) {
-  let finalConfirm = badgeResult.confirm ? 'Yes' : 'No';
-  if (badgeResult.confirm) {
-    const confirmDateStr = badgeResult.confirm_date;
-    if (confirmDateStr && confirmDateStr !== 'None') {
-      try {
-        const confirmDate = new Date(confirmDateStr);
-        const diffDays = Math.floor((Date.now() - confirmDate.getTime()) / (24 * 60 * 60 * 1000));
-        if (diffDays > 2) finalConfirm = 'No';
-      } catch { finalConfirm = 'No'; }
-    } else {
-      finalConfirm = 'No';
-    }
-  }
-  return finalConfirm;
-}
-
-function defaultClassification(dateVal, movingSlowOverride = null) {
-  const createdDate = new Date(dateVal);
-  const diffDays = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000));
-  const isOlderThan5Days = diffDays > 5;
-  return {
-    meaningfulUpdate: false,
-    notAnswering: 'No',
-    movingSlow: movingSlowOverride ?? (isOlderThan5Days ? 'Yes' : 'No'),
-    underDiscussion: 'No',
-    confirm: 'No',
-    intentScore: 2,
-    reasoning: 'No sales agent comment found.',
-    summary: 'No sales agent comment found.',
-    salesAgent: 'Unassigned',
-  };
-}
-
-function resolveSalesAgent(badgeResult, agentRoster, commentText = '') {
-  if (!agentRoster || !agentRoster.length) return 'Unassigned';
-  const lower = (s) => String(s || '').toLowerCase();
-  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  // A roster name is only "present" in the text if the text contains the full
-  // name (word-bounded) or a unique roster prefix of it. Used to verify both
-  // LLM answers and safety-net scans against hallucinations.
-  const presentInText = (name) => {
-    if (!commentText) return false;
-    if (new RegExp(`\\b${esc(name)}\\b`, 'i').test(commentText)) return true;
-    const ln = lower(name);
-    for (const w of new Set(lower(commentText).match(/[a-z]{4,}/g) || [])) {
-      if (ln !== w && ln.startsWith(w)) {
-        const rivals = agentRoster.filter((n) => lower(n).startsWith(w));
-        if (rivals.length === 1) return true; // unique short form
-      }
-    }
-    return false;
-  };
-
-  // 1. LLM answer → exact roster name, else unambiguous prefix — BUT only if
-  //    some form of that name actually appears in the comment. Guards against
-  //    the model guessing an unsigned comment (e.g. EST-023091 → "Muskan").
-  const raw = lower(String(badgeResult.sales_agent || '').trim());
-  if (raw && !/^unassigned$/.test(raw)) {
-    const exact = agentRoster.find((n) => lower(n) === raw);
-    if (exact && presentInText(exact)) return exact;
-    const pref = agentRoster.find((n) => lower(n).startsWith(raw) && raw.length >= 4);
-    if (pref && presentInText(pref)) return pref;
-  }
-
-  // 2. Safety net: scan the raw comment — the LLM sometimes overlooks signatures.
-  if (!commentText) return 'Unassigned';
-  //    a) full roster name present word-bounded anywhere in the comment.
-  const full = agentRoster.find((n) => new RegExp(`\\b${esc(n)}\\b`, 'i').test(commentText));
-  if (full) return full;
-  //    b) signed short form: a standalone word that uniquely prefixes exactly
-  //       one roster name (min 4 chars; ambiguous prefixes like "deepa" for
-  //       Deepak/Deepanshu are rejected).
-  const words = [...new Set(lower(commentText).match(/[a-z]{4,}/g) || [])];
-  for (const w of words) {
-    const matches = agentRoster.filter((n) => {
-      const ln = lower(n);
-      return ln !== w && ln.startsWith(w);
-    });
-    if (matches.length === 1) return matches[0];
-  }
-  return 'Unassigned';
-}
-
-function buildClassification(badgeResult, journeyResult, dateVal, movingSlowOverride = null, agentRoster = [], latestComment = '') {
-  const createdDate = new Date(dateVal);
-  const isOlderThan5Days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) > 5;
-
-  return {
-    meaningfulUpdate: !!badgeResult.meaningful_update,
-    notAnswering: badgeResult.not_answering ? 'Yes' : 'No',
-    movingSlow: movingSlowOverride ?? (isOlderThan5Days ? 'Yes' : 'No'),
-    underDiscussion: badgeResult.under_discussion ? 'Yes' : 'No',
-    confirm: finalConfirm(badgeResult),
-    intentScore: journeyResult.intent_score ?? 2,
-    reasoning: badgeResult.reasoning || '',
-    summary: journeyResult.summary || '',
-    salesAgent: resolveSalesAgent(badgeResult, agentRoster, latestComment),
-  };
-}
-
-async function saveCommentsAndExtract(estId, comments, existingEstimate, doSave) {
-  const salesComments = [];
-  if (doSave) {
-    const toUpsert = comments.map((c) => ({
-      commentId: c.comment_id,
-      estimateId: estId,
-      description: cleanHtml(c.description || ''),
-      commentedBy: c.commented_by,
-      date: c.date,
-      dateDescription: c.date_description,
-      dateFormatted: c.date_formatted || null,
-    }));
-    // Save in batches to keep each worker request small.
-    for (let i = 0; i < toUpsert.length; i += 50) {
-      await workerRequest('/api/runner/zoho/comments', { method: 'POST', body: { comments: toUpsert.slice(i, i + 50) } });
-    }
-  }
-  for (const c of comments) {
-    const descClean = cleanHtml(c.description || '');
-    if (isRealSalesComment(descClean, c.commented_by, c.comment_type)) {
-      salesComments.push({ id: c.comment_id, date: c.date || '', dateFormatted: c.date_formatted || null, author: c.commented_by || 'Unknown', text: descClean });
-    }
-  }
-  void existingEstimate;
-  return salesComments;
-}
-
-async function processEstimate(job, agentRoster) {
-  const { estId, custName, total, dateVal, estStatus, fetched } = job;  const comments = fetched.comments || [];
-  const salesComments = await saveCommentsAndExtract(estId, comments, null, true);
-
-  salesComments.sort(latestFirst);
-  const historyLines = salesComments.slice(0, 15).map((c) => `[${c.date}] ${c.author}: ${c.text}`);
-  const commentHistory = historyLines.join('\n');
-
-  let classification;
-  if (!commentHistory) {
-    classification = defaultClassification(dateVal);
-  } else {
-    const latestComment = historyLines[0] || '';
-    const { badgeResult, journeyResult } = await classifyEstimate(custName, total, latestComment, dateVal, commentHistory, agentRoster);
-    classification = buildClassification(badgeResult, journeyResult, dateVal, null, agentRoster, latestComment);
-  }
-  void estStatus;
-
-  await workerRequest('/api/runner/zoho/classification', {
-    method: 'POST',
-    body: { estimateId: estId, classification },
-  });
-}
-
-// ── Sales orders created today (IST) ─────────────────────────────────────────
-// Feeds the Zoho dashboard's "Sales Orders Today" tile. The Worker cannot do
-// this fetch reliably from the dashboard request path, so the runner (which
-// already talks to Zoho with the same curl credentials) computes it every tick
-// and POSTs it to /api/runner/zoho/salesorders-today (KV-cached there).
-const SO_TODAY_EXCLUDED = new Set(['cancelled', 'void']);
-
-function istDateString(d) {
-  return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
-
-function buildSalesOrdersUrl(page) {
-  return `https://books.zoho.com/api/v3/salesorders?page=${page}&per_page=200&filter_by=Status.All&sort_column=created_time&sort_order=D&usestate=true&organization_id=${orgId}`;
-}
-
-async function syncSalesOrdersToday() {
-  try {
-    const today = istDateString(new Date());
-    const statuses = {};
-    const orders = [];
-    let count = 0;
-    let totalValue = 0;
-
-    // Newest first; stop when a page is short or its oldest order predates today.
-    for (let page = 1; page <= 10; page++) {
-      const json = await zohoFetch(buildSalesOrdersUrl(page));
-      const salesorders = json.salesorders || [];
-      for (const so of salesorders) {
-        const st = String(so.status || '').toLowerCase();
-        statuses[st] = (statuses[st] || 0) + 1;
-        if (SO_TODAY_EXCLUDED.has(st)) continue;
-        if (istDateString(new Date(so.created_time)) === today) {
-          count++;
-          totalValue += parseFloat(so.total) || 0;
-          if (orders.length < 50) {
-            orders.push({
-              so: so.salesorder_number || '',
-              ref: so.reference_number || '',           // linked estimate (EST-xxxxx)
-              customer: so.customer_name || '',
-              total: parseFloat(so.total) || 0,
-              status: st,
-              time: so.created_time_formatted || so.created_time || '',
-            });
-          }
-        }
-      }
-      if (salesorders.length < 200) break;
-      const oldest = salesorders[salesorders.length - 1];
-      if (istDateString(new Date(oldest.created_time)) < today) break;
-    }
-
-    totalValue = Math.round(totalValue * 100) / 100;
-    await workerRequest('/api/runner/zoho/salesorders-today', {
-      method: 'POST',
-      body: { date: today, count, totalValue, statuses, orders },
-    });
-    console.log(`zoho-sent-runner: sales orders today (${today}): ${count} (₹${totalValue.toLocaleString()})`);
-    return true;
+    const snapshot = await fetch.fetchSalesOrdersToday();
+    await persist.postSalesOrdersToday(snapshot);
+    console.log(`zoho-sent-runner: sales orders today (${snapshot.date}): ${snapshot.count} (₹${snapshot.totalValue.toLocaleString()})`);
   } catch (err) {
     // Non-fatal: the dashboard tile reads 0 until the next 15-min tick.
     console.warn(`zoho-sent-runner: sales-orders-today sync failed: ${err.message}`);
-    return false;
   }
 }
 
 async function main() {
-  // SO_ONLY=1 — lightweight 5-min tick: refresh ONLY the sales-orders-today
-  // tile and exit. Skips the full estimates fetch + comments + AI so the
-  // 5-min cadence costs ~10 Zoho reads instead of a full sync. The full sync
-  // still runs every 15 min (cron-every-15min.yml) and also refreshes SO-today.
   if (process.env.SO_ONLY === '1') {
-    await syncSalesOrdersToday();
+    await syncSalesOrders();
     console.log('zoho-sent-runner: SO_ONLY tick done');
     return;
   }
 
-  // 0. Sales orders created today (IST) — runs BEFORE the no-change fast path:
-  //    new sales orders don't touch the estimates payload at all, so a quiet
-  //    estimates day still needs this refreshed.
-  await syncSalesOrdersToday();
+  // 0. Sales orders (independent of estimates — runs before the fast path).
+  await syncSalesOrders();
 
-  console.log('zoho-sent-runner: fetching active sent estimates from Zoho');
-  const responseJson = await zohoFetch(ZOHO_BOOKS_SENT_URL);
-  const estimates = responseJson.estimates || [];
-  console.log(`zoho-sent-runner: fetched ${estimates.length} active sent estimates`);
-
+  // 1. All-status estimates, newest-modified first (any mover is in-window).
+  console.log('zoho-sent-runner: fetching all-status estimates from Zoho (2 pages)');
+  const estimates = await fetch.fetchEstimatesAll(2);
+  console.log(`zoho-sent-runner: fetched ${estimates.length} estimates`);
   const forced = process.env.ZOHO_FORCE === '1';
 
-  // 1b. Fetch Zoho comments for every active estimate (NETWORK only — cheap).
-  //     Comments do NOT bump last_modified_time in Zoho, so they must be fetched
-  //     to detect comment-only changes. This happens BEFORE any DB read so the
-  //     no-change fingerprint below never pays D1 row reads.
-  const COMMENT_CONCURRENCY = 6;
-  const fetchedByEst = new Map();
-  for (let i = 0; i < estimates.length; i += COMMENT_CONCURRENCY) {
-    const batch = estimates.slice(i, i + COMMENT_CONCURRENCY);
-    await Promise.all(batch.map(async (est) => {
-      const estId = est.estimate_id;
-      try {
-        const cj = await zohoFetch(`https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`);
-        fetchedByEst.set(estId, { comments: cj.comments || [], hasNew: false });
-      } catch (err) {
-        console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`);
-      }
-    }));
-  }
+  // 2. DB state for diffing.
+  console.log('zoho-sent-runner: fetching current DB state from worker');
+  const state = await persist.getDbState();
+  const existingByEstId = new Map();
+  for (const row of state.estimates || []) existingByEstId.set(row.estimateId, row);
+  const maxCommentIdByEst = state.maxCommentIdByEstimate || {};
+  const fetchedIds = new Set(estimates.map((e) => e.estimate_id));
 
-  // 1c. NO-CHANGE FAST PATH — compute a fingerprint of this exact Zoho payload
-  //     (estimates + comments) and compare against the last fully-processed one
-  //     (stored in KV by a previous run). If identical, the DB already matches
-  //     Zoho exactly — skip every DB read/write (state fetch, metadata sync,
-  //     closed status check, comments upsert, AI). This is the whole point of
-  //     the KV cache: a quiet 15-min tick costs ZERO D1 row reads.
-  // Per-estimate id-set baseline from the previous complete run (filled by
-  // the fingerprint fast-path above; null on legacy values/force → the
-  // max-id DB fallback in the comment-diff step below).
+  // 3. Comments (network, before any fingerprint compare). Gated: sent rows +
+  //    rows that were sent in DB (close-out coverage for sent→draft/void).
+  //    Brand-new drafts persist as metadata only — no Zoho reads, no AI.
+  const commentTargets = estimates.filter((est) => {
+    if (diff.PROCESSABLE.has(String(est.status ?? '').toLowerCase())) return true;
+    const existing = existingByEstId.get(est.estimate_id);
+    return !!existing && String(existing.status) === 'sent';
+  });
+  const fetchedByEst = await fetch.fetchCommentsFor(commentTargets, {
+    onError: (est, err) => console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`),
+  });
+
+  // 4. No-change fast path — identical payload → zero DB reads/writes.
   let prevByEst = null;
-  if (!forced && estimates.length > 0 && fetchedByEst.size === estimates.length) {
-    const current = buildFingerprint(estimates, fetchedByEst);
-    const fpRes = await workerRequest('/api/runner/zoho/fingerprint').catch(() => ({ fingerprint: null }));
-    // Exact per-estimate baseline from the previous complete run (zero DB
-    // reads). Legacy/corrupt values parse to null → max-id fallback below.
-    prevByEst = parseFingerprint(fpRes?.fingerprint);
-    // needsBackfill is true while ANY active estimate still has
-    // detailsCaptured=false — keep re-entering so uncaptured estimates stay in
-    // the 15-min detail-capture loop (the sales agent may take ~40 min to post
-    // the lead block). The fingerprint alone would skip them on a quiet tick.
+  if (!forced && estimates.length > 0) {
+    const current = diff.buildFingerprint(estimates, fetchedByEst);
+    const fpRes = await persist.getFingerprint();
+    prevByEst = diff.parseFingerprint(fpRes?.fingerprint);
+    // needsBackfill is true while ANY estimate still needs lead-details
+    // capture — keep re-entering so uncaptured rows stay in the loop.
     if (fpRes?.fingerprint && fpRes.fingerprint === current.fp && !fpRes.needsBackfill) {
       console.log('zoho-sent-runner: no change detected and no details pending — skipping full sync (served from fingerprint). 0 DB row reads.');
       return;
@@ -765,284 +109,66 @@ async function main() {
   }
 
   console.log('zoho-sent-runner: fetching NeoDove sales agent roster');
-  const agentRoster = await fetchAgentRoster();
+  const agentRoster = await fetch.fetchAgentRoster();
   console.log(`zoho-sent-runner: roster (${agentRoster.length}): ${agentRoster.join(', ') || '(empty)'}`);
 
-  console.log('zoho-sent-runner: fetching current DB state from worker');
-  const state = await workerRequest('/api/runner/zoho/state');
-  const existingByEstId = new Map();
-  for (const row of state.estimates || []) existingByEstId.set(row.estimateId, row);
-  const maxCommentIdByEst = state.maxCommentIdByEstimate || {};
+  // 5. Comment newcomer detection (exact set-diff; max-id legacy fallback).
+  diff.computeHasNew(fetchedByEst, prevByEst, maxCommentIdByEst);
 
-  const activeEstIds = new Set(estimates.map((e) => e.estimate_id));
+  // 6. Status transitions first — the worker route credits accepted/confirmed
+  //    closes into the telecalling ledger and broadcasts both live events.
+  const transitions = diff.detectTransitions(estimates, existingByEstId);
+  if (transitions.length) await persist.postStatusUpdates(transitions);
 
-  // 3. Metadata sync
-  const metadataUpserts = [];
-  for (const est of estimates) {
-    const existing = existingByEstId.get(est.estimate_id);
-    const metadata = {
-      estimateId: est.estimate_id,
-      estimateNumber: est.estimate_number,
-      customerName: est.customer_name,
-      total: parseFloat(est.total),
-      date: est.date,
-      status: est.status,
-    };
-    const unchanged = !!existing &&
-      existing.estimateNumber === metadata.estimateNumber &&
-      existing.customerName === metadata.customerName &&
-      existing.total === metadata.total &&
-      existing.date === metadata.date &&
-      existing.status === metadata.status;
-    if (unchanged) continue;
-    metadataUpserts.push(metadata);
-  }
-  if (metadataUpserts.length) {
-    await workerRequest('/api/estimates/bulk-upsert', { method: 'POST', body: { estimates: metadataUpserts } });
-    console.log(`zoho-sent-runner: metadata upserted ${metadataUpserts.length}`);
-  } else {
-    console.log('zoho-sent-runner: metadata unchanged');
-  }
+  // 7. Metadata convergence (status rides only on brand-new rows; flips went
+  //    through step 6 so no win is ever applied silently).
+  await persist.postMetadataUpserts(diff.diffMetadata(estimates, existingByEstId));
 
-  // 4. Closed status sync
-  const localSent = state.estimates.filter((e) => e.status === 'sent');
-  const closedStatusUpdates = [];
-  for (const est of localSent) {
-    if (activeEstIds.has(est.estimateId)) continue;
-    console.log(`zoho-sent-runner: checking closed status for ${est.estimateNumber}`);
+  // 8. Vanished-row fallback: DB-sent rows on neither list page (deleted in
+  //    Zoho → last-known status kept; otherwise the live status is synced).
+  for (const local of state.estimates || []) {
+    if (String(local.status) !== 'sent' || fetchedIds.has(local.estimateId)) continue;
     try {
-      const detailUrl = `https://books.zoho.com/api/v3/estimates/${est.estimateId}?organization_id=${orgId}`;
-      const detailJson = await zohoFetch(detailUrl);
-      const currentStatus = detailJson.estimate?.status;
-      if (currentStatus && currentStatus !== 'sent') {
-        closedStatusUpdates.push({ estimateId: est.estimateId, status: currentStatus });
-
-        let comments = [];
-        try {
-          const cj = await zohoFetch(`https://books.zoho.com/api/v3/estimates/${est.estimateId}/comments?organization_id=${orgId}`);
-          comments = cj.comments || [];
-        } catch (err) { console.warn(`zoho-sent-runner: comment fetch failed for closed ${est.estimateNumber}: ${err.message}`); }
-
-        const salesComments = await saveCommentsAndExtract(est.estimateId, comments, null, true);
-        salesComments.sort(latestFirst);
-        const historyLines = salesComments.slice(0, 15).map((c) => `[${c.date}] ${c.author}: ${c.text}`);
-        const commentHistory = historyLines.join('\n');
-
-        if (commentHistory) {
-          try {
-            const latestComment = historyLines[0] || '';
-            const { badgeResult, journeyResult } = await classifyEstimate(est.customerName, est.total, latestComment, est.date, commentHistory, agentRoster);
-            const classification = buildClassification(badgeResult, journeyResult, est.date, 'No', agentRoster, latestComment);
-            await workerRequest('/api/runner/zoho/classification', {
-              method: 'POST',
-              body: { estimateId: est.estimateId, classification },
-            });
-          } catch (err) { console.error(`zoho-sent-runner: AI classification error for closed estimate ${est.estimateNumber}: ${err.message}`); }
-        } else {
-          const classification = defaultClassification(est.date, 'No');
-          await workerRequest('/api/runner/zoho/classification', {
-            method: 'POST',
-            body: { estimateId: est.estimateId, classification },
-          });
-        }
+      const res = await fetch.fetchVanishedStatus(local.estimateId);
+      if (res.gone) {
+        console.log(`zoho-sent-runner: ${local.estimateNumber} vanished from Zoho (deleted?) — keeping last-known status`);
+      } else if (res.status && res.status !== 'sent') {
+        await persist.postStatusUpdates([{ estimateId: local.estimateId, to: res.status }]);
       }
-    } catch (err) { console.warn(`zoho-sent-runner: closed status check failed for ${est.estimateNumber}: ${err.message}`); }
-  }
-  if (closedStatusUpdates.length) {
-    await workerRequest('/api/runner/zoho/status', { method: 'POST', body: { updates: closedStatusUpdates } });
-    console.log(`zoho-sent-runner: ${closedStatusUpdates.length} closed statuses synced`);
+    } catch (err) { console.warn(`zoho-sent-runner: vanished check failed for ${local.estimateNumber}: ${err.message}`); }
   }
 
-  // 5. Comment diff — comments were already fetched from Zoho in step 1b
-  //    (network). Detect which estimates gained NEW comments. Exact set-diff
-  //    against the previous complete run's id sets (id-order-proof: a newcomer
-  //    with a smaller id still counts); max-id DB compare only as the legacy
-  //    fallback when no baseline map is available.
-  for (const [estId, bucket] of fetchedByEst) {
-    const zohoIds = [];
-    for (const c of bucket.comments) {
-      if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
-      zohoIds.push(String(c.comment_id));
-    }
-    const prev = prevByEst?.get(estId);
-    if (prev) {
-      bucket.hasNew = zohoIds.some((id) => !prev.has(id));
-    } else {
-      let maxZohoId = '';
-      for (const id of zohoIds) if (id > maxZohoId) maxZohoId = id;
-      bucket.hasNew = maxZohoId > (maxCommentIdByEst[estId] || '');
-    }
-  }
+  // 9. AI classification (sent + just-transitioned only — see analyze.js).
+  const { workItems, skipped, failed: selectFailed } = diff.selectWorkItems({
+    estimates, existingByEstId, fetchedByEst, forced,
+  });
+  console.log(`zoho-sent-runner: ${workItems.length} estimates need AI processing, ${skipped} skipped, ${selectFailed} comment-fetch failures`);
+  const { processed, failed: analysisFailed } = await analyze.runAnalysisPool(workItems, agentRoster);
 
-  // Quota-safe pacing: Groq on_demand keys cap at ~8k TPM and HIGH-reasoning
-  // 120b calls burn 1-4k tokens each — 6 parallel workers saturated every key
-  // at once (Sep-10 force-run 429 storm across all orgs). 2 workers + a short
-  // pause per estimate keeps bursts inside quotas; full passes take longer
-  // but complete instead of failing. (COMMENT_CONCURRENCY above is Zoho API
-  // reads, not LLM — untouched.)
-  const AI_CONCURRENCY = 2;
-  const AI_PACING_MS = 2000;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const workItems = [];
-  let skipped = 0;
-  let failed = 0;
+  // 10. Lead-details capture (sent rows with uncaptured blocks only).
+  await analyze.captureLeadDetails({ estimates, existingByEstId, fetchedByEst });
 
-  for (const est of estimates) {
-    const estId = est.estimate_id;
-    const custName = est.customer_name;
-    const total = parseFloat(est.total);
-    const dateVal = est.date;
-    const estStatus = est.status;
+  const failed = selectFailed + analysisFailed;
 
-    const lastModified = est.last_modified_time ? new Date(est.last_modified_time) : null;
-    const existingEstimate = existingByEstId.get(estId);
-
-    const statusChanged = !existingEstimate || existingEstimate.status !== estStatus;
-    const neverAnalyzed = !existingEstimate?.classification;
-    const modifiedSinceLastSync = !!lastModified && !!existingEstimate &&
-      new Date(lastModified).getTime() > new Date(existingEstimate.lastSyncTime).getTime();
-
-    const fetched = fetchedByEst.get(estId);
-    if (!fetched) { failed++; continue; }
-    const hasNewComments = fetched.hasNew;
-    const needsProcessing = forced || statusChanged || neverAnalyzed || modifiedSinceLastSync || hasNewComments;
-    if (!needsProcessing) { skipped++; continue; }
-    workItems.push({ estId, custName, total, dateVal, estStatus, existingEstimate, fetched });
-  }
-
-  console.log(`zoho-sent-runner: ${workItems.length} estimates need AI processing, ${skipped} skipped, ${failed} comment-fetch failures`);
-
-  // 6b. LEAD-DETAILS capture — the sales agent writes the "Enquiry Number /
-  //     Source Lead / Location / Contact / Mobile / Email / Lead generated by"
-  //     block in the first 2–5 REAL sales comments (system messages excluded,
-  //     oldest first). An agent can take up to ~40 min to post the block, so
-  //     this runs for EVERY active estimate whose detailsCaptured flag is
-  //     still false (the migration defaults all existing rows to false → full
-  //     backfill on the first pass). Robust Groq (gpt-oss-120b, HIGH
-  //     reasoning, random key rotation + 5 attempts) is used strictly — no
-  //     omniroute. The worker flips detailsCaptured=true (stopping the loop)
-  //     as soon as a >= 3-field capture is stored.
-  //     RETRY BUDGET (10 AI turns, enforced worker-side): a pass that extracts
-  //     <3 fields consumes one attempt (detailsAttempts + 1); at 10 the worker
-  //     marks detailsFailed and the estimate leaves this loop for good — EXCEPT
-  //     when NEW comments arrived since the last pass (the agent may have
-  //     finally posted the lead block), which re-admits it for one more turn.
-  //     A later success clears the give-up flag.
-  const groqKeys = (process.env.GROQ_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
-  if (groqKeys.length > 0) {
-    const leadDetailRows = [];
-    const pendingCapture = estimates.filter((est) => {
-      const existing = existingByEstId.get(est.estimate_id);
-      if (!existing || !existing.detailsCaptured) {
-        if (existing?.detailsFailed) {
-          return !!fetchedByEst.get(est.estimate_id)?.hasNew;
-        }
-        return true;
-      }
-      return false;
-    });
-    console.log(`zoho-sent-runner: ${pendingCapture.length} active estimates still need lead-details capture`);
-    for (const est of pendingCapture) {
-      const fetched = fetchedByEst.get(est.estimate_id);
-      if (!fetched) continue;
-      const firstRealSales = (fetched.comments || [])
-        .filter((c) => isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type))
-        .sort(oldestFirst)
-        .slice(0, 5)
-        .map((c) => `${c.commented_by || ''}: ${cleanHtml(c.description || '')}`)
-        .join('\n');
-      if (!firstRealSales.trim()) continue;
-      // Attempt number for logging (worker is the source of truth — it counts).
-      const attemptNo = (existingByEstId.get(est.estimate_id)?.detailsAttempts ?? 0) + 1;
-      try {
-        const extracted = await extractLeadDetails({ text: firstRealSales, company: est.customer_name || '' });
-        const fieldCount = extracted
-          ? ['enquiryNumber', 'sourceLead', 'location', 'contactName', 'contactPhone', 'contactEmail', 'leadGeneratedBy']
-            .filter((k) => extracted[k]).length
-          : 0;
-        // Report EVERY attempt to the worker — including thin (<3-field) ones.
-        // Validity gate (>= 3 non-empty fields) is applied worker-side: a thin
-        // capture consumes one retry-budget attempt instead of being dropped
-        // silently (a lone field is usually a fragment/hallucination).
-        leadDetailRows.push({ estimateId: est.estimate_id, ...(extracted || {}) });
-        if (fieldCount >= 3) {
-          console.log(`zoho-sent-runner: ${est.estimate_number}: captured ${fieldCount}/7 lead-detail fields`);
-        } else {
-          console.warn(`zoho-sent-runner: ${est.estimate_number}: extraction had ${fieldCount}/7 fields (attempt ${attemptNo}/10) — below 3, judged invalid, consuming one retry attempt`);
-        }
-      } catch (err) {
-        // A failed AI turn still consumes budget (reported as an empty row) so
-        // a permanently broken estimate gives up after 10 turns instead of
-        // burning Groq calls on every pass forever.
-        leadDetailRows.push({ estimateId: est.estimate_id });
-        console.warn(`zoho-sent-runner: lead-details extraction failed for ${est.estimate_number} (attempt ${attemptNo}/10): ${err.message} — consuming one retry attempt`);
-      }
-    }
-    if (leadDetailRows.length > 0) {
-      const res = await workerRequest('/api/runner/estimates/lead-details', { method: 'POST', body: { rows: leadDetailRows } });
-      console.log(`zoho-sent-runner: lead-details stored for ${res?.count ?? '?'} estimates, thin attempts ${res?.attempted ?? '?'}, gave up ${res?.failed ?? '?'}`);
-    }
-  }
-
-  let processed = 0;
-  let workerIndex = 0;
-  const failedItems = [];
-  const runPool = async (items) => {
-    const innerFailed = [];
-    const runner = async () => {
-      while (workerIndex < items.length) {
-        const job = items[workerIndex++];
-        try {
-          await processEstimate(job, agentRoster);
-          processed++;
-        } catch (err) {
-          console.error(`zoho-sent-runner: AI processing error for ${job.estId}: ${err.message}`);
-          innerFailed.push(job);
-        }
-        await sleep(AI_PACING_MS);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(AI_CONCURRENCY, items.length) }, () => runner()));
-    return innerFailed;
-  };
-
-  let stillFailed = await runPool(workItems);
-  if (stillFailed.length) {
-    console.warn(`zoho-sent-runner: ${stillFailed.length} failed. Retrying once...`);
-    await new Promise((r) => setTimeout(r, 5000));
-    workerIndex = 0;
-    stillFailed = await runPool(stillFailed);
-  }
-  failed += stillFailed.length;
-
-  // 7. Watermark only on a fully-complete pass.
-  const neededCount = workItems.length;
-  const complete = neededCount > 0 && failed === 0;
-  if (complete) {
-    await workerRequest('/api/estimates/bulk-upsert', {
-      method: 'POST',
-      body: { estimates: [], lastSyncAt: new Date().toISOString() },
-    });
-    console.log(`zoho-sent-runner: complete pass finished, watermark advanced (needed ${neededCount}, failed ${failed})`);
+  // 11. Watermark only on a fully-complete pass.
+  if (workItems.length > 0 && failed === 0) {
+    await persist.advanceWatermark();
+    console.log(`zoho-sent-runner: complete pass finished, watermark advanced (needed ${workItems.length}, failed ${failed})`);
   } else {
-    console.log(`zoho-sent-runner: incomplete — needed ${neededCount}, failed ${failed}. Watermark not advanced.`);
+    console.log(`zoho-sent-runner: incomplete — needed ${workItems.length}, failed ${failed}. Watermark not advanced.`);
   }
 
-  // A fully-complete run means the DB now matches Zoho exactly — store the
-  // fingerprint so the next 15-min tick can skip every DB read when unchanged.
-  // A run with failures is NOT fingerprinted (the DB may not match Zoho yet).
+  // A failure-free run means the DB matches Zoho — store the fingerprint so
+  // the next tick can skip every DB read when unchanged.
   if (failed === 0) {
-    const { fp } = buildFingerprint(estimates, fetchedByEst);
-    await workerRequest('/api/runner/zoho/fingerprint', {
-      method: 'POST',
-      body: { fingerprint: fp },
-    }).catch((err) => console.warn(`zoho-sent-runner: fingerprint store failed: ${err.message}`));
+    const { fp } = diff.buildFingerprint(estimates, fetchedByEst);
+    await persist.postFingerprint(fp);
   }
 
   console.log(`zoho-sent-runner: done — processed ${processed}, skipped ${skipped}, failed ${failed}`);
 
   if (failed > 0) {
-    console.error(`zoho-sent-runner: ${failed} estimate(s) failed (Groq/LLM unreachable after 5 attempts). Failing the run.`);
+    console.error(`zoho-sent-runner: ${failed} estimate(s) failed. Failing the run.`);
     process.exit(1);
   }
 }
@@ -1054,4 +180,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { classifyEstimate, buildClassification, defaultClassification, fetchAgentRoster };
+// Back-compat re-exports (no in-repo importers; kept for external scripts).
+module.exports = {
+  classifyEstimate: analyze.classifyEstimate,
+  buildClassification: analyze.buildClassification,
+  defaultClassification: analyze.defaultClassification,
+  fetchAgentRoster: fetch.fetchAgentRoster,
+};

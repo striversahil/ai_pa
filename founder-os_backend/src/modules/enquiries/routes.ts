@@ -1,7 +1,7 @@
 import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty, parseFlagThread, normalizeVisibility, type FlagThreadBy, type FlagThreadEntry } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
-import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, AI_ITEMS_ENABLED, type RedactedViewCache } from "./extract";
+import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
 import { cacheGet } from "../../shared/cache";
 
 /** v1 cache entries (description-only) predate the comments/requirements map —
@@ -515,6 +515,15 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
   // Scope-safe broadcast: a summary only (counts + label parts) — never the
   // full row, which carries client PII to every connected screen.
   const summary = summarizeEnquiry(created);
+  // Enquiry → Estimate creator sync: Lead of (Estimate.createdBy) is mapped
+  // ENTIRELY from the enquiry agent (Enquiry.estNumber = Estimate.estimateNumber).
+  // Overwrites always; fail-open so an enquiry save never fails on it.
+  if (estNumber && assignedAgentId) {
+    try {
+      const { syncEstimateCreatorFromEnquiry } = await import('./estimate-link');
+      await syncEstimateCreatorFromEnquiry(estNumber, assignedAgentId);
+    } catch { /* fail-open */ }
+  }
   const body_ = canManageRates(me) ? enquiry : stripMarginFields(enquiry as any);
   return {
     status: 201,
@@ -561,12 +570,8 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     const rateError = validateRatesInput((body as any).items);
     if (rateError) return json(400, { error: rateError });
   }
-  // Items derive from manual entry: with AI auto-split OFF, a description
-  // edit must preserve them (the reset below only applies when AI splitting
-  // is enabled). Explicit item saves carry `items` and are always preserved.
-  if (AI_ITEMS_ENABLED && (updates as any).description !== undefined && (updates as any).items === undefined) {
-    (updates as any).items = [];
-  }
+  // Items derive from manual entry (AI auto-split is permanently OFF):
+  // a description edit preserves them; explicit item saves carry `items`.
   const privileged = canManageRates(me);
   const restricted = isRestrictedViewer(me);
   // Acting surface: privileged writers (MIS/admin) working inside the
@@ -834,6 +839,19 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
   }
   const enquiry = await store.updateEnquiry(id, updates);
   if (!enquiry) return json(404, { error: "not found" });
+  // Keep the linked Zoho estimate's creator in sync: enquiry agent always wins.
+  try {
+    const nextEst = (updates as any)?.estNumber !== undefined
+      ? String((updates as any).estNumber ?? '')
+      : String((enquiry as any)?.estNumber ?? '');
+    const nextAgent = (updates as any)?.assignedAgentId !== undefined
+      ? String((updates as any).assignedAgentId ?? '')
+      : String((enquiry as any)?.assignedAgentId ?? '');
+    if (nextEst.trim() && nextAgent.trim()) {
+      const { syncEstimateCreatorFromEnquiry } = await import('./estimate-link');
+      await syncEstimateCreatorFromEnquiry(nextEst, nextAgent);
+    }
+  } catch { /* fail-open */ }
   const canSeeMargins = canManageRates(me);
   return {
     status: 200,

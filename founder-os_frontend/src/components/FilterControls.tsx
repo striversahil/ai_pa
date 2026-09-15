@@ -1,5 +1,5 @@
 import React from "react";
-import { Agent, ENQUIRY_SOURCES } from "../mockData";
+import { Agent, ENQUIRY_SOURCES } from "../types";
 
 interface FilterControlsProps {
   searchQuery: string;

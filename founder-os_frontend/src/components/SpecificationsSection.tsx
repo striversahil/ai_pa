@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Enquiry, EnquiryItem, parseMoneyInput } from "../mockData";
+import { Enquiry, EnquiryItem, parseMoneyInput } from "../types";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
 import IntakeItemMeta from "./IntakeItemMeta";
