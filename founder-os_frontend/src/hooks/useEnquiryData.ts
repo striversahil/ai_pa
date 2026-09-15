@@ -165,21 +165,14 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     setEnquiries(resolved);
   }, []);
 
-  const fetchAll = useCallback(async () => {
+  // Slow-moving lookups load once per mount. The live path refetches the
+  // enquiries list only — agents/clients almost never change mid-session.
+  const fetchStatic = useCallback(async () => {
     try {
-      const [enqRes, agentsRes, clientsRes] = await Promise.all([
-        fetch(`/api/enquiries${qs}${pageQs}`),
+      const [agentsRes, clientsRes] = await Promise.all([
         fetch(`/api/enquiries/agents${qs}`),
         fetch(`/api/enquiries/clients${qs}`),
       ]);
-      if (!enqRes.ok) throw new Error('load failed');
-      const data = await enqRes.json();
-      const list = Array.isArray(data.enquiries) ? data.enquiries : [];
-      const coms = Array.isArray(data.comments) ? data.comments : [];
-      setEnquiriesSynced(list.map(toEnquiry));
-      setComments(coms.map(toComment));
-      setTotal(typeof data.total === 'number' ? data.total : null);
-      if (typeof data.aiConfigured === 'boolean') setAiConfigured(data.aiConfigured);
       if (agentsRes.ok) {
         const raw = await agentsRes.json();
         const sales = Array.isArray(raw) ? raw : [];
@@ -201,6 +194,22 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         })).filter((c: any) => c.name) : []);
       }
     } catch (e) {
+      console.error('Failed to load enquiry lookups:', e);
+    }
+  }, [qs]);
+
+  const fetchEnquiries = useCallback(async () => {
+    try {
+      const enqRes = await fetch(`/api/enquiries${qs}${pageQs}`);
+      if (!enqRes.ok) throw new Error('load failed');
+      const data = await enqRes.json();
+      const list = Array.isArray(data.enquiries) ? data.enquiries : [];
+      const coms = Array.isArray(data.comments) ? data.comments : [];
+      setEnquiriesSynced(list.map(toEnquiry));
+      setComments(coms.map(toComment));
+      setTotal(typeof data.total === 'number' ? data.total : null);
+      if (typeof data.aiConfigured === 'boolean') setAiConfigured(data.aiConfigured);
+    } catch (e) {
       console.error('Failed to load enquiries:', e);
     } finally {
       setLoaded(true);
@@ -208,31 +217,76 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   }, [qs, pageQs]);
 
   useEffect(() => {
-    void fetchAll();
-  }, [fetchAll]);
+    void fetchStatic();
+    void fetchEnquiries();
+  }, [fetchStatic, fetchEnquiries]);
 
   // Live updates: the backend broadcasts scope-safe SUMMARIES only (counts +
-  // label parts — never PII, free text, or vendor rates), so every view
-  // refetches its own scoped payload here (trailing-edge debounced: a burst
-  // of own-write broadcasts must settle before re-reading, or a stale read
-  // lands after the save and the just-added rate "disappears" until the next
-  // refresh). Legacy full-row events (ev.enquiry) still merge directly for
+  // label parts — never PII, free text, or vendor rates). The full view then
+  // fetches the ONE changed row (`GET /api/enquiries/:id`, server-scoped)
+  // and merges it — no full-list refetch, no debounce settling, no stale
+  // reads landing after a save. The redacted (procurement) view keeps the
+  // debounced list refetch: its payload only comes from the list endpoint
+  // (single-row returns 403 for restricted viewers by design).
+  // Legacy full-row events (ev.enquiry) still merge directly for
   // backwards compatibility.
-  const fetchAllRef = useRef(fetchAll);
-  fetchAllRef.current = fetchAll;
+  const fetchEnquiriesRef = useRef(fetchEnquiries);
+  fetchEnquiriesRef.current = fetchEnquiries;
   const pageSizeRef = useRef(pageSize);
   pageSizeRef.current = pageSize;
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleRefetch = useCallback((ms: number) => {
     if (refetchTimer.current) clearTimeout(refetchTimer.current);
-    refetchTimer.current = setTimeout(() => { void fetchAllRef.current(); }, ms);
+    refetchTimer.current = setTimeout(() => { void fetchEnquiriesRef.current(); }, ms);
+  }, []);
+  // Single-row live merge (full view only): fetch the changed row scoped to
+  // this viewer and splice it in, replacing that row's thread. Falls back to
+  // a list refetch when the row is gone (deleted) or unreadable (403).
+  const mergeSingle = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/enquiries/${encodeURIComponent(id)}`);
+      if (res.status === 404) {
+        setEnquiriesSynced(enquiriesRef.current.filter((x) => x.id !== id));
+        setComments((prev) => prev.filter((c) => c.enquiryId !== id));
+        return;
+      }
+      if (!res.ok) throw new Error('single fetch failed');
+      const data = await res.json();
+      if (!data?.enquiry) throw new Error('empty row');
+      const row = toEnquiry(data.enquiry);
+      setEnquiriesSynced(enquiriesRef.current.some((x) => x.id === id)
+        ? enquiriesRef.current.map((x) => (x.id === id ? row : x))
+        : [row, ...enquiriesRef.current]);
+      if (Array.isArray(data.comments)) {
+        const fresh = data.comments.map(toComment);
+        const freshIds = new Set(fresh.map((c: Comment) => c.id));
+        setComments((prev) => [...prev.filter((c) => c.enquiryId !== id || !freshIds.has(c.id)), ...fresh]);
+      }
+    } catch {
+      void fetchEnquiriesRef.current();
+    }
   }, []);
   useLiveEvent((e) => {
     if (!e || (e as any).type !== 'enquiries') return;
     const ev = e as any;
-    // Summary-only event (current backend): refetch the scoped payload.
+    // Summary-only event (current backend): full view merges the one changed
+    // row; redacted view refetches its list payload (debounced).
     if (!ev.enquiry && !ev.comment) {
-      scheduleRefetch(redactedView ? 1200 : 800);
+      if (redactedView) { scheduleRefetch(1200); return; }
+      const id = String(ev.id ?? ev.enquiryId ?? '');
+      if (!id) { scheduleRefetch(300); return; }
+      if (ev.action === 'deleted') {
+        setEnquiriesSynced(enquiriesRef.current.filter((x) => x.id !== id));
+        return;
+      }
+      // Created rows shift counts/paging — full refetch; everything else
+      // (updated, requirement, estimate-claimed, comment) merges one row.
+      if (ev.action === 'created' && pageSizeRef.current <= 0) {
+        void mergeSingle(id);
+        return;
+      }
+      if (ev.action === 'created') { void fetchEnquiriesRef.current(); return; }
+      void mergeSingle(id);
       return;
     }
     // Comment-only event (no content — refetch the scoped thread).
@@ -248,7 +302,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     // updates merge into the visible page when present.
     const paged = pageSizeRef.current > 0;
     if (ev.action === 'created' && ev.enquiry) {
-      if (paged) { void fetchAllRef.current(); return; }
+      if (paged) { void fetchEnquiriesRef.current(); return; }
       setEnquiriesSynced([toEnquiry(ev.enquiry), ...enquiriesRef.current.filter((x) => x.id !== ev.enquiry.id)]);
     } else if (ev.action === 'updated' && ev.enquiry) {
       setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === ev.enquiry.id ? toEnquiry(ev.enquiry) : x)));
@@ -328,7 +382,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       return saved;
     } catch (err) {
       console.error('updateEnquiry failed, resyncing:', err);
-      void fetchAllRef.current();
+      void fetchEnquiriesRef.current();
       throw err;
     }
   }, []);
@@ -339,12 +393,26 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     setComments((prev) => prev.filter((c) => c.enquiryId !== id));
   }, []);
 
+  // Optimistic: echo instantly with a temp id, swap in server truth on
+  // success, drop the echo on failure (live events converge other writers).
   const addComment = useCallback(async (comment: Comment) => {
-    const saved = await persist('POST', `/api/enquiries/${comment.enquiryId}/comments`, {
-      agentId: comment.agentId, content: comment.content, parentId: comment.parentId,
-      imageUrl: comment.imageUrl, visibility: comment.visibility || undefined,
-    });
-    setComments((prev) => (prev.some((x) => x.id === saved.id) ? prev : [...prev, toComment(saved)]));
+    const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const echo: Comment = { ...comment, id: tempId, createdAt: new Date().toISOString() };
+    setComments((prev) => [...prev, echo]);
+    try {
+      const saved = await persist('POST', `/api/enquiries/${comment.enquiryId}/comments`, {
+        agentId: comment.agentId, content: comment.content, parentId: comment.parentId,
+        imageUrl: comment.imageUrl, visibility: comment.visibility || undefined,
+      });
+      const row = toComment(saved);
+      setComments((prev) => prev.some((x) => x.id === row.id)
+        ? prev.filter((x) => x.id !== tempId)
+        : prev.map((x) => (x.id === tempId ? row : x)));
+      return saved;
+    } catch (err) {
+      setComments((prev) => prev.filter((x) => x.id !== tempId));
+      throw err;
+    }
   }, []);
 
   const addRequirement = useCallback(async (enquiryId: string, text: string, imageUrl?: string) => {
@@ -375,7 +443,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         return saved;
       } catch (err) {
         console.error('updateItems failed, resyncing:', err);
-        void fetchAllRef.current();
+        void fetchEnquiriesRef.current();
         throw err;
       }
     };
@@ -407,6 +475,6 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     addRequirement,
     updateItems,
     makeActivity,
-    refresh: fetchAll,
+    refresh: fetchEnquiries,
   };
 }

@@ -184,6 +184,15 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
     return c.json(r.body, r.status as any);
   });
+  // Scoped single-row read for live merge (see enquiryGet): the broadcast
+  // carries ids only, so views fetch the one changed row. Restricted
+  // (procurement) viewers get 403 — their payload only comes from the list.
+  app.get('/api/enquiries/:id', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    const r = await EnquiryRoutes.enquiryGet(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
+    return c.json(r.body, r.status as any);
+  });
   app.get('/api/enquiries/:id/comments', async (c) => {    const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);

@@ -63,6 +63,39 @@ export async function syncEstimateCreatorFromEnquiry(
   }
 }
 
+/**
+ * Reconcile one estimate number after an unlink (EST No. edited away or
+ * enquiry deleted): another mapping enquiry wins (first agent found), else
+ * createdBy is cleared — By shows ONLY while a B2B enquiry maps the row.
+ * Fail-open, never throws.
+ */
+export async function reconcileEstimateCreator(estNumber: unknown): Promise<{ updated: boolean }> {
+  const num = normalizeEstNumber(estNumber);
+  if (!num) return { updated: false };
+  try {
+    const est = await findEstimateByNumber(num);
+    if (!est) return { updated: false };
+    let owner: string | null = null;
+    try {
+      const rows = await (prisma as any).enquiry.findMany({});
+      for (const r of rows as any[]) {
+        if (normalizeEstNumber((r as any)?.estNumber) !== num) continue;
+        const agent = String((r as any)?.assignedAgentId ?? '').trim();
+        if (agent) { owner = agent; break; }
+      }
+    } catch { /* treat as unmapped below */ }
+    const current = String((est as any).createdBy ?? '');
+    if ((owner ?? '') === current) return { updated: false };
+    await (prisma as any).estimate.update({
+      where: { estimateId: String(est.estimateId) },
+      data: { createdBy: owner },
+    });
+    return { updated: true };
+  } catch {
+    return { updated: false };
+  }
+}
+
 /** Lookup for the B2B EST-No. check button. */
 export async function lookupEstimateStatus(estNumber: unknown): Promise<{
   found: boolean;

@@ -45,7 +45,7 @@ export default function EnquiryTracker() {
   // in-view department gates here.
   const {
     enquiries, comments, agents, currentAgent, loaded,
-    syncState, addEnquiry, updateEnquiry, deleteEnquiry,
+    addEnquiry, updateEnquiry, deleteEnquiry,
     addComment, updateItems, makeActivity, clients,
   } = useEnquiryData("sales");
 

@@ -352,6 +352,15 @@ app.delete('/api/enquiries/:id', async (req, res) => {
   }
   res.status(r.status).json(r.body);
 });
+// Scoped single-row read for live merge (see enquiryGet): the broadcast
+// carries ids only, so views fetch the one changed row. Restricted
+// (procurement) viewers get 403 — their payload only comes from the list.
+app.get('/api/enquiries/:id', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const r = await EnquiryRoutes.enquiryGet(enquiryStore, me as any, req.params.id);
+  res.status(r.status).json(r.body);
+});
 app.get('/api/enquiries/:id/comments', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
