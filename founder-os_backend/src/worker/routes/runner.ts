@@ -1110,6 +1110,23 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const { applyIntakeBulkResult } = await import('../../modules/enquiries/update');
       const merged = applyIntakeBulkResult(existingItems, incomingItems);
       if (merged) (updates as any).items = merged;
+      else if (incomingItems.length > 0 && existingItems.length > 0) {
+        // No aiPending row on the stored enquiry — the router lines are
+        // discarded and the row is untouched. Logs here (not silently)
+        // so a dropped Add-via-AI flag is visible in `wrangler tail`.
+        console.log(`intake-result ${enquiryId}: ${incomingItems.length} lines discarded, no aiPending item stored`);
+      }
+    }
+    // A finalized row given fresh undecided loop items (bulk-split lines
+    // carry no decision) must drop back to rates_received — otherwise the
+    // Management panel stays locked with items nobody can save (Enquiry 5).
+    // Fully-decided rows stay finalized.
+    if (String((existing as any)?.rateStatus ?? '') === 'finalized') {
+      const mergedItems = Array.isArray((updates as any).items) ? (updates as any).items : existingItems;
+      const loop = mergedItems.filter((it: any) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
+      const done = loop.filter((it: any) => it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
+      const loopDone = loop.length === 0 ? mergedItems.length > 0 : done.length === loop.length;
+      if (!loopDone) (updates as any).rateStatus = 'rates_received';
     }
     let updated: any = existing;
     if (Object.keys(updates).length > 0) {

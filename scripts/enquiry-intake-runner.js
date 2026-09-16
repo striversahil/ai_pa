@@ -184,6 +184,12 @@ async function processEnquiry(gateway, eq) {
   // already has real items; the result endpoint replaces just the aiPending
   // rows, deduped). Otherwise split the enquiry description as usual.
   const bulkText = String(eq.aiBulkText || '').trim();
+  if (!bulkText && Array.isArray(eq.items) && eq.items.length > 0) {
+    // No aiPending text on a row that already has items: the router falls
+    // back to the description and the result merge will discard the lines
+    // (nothing to replace). Almost always a dropped aiPending flag upstream.
+    console.log(`- ${eq.id}: WARNING no aiBulkText, splitting description on a ${eq.items.length}-item row — result will be discarded`);
+  }
   const text = bulkText
     ? `New items to split (ignore everything else):\n${bulkText.slice(0, 3000)}\n\nCategories (name: items):\n${ROUTER_LINES}`
     : `Enquiry text:\n${String(eq.description || '').slice(0, 3000)}\n\nCategories (name: items):\n${ROUTER_LINES}`;

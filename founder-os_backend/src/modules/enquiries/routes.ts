@@ -130,6 +130,13 @@ function pick(data: any): Partial<Enquiry> | null {
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         thread: parseFlagThread(r?.thread),
+        // Detail-view "Add via AI" flag — the GH intake action replaces
+        // these raw rows with vision-split lines (applyIntakeBulkResult).
+        // Dropped here, the runner computes lines the merge then discards.
+        aiPending: r?.aiPending === true ? true : undefined,
+        // Sales-owned negotiation target (client-expected price + note).
+        expectedRate: numOrUndefined(r?.expectedRate),
+        expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -197,10 +204,10 @@ export function normalizeMoneyInput(v: unknown): number | undefined {
 export function validateRatesInput(items: unknown): string | null {
   if (!Array.isArray(items)) return null;
   for (let i = 0; i < items.length; i++) {
-    for (const f of ['markup', 'finalRate'] as const) {
+    for (const f of ['markup', 'finalRate', 'expectedRate'] as const) {
       const raw = (items[i] as any)?.[f];
       if (raw !== undefined && raw !== null && raw !== '' && normalizeMoneyInput(raw) === undefined) {
-        return `Item ${i + 1}: "${String(raw)}" is not a valid ${f === 'markup' ? 'markup' : 'final rate'} — use digits only`;
+        return `Item ${i + 1}: "${String(raw)}" is not a valid ${f === 'markup' ? 'markup' : f === 'finalRate' ? 'final rate' : 'expected price'} — use digits only`;
       }
     }
     const fd = (items[i] as any)?.finalDiscountPercent;
