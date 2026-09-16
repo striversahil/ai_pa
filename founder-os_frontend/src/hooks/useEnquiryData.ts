@@ -51,7 +51,9 @@ function toEnquiry(raw: any): Enquiry {
               .map((q: any) => ({
                 vendor: String(q?.vendor ?? ""),
                 rate: Number(q?.rate ?? NaN),
+                discountPercent: q?.discountPercent !== undefined && q?.discountPercent !== null && q?.discountPercent !== "" ? Number(q.discountPercent) : undefined,
                 description: q?.description ? String(q.description) : undefined,
+                salesNote: q?.salesNote ? String(q.salesNote) : undefined,
                 specSame: q?.specSame === false ? false : true,
                 specDiff: q?.specSame === false && q?.specDiff ? String(q.specDiff) : undefined,
                 quotedAt: q?.quotedAt ? String(q.quotedAt) : undefined,
@@ -71,6 +73,7 @@ function toEnquiry(raw: any): Enquiry {
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor) : undefined,
         markup: r?.markup !== undefined && r?.markup !== null && r?.markup !== "" ? Number(r.markup) : undefined,
         finalRate: r?.finalRate !== undefined && r?.finalRate !== null && r?.finalRate !== "" ? Number(r.finalRate) : undefined,
+        finalDiscountPercent: (r as any)?.finalDiscountPercent !== undefined && (r as any)?.finalDiscountPercent !== null && (r as any)?.finalDiscountPercent !== "" ? Number((r as any).finalDiscountPercent) : undefined,
         finalizedAt: r?.finalizedAt ? String(r.finalizedAt) : undefined,
         specIssue: r?.specIssue ? String(r.specIssue) : undefined,
         specFlaggedAt: r?.specFlaggedAt ? String(r.specFlaggedAt) : undefined,
@@ -79,6 +82,7 @@ function toEnquiry(raw: any): Enquiry {
         internalRatesAt: r?.internalRatesAt ? String(r.internalRatesAt) : undefined,
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested) : undefined,
         ratesRequestedAt: r?.ratesRequestedAt ? String(r.ratesRequestedAt) : undefined,
+        aiPending: r?.aiPending === true ? true : undefined,
         thread: Array.isArray(r?.thread)
           ? r.thread
               .map((e: any) => ({

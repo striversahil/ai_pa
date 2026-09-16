@@ -3,6 +3,7 @@ import { Enquiry, EnquiryItem, parseMoneyInput } from "../types";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
 import IntakeItemMeta from "./IntakeItemMeta";
+import AiProcessingLoader from "./AiProcessingLoader";
 import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS, type IntakeSuggestion } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import FlagThread from "./FlagThread";
@@ -20,8 +21,9 @@ interface SpecificationsSectionProps {
   /** Vendor-rate visibility per view: sales sees finals only ('none');
    *  procurement collects rates ('edit'); management reviews them ('view'). */
   ratesMode?: "none" | "edit" | "view";
-  /** AI intake (suggestions + missing slots) rendered per item row. */
-  intake?: { suggestions: IntakeSuggestion[]; missing: string[] } | null;
+  /** AI intake (suggestions + missing slots) rendered per item row.
+   *  `ready:false` = the GH intake action hasn't finished yet. */
+  intake?: { suggestions: IntakeSuggestion[]; missing: string[]; ready?: boolean } | null;
   /** Sales 1-click quote-from-memory (marks rateAvailable on the item). */
   onAcceptSuggestion?: (itemIndex: number) => void;
 }
@@ -131,7 +133,11 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const saveEdit = () => {
     if (editingIdx === null || !onUpdateItems) return;
     if (!draft.name.trim() && !draft.qty.trim() && !draft.spec.trim()) return;
-    const next = items.map((it, i) => (i === editingIdx ? { ...draft, media: it.media ?? [] } : it));
+    // Manual edit takes ownership — clears the AI-split flag so the intake
+    // action never overwrites a hand-corrected item.
+    const { aiPending, ...draftRest } = draft as any;
+    void aiPending;
+    const next = items.map((it, i) => (i === editingIdx ? { ...draftRest, media: it.media ?? [] } : it));
     onUpdateItems(next);
     setEditingIdx(null);
   };
@@ -191,9 +197,32 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
             </div>
           )}
           {items.length === 0 ? (
-            <p className="text-xs text-[var(--text-tertiary)] font-medium bg-[var(--bg-input)]/25 p-3 rounded-xl border border-[var(--border-card)]/50">
-              {redacted ? "Preparing secure view…" : "No items yet — add the first one below."}
-            </p>
+            (() => {
+              // New-enquiry intake: fresh row + source text/photos + runner not
+              // done yet (KV `ready:false`) = AI actively working → loader.
+              // Anything older settles back to the plain empty copy.
+              const createdMs = new Date(selectedEnquiry.createdAt).getTime();
+              const isFresh = Number.isFinite(createdMs) && Date.now() - createdMs < 15 * 60 * 1000;
+              const hasSource = !!(
+                selectedEnquiry.description?.trim() ||
+                (selectedEnquiry.imageUrls ?? []).length > 0 ||
+                (selectedEnquiry.additionalRequirements ?? []).length > 0
+              );
+              const intakePending = !intake || (intake as any).ready === false;
+              if (!redacted && isFresh && hasSource && intakePending) {
+                return (
+                  <AiProcessingLoader
+                    title="AI reading your enquiry…"
+                    subtitle="Splitting items + checking past prices — they appear here automatically"
+                  />
+                );
+              }
+              return (
+                <p className="text-xs text-[var(--text-tertiary)] font-medium bg-[var(--bg-input)]/25 p-3 rounded-xl border border-[var(--border-card)]/50">
+                  {redacted ? "Preparing secure view…" : "No items yet — add the first one below."}
+                </p>
+              );
+            })()
           ) : (
             <ul className="space-y-2">
               {items.map((it, idx) => (
@@ -267,6 +296,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           Rate available
                         </div>
                       )}
+                      {(it as any).aiPending === true && (
+                        <AiProcessingLoader compact />
+                      )}
                       {intake && (
                         <IntakeItemMeta
                           itemIndex={idx}
@@ -312,44 +344,47 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
                       {it.spec && <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed mt-0.5">{it.spec}</p>}
-                      {it.finalRate !== undefined && it.finalRate !== null && (
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[11px] font-extrabold">
-                            {it.internalRates ? "Rate available internally" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
-                          </span>
-                        </div>
-                      )}
                       {it.internalRates && (it.finalRate === undefined || it.finalRate === null) && (
                         <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-violet-500/10 border border-violet-500/30 text-violet-600 dark:text-violet-400 text-[11px] font-extrabold">
                           Handled internally — rate to follow
                         </div>
                       )}
-                      {(() => {
-                        // Only the SELECTED vendor's reference attachments travel
-                        // to sales with the final rate — losing quotes stay internal.
-                        // Never the vendor name (server strips it; `selected`
-                        // flag locates the quote — filenames stay generic too).
+                                            {(() => {
                         const selRate = (it.rates ?? []).find((r) => (r as any).selected === true)
                           ?? (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor);
+                        const note = (selRate as any)?.salesNote ? String((selRate as any).salesNote).trim() : "";
+                        const hasRate = it.finalRate !== undefined && it.finalRate !== null;
                         const refs = selRate?.references ?? [];
-                        if (refs.length === 0) return null;
                         const refImages = refs.filter((m) => m.type !== "video" && m.type !== "pdf").map((m) => m.url).filter(Boolean);
+                        const hasContent = hasRate || !!note || refs.length > 0;
+                        if (!hasContent) return null;
                         return (
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {refs.map((m, mi) => (
-                              m.type === "video" ? (
-                                <video key={mi} src={m.url} controls preload="metadata" className="w-24 h-14 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
-                              ) : m.type === "pdf" ? (
-                                <a key={mi} href={m.url} download={`reference-${mi + 1}.pdf`}
-                                  className="px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 transition-colors text-[10px] font-bold text-[var(--text-primary)] truncate max-w-[10rem]">
-                                  Reference PDF
-                                </a>
-                              ) : (
-                                <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`}
-                                  className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in"
-                                  onClick={() => onOpenLightbox(m.url, refImages.length > 0 ? refImages : [m.url], Math.max(0, refImages.indexOf(m.url)))} />
-                              )
-                            ))}
+                          <div className="mt-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-2 space-y-1.5">
+                            {hasRate && (
+                              <p className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400">
+                                {it.internalRates ? "Rate available internally" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
+                                {(it as any).finalDiscountPercent ? ` · ${(it as any).finalDiscountPercent}% off` : ""}
+                              </p>
+                            )}
+                            {note && <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{note}</p>}
+                            {refs.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {refs.map((m, mi) => (
+                                  m.type === "video" ? (
+                                    <video key={mi} src={m.url} controls preload="metadata" className="w-24 h-14 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
+                                  ) : m.type === "pdf" ? (
+                                    <a key={mi} href={m.url} download={`reference-${mi + 1}.pdf`}
+                                       className="px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 transition-colors text-[10px] font-bold text-[var(--text-primary)] truncate max-w-[10rem]">
+                                      Reference PDF
+                                    </a>
+                                  ) : (
+                                    <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`}
+                                       className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in"
+                                       onClick={() => onOpenLightbox(m.url, refImages.length > 0 ? refImages : [m.url], Math.max(0, refImages.indexOf(m.url)))} />
+                                  )
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}

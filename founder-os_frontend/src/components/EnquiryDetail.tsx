@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../types";
 import CommentNode from "./CommentNode";
 import EnquiryChat from "./EnquiryChat";
@@ -63,6 +63,11 @@ export default function EnquiryDetail({
   // duplicate + new-item box), appended to the enquiry's items on save.
   const [itemsOpen, setItemsOpen] = useState(false);
   const [newItems, setNewItems] = useState<EnquiryItem[]>([blankItem()]);
+  // AI bulk requirement (unstructured) — same textarea + photos as Log New B2B Enquiry create (AI intake path). Appended as a new line item with spec=text + media so it reuses the existing items flow.
+  const [addReqText, setAddReqText] = useState("");
+  const [addReqImages, setAddReqImages] = useState<string[]>([]);
+  const [addReqDragOver, setAddReqDragOver] = useState(false);
+  const addReqFileRef = useRef<HTMLInputElement>(null);
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Mark-as-sent: finalized → sent (EST No. required, server-enforced too).
@@ -112,6 +117,33 @@ export default function EnquiryDetail({
     if (fresh.length === 0 || !onUpdateItems) return;
     onUpdateItems(selectedEnquiry.id, [...(selectedEnquiry.items ?? []), ...fresh]);
     setNewItems([blankItem()]);
+    setItemsOpen(false);
+  };
+
+  const handleAddReqImages = async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
+    const list = Array.from(files);
+    const { media } = await import("../lib/imageFiles").then(m => m.filesToMedia(list));
+    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
+    if (urls.length > 0) setAddReqImages((prev) => [...prev, ...urls]);
+  };
+  // "Add via AI": appends ONE raw item flagged aiPending — the save kicks
+  // the GH intake action (same as new-enquiry intake), which replaces it
+  // with vision-split items. Sales sees an "AI splitting…" chip meanwhile.
+  const handleSaveAdditionalRequirement = () => {
+    const text = addReqText.trim();
+    if (!text && addReqImages.length === 0) return;
+    if (!onUpdateItems) return;
+    const newItem: EnquiryItem = {
+      name: "",
+      qty: "",
+      spec: text.slice(0, 2000),
+      media: addReqImages.map((url) => ({ type: "image" as const, url })),
+      aiPending: true,
+    };
+    onUpdateItems(selectedEnquiry.id, [...(selectedEnquiry.items ?? []), newItem]);
+    setAddReqText("");
+    setAddReqImages([]);
     setItemsOpen(false);
   };
 
@@ -486,18 +518,58 @@ export default function EnquiryDetail({
         </div>
       )}
 
-      {/* Add Items popup — same multi-item boxes as the B2B form */}
       {itemsOpen && (
         <Modal
           title="Add Items"
-          subtitle="New items join the vendor-rate flow as rate-pending"
-          onClose={() => setItemsOpen(false)}
+          subtitle="New items join the vendor-rate flow as rate-pending — use AI bulk with photos or structured boxes"
+          onClose={() => { setItemsOpen(false); setAddReqText(""); setAddReqImages([]); setNewItems([blankItem()]); }}
         >
+          {/* AI bulk requirement — unstructured text + photos, split by AI intake runner */}
+          <div className={`space-y-2 rounded-xl p-3 border ${addReqDragOver ? "border-brand-indigo bg-brand-indigo/10" : "border-[var(--border-card)]/60 bg-[var(--bg-input)]/20"}`}
+               onDragOver={(e) => { const hasFiles = (e.dataTransfer.types || []).includes("Files"); if (hasFiles) { e.preventDefault(); setAddReqDragOver(true); } }}
+               onDragLeave={() => setAddReqDragOver(false)}
+               onDrop={(e) => { const hasFiles = (e.dataTransfer.types || []).includes("Files"); if (!hasFiles) return; e.preventDefault(); setAddReqDragOver(false); void handleAddReqImages(e.dataTransfer.files); }}>
+            <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">AI bulk — type or paste anything + photos (image supported)</label>
+            <textarea
+              value={addReqText}
+              onChange={(e) => setAddReqText(e.target.value)}
+              rows={5}
+              placeholder={"e.g. Rajdhani Flour Mill — 24GG Milling Fabric 136cm 50 mtr + extra roller 2 nos…\n\nWrite items in your own words; AI splits items, attaches photos as drawings and checks past prices."}
+              className="w-full px-3 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm resize-y min-h-[110px] text-[var(--text-primary)]"
+            />
+            <input ref={addReqFileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void handleAddReqImages(e.target.files); e.target.value=""; }} />
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => addReqFileRef.current?.click()} className="inline-flex items-center px-3 py-1.5 border border-dashed border-[var(--border-card)] rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach photos</button>
+              <span className="text-[11px] text-[var(--text-tertiary)]">Drag & drop photos here (AI reads text + images)</span>
+            </div>
+            {addReqImages.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {addReqImages.map((url, i) => (
+                  <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-[var(--border-card)]">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt={`req ${i+1}`} className="w-full h-full object-cover" />
+                    <button type="button" onClick={() => setAddReqImages(prev => prev.filter((_, j) => j !== i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-[var(--text-tertiary)]">Runs the AI intake action — items auto-split in ~1 min</span>
+              <button type="button" disabled={!addReqText.trim() && addReqImages.length===0} onClick={handleSaveAdditionalRequirement} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer disabled:opacity-40">Add via AI</button>
+            </div>
+          </div>
+
+          <div className="my-3 flex items-center gap-2">
+            <span className="flex-1 h-px bg-[var(--border-card)]" />
+            <span className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">or add structured items manually</span>
+            <span className="flex-1 h-px bg-[var(--border-card)]" />
+          </div>
+
           <ItemBoxList items={newItems} onChange={setNewItems} />
           <div className="flex justify-end gap-2 pt-3">
-            <button type="button" onClick={() => setItemsOpen(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
-            <button type="button" onClick={handleSaveNewItems} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer">
-              Add Items
+            <button type="button" onClick={() => { setItemsOpen(false); setAddReqText(""); setAddReqImages([]); setNewItems([blankItem()]); }} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
+            <button type="button" onClick={handleSaveNewItems} className="px-3.5 py-1.5 bg-transparent border border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/10 font-bold text-xs rounded-lg cursor-pointer">
+              Add structured items
             </button>
           </div>
         </Modal>

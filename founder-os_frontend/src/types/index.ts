@@ -32,8 +32,15 @@ export interface EnquiryMedia {
 export interface EnquiryItemRate {
   vendor: string;
   rate: number;
+  /** Procurement-entered discount % the vendor offers (0-100). Info-only,
+   *  shown to Management alongside the rate. */
+  discountPercent?: number;
   /** Per-quote vendor description (address/contact/terms). */
   description?: string;
+  /** Procurement note intended for the sales team — only the selected vendor's
+   *  salesNote is forwarded to sales with the final rate (founder can edit it
+   *  before finalizing). */
+  salesNote?: string;
   /** False when this quote's spec differs from the item spec. */
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
@@ -62,6 +69,9 @@ export interface EnquiryItem {
   selectedVendor?: string;
   markup?: number;
   finalRate?: number;
+  /** Management-decided discount % to pass to customer (0-100). Applied
+   *  on the vendor rate before markup: discountedBase = rate*(1-discount/100). */
+  finalDiscountPercent?: number;
   /** ISO instant the item was finalized. */
   finalizedAt?: string;
   /** Procurement spec dispute: present = spec flagged incorrect, awaiting a
@@ -83,6 +93,9 @@ export interface EnquiryItem {
   /** Back-and-forth loop trail (server-authored): flags, remarks, fixes,
    *  requests — oldest first. Visible in procurement. */
   thread?: FlagThreadEntry[];
+  /** AI bulk intake: true = raw "Add via AI" item awaiting the GH intake
+   *  action, which replaces it with vision-split items. */
+  aiPending?: boolean;
 }
 
 export interface FlagThreadEntry {
@@ -120,27 +133,35 @@ export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "inter
  *  dashboards (backend predicates mirror these; keep them in sync).
  *  Pending and history are DISJOINT: an enquiry is either awaiting work or
  *  done, never both. Empty enquiries (no items yet) are sales-only — they
- *  wait on sales to add items, not on procurement. Procurement pending
- *  additionally requires NOT submitted: the handoff concludes the queue. */
+ *  wait on sales to add items, not on procurement.
+ *  Procurement stays ACTIVE until "Enquiry Concluded" (procurementSubmittedAt):
+ *  even when every item is quoted, it remains in Active — management sees the
+ *  live incoming vendor rates the whole time. */
 export function isProcurementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
   if (isSubmitted(e)) return false;
   const items = e.items ?? [];
-  return items.some(itemNeedsRates);
+  if (items.length === 0) return false;
+  // Any quotable work (rate not already available, not management-internal)
+  // keeps the enquiry active until the explicit Concluded handoff — flagged
+  // items (awaiting sales fix) and fully-quoted-but-not-yet-concluded both
+  // stay here. Rate-available/internal-only enquiries have no procurement work.
+  const hasQuotable = items.some((it) => !it?.rateAvailable && !it?.internalRates);
+  return hasQuotable;
 }
 
-export function isProcurementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean {
+export function isProcurementHistoryEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
   const items = e.items ?? [];
-  return !isProcurementPendingEnquiry(e)
-    && items.some((it) => (it.rates ?? []).length > 0 && !it.ratesRequested);
+  if (!isSubmitted(e)) return false;
+  return items.some((it) => (it.rates ?? []).length > 0 && !it.ratesRequested);
 }
 
 export function isManagementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
+  void isSubmitted; // live visibility — submitted flag no longer gates management
   const items = e.items ?? [];
-  if (!items.some(itemNeedsDecision)) return false;
-  // Unsubmitted enquiries reach management ONLY through their internal
-  // items — procurement's queue still owns everything else.
-  if (isSubmitted(e)) return true;
-  return items.some((it) => it?.internalRates === true && itemNeedsDecision(it));
+  // Management sees live incoming vendor rates as procurement adds them —
+  // no "Submit to Management" gate. Any item needing a decision appears here
+  // instantly (correct spec, quoted or internal, not yet finalized).
+  return items.some(itemNeedsDecision);
 }
 
 /** Submit readiness: every quotable loop item (correct spec, rate not
@@ -158,8 +179,12 @@ export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean
 
 export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean {
   const items = e.items ?? [];
-  return !isManagementPendingEnquiry(e)
-    && items.some((it) => it.finalRate !== undefined && it.finalRate !== null && !it.specIssue);
+  if (items.length === 0) return false;
+  if (isManagementPendingEnquiry(e)) return false;
+  // History only when every quotable item (correct spec, not rateAvailable) has a finalRate — partial finalizes stay in Active
+  const loop = items.filter((it) => !it?.specIssue && !it?.rateAvailable);
+  if (loop.length === 0) return false;
+  return loop.every((it) => it.finalRate !== undefined && it.finalRate !== null);
 }
 
 export interface Enquiry {

@@ -65,8 +65,14 @@ export interface EnquiryMedia {
 export interface EnquiryItemRate {
   vendor: string;
   rate: number;
+  /** Procurement-entered discount % the vendor offers (0-100). */
+  discountPercent?: number;
   /** Per-quote vendor description (address/contact/terms). */
   description?: string;
+  /** Procurement note intended for the sales team / customer — only the
+   *  selected vendor's salesNote is forwarded to sales with the final rate
+   *  (founder can edit it in the review panel before finalizing). */
+  salesNote?: string;
   /** False when this quote's spec differs from the item spec. */
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
@@ -94,6 +100,8 @@ export interface EnquiryItem {
   selectedVendor?: string;
   markup?: number;
   finalRate?: number;
+  /** Management-decided discount % to pass to customer (0-100). */
+  finalDiscountPercent?: number;
   /** IST instant the item was finalized (stamped on finalize). */
   finalizedAt?: string;
   /** Procurement spec dispute: present = spec flagged incorrect, awaiting a
@@ -119,6 +127,10 @@ export interface EnquiryItem {
    *  and request on this item, oldest first. Rendered in procurement so the
    *  full 2–3 round history stays visible. */
   thread?: FlagThreadEntry[];
+  /** AI bulk intake: true = this raw item (unstructured spec + photos from
+   *  the detail-view "Add via AI" flow) is awaiting the GH intake action,
+   *  which replaces it with vision-split items. Manual edits clear it. */
+  aiPending?: boolean;
 }
 
 export type FlagThreadBy = 'sales' | 'procurement' | 'management';
@@ -178,6 +190,13 @@ export function parseItemMedia(raw: unknown): EnquiryMedia[] {
     .slice(0, MAX_ITEM_MEDIA_COUNT);
 }
 
+function parseDiscountPercent(v: unknown): number | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(String(v).trim());
+  if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
+  return Math.round(n * 100) / 100;
+}
+
 export function parseItemRates(raw: unknown): EnquiryItemRate[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -186,7 +205,9 @@ export function parseItemRates(raw: unknown): EnquiryItemRate[] {
       return {
         vendor: String(r?.vendor ?? '').slice(0, 200),
         rate: strictNum(r?.rate) ?? NaN,
+        discountPercent: parseDiscountPercent(r?.discountPercent),
         description: r?.description ? String(r.description).slice(0, 2000) : undefined,
+        salesNote: r?.salesNote ? String(r.salesNote).slice(0, 2000) : undefined,
         specSame,
         specDiff: !specSame && r?.specDiff ? String(r.specDiff).slice(0, 2000) : undefined,
         references: parseItemMedia(r?.references),
@@ -348,6 +369,7 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         markup: numOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
+        finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
@@ -357,6 +379,7 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
+        aiPending: r?.aiPending === true ? true : undefined,
       }))
       .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -429,6 +452,7 @@ export function sanitize(e: any): Enquiry {
           selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
           markup: numOrUndefined(r?.markup),
           finalRate: numOrUndefined(r?.finalRate),
+          finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
@@ -438,6 +462,7 @@ export function sanitize(e: any): Enquiry {
         thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
+        aiPending: r?.aiPending === true ? true : undefined,
         }))
       : [],
   };

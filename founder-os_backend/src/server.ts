@@ -27,6 +27,7 @@ import whatsappMarketingRouter from './routes/whatsapp-marketing';
 import pendingItemsRouter from './routes/pending-items';
 import telecallersRouter from './routes/telecallers';
 import accountsRouter from './routes/accounts';
+import digitalMarketingRouter from './routes/digital-marketing';
 import { automationRouter } from './modules/automation';
 import * as AuthRoutes from './modules/auth/routes';
 import { PrismaAuthStore } from './modules/auth/store-prisma';
@@ -112,6 +113,9 @@ app.use('/api/telecallers', telecallersRouter);
 
 // --- Accounts roster + templates + taskbar logging ---
 app.use('/api/accounts', accountsRouter);
+
+// --- Digital Marketing roster + templates + taskbar logging ---
+app.use('/api/digital-marketing', digitalMarketingRouter);
 
 // --- Google Auth (routes + root user management) ---
 app.get('/api/auth/google', (req, res) => sendAuth(res, AuthRoutes.authLogin(config, publicOriginOf(req))));
@@ -327,7 +331,9 @@ app.patch('/api/enquiries/:id', async (req, res) => {
   const r = await EnquiryRoutes.enquiryUpdate(enquiryStore, me, req.params.id, req.body || {});
   if (r.body?.id) {
     void runEnquiryExtractionLocal(r.body.id);
-    if ((req.body as any)?.description !== undefined) void kickIntakeNowLocal();
+    const hasAiBulk = Array.isArray((req.body as any)?.items)
+      && (req.body as any).items.some((it: any) => it?.aiPending === true);
+    if ((req.body as any)?.description !== undefined || hasAiBulk) void kickIntakeNowLocal();
   }
   res.status(r.status).json(r.body);
 });

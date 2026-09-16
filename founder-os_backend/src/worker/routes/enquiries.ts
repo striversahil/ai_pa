@@ -158,9 +158,13 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     enquirySend(c, r);
     if ((r as any).status === 200 && (r.body as any)?.id) {
       kick(c, String((r.body as any).id));
-      // Fresh free text → re-run vision intake now (item-only saves skip it;
-      // the sweep still covers everything).
-      if ((patchBody as any)?.description !== undefined) kickIntakeNow(c);
+      // Fresh free text → re-run vision intake now. Detail-view "Add via AI"
+      // saves carry `aiPending` items (unstructured spec + photos) — they
+      // kick intake too; plain item-only saves skip it (the sweep covers
+      // everything as backstop).
+      const hasAiBulk = Array.isArray((patchBody as any)?.items)
+        && (patchBody as any).items.some((it: any) => it?.aiPending === true);
+      if ((patchBody as any)?.description !== undefined || hasAiBulk) kickIntakeNow(c);
     }
     return c.json(r.body, r.status as any);
   });

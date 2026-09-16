@@ -998,7 +998,16 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       }
       return { name: String(it?.name ?? ''), qty: String(it?.qty ?? ''), spec: String(it?.spec ?? ''), media: kept };
     });
-    return { ...(e as any), items: slimItems, enquiryImages, mediaTruncated };
+    // AI bulk-add (detail-view "Add via AI"): unstructured specs awaiting the
+    // vision split. The runner uses this as its Stage-A text instead of the
+    // enquiry description (item specs are otherwise invisible to the router).
+    const aiBulkText = items
+      .filter((it: any) => it?.aiPending === true)
+      .map((it: any) => String(it?.spec ?? '').trim())
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 3000);
+    return { ...(e as any), items: slimItems, enquiryImages, mediaTruncated, aiBulkText };
   }
 
   app.get('/api/runner/enquiry-intake/pending', async (c) => {
@@ -1094,6 +1103,13 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
         ...(it?.category ? { category: String(it.category).slice(0, 120) } : {}),
         ...(it?.verbatim ? { verbatim: String(it.verbatim).slice(0, 500) } : {}),
       }));
+    } else {
+      // AI bulk-add merge: replace `aiPending` raw items with the
+      // vision-split lines (deduped, photos carried over). Null = none
+      // pending, row untouched.
+      const { applyIntakeBulkResult } = await import('../../modules/enquiries/update');
+      const merged = applyIntakeBulkResult(existingItems, incomingItems);
+      if (merged) (updates as any).items = merged;
     }
     let updated: any = existing;
     if (Object.keys(updates).length > 0) {

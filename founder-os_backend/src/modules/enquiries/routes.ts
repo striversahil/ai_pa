@@ -102,6 +102,12 @@ function pick(data: any): Partial<Enquiry> | null {
       .filter((r: any) => r.text.trim().length > 0);
   }
   if (data.items !== undefined) {
+    const parseDiscount = (v: unknown): number | undefined => {
+      if (v === undefined || v === null || v === '') return undefined;
+      const n = Number(String(v).trim());
+      if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
+      return Math.round(n * 100) / 100;
+    };
     out.items = (Array.isArray(data.items) ? data.items : [])
       .map((r: any) => ({
         name: String(r?.name ?? '').slice(0, 300),
@@ -114,6 +120,7 @@ function pick(data: any): Partial<Enquiry> | null {
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         markup: numOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
+        finalDiscountPercent: parseDiscount(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
@@ -149,9 +156,9 @@ export function canManageRates(me: MeResponse): boolean {
 
 /** Margin fields are Management-only: non-privileged readers (sales AND
  *  procurement) see final rates but never the chosen vendor NAME or the
- *  markup. The chosen quote is flagged vendor-free (`selected: true`) so
- *  sales can render its reference attachments without ever seeing the name.
- *  Stored rows are untouched — only the API response. */
+ *  markup. Final discount % is visible to sales (it's the customer offer),
+ *  but vendor-level discounts stay hidden. Stored rows untouched — only API
+ *  response. */
 export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T {
   if (!enquiry || !Array.isArray((enquiry as any).items)) return enquiry;
   return {
@@ -159,9 +166,14 @@ export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T 
     items: (enquiry as any).items.map((it: any) => {
       if (!it || typeof it !== 'object') return it;
       const { selectedVendor, markup, ...rest } = it;
-      if (selectedVendor && Array.isArray((rest as any).rates)) {
-        (rest as any).rates = (rest as any).rates.map((r: any) =>
-          r && typeof r === 'object' && r.vendor === selectedVendor ? { ...r, selected: true } : r);
+      // Vendor discounts are procurement→management info only; strip from sales.
+      if (Array.isArray((rest as any).rates)) {
+        (rest as any).rates = (rest as any).rates.map((r: any) => {
+          if (!r || typeof r !== 'object') return r;
+          const { discountPercent, ...rr } = r;
+          if (selectedVendor && r.vendor === selectedVendor) return { ...rr, selected: true };
+          return rr;
+        });
       }
       return rest;
     }),
@@ -191,6 +203,11 @@ export function validateRatesInput(items: unknown): string | null {
         return `Item ${i + 1}: "${String(raw)}" is not a valid ${f === 'markup' ? 'markup' : 'final rate'} — use digits only`;
       }
     }
+    const fd = (items[i] as any)?.finalDiscountPercent;
+    if (fd !== undefined && fd !== null && fd !== '') {
+      const n = Number(String(fd).trim());
+      if (!Number.isFinite(n) || n < 0 || n > 100) return `Item ${i + 1}: discount must be 0–100%`;
+    }
     const rates = (items[i] as any)?.rates;
     if (!Array.isArray(rates)) continue;
     for (let j = 0; j < rates.length; j++) {
@@ -198,6 +215,11 @@ export function validateRatesInput(items: unknown): string | null {
       if (!String(r?.vendor ?? '').trim()) continue;
       if (normalizeMoneyInput(r?.rate) === undefined) {
         return `Item ${i + 1}, quote ${j + 1}: "${String(r?.rate ?? '')}" is not a valid amount — use digits only (e.g. 1200 or 1200.50)`;
+      }
+      const d = r?.discountPercent;
+      if (d !== undefined && d !== null && d !== '') {
+        const n = Number(String(d).trim());
+        if (!Number.isFinite(n) || n < 0 || n > 100) return `Item ${i + 1}, quote ${j + 1}: discount must be 0–100%`;
       }
     }
   }
@@ -588,8 +610,10 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     const rateError = validateRatesInput((body as any).items);
     if (rateError) return json(400, { error: rateError });
   }
-  // Items derive from manual entry (AI auto-split is permanently OFF):
-  // a description edit preserves them; explicit item saves carry `items`.
+  // Items derive from manual entry — except `aiPending` raw items from the
+  // detail-view "Add via AI" flow, which the GH intake action replaces with
+  // vision-split lines (see applyIntakeBulkResult): a description edit
+  // preserves them; explicit item saves carry `items`.
   const privileged = canManageRates(me);
   const restricted = isRestrictedViewer(me);
   // Acting surface: privileged writers (MIS/admin) working inside the
@@ -672,21 +696,18 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       && !mergedItems.some((it: any) => it?.specIssue)) {
       (updates as any).rateStatus = 'finalized';
     }
-    // Late-quote reopen (any writer): a new vendor quote on a finalized row
-    // clears that item's committed decision (see update.ts) and drops the
-    // enquiry back to rates_received — sales is notified via live event,
-    // management re-decides. Sent rows never reopen.
+    // Late-quote note (any writer): a new vendor quote on a finalized row
+    // KEEPS the committed decision so sales keeps the previous rate (see
+    // update.ts) — rateStatus stays `finalized`. Management is notified via
+    // live event + thread entry and revises only if needed. Sent rows never
+    // reopen.
     if (cur === 'finalized') {
       const { applyLateQuoteReopen } = await import('./update');
-      if (
-        applyLateQuoteReopen(updates, {
-          storedItems,
-          storedRateStatus: cur,
-          actedBy: actingProcurement ? 'procurement' : privileged ? 'management' : 'sales',
-        })
-      ) {
-        (updates as any).rateStatus = 'rates_received';
-      }
+      applyLateQuoteReopen(updates, {
+        storedItems,
+        storedRateStatus: cur,
+        actedBy: actingProcurement ? 'procurement' : privileged ? 'management' : 'sales',
+      });
     }
   }
   const enquiry = await store.updateEnquiry(id, updates);

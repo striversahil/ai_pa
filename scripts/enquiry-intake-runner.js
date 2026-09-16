@@ -179,7 +179,14 @@ async function processEnquiry(gateway, eq) {
   // Stage A — router (vision+text, slim ~630-token list): verbatim lines +
   // category each + lead block. Client wording is preserved here; canonical
   // names are assigned in Stage B only.
-  const text = `Enquiry text:\n${String(eq.description || '').slice(0, 3000)}\n\nCategories (name: items):\n${ROUTER_LINES}`;
+  // AI bulk-add (detail-view "Add via AI"): the worker passes the pending
+  // unstructured specs as aiBulkText — split ONLY this chunk (the enquiry
+  // already has real items; the result endpoint replaces just the aiPending
+  // rows, deduped). Otherwise split the enquiry description as usual.
+  const bulkText = String(eq.aiBulkText || '').trim();
+  const text = bulkText
+    ? `New items to split (ignore everything else):\n${bulkText.slice(0, 3000)}\n\nCategories (name: items):\n${ROUTER_LINES}`
+    : `Enquiry text:\n${String(eq.description || '').slice(0, 3000)}\n\nCategories (name: items):\n${ROUTER_LINES}`;
   const images = [];
   for (const it of eq.items || []) for (const m of it.media || []) if (m.url) images.push(m.url);
   const content = buildVisionUserContent(text, images, 4);

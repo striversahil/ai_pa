@@ -29,9 +29,20 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
   const { storedItems, privileged, restricted, actingProcurement } = ctx;
   return (items as any[]).map((it: any, idx: number) => {
     const stored = storedItems[idx] ?? {};
-    // Markup decisions + finalize (+ its timestamp) are Management-only.
-    const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = it;
+    // Markup + discount decisions + finalize (+ its timestamp) are Management-only.
+    const { selectedVendor, markup, finalRate, finalDiscountPercent, finalizedAt, ...rest } = it;
     const base: any = privileged ? it : rest;
+    // Preserve vendor quotes when only the availability flag flips: a
+    // sales/management toggle of `rateAvailable` must never silently wipe
+    // management-collected `rates` (bug: available→true hid rates, off again
+    // showed empty because the toggle write omitted the array).
+    if (Array.isArray(stored.rates) && stored.rates.length > 0) {
+      const incomingRatesEmpty = !Array.isArray(base.rates) || base.rates.length === 0;
+      const availabilityFlipped = (base.rateAvailable === true) !== (stored.rateAvailable === true);
+      if (incomingRatesEmpty && availabilityFlipped) {
+        base.rates = stored.rates;
+      }
+    }
     if (!privileged) {
       // Non-management writers can never decide — but they must never WIPE
       // a decision either (e.g. a sales EST-No. edit echoing items back
@@ -41,6 +52,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       base.selectedVendor = stored.selectedVendor;
       base.markup = stored.markup;
       base.finalRate = stored.finalRate;
+      base.finalDiscountPercent = stored.finalDiscountPercent;
       base.finalizedAt = stored.finalizedAt;
     }
     if (restricted) {
@@ -99,6 +111,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.selectedVendor = undefined;
         base.markup = undefined;
         base.finalRate = undefined;
+        base.finalDiscountPercent = undefined;
         base.finalizedAt = undefined;
       }
     }
@@ -124,6 +137,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.selectedVendor = undefined;
         base.markup = undefined;
         base.finalRate = undefined;
+        base.finalDiscountPercent = undefined;
         base.finalizedAt = undefined;
       } else {
         base.specIssue = stored.specIssue;
@@ -189,6 +203,82 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
   }).filter((it: any) => it !== null);
 }
 
+const normIntakeLine = (s: unknown): string =>
+  String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+
+/**
+ * Intake bulk-add merge (GH intake action result → stored items):
+ * - returns null when no item carries `aiPending` (nothing to do — the
+ *   caller keeps its empty-fill-only behaviour);
+ * - when the router returned split lines: replaces the `aiPending` block
+ *   with the split items (deduped against existing real items so a
+ *   re-run never duplicates), carrying the pending photos onto the first
+ *   split item instead of duplicating data-URIs across every row;
+ * - when the router returned zero lines: keeps the raw items but clears
+ *   the flags so the UI stops showing "processing".
+ * Pure (no I/O) — unit-tested via ts-node.
+ */
+export function applyIntakeBulkResult(existingItems: any[], incomingItems: any[]): any[] | null {
+  const list = Array.isArray(existingItems) ? existingItems : [];
+  const pendingIdx: number[] = [];
+  list.forEach((it: any, i: number) => { if (it?.aiPending === true) pendingIdx.push(i); });
+  if (pendingIdx.length === 0) return null;
+  const pendingSet = new Set(pendingIdx);
+  const clearFlags = () =>
+    list.map((it: any) => {
+      if (it?.aiPending !== true) return it;
+      const { aiPending, ...rest } = it;
+      void aiPending;
+      return rest;
+    });
+  const incoming = (Array.isArray(incomingItems) ? incomingItems : [])
+    .map((l: any) => ({
+      name: String(l?.name ?? '').slice(0, 300),
+      qty: String(l?.qty ?? '').slice(0, 120),
+      spec: String(l?.spec ?? '').slice(0, 2000),
+      category: l?.category ? String(l.category).slice(0, 120) : undefined,
+      verbatim: l?.verbatim ? String(l.verbatim).slice(0, 500) : undefined,
+    }))
+    .filter((l) => l.name || l.qty || l.spec);
+  if (incoming.length === 0) return clearFlags();
+  // Dedup: skip router lines already present as real (non-pending) items.
+  const seen = new Set(
+    list
+      .filter((_, i) => !pendingSet.has(i))
+      .map((it: any) => normIntakeLine(`${it?.verbatim ?? ''} | ${it?.name ?? ''} | ${it?.spec ?? ''}`))
+      .filter(Boolean),
+  );
+  const fresh = incoming.filter((l) => {
+    const key = normIntakeLine(`${l.verbatim ?? ''} | ${l.name} | ${l.spec}`);
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (fresh.length === 0) return clearFlags();
+  // Pending photos belong to the whole chunk — carry them on the first split
+  // item (duplicating data-URIs across every item would bloat the row).
+  const pendingMedia: any[] = [];
+  for (const i of pendingIdx) {
+    for (const m of (list[i]?.media ?? [])) {
+      if (!m?.url) continue;
+      const k = `${m?.type}:${m?.url}`;
+      if (!pendingMedia.some((p) => `${p?.type}:${p?.url}` === k)) pendingMedia.push(m);
+    }
+  }
+  const split = fresh.map((l, k) => ({ ...l, media: k === 0 ? pendingMedia : [], rates: [] }));
+  const out: any[] = [];
+  let inserted = false;
+  list.forEach((it: any, i: number) => {
+    if (pendingSet.has(i)) {
+      if (!inserted) { out.push(...split); inserted = true; }
+      return;
+    }
+    out.push(it);
+  });
+  return out.slice(0, 100);
+}
+
 export interface RateWriteCtx {
   storedForItems: any | null;
   storedItems: any[];
@@ -197,16 +287,18 @@ export interface RateWriteCtx {
 }
 
 /**
- * Late-quote reopen (any writer): a NEW vendor quote appended to an item
- * whose decision is committed (finalRate set) clears that item's decision
- * (selectedVendor/markup/finalRate/finalizedAt) and stamps a quoted trail
- * entry — the caller drops the enquiry back to rates_received so sales is
- * notified and management re-decides. Only fires when:
+ * Late-quote note (any writer): a NEW vendor quote appended to an item
+ * whose decision is committed (finalRate set) KEEPS that item's decision
+ * (selectedVendor/markup/finalRate/finalizedAt) so sales keeps seeing the
+ * previous quoted rate — only a founder override changes it. Stamps a
+ * quoted trail entry so management can review the new quote and revise.
+ * Only fires when:
  * - the enquiry is currently `finalized` (sent rows never reopen), AND
  * - the write carries no explicit rateStatus (a same-save finalize wins), AND
  * - at least one genuinely new vendor+amount pair arrived (edits/removals
- *   don't reopen).
- * Returns true when any item reopened.
+ *   don't notify).
+ * Returns true when any late quote was noted (caller keeps rateStatus
+ * `finalized` — no auto-reopen).
  */
 export function applyLateQuoteReopen(
   updates: any,
@@ -216,7 +308,7 @@ export function applyLateQuoteReopen(
   if ((updates as any).rateStatus !== undefined) return false;
   const items = (updates as any).items;
   if (!Array.isArray(items)) return false;
-  let reopened = false;
+  let noted = false;
   (updates as any).items = items.map((it: any, idx: number) => {
     const stored = ctx.storedItems[idx] ?? {};
     if (stored.finalRate === undefined || stored.finalRate === null) return it;
@@ -229,22 +321,17 @@ export function applyLateQuoteReopen(
         !oldRates.some((o: any) => String(o.vendor) === String(r.vendor) && Number(o.rate) === Number(r.rate)),
     );
     if (added.length === 0) return it;
-    reopened = true;
-    const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = it;
-    void selectedVendor;
-    void markup;
-    void finalRate;
-    void finalizedAt;
-    const thread = Array.isArray((rest as any).thread) ? [...(rest as any).thread] : [];
+    noted = true;
+    const thread = Array.isArray((it as any).thread) ? [...(it as any).thread] : [];
     thread.push({
       by: ctx.actedBy,
       kind: 'quoted',
-      text: `Late vendor quote (${added.map((r: any) => String(r.vendor)).join(', ')}) — decision reopened`,
+      text: `Late vendor quote (${added.map((r: any) => String(r.vendor)).join(', ')}) — previous rate kept for sales`,
       at: new Date().toISOString(),
     });
-    return { ...rest, thread: thread.slice(-50) };
+    return { ...it, thread: thread.slice(-50) };
   });
-  return reopened;
+  return noted;
 }
 
 /**
@@ -275,26 +362,53 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
       it?.ratesRequested && !(storedItems[idx]?.ratesRequested));
     if (reopens) (updates as any).procurementSubmittedAt = '';
   }
-  // Auto-advance: a management item save that leaves every loop item
-  // with a final rate flips the enquiry to rates-ready on its own — no
-  // manual Finalize press needed. Only privileged (management) item writes
-  // trigger this; other roles never carry decision fields. finalizedAt is
-  // stamped for items that lack it, mirroring an explicit finalize.
-  if (privileged && (updates as any).rateStatus === undefined && Array.isArray((updates as any).items)) {
+  // Auto-advance: an item save that leaves every loop item with a final
+  // rate flips the enquiry to rates-ready on its own — no manual Finalize
+  // press needed. Previously privileged-only, but a sales `rateAvailable`
+  // toggle that clears the last actionable item must also advance so
+  // `Mark as sent` enables immediately (flag→available case). `hasBlockingFlag`
+  // keeps a pure flagged item blocking; flagged+available is not blocking.
+  // finalizedAt is stamped for items that lack it, mirroring an explicit finalize.
+  if ((updates as any).rateStatus === undefined && Array.isArray((updates as any).items)) {
     const merged = (updates as any).items as any[];
-    const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable);
-    const done = loop.filter((it) =>
-      it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
-    if (loop.length > 0 && done.length === loop.length) {
-      const cur = String((storedForItems as any)?.rateStatus ?? '');
-      if (cur === '' || cur === 'rate_pending' || cur === 'rates_received') {
-        const nowIso = new Date().toISOString();
-        (updates as any).items = merged.map((it) =>
-          (!it?.specIssue && !it?.rateAvailable
-            && it?.finalRate !== undefined && it?.finalRate !== null && !it?.finalizedAt)
-            ? { ...it, finalizedAt: nowIso }
-            : it);
-        (updates as any).rateStatus = 'finalized';
+    // `rateAvailable` is a sales-owned availability bypass — a procurement-
+    // flagged (`specIssue`) item that is also marked available no longer
+    // blocks the loop. Pure flagged items (no availability) still block.
+    const hasBlockingFlag = merged.some((it) => it?.specIssue && !it?.rateAvailable);
+    const curStatus = String((storedForItems as any)?.rateStatus ?? '');
+    if (hasBlockingFlag) {
+      // Procurement hold persists — do not auto-finalize while a non-
+      // available flagged item exists. Toggling `rateAvailable` off again
+      // restores this block (specIssue is restored in normalizeItemWrites).
+      // If the enquiry was previously finalized via the available bypass,
+      // toggling off must revert so `sent` disables and the procurement
+      // queue regains the item.
+      if (curStatus === 'finalized') {
+        (updates as any).rateStatus = 'rates_received';
+      }
+    } else {
+      const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
+      const done = loop.filter((it) =>
+        it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
+      // Empty loop means every item is either rate-available, internal, or
+      // flagged+available — nothing left to decide, so the enquiry is
+      // considered decided (previous `loop.length > 0` guard blocked this and
+      // kept `sent` disabled after a flag→available toggle).
+      const loopDone = loop.length === 0 ? merged.length > 0 : done.length === loop.length;
+      if (loopDone) {
+        if (curStatus === '' || curStatus === 'rate_pending' || curStatus === 'rates_received') {
+          const nowIso = new Date().toISOString();
+          (updates as any).items = merged.map((it) =>
+            (!it?.specIssue && !it?.rateAvailable && !it?.internalRates
+              && it?.finalRate !== undefined && it?.finalRate !== null && !it?.finalizedAt)
+              ? { ...it, finalizedAt: nowIso }
+              : it);
+          (updates as any).rateStatus = 'finalized';
+        }
+      } else if (curStatus === 'finalized') {
+        // Loop now has undecided actionable items (e.g. available→unavailable
+        // toggle) — revert so management must decide again and `sent` disables.
+        (updates as any).rateStatus = 'rates_received';
       }
     }
   }
