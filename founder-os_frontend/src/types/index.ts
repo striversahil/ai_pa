@@ -41,6 +41,9 @@ export interface EnquiryItemRate {
    *  salesNote is forwarded to sales with the final rate (founder can edit it
    *  before finalizing). */
   salesNote?: string;
+  /** Management-shared alternate: shown to sales as a visible option beside
+   *  the decided rate. The finalRate stays the quoted default. */
+  sharedWithSales?: boolean;
   /** False when this quote's spec differs from the item spec. */
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
@@ -67,6 +70,9 @@ export interface EnquiryItem {
   rates?: EnquiryItemRate[];
   /** Management decision: chosen vendor + markup + finalized rate. */
   selectedVendor?: string;
+  /** Index into `rates` of the management-chosen quote — disambiguates
+   *  duplicate vendor names (same vendor, two makes). */
+  selectedRateIdx?: number;
   markup?: number;
   finalRate?: number;
   /** Management-decided discount % to pass to customer (0-100). Applied

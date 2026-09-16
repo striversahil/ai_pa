@@ -54,6 +54,7 @@ function toEnquiry(raw: any): Enquiry {
                 discountPercent: q?.discountPercent !== undefined && q?.discountPercent !== null && q?.discountPercent !== "" ? Number(q.discountPercent) : undefined,
                 description: q?.description ? String(q.description) : undefined,
                 salesNote: q?.salesNote ? String(q.salesNote) : undefined,
+                sharedWithSales: q?.sharedWithSales === true ? true : undefined,
                 specSame: q?.specSame === false ? false : true,
                 specDiff: q?.specSame === false && q?.specDiff ? String(q.specDiff) : undefined,
                 quotedAt: q?.quotedAt ? String(q.quotedAt) : undefined,
@@ -71,6 +72,7 @@ function toEnquiry(raw: any): Enquiry {
               .filter((q: any) => q.vendor.trim() && Number.isFinite(q.rate))
           : [],
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor) : undefined,
+        selectedRateIdx: Number.isInteger(Number(r?.selectedRateIdx)) && Number(r?.selectedRateIdx) >= 0 ? Number(r?.selectedRateIdx) : undefined,
         markup: r?.markup !== undefined && r?.markup !== null && r?.markup !== "" ? Number(r.markup) : undefined,
         finalRate: r?.finalRate !== undefined && r?.finalRate !== null && r?.finalRate !== "" ? Number(r.finalRate) : undefined,
         finalDiscountPercent: (r as any)?.finalDiscountPercent !== undefined && (r as any)?.finalDiscountPercent !== null && (r as any)?.finalDiscountPercent !== "" ? Number((r as any).finalDiscountPercent) : undefined,

@@ -1,4 +1,4 @@
-import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty, parseFlagThread, normalizeVisibility, type FlagThreadBy, type FlagThreadEntry } from "./store";
+import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, rateIdxOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty, parseFlagThread, normalizeVisibility, type FlagThreadBy, type FlagThreadEntry } from "./store";
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
@@ -118,6 +118,7 @@ function pick(data: any): Partial<Enquiry> | null {
         verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
         rates: parseItemRates(r?.rates),
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
+        selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
         markup: numOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
         finalDiscountPercent: parseDiscount(r?.finalDiscountPercent),

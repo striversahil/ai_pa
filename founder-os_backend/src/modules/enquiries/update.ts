@@ -51,10 +51,28 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       // survive their writes; only the privileged surface below may set
       // or clear them.
       base.selectedVendor = stored.selectedVendor;
+      base.selectedRateIdx = stored.selectedRateIdx;
       base.markup = stored.markup;
       base.finalRate = stored.finalRate;
       base.finalDiscountPercent = stored.finalDiscountPercent;
       base.finalizedAt = stored.finalizedAt;
+      // Sales-visibility of alternate quotes is Management-only (like the
+      // negotiation target above): echoing writers follow the stored flags,
+      // matched by vendor+rate identity so reordered rows keep them. A
+      // procurement amount correction drops the share — management re-shares
+      // the new number explicitly.
+      const sharedByKey = new Map(
+        (Array.isArray(stored.rates) ? stored.rates : []).map((r: any) => [
+          `${String(r?.vendor ?? '')}|${Number(r?.rate)}`,
+          r?.sharedWithSales === true,
+        ]),
+      );
+      if (Array.isArray(base.rates)) {
+        base.rates = base.rates.map((r: any) => ({
+          ...r,
+          sharedWithSales: sharedByKey.get(`${String(r?.vendor ?? '')}|${Number(r?.rate)}`) === true ? true : undefined,
+        }));
+      }
     }
     if (restricted) {
       // Procurement owns rates + spec flags only: identity (name/qty/spec/

@@ -33,7 +33,11 @@ interface ManagementRatesPanelProps {
  *  updated rates to Sales automatically (same useLiveQuery subscription). */
 export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRatesPanelProps) {
   const items = Array.isArray(enquiry.items) ? enquiry.items : [];
-  const [sel, setSel] = useState<Record<number, string>>({});
+  // Selected vendor per item, keyed by RATE ROW INDEX (not vendor name):
+  // procurement often adds two quotes from the same vendor (two makes /
+  // models), and name-keyed selection always resolved to the first match,
+  // making the second row unselectable.
+  const [sel, setSel] = useState<Record<number, number>>({});
   const [modes, setModes] = useState<Record<number, MarkupMode>>({});
   const [pctInputs, setPctInputs] = useState<Record<number, string>>({});
   const [finalInputs, setFinalInputs] = useState<Record<number, string>>({});
@@ -55,6 +59,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // Per-item forwardable note: procurement's salesNote for the selected vendor,
   // editable by founder before finalizing (forwarded to sales with finalRate).
   const [salesNotes, setSalesNotes] = useState<Record<number, string>>({});
+  // Share-with-sales toggles (founder clicks only — unstaged rows fall back
+  // to the stored flag at save, so live procurement edits never silently
+  // unshare). Keyed vendor+rate so appended/dropped rows can't shift them.
+  const [shareToggled, setShareToggled] = useState<Record<string, boolean>>({});
+  const shareKey = (i: number, r: any): string =>
+    `${i}|${String(r?.vendor ?? "")}|${Number(r?.rate)}`;
   // Bulk decisions: checkboxes select items, then one margin % applies to
   // all, or one combined final ₹ splits proportionally across selected
   // vendor rates (each ceil5; the computed total is shown).
@@ -70,15 +80,20 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [showClosed, setShowClosed] = useState(false);
 
   useEffect(() => {
-    const s: Record<number, string> = {};
+    const s: Record<number, number> = {};
     const p: Record<number, string> = {};
     const f: Record<number, string> = {};
     const d: Record<number, string> = {};
     const sn: Record<number, string> = {};
     items.forEach((it, i) => {
-      if (it.selectedVendor) s[i] = it.selectedVendor;
+      // Stored vendor NAME resolves to its first matching row (backwards
+      // compatible); a deleted vendor leaves the item unselected to pick fresh.
+      if (it.selectedVendor) {
+        const k = (it.rates ?? []).findIndex((r) => r.vendor === it.selectedVendor);
+        if (k >= 0) s[i] = k;
+      }
       // Auto-select when only one vendor rate exists — faster processing, no extra click
-      else if (!it.specIssue && !it.rateAvailable && (it.rates ?? []).length === 1) s[i] = (it.rates as any)[0].vendor;
+      else if (!it.specIssue && !it.rateAvailable && (it.rates ?? []).length === 1) s[i] = 0;
       // Markup % was stored over discounted base; reverse with same base.
       const rate = (it.rates ?? []).find((r) => r.vendor === (it.selectedVendor ?? ""))?.rate;
       const disc = (it as any).finalDiscountPercent;
@@ -130,13 +145,13 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // Live auto-select single-rate items (procurement just added the only quote while the panel is open)
   useEffect(() => {
     if (locked && !canSaveLocked) return;
-    const patch: Record<number, string> = {};
+    const patch: Record<number, number> = {};
     let changed = false;
     items.forEach((it, i) => {
-      if (sel[i] || it.selectedVendor) return;
+      if (sel[i] !== undefined || it.selectedVendor) return;
       if (it.specIssue || it.rateAvailable) return;
       if ((it.rates ?? []).length === 1) {
-        patch[i] = (it.rates as any)[0].vendor;
+        patch[i] = 0;
         changed = true;
       }
     });
@@ -146,8 +161,18 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // never counted here (same rule as the pending queue predicate).
   const actionableCount = items.filter((it) => !it.specIssue && !it.rateAvailable).length;
 
-  const vendorRate = (idx: number, vendor: string): number | undefined =>
-    items[idx] ? (items[idx].rates ?? []).find((r) => r.vendor === vendor)?.rate : undefined;
+  // Selected rate ROW for item i: explicit index first, else the stored
+  // vendor name's first match (backwards compatible). Every consumer
+  // (radio, compute, note box, save) resolves through here so duplicate
+  // vendor names stay independently selectable.
+  const selRateIdx = (i: number, it: EnquiryItem): number | undefined => {
+    const rates = it.rates ?? [];
+    const s = sel[i];
+    if (s !== undefined) return s >= 0 && s < rates.length ? s : undefined;
+    if (!it.selectedVendor) return undefined;
+    const k = rates.findIndex((r) => r.vendor === it.selectedVendor);
+    return k >= 0 ? k : undefined;
+  };
 
   const discountFor = (i: number, it: EnquiryItem): number => {
     const raw = discountInputs[i];
@@ -171,8 +196,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
    *    final = ceil5(discountedBase * (1 + markup%/100)) or direct final ₹
    *  Null when nothing is entered and nothing was stored (preserve as-is). */
   const computeItem = (i: number, it: EnquiryItem): { markup: number; finalRate: number; unrounded: number; discount: number } | null => {
-    const vendor = sel[i] ?? it.selectedVendor ?? "";
-    const rate = vendorRate(i, vendor);
+    const ri = selRateIdx(i, it);
+    const rate = ri === undefined ? undefined : (it.rates ?? [])[ri]?.rate;
     const discount = discountFor(i, it);
     if (!Number.isFinite(discount) || discount < 0 || discount > 100) return null;
     const base = rate !== undefined ? rate * (1 - discount / 100) : undefined;
@@ -213,14 +238,25 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       // Held for a sales spec correction, or rate already available: never
       // touched here, never finalized.
       if (it.specIssue || it.rateAvailable) return { ...it };
-      const vendor = sel[i] ?? it.selectedVendor ?? "";
-      const out: EnquiryItem = { ...it, selectedVendor: vendor || undefined };
-      // Forwardable salesNote: if founder edited it for the selected vendor,
-      // persist it on that rate (procurement's note, founder-editable, sales sees
-      // only the selected vendor's note with the final rate).
+      const ri = selRateIdx(i, it);
+      const picked = ri === undefined ? undefined : (it.rates ?? [])[ri];
+      const out: EnquiryItem = { ...it, selectedVendor: picked?.vendor || undefined };
+      // Persist the exact decided ROW (duplicate vendor names) + per-row
+      // sales-visibility: the selected row is always shared (it IS the
+      // quoted rate); other rows follow the founder's toggle, else stored.
+      if (ri !== undefined) (out as any).selectedRateIdx = ri;
+      else delete (out as any).selectedRateIdx;
+      out.rates = (out.rates ?? []).map((r: any, k: number) => {
+        const want = k === ri || shareToggled[shareKey(i, r)] === true
+          || (shareToggled[shareKey(i, r)] === undefined && (r as any)?.sharedWithSales === true);
+        return { ...r, sharedWithSales: want ? true : undefined };
+      });
+      // Forwardable salesNote: if founder edited it for the selected ROW,
+      // persist it on that row only (procurement's note, founder-editable,
+      // sales sees only the selected vendor's note with the final rate).
       const noteEdited = salesNotes[i] !== undefined;
-      if (vendor && noteEdited) {
-        out.rates = (out.rates ?? []).map((r: any) => r.vendor === vendor ? { ...r, salesNote: salesNotes[i].trim() || undefined } : r);
+      if (ri !== undefined && noteEdited) {
+        out.rates = (out.rates ?? []).map((r: any, k: number) => k === ri ? { ...r, salesNote: salesNotes[i].trim() || undefined } : r);
       }
       // Management rate-request (incorrect quote / different vendor needed):
       // attaches the flag + timestamp; null withdraws an unanswered request.
@@ -331,8 +367,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     if (total === null) { setBulkError("Enter a valid combined final ₹."); return; }
     if (checkedIdx.length === 0) { setBulkError("Select items first."); return; }
     const weights = checkedIdx.map((i) => {
-      const vendor = sel[i] ?? items[i].selectedVendor ?? "";
-      return vendorRate(i, vendor);
+      const ri = selRateIdx(i, items[i]);
+      return ri === undefined ? undefined : (items[i].rates ?? [])[ri]?.rate;
     });
     if (weights.some((w) => w === undefined)) {
       setBulkError("Select a vendor for every checked item first.");
@@ -414,7 +450,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             {showClosed && (
               <ul className="border-t border-zinc-800 divide-y divide-zinc-800/60">
                 {decided.map(({ it, i }) => {
-                  const vRate = (it.rates ?? []).find((r) => r.vendor === (it.selectedVendor ?? ""))?.rate;
+                  const selRow = typeof (it as any).selectedRateIdx === "number"
+                    ? (it.rates ?? [])[(it as any).selectedRateIdx]
+                    : undefined;
+                  const vRate = (selRow ?? (it.rates ?? []).find((r) => r.vendor === (it.selectedVendor ?? "")))?.rate;
                   return (
                     <li key={i} className="px-3 py-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
                       <span className="font-extrabold text-zinc-200">
@@ -545,8 +584,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               );
             }
             const rates = it.rates ?? [];
-            const vendor = sel[i] ?? it.selectedVendor ?? "";
-            const rate = rates.find((r) => r.vendor === vendor)?.rate;
+            const ri = selRateIdx(i, it);
+            const rate = ri === undefined ? undefined : rates[ri]?.rate;
             const mode: MarkupMode = modes[i] ?? "percent";
             const computed = computeItem(i, it);
             const preview = computed ? computed.finalRate : null;
@@ -584,14 +623,24 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   <p className="text-[11px] text-zinc-500 italic">No vendor rates yet — procurement adds them per item.</p>
                 ) : (
                   <div className="space-y-1">
-                    {rates.map((r, ri) => (
-                      <label key={ri} className={`flex items-start gap-2 text-[11px] rounded-lg border border-transparent p-1.5 ${isItemLocked ? "opacity-60" : "cursor-pointer has-checked:border-indigo-500/40 has-checked:bg-indigo-500/5"}`}>
+                    {rates.map((r, rj) => (
+                      <label key={rj} className={`flex items-start gap-2 text-[11px] rounded-lg border border-transparent p-1.5 ${isItemLocked ? "opacity-60" : "cursor-pointer has-checked:border-indigo-500/40 has-checked:bg-indigo-500/5"}`}>
                         <input
                           type="radio"
                           name={`vendor-${enquiry.id}-${i}`}
-                          checked={vendor === r.vendor}
+                          checked={ri === rj}
                           disabled={isItemLocked}
-                          onChange={() => setSel((prev) => ({ ...prev, [i]: r.vendor }))}
+                          onChange={() => {
+                            setSel((prev) => ({ ...prev, [i]: rj }));
+                            // Switching rows drops the other row's note draft —
+                            // otherwise it would stamp onto this row at save.
+                            setSalesNotes((prev) => {
+                              if (prev[i] === undefined) return prev;
+                              const n = { ...prev };
+                              delete n[i];
+                              return n;
+                            });
+                          }}
                           className="accent-indigo-500 mt-0.5 disabled:opacity-50"
                         />
                         <span className="flex-1 min-w-0">
@@ -607,8 +656,21 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                             {(r as any).discountPercent !== undefined && (r as any).discountPercent !== null && (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">{String((r as any).discountPercent)}% vendor off</span>
                             )}
-                {(!locked || revise[i] || it.finalRate === undefined || it.finalRate === null) && (
-                              <button type="button" onClick={() => dropRate(i, ri)} title="Remove incorrect rate"
+                            {ri === rj ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-indigo-500/10 text-indigo-300 border border-indigo-500/30" title="The quoted rate — always shown to sales">Quoted ✓</span>
+                            ) : !isItemLocked && (
+                              <button type="button"
+                                onClick={() => {
+                                  const k = shareKey(i, r);
+                                  setShareToggled((prev) => ({ ...prev, [k]: !(prev[k] ?? (r as any)?.sharedWithSales === true) }));
+                                }}
+                                title="Show this quote to sales as an alternate option beside the quoted rate"
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide border cursor-pointer ${(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "bg-sky-500/10 text-sky-300 border-sky-500/30" : "bg-transparent text-zinc-500 border-zinc-700 hover:text-zinc-300"}`}>
+                                {(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "Shared ✓" : "Share with sales"}
+                              </button>
+                            )}
+                 {(!locked || revise[i] || it.finalRate === undefined || it.finalRate === null) && (
+                               <button type="button" onClick={() => dropRate(i, rj)} title="Remove incorrect rate"
                                 className="text-zinc-600 hover:text-red-400 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">×</button>
                             )}
                           </span>
@@ -642,11 +704,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     ))}
                   </div>
                 )}
-                {vendor && !isItemLocked && (
+                {ri !== undefined && !isItemLocked && (
                   <div className="space-y-1">
                     <label className="block text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Note for sales (forwarded with final rate)</label>
                     <textarea
-                      value={salesNotes[i] ?? (rates.find((r: any) => r.vendor === vendor) as any)?.salesNote ?? ""}
+                      value={salesNotes[i] ?? (rates[ri] as any)?.salesNote ?? ""}
                       onChange={(e) => setSalesNotes((prev) => ({ ...prev, [i]: e.target.value }))}
                       placeholder="Forwarded to sales when this vendor is selected — e.g. delivery terms, warranty, validity…"
                       rows={2}
@@ -663,7 +725,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         {(it as any).finalDiscountPercent ? ` · ${(it as any).finalDiscountPercent}% off` : ""}
                       </p>
                       {(() => {
-                        const sr: any = rates.find((r) => r.vendor === vendor);
+                        const sr: any = ri !== undefined ? rates[ri] : rates.find((r) => r.vendor === (it.selectedVendor ?? ""));
                         const n = sr?.salesNote ? String(sr.salesNote).trim() : "";
                         const refs: any[] = sr?.references ?? [];
                         return (

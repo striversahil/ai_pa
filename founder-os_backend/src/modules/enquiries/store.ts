@@ -73,6 +73,11 @@ export interface EnquiryItemRate {
    *  selected vendor's salesNote is forwarded to sales with the final rate
    *  (founder can edit it in the review panel before finalizing). */
   salesNote?: string;
+  /** Management-shared alternate: true = this quote is shown to sales as a
+   *  visible option beside the decided rate (same vendor, two makes), so the
+   *  team can discuss which material to quote. The decided finalRate stays
+   *  the quoted default; picking the alternate goes through Revise. */
+  sharedWithSales?: boolean;
   /** False when this quote's spec differs from the item spec. */
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
@@ -98,6 +103,10 @@ export interface EnquiryItem {
   rates?: EnquiryItemRate[];
   /** Management decision: chosen vendor + markup + finalized rate. */
   selectedVendor?: string;
+  /** Index into `rates` of the management-chosen quote — disambiguates
+   *  duplicate vendor names (same vendor, two makes). Sales renders the
+   *  exact decided row; falls back to selectedVendor name matching. */
+  selectedRateIdx?: number;
   markup?: number;
   finalRate?: number;
   /** Management-decided discount % to pass to customer (0-100). */
@@ -172,6 +181,12 @@ export const isoOrUndefined = (v: unknown): string | undefined => {
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 };
 
+/** Rate-row index passthrough (selectedRateIdx) — invalid values dropped. */
+export const rateIdxOrUndefined = (v: unknown): number | undefined => {
+  const n = typeof v === 'number' ? v : Number(String(v ?? '').trim());
+  return Number.isInteger(n) && (n as number) >= 0 ? (n as number) : undefined;
+};
+
 /** Quantity keeps digits + units (`3 PCS`): anything without a digit is
  *  not a quantity and normalizes to "". */
 export function normalizeQty(v: unknown): string {
@@ -214,6 +229,7 @@ export function parseItemRates(raw: unknown): EnquiryItemRate[] {
         discountPercent: parseDiscountPercent(r?.discountPercent),
         description: r?.description ? String(r.description).slice(0, 2000) : undefined,
         salesNote: r?.salesNote ? String(r.salesNote).slice(0, 2000) : undefined,
+        sharedWithSales: r?.sharedWithSales === true ? true : undefined,
         specSame,
         specDiff: !specSame && r?.specDiff ? String(r.specDiff).slice(0, 2000) : undefined,
         references: parseItemMedia(r?.references),
@@ -373,6 +389,7 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
         rates: parseItemRates(r?.rates),
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
+        selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
         markup: numOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
         finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
@@ -458,6 +475,7 @@ export function sanitize(e: any): Enquiry {
           verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
           rates: parseItemRates(r?.rates),
           selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
+          selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
           markup: numOrUndefined(r?.markup),
           finalRate: numOrUndefined(r?.finalRate),
           finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),

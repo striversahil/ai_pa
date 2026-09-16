@@ -446,13 +446,18 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           </button>
                         )
                       )}
-                                             {(() => {
+                                              {(() => {
+                        const selIdx = (it as any)?.selectedRateIdx;
                         const selRate = (it.rates ?? []).find((r) => (r as any).selected === true)
+                          ?? (typeof selIdx === "number" ? (it.rates ?? [])[selIdx] : undefined)
                           ?? (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor);
                         const note = (selRate as any)?.salesNote ? String((selRate as any).salesNote).trim() : "";
                         const hasRate = it.finalRate !== undefined && it.finalRate !== null;
                         const refs = selRate?.references ?? [];
                         const refImages = refs.filter((m) => m.type !== "video" && m.type !== "pdf").map((m) => m.url).filter(Boolean);
+                        // Management-shared alternates (same vendor, two makes): every
+                        // shared row except the exact quoted one above.
+                        const alts = (it.rates ?? []).filter((r) => r !== selRate && (r as any)?.sharedWithSales === true);
                         const hasContent = hasRate || !!note || refs.length > 0;
                         if (!hasContent) return null;
                         return (
@@ -480,6 +485,24 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                        onClick={() => onOpenLightbox(m.url, refImages.length > 0 ? refImages : [m.url], Math.max(0, refImages.indexOf(m.url)))} />
                                   )
                                 ))}
+                              </div>
+                            )}
+                            {hasRate && alts.length > 0 && (
+                              <div className="pt-1.5 mt-1 border-t border-emerald-500/10 space-y-1">
+                                <p className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
+                                  Alternate option{alts.length === 1 ? "" : "s"} — quoted rate above stays default
+                                </p>
+                                {alts.map((a, ai) => (
+                                  <div key={ai} className="space-y-0.5">
+                                    <p className="text-[11px] font-bold text-[var(--text-primary)]">
+                                      {a.vendor} · <span className="font-mono">₹{Number(a.rate).toLocaleString("en-IN")}</span>
+                                    </p>
+                                    {(a as any)?.salesNote && (
+                                      <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((a as any).salesNote)}</p>
+                                    )}
+                                  </div>
+                                ))}
+                                <p className="text-[10px] text-[var(--text-tertiary)]">If the client prefers an alternate, ask management to revise — the quoted rate can't be switched from here.</p>
                               </div>
                             )}
                           </div>
