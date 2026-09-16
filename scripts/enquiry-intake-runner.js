@@ -200,17 +200,29 @@ async function processEnquiry(gateway, eq) {
   if (_poolNote.length + images.length > 0 && attachedImgs === 0) {
     console.log(`- ${eq.id}: WARNING ${ _poolNote.length + images.length} image(s) present but none attached to vision call`);
   }
+  // Free-tier models intermittently return empty/unparseable responses
+  // (burst limits) — retry the router call before giving up on the enquiry.
   let routed;
-  try {
-    routed = await gateway.completeJson({
-      messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content: fullContent }],
-      temperature: 0, json: true, maxTokens: 3000,
-      // Enquiry pipeline runs on OpenRouter (ling text+vision); the gateway
-      // falls back to Groq automatically when no OpenRouter key is set.
-      provider: 'openrouter',
-    });
-  } catch (e) {
-    return { error: `vision failed: ${e.message}`, items: [], missing: [], suggestions: [], candidates: [] };
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      routed = await gateway.completeJson({
+        messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content: fullContent }],
+        temperature: 0, json: true, maxTokens: 3000,
+        // Enquiry pipeline runs on OpenRouter (ling text+vision); the gateway
+        // falls back to Groq automatically when no OpenRouter key is set.
+        provider: 'openrouter',
+      });
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      console.log(`- ${eq.id}: router attempt ${attempt + 1}/3 failed (${String(e.message).slice(0, 120)}) — retrying`);
+      await new Promise((r) => setTimeout(r, 15000));
+    }
+  }
+  if (lastErr) {
+    return { error: `vision failed: ${lastErr.message}`, items: [], missing: [], suggestions: [], candidates: [] };
   }
   if (!Array.isArray(routed.lines) || routed.lines.length === 0) {
     console.log(`- ${eq.id}: router returned 0 lines (lead: ${JSON.stringify(routed.lead || {}).slice(0, 300)})`);
