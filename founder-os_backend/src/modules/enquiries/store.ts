@@ -78,6 +78,11 @@ export interface EnquiryItemRate {
    *  team can discuss which material to quote. The decided finalRate stays
    *  the quoted default; picking the alternate goes through Revise. */
   sharedWithSales?: boolean;
+  /** Per-quote sales final for a shared alternate: the item's margin %
+   *  applied to THIS quote (same discount first, same ceil5). Sales sees one
+   *  final per option; direct Final-₹ entry is locked out in multi-quote
+   *  mode because a single final can't express per-quote finals. */
+  sharedFinalRate?: number;
   /** False when this quote's spec differs from the item spec. */
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
@@ -230,6 +235,10 @@ export function parseItemRates(raw: unknown): EnquiryItemRate[] {
         description: r?.description ? String(r.description).slice(0, 2000) : undefined,
         salesNote: r?.salesNote ? String(r.salesNote).slice(0, 2000) : undefined,
         sharedWithSales: r?.sharedWithSales === true ? true : undefined,
+        sharedFinalRate: (() => {
+          const v = strictNum(r?.sharedFinalRate);
+          return v !== undefined && v >= 0 ? v : undefined;
+        })(),
         specSame,
         specDiff: !specSame && r?.specDiff ? String(r.specDiff).slice(0, 2000) : undefined,
         references: parseItemMedia(r?.references),

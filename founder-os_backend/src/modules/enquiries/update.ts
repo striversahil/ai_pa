@@ -61,17 +61,26 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       // matched by vendor+rate identity so reordered rows keep them. A
       // procurement amount correction drops the share — management re-shares
       // the new number explicitly.
-      const sharedByKey = new Map(
+      const storedRateByKey = new Map(
         (Array.isArray(stored.rates) ? stored.rates : []).map((r: any) => [
           `${String(r?.vendor ?? '')}|${Number(r?.rate)}`,
-          r?.sharedWithSales === true,
+          r,
         ]),
       );
       if (Array.isArray(base.rates)) {
-        base.rates = base.rates.map((r: any) => ({
-          ...r,
-          sharedWithSales: sharedByKey.get(`${String(r?.vendor ?? '')}|${Number(r?.rate)}`) === true ? true : undefined,
-        }));
+        base.rates = base.rates.map((r: any) => {
+          const stored = storedRateByKey.get(`${String(r?.vendor ?? '')}|${Number(r?.rate)}`);
+          // A per-quote final is meaningless without its share flag — drop
+          // both together so sales never shows a stale alternate price.
+          if (!stored || (stored as any)?.sharedWithSales !== true) {
+            const out = { ...r };
+            delete (out as any).sharedWithSales;
+            delete (out as any).sharedFinalRate;
+            return out;
+          }
+          const v = Number((stored as any)?.sharedFinalRate);
+          return { ...r, sharedWithSales: true, sharedFinalRate: Number.isFinite(v) && v >= 0 ? v : undefined };
+        });
       }
     }
     if (restricted) {

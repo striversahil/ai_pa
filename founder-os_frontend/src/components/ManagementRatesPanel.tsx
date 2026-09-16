@@ -173,6 +173,54 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     const k = rates.findIndex((r) => r.vendor === it.selectedVendor);
     return k >= 0 ? k : undefined;
   };
+  // A row is sales-visible when toggled on, else when the stored flag says
+  // so (live procurement edits never silently unshare).
+  const rowShared = (i: number, r: any): boolean =>
+    shareToggled[shareKey(i, r)] === true
+    || (shareToggled[shareKey(i, r)] === undefined && (r as any)?.sharedWithSales === true);
+  // All sales-visible row indices (selected row always included).
+  const sharedRows = (i: number, it: EnquiryItem): number[] => {
+    const ri = selRateIdx(i, it);
+    return (it.rates ?? []).map((r: any, k: number) => ({ r, k }))
+      .filter(({ r, k }) => k === ri || rowShared(i, r))
+      .map(({ k }) => k);
+  };
+  // Multi-quote mode: selected + ≥1 shared alternate. One margin % applies
+  // respectively to every shared row; direct Final ₹ is locked out (a single
+  // final can't express per-quote finals).
+  const isMultiQuote = (i: number, it: EnquiryItem): boolean => {
+    const ri = selRateIdx(i, it);
+    return ri !== undefined && sharedRows(i, it).some((k) => k !== ri);
+  };
+  // The item's margin %: typed input, else stored-markup-derived.
+  const resolvePct = (i: number, it: EnquiryItem): number | null => {
+    const raw = pctInputs[i];
+    if (raw !== undefined && raw.trim() !== "") return parseMoneyInput(raw);
+    const ri = selRateIdx(i, it);
+    const rate = ri === undefined ? undefined : (it.rates ?? [])[ri]?.rate;
+    const discount = discountFor(i, it);
+    const base = rate !== undefined && Number.isFinite(discount) ? rate * (1 - discount / 100) : undefined;
+    if (it.markup !== undefined && it.markup !== null && base) {
+      const p = (Number(it.markup) / base) * 100;
+      return Number.isFinite(p) ? p : null;
+    }
+    return null;
+  };
+  // Per-row sales finals under the item's margin % (discount first, same
+  // ceil5). Keyed by row index; rows without a resolvable % are absent.
+  const sharedFinals = (i: number, it: EnquiryItem): Record<number, number> => {
+    const out: Record<number, number> = {};
+    const p = resolvePct(i, it);
+    if (p === null || !Number.isFinite(p)) return out;
+    const discount = discountFor(i, it);
+    if (!Number.isFinite(discount) || discount < 0 || discount > 100) return out;
+    for (const k of sharedRows(i, it)) {
+      const rate = (it.rates ?? [])[k]?.rate;
+      if (rate === undefined) continue;
+      out[k] = ceil5(rate * (1 - discount / 100) * (1 + p / 100));
+    }
+    return out;
+  };
 
   const discountFor = (i: number, it: EnquiryItem): number => {
     const raw = discountInputs[i];
@@ -201,7 +249,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     const discount = discountFor(i, it);
     if (!Number.isFinite(discount) || discount < 0 || discount > 100) return null;
     const base = rate !== undefined ? rate * (1 - discount / 100) : undefined;
-    const mode: MarkupMode = modes[i] ?? "percent";
+    // Multi-quote items are margin-%-only (see isMultiQuote).
+    const mode: MarkupMode = isMultiQuote(i, it) ? "percent" : (modes[i] ?? "percent");
     if (mode === "final") {
       const raw = finalInputs[i];
       const f = raw !== undefined && raw.trim() !== ""
@@ -212,10 +261,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       const markup = base !== undefined ? final - base : final;
       return { markup, finalRate: final, unrounded: f, discount };
     }
-    const raw = pctInputs[i];
-    const p = raw !== undefined && raw.trim() !== ""
-      ? parseMoneyInput(raw)
-      : (it.markup !== undefined && it.markup !== null && base ? (Number(it.markup) / base) * 100 : NaN);
+    const p = resolvePct(i, it);
     if (p === null || !Number.isFinite(p) || base === undefined) return null;
     const unrounded = base * (1 + p / 100);
     const final = ceil5(unrounded);
@@ -246,10 +292,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       // quoted rate); other rows follow the founder's toggle, else stored.
       if (ri !== undefined) (out as any).selectedRateIdx = ri;
       else delete (out as any).selectedRateIdx;
+      const finals = sharedFinals(i, it);
       out.rates = (out.rates ?? []).map((r: any, k: number) => {
-        const want = k === ri || shareToggled[shareKey(i, r)] === true
-          || (shareToggled[shareKey(i, r)] === undefined && (r as any)?.sharedWithSales === true);
-        return { ...r, sharedWithSales: want ? true : undefined };
+        const want = k === ri || rowShared(i, r);
+        return {
+          ...r,
+          sharedWithSales: want ? true : undefined,
+          sharedFinalRate: want && finals[k] !== undefined ? finals[k] : undefined,
+        };
       });
       // Forwardable salesNote: if founder edited it for the selected ROW,
       // persist it on that row only (procurement's note, founder-editable,
@@ -586,7 +636,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             const rates = it.rates ?? [];
             const ri = selRateIdx(i, it);
             const rate = ri === undefined ? undefined : rates[ri]?.rate;
-            const mode: MarkupMode = modes[i] ?? "percent";
+            // Multi-quote: margin-%-only, one % respectively per shared row.
+            const multi = isMultiQuote(i, it);
+            const finals = sharedFinals(i, it);
+            const mode: MarkupMode = multi ? "percent" : (modes[i] ?? "percent");
             const computed = computeItem(i, it);
             const preview = computed ? computed.finalRate : null;
             const wasRounded = !!computed && computed.unrounded !== computed.finalRate;
@@ -668,6 +721,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                                 className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide border cursor-pointer ${(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "bg-sky-500/10 text-sky-300 border-sky-500/30" : "bg-transparent text-zinc-500 border-zinc-700 hover:text-zinc-300"}`}>
                                 {(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "Shared ✓" : "Share with sales"}
                               </button>
+                            )}
+                            {multi && finals[rj] !== undefined && (ri === rj || rowShared(i, r)) && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30" title="What sales will see for this option under the item margin %">
+                                → {fmtINR(finals[rj])} for sales
+                              </span>
                             )}
                  {(!locked || revise[i] || it.finalRate === undefined || it.finalRate === null) && (
                                <button type="button" onClick={() => dropRate(i, rj)} title="Remove incorrect rate"
@@ -781,9 +839,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         % Markup
                       </button>
                       <button type="button"
-                        onClick={() => setModes((prev) => ({ ...prev, [i]: "final" }))}
-                        className={`px-2.5 py-1.5 cursor-pointer border-0 ${mode === "final" ? "bg-indigo-600 text-white" : "bg-transparent text-zinc-400"}`}>
-                        Final ₹
+                        onClick={() => { if (!multi) setModes((prev) => ({ ...prev, [i]: "final" })); }}
+                        disabled={multi}
+                        title={multi ? "Disabled: one margin % applies to every shared quote — a single Final ₹ can't price them respectively" : undefined}
+                        className={`px-2.5 py-1.5 border-0 ${multi ? "bg-transparent text-zinc-600 cursor-not-allowed opacity-50" : `cursor-pointer ${mode === "final" ? "bg-indigo-600 text-white" : "bg-transparent text-zinc-400"}`}`}>
+                        Final ₹{multi ? " 🔒" : ""}
                       </button>
                     </div>
                     {mode === "percent" ? (

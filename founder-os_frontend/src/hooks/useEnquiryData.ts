@@ -55,6 +55,7 @@ function toEnquiry(raw: any): Enquiry {
                 description: q?.description ? String(q.description) : undefined,
                 salesNote: q?.salesNote ? String(q.salesNote) : undefined,
                 sharedWithSales: q?.sharedWithSales === true ? true : undefined,
+                sharedFinalRate: q?.sharedFinalRate !== undefined && q?.sharedFinalRate !== null && q?.sharedFinalRate !== "" && Number.isFinite(Number(q.sharedFinalRate)) && Number(q.sharedFinalRate) >= 0 ? Number(q.sharedFinalRate) : undefined,
                 specSame: q?.specSame === false ? false : true,
                 specDiff: q?.specSame === false && q?.specDiff ? String(q.specDiff) : undefined,
                 quotedAt: q?.quotedAt ? String(q.quotedAt) : undefined,

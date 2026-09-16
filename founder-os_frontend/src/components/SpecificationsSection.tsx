@@ -492,16 +492,20 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 <p className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
                                   Alternate option{alts.length === 1 ? "" : "s"} — quoted rate above stays default
                                 </p>
-                                {alts.map((a, ai) => (
+                                {alts.map((a, ai) => {
+                                  const altFinal = (a as any)?.sharedFinalRate !== undefined && (a as any)?.sharedFinalRate !== null
+                                    ? Number((a as any).sharedFinalRate) : Number(a.rate);
+                                  return (
                                   <div key={ai} className="space-y-0.5">
                                     <p className="text-[11px] font-bold text-[var(--text-primary)]">
-                                      {a.vendor} · <span className="font-mono">₹{Number(a.rate).toLocaleString("en-IN")}</span>
+                                      {a.vendor} · <span className="font-mono">₹{altFinal.toLocaleString("en-IN")}</span>
                                     </p>
                                     {(a as any)?.salesNote && (
                                       <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((a as any).salesNote)}</p>
                                     )}
                                   </div>
-                                ))}
+                                  );
+                                })}
                                 <p className="text-[10px] text-[var(--text-tertiary)]">If the client prefers an alternate, ask management to revise — the quoted rate can't be switched from here.</p>
                               </div>
                             )}

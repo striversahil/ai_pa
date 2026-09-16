@@ -44,6 +44,9 @@ export interface EnquiryItemRate {
   /** Management-shared alternate: shown to sales as a visible option beside
    *  the decided rate. The finalRate stays the quoted default. */
   sharedWithSales?: boolean;
+  /** Per-quote sales final for a shared alternate (item margin % applied to
+   *  this quote). Shown to sales as the alternate's price. */
+  sharedFinalRate?: number;
   /** False when this quote's spec differs from the item spec. */
   specSame?: boolean;
   /** The differing spec, logged when specSame is false. */
