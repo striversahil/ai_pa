@@ -763,16 +763,16 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   </div>
                 )}
                 {ri !== undefined && !isItemLocked && (
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Note for sales (forwarded with final rate)</label>
+                  <div className="space-y-1 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-2">
+                    <label className="block text-[10px] font-extrabold text-emerald-400 uppercase tracking-wider">💬 Note for sales (forwarded with final rate)</label>
                     <textarea
                       value={salesNotes[i] ?? (rates[ri] as any)?.salesNote ?? ""}
                       onChange={(e) => setSalesNotes((prev) => ({ ...prev, [i]: e.target.value }))}
                       placeholder="Forwarded to sales when this vendor is selected — e.g. delivery terms, warranty, validity…"
                       rows={2}
-                      className="w-full px-2.5 py-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 resize-y"
+                      className="w-full px-2.5 py-2 rounded-lg border border-emerald-500/30 bg-black/30 text-xs text-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 resize-y placeholder:text-zinc-500"
                     />
-                    <p className="text-[10px] text-zinc-500">Procurement's draft shows here — edit before finalizing, sales sees only the selected vendor's note.</p>
+                    <p className="text-[10px] text-emerald-500/80">Procurement's draft shows here — edit before finalizing, sales sees only the selected vendor's note.</p>
                   </div>
                 )}
                 <div className="space-y-1.5">
@@ -788,7 +788,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         const refs: any[] = sr?.references ?? [];
                         return (
                           <>
-                            {n && <p className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed">{n}</p>}
+                            {n && <p className="text-xs text-emerald-100/90 whitespace-pre-wrap leading-relaxed border-l-2 border-emerald-500/50 pl-2">{n}</p>}
                             {refs.length > 0 && (
                               <div className="flex flex-wrap gap-1.5">
                                 {refs.map((m: any, mi: number) => (
