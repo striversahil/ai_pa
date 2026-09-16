@@ -125,7 +125,7 @@ function resolveV2(category, itemName) {
 const ROUTER_SYSTEM = `You are a B2B industrial-spare intake router for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
 For EACH item return: {"verbatim": "client wording for the product, copied exactly as written/seen — NEVER rename or canonicalize", "category": "the category NUMBER (1-${ROUTER_COUNT}) from the numbered list below, as a bare number", "qty": "quantity with unit or empty", "dims": "dimensions as written", "spec": "material/variant/spec detail as written"}.
 Also extract the lead block: {"lead": {"clientCompany": "customer company, or empty", "contactName": "contact person, or empty", "contactEmail": "or empty", "contactPhone": "mobile/phone, or empty", "location": "city/state, or empty", "sourceLead": "lead source like IndiaMART/reference, or empty"}} — NEVER invent; empty when not stated. The sales agent's own name ("Lead of ...") is NOT the customer — ignore it.
-Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; "category" MUST be copied EXACTLY from the
+Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); a trailing code like "150-30 pcs" splits to dims "150" + qty "30 pcs"; "category" MUST be copied EXACTLY from the
 category list below (it is always a multi-word department name like "Conveying
 Accessories" — NEVER a material, product, or alias word like "Nylon" or "Belt");
 never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
@@ -214,7 +214,9 @@ async function processEnquiry(gateway, eq) {
     try {
       routed = await gateway.completeJson({
         messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content: fullContent }],
-        temperature: 0, json: true, maxTokens: 3000,
+        // No reasoning trace (it shares the token budget and truncates the
+        // JSON mid-stream); 8k headroom so the full lines array always fits.
+        temperature: 0, json: true, maxTokens: 8000, noReasoning: true,
         // Enquiry pipeline runs on OpenRouter (ling text+vision); the gateway
         // falls back to Groq automatically when no OpenRouter key is set.
         provider: 'openrouter',

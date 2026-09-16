@@ -351,7 +351,10 @@ class AiGateway {
       ...(provider.extraParams || {}),
     };
     if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
-    if (provider.reasoningObject) body.reasoning = { enabled: true };
+    // Small deterministic JSON tasks (intake split) opt out via noReasoning:
+    // uncapped reasoning shares the max_tokens budget and the answer JSON
+    // gets cut mid-stream, failing strict parse on every attempt.
+    if (provider.reasoningObject && !req.noReasoning) body.reasoning = { enabled: true };
     else if (provider.supportsReasoning && req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
 
     const res = await fetch(provider.baseURL, {
