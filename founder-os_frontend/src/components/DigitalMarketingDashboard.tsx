@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
-import { useLiveDashboard, useOptimisticMutation, patchRowInLists, mapRowInLists } from "@/hooks/useLiveData";
+import React, { useMemo, useState } from "react";
+import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 
 interface FileItem {
@@ -14,6 +14,13 @@ interface FileItem {
   url: string;
 }
 
+interface MetricField {
+  key: string;
+  label: string;
+  type: string;
+  options?: string[];
+}
+
 interface TaskItem {
   templateId: string;
   title: string;
@@ -24,6 +31,8 @@ interface TaskItem {
   dueLabel?: string | null;
   isShared?: boolean;
   employeeRaw?: string | null;
+  metricsSchema?: MetricField[] | null;
+  metricsJson?: Record<string, any> | null;
   logId: string | null;
   status: string;
   remark: string | null;
@@ -32,7 +41,6 @@ interface TaskItem {
   dueDate?: string | null;
   accountantId: string | null;
   accountantName: string | null;
-  updatedAt?: string | null;
   attachments?: FileItem[];
   missed?: string[];
   overdue: boolean;
@@ -123,10 +131,10 @@ interface DashData {
   freqStats?: FreqStat[];
   unscheduled?: UnscheduledItem[];
   team?: TeamData | null;
+  metaAdsCampaign?: { logId: string; dueDate: string; category: string | null; amountSpent: number | null; fromDate: string; toDate: string; durationDays: number | null; inquiries: number | null; leads: number | null } | null;
 }
 
 const FREQS = ["daily", "weekly", "monthly", "quarterly", "yearly"];
-const ROLES = ["senior", "junior", "either"];
 
 function StatusChip({ status, overdue }: { status: string; overdue: boolean }) {
   const base = "inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold px-2 py-0.5 text-[11px]";
@@ -175,10 +183,19 @@ function fmtShort(iso: string): string {
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]}`;
 }
 
+/** from/to (YYYY-MM-DD) → "5 days" run duration for the Meta Ads Run banner. */
+function runDays(from: string, to: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test((from || "").slice(0, 10)) || !/^\d{4}-\d{2}-\d{2}$/.test((to || "").slice(0, 10))) return "";
+  const ms = Date.parse(to.slice(0, 10)) - Date.parse(from.slice(0, 10));
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const n = Math.round(ms / 86400000) + 1;
+  return `${n} day${n === 1 ? "" : "s"}`;
+}
+
 /** Match the signed-in user to a roster entry by NAME only (never email —
  *  the team shares logins, so email can't distinguish humans). Session name,
  *  then session email local-part, each accepted only on a single clear hit.
- *  Returns "" when ambiguous — the "Acting as" picker then decides. */
+ *  Returns "" when ambiguous — the row's "Who?…" picker then decides. */
 export function matchSelfRoster(me: { user: { email: string; name: string } } | null, roster: RosterRow[]): string {
   if (!me) return "";
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -193,17 +210,7 @@ export function matchSelfRoster(me: { user: { email: string; name: string } } | 
   return "";
 }
 
-const ACTOR_KEY = "accounts_actor_id";
-
-function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
-  t: TaskItem;
-  roster: RosterRow[];
-  defaultWho: string;
-  onSave: (logId: string, body: Record<string, unknown>, patch: Partial<TaskItem>) => Promise<unknown>;
-  onAttach: (logId: string, file: File) => Promise<unknown>;
-  onDetach: (logId: string, fileId: string) => Promise<unknown>;
-  today?: string;
-}) {
+function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; roster: RosterRow[]; defaultWho: string; onLogged: () => void; today?: string }) {
   const [remark, setRemark] = useState(t.remark ?? "");
   // Time taken, entered as hours + minutes, stored as integer minutes.
   // Prefilled from the recorded value so it can be corrected later.
@@ -218,40 +225,53 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
     return h * 60 + m;
   })();
   const timeInit = t.timeSpentMin ?? null;
+  // Metrics for daily numeric tasks (Meta/B2B/Whatsapp/Email). Prefilled from saved metricsJson.
+  const [metrics, setMetrics] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    const src = (t as any).metricsJson as Record<string, any> | null;
+    if (src && typeof src === 'object') {
+      for (const [k, v] of Object.entries(src)) init[k] = v == null ? "" : String(v);
+    }
+    // Ensure all schema keys have an entry
+    const schema = (t as any).metricsSchema as Array<{key:string}> | null;
+    if (schema) for (const f of schema) if (!(f.key in init)) init[f.key] = "";
+    return init;
+  });
+  const metricsInit = (() => {
+    const s = JSON.stringify((t as any).metricsJson ?? null);
+    const cur = JSON.stringify(Object.fromEntries(Object.entries(metrics).map(([k,v]) => [k, v.trim()===""?null : (isNaN(Number(v))? v : Number(v)) ])));
+    return s;
+  })();
+  const metricsDirty = JSON.stringify((t as any).metricsJson ?? null) !== JSON.stringify(Object.fromEntries(Object.entries(metrics).map(([k,v]) => [k, v.trim()===""?null : (isNaN(Number(v))? v.trim() : Number(v)) ])));
   // Explicit per-row override; otherwise the log's recorded owner, otherwise
-  // the device's "Acting as" identity. Never goes stale: derived every render.
+  // the signed-in user's roster match. Never goes stale: derived every render.
   const [whoOverride, setWhoOverride] = useState("");
   const whoId = whoOverride || t.accountantId || defaultWho || "";
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const dirty = remark !== (t.remark ?? "") || timeTotal !== timeInit;
+  const dirty = remark !== (t.remark ?? "") || timeTotal !== timeInit || metricsDirty;
   const lane = roster.filter((r) => t.ownerRole === "either" || r.role === t.ownerRole);
   const whoName = lane.find((r) => r.id === whoId)?.name ?? roster.find((r) => r.id === whoId)?.name ?? null;
 
   const save = async (status: string) => {
     if (!t.logId) return;
-    // Shared optimistic module: paint instantly (per-log serialized in the
-    // parent), reconcile in background; failure resyncs + alerts.
-    const nextRemark = remark.trim() || t.remark;
-    const nextName = status === "done" ? whoName : t.doneBy;
     setBusy(true);
     try {
-      await onSave(t.logId, {
-        status,
-        remark: remark.trim() || null,
-        accountantId: whoId || null,
-        doneBy: status === "done" ? whoName : undefined,
-        timeSpentMin: timeTotal,
-      }, {
-        status,
-        remark: nextRemark,
-        doneBy: nextName,
-        accountantId: whoId || t.accountantId,
-        accountantName: whoName ?? t.accountantName,
-        timeSpentMin: timeTotal,
-        updatedAt: new Date().toISOString(),
-        overdue: status === "done" || status === "skipped" ? false : t.overdue,
+      const metricsJson = (t as any).metricsSchema ? Object.fromEntries(Object.entries(metrics).map(([k,v]) => [k, v.trim()===""?null : (isNaN(Number(v))? v.trim() : Number(v)) ])) : undefined;
+      const res = await fetch(`/api/digital-marketing/logs/${t.logId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status,
+          remark: remark.trim() || null,
+          accountantId: whoId || null,
+          doneBy: status === "done" ? whoName : undefined,
+          timeSpentMin: timeTotal,
+          metricsJson,
+        }),
       });
+      if (!res.ok) throw new Error(await res.text());
+      onLogged();
     } catch (e) {
       console.error(e);
       alert("Save failed — try again");
@@ -264,7 +284,11 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
     if (!file || !t.logId) return;
     setUploading(true);
     try {
-      await onAttach(t.logId, file);
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/digital-marketing/logs/${t.logId}/files`, { method: "POST", body: form });
+      if (!res.ok) throw new Error(await res.text());
+      onLogged();
     } catch (e) {
       console.error(e);
       alert(e instanceof Error ? e.message : "Upload failed");
@@ -274,10 +298,11 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
   };
 
   const removeFile = async (id: string) => {
-    if (!t.logId) return;
     setBusy(true);
     try {
-      await onDetach(t.logId, id);
+      const res = await fetch(`/api/digital-marketing/files/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      onLogged();
     } catch (e) {
       console.error(e);
       alert(e instanceof Error ? e.message : "Delete failed");
@@ -287,16 +312,36 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
   };
 
   const files = t.attachments ?? [];
+  const isMetaRun = t.templateId === "dmm-06";
+  // Whatsapp / Email marketing (dmm-08/09): Done needs the data-source field
+  // filled + ≥1 proof attachment (server enforces; mirror here for guidance).
+  const needsMarketingProof = t.templateId === "dmm-08" || t.templateId === "dmm-09";
+  const dataSourceVal = String(
+    metrics.dataSource ?? t.metricsJson?.dataSource ?? ""
+  ).trim();
+  const missingDataSource = needsMarketingProof && !dataSourceVal;
+  const missingProofFile = needsMarketingProof && files.length === 0;
   // Status bar with mandatory reason: a transition is only clickable when a
   // remark is present (typed now or already recorded) — the server enforces it.
   const hasReason = remark.trim() !== "" || String(t.remark || "").trim() !== "";
   const needReason = !hasReason ? " — add a remark (reason) first" : "";
+  const needProof = needsMarketingProof && (missingDataSource || missingProofFile)
+    ? ` — write which data was used${missingProofFile ? " + attach the data as proof" : ""}`
+    : "";
+  const doneBlocked = !hasReason || (needsMarketingProof && (missingDataSource || missingProofFile));
 
   return (
-    <div className={`rounded-xl border p-3 sm:p-4 ${t.overdue && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
+    <div className={isMetaRun
+      ? "rounded-2xl border-2 border-indigo-500/60 bg-gradient-to-br from-indigo-500/[0.12] via-indigo-500/[0.05] to-transparent p-3 sm:p-4 shadow-[0_0_24px_-8px_rgba(99,102,241,0.5)]"
+      : `rounded-xl border p-3 sm:p-4 ${t.overdue && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="font-semibold text-zinc-900 dark:text-white text-sm">{t.title}</div>
+          {isMetaRun && (
+            <div className="mb-1 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-white">
+              📣 Meta Ads Run · Saturday campaign
+            </div>
+          )}
+          <div className={`font-semibold text-sm ${isMetaRun ? "text-indigo-600 dark:text-indigo-300 text-[15px]" : "text-zinc-900 dark:text-white"}`}>{t.title}</div>
           {t.description && <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t.description}</div>}
           <div className="flex flex-wrap gap-1.5 mt-1.5">
             <FreqChip f={t.frequency} />
@@ -342,18 +387,57 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
             <button disabled={busy || !t.logId || !hasReason} title={`Start work${needReason}`} onClick={() => save("inprogress")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 cursor-pointer border-0">▶ In Progress</button>
           )}
           {(t.status === "pending" || t.status === "overdue" || t.status === "inprogress") && (
-            <button disabled={busy || !t.logId || !hasReason} title={`Mark done${needReason}`} onClick={() => save("done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer border-0">✓ Done</button>
+            <button disabled={busy || !t.logId || doneBlocked} title={`Mark done${needReason}${needProof}`} onClick={() => save("done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer border-0">✓ Done</button>
           )}
           {t.status !== "pending" && (
             <button disabled={busy || !t.logId || !hasReason} onClick={() => save("pending")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 cursor-pointer border-0" title={`Back to pending${needReason}`}>↩ Pending</button>
           )}
         </div>
       </div>
+      {(t as any).metricsSchema && Array.isArray((t as any).metricsSchema) && (t as any).metricsSchema.length > 0 && (
+        <div className="grid grid-cols-2 gap-1.5 mt-2">
+          {(t as any).metricsSchema.map((f: any) => (
+            <label key={f.key} className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+              <span className="font-semibold">{f.label}</span>
+              {f.type === "select" && Array.isArray(f.options) ? (
+                <select
+                  value={metrics[f.key] ?? ""}
+                  onChange={(e) => setMetrics({ ...metrics, [f.key]: e.target.value })}
+                  className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500 text-zinc-900 dark:text-zinc-100"
+                >
+                  <option value="">Select {f.label}…</option>
+                  {f.options.map((o: string) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : (
+                <input
+                  value={metrics[f.key] ?? ""}
+                  onChange={(e) => setMetrics({ ...metrics, [f.key]: e.target.value })}
+                  placeholder={f.type === 'number' ? '0' : f.type === 'date' ? 'YYYY-MM-DD' : f.label}
+                  type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+                  inputMode={f.type === 'number' ? 'numeric' : undefined}
+                  className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500"
+                />
+              )}
+            </label>
+          ))}
+        </div>
+      )}
+      {t.templateId === "dmm-06" && (metrics.fromDate || metrics.toDate) && (
+        <div className="mt-1.5 text-[11px] font-semibold text-indigo-500 dark:text-indigo-300">
+          📣 Meta Ads Run{metrics.category ? ` · ${metrics.category}` : ""}{metrics.amountSpent ? ` · ₹${metrics.amountSpent}` : ""}{metrics.fromDate && metrics.toDate ? ` · ${metrics.fromDate} → ${metrics.toDate} (${runDays(metrics.fromDate, metrics.toDate)})` : ""}
+          {(t as any).campaignCarried && <span className="font-normal opacity-80"> · carried from campaign start — fill today's inquiries/leads below</span>}
+        </div>
+      )}
+      {needsMarketingProof && (missingDataSource || missingProofFile) && t.status !== "done" && (
+        <div className="mt-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+          ⚠ To mark Done: {missingDataSource ? "write which data was used (Data used field above)" : ""}{missingDataSource && missingProofFile ? " + " : ""}{missingProofFile ? "attach the data file as proof below" : ""}
+        </div>
+      )}
       <div className="flex gap-1.5 mt-2">
         <input
           value={remark}
           onChange={(e) => setRemark(e.target.value)}
-          placeholder="Remark — e.g. paid via HDFC, ref 4821…"
+          placeholder="Remark — e.g. leads: 5 Meta, 3 B2B…"
           className="flex-1 min-w-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
         />
         <select value={whoId} onChange={(e) => setWhoOverride(e.target.value)} title="Who did this task" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1.5 text-xs max-w-[130px]">
@@ -393,10 +477,10 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
   );
 }
 
-type AccountsView = "dashboard" | "tasks" | "overdue" | "history" | "senior" | "junior" | "my" | "controller";
+type DigitalMarketingView = "dashboard" | "tasks" | "controller";
 
-// NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
-// (MIS/root see every lane; others see Dashboard + their own "My Tasks").
+  // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
+  // (MIS/root additionally see the Controller tab).
 
 function fmtToday(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -411,103 +495,29 @@ function fmtToday(iso: string): string {
 export default function AccountsDashboard() {
   const { me } = useAuth();
   const canMIS = !!me && (me.isAdmin || me.scopes.includes("mis"));
-  const [view, setView] = useState<AccountsView>("dashboard");
+  const [view, setView] = useState<DigitalMarketingView>("dashboard");
 
   // Today only — no date filter. The backend serves the current IST day.
   // pollMs safety net: a stalled request can never wedge the view forever —
   // the 30s hook timeout turns it into an error and the next poll recovers.
   // Loading renders non-destructively (spinner only before first payload).
   const dash = useLiveDashboard<DashData>(async () => {
-    // Identity rides along so the backend scopes the payload to the viewer's
-    // own lane (MIS/root skip scoping server-side).
-    const res = await fetch(`/api/automations/accounts/data${actorPick ? `?as=${encodeURIComponent(actorPick)}` : ""}`);
+    const res = await fetch(`/api/automations/digital-marketing/data`);
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
   }, { pollMs: 60000 });
 
   const data = dash.data;
-  // Shared optimistic module (useLiveData): every write paints instantly and
-  // reconciles in the background — the same contract as sales enquiries.
-  // All payload lists holding log rows; rapid taps on one log serialize via
-  // the mutation key, taps on different logs run concurrently.
-  const LISTS = useMemo(() => ["items", "senior", "junior", "overdueList", "history"] as const, []);
-  const { mutate } = useOptimisticMutation(dash);
-  const saveLog = React.useCallback((logId: string, body: Record<string, unknown>, patch: Partial<TaskItem>) =>
-    mutate(
-      (prev) => patchRowInLists(prev, [...LISTS], "logId", logId, patch as Record<string, any>),
-      async () => {
-        const res = await fetch(`/api/accounts/logs/${logId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) throw new Error(await res.text());
-      },
-      { key: logId },
-    ), [mutate, LISTS]);
-  const attachFile = React.useCallback((logId: string, file: File) => {
-    const temp: FileItem = { id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`, fileName: file.name, mime: file.type || "application/octet-stream", size: file.size, uploadedBy: "…", createdAt: new Date().toISOString(), url: "#" };
-    return mutate(
-      (prev) => mapRowInLists(prev, [...LISTS], "logId", logId, (row) => ({ ...row, attachments: [...(row.attachments ?? []), temp] })),
-      async () => {
-        const form = new FormData();
-        form.append("file", file);
-        const res = await fetch(`/api/accounts/logs/${logId}/files`, { method: "POST", body: form });
-        if (!res.ok) throw new Error(await res.text());
-      },
-      { key: logId },
-    );
-  }, [mutate, LISTS]);
-  const detachFile = React.useCallback((logId: string, fileId: string) =>
-    mutate(
-      (prev) => mapRowInLists(prev, [...LISTS], "logId", logId, (row) => ({ ...row, attachments: (row.attachments ?? []).filter((f: FileItem) => f.id !== fileId) })),
-      async () => {
-        const res = await fetch(`/api/accounts/files/${fileId}`, { method: "DELETE" });
-        if (!res.ok) throw new Error(await res.text());
-      },
-      { key: logId },
-    ), [mutate, LISTS]);
   const [statusFilter, setStatusFilter] = useState<"pending" | "inprogress" | "done" | "all">("pending");
-  // Inner tabs for Senior/Junior/My: today (today's taskbar) vs overdue (role's backlog) vs history (role's last-30d done)
+  // Inner tabs for the Tasks view: today (today's taskbar) vs overdue (backlog) vs history (last-30d done)
   const [roleSub, setRoleSub] = useState<"today" | "overdue" | "history">("today");
-  React.useEffect(() => { if (["senior", "junior", "my"].includes(view)) setRoleSub("today"); }, [view]);
+  React.useEffect(() => { if (view === "tasks") setRoleSub("today"); }, [view]);
   const selfId = useMemo(() => matchSelfRoster(me as any, data?.roster ?? []), [me, data]);
-  // Shared logins can't be told apart by auth — each device declares its human
-  // once ("Acting as"), remembered in localStorage. Every Done/remark/file is
-  // credited to this identity unless a row overrides it.
-  const [actorPick, setActorPick] = useState(() => {
-    try { return localStorage.getItem(ACTOR_KEY) || ""; } catch { return ""; }
-  });
-  const pickActor = (id: string) => {
-    setActorPick(id);
-    try {
-      if (id) localStorage.setItem(ACTOR_KEY, id);
-      else localStorage.removeItem(ACTOR_KEY);
-    } catch { /* private mode */ }
-  };
-  // Identity drives backend lane scoping — refetch as the new person
-  // (skipped on mount; the initial load already runs).
-  const mounted = useRef(false);
-  React.useEffect(() => {
-    if (!mounted.current) { mounted.current = true; return; }
-    dash.refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actorPick]);
-  const defaultWho = actorPick || selfId;
-  // A remembered identity can go stale (person removed from the roster):
-  // drop it so "Acting as" never credits a deleted accountant.
-  React.useEffect(() => {
-    if (actorPick && data && !data.roster.some((r) => r.id === actorPick)) pickActor("");
-  }, [actorPick, data]);
-  const lane = useMemo(() => {
-    if (!data) return [];
-    if (view === "senior") return data.senior;
-    if (view === "junior") return data.junior;
-    if (view === "overdue") return [];
-    // Scoped "My Tasks" and the admin "All Tasks" both render the payload's
-    // items, which the backend already lane-filtered for non-admin viewers.
-    return data.items;
-  }, [data, view]);
+  // No "Acting as" switcher here — a single manager works this taskbar.
+  // Credit defaults to the signed-in user's roster match, overridable per row
+  // via the "Who?…" picker.
+  const defaultWho = selfId;
+  const lane = useMemo(() => data?.items ?? [], [data]);
   const visible = useMemo(() => {
     if (statusFilter === "inprogress") return lane.filter((t) => t.status === "inprogress");
     if (statusFilter === "done") return lane.filter((t) => t.status === "done");
@@ -518,56 +528,24 @@ export default function AccountsDashboard() {
   const inprogCount = lane.filter((t) => t.status === "inprogress").length;
   const doneCount = lane.filter((t) => t.status === "done").length;
 
-  // Identity-aware nav: MIS/root see every lane; everyone else sees Dashboard
-  // + exactly their own lane ("My Tasks"). The backend already scopes the
-  // payload, so this is display-layer enforcement to match.
-  const selfRole = data?.meta?.self && !data?.meta?.isAdmin ? data.meta.self.role : null;
-  const showAllLanes = !data || data.meta.isAdmin;
-  const visibleTabs: { key: AccountsView; label: string; icon: string }[] = !data
+  // Single manager — no lane split. Controller only for MIS.
+  const visibleTabs: { key: DigitalMarketingView; label: string; icon: string }[] = !data
     ? [{ key: "dashboard", label: "Dashboard", icon: "📊" }]
-    : showAllLanes
+    : canMIS
       ? [
         { key: "dashboard", label: "Dashboard", icon: "📊" },
-        { key: "tasks", label: "All Tasks", icon: "📋" },
-        { key: "senior", label: "Senior", icon: "👔" },
-        { key: "junior", label: "Junior", icon: "🧾" },
+        { key: "tasks", label: "Tasks", icon: "📋" },
         { key: "controller", label: "Controller", icon: "🎛️" },
       ]
-      : selfRole
-        ? [
-          { key: "dashboard", label: "Dashboard", icon: "📊" },
-          { key: "my", label: "My Tasks", icon: selfRole === "senior" ? "👔" : "🧾" },
-        ]
-        : [
-          { key: "dashboard", label: "Dashboard", icon: "📊" },
-        ];
-  const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
-  const isOverdueView = view === "overdue";
-  const isHistoryView = view === "history";
-  // Overdue tab shows the full backlog (past-due unresolved logs). The payload
-  // is already lane-scoped server-side, so admins see everything and everyone
-  // else sees their own lane — no further narrowing by lane tab.
-  const overdueCount = data?.overdueList?.length ?? 0;
-  const overdueTray = useMemo(() => {
-    const list = data?.overdueList ?? [];
-    if (isOverdueView || view === "tasks") return list;
-    if (view === "my") return selfRole ? list.filter((t) => t.ownerRole === "either" || t.ownerRole === selfRole) : list;
-    return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
-  }, [data, view, selfRole, isOverdueView]);
-  const historyCount = data?.history?.length ?? 0;
-  const historyTray = useMemo(() => {
-    const list = data?.history ?? [];
-    if (isHistoryView || view === "tasks") return list;
-    if (view === "my") return selfRole ? list.filter((t) => t.ownerRole === "either" || t.ownerRole === selfRole) : list;
-    if (view === "senior" || view === "junior") return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
-    return list;
-  }, [data, view, selfRole, isHistoryView]);
-  // Reference items follow the same lane visibility as tasks.
-  const inUnscheduled = (u: UnscheduledItem) => {
-    if (view === "my") return !selfRole || u.ownerRole === "either" || u.ownerRole === selfRole;
-    if (view === "tasks") return true;
-    return u.ownerRole === "either" || u.ownerRole === view;
-  };
+      : [
+        { key: "dashboard", label: "Dashboard", icon: "📊" },
+        { key: "tasks", label: "Tasks", icon: "📋" },
+      ];
+  const isTaskView = view === "tasks";
+  const overdueTray = useMemo(() => data?.overdueList ?? [], [data]);
+  const historyTray = useMemo(() => data?.history ?? [], [data]);
+  // Reference items: single lane, always visible when in tasks view.
+  const inUnscheduled = (_u: UnscheduledItem) => true;
   // If the visible tabs narrow (e.g. identity picked/cleared), drop a
   // now-unreachable view back to the dashboard.
   React.useEffect(() => {
@@ -579,7 +557,7 @@ export default function AccountsDashboard() {
     <div className="space-y-4 text-zinc-900 dark:text-zinc-100">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold">Accounts <span className="text-xs font-medium text-zinc-500">· daily / monthly / yearly taskbar</span></h2>
+          <h2 className="text-xl font-bold">Digital Marketing <span className="text-xs font-medium text-zinc-500">· daily / weekly taskbar</span></h2>
           {data && (
             <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px]">
               <span className="font-bold text-zinc-800 dark:text-zinc-100 text-xs">📅 Today · {fmtToday(data.meta.date)}</span>
@@ -588,26 +566,23 @@ export default function AccountsDashboard() {
               {data.meta.overdue > 0 && <span className="font-bold text-rose-500">⚠ {data.meta.overdue} overdue</span>}
             </div>
           )}
+          {data?.metaAdsCampaign && (
+            <div className="mt-1.5 inline-flex flex-wrap items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[11px] font-semibold text-indigo-500 dark:text-indigo-300">
+              📣 Meta Ads Run{data.metaAdsCampaign.category ? ` · ${data.metaAdsCampaign.category}` : ""}{data.metaAdsCampaign.amountSpent != null ? ` · ₹${data.metaAdsCampaign.amountSpent}` : ""} · {data.metaAdsCampaign.fromDate} → {data.metaAdsCampaign.toDate}{data.metaAdsCampaign.durationDays ? ` (${data.metaAdsCampaign.durationDays} days)` : ""}
+              <span className="font-normal opacity-80">· daily box stays open for inquiries/leads during the run</span>
+            </div>
+          )}
         </div>
-        {data && data.roster.length > 0 && (
-          <label className="flex items-center gap-1.5 text-[11px] text-zinc-500 shrink-0" title="Shared login? Pick who is using this device — credits go to this person">
-            Acting as:
-            <select value={actorPick} onChange={(e) => pickActor(e.target.value)} className="rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-2 py-1.5 text-xs font-bold text-indigo-300 outline-none">
-              <option value="">Auto{selfId && data.roster.find((r) => r.id === selfId) ? ` (${data.roster.find((r) => r.id === selfId)!.name})` : ""}</option>
-              {data.roster.map((r) => <option key={r.id} value={r.id}>{r.name} · {r.role}</option>)}
-            </select>
-          </label>
-        )}
       </div>
 
       <div className="flex flex-col gap-6">
         {/* Tabs (full-width horizontal row, like Telecalling). Non-MIS viewers
-            only get Dashboard + their own lane — other lanes never render. */}
+            only get Dashboard + Tasks — the Controller tab never renders. */}
         <aside className="w-full shrink-0">
           <nav className="flex flex-row flex-wrap gap-2">
             {visibleTabs.filter((t) => t.key !== "controller" || canMIS).map((t) => {
               const active = view === t.key;
-              const count = t.key === "overdue" ? overdueCount : t.key === "history" ? historyCount : null;
+              const count: number | null = null;
               return (
                 <button
                   key={t.key}
@@ -635,50 +610,11 @@ export default function AccountsDashboard() {
         <div className="flex-1 min-w-0">
           {data && view === "dashboard" && <TeamBoard team={data.team ?? null} freqStats={data.freqStats ?? []} />}
 
-      {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
+      {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading digital marketing taskbar…</div>}
       {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
 
-      {/* All Tasks (global) — today taskbar */}
+      {/* Tasks — single manager with inner tabs Today / Overdue / History */}
       {data && view === "tasks" && (
-        <>
-          <div className="flex flex-wrap gap-1.5">
-            {([
-              { key: "pending", label: `● Pending (${pendingCount})` },
-              { key: "inprogress", label: `▶ In Progress (${inprogCount})` },
-              { key: "done", label: `✓ Done (${doneCount})` },
-              { key: "all", label: `All (${lane.length})` },
-            ] as const).map((s) => (
-              <button key={s.key} onClick={() => setStatusFilter(s.key)} className={`px-3 py-1 text-[11px] font-bold rounded-full cursor-pointer border ${statusFilter === s.key ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent" : "border-zinc-300 dark:border-zinc-700 text-zinc-500"}`}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-            {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done in this view yet — today's completions will appear here (past done is in History tab)." : statusFilter === "inprogress" ? "Nothing in progress — tap ▶ In Progress on a pending task to start it." : "No pending tasks in this view."}</div>}
-          </div>
-          {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📌 No fixed date — reference ({(data.unscheduled ?? []).filter(inUnscheduled).length})</h3>
-              <div className="grid gap-2 md:grid-cols-2">
-                {(data.unscheduled ?? []).filter(inUnscheduled).map((u) => (
-                  <div key={u.templateId} className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-3 text-xs">
-                    <div className="font-semibold text-zinc-800 dark:text-zinc-200">{u.title}</div>
-                    {(u.note || u.dueLabel) && <div className="text-zinc-500 mt-0.5">{[u.note, u.dueLabel].filter(Boolean).join(" · ")}</div>}
-                    <div className="flex gap-1.5 mt-1.5">
-                      <FreqChip f={u.frequency} />
-                      <span title={u.employeeRaw ? `Sheet: ${u.employeeRaw}` : undefined} className="inline-flex items-center rounded-full border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">{u.isShared ? "👥 shared" : u.ownerRole}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Senior / Junior / My — individual tabs: Today / Overdue (by role) / History (by role) */}
-      {data && (view === "senior" || view === "junior" || view === "my") && (
         <div className="space-y-4">
           <div className="flex flex-wrap gap-1.5">
             {([
@@ -707,8 +643,15 @@ export default function AccountsDashboard() {
                 ))}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-                {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today for this lane — switch to History for past completions." : statusFilter === "inprogress" ? "Nothing in progress — tap ▶ In Progress on a pending task to start it." : "No pending tasks for this lane today."}</div>}
+                {(() => {
+                  const meta = visible.find((x) => x.templateId === "dmm-06");
+                  const rest = visible.filter((x) => x.templateId !== "dmm-06");
+                  return (<>
+                    {meta && <div className="md:col-span-2"><TaskRow key={meta.templateId} t={meta} roster={data.roster} defaultWho={defaultWho} onLogged={() => dash.refresh()} /></div>}
+                    {rest.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onLogged={() => dash.refresh()} />)}
+                  </>);
+                })()}
+                {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today — switch to History for past completions." : statusFilter === "inprogress" ? "Nothing in progress — tap ▶ In Progress on a pending task to start it." : "No tasks pending today."}</div>}
               </div>
               {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
                 <div className="space-y-2">
@@ -734,10 +677,10 @@ export default function AccountsDashboard() {
             <div className="space-y-2">
               {overdueTray.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {overdueTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
+                  {overdueTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onLogged={() => dash.refresh()} />)}
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — no overdue for this lane. 🎉</div>
+                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — no overdue. 🎉</div>
               )}
             </div>
           )}
@@ -746,10 +689,10 @@ export default function AccountsDashboard() {
             <div className="space-y-2">
               {historyTray.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {historyTray.map((t) => <TaskRow key={t.logId ?? `${t.templateId}-${t.dueDate}`} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
+                  {historyTray.map((t) => <TaskRow key={t.logId ?? `${t.templateId}-${t.dueDate}`} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onLogged={() => dash.refresh()} />)}
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">No completed tasks in the last 30 days for this lane.</div>
+                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">No completed tasks in the last 30 days.</div>
               )}
             </div>
           )}
@@ -826,14 +769,13 @@ function TeamBoard({ team, freqStats }: { team: TeamData | null; freqStats?: Fre
         <div className="px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider text-zinc-600 dark:text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
           🏆 Leaderboard · tasks done per person <span className="normal-case font-medium">(week starts Monday)</span>
         </div>
-        {team.members.length === 0 && <div className="p-6 text-center text-xs text-zinc-500">No accountants on the roster yet — MIS adds them from the Controller tab.</div>}
+        {team.members.length === 0 && <div className="p-6 text-center text-xs text-zinc-500">No managers on the roster yet — MIS adds them from the Controller tab.</div>}
         {team.members.map((m, i) => (
           <div key={m.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-zinc-100 dark:border-zinc-800/60 last:border-0">
             <span className="w-7 text-sm font-bold shrink-0">{medal(i)}</span>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <span className="font-bold text-sm truncate">{m.name}</span>
-                <span className={`text-[10px] font-bold uppercase ${m.role === "senior" ? "text-indigo-400" : "text-zinc-500"}`}>{m.role}</span>
               </div>
               <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 mt-1 overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500" style={{ width: `${Math.round((m.doneMonth / maxMonth) * 100)}%` }} />
@@ -868,23 +810,25 @@ function ExportCard() {
     setBusy(true);
     setInfo(null);
     try {
-      const res = await fetch(`/api/accounts/export?days=${Math.min(93, Math.max(1, days || 30))}`);
+      const res = await fetch(`/api/digital-marketing/export?days=${Math.min(93, Math.max(1, days || 30))}`);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       const rows = (data.rows ?? []) as Record<string, any>[];
-      const header = ["Date", "Task", "Frequency", "Lane", "Shared", "Due", "Status", "Overdue", "Done By", "Accountant", "Remark", "Attachments", "Updated At"];
+      const header = ["Date", "Task", "Template", "Frequency", "Lane", "Shared", "Due", "Status", "Overdue", "Done By", "Manager", "Remark", "Time Spent", "Category", "Amount Spent", "From", "To", "Duration Days", "Inquiries", "Leads", "Data Source", "Attachments", "Updated At"];
       const lines = [header.map(csvCell).join(",")];
       for (const r of rows) {
         const files = (r.attachments ?? []).map((f: any) => `${f.name} (${f.url})`).join("; ");
         lines.push([
-          r.date, r.task, r.frequency, r.lane, r.shared ? "yes" : "no", r.due,
-          r.status, r.overdue ? "yes" : "no", r.doneBy, r.accountant, r.remark, files, r.updatedAt,
+          r.date, r.task, r.templateId ?? "", r.frequency, r.lane, r.shared ? "yes" : "no", r.due,
+          r.status, r.overdue ? "yes" : "no", r.doneBy, r.accountant, r.remark, r.timeSpent ?? "",
+          r.category ?? "", r.amountSpent ?? "", r.fromDate ?? "", r.toDate ?? "", r.durationDays ?? "",
+          r.inquiries ?? "", r.leads ?? "", r.dataSource ?? "", files, r.updatedAt,
         ].map(csvCell).join(","));
       }
       const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `accounts-export-${data.from}-to-${data.to}.csv`;
+      a.download = `digital-marketing-export-${data.from}-to-${data.to}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -939,10 +883,6 @@ function RosterRowEditor({ row, busy, onSave, onRemove, onRestore }: {
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 px-2.5 py-1.5 text-xs space-y-1.5">
       <div className="flex items-center gap-2">
         <span className="font-semibold flex-1 truncate">{row.name}</span>
-        <select value={row.role} disabled={busy} onChange={(e) => onSave({ role: e.target.value })} className={`rounded border px-1.5 py-1 text-xs font-bold ${row.role === "senior" ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-400" : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950"}`}>
-          <option value="junior">Junior</option>
-          <option value="senior">Senior</option>
-        </select>
         <button disabled={busy} onClick={onRemove} className="text-rose-500 hover:text-rose-400 cursor-pointer border-0 bg-transparent text-sm" title="Remove">✕</button>
       </div>
       <div className="flex gap-1.5">
@@ -1046,7 +986,8 @@ function buildTemplateBody(p: {
 
 function TemplateCreator({ onChanged }: { onChanged: () => void }) {
   const [title, setTitle] = useState("");
-  const [owner, setOwner] = useState("either");
+  // Single manager, no lanes — every template is visible to everyone.
+  const owner = "either";
   const [shared, setShared] = useState(false);
   const [pattern, setPattern] = useState<PatternKey>("monthly_fixed");
   const [day, setDay] = useState("15");
@@ -1080,7 +1021,7 @@ function TemplateCreator({ onChanged }: { onChanged: () => void }) {
     try {
       const { _months, ...body } = r.body as Record<string, unknown>;
       void _months;
-      const res = await fetch("/api/accounts/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const res = await fetch("/api/digital-marketing/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
       setTitle("");
       onChanged();
@@ -1096,15 +1037,10 @@ function TemplateCreator({ onChanged }: { onChanged: () => void }) {
 
   return (
     <div className="space-y-1.5">
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title — e.g. Professional tax payment" className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />
-      <div className="grid grid-cols-2 gap-1.5">
-        <select value={pattern} onChange={(e) => setPattern(e.target.value as PatternKey)} className={sel} title="Schedule pattern">
-          {PATTERNS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-        </select>
-        <select value={owner} onChange={(e) => setOwner(e.target.value)} className={sel} title="Owner lane">
-          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-      </div>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title — e.g. Meta ads performance check" className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />
+      <select value={pattern} onChange={(e) => setPattern(e.target.value as PatternKey)} className={sel} title="Schedule pattern">
+        {PATTERNS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+      </select>
       {pattern === "monthly_fixed" && (
         <label className="flex items-center gap-1.5 text-[11px] text-zinc-500">Day of month <input value={day} onChange={(e) => setDay(e.target.value)} className={num} inputMode="numeric" /></label>
       )}
@@ -1150,7 +1086,7 @@ function TemplateCreator({ onChanged }: { onChanged: () => void }) {
         </div>
       )}
       <label className="flex items-center gap-1.5 text-[11px] text-zinc-500 cursor-pointer">
-        <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} className="accent-indigo-600" /> 👥 Shared (both senior + junior)
+        <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} className="accent-indigo-600" /> 👥 Shared (whole team)
       </label>
       <div className="text-[11px] text-zinc-500 rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2 py-1">→ {preview}</div>
       {err && <div className="text-[11px] text-rose-500">{err}</div>}
@@ -1166,15 +1102,14 @@ function Controller({ onChanged }: { onChanged: () => void }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("junior");
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     try {
       setLoadError(null);
       const [rRes, tRes] = await Promise.all([
-        fetch(`/api/accounts/roster${showRemoved ? "?deleted=1" : "?deleted=0"}`),
-        fetch("/api/accounts/templates?all=1"),
+        fetch(`/api/digital-marketing/roster${showRemoved ? "?deleted=1" : "?deleted=0"}`),
+        fetch("/api/digital-marketing/templates?all=1"),
       ]);
       if (!rRes.ok) throw new Error(`roster HTTP ${rRes.status}`);
       if (!tRes.ok) throw new Error(`templates HTTP ${tRes.status}`);
@@ -1206,16 +1141,12 @@ function Controller({ onChanged }: { onChanged: () => void }) {
     <div className="grid gap-4 lg:grid-cols-2">
       <ExportCard />
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
-        <h3 className="font-bold text-sm">👥 Accountants — map person → Senior / Junior</h3>
-        <div className="text-[11px] text-zinc-500">Same idea as the telecalling roster: each person is mapped by name + email, then flagged Senior or Junior. The taskbar splits on this flag.</div>
+        <h3 className="font-bold text-sm">👥 Managers — people who work this taskbar</h3>
+        <div className="text-[11px] text-zinc-500">Each person is mapped by name + email. Done / remarks credit whoever logs them (or the name picked in a row's "Who?…" box).</div>
         <div className="grid grid-cols-2 gap-1.5">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name — e.g. Ramesh" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email — e.g. ramesh@…" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />
-          <select value={role} onChange={(e) => setRole(e.target.value)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs">
-            <option value="junior">Junior</option>
-            <option value="senior">Senior</option>
-          </select>
-          <button disabled={busy || !name.trim()} onClick={() => { api("/api/accounts/roster", "POST", { name: name.trim(), email: email.trim() || null, role }); setName(""); setEmail(""); }} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0">Add</button>
+          <button disabled={busy || !name.trim()} onClick={() => { api("/api/digital-marketing/roster", "POST", { name: name.trim(), email: email.trim() || null }); setName(""); setEmail(""); }} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0 col-span-2">Add</button>
         </div>
         {loadError && <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5 text-xs text-rose-400">Controller failed to load: {loadError} <button onClick={() => load()} className="ml-1 underline cursor-pointer">Retry</button></div>}
         <label className="flex items-center gap-1.5 text-[11px] text-zinc-500 cursor-pointer">
@@ -1223,10 +1154,10 @@ function Controller({ onChanged }: { onChanged: () => void }) {
         </label>
         <div className="space-y-1.5">
           {(roster ?? []).map((r) => (
-            <RosterRowEditor key={r.id} row={r} busy={busy} onSave={(patch) => api(`/api/accounts/roster/${r.id}`, "PUT", patch)} onRemove={() => api(`/api/accounts/roster/${r.id}`, "DELETE")} onRestore={() => api(`/api/accounts/roster/${r.id}`, "PUT", { deleted: false })} />
+            <RosterRowEditor key={r.id} row={r} busy={busy} onSave={(patch) => api(`/api/digital-marketing/roster/${r.id}`, "PUT", patch)} onRemove={() => api(`/api/digital-marketing/roster/${r.id}`, "DELETE")} onRestore={() => api(`/api/digital-marketing/roster/${r.id}`, "PUT", { deleted: false })} />
           ))}
           {roster === null && !loadError && <div className="text-xs text-zinc-500 animate-pulse">Loading roster…</div>}
-          {roster !== null && roster.length === 0 && !loadError && <div className="text-xs text-zinc-500">No accountants yet — add the senior and junior above.</div>}
+          {roster !== null && roster.length === 0 && !loadError && <div className="text-xs text-zinc-500">No managers yet — add the team above.</div>}
         </div>
       </div>
 
@@ -1238,15 +1169,13 @@ function Controller({ onChanged }: { onChanged: () => void }) {
           {(templates ?? []).map((t) => (
             <div key={t.id} className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${t.active ? "border-zinc-200 dark:border-zinc-800" : "border-dashed opacity-60"}`}>
               <span className="font-semibold flex-1 min-w-[120px] truncate">{t.title}</span>
-              <select value={t.frequency} disabled={busy} onChange={(e) => api(`/api/accounts/templates/${t.id}`, "PUT", { frequency: e.target.value })} className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1 py-0.5 text-[11px]">
+              <select value={t.frequency} disabled={busy} onChange={(e) => api(`/api/digital-marketing/templates/${t.id}`, "PUT", { frequency: e.target.value })} className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1 py-0.5 text-[11px]">
                 {FREQS.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
-              <select value={t.ownerRole} disabled={busy} onChange={(e) => api(`/api/accounts/templates/${t.id}`, "PUT", { ownerRole: e.target.value })} className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1 py-0.5 text-[11px]">
-                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
-              <button disabled={busy} onClick={() => api(`/api/accounts/templates/${t.id}`, "PUT", { isShared: !t.isShared })} className={`cursor-pointer border-0 bg-transparent text-sm ${t.isShared ? "" : "opacity-30 grayscale"}`} title={t.isShared ? "Shared task (click to unmark)" : "Mark as shared task"}>👥</button>
-              <button disabled={busy} onClick={() => api(`/api/accounts/templates/${t.id}`, "PUT", { active: !t.active })} className="cursor-pointer border-0 bg-transparent text-sm" title={t.active ? "Pause" : "Resume"}>{t.active ? "⏸" : "▶"}</button>
-              <button disabled={busy} onClick={() => api(`/api/accounts/templates/${t.id}`, "DELETE")} className="text-rose-500 hover:text-rose-400 cursor-pointer border-0 bg-transparent text-sm" title="Archive">✕</button>
+              <span title="Visible to the whole team" className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1 py-0.5 text-[11px] text-zinc-500">{t.ownerRole === "either" ? "everyone" : t.ownerRole}</span>
+              <button disabled={busy} onClick={() => api(`/api/digital-marketing/templates/${t.id}`, "PUT", { isShared: !t.isShared })} className={`cursor-pointer border-0 bg-transparent text-sm ${t.isShared ? "" : "opacity-30 grayscale"}`} title={t.isShared ? "Shared task (click to unmark)" : "Mark as shared task"}>👥</button>
+              <button disabled={busy} onClick={() => api(`/api/digital-marketing/templates/${t.id}`, "PUT", { active: !t.active })} className="cursor-pointer border-0 bg-transparent text-sm" title={t.active ? "Pause" : "Resume"}>{t.active ? "⏸" : "▶"}</button>
+              <button disabled={busy} onClick={() => api(`/api/digital-marketing/templates/${t.id}`, "DELETE")} className="text-rose-500 hover:text-rose-400 cursor-pointer border-0 bg-transparent text-sm" title="Archive">✕</button>
             </div>
           ))}
           {templates === null && <div className="text-xs text-zinc-500 animate-pulse">Loading templates…</div>}

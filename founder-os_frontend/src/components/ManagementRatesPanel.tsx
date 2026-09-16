@@ -66,6 +66,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // previous rate until a revision is saved — revise unlocks one item at a
   // time, late quotes never auto-clear.
   const [revise, setRevise] = useState<Record<number, boolean>>({});
+  // Decided-rates summary: collapsed "Closed" dropdown above the item cards.
+  const [showClosed, setShowClosed] = useState(false);
 
   useEffect(() => {
     const s: Record<number, string> = {};
@@ -117,10 +119,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // Founder revising a committed enquiry: any item in revise mode re-enables
   // Save/Finalize even while `locked` — sales keeps the old rate until save.
   const revisingLocked = locked && Object.values(revise).some(Boolean);
+  // Late-added items on a committed enquiry were never decided (no finalRate)
+  // — they must stay editable + savable even while the rest of the row is
+  // locked. Without this the panel is a dead end: Save disabled, no Revise
+  // button on never-committed items (Enquiry No 5 case).
+  const hasUndecidedInLocked =
+    locked && items.some((it) => !it.specIssue && !it.rateAvailable && (it.finalRate === undefined || it.finalRate === null));
+  const canSaveLocked = revisingLocked || hasUndecidedInLocked;
 
   // Live auto-select single-rate items (procurement just added the only quote while the panel is open)
   useEffect(() => {
-    if (locked) return;
+    if (locked && !canSaveLocked) return;
     const patch: Record<number, string> = {};
     let changed = false;
     items.forEach((it, i) => {
@@ -385,6 +394,52 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         </span>
       </div>
 
+      {(() => {
+        const decided = items
+          .map((it, i) => ({ it, i }))
+          .filter(({ it }) => it.finalRate !== undefined && it.finalRate !== null);
+        if (decided.length === 0) return null;
+        return (
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <button type="button" onClick={() => setShowClosed((o) => !o)}
+              className="w-full flex items-center gap-2 px-3 py-2.5 cursor-pointer bg-transparent border-0 text-left hover:bg-zinc-800/40">
+              <svg className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ${showClosed ? "rotate-90" : ""}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
+                Closed — decision made ({decided.length})
+              </span>
+            </button>
+            {showClosed && (
+              <ul className="border-t border-zinc-800 divide-y divide-zinc-800/60">
+                {decided.map(({ it, i }) => {
+                  const vRate = (it.rates ?? []).find((r) => r.vendor === (it.selectedVendor ?? ""))?.rate;
+                  return (
+                    <li key={i} className="px-3 py-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
+                      <span className="font-extrabold text-zinc-200">
+                        Item {i + 1}{it.name ? ` — ${it.name}` : ""}
+                      </span>
+                      {it.qty && <span className="text-zinc-500 font-semibold">× {it.qty}</span>}
+                      <span className="ml-auto font-mono text-zinc-400">
+                        {it.selectedVendor ? `${it.selectedVendor} · ` : ""}{vRate !== undefined ? `₹${Number(vRate).toLocaleString("en-IN")} → ` : ""}
+                        <span className="font-extrabold text-emerald-400">₹{Number(it.finalRate).toLocaleString("en-IN")}</span>
+                      </span>
+                      {(it as any).finalDiscountPercent ? (
+                        <span className="text-zinc-500">{String((it as any).finalDiscountPercent)}% off</span>
+                      ) : null}
+                      {it.finalizedAt && (
+                        <span className="text-zinc-600">{historyDateChip(it.finalizedAt)}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        );
+      })()}
+
       {items.length === 0 ? (
         <p className="text-xs text-zinc-500 italic">No items on this enquiry yet.</p>
       ) : (
@@ -519,6 +574,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                 )}
                 <FlagThread thread={it.thread ?? []} tone="dark" />
+                {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && (
+                  <p className="text-[11px] font-extrabold text-sky-400">
+                    🎯 Client expects ₹{Number((it as any).expectedRate).toLocaleString("en-IN")}
+                    {(it as any).expectedNote ? ` — ${String((it as any).expectedNote)}` : ""}
+                  </p>
+                )}
                 {rates.length === 0 ? (
                   <p className="text-[11px] text-zinc-500 italic">No vendor rates yet — procurement adds them per item.</p>
                 ) : (
@@ -540,10 +601,13 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30">Spec differs</span>
                             )}
                             <span className="font-mono text-zinc-400">₹{Number(r.rate).toLocaleString("en-IN")}</span>
+                            {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && Number(r.rate) <= Number((it as any).expectedRate) && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">✓ within target</span>
+                            )}
                             {(r as any).discountPercent !== undefined && (r as any).discountPercent !== null && (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">{String((r as any).discountPercent)}% vendor off</span>
                             )}
-                            {(!locked || revise[i]) && (
+                {(!locked || revise[i] || it.finalRate === undefined || it.finalRate === null) && (
                               <button type="button" onClick={() => dropRate(i, ri)} title="Remove incorrect rate"
                                 className="text-zinc-600 hover:text-red-400 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">×</button>
                             )}
@@ -800,12 +864,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => void doSave(false)}
-          disabled={busy || actionableCount === 0 || (locked && !revisingLocked)}
+          disabled={busy || actionableCount === 0 || (locked && !canSaveLocked)}
           className="px-4 py-2 rounded-xl text-xs font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40"
         >
           {busy ? "Saving…" : revisingLocked ? "Save revised rate" : "Save rates"}
         </button>
-        {(!locked || revisingLocked) && actionableIdx.length > 0 && (
+        {(!locked || canSaveLocked) && actionableIdx.length > 0 && (
           <span className={`text-[11px] font-bold ${allDecided ? "text-emerald-400" : "text-zinc-500"}`}>
             Decided {decidedCount} of {actionableIdx.length}
             {allDecided ? " — ready to finalize." : " — decide every item to unlock Finalize."}
@@ -817,7 +881,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         {savedTick && !saveError && (
           <span className="text-[11px] font-extrabold text-emerald-400">Saved ✓</span>
         )}
-        {(!locked || revisingLocked) ? (
+        {(!locked || canSaveLocked) ? (
           confirming ? (
             <>
               <button

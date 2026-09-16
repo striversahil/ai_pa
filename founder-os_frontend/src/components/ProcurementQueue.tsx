@@ -11,7 +11,7 @@ import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
-import { enquiryLabel, historyDateChip, itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, procurementSubmittable } from "@/types";
+import { enquiryLabel, historyDateChip, itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, procurementSubmittable } from "@/types";
 
 /** Pending = items still needing rates. Empty enquiries (no items yet) wait
  *  on sales, not procurement — they render in their own section below. */
@@ -54,6 +54,13 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
     return (
       <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-indigo-500/10 text-indigo-500 border-indigo-500/30">
         Rates requested{pendingItems.length > 1 ? ` (${requested}/${pendingItems.length})` : ""}
+      </span>
+    );
+  }
+  if (pendingItems.length === 0 && procurementSubmittable(enquiry).ok) {
+    return (
+      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+        Quoted — ready to conclude
       </span>
     );
   }
@@ -208,15 +215,16 @@ export default function ProcurementQueue() {
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, internalRates: false, internalRatesAt: undefined } : it)), [patchItems]);
 
-  // Final handoff: only an explicit submit concludes procurement and routes
-  // the enquiry to management. Late vendor quotes stay addable until then.
+  // Enquiry Concluded: explicit procurement handoff — enquiry stays Active
+  // (quoted) until this is clicked; management sees live rates the whole
+  // time via the live predicate, this just marks the enquiry done.
   const handleSubmit = useCallback(async (enquiryId: string) => {
     setSaveError(null);
     try {
       await updateEnquiry(enquiryId, { procurementSubmittedAt: new Date().toISOString() });
       setSelectedId(null);
     } catch (e: any) {
-      setSaveError(e?.message || "Submit failed — please retry.");
+      setSaveError(e?.message || "Conclude failed — please retry.");
     }
   }, [updateEnquiry]);
 
@@ -239,8 +247,10 @@ export default function ProcurementQueue() {
   const renderEnquiryRows = (list: Enquiry[], mode: "active" | "history") => list.map((e) => {
     const items = e.items ?? [];
     const quoted = items.filter((it) => (it.rates ?? []).length > 0).length;
+    const needRatesActive = items.filter(itemNeedsRates).length;
+    const isReady = mode === "active" && needRatesActive === 0 && procurementSubmittable(e).ok;
     const needRates = mode === "active"
-      ? items.filter(itemNeedsRates).length
+      ? needRatesActive
       : items.filter((it) => (it.rates ?? []).length > 0 && !it.ratesRequested).length;
     const names = items.map((it, i) => {
       const n = it.name || `Item ${i + 1}`;
@@ -266,7 +276,7 @@ export default function ProcurementQueue() {
         </td>
         <td className={tdClass}>
           <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
-            {mode === "active" ? `${needRates} need rates` : `${needRates} quoted`}
+            {mode === "active" ? (isReady ? `Ready to conclude` : `${needRates} need rates`) : `${needRates} quoted`}
             <span className="text-[var(--text-tertiary)]"> · {quoted}/{items.length} with rates</span>
           </span>
         </td>
@@ -423,17 +433,25 @@ export default function ProcurementQueue() {
           {(() => {
             const submitted = isSubmitted(selEnquiry);
             const lateQuoteEnquiry = selEnquiry.rateStatus === "finalized";
+            const freshCount = (selEnquiry.items ?? []).filter(isFreshQuotableItem).length;
+            if (submitted && freshCount > 0) {
+              return (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                  {freshCount} new client-added item{freshCount === 1 ? "" : "s"} need{freshCount === 1 ? "s" : ""} quotes — decided lines stay locked, quote only the new {freshCount === 1 ? "line" : "lines"} below.
+                </p>
+              );
+            }
             if (submitted && !lateQuoteEnquiry) {
               return (
                 <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                  Submitted to management — vendor rates are locked. Late quotes reopen via a management rate request.
+                  Enquiry Concluded — vendor rates locked. Management sees the live quotes already; late quotes reopen via a management rate request.
                 </p>
               );
             }
             if (submitted && lateQuoteEnquiry) {
               return (
                 <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">
-                  Finalized — new vendor quotes are welcome here and reopen the decision automatically.
+                  Finalized — new vendor quotes are welcome here; decided rates stay until management revises.
                 </p>
               );
             }
@@ -444,13 +462,13 @@ export default function ProcurementQueue() {
                   type="button"
                   disabled={!gate.ok}
                   onClick={() => void handleSubmit(selEnquiry.id)}
-                  title={gate.ok ? "Conclude procurement and send to management" : gate.reason}
+                  title={gate.ok ? "Mark enquiry as concluded — procurement is done" : gate.reason}
                   className="px-3.5 py-2 bg-brand-indigo text-white font-bold text-xs rounded-xl cursor-pointer border-0 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  Submit to Management
+                  Enquiry Concluded
                 </button>
                 {!gate.ok && (
-                  <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{gate.reason} — the enquiry stays open for late vendor quotes until you submit.</span>
+                  <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{gate.reason} — the enquiry stays in Active (and management sees live rates) until you conclude.</span>
                 )}
               </div>
             );
@@ -473,7 +491,7 @@ export default function ProcurementQueue() {
                   onMarkInternal={() => handleMarkInternal(selEnquiry.id, itemIdx)}
                   onUnmarkInternal={() => handleUnmarkInternal(selEnquiry.id, itemIdx)}
                   onOpenLightbox={handleOpenLightbox}
-                  readOnly={submitted || item.internalRates === true || (item.finalRate !== undefined && item.finalRate !== null)}
+                  readOnly={(submitted && !isFreshQuotableItem(item)) || item.internalRates === true || (item.finalRate !== undefined && item.finalRate !== null)}
                 />
               ));
             })()}

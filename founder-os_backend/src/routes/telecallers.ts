@@ -56,7 +56,20 @@ router.put('/penalty-mode', misGuard, asyncHandler(async (req, res) => {
 }));
 
 // ── "EOD Reassignment" master switch (MIS) — registered BEFORE /:id routes ──
-router.get('/eod-reassign', misGuard, asyncHandler(async (_req, res) => {
+// GET readable by any approved viewer (sales needs it to hide snatch chips
+// when reassignment is OFF — MIS-gating left sales stuck on stale warnings).
+router.get('/eod-reassign', asyncHandler(async (req, res) => {
+  const store = new PrismaAuthStore(prisma);
+  const me = await store.getMe ? null : null;
+  // Use requireScope with isApproved-style check: any approved session may read
+  try {
+    const { getMe, isApproved } = await import('../modules/auth/service');
+    const me2 = await getMe(store as any, req.headers.cookie || null);
+    if (!me2 || !isApproved(me2)) return res.status(me2 ? 403 : 401).json({ error: me2 ? 'Access pending' : 'Authentication required' });
+  } catch (e) {
+    if (e instanceof AuthError) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
   res.json({ enabled: await isEodReassignEnabled() });
 }));
 

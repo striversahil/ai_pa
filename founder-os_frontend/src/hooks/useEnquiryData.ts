@@ -83,6 +83,8 @@ function toEnquiry(raw: any): Enquiry {
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested) : undefined,
         ratesRequestedAt: r?.ratesRequestedAt ? String(r.ratesRequestedAt) : undefined,
         aiPending: r?.aiPending === true ? true : undefined,
+        expectedRate: r?.expectedRate !== undefined && r?.expectedRate !== null && r?.expectedRate !== "" ? Number(r.expectedRate) : undefined,
+        expectedNote: r?.expectedNote ? String(r.expectedNote) : undefined,
         thread: Array.isArray(r?.thread)
           ? r.thread
               .map((e: any) => ({

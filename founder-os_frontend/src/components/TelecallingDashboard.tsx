@@ -1094,12 +1094,11 @@ export default function TelecallingDashboard() {
   // ── "EOD Reassignment" master switch (MIS Controller) ─────────────────────
   const [eodReassign, setEodReassign] = useState<boolean | null>(null);
   const loadEodReassign = useCallback(async () => {
-    if (!canManageRoster) return;
     try {
       const res = await fetch("/api/telecallers/eod-reassign");
       if (res.ok) setEodReassign((await res.json()).enabled ?? true);
     } catch { /* keep last known state */ }
-  }, [canManageRoster]);
+  }, []);
   useEffect(() => {
     void loadEodReassign();
   }, [loadEodReassign]);

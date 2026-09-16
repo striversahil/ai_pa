@@ -276,14 +276,16 @@ export default function ManagementReview() {
             )}
           </div>
           {info.length > 0 && (
-            <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1.5 rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/30 p-3">
-              {info.map(([k, v]) => (
-                <div key={k} className="min-w-0">
-                  <dt className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">{k}</dt>
-                  <dd className="text-xs font-semibold text-[var(--text-primary)] break-words">{v}</dd>
-                </div>
-              ))}
-            </dl>
+            <div className="sticky top-0 z-10 -mx-5 px-5 py-3 bg-[var(--bg-card)]/95 backdrop-blur supports-[backdrop-filter]:bg-[var(--bg-card)]/80 border-y border-[var(--border-card)]/50">
+              <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1.5 rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/30 p-3">
+                {info.map(([k, v]) => (
+                  <div key={k} className="min-w-0">
+                    <dt className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">{k}</dt>
+                    <dd className="text-xs font-semibold text-[var(--text-primary)] break-words">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
           )}
           {sel.description && (
             <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{sel.description}</p>

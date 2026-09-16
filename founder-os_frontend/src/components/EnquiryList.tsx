@@ -35,14 +35,15 @@ export default function EnquiryList({
   const [searchQuery, setSearchQuery] = useState("");
   const [agentFilter, setAgentFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
-  const [ratesFilter, setRatesFilter] = useState("all");
+  const [ratesFilter, setRatesFilter] = useState("awaiting");
   const [selectedDate, setSelectedDate] = useState<string | null>(() => {
     return new Date().toISOString().split("T")[0];
   });
   const [queueOnly, setQueueOnly] = useState(true);
-  // Pagination lives ONLY in the Marked-as-Sent archive view (10/page).
-  const [sentPage, setSentPage] = useState(1);
-  const SENT_PAGE_SIZE = 10;
+  // Pagination: 50/100/200 per page for all filters to avoid tremendous growth
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(50);
+  const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
   const sentView = ratesFilter === "sent";
 
   const dateInputRef = useRef<HTMLInputElement>(null);
@@ -103,38 +104,65 @@ export default function EnquiryList({
       });
   }, [enquiries, selectedDate]);
 
-  // Filtered queries pipeline
+  // Filtered queries pipeline — search hits EST No. (with or without EST- prefix, partial digits), daily No, source, lead fields, title/description, items
   const filteredEnquiries = useMemo(() => {
     const inQueue = queueToggle && queueOnly ? enquiries.filter(queueToggle.isPending) : enquiries;
+    const agentNameById = new Map(agents.map(a => [a.id, (a.name || "").toLowerCase()]));
     return inQueue.filter(e => {
-      const query = searchQuery.toLowerCase();
-      const matchSearch = e.clientCompany.toLowerCase().includes(query) ||
-        e.title.toLowerCase().includes(query) ||
-        e.contactName.toLowerCase().includes(query);
+      const rawQuery = searchQuery.trim().toLowerCase();
+      const query = rawQuery;
+      // Empty query matches all
+      let matchSearch = true;
+      if (query) {
+        const haystackParts: string[] = [
+          e.clientCompany ?? "",
+          e.title ?? "",
+          e.contactName ?? "",
+          e.estNumber ?? "",
+          (e as any).enquiryNumber ?? "",
+          (e as any).sourceLead ?? "",
+          (e as any).location ?? "",
+          e.contactPhone ?? "",
+          (e as any).contactEmail ?? "",
+          e.description ?? "",
+          e.source ?? "",
+          String(e.dailyNo ?? ""),
+          // item names/specs as searchable text
+          ...(((e as any).items ?? []) as any[]).flatMap((it: any) => [it?.name ?? "", it?.qty ?? "", it?.spec ?? "", it?.verbatim ?? ""]),
+          agentNameById.get(e.assignedAgentId) ?? "",
+        ];
+        const haystack = haystackParts.join(" ").toLowerCase();
+        // Direct substring match (covers "023460" inside "EST-023460")
+        const direct = haystack.includes(query);
+        // EST-normalized: allow "23460" to match "023460" and vice-versa via digit-only fallback
+        const queryDigits = query.replace(/\D/g, "");
+        const estDigits = (e.estNumber ?? "").replace(/\D/g, "");
+        const digitMatch = queryDigits.length >= 3 && estDigits.includes(queryDigits);
+        matchSearch = direct || digitMatch;
+      }
 
       const matchAgent = agentFilter === "all" || e.assignedAgentId === agentFilter;
       const matchSource = sourceFilter === "all" || (e.source || "TL") === sourceFilter;
       const matchRates = ratesFilter === "all"
         || (ratesFilter === "ready" && (e.rateStatus ?? "") === "finalized")
-        || (ratesFilter === "awaiting" && (e.rateStatus ?? "") !== "finalized" && (e.rateStatus ?? "") !== "sent")
+        || (ratesFilter === "awaiting" && (e.rateStatus ?? "") !== "sent")
         || (ratesFilter === "sent" && (e.rateStatus ?? "") === "sent");
 
-      const matchDate = !selectedDate || new Date(e.createdAt).toISOString().split("T")[0] === selectedDate;
+      // Global search: when a text query is active, ignore the calendar date filter so any day's enquiry is findable by EST No. etc.
+      const matchDate = rawQuery ? true : (!selectedDate || new Date(e.createdAt).toISOString().split("T")[0] === selectedDate);
 
       return matchSearch && matchAgent && matchSource && matchRates && matchDate;
     });
-  }, [enquiries, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly]);
+  }, [enquiries, agents, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly]);
 
   const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 
-  // Pagination lives ONLY in the Marked-as-Sent archive view — reset page on filter change.
-  useEffect(() => { setSentPage(1); }, [ratesFilter, searchQuery, agentFilter, sourceFilter, selectedDate]);
+  // Reset page on any filter/search/pageSize change
+  useEffect(() => { setPage(1); }, [ratesFilter, searchQuery, agentFilter, sourceFilter, selectedDate, queueOnly, pageSize]);
 
-  const sentPages = Math.max(1, Math.ceil(filteredEnquiries.length / SENT_PAGE_SIZE));
-  const sentPageClamped = Math.min(sentPage, sentPages);
-  const visibleEnquiries = sentView
-    ? filteredEnquiries.slice((sentPageClamped - 1) * SENT_PAGE_SIZE, sentPageClamped * SENT_PAGE_SIZE)
-    : filteredEnquiries;
+  const totalPages = Math.max(1, Math.ceil(filteredEnquiries.length / pageSize));
+  const pageClamped = Math.min(page, totalPages);
+  const visibleEnquiries = filteredEnquiries.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -227,6 +255,20 @@ export default function EnquiryList({
         setRatesFilter={redacted ? undefined : setRatesFilter}
       />
 
+      {/* Page size + pagination header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-[var(--text-secondary)]">
+          {filteredEnquiries.length === 0 ? "0 enquiries" : `${filteredEnquiries.length} ${filteredEnquiries.length === 1 ? "enquiry" : "enquiries"}${sentView ? " · sent" : ""}`}
+          {filteredEnquiries.length > 0 && totalPages > 1 && ` · page ${pageClamped} of ${totalPages}`}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-[var(--text-secondary)]">Show</label>
+          <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} className="px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg text-xs font-semibold text-[var(--text-primary)] focus:outline-hidden cursor-pointer">
+            {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n} / page</option>)}
+          </select>
+        </div>
+      </div>
+
       {/* List */}
       {filteredEnquiries.length === 0 ? (
         <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-12 text-center flex flex-col items-center justify-center gap-3">
@@ -250,13 +292,16 @@ export default function EnquiryList({
               />
             );
           })}
-          {sentView && sentPages > 1 && (
-            <div className="flex items-center gap-2 pt-1 text-xs font-semibold text-[var(--text-secondary)]">
-              <span>Page {sentPageClamped} of {sentPages} · {filteredEnquiries.length} sent</span>
-              <button type="button" disabled={sentPageClamped <= 1} onClick={() => setSentPage(sentPageClamped - 1)}
-                className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] disabled:opacity-40 cursor-pointer bg-transparent text-[var(--text-primary)]">‹ Prev</button>
-              <button type="button" disabled={sentPageClamped >= sentPages} onClick={() => setSentPage(sentPageClamped + 1)}
-                className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] disabled:opacity-40 cursor-pointer bg-transparent text-[var(--text-primary)]">Next ›</button>
+          {totalPages > 1 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <span className="text-xs font-semibold text-[var(--text-secondary)]">Showing {(pageClamped - 1) * pageSize + 1}–{Math.min(pageClamped * pageSize, filteredEnquiries.length)} of {filteredEnquiries.length}</span>
+              <div className="flex items-center gap-2">
+                <button type="button" disabled={pageClamped <= 1} onClick={() => setPage(pageClamped - 1)}
+                  className="px-3 py-1.5 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer bg-transparent text-[var(--text-primary)]">‹ Previous</button>
+                <span className="text-xs font-bold text-[var(--text-primary)]">Page {pageClamped} of {totalPages}</span>
+                <button type="button" disabled={pageClamped >= totalPages} onClick={() => setPage(pageClamped + 1)}
+                  className="px-3 py-1.5 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer bg-transparent text-[var(--text-primary)]">Next ›</button>
+              </div>
             </div>
           )}
         </div>

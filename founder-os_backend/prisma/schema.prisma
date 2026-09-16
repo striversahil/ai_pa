@@ -967,3 +967,82 @@ model OverrideLog {
   @@index([taskId])
   @@index([decisionType])
 }
+
+// ── Digital Marketing (single manager taskbar, daily metrics + weekly posts) ──
+model DigitalMarketingManager {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  role      String   @default("manager") // manager only today, but keep role for lane parity
+  order     Int      @default(0)
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  logs      DigitalMarketingTaskLog[]
+
+  @@index([deleted, order])
+}
+
+model DigitalMarketingTaskTemplate {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  frequency   String   @default("daily") // daily | weekly | monthly | quarterly | yearly
+  ownerRole   String   @default("manager") // manager | either
+  dueDay      Int?
+  dueMonth    Int?
+  ruleType    String?
+  ruleJson    String?
+  rawText     String?
+  isShared    Boolean  @default(false)
+  employeeRaw String?
+  department  String?
+  sheetStatus String?
+  // Metrics schema for daily numeric tasks (Meta/B2B/Whatsapp/Email). JSON array of {key,label,type} stored as string.
+  metricsSchema String?
+  active      Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  logs        DigitalMarketingTaskLog[]
+
+  @@index([active, frequency])
+}
+
+model DigitalMarketingTaskLog {
+  id           String                       @id @default(uuid())
+  templateId   String
+  template     DigitalMarketingTaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  dueDate      String // YYYY-MM-DD IST
+  status       String   @default("pending") // pending | inprogress | done | skipped | overdue
+  remark       String?
+  doneBy       String?
+  // Structured metrics for the 4 daily numeric tasks (stored as JSON string).
+  metricsJson  String?
+  // Legacy timeSpent kept for parity.
+  timeSpentMin Int?
+  accountantId String?
+  accountant   DigitalMarketingManager? @relation(fields: [accountantId], references: [id], onDelete: SetNull)
+  updatedBy    String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  attachments  DigitalMarketingTaskAttachment[]
+
+  @@unique([templateId, dueDate])
+  @@index([dueDate, status])
+  @@index([accountantId])
+}
+
+model DigitalMarketingTaskAttachment {
+  id         String                @id @default(uuid())
+  logId      String
+  log        DigitalMarketingTaskLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String   @default("application/octet-stream")
+  size       Int      @default(0)
+  kvKey      String   @unique
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([logId])
+}

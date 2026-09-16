@@ -47,6 +47,10 @@ const BOOL_FIELDS: Record<string, string[]> = {
   AccountsTaskTemplate: ['active', 'isShared'],
   AccountsTaskLog: [],
   AccountsTaskAttachment: [],
+  DigitalMarketingManager: ['deleted'],
+  DigitalMarketingTaskTemplate: ['active', 'isShared'],
+  DigitalMarketingTaskLog: [],
+  DigitalMarketingTaskAttachment: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -77,6 +81,10 @@ const DATE_FIELDS: Record<string, string[]> = {
   AccountsTaskTemplate: ['createdAt', 'updatedAt'],
   AccountsTaskLog: ['createdAt', 'updatedAt'],
   AccountsTaskAttachment: ['createdAt'],
+  DigitalMarketingManager: ['createdAt'],
+  DigitalMarketingTaskTemplate: ['createdAt', 'updatedAt'],
+  DigitalMarketingTaskLog: ['createdAt', 'updatedAt'],
+  DigitalMarketingTaskAttachment: ['createdAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
   SoAttachment: ['createdAt'],
@@ -130,6 +138,10 @@ const ID_FIELDS: Record<string, string> = {
   AccountsTaskTemplate: 'id',
   AccountsTaskLog: 'id',
   AccountsTaskAttachment: 'id',
+  DigitalMarketingManager: 'id',
+  DigitalMarketingTaskTemplate: 'id',
+  DigitalMarketingTaskLog: 'id',
+  DigitalMarketingTaskAttachment: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -199,6 +211,16 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   AccountsTaskAttachment: {
     log: { model: 'AccountsTaskLog', fk: 'logId', one: true },
+  },
+  DigitalMarketingManager: { logs: { model: 'DigitalMarketingTaskLog', fk: 'accountantId' } },
+  DigitalMarketingTaskTemplate: { logs: { model: 'DigitalMarketingTaskLog', fk: 'templateId' } },
+  DigitalMarketingTaskLog: {
+    template: { model: 'DigitalMarketingTaskTemplate', fk: 'templateId', one: true },
+    accountant: { model: 'DigitalMarketingManager', fk: 'accountantId', one: true },
+    attachments: { model: 'DigitalMarketingTaskAttachment', fk: 'logId' },
+  },
+  DigitalMarketingTaskAttachment: {
+    log: { model: 'DigitalMarketingTaskLog', fk: 'logId', one: true },
   },
 };
 
@@ -722,6 +744,11 @@ export class D1PrismaClient {
   get accountsTaskTemplate() { return this.model('AccountsTaskTemplate'); }
   get accountsTaskLog() { return this.model('AccountsTaskLog'); }
   get accountsTaskAttachment() { return this.model('AccountsTaskAttachment'); }
+  // Digital Marketing automation (single manager).
+  get digitalMarketingManager() { return this.model('DigitalMarketingManager'); }
+  get digitalMarketingTaskTemplate() { return this.model('DigitalMarketingTaskTemplate'); }
+  get digitalMarketingTaskLog() { return this.model('DigitalMarketingTaskLog'); }
+  get digitalMarketingTaskAttachment() { return this.model('DigitalMarketingTaskAttachment'); }
 
   $on() {}
   $disconnect() {}

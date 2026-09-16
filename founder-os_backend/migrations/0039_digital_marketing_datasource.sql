@@ -1,0 +1,5 @@
+-- Digital Marketing: Whatsapp + Email marketing need a "data used" field + proof.
+-- Adds a `dataSource` text metric to dmm-08 (Whatsapp) and dmm-09 (Email) schemas.
+-- Re-runnable: idempotent UPDATEs (only touch rows whose schema lacks dataSource).
+UPDATE "DigitalMarketingTaskTemplate" SET "metricsSchema" = '[{"key":"dataSource","label":"Data used for marketing (source / list)","type":"text"},{"key":"whatsappCount","label":"Whatsapp Marketing Count","type":"number"},{"key":"whatsappLeads","label":"Leads Generated Count","type":"number"}]', "updatedAt" = datetime('now') WHERE "id" = 'dmm-08' AND ("metricsSchema" IS NULL OR instr("metricsSchema", 'dataSource') = 0);
+UPDATE "DigitalMarketingTaskTemplate" SET "metricsSchema" = '[{"key":"dataSource","label":"Data used for marketing (source / list)","type":"text"},{"key":"emailCount","label":"Email Marketing Count","type":"number"},{"key":"emailLeads","label":"Leads Generated Count","type":"number"}]', "updatedAt" = datetime('now') WHERE "id" = 'dmm-09' AND ("metricsSchema" IS NULL OR instr("metricsSchema", 'dataSource') = 0);

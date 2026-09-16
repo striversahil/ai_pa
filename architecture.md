@@ -766,6 +766,59 @@ contact, assigned sales agent) from the freeform description, keeping the client
    GH Actions); the hub delivers those changes to open tabs within ~2s instead of on a
    poll tick. True sub-minute freshness would require Zoho webhooks → worker.
 
+### 11.5 Optimistic mutations (instant-UI standard — ALL dashboards)
+
+Live events (§11.2a–11.3) converge *other* tabs within ~2s, but the tab that made
+the write must feel instant: **no dashboard write may wait for the network to
+paint.** The contract, taken from the sales-enquiry tracker and modularised so
+every automation gets it for free:
+
+1. **Patch local state instantly** — surgical `setData`, never a full refetch.
+2. **Send the server request in the background.**
+3. **Reconcile with server truth afterwards** (background `refresh()`).
+4. **On failure, resync** (`refresh()`) so the UI never sits on a lie — then alert.
+
+**Module** — `founder-os_frontend/src/hooks/useLiveData.ts` (the same single
+shared layer as the live socket):
+
+- `useOptimisticMutation(query)` — driver over any `useLiveQuery` /
+  `useLiveDashboard` result. `mutate(patch, request, { key?, reconcile? })`:
+  paints via `setData`, runs `request`, refreshes to reconcile (or resync on
+  error). `key` (e.g. the logId/enquiryId) serializes rapid taps on the SAME
+  record into a queue — each body builds after the previous step resolved, so
+  fast double-taps can't fork/overwrite each other (the enquiry `chainsRef`
+  pattern); taps on different records run concurrently. Omit `key` for
+  fire-and-forget writes.
+- `patchRowInLists(prev, lists, idKey, id, patch)` — shallow-merge `patch` into
+  the one matched row inside each named payload list (today/senior/junior/
+  overdue/history…). Pure, for use inside `setData`; only the touched row
+  re-renders.
+- `mapRowInLists(prev, lists, idKey, id, fn)` — same but with a row transform
+  (append a temp upload chip, filter a deleted file, …).
+
+**Adopting it in a new dashboard (~5 lines):**
+
+```tsx
+const dash = useLiveDashboard(fetchMyData);
+const { mutate } = useOptimisticMutation(dash);
+const save = (id: string, body: unknown, patch: Record<string, unknown>) =>
+  mutate(
+    (prev) => patchRowInLists(prev, ["items", "mine"], "id", id, patch),
+    async () => {
+      const res = await fetch(`/api/my-scope/${id}`, { method: "PATCH", ... });
+      if (!res.ok) throw new Error(await res.text());
+    },
+    { key: id },
+  );
+```
+
+Creates/uploads echo with a `tmp-` id and swap in server truth on the
+background refresh (enquiry comments, accounts proof files). Reference
+implementations: sales enquiries (`useEnquiryData.ts` — the original pattern:
+ref-mirrored state, per-enquiry write chains, temp-id comment echo, single-row
+live merge) and Accounts (`AccountsDashboard.tsx` — first adopter of this
+module: `saveLog`/`attachFile`/`detachFile`).
+
 ## 12. Authentication & granular permissions (Google OAuth)
 
 Founder OS uses **Google Sign-In** with one root account (`striversahil@gmail.com`) and

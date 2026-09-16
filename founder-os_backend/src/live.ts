@@ -37,8 +37,9 @@ export const LiveEvent = {
    * Accounts taskbar writes (daily logging, remarks, attachments, MIS
    * roster/template changes). Typed member so refactors are compiler-checked.
    */
-  Accounts: "accounts",  /**
-   * Agent call-disposition tag tap (Lead Conversion view). Deliberately NOT
+  Accounts: "accounts",
+  DigitalMarketing: "digital-marketing",  /**
+    * Agent call-disposition tag tap (Lead Conversion view). Deliberately NOT
    * "telecalling": dashboards refetch wholesale on that type, and a tag save
    * would fan out into ~20 requests (leaderboard + generation + roster + every
    * agent view). The tag delta rides INSIDE this event and each tab patches

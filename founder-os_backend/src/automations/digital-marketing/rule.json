@@ -1,0 +1,10 @@
+{
+  "name": "Digital Marketing",
+  "description": "Daily BUI digital marketing taskbar: account sheet, weekly collateral posts (FB/IG/GBP/LI) and daily numeric inputs (Meta Ads, B2B, Whatsapp, Email) with MIS controller and KRA/KPI.",
+  "type": "handler",
+  "trigger": {
+    "type": "schedule",
+    "cron": "30 3 * * *"
+  },
+  "scope": "digital-marketing"
+}

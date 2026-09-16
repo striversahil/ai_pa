@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useLiveQuery } from "@/hooks/useLiveData";
+import { useAuth } from "@/auth/AuthContext";
 
 // Lazy-load each dashboard so only the opened one is fetched & parsed.
 const ZohoEstimates = dynamic(() => import("./ZohoEstimates"), { ssr: false });
@@ -15,6 +16,7 @@ const EnterpriseOperationsDashboard = dynamic(() => import("./EnterpriseOperatio
 const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDashboard"), { ssr: false });
 const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
 const AccountsDashboard = dynamic(() => import("./AccountsDashboard"), { ssr: false });
+const DigitalMarketingDashboard = dynamic(() => import("./DigitalMarketingDashboard"), { ssr: false });
 const AutopilotDashboard = dynamic(() => import("./AutopilotDashboard"), { ssr: false });
 const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false });
 const ProcurementQueue = dynamic(() => import("./ProcurementQueue"), { ssr: false });
@@ -57,6 +59,8 @@ interface AutomationsProps {
 }
 
 export default function Automations({ slug, onNavigate }: AutomationsProps) {
+  const { me } = useAuth();
+  const isRoot = !!me?.isRoot;
   const automations = useLiveQuery<Automation[]>(
     async () => {
       const res = await fetch("/api/automations");
@@ -125,6 +129,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
     if (selected === "telecalling") return <TelecallingDashboard />;
     if (selected === "accounts") return <AccountsDashboard />;
+    if (selected === "digital-marketing") return <DigitalMarketingDashboard />;
     if (selected === "whatsapp-autopilot") return <AutopilotDashboard />;
     if (selected === "enquiry-tracker") return <EnquiryTracker />;
     if (selected === "enquiry-procurement") return <ProcurementQueue />;
@@ -228,12 +233,16 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
       {selected ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <button
-              onClick={() => onNavigate("/automations")}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium text-sm transition-all duration-200 cursor-pointer border-0"
-            >
-              ← Back to all automations
-            </button>
+            {isRoot ? (
+              <button
+                onClick={() => onNavigate("/automations")}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium text-sm transition-all duration-200 cursor-pointer border-0"
+              >
+                ← Back to all automations
+              </button>
+            ) : (
+              <span />
+            )}
             <button
               onClick={() => togglePin(selected)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-0 ${pinned.includes(selected)

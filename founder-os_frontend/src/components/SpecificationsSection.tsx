@@ -37,6 +37,10 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [rateError, setRateError] = useState<string | null>(null);
   const [remarkIdx, setRemarkIdx] = useState<number | null>(null);
   const [remarkText, setRemarkText] = useState("");
+  // Sales negotiation: client-side expected price + note per item.
+  const [expOpen, setExpOpen] = useState<number | null>(null);
+  const [expRate, setExpRate] = useState("");
+  const [expNote, setExpNote] = useState("");
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
   const editable = !!onUpdateItems && !redacted;
@@ -153,6 +157,45 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     if (!onUpdateItems) return;
     onUpdateItems(items.filter((_, i) => i !== idx));
     if (editingIdx === idx) setEditingIdx(null);
+  };
+  // Sales-owned expected price: target ₹ (+ optional note like "client
+  // quoted X elsewhere"). Saved onto the item + trailed as a sales remark
+  // so procurement (negotiation target) and management (vs vendor rates)
+  // both see it live. Clearing removes the target, also trailed.
+  const openExpected = (idx: number) => {
+    const it = items[idx];
+    setExpOpen(idx);
+    setExpRate(it?.expectedRate !== undefined && it?.expectedRate !== null ? String(it.expectedRate) : "");
+    setExpNote(it?.expectedNote ?? "");
+    setRateError(null);
+  };
+  const saveExpected = (idx: number) => {
+    if (!onUpdateItems) return;
+    const raw = expRate.trim();
+    const note = expNote.trim();
+    let rate: number | undefined;
+    if (raw) {
+      const v = parseMoneyInput(raw);
+      if (v === null) {
+        setRateError(`"${raw}" is not a valid amount — use digits only (e.g. 1200 or 1200.50).`);
+        return;
+      }
+      rate = v;
+    }
+    setRateError(null);
+    const text = rate !== undefined
+      ? `Expected price set: ₹${rate.toLocaleString("en-IN")}${note ? ` — ${note}` : ""}`
+      : "Expected price removed";
+    const entry = { by: "sales" as const, kind: "remark" as const, text: text.slice(0, 500), at: new Date().toISOString() };
+    onUpdateItems(items.map((it, i) => (i === idx ? {
+      ...it,
+      expectedRate: rate,
+      expectedNote: note || undefined,
+      thread: [...(it.thread ?? []), entry],
+    } : it)));
+    setExpOpen(null);
+    setExpRate("");
+    setExpNote("");
   };
   const copyItem = (idx: number) => {
     if (!onUpdateItems) return;
@@ -349,7 +392,61 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           Handled internally — rate to follow
                         </div>
                       )}
-                                            {(() => {
+                      {it.expectedRate !== undefined && it.expectedRate !== null && (
+                        <div className="mt-1.5 rounded-lg border border-sky-500/20 bg-sky-500/5 px-2.5 py-2">
+                          <p className="text-[11px] font-extrabold text-sky-600 dark:text-sky-400">
+                            🎯 Client expects: ₹{Number(it.expectedRate).toLocaleString("en-IN")}
+                          </p>
+                          {it.expectedNote && (
+                            <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed mt-0.5">{it.expectedNote}</p>
+                          )}
+                        </div>
+                      )}
+                      {editable && mode === "none"
+                        && String(selectedEnquiry.rateStatus ?? "") === "sent"
+                        && it.finalRate !== undefined && it.finalRate !== null && (
+                        expOpen === idx ? (
+                          <div className="mt-1.5 space-y-1.5 rounded-lg border border-dashed border-sky-500/40 p-2">
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                value={expRate}
+                                onChange={(e) => setExpRate(e.target.value)}
+                                placeholder="Client-expected ₹ (e.g. 1100)"
+                                inputMode="decimal"
+                                className="flex-1 px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-sky-500 text-xs text-[var(--text-primary)]"
+                              />
+                              {it.expectedRate !== undefined && it.expectedRate !== null && (
+                                <button type="button" onClick={() => { setExpRate(""); setExpNote(""); }}
+                                  className="px-2 py-1.5 text-[11px] font-bold text-[var(--color-danger)] hover:opacity-80 cursor-pointer bg-transparent border-0 flex-shrink-0">
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                            <input
+                              value={expNote}
+                              onChange={(e) => setExpNote(e.target.value)}
+                              placeholder="Note — e.g. client quoted lower elsewhere, budget cap… (optional)"
+                              className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-sky-500 text-xs text-[var(--text-primary)]"
+                            />
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => saveExpected(idx)} disabled={!expRate.trim() && (it.expectedRate === undefined || it.expectedRate === null)}
+                                className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
+                                {it.expectedRate !== undefined && it.expectedRate !== null ? "Update target" : "Set target"}
+                              </button>
+                              <button type="button" onClick={() => { setExpOpen(null); setExpRate(""); setExpNote(""); setRateError(null); }}
+                                className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => openExpected(idx)}
+                            className="mt-1.5 text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:opacity-80 cursor-pointer bg-transparent border-0">
+                            💬 {it.expectedRate !== undefined && it.expectedRate !== null ? "Negotiate — update expected price" : "Negotiate — set client-expected price"}
+                          </button>
+                        )
+                      )}
+                                             {(() => {
                         const selRate = (it.rates ?? []).find((r) => (r as any).selected === true)
                           ?? (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor);
                         const note = (selRate as any)?.salesNote ? String((selRate as any).salesNote).trim() : "";

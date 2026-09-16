@@ -131,6 +131,12 @@ export interface EnquiryItem {
    *  the detail-view "Add via AI" flow) is awaiting the GH intake action,
    *  which replaces it with vision-split items. Manual edits clear it. */
   aiPending?: boolean;
+  /** Sales-negotiated target: the client-side expected price for this item
+   *  (plus an optional note — "client quoted X elsewhere", "budget cap").
+   *  Sales-owned; procurement sees it as the negotiation target, management
+   *  beside vendor rates. Never blocks the loop. */
+  expectedRate?: number;
+  expectedNote?: string;
 }
 
 export type FlagThreadBy = 'sales' | 'procurement' | 'management';
@@ -380,6 +386,8 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         aiPending: r?.aiPending === true ? true : undefined,
+        expectedRate: numOrUndefined(r?.expectedRate),
+        expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
       }))
       .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);
@@ -463,6 +471,8 @@ export function sanitize(e: any): Enquiry {
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         aiPending: r?.aiPending === true ? true : undefined,
+        expectedRate: numOrUndefined(r?.expectedRate),
+        expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
         }))
       : [],
   };

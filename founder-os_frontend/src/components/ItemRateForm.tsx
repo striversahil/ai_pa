@@ -20,7 +20,9 @@ interface ItemRateFormProps {
 export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate", onCancel }: ItemRateFormProps) {
   const [vendor, setVendor] = useState(initial?.vendor ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [salesNote, setSalesNote] = useState(initial?.salesNote ?? "");
   const [rate, setRate] = useState(initial?.rate !== undefined ? String(initial.rate) : "");
+  const [discount, setDiscount] = useState(initial?.discountPercent !== undefined ? String(initial.discountPercent) : "");
   const [specMode, setSpecMode] = useState<"same" | "diff">(initial?.specSame === false ? "diff" : "same");
   const [specDiff, setSpecDiff] = useState(initial?.specDiff ?? "");
   const [formError, setFormError] = useState<string | null>(null);
@@ -47,12 +49,23 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
       setFormError(`"${rate.trim()}" is not a valid amount — use digits only (e.g. 1200 or 1200.50).`);
       return;
     }
+    let disc: number | undefined = undefined;
+    if (String(discount).trim() !== "") {
+      const n = Number(String(discount).trim());
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        setFormError("Discount must be 0–100%");
+        return;
+      }
+      disc = Math.round(n * 100) / 100;
+    }
     setFormError(null);
     const same = specMode !== "diff";
     onAdd({
       vendor: v,
       rate: r,
+      discountPercent: disc,
       description: description.trim() || undefined,
+      salesNote: salesNote.trim() || undefined,
       specSame: same,
       specDiff: !same && specDiff.trim() ? specDiff.trim() : undefined,
       // Reference attachments ride with the quote (add + edit alike).
@@ -62,7 +75,9 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
     if (initial) return; // edit mode: parent closes the form
     setVendor("");
     setDescription("");
+    setSalesNote("");
     setRate("");
+    setDiscount("");
     setSpecMode("same");
     setSpecDiff("");
   };
@@ -79,9 +94,16 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
       <textarea
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        placeholder="Vendor description — contact person, terms, delivery…"
+        placeholder="Vendor description — contact person, terms, delivery… (internal, not shown to sales)"
         rows={2}
         className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
+      />
+      <textarea
+        value={salesNote}
+        onChange={(e) => setSalesNote(e.target.value)}
+        placeholder="Note for sales — forwarded to sales team when this vendor is selected (e.g. warranty, delivery for customer)…"
+        rows={2}
+        className="w-full px-2.5 py-2 bg-emerald-500/5 border border-emerald-500/20 rounded-lg outline-none focus:border-emerald-500 text-xs resize-y text-[var(--text-primary)]"
       />
       <div className="flex items-center gap-1.5">
         <input
@@ -90,6 +112,13 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
           placeholder="Rate ₹"
           inputMode="decimal"
           className="flex-1 px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+        />
+        <input
+          value={discount}
+          onChange={(e) => setDiscount(e.target.value)}
+          placeholder="Disc. %"
+          inputMode="decimal"
+          className="w-20 px-2 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
         />
         <div className="flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[11px] font-bold">
           <button type="button"

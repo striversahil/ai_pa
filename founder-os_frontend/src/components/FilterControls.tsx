@@ -37,7 +37,7 @@ export default function FilterControls({
           type="text" 
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={hideAgentFilter ? "Search by title..." : "Search by client, title or contact name..."} 
+          placeholder={hideAgentFilter ? "Search by title..." : "Search enquiry, EST No., client, contact, phone or item..."} 
           className="w-full pl-11 pr-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl text-sm placeholder-[var(--text-tertiary)] text-[var(--text-primary)] focus:outline-hidden focus:border-brand-indigo/80"
         />
       </div>
@@ -68,7 +68,7 @@ export default function FilterControls({
         >
           <option value="all">All Rates</option>
           <option value="ready">Rates Ready</option>
-          <option value="awaiting">Awaiting Rates</option>
+          <option value="awaiting">Not Sent</option>
           <option value="sent">Marked as Sent</option>
         </select>
       </div>

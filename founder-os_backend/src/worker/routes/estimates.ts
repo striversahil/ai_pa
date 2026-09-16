@@ -3,7 +3,7 @@
 // overrides, baseline snapshots, NeoDove report, Zoho classification, bulk-upsert.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, getMe, readSessionCookie, type Bindings } from '../context';
+import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, getMe, isApproved, readSessionCookie, type Bindings } from '../context';
 import {
   recordAssignment,
   markTelecallerAbsent,
@@ -151,8 +151,13 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   // unassigned deals + MIS locks + non-specialist (lead-gen) holds corrected
   // back to specialists still move. NOTE: registered BEFORE /api/telecallers/:id so
   // 'eod-reassign' can never be captured as an :id.
+  // GET is readable by any approved viewer (sales needs it to hide snatch chips
+  // when reassignment is OFF — MIS-gating here left sales agents stuck on
+  // `showRisk=true` with stale "will be snatched" warnings).
   app.get('/api/telecallers/eod-reassign', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    if (!isApproved(me)) return c.json({ error: 'Access pending' }, 403);
     return c.json({ enabled: await isEodReassignEnabled() });
   });
 

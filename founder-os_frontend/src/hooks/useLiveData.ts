@@ -201,3 +201,120 @@ export function useLiveDashboard<T>(
 ): LiveQueryResult<T> {
   return useLiveQuery<T>(fetcher, options);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Optimistic mutations — the sales-enquiry standard, modular for EVERY dashboard.
+//
+// Rule: no dashboard write may wait for the network to paint. The pattern is:
+//   1. patch local state instantly (via setData — surgical, no refetch),
+//   2. send the server request in the background,
+//   3. reconcile with server truth afterwards (refresh),
+//   4. on failure resync (refresh) so the UI never sits on a lie.
+//
+// New automations adopt this in ~5 lines (see usage below); the live event the
+// write broadcasts converges other writers automatically. Reference
+// implementations: sales enquiries (`useEnquiryData.ts` — the original) and
+// Accounts (`AccountsDashboard.tsx` — first adopter of this module).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Transform the one row matched by `String(row[idKey]) === String(id)` inside
+ * each named list field of the dashboard payload. Pure — use inside setData.
+ * Payload lists stay mounted; only the touched row re-renders.
+ */
+export function mapRowInLists<T extends Record<string, any>>(
+  prev: T | null,
+  lists: (keyof T)[],
+  idKey: string,
+  id: string,
+  fn: (row: any) => any,
+): T | null {
+  if (!prev) return prev;
+  const next: Record<string, any> = { ...prev };
+  for (const k of lists) {
+    const list = (prev as any)[k];
+    if (Array.isArray(list)) {
+      next[k as string] = list.map((it: any) =>
+        it && String(it[idKey]) === String(id) ? fn(it) : it,
+      );
+    }
+  }
+  return next as T;
+}
+
+/** Shallow-merge `patch` into the matched row in each named list. */
+export function patchRowInLists<T extends Record<string, any>>(
+  prev: T | null,
+  lists: (keyof T)[],
+  idKey: string,
+  id: string,
+  patch: Record<string, any>,
+): T | null {
+  return mapRowInLists(prev, lists, idKey, id, (row) => ({ ...row, ...patch }));
+}
+
+export interface OptimisticMutateOptions {
+  /**
+   * Per-record serialization key (e.g. the logId/enquiryId). Rapid taps on
+   * the SAME record queue instead of racing (each body builds after the
+   * previous step resolved); taps on different records run concurrently.
+   * Omit for fire-and-forget writes with no ordering need.
+   */
+  key?: string;
+  /** Set false when the caller merges server truth itself. Default true. */
+  reconcile?: boolean;
+}
+
+/**
+ * Shared optimistic-write driver over any `useLiveQuery`/`useLiveDashboard`
+ * result. Usage (inside a dashboard component):
+ *
+ *   const dash = useLiveDashboard(fetchAccounts);
+ *   const { mutate } = useOptimisticMutation(dash);
+ *   const save = (logId, body, patch) =>
+ *     mutate(
+ *       (prev) => patchRowInLists(prev, ["items","senior","junior"], "logId", logId, patch),
+ *       async () => {
+ *         const res = await fetch(`/api/.../${logId}`, { method: "PATCH", ... });
+ *         if (!res.ok) throw new Error(await res.text());
+ *       },
+ *       { key: logId },
+ *     );
+ */
+export function useOptimisticMutation<T>(query: LiveQueryResult<T>) {
+  const chainsRef = useRef<Record<string, Promise<unknown>>>({});
+  const queryRef = useRef(query);
+  queryRef.current = query;
+
+  const mutate = useCallback(
+    async (
+      patch: (prev: T | null) => T | null,
+      request: () => Promise<unknown>,
+      opts: OptimisticMutateOptions = {},
+    ): Promise<unknown> => {
+      const run = async () => {
+        // 1. Paint instantly — the UI never waits for the network.
+        queryRef.current.setData(patch);
+        try {
+          const res = await request();
+          // 2. Reconcile with server truth in the background (the write's
+          // live broadcast converges other writers at the same time).
+          if (opts.reconcile !== false) queryRef.current.refresh();
+          return res;
+        } catch (e) {
+          // 3. Never sit on a lie — resync, then surface the error.
+          queryRef.current.refresh();
+          throw e;
+        }
+      };
+      if (!opts.key) return run();
+      const prev = chainsRef.current[opts.key] ?? Promise.resolve();
+      const next = prev.then(run, run);
+      chainsRef.current[opts.key] = next.catch(() => {});
+      return next;
+    },
+    [],
+  );
+
+  return { mutate };
+}

@@ -3,14 +3,14 @@ import { logger } from '../../shared/logger';
 import { cached, cacheDel } from '../../shared/cache';
 
 export const FREQUENCIES = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
-export const OWNER_ROLES = ['senior', 'junior', 'either'] as const;
+export const OWNER_ROLES = ['manager', 'either'] as const;
 // Live workflow: pending → inprogress → done. `skipped` is legacy (old UI
 // offered it; no longer offered, still rendered). `overdue` is materialised
 // by the rollover for stale pendings/in-progress rows.
 export const LOG_STATUSES = ['pending', 'inprogress', 'done', 'skipped'] as const;
 
 const DATA_TTL_MS = 5 * 60 * 1000;
-const DATA_CACHE_PREFIX = 'accounts:dashboard:';
+const DATA_CACHE_PREFIX = 'digital-marketing:dashboard:';
 
 export function istDateStr(d = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -160,24 +160,24 @@ import { SEED_TASKS } from './seed-tasks';
 
 export async function ensureSeedTemplates(): Promise<void> {
   try {
-    const count = await prisma.accountsTaskTemplate.count();
+    const count = await prisma.digitalMarketingTaskTemplate.count();
     if (count > 0) return;
     for (const t of SEED_TASKS) {
-      await (prisma as any).accountsTaskTemplate.create({ data: { ...(t as any) } });
+      await (prisma as any).digitalMarketingTaskTemplate.create({ data: { ...(t as any) } });
     }
-    logger.info({ n: SEED_TASKS.length }, 'accounts: seeded follow-up templates');
+    logger.info({ n: SEED_TASKS.length }, 'digital-marketing: seeded follow-up templates');
   } catch (e: any) {
-    logger.warn({ err: e?.message }, 'accounts: seed failed (best-effort)');
+    logger.warn({ err: e?.message }, 'digital-marketing: seed failed (best-effort)');
   }
 }
 
 /** Ensure one log row per due template for `dateStr` (idempotent). */
 export async function ensureInstances(dateStr: string): Promise<number> {
   await ensureSeedTemplates();
-  const templates = await prisma.accountsTaskTemplate.findMany({ where: { active: true } });
+  const templates = await prisma.digitalMarketingTaskTemplate.findMany({ where: { active: true } });
   const due = templates.filter((t: any) => isDueOn(t, dateStr));
   if (due.length === 0) return 0;
-  const existing = await prisma.accountsTaskLog.findMany({
+  const existing = await prisma.digitalMarketingTaskLog.findMany({
     where: { dueDate: dateStr, templateId: { in: due.map((t: any) => t.id) } },
     select: { templateId: true },
   });
@@ -188,14 +188,14 @@ export async function ensureInstances(dateStr: string): Promise<number> {
   // (templateId, dueDate) keeps concurrent rollovers idempotent — on conflict
   // the batch throws and we fall back to idempotent per-row creates.
   try {
-    const rows = await (prisma as any).accountsTaskLog.createManyAndReturn({
+    const rows = await (prisma as any).digitalMarketingTaskLog.createManyAndReturn({
       data: missing.map((t: any) => ({ templateId: String(t.id), dueDate: dateStr, status: 'pending' })),
     });
     return Array.isArray(rows) ? rows.length : missing.length;
   } catch {
     const results = await Promise.all(missing.map(async (t: any) => {
       try {
-        await prisma.accountsTaskLog.create({ data: { templateId: t.id, dueDate: dateStr, status: 'pending' } });
+        await prisma.digitalMarketingTaskLog.create({ data: { templateId: t.id, dueDate: dateStr, status: 'pending' } });
         return 1;
       } catch { return 0; /* unique race — ignore */ }
     }));
@@ -205,7 +205,7 @@ export async function ensureInstances(dateStr: string): Promise<number> {
 
 /** Mark stale pending rows overdue (materialised reminder state). */
 export async function flagOverdue(todayStr: string): Promise<number> {
-  const stale = await prisma.accountsTaskLog.findMany({
+  const stale = await prisma.digitalMarketingTaskLog.findMany({
     where: { dueDate: { lt: todayStr }, status: 'pending' },
     select: { id: true },
     take: 500,
@@ -213,7 +213,7 @@ export async function flagOverdue(todayStr: string): Promise<number> {
   let n = 0;
   for (const r of stale as any[]) {
     try {
-      await prisma.accountsTaskLog.update({ where: { id: r.id }, data: { status: 'overdue' } });
+      await prisma.digitalMarketingTaskLog.update({ where: { id: r.id }, data: { status: 'overdue' } });
       n++;
     } catch { /* ignore */ }
   }
@@ -232,7 +232,7 @@ export async function getCarriedOverdue(
   const out = new Map<string, string[]>();
   if (!templateIds.length) return out;
   const from = addDays(dateStr, -lookbackDays);
-  const rows = await (prisma as any).accountsTaskLog.findMany({
+  const rows = await (prisma as any).digitalMarketingTaskLog.findMany({
     where: {
       templateId: { in: templateIds },
       dueDate: { gte: from, lt: dateStr },
@@ -254,11 +254,11 @@ export async function runDailyRollover(): Promise<{ date: string; created: numbe
   const today = istDateStr();
   const created = await ensureInstances(today);
   const overdue = await flagOverdue(today);
-  await invalidateAccountsCache();
+  await invalidateDigitalMarketingCache();
   return { date: today, created, overdue };
 }
 
-export async function invalidateAccountsCache(): Promise<void> {
+export async function invalidateDigitalMarketingCache(): Promise<void> {
   try { await cacheDel(DATA_CACHE_PREFIX.slice(0, -1)); } catch { /* best-effort */ }
   try {
     const { cacheDelPrefix } = await import('../../shared/cache');
@@ -272,16 +272,16 @@ async function computeDashboard(
 ) {
   await ensureInstances(dateStr);
   const [roster, templates, logs] = await Promise.all([
-    prisma.accountant.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
-    prisma.accountsTaskTemplate.findMany({ where: { active: true }, orderBy: { order: 'asc' } }),
-    prisma.accountsTaskLog.findMany({
+    prisma.digitalMarketingManager.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
+    prisma.digitalMarketingTaskTemplate.findMany({ where: { active: true }, orderBy: { order: 'asc' } }),
+    prisma.digitalMarketingTaskLog.findMany({
       where: { dueDate: dateStr },
       include: { template: true, accountant: true },
     }),
   ]);
   const logIds = (logs as any[]).map((l) => String(l.id)).filter(Boolean);
   const attachments = logIds.length
-    ? await (prisma as any).accountsTaskAttachment.findMany({
+    ? await (prisma as any).digitalMarketingTaskAttachment.findMany({
       where: { logId: { in: logIds } },
       orderBy: { createdAt: 'asc' },
     }).catch(() => [])
@@ -314,6 +314,10 @@ async function computeDashboard(
       const status = log?.status ?? 'pending';
       const missed = carried.get(String(t.id)) ?? [];
       const isOverdueRow = missed.length > 0 || status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr());
+      let metricsSchema: any = null;
+      try { metricsSchema = t.metricsSchema ? JSON.parse(String(t.metricsSchema)) : null; } catch { metricsSchema = null; }
+      let metricsJson: any = null;
+      try { metricsJson = log?.metricsJson ? JSON.parse(String(log.metricsJson)) : null; } catch { metricsJson = null; }
       return {
         templateId: t.id,
         title: t.title,
@@ -326,10 +330,12 @@ async function computeDashboard(
         dueLabel: t.rawText ?? null,
         isShared: !!t.isShared,
         employeeRaw: t.employeeRaw ?? null,
+        metricsSchema,
         logId: log?.id ?? null,
         status,
         remark: log?.remark ?? null,
         doneBy: log?.doneBy ?? null,
+        metricsJson,
         timeSpentMin: log?.timeSpentMin ?? null,
         accountantId: log?.accountantId ?? null,
         accountantName: log?.accountant?.name ?? null,
@@ -339,10 +345,10 @@ async function computeDashboard(
         missed,
         overdue: isOverdueRow,
         // Days overdue for this card: oldest missed day wins; else the row's
-        // own past-due age. 0/null = not overdue.
+        // own past-due age. 0 = not overdue.
         daysOverdue: missed.length > 0
           ? diffDays(missed[0], dateStr)
-          : (status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr() && log?.dueDate)
+          : (status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr() && (log as any)?.dueDate)
             ? diffDays(String((log as any)?.dueDate ?? dateStr), dateStr)
             : 0),
       };
@@ -369,25 +375,27 @@ async function computeDashboard(
   // always visible, never auto-instantiated, never overdue.
   const unscheduled = (templates as any[])
     .filter((t) => inLane(t) && UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')))
-    .map((t) => ({
-      templateId: t.id,
-      title: t.title,
-      description: t.description,
-      frequency: t.frequency,
-      ownerRole: t.ownerRole,
-      ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
-      note: (() => { try { return JSON.parse(String(t.ruleJson || '{}')).note ?? null; } catch { return null; } })(),
-      dueLabel: t.rawText ?? null,
-      isShared: !!t.isShared,
-      employeeRaw: t.employeeRaw ?? null,
-    }));
+    .map((t) => {
+      let metricsSchema: any = null;
+      try { metricsSchema = (t as any).metricsSchema ? JSON.parse(String((t as any).metricsSchema)) : null; } catch { metricsSchema = null; }
+      return {
+        templateId: t.id,
+        title: t.title,
+        description: t.description,
+        frequency: t.frequency,
+        ownerRole: t.ownerRole,
+        ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
+        note: (() => { try { return JSON.parse(String(t.ruleJson || '{}')).note ?? null; } catch { return null; } })(),
+        dueLabel: t.rawText ?? null,
+        isShared: !!t.isShared,
+        employeeRaw: t.employeeRaw ?? null,
+        metricsSchema,
+      };
+    });
   // Overdue tray: EVERY unresolved instance BEFORE today (same 120-day window
   // as carryover, capped at 500). Each repeat shows as its own row — a daily
   // missed 3 days in a row lists 3 rows, each with its own days-overdue age.
-  // The today-only taskbar would otherwise hide a skipped daily/weekly until
-  // its next due date — this list stays visible until each row is done, and
-  // honours the same lane scoping as items.
-  const overdueLogs = await (prisma as any).accountsTaskLog.findMany({
+  const overdueLogs = await (prisma as any).digitalMarketingTaskLog.findMany({
     where: {
       dueDate: { gte: addDays(dateStr, -120), lt: dateStr },
       status: { in: ['pending', 'overdue', 'inprogress'] },
@@ -398,7 +406,7 @@ async function computeDashboard(
   }).catch(() => []);
   const overdueIds = (overdueLogs as any[]).map((l: any) => String(l.id)).filter(Boolean);
   const overdueFiles = overdueIds.length
-    ? await (prisma as any).accountsTaskAttachment.findMany({
+    ? await (prisma as any).digitalMarketingTaskAttachment.findMany({
       where: { logId: { in: overdueIds } },
       orderBy: { createdAt: 'asc' },
     }).catch(() => [])
@@ -413,6 +421,10 @@ async function computeDashboard(
     .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
     .map((log: any) => {
       const t: any = log.template;
+      let metricsSchema: any = null;
+      try { metricsSchema = t.metricsSchema ? JSON.parse(String(t.metricsSchema)) : null; } catch { metricsSchema = null; }
+      let metricsJson: any = null;
+      try { metricsJson = log.metricsJson ? JSON.parse(String(log.metricsJson)) : null; } catch { metricsJson = null; }
       return {
         templateId: t.id,
         title: t.title,
@@ -425,11 +437,13 @@ async function computeDashboard(
         dueLabel: t.rawText ?? null,
         isShared: !!t.isShared,
         employeeRaw: t.employeeRaw ?? null,
+        metricsSchema,
         logId: log.id,
         dueDate: String(log.dueDate),
         status: log.status,
         remark: log.remark ?? null,
         doneBy: log.doneBy ?? null,
+        metricsJson,
         timeSpentMin: log.timeSpentMin ?? null,
         accountantId: log.accountantId ?? null,
         accountantName: log.accountant?.name ?? null,
@@ -442,7 +456,7 @@ async function computeDashboard(
     });
   // Historical done — last 30 days BEFORE today, lane-scoped, capped.
   // Gives the Done tab's missing context and powers the new History view.
-  const historyLogsRaw = await (prisma as any).accountsTaskLog.findMany({
+  const historyLogsRaw = await (prisma as any).digitalMarketingTaskLog.findMany({
     where: {
       dueDate: { gte: addDays(dateStr, -30), lt: dateStr },
       status: { in: ['done', 'skipped'] },
@@ -453,7 +467,7 @@ async function computeDashboard(
   }).catch(() => []);
   const historyIds = (historyLogsRaw as any[]).map((l: any) => String(l.id)).filter(Boolean);
   const historyFiles = historyIds.length
-    ? await (prisma as any).accountsTaskAttachment.findMany({
+    ? await (prisma as any).digitalMarketingTaskAttachment.findMany({
         where: { logId: { in: historyIds } },
         orderBy: { createdAt: 'asc' },
       }).catch(() => [])
@@ -468,6 +482,10 @@ async function computeDashboard(
     .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
     .map((log: any) => {
       const t: any = log.template;
+      let metricsSchema: any = null;
+      try { metricsSchema = t.metricsSchema ? JSON.parse(String(t.metricsSchema)) : null; } catch { metricsSchema = null; }
+      let metricsJson: any = null;
+      try { metricsJson = log.metricsJson ? JSON.parse(String(log.metricsJson)) : null; } catch { metricsJson = null; }
       return {
         templateId: t.id,
         title: t.title,
@@ -480,11 +498,13 @@ async function computeDashboard(
         dueLabel: t.rawText ?? null,
         isShared: !!t.isShared,
         employeeRaw: t.employeeRaw ?? null,
+        metricsSchema,
         logId: log.id,
         dueDate: String(log.dueDate),
         status: log.status,
         remark: log.remark ?? null,
         doneBy: log.doneBy ?? null,
+        metricsJson,
         timeSpentMin: log.timeSpentMin ?? null,
         accountantId: log.accountantId ?? null,
         accountantName: log.accountant?.name ?? null,
@@ -494,6 +514,27 @@ async function computeDashboard(
         overdue: false,
       };
     });
+  // Active Meta Ads campaign window (Saturday start → daily capture during run).
+  const metaAdsCampaign: any = await getActiveMetaCampaign(dateStr).catch(() => null);
+  // Carry-forward: today's Meta Ads Run box inherits the active campaign's
+  // category/amount/from-to for DISPLAY so every day of the run shows what
+  // campaign the inquiries/leads belong to (the day's own inquiries/leads win).
+  // DB rows are untouched — saving the day writes its own metricsJson.
+  if (metaAdsCampaign) {
+    const todayRun = (items as any[]).find((i) => String(i.templateId) === 'dmm-06');
+    if (todayRun && String(todayRun.logId ?? '') !== String(metaAdsCampaign.logId ?? '')) {
+      const cur = (todayRun.metricsJson && typeof todayRun.metricsJson === 'object') ? todayRun.metricsJson : {};
+      const pick = (k: string) => (cur as any)[k] ?? null;
+      todayRun.metricsJson = {
+        ...cur,
+        category: pick('category') ?? (metaAdsCampaign as any).category ?? null,
+        amountSpent: pick('amountSpent') ?? (metaAdsCampaign as any).amountSpent ?? null,
+        fromDate: pick('fromDate') ?? (metaAdsCampaign as any).fromDate ?? null,
+        toDate: pick('toDate') ?? (metaAdsCampaign as any).toDate ?? null,
+      };
+      (todayRun as any).campaignCarried = true;
+    }
+  }
   return {
     meta: {
       date: dateStr,
@@ -515,20 +556,23 @@ async function computeDashboard(
       // the Who-picker, lane labels, and the team board.
       id: r.id, name: r.name, role: r.role, order: r.order,
     })),
-    senior: laneEnforced && laneRole !== 'senior' ? [] : split('senior'),
-    junior: laneEnforced && laneRole !== 'junior' ? [] : split('junior'),
+    manager: laneEnforced && laneRole !== 'manager' ? [] : split('manager'),
+    senior: [],
+    junior: [],
     items,
     overdueList,
     history,
     freqStats,
     unscheduled,
+    metaAdsCampaign,
     team: await computeTeam(dateStr, carried, { roster, todayLogs: logs }),
   };
 }
+export const getAccountsDashboardData = getDigitalMarketingDashboardData;
 
-export async function getAccountsDashboardData(query: Record<string, any> = {}) {
+export async function getDigitalMarketingDashboardData(query: Record<string, any> = {}) {
   const date = String(query.date || '').slice(0, 10) || istDateStr();
-  // Scope is part of the cache key: a junior must never be served a payload
+  // Scope is part of the cache key: a non-MIS viewer must never be served a payload
   // computed for MIS (or vice versa).
   const scope = (query.scope ?? null) as { scope: LaneScope | null; isAdmin: boolean } | null;
   const scopeKey = !scope || scope.isAdmin ? 'all' : scope.scope ? `self:${scope.scope.selfId}` : 'unassigned';
@@ -538,7 +582,7 @@ export async function getAccountsDashboardData(query: Record<string, any> = {}) 
 // ── MIS export: past-N-days full ledger ─────────────────────────────────────
 // One row per (date × due task): status, who, remark, attachment links.
 // Read-only (never creates instances) — a complete view of what was
-// pending / in-progress / done per senior-junior lane, for the MIS export.
+// pending / in-progress / done for the single-manager taskbar, for the MIS export.
 // Minutes → "1h 20m" / "45m" for the MIS export. NULL/0 → null.
 function fmtMins(v: unknown): string | null {
   const n = Math.floor(Number(v));
@@ -553,6 +597,22 @@ function addDays(dateStr: string, n: number): string {
   return new Date(Date.UTC(y, m - 1, d, 12) + n * 86400000).toISOString().slice(0, 10);
 }
 
+function parseMetricsJson(raw: unknown): Record<string, any> {
+  if (!raw) return {};
+  try {
+    const o = typeof raw === 'string' ? JSON.parse(String(raw)) : raw;
+    return o && typeof o === 'object' && !Array.isArray(o) ? o as Record<string, any> : {};
+  } catch { return {}; }
+}
+
+function durationDaysBetween(from: string, to: string): number | null {
+  const ok = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '').slice(0, 10));
+  if (!ok(from) || !ok(to)) return null;
+  const ms = Date.parse(to.slice(0, 10)) - Date.parse(from.slice(0, 10));
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  return Math.round(ms / 86400000) + 1;
+}
+
 /** Whole days `from` (YYYY-MM-DD) is before `to` — the "N days overdue" count. */
 export function diffDays(from: string, to: string): number {
   const a = Date.parse(String(from || '').slice(0, 10));
@@ -561,7 +621,42 @@ export function diffDays(from: string, to: string): number {
   return Math.max(0, Math.round((b - a) / 86400000));
 }
 
-export async function getAccountsExport(daysRaw: unknown, origin: string) {
+/**
+ * Active Meta Ads campaign for `dateStr`: the most recent dmm-06 log (lookback
+ * 60 days incl. today) whose [fromDate, toDate] window covers `dateStr`.
+ * Saturday starts the campaign; the daily box stays open for inquiries/leads
+ * for the whole duration — the dashboard wears this as a banner.
+ */
+export async function getActiveMetaCampaign(dateStr: string): Promise<Record<string, any> | null> {
+  const from = addDays(dateStr, -60);
+  const rows = await (prisma as any).digitalMarketingTaskLog.findMany({
+    where: { templateId: 'dmm-06', dueDate: { gte: from, lte: dateStr } },
+    orderBy: { dueDate: 'desc' },
+    take: 60,
+  }).catch(() => []);
+  for (const r of rows as any[]) {
+    const m = parseMetricsJson((r as any).metricsJson);
+    const f = String((m as any).fromDate ?? '').slice(0, 10);
+    const t = String((m as any).toDate ?? '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) continue;
+    if (f <= dateStr && dateStr <= t) {
+      return {
+        logId: String((r as any).id),
+        dueDate: String((r as any).dueDate),
+        category: (m as any).category ?? null,
+        amountSpent: (m as any).amountSpent ?? null,
+        fromDate: f,
+        toDate: t,
+        durationDays: durationDaysBetween(f, t),
+        inquiries: (m as any).inquiries ?? null,
+        leads: (m as any).leads ?? null,
+      };
+    }
+  }
+  return null;
+}
+
+export async function getDigitalMarketingExport(daysRaw: unknown, origin: string) {
   const days = Math.min(93, Math.max(1, Math.floor(Number(daysRaw) || 30)));
   const today = istDateStr();
   const dates: string[] = [];
@@ -569,8 +664,8 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
   const from = dates[dates.length - 1];
   await ensureSeedTemplates();
   const [templates, logs] = await Promise.all([
-    prisma.accountsTaskTemplate.findMany({ orderBy: { order: 'asc' } }),
-    prisma.accountsTaskLog.findMany({
+    prisma.digitalMarketingTaskTemplate.findMany({ orderBy: { order: 'asc' } }),
+    prisma.digitalMarketingTaskLog.findMany({
       where: { dueDate: { gte: from, lte: today } },
       include: { template: true, accountant: true },
       orderBy: { dueDate: 'desc' },
@@ -579,7 +674,7 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
   ]);
   const logIds = (logs as any[]).map((l) => String(l.id));
   const files = logIds.length
-    ? await (prisma as any).accountsTaskAttachment.findMany({
+    ? await (prisma as any).digitalMarketingTaskAttachment.findMany({
       where: { logId: { in: logIds } },
       orderBy: { createdAt: 'asc' },
     }).catch(() => [])
@@ -592,6 +687,21 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
   }
   const base = String(origin || '').replace(/\/$/, '');
   const rows: Record<string, unknown>[] = [];
+  // Meta campaign windows declared in-range (Saturday starts): any dmm-06 log
+  // carrying a valid [fromDate, toDate] defines a run. Weekday rows inside a
+  // run inherit category/amount/from-to when their own log left them blank —
+  // so MIS sees which campaign each day's inquiries/leads belong to.
+  const metaWindows = (logs as any[])
+    .filter((l) => String((l as any).templateId) === 'dmm-06')
+    .map((l) => {
+      const mm = parseMetricsJson((l as any).metricsJson);
+      const f = String((mm as any).fromDate ?? '').slice(0, 10);
+      const tt = String((mm as any).toDate ?? '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(tt) || f > tt) return null;
+      return { f, t: tt, category: (mm as any).category ?? null, amountSpent: (mm as any).amountSpent ?? (mm as any).amount ?? null };
+    })
+    .filter(Boolean) as { f: string; t: string; category: string | null; amountSpent: number | null }[];
+  const coveringWindow = (date: string) => metaWindows.find((w) => w.f <= date && date <= w.t) ?? null;
   for (const date of dates) {
     const due = (templates as any[]).filter(
       (t) => t.active && !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')) && isDueOn(t, date),
@@ -601,9 +711,14 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
       const log: any = byTemplate.get(String(t.id));
       const status = log?.status ?? 'not-logged';
       const open = status === 'pending' || status === 'inprogress' || status === 'overdue' || status === 'not-logged';
+      const m = parseMetricsJson(log?.metricsJson);
+      const win = String(t.id) === 'dmm-06' ? coveringWindow(date) : null;
+      const mFrom = String((m as any).fromDate ?? (win as any)?.f ?? '').slice(0, 10) || null;
+      const mTo = String((m as any).toDate ?? (win as any)?.t ?? '').slice(0, 10) || null;
       rows.push({
         date,
         task: t.title,
+        templateId: t.id,
         frequency: t.frequency,
         lane: t.ownerRole,
         shared: !!t.isShared,
@@ -615,6 +730,17 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
         remark: log?.remark ?? null,
         timeSpentMin: log?.timeSpentMin ?? null,
         timeSpent: fmtMins(log?.timeSpentMin),
+        // Structured daily numbers (Meta Ads Run title highlight: category /
+        // amount / from-to / duration / inquiries / leads; whatsapp +amount).
+        metricsJson: log?.metricsJson ? (() => { try { return JSON.parse(String(log.metricsJson)); } catch { return String(log.metricsJson); } })() : null,
+        category: (m as any).category ?? (win as any)?.category ?? null,
+        amountSpent: (m as any).amountSpent ?? (m as any).amount ?? (win as any)?.amountSpent ?? null,
+        fromDate: mFrom,
+        toDate: mTo,
+        durationDays: mFrom && mTo ? durationDaysBetween(mFrom, mTo) : null,
+        inquiries: (m as any).inquiries ?? null,
+        leads: (m as any).leads ?? (m as any).whatsappLeads ?? (m as any).emailLeads ?? null,
+        dataSource: (m as any).dataSource ?? null,
         attachments: ((log ? filesByLog.get(String(log.id)) ?? [] : []) as any[]).map((f) => ({
           name: String(f.fileName || ''),
           url: `${base}/api/accounts/files/${String(f.id || '')}`,
@@ -640,11 +766,11 @@ function normId(s: unknown): string {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-export async function resolveSelfAccountant(
+export async function resolveSelfDigitalMarketingManager(
   asId: unknown,
   me: { user?: { email?: string | null; name?: string | null } } | null,
 ): Promise<LaneScope | null> {
-  const roster = (await prisma.accountant.findMany({ where: { deleted: false } })) as any[];
+  const roster = (await prisma.digitalMarketingManager.findMany({ where: { deleted: false } })) as any[];
   // Declared identity first (the "Acting as" picker — authoritative for
   // shared logins). Must be a live roster row.
   if (asId) {
@@ -675,18 +801,18 @@ export async function resolveSelfAccountant(
 }
 
 // ── Roster (MIS writes) ──────────────────────────────────────────────────────
-export async function listAccountants(includeDeleted = false) {
-  return prisma.accountant.findMany({
+export async function listDigitalMarketingManagers(includeDeleted = false) {
+  return prisma.digitalMarketingManager.findMany({
     where: includeDeleted ? {} : { deleted: false },
     orderBy: { order: 'asc' },
   });
 }
 
-export async function createAccountant(input: Record<string, any>) {
+export async function createDigitalMarketingManager(input: Record<string, any>) {
   const name = String(input.name || '').trim();
   if (!name) throw new Error('name required');
-  const role = ['senior', 'junior'].includes(String(input.role)) ? String(input.role) : 'junior';
-  const row = await prisma.accountant.create({
+  const role = ['manager', 'either'].includes(String(input.role)) ? String(input.role) : 'manager';
+  const row = await prisma.digitalMarketingManager.create({
     data: {
       name,
       email: input.email ? String(input.email) : null,
@@ -696,29 +822,29 @@ export async function createAccountant(input: Record<string, any>) {
       deleted: false,
     },
   });
-  await invalidateAccountsCache();
+  await invalidateDigitalMarketingCache();
   return row;
 }
 
-export async function updateAccountant(id: string, input: Record<string, any>) {
+export async function updateDigitalMarketingManager(id: string, input: Record<string, any>) {
   const data: Record<string, any> = {};
   if (input.name !== undefined) data.name = String(input.name).trim();
   if (input.email !== undefined) data.email = input.email ? String(input.email) : null;
   if (input.phone !== undefined) data.phone = input.phone ? String(input.phone) : null;
   if (input.role !== undefined) {
-    if (!['senior', 'junior'].includes(String(input.role))) throw new Error('role must be senior|junior');
+    if (!['manager', 'either'].includes(String(input.role))) throw new Error('role must be manager|either');
     data.role = String(input.role);
   }
   if (input.order !== undefined) data.order = Number(input.order);
   if (input.deleted !== undefined) data.deleted = !!input.deleted;
-  const row = await prisma.accountant.update({ where: { id }, data });
-  await invalidateAccountsCache();
+  const row = await prisma.digitalMarketingManager.update({ where: { id }, data });
+  await invalidateDigitalMarketingCache();
   return row;
 }
 
 // ── Templates (MIS writes) ───────────────────────────────────────────────────
 export async function listTemplates(includeInactive = false) {
-  return prisma.accountsTaskTemplate.findMany({
+  return prisma.digitalMarketingTaskTemplate.findMany({
     where: includeInactive ? {} : { active: true },
     orderBy: { order: 'asc' },
   });
@@ -769,20 +895,30 @@ function cleanTemplateInput(input: Record<string, any>, partial = false) {
   if (input.employeeRaw !== undefined) data.employeeRaw = input.employeeRaw ? String(input.employeeRaw).slice(0, 200) : null;
   if (input.department !== undefined) data.department = input.department ? String(input.department).slice(0, 100) : null;
   if (input.sheetStatus !== undefined) data.sheetStatus = input.sheetStatus ? String(input.sheetStatus).slice(0, 50) : null;
+  if (input.metricsSchema !== undefined) {
+    if (input.metricsSchema === null) data.metricsSchema = null;
+    else {
+      try {
+        const v = typeof input.metricsSchema === 'string' ? JSON.parse(input.metricsSchema) : input.metricsSchema;
+        if (!Array.isArray(v)) throw new Error('metricsSchema must be array');
+        data.metricsSchema = JSON.stringify(v);
+      } catch { throw new Error('metricsSchema must be valid JSON array'); }
+    }
+  }
   if (input.active !== undefined) data.active = !!input.active;
   if (input.order !== undefined) data.order = Number(input.order);
   return data;
 }
 
 export async function createTemplate(input: Record<string, any>) {
-  const row = await (prisma as any).accountsTaskTemplate.create({ data: { active: true, ...cleanTemplateInput(input) } as any });
-  await invalidateAccountsCache();
+  const row = await (prisma as any).digitalMarketingTaskTemplate.create({ data: { active: true, ...cleanTemplateInput(input) } as any });
+  await invalidateDigitalMarketingCache();
   return row;
 }
 
 export async function updateTemplate(id: string, input: Record<string, any>) {
-  const row = await prisma.accountsTaskTemplate.update({ where: { id }, data: cleanTemplateInput(input, true) });
-  await invalidateAccountsCache();
+  const row = await prisma.digitalMarketingTaskTemplate.update({ where: { id }, data: cleanTemplateInput(input, true) });
+  await invalidateDigitalMarketingCache();
   return row;
 }
 
@@ -790,6 +926,10 @@ export async function updateTemplate(id: string, input: Record<string, any>) {
 // Status bar: pending → inprogress → done. EVERY status change must carry a
 // recorded reason: an empty remark on a transition is rejected (400) unless
 // the log already holds one (which is then preserved, never wiped).
+// Whatsapp (dmm-08) + Email (dmm-09) marketing additionally require, on Done:
+//   1. a "data used" source (metrics.dataSource — which list/database was used)
+//   2. at least one proof attachment (the data file / screenshot attached below)
+const MARKETING_PROOF_TEMPLATES = new Set(['dmm-08', 'dmm-09']);
 export async function logTask(logId: string, input: Record<string, any>, actor: string | null) {
   const status = String(input.status || '');
   // `overdue` is system-set by the rollover; users move pending/inprogress/done
@@ -797,7 +937,7 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
   if (!['pending', 'inprogress', 'done', 'skipped'].includes(status)) {
     throw new Error('status must be pending|inprogress|done');
   }
-  const current: any = await prisma.accountsTaskLog.findUnique({ where: { id: logId } });
+  const current: any = await prisma.digitalMarketingTaskLog.findUnique({ where: { id: logId } });
   if (!current) throw new Error('task log not found');
   let remark: string | null = input.remark !== undefined
     ? (input.remark ? String(input.remark).slice(0, 2000) : null)
@@ -809,6 +949,39 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
   const data: Record<string, any> = { status, remark, updatedBy: actor };
   if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
   if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
+  // Structured metrics for daily numeric tasks (Meta/B2B/Whatsapp/Email).
+  if (input.metricsJson !== undefined) {
+    if (input.metricsJson === null || input.metricsJson === '') data.metricsJson = null;
+    else {
+      let obj: any = input.metricsJson;
+      if (typeof obj === 'string') { try { obj = JSON.parse(obj); } catch { throw new Error('metricsJson must be valid JSON'); } }
+      if (typeof obj !== 'object' || Array.isArray(obj) || !obj) throw new Error('metricsJson must be object');
+      // Sanitize: numbers 0-1e9, text up to 500 chars per field.
+      const clean: Record<string, any> = {};
+      for (const [k, v] of Object.entries(obj as Record<string, any>)) {
+        const key = String(k).slice(0, 50);
+        if (v === null || v === '' || v === undefined) { clean[key] = null; continue; }
+        if (typeof v === 'number') clean[key] = Number.isFinite(v) ? Math.floor(Number(v)) : null;
+        else if (!isNaN(Number(String(v).trim())) && String(v).trim() !== '' && /^[-0-9.]+$/.test(String(v).trim())) clean[key] = Math.max(0, Math.floor(Number(String(v).trim())));
+        else clean[key] = String(v).slice(0, 500);
+      }
+      data.metricsJson = JSON.stringify(clean);
+    }
+  }
+  // Whatsapp / Email marketing proof gate: Done requires (1) the data-source
+  // field filled (which list was used) and (2) ≥1 proof attachment.
+  // dataSource may arrive in this PATCH or already be stored on the log.
+  if (status === 'done' && MARKETING_PROOF_TEMPLATES.has(String((current as any).templateId))) {
+    let merged: Record<string, any> = {};
+    try { merged = current.metricsJson ? JSON.parse(String(current.metricsJson)) : {}; } catch { merged = {}; }
+    if (data.metricsJson) {
+      try { merged = { ...merged, ...JSON.parse(String(data.metricsJson)) }; } catch { /* keep stored */ }
+    }
+    const ds = String((merged as any).dataSource ?? '').trim();
+    if (!ds) throw new Error('Write which data was used for marketing (Data used field) before marking Done');
+    const proofs = await (prisma as any).digitalMarketingTaskAttachment.count({ where: { logId } }).catch(() => 0);
+    if (!proofs || Number(proofs) < 1) throw new Error('Attach the marketing data as proof before marking Done');
+  }
   // Time taken (hours+minutes in the UI, integer minutes here). Optional and
   // editable on any status — correcting logged time never needs a transition.
   if (input.timeSpentMin !== undefined) {
@@ -826,7 +999,7 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
     // dropped so ghosts can't collect points or appear as owners — but their
     // name is kept in doneBy as the history trail. Fail-open on read errors.
     try {
-      const acc: any = await prisma.accountant.findUnique({ where: { id: String(data.accountantId) } });
+      const acc: any = await prisma.digitalMarketingManager.findUnique({ where: { id: String(data.accountantId) } });
       if (!acc || acc.deleted) {
         if (status === 'done' && !data.doneBy && acc?.name) data.doneBy = String(acc.name).slice(0, 200);
         data.accountantId = null;
@@ -835,8 +1008,8 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
       }
     } catch { /* keep the id on read failure */ }
   }
-  const row = await prisma.accountsTaskLog.update({ where: { id: logId }, data });
-  await invalidateAccountsCache();
+  const row = await prisma.digitalMarketingTaskLog.update({ where: { id: logId }, data });
+  await invalidateDigitalMarketingCache();
   return row;
 }
 
@@ -850,16 +1023,16 @@ export function toAttachmentJson(row: any) {
     size: Number(row?.size ?? 0),
     uploadedBy: String(row?.uploadedBy ?? ''),
     createdAt: row?.createdAt instanceof Date ? row.createdAt.toISOString() : String(row?.createdAt ?? ''),
-    url: `/api/accounts/files/${String(row?.id ?? '')}`,
+    url: `/api/digital-marketing/files/${String(row?.id ?? '')}`,
   };
 }
 
 export async function createAttachmentRecord(input: {
   logId: string; fileName: string; mime: string; size: number; kvKey: string; uploadedBy: string | null;
 }) {
-  const log: any = await prisma.accountsTaskLog.findUnique({ where: { id: input.logId } });
+  const log: any = await prisma.digitalMarketingTaskLog.findUnique({ where: { id: input.logId } });
   if (!log) throw new Error('task log not found');
-  const row = await (prisma as any).accountsTaskAttachment.create({
+  const row = await (prisma as any).digitalMarketingTaskAttachment.create({
     data: {
       logId: input.logId,
       fileName: input.fileName.slice(0, 200),
@@ -870,19 +1043,19 @@ export async function createAttachmentRecord(input: {
       createdAt: new Date(),
     },
   });
-  await invalidateAccountsCache();
+  await invalidateDigitalMarketingCache();
   return row;
 }
 
 export async function getAttachment(id: string) {
-  return (prisma as any).accountsTaskAttachment.findUnique({ where: { id } });
+  return (prisma as any).digitalMarketingTaskAttachment.findUnique({ where: { id } });
 }
 
 export async function deleteAttachmentRecord(id: string) {
-  const row: any = await (prisma as any).accountsTaskAttachment.findUnique({ where: { id } });
+  const row: any = await (prisma as any).digitalMarketingTaskAttachment.findUnique({ where: { id } });
   if (!row) throw new Error('Attachment not found');
-  await (prisma as any).accountsTaskAttachment.delete({ where: { id } });
-  await invalidateAccountsCache();
+  await (prisma as any).digitalMarketingTaskAttachment.delete({ where: { id } });
+  await invalidateDigitalMarketingCache();
   return row;
 }
 
@@ -909,15 +1082,15 @@ async function computeTeam(
   // Reuse the dashboard's already-fetched roster + today logs when provided —
   // only the month-to-date done ledger needs its own query (no includes: just
   // raw attribution fields, one round trip).
-  const roster = (pre?.roster ?? await prisma.accountant.findMany({
+  const roster = (pre?.roster ?? await prisma.digitalMarketingManager.findMany({
     where: { deleted: false }, orderBy: { order: 'asc' },
   })) as any[];
   const [doneLogs, todayLogs] = await Promise.all([
-    (prisma as any).accountsTaskLog.findMany({
+    (prisma as any).digitalMarketingTaskLog.findMany({
       where: { status: 'done', dueDate: { gte: monthStart } },
       select: { accountantId: true, doneBy: true, dueDate: true },
     }).catch(() => []),
-    pre?.todayLogs ?? prisma.accountsTaskLog.findMany({
+    pre?.todayLogs ?? prisma.digitalMarketingTaskLog.findMany({
       where: { dueDate: todayStr },
       include: { template: true },
     }).catch(() => []),
@@ -948,7 +1121,7 @@ async function computeTeam(
     if (String(l.dueDate) === todayStr) c.today += 1;
   }
   // Open items in each member's role lane today (shared context, not assignment).
-  const openByRole = { senior: 0, junior: 0 };
+  const openByRole = { manager: 0 };
   let doneToday = 0;
   let openToday = 0;
   let inProgressToday = 0;
@@ -960,13 +1133,12 @@ async function computeTeam(
     openToday += 1;
     if (l.status === 'inprogress') inProgressToday += 1;
     const role = String(l.template?.ownerRole || 'either');
-    if (role === 'senior' || role === 'either') openByRole.senior += 1;
-    if (role === 'junior' || role === 'either') openByRole.junior += 1;
+    if (role === 'manager' || role === 'either') openByRole.manager += 1;
   }
   const completionPct = doneToday + openToday > 0 ? Math.round((doneToday / (doneToday + openToday)) * 100) : 100;
   const members = roster.map((r) => {
     const c = credit.get(String(r.id))!;
-    const lane = r.role === 'senior' ? openByRole.senior : openByRole.junior;
+    const lane = openByRole.manager;
     return {
       id: r.id, name: r.name, role: r.role,
       doneToday: c.today, doneWeek: c.week, doneMonth: c.month,

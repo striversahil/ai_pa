@@ -74,12 +74,13 @@ export default function EnquiryDetail({
   const [sentBusy, setSentBusy] = useState(false);
   const [sentError, setSentError] = useState<string | null>(null);
   const sentState = String((selectedEnquiry as any).rateStatus ?? "");
-  // Copilot rail (per-enquiry AI sidebar) — open by default, persisted.
+  // Copilot rail (per-enquiry AI sidebar) — closed by default for sales;
+  // opens only on manual click, persisted per browser.
   const [copilotOpen, setCopilotOpen] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("enquiry-copilot-open") !== "0";
+      return localStorage.getItem("enquiry-copilot-open") === "1";
     } catch {
-      return true;
+      return false;
     }
   });
   const toggleCopilot = (next: boolean) => {

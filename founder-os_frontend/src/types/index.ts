@@ -96,6 +96,10 @@ export interface EnquiryItem {
   /** AI bulk intake: true = raw "Add via AI" item awaiting the GH intake
    *  action, which replaces it with vision-split items. */
   aiPending?: boolean;
+  /** Sales-negotiated target: client-side expected price + optional note.
+   *  Procurement sees it as the negotiation target, management beside rates. */
+  expectedRate?: number;
+  expectedNote?: string;
 }
 
 export interface FlagThreadEntry {
@@ -137,8 +141,23 @@ export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "inter
  *  Procurement stays ACTIVE until "Enquiry Concluded" (procurementSubmittedAt):
  *  even when every item is quoted, it remains in Active — management sees the
  *  live incoming vendor rates the whole time. */
+/** Fresh unquoted work: client-added lines with no vendor rates and no
+ *  decision yet (after submit/finalize/sent). These reopen the procurement
+ *  Active queue even on concluded rows — the client keeps asking. */
+export function hasFreshUnquotedWork(e: Pick<Enquiry, "items">): boolean {
+  return (e.items ?? []).some((it) => !it?.rateAvailable && !it?.internalRates && !it?.specIssue
+    && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null));
+}
+
+/** One fresh line is quotable even on a concluded row (its card renders
+ *  editable while decided siblings stay locked). */
+export function isFreshQuotableItem(it: Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate" | "specIssue">): boolean {
+  return !it?.rateAvailable && !it?.internalRates && !it?.specIssue
+    && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null);
+}
+
 export function isProcurementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
-  if (isSubmitted(e)) return false;
+  if (isSubmitted(e) && !hasFreshUnquotedWork(e)) return false;
   const items = e.items ?? [];
   if (items.length === 0) return false;
   // Any quotable work (rate not already available, not management-internal)
@@ -152,6 +171,8 @@ export function isProcurementPendingEnquiry(e: Pick<Enquiry, "items"> & { procur
 export function isProcurementHistoryEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
   const items = e.items ?? [];
   if (!isSubmitted(e)) return false;
+  // Fresh unquoted lines live in Active (pending above), never double-listed.
+  if (hasFreshUnquotedWork(e)) return false;
   return items.some((it) => (it.rates ?? []).length > 0 && !it.ratesRequested);
 }
 

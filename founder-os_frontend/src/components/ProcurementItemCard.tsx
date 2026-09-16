@@ -31,7 +31,8 @@ interface ProcurementItemCardProps {
 // One compact procurement work card: spec + attachments on top, already-given
 // rates as tight rows (editable in place), add-rate and incorrect-spec forms
 // collapsed behind buttons so the queue stays scannable. A flagged item shows
-// its hold banner and no rate actions until Sales corrects the spec.
+// its hold banner (held from Management) but still allows adding/editing
+// vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
   item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox,
   canMarkInternal = false, onMarkInternal, onUnmarkInternal, readOnly = false,
@@ -112,6 +113,17 @@ export default function ProcurementItemCard({
         <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{item.spec}</p>
       )}
 
+      {item.expectedRate !== undefined && item.expectedRate !== null && (
+        <div className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2 text-[11px] leading-relaxed">
+          <p className="font-extrabold text-sky-600 dark:text-sky-400">
+            🎯 Client expects ₹{Number(item.expectedRate).toLocaleString("en-IN")} — negotiate vendors toward this
+          </p>
+          {item.expectedNote && (
+            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{item.expectedNote}</p>
+          )}
+        </div>
+      )}
+
       {media.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {media.map((m, mi) => (
@@ -185,7 +197,13 @@ export default function ProcurementItemCard({
                     <span className="text-[9px] text-[var(--text-tertiary)] flex-shrink-0">{historyDateChip(r.quotedAt)}</span>
                   )}
                   <span className="font-mono text-[var(--text-secondary)] whitespace-nowrap">₹{Number(r.rate).toLocaleString("en-IN")}</span>
-                  {!flagged && !readOnly && (
+                  {item.expectedRate !== undefined && item.expectedRate !== null && Number(r.rate) <= Number(item.expectedRate) && (
+                    <span className="px-1 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex-shrink-0">✓ within target</span>
+                  )}
+                  {r.discountPercent !== undefined && r.discountPercent !== null && (
+                    <span className="px-1 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex-shrink-0">{Number(r.discountPercent).toString()}% off</span>
+                  )}
+                  {!readOnly && (
                     <>
                       <button type="button" onClick={() => { setEditingRate(ri); setShowAdd(false); }}
                         title="Edit rate"
@@ -199,6 +217,9 @@ export default function ProcurementItemCard({
               )}
               {editingRate !== ri && r.description && (
                 <p className="text-[10px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed mt-0.5">{r.description}</p>
+              )}
+              {editingRate !== ri && (r as any).salesNote && (
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 whitespace-pre-wrap leading-relaxed mt-0.5 border-l-2 border-emerald-500/30 pl-2"><span className="font-bold">For sales: </span>{String((r as any).salesNote)}</p>
               )}
               {editingRate !== ri && r.specSame === false && r.specDiff && (
                 <p className="text-[10px] text-amber-600 dark:text-amber-400 whitespace-pre-wrap leading-relaxed mt-0.5">
@@ -247,10 +268,13 @@ export default function ProcurementItemCard({
         </ul>
       )}
 
-      {!flagged && (!readOnly || lateQuote) && (
+      {(!readOnly || lateQuote) && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
           {lateQuote && readOnly && (
             <p className="w-full text-[10px] font-semibold text-amber-600 dark:text-amber-400">Finalized row — a new quote reopens the decision for management.</p>
+          )}
+          {flagged && !readOnly && (
+            <p className="w-full text-[10px] font-semibold text-red-400/80">Spec flagged — held from management, but you can still add vendor rates while sales fixes it.</p>
           )}
           {showAdd ? (
             <div className="flex-1 min-w-[12rem]">
@@ -266,7 +290,7 @@ export default function ProcurementItemCard({
               + Add vendor rate
             </button>
           )}
-          {!locked && !showAdd && (
+          {!flagged && !locked && !showAdd && (
             showFlag ? (
               <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-red-500/40 p-2">
                 <textarea

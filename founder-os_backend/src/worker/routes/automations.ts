@@ -139,12 +139,25 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
           const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis');
           if (me && !isAdmin) {
             const { resolveSelfAccountant } = await import('../../automations/accounts/service');
-            const self = await resolveSelfAccountant(query.as ?? null, me as any);
-            query.scope = { scope: self, isAdmin: false };
+            const self = await resolveSelfAccountant((query as any).as ?? null, me as any);
+            (query as any).scope = { scope: self, isAdmin: false };
           } else if (me) {
-            query.scope = { scope: null, isAdmin: true };
+            (query as any).scope = { scope: null, isAdmin: true };
           }
         } catch { /* no session → unscoped (auth gate normally blocks first) */ }
+      }
+      if (c.req.param('slug') === 'digital-marketing') {
+        try {
+          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis');
+          if (me && !isAdmin) {
+            const { resolveSelfDigitalMarketingManager } = await import('../../automations/digital-marketing/service');
+            const self = await resolveSelfDigitalMarketingManager((query as any).as ?? null, me as any);
+            (query as any).scope = { scope: self, isAdmin: false };
+          } else if (me) {
+            (query as any).scope = { scope: null, isAdmin: true };
+          }
+        } catch { /* no session → unscoped */ }
       }
       const data = await AutomationEngine.getData(c.req.param('slug'), query);
       return c.json(data);

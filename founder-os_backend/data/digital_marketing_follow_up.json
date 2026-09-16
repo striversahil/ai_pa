@@ -1,0 +1,135 @@
+{
+  "schema_version": "1.0",
+  "date_type_legend": {
+    "not_applicable": { "description": "Daily tasks done every working day (Mon-Sat).", "fields": {} },
+    "weekday": { "description": "Tied to a day of the week.", "fields": { "weekday": "Monday..Sunday", "occurrence": "'every'" } },
+    "multi_occurrence": { "description": "Task due on multiple weekdays (any occurrence matches).", "fields": { "occurrences": "array of {weekday, occurrence}" } }
+  },
+  "tasks": [
+    {
+      "row_number": 1,
+      "task": "Create a sheet containing all account details for Facebook, Instagram, Google Business Profile, and LinkedIn.",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Daily",
+      "status": "Ok",
+      "expected_completion": { "type": "not_applicable", "raw_text": null },
+      "metricsSchema": null
+    },
+    {
+      "row_number": 2,
+      "task": "Company Pages – Collateral Posting Facebook: Publish Post",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Weekly",
+      "status": "Ok",
+      "expected_completion": { "type": "multi_occurrence", "occurrences": [{ "type": "weekday", "weekday": "Monday", "occurrence": "every" }, { "type": "weekday", "weekday": "Wednesday", "occurrence": "every" }], "raw_text": "Monday, Wednesday" },
+      "metricsSchema": null
+    },
+    {
+      "row_number": 3,
+      "task": "Company Pages – Collateral Posting Instagram: Publish Post",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Weekly",
+      "status": "Ok",
+      "expected_completion": { "type": "multi_occurrence", "occurrences": [{ "type": "weekday", "weekday": "Tuesday", "occurrence": "every" }, { "type": "weekday", "weekday": "Thursday", "occurrence": "every" }], "raw_text": "Tuesday, Thursday" },
+      "metricsSchema": null
+    },
+    {
+      "row_number": 4,
+      "task": "Company Pages – Collateral Posting Google Business Profile: Publish Post",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Weekly",
+      "status": "Ok",
+      "expected_completion": { "type": "multi_occurrence", "occurrences": [{ "type": "weekday", "weekday": "Wednesday", "occurrence": "every" }, { "type": "weekday", "weekday": "Friday", "occurrence": "every" }], "raw_text": "Wednesday, Friday" },
+      "metricsSchema": null
+    },
+    {
+      "row_number": 5,
+      "task": "Company Pages – Collateral Posting LinkedIn: Publish Post",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Weekly",
+      "status": "Ok",
+      "expected_completion": { "type": "multi_occurrence", "occurrences": [{ "type": "weekday", "weekday": "Thursday", "occurrence": "every" }, { "type": "weekday", "weekday": "Saturday", "occurrence": "every" }], "raw_text": "Thursday, Saturday" },
+      "metricsSchema": null
+    },
+    {
+      "row_number": 6,
+      "task": "Meta Ads",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Daily",
+      "status": "Ok",
+      "expected_completion": { "type": "not_applicable", "raw_text": null },
+      "metricsSchema": [
+        { "key": "category", "label": "Category", "type": "text" },
+        { "key": "inquiries", "label": "No of Inquiries Generated", "type": "number" },
+        { "key": "leads", "label": "Leads Generated", "type": "number" }
+      ]
+    },
+    {
+      "row_number": 7,
+      "task": "B2B websites optimization",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Daily",
+      "status": "Ok",
+      "expected_completion": { "type": "not_applicable", "raw_text": null },
+      "metricsSchema": [
+        { "key": "aliBaba", "label": "Ali Baba - No of Leads Generated", "type": "number" },
+        { "key": "eExporter", "label": "E exporter - No of Leads Generated", "type": "number" },
+        { "key": "indiaMart", "label": "India Mart - No of Leads Generated", "type": "number" },
+        { "key": "tradeIndia", "label": "Trade India - No of Leads Generated", "type": "number" }
+      ]
+    },
+    {
+      "row_number": 8,
+      "task": "Whatsapp Marketing",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Daily",
+      "status": "Ok",
+      "expected_completion": { "type": "not_applicable", "raw_text": null },
+      "metricsSchema": [
+        { "key": "dataSource", "label": "Data used for marketing (source / list)", "type": "text" },
+        { "key": "whatsappCount", "label": "Whatsapp Marketing Count", "type": "number" },
+        { "key": "whatsappLeads", "label": "Leads Generated Count", "type": "number" }
+      ]
+    },
+    {
+      "row_number": 9,
+      "task": "Email Marketing",
+      "assigned_to": ["Digital Marketing Manager"],
+      "is_shared_task": false,
+      "employee_raw": "Digital Marketing Manager",
+      "department": "Digital Marketing",
+      "frequency": "Daily",
+      "status": "Ok",
+      "expected_completion": { "type": "not_applicable", "raw_text": null },
+      "metricsSchema": [
+        { "key": "dataSource", "label": "Data used for marketing (source / list)", "type": "text" },
+        { "key": "emailCount", "label": "Email Marketing Count", "type": "number" },
+        { "key": "emailLeads", "label": "Leads Generated Count", "type": "number" }
+      ]
+    }
+  ]
+}

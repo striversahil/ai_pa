@@ -5,6 +5,7 @@ import {
   parseItemMedia,
   parseItemRates,
   parseFlagThread,
+  numOrUndefined,
   type FlagThreadBy,
   type FlagThreadEntry,
 } from "./store";
@@ -74,6 +75,11 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       const seenMedia = new Set(storedMedia.map((m: any) => `${m.type}:${m.url}`));
       base.media = [...storedMedia, ...incomingMedia.filter((m: any) => !seenMedia.has(`${m.type}:${m.url}`))];
       base.rateAvailable = stored.rateAvailable === true;
+      // Expected price is sales-owned (client target): procurement sees it
+      // as the negotiation target but follows the stored value, like
+      // availability above.
+      base.expectedRate = numOrUndefined(stored.expectedRate);
+      base.expectedNote = stored.expectedNote ? String(stored.expectedNote).slice(0, 500) : undefined;
       // Internal handling is Management-only: procurement and sales writes
       // follow the stored flag so neither surface can claim or drop it.
       if (!privileged) {
