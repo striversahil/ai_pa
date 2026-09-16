@@ -118,6 +118,19 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       const ratesChanged = JSON.stringify(base.rates ?? []) !== JSON.stringify(stored.rates ?? []);
       base.ratesRequested = ratesChanged ? undefined : stored.ratesRequested;
       base.ratesRequestedAt = ratesChanged ? undefined : stored.ratesRequestedAt;
+      // A fresh/edited rate (not a pure removal) answers sales' variation
+      // request the same way — the quoted variation flows to management,
+      // which shares it into the sales variants list. Anything else keeps
+      // the pending request (and its text) exactly as stored.
+      const storedVar = String(stored.variationRequest ?? "").trim();
+      const ratesGrew = (base.rates ?? []).length >= (stored.rates ?? []).length;
+      if (storedVar && ratesChanged && ratesGrew) {
+        base.variationRequest = undefined;
+        base.variationRequestedAt = undefined;
+      } else {
+        base.variationRequest = stored.variationRequest;
+        base.variationRequestedAt = stored.variationRequestedAt;
+      }
     }
     // Management rate-request lifecycle: only privileged writers may set
     // it. Plain sales writers follow the stored value so a stale edit can
@@ -217,6 +230,37 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     }
     if (reqSet) trail.push({ by: role, kind: 'request', text: String(base.ratesRequested).slice(0, 500), at: nowIso });
     if (reqCleared) trail.push({ by: role, kind: 'quoted', text: 'New vendor rates added', at: nowIso });
+    // Sales variation requests (non-blocking): sales sets the text (stamped
+    // once per change) or withdraws with an explicit ""; unrelated saves
+    // echo the stored value back and must never wipe a pending request.
+    // Procurement answering (new rate above) trails below as 'quoted'.
+    if (!privileged && !restricted) {
+      const inVar = (it as any)?.variationRequest;
+      const stVar = String(stored.variationRequest ?? "");
+      if (typeof inVar === "string" && inVar.trim()) {
+        const text = inVar.trim().slice(0, 500);
+        base.variationRequest = text;
+        if (text !== stVar.trim()) {
+          base.variationRequestedAt = nowIso;
+          trail.push({ by: role, kind: 'remark', text: `Variation requested: ${text}`.slice(0, 500), at: nowIso });
+        } else {
+          base.variationRequestedAt = stored.variationRequestedAt ?? nowIso;
+        }
+      } else if (inVar === "" && stVar) {
+        base.variationRequest = undefined;
+        base.variationRequestedAt = undefined;
+        trail.push({ by: role, kind: 'remark', text: 'Variation request withdrawn', at: nowIso });
+      } else {
+        base.variationRequest = stored.variationRequest;
+        base.variationRequestedAt = stored.variationRequestedAt;
+      }
+    }
+    // Procurement answered a variation request with a fresh rate (cleared
+    // above) — trail it so sales sees the loop close. Sales' own withdraw
+    // already trailed above and never takes this branch.
+    if (!!String(stored.variationRequest ?? "").trim() && !(base as any).variationRequest && actingProcurement) {
+      trail.push({ by: role, kind: 'quoted', text: 'Variation quoted', at: nowIso });
+    }
     // Internal-handling lifecycle (privileged only — other roles are
     // pinned to stored above): stamp the handoff, trail the transition.
     if (privileged) {

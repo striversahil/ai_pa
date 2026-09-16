@@ -308,12 +308,16 @@ async function computeDashboard(
   // when an older instance of the same task is still overdue — the overdue
   // row stays in the Overdue tray with its own days-overdue count, and today
   // always shows as a new entry (never suppressed by the backlog).
+  // Day-1 rule: a fresh entry is simply done / not-done — it reads overdue
+  // only after its own day has passed (dueDate < today). Past misses live in
+  // the Overdue tray, never on today's card.
   const items = dueTemplates
     .map((t) => {
       const log = byTemplate.get(String(t.id));
       const status = log?.status ?? 'pending';
       const missed = carried.get(String(t.id)) ?? [];
-      const isOverdueRow = missed.length > 0 || status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr());
+      const pastDue = String(dateStr) < istDateStr();
+      const isOverdueRow = status === 'overdue' || ((status === 'pending' || status === 'inprogress') && pastDue);
       return {
         templateId: t.id,
         title: t.title,
@@ -339,12 +343,12 @@ async function computeDashboard(
         missed,
         overdue: isOverdueRow,
         // Days overdue for this card: oldest missed day wins; else the row's
-        // own past-due age. 0/null = not overdue.
-        daysOverdue: missed.length > 0
-          ? diffDays(missed[0], dateStr)
-          : (status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr() && log?.dueDate)
-            ? diffDays(String((log as any)?.dueDate ?? dateStr), dateStr)
-            : 0),
+        // own past-due age. 0 = not overdue (fresh day-1 entries are never overdue).
+        daysOverdue: !isOverdueRow
+          ? 0
+          : missed.length > 0
+            ? diffDays(missed[0], dateStr)
+            : (log?.dueDate ? diffDays(String(log.dueDate), dateStr) : 0),
       };
     });
   const OPEN = new Set(['pending', 'inprogress', 'overdue']);
@@ -561,17 +565,32 @@ export function diffDays(from: string, to: string): number {
   return Math.max(0, Math.round((b - a) / 86400000));
 }
 
-export async function getAccountsExport(daysRaw: unknown, origin: string) {
-  const days = Math.min(93, Math.max(1, Math.floor(Number(daysRaw) || 30)));
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function getAccountsExport(daysRaw: unknown, origin: string, fromRaw?: unknown, toRaw?: unknown) {
   const today = istDateStr();
+  // Explicit date range wins; otherwise the legacy past-N-days window.
+  // Span is clamped to 93 days and `to` never runs past today.
+  let from: string;
+  let to: string;
+  if (fromRaw != null || toRaw != null) {
+    to = ISO_DAY.test(String(toRaw || '')) ? String(toRaw).slice(0, 10) : today;
+    from = ISO_DAY.test(String(fromRaw || '')) ? String(fromRaw).slice(0, 10) : addDays(to, -29);
+    if (to > today) to = today;
+    if (from > to) throw new Error('from must be on or before to');
+    if (diffDays(from, to) > 92) from = addDays(to, -92);
+  } else {
+    const days = Math.min(93, Math.max(1, Math.floor(Number(daysRaw) || 30)));
+    to = today;
+    from = addDays(today, -(days - 1));
+  }
   const dates: string[] = [];
-  for (let i = 0; i < days; i++) dates.push(addDays(today, -i));
-  const from = dates[dates.length - 1];
+  for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
   await ensureSeedTemplates();
-  const [templates, logs] = await Promise.all([
+    const [templates, logs] = await Promise.all([
     prisma.accountsTaskTemplate.findMany({ orderBy: { order: 'asc' } }),
     prisma.accountsTaskLog.findMany({
-      where: { dueDate: { gte: from, lte: today } },
+      where: { dueDate: { gte: from, lte: to } },
       include: { template: true, accountant: true },
       orderBy: { dueDate: 'desc' },
       take: 5000,
@@ -609,6 +628,7 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
         shared: !!t.isShared,
         due: t.rawText ?? null,
         status,
+        // Same day-1 rule as the dashboard: overdue only after the day passes.
         overdue: status === 'overdue' || (open && date < today),
         doneBy: log?.doneBy ?? null,
         accountant: log?.accountant?.name ?? null,
@@ -623,7 +643,7 @@ export async function getAccountsExport(daysRaw: unknown, origin: string) {
       });
     }
   }
-  return { from, to: today, days, total: rows.length, rows };
+  return { from, to, days: dates.length, total: rows.length, rows };
 }
 
 // ── Identity scoping (lane enforcement) ─────────────────────────────────────

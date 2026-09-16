@@ -137,6 +137,13 @@ export interface EnquiryItem {
    *  a rate, which clears it. */
   ratesRequested?: string;
   ratesRequestedAt?: string;
+  /** Sales → procurement variation request (non-blocking): free text like
+   *  "client wants ABB make" entered via "Request different variation".
+   *  Reopens the procurement Active queue until procurement quotes the
+   *  variation as a new rate row (which clears it); management sharing that
+   *  row adds it to the sales variants list. Sales may withdraw anytime. */
+  variationRequest?: string;
+  variationRequestedAt?: string;
   /** Back-and-forth loop trail (server-authored): every flag, remark, fix
    *  and request on this item, oldest first. Rendered in procurement so the
    *  full 2–3 round history stays visible. */
@@ -411,6 +418,8 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
+        variationRequest: r?.variationRequest ? String(r.variationRequest).slice(0, 500) : undefined,
+        variationRequestedAt: isoOrUndefined(r?.variationRequestedAt),
         aiPending: r?.aiPending === true ? true : undefined,
         expectedRate: numOrUndefined(r?.expectedRate),
         expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
@@ -497,6 +506,8 @@ export function sanitize(e: any): Enquiry {
         thread: parseFlagThread(r?.thread),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
+        variationRequest: r?.variationRequest ? String(r.variationRequest).slice(0, 500) : undefined,
+        variationRequestedAt: isoOrUndefined(r?.variationRequestedAt),
         aiPending: r?.aiPending === true ? true : undefined,
         expectedRate: numOrUndefined(r?.expectedRate),
         expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,

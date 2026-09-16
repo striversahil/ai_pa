@@ -130,6 +130,9 @@ function pick(data: any): Partial<Enquiry> | null {
         internalRatesAt: isoOrUndefined(r?.internalRatesAt),
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
+        // ""-preserving (unlike the fields above): sales withdraws a
+        // variation request by saving an explicit empty string.
+        variationRequest: (r as any)?.variationRequest !== undefined ? String((r as any).variationRequest).slice(0, 500) : undefined,
         thread: parseFlagThread(r?.thread),
         // Detail-view "Add via AI" flag — the GH intake action replaces
         // these raw rows with vision-split lines (applyIntakeBulkResult).

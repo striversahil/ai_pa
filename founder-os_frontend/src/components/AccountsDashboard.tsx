@@ -167,12 +167,24 @@ function fmtDur(mins: number | null | undefined): string | null {
   return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ""}` : `${m}m`;
 }
 
-/** "2026-09-15" → "15 Sep" for missed-day chips. */
+/** "2026-09-15" → "15 Sep" for due-date chips. */
 function fmtShort(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]}`;
+}
+
+/** Today in IST as YYYY-MM-DD (matches the backend's day boundary). */
+function istToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).slice(0, 10);
+}
+
+/** Shift a YYYY-MM-DD date by n days (UTC-noon math avoids TZ edges). */
+function shiftDay(iso: string, n: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12) + n * 86400000).toISOString().slice(0, 10);
 }
 
 /** Match the signed-in user to a roster entry by NAME only (never email —
@@ -316,11 +328,6 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
             {t.dueDate && t.dueDate !== today && (
               <span title={`Originally due ${t.dueDate} — still unresolved`} className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-500 dark:text-rose-400">
                 📅 due {fmtShort(t.dueDate)}
-              </span>
-            )}
-            {(t.missed ?? []).length > 0 && (
-              <span title={`Not completed on: ${(t.missed ?? []).join(", ")}`} className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-500 dark:text-rose-400">
-                ⚠ missed {(t.missed ?? []).slice(0, 3).map(fmtShort).join(", ")}{(t.missed ?? []).length > 3 ? ` +${(t.missed ?? []).length - 3} more` : ""}
               </span>
             )}
             {(t.daysOverdue ?? 0) > 0 && (
@@ -860,7 +867,8 @@ function csvCell(v: unknown): string {
 }
 
 function ExportCard() {
-  const [days, setDays] = useState(30);
+  const [from, setFrom] = useState(() => shiftDay(istToday(), -29));
+  const [to, setTo] = useState(() => istToday());
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
 
@@ -868,7 +876,9 @@ function ExportCard() {
     setBusy(true);
     setInfo(null);
     try {
-      const res = await fetch(`/api/accounts/export?days=${Math.min(93, Math.max(1, days || 30))}`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error("Pick both dates");
+      if (from > to) throw new Error("From must be on or before To");
+      const res = await fetch(`/api/accounts/export?from=${from}&to=${to}`);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       const rows = (data.rows ?? []) as Record<string, any>[];
@@ -906,9 +916,10 @@ function ExportCard() {
           <div className="text-[11px] text-zinc-500 mt-0.5">Every due task per day with lane, pending / in-progress / done status, who did it, remarks and attachment links. Opens in Excel.</div>
         </div>
         <label className="text-[11px] text-zinc-500 flex items-center gap-1.5">
-          Past
-          <input type="number" min={1} max={93} value={days} onChange={(e) => setDays(Number(e.target.value))} className="w-16 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500" />
-          days
+          From
+          <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500" />
+          To
+          <input type="date" value={to} min={from} max={istToday()} onChange={(e) => setTo(e.target.value)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500" />
         </label>
         <button disabled={busy} onClick={run} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer border-0">
           {busy ? "Exporting…" : "⬇ Export CSV"}

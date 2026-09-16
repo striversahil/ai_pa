@@ -92,12 +92,12 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     return c.json({ ok: true });
   });
 
-  // ── MIS export: past-N-days full ledger (pending/inprogress/done + remarks + file links) ──
+  // ── MIS export: date-range full ledger (pending/inprogress/done + remarks + file links) ──
   app.get('/api/accounts/export', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const origin = new URL(c.req.url).origin;
-      return c.json(await getAccountsExport(c.req.query('days'), origin));
+      return c.json(await getAccountsExport(c.req.query('days'), origin, c.req.query('from'), c.req.query('to')));
     } catch (e: any) { return c.json({ error: e?.message ?? 'export failed' }, 400); }
   });
 

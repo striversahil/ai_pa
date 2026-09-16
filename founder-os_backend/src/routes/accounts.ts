@@ -57,7 +57,7 @@ router.delete('/templates/:id', misGuard, asyncHandler(async (req, res) => {
 
 router.get('/export', misGuard, asyncHandler(async (req, res) => {
   const origin = `${req.protocol}://${req.get('host')}`;
-  try { res.json(await getAccountsExport(req.query.days, origin)); }
+  try { res.json(await getAccountsExport(req.query.days, origin, req.query.from, req.query.to)); }
   catch (e: any) { res.status(400).json({ error: e?.message ?? 'export failed' }); }
 }));
 

@@ -437,7 +437,7 @@ export default function ProcurementQueue() {
             if (submitted && freshCount > 0) {
               return (
                 <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">
-                  {freshCount} new client-added item{freshCount === 1 ? "" : "s"} need{freshCount === 1 ? "s" : ""} quotes — decided lines stay locked, quote only the new {freshCount === 1 ? "line" : "lines"} below.
+                  {freshCount} item{freshCount === 1 ? "" : "s"} still need{freshCount === 1 ? "s" : ""} quotes — decided lines stay locked, quote only the open {freshCount === 1 ? "line" : "lines"} below.
                 </p>
               );
             }
