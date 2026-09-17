@@ -84,6 +84,14 @@ export default function ManagementReview() {
   const historyEnquiries: Enquiry[] = useMemo(() => {
     return enquiries.filter(isManagementHistoryEnquiry).sort(byActivity);
   }, [enquiries]);
+  // History pagination (like Daily Enquiries) — decided list grows unbounded
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState<number>(50);
+  const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
+  useEffect(() => { setHistoryPage(1); }, [historyEnquiries.length, historyPageSize]);
+  const historyTotalPages = Math.max(1, Math.ceil(historyEnquiries.length / historyPageSize));
+  const historyPageClamped = Math.min(historyPage, historyTotalPages);
+  const visibleHistory = useMemo(() => historyEnquiries.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize), [historyEnquiries, historyPageClamped, historyPageSize]);
 
   const leadName = useCallback((agentId: string) => {
     if (!agentId) return "";
@@ -217,7 +225,18 @@ export default function ManagementReview() {
 
           {historyEnquiries.length > 0 && (
             <ClosedDropdown count={historyEnquiries.length}>
-              {enquiryTable(historyEnquiries, "history")}
+              {enquiryTable(visibleHistory, "history")}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[var(--border-card)] mt-3">
+                <span className="text-xs font-semibold text-[var(--text-secondary)]">Showing {(historyPageClamped - 1) * historyPageSize + 1}–{Math.min(historyPageClamped * historyPageSize, historyEnquiries.length)} of {historyEnquiries.length} {historyTotalPages > 1 ? `· page ${historyPageClamped} of ${historyTotalPages}` : ""}</span>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-[var(--text-secondary)]">Show</label>
+                  <select value={historyPageSize} onChange={(e) => setHistoryPageSize(Number(e.target.value))} className="px-2 py-1 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg text-xs font-semibold cursor-pointer">
+                    {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n} / page</option>)}
+                  </select>
+                  <button type="button" disabled={historyPageClamped <= 1} onClick={() => setHistoryPage(historyPageClamped - 1)} className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer">‹ Prev</button>
+                  <button type="button" disabled={historyPageClamped >= historyTotalPages} onClick={() => setHistoryPage(historyPageClamped + 1)} className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer">Next ›</button>
+                </div>
+              </div>
             </ClosedDropdown>
           )}
         </div>
