@@ -36,7 +36,7 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
     : "border-l-red-700";
   return (
     <div
-      className={`group flex cursor-pointer flex-col items-start gap-3 rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all duration-150 hover:border-indigo-200 dark:hover:border-indigo-800 hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6 border-l-4 ${overdueCardClass} ${overdueAccent || "border-l-zinc-200 dark:border-l-zinc-800"}`}
+      className={`group flex cursor-pointer flex-col items-start gap-2 rounded-xl border px-3 py-3 shadow-sm hover:shadow transition-all duration-150 hover:border-zinc-300 dark:hover:border-zinc-700 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-4 border-l-4 ${overdueCardClass} ${overdueAccent || "border-l-zinc-200 dark:border-l-zinc-700"}`}
       onClick={() => onViewDetail(enq.id)}
     >
       <div className="min-w-0">
