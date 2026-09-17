@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { parseMoneyInput, historyDateChip } from "@/types";
-import { RATE_STATUS_LABEL, fmtINR, ceil5, shareKey } from "@/enquiry/pricing";
+import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
 import { itemHasUnreviewedQuotes } from "@/enquiry/queue";
 import FlagThread from "@/components/FlagThread";
 import ItemRateForm from "@/components/ItemRateForm";
@@ -196,7 +196,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     return null;
   };
   // Per-row sales finals under the item's margin % (discount first, same
-  // ceil5). Keyed by row index; rows without a resolvable % are absent.
+  // finalRound). Keyed by row index; rows without a resolvable % are absent.
   const sharedFinals = (i: number, it: EnquiryItem): Record<number, number> => {
     const out: Record<number, number> = {};
     const p = resolvePct(i, it);
@@ -206,7 +206,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     for (const k of sharedRows(i, it)) {
       const rate = (it.rates ?? [])[k]?.rate;
       if (rate === undefined) continue;
-      out[k] = ceil5(rate * (1 - discount / 100) * (1 + p / 100));
+      out[k] = finalRound(rate * (1 - discount / 100) * (1 + p / 100));
     }
     return out;
   };
@@ -230,8 +230,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
    *  Discount (procurement's vendor offer is info-only; management's final
    *  discount is applied on the selected vendor rate before markup):
    *    discountedBase = rate * (1 - finalDiscount/100)
-   *    final = ceil5(discountedBase * (1 + markup%/100)) or direct final ₹
-   *  Null when nothing is entered and nothing was stored (preserve as-is). */
+   *    final = finalRound(discountedBase * (1 + markup%/100)) or direct final ₹
+   *  finalRound = ceil5 ≥₹100, rupee-round <₹100. Null when nothing entered
+   *  and nothing stored (preserve as-is). */
   const computeItem = (i: number, it: EnquiryItem): { markup: number; finalRate: number; unrounded: number; discount: number } | null => {
     const ri = selRateIdx(i, it);
     const rate = ri === undefined ? undefined : (it.rates ?? [])[ri]?.rate;
@@ -246,14 +247,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         ? parseMoneyInput(raw)
         : (it.finalRate !== undefined && it.finalRate !== null ? Number(it.finalRate) : NaN);
       if (f === null || !Number.isFinite(f) || f < 0) return null;
-      const final = ceil5(f);
+      const final = finalRound(f);
       const markup = base !== undefined ? final - base : final;
       return { markup, finalRate: final, unrounded: f, discount };
     }
     const p = resolvePct(i, it);
     if (p === null || !Number.isFinite(p) || base === undefined) return null;
     const unrounded = base * (1 + p / 100);
-    const final = ceil5(unrounded);
+    const final = finalRound(unrounded);
     return { markup: final - base, finalRate: final, unrounded, discount };
   };
 
