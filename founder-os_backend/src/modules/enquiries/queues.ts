@@ -105,11 +105,19 @@ export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean
   return { ok: true, reason: "" };
 }
 
-export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean {
+export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items" | "rateStatus">): boolean {
   const items = (e as any).items ?? [];
   if (items.length === 0) return false;
   if (isManagementPendingEnquiry(e as any)) return false;
-  const loop = items.filter((it: any) => !it?.specIssue && !it?.rateAvailable);
-  if (loop.length === 0) return false;
-  return loop.every((it: any) => it.finalRate !== undefined && it.finalRate !== null);
+  const relevant = items.filter((it: any) => !it?.specIssue);
+  if (relevant.length === 0) return false;
+  // Every non-held item must be accounted for — either rate-available or
+  // decided. Pure rateAvailable rows only belong here after commit, otherwise
+  // they'd appear as history before any decision (loop empty → false fix).
+  const allRateAvailable = relevant.every((it: any) => it?.rateAvailable);
+  if (allRateAvailable) {
+    const s = String((e as any)?.rateStatus ?? "");
+    return s === "finalized" || s === "sent";
+  }
+  return relevant.every((it: any) => it?.rateAvailable || (it.finalRate !== undefined && it.finalRate !== null));
 }
