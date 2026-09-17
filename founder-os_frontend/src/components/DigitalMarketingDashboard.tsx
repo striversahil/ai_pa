@@ -125,7 +125,7 @@ interface TeamData {
 }
 
 interface DashData {
-  meta: { date: string; today: string; total: number; open: number; done: number; overdue: number; incomplete?: number; generatedAt: string; isAdmin?: boolean; self?: { id: string; name: string; role: string } | null };
+  meta: { date: string; today: string; total: number; open: number; done: number; overdue: number; incomplete?: number; computeV?: string; generatedAt: string; isAdmin?: boolean; self?: { id: string; name: string; role: string } | null };
   roster: RosterRow[];
   senior: TaskItem[];
   junior: TaskItem[];
@@ -424,7 +424,7 @@ function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; rost
               </span>
             )}
             {((t as any).daysIncomplete ?? t.daysOverdue ?? 0) > 0 && (
-              <span title={t.dueDate ? `Originally due ${t.dueDate}` : "Days past due"} className="inline-flex items-center gap-1 rounded-full border border-rose-500/50 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-rose-600 dark:text-rose-300">
+              <span title={t.dueDate ? `Originally due ${t.dueDate}` : "Consecutive days missed"} className="inline-flex items-center gap-1 rounded-full border border-rose-500/50 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-rose-600 dark:text-rose-300">
                 ⏳ {((t as any).daysIncomplete ?? t.daysOverdue ?? 0)} day{((t as any).daysIncomplete ?? t.daysOverdue ?? 0) === 1 ? "" : "s"} missed
               </span>
             )}
@@ -559,7 +559,7 @@ export default function AccountsDashboard() {
   // the 30s hook timeout turns it into an error and the next poll recovers.
   // Loading renders non-destructively (spinner only before first payload).
   const dash = useLiveDashboard<DashData>(async () => {
-    const res = await fetch(`/api/automations/digital-marketing/data`);
+    const res = await fetch(`/api/automations/digital-marketing/data`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
   }, { pollMs: 60000 });
@@ -619,6 +619,7 @@ export default function AccountsDashboard() {
               <span className="font-bold text-emerald-500">✓ {data.meta.done} completed</span>
               <span className="font-bold text-amber-500">✕ {data.meta.open} not completed</span>
               {(data.meta.incomplete ?? data.meta.overdue) > 0 && <span className="font-bold text-rose-500">📦 {data.meta.incomplete ?? data.meta.overdue} incomplete</span>}
+              {data.meta.computeV && <span className="text-zinc-400" title="Backend version that calculated these numbers">· {data.meta.computeV}</span>}
             </div>
           )}
           {data?.metaAdsCampaign && (
@@ -892,7 +893,7 @@ function ExportCard() {
     setBusy(true);
     setInfo(null);
     try {
-      const res = await fetch(`/api/digital-marketing/export?days=${Math.min(93, Math.max(1, days || 30))}`);
+      const res = await fetch(`/api/digital-marketing/export?days=${Math.min(93, Math.max(1, days || 30))}`, { cache: "no-store" });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       const rows = (data.rows ?? []) as Record<string, any>[];
@@ -1194,8 +1195,8 @@ function Controller({ onChanged }: { onChanged: () => void }) {
     try {
       setLoadError(null);
       const [rRes, tRes] = await Promise.all([
-        fetch(`/api/digital-marketing/roster${showRemoved ? "?deleted=1" : "?deleted=0"}`),
-        fetch("/api/digital-marketing/templates?all=1"),
+        fetch(`/api/digital-marketing/roster${showRemoved ? "?deleted=1" : "?deleted=0"}`, { cache: "no-store" }),
+        fetch("/api/digital-marketing/templates?all=1", { cache: "no-store" }),
       ]);
       if (!rRes.ok) throw new Error(`roster HTTP ${rRes.status}`);
       if (!tRes.ok) throw new Error(`templates HTTP ${tRes.status}`);

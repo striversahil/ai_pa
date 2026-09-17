@@ -191,6 +191,17 @@ export async function cached<T>(key: string, ttlMs: number, compute: () => Promi
   return job;
 }
 
+/** Upper bound for stale-on-error fallback: past this age the failure must
+ *  surface instead of masking behind ever-older data. Without a bound, a
+ *  persistently failing compute would pin clients to an old payload
+ *  indefinitely (the in-memory copy has no TTL of its own). */
+const STALE_MAX_MS = 15 * 60 * 1000;
+
+function staleWithinBound(computedAt: string): boolean {
+  const t = Date.parse(computedAt);
+  return Number.isFinite(t) && Date.now() - t <= STALE_MAX_MS;
+}
+
 /** Read a cached value ignoring freshness (used only for stale-on-error). */
 async function readStale<T>(key: string): Promise<T | null> {
   const fullKey = `${NS}:${key}`;
@@ -199,10 +210,17 @@ async function readStale<T>(key: string): Promise<T | null> {
       const raw = await kv.get(fullKey);
       if (!raw) return null;
       const entry = JSON.parse(raw) as CacheEntry<T>;
+      if (!staleWithinBound(entry.computedAt)) return null;
       return entry.value;
     } catch {
       return null;
     }
   }
-  return (memory.get(fullKey)?.payload as T) ?? null;
+  const mem = memory.get(fullKey);
+  if (!mem) return null;
+  if (Date.now() - mem.computedAt > STALE_MAX_MS) {
+    memory.delete(fullKey);
+    return null;
+  }
+  return (mem.payload as T) ?? null;
 }

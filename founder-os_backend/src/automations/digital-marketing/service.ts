@@ -199,6 +199,24 @@ export function windowGraceStart(t: any, dateStr: string): string | null {
   return start;
 }
 
+/** Consecutive-miss streak: trailing run of due-days ending at `anchor`
+ *  (inclusive) that are all unresolved — the "N days missed consecutively"
+ *  number. Non-due days are skipped (a Sunday never breaks a daily streak);
+ *  the first due-but-resolved day ends it. `unresolved` = set of YYYY-MM-DD
+ *  dates with open instances. */
+export function missStreak(t: any, anchor: string, unresolved: Set<string>): number {
+  let n = 0;
+  let cur = String(anchor || '').slice(0, 10);
+  for (let i = 0; i < 370; i++) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cur)) break;
+    if (!isDueOn(t, cur)) { cur = addDays(cur, -1); continue; }
+    if (!unresolved.has(cur)) break;
+    n++;
+    cur = addDays(cur, -1);
+  }
+  return n;
+}
+
 /** Real follow-up list (generated from data/accounts_follow_up.json). */
 import { SEED_TASKS } from './seed-tasks';
 
@@ -395,18 +413,10 @@ async function computeDashboard(
         missed,
         overdue: isOverdueRow,
         incomplete: isOverdueRow,
-        // Days missed for this card: oldest missed day wins; else the row's
-        // own past-due age. 0 = complete-able (fresh day-1 entries are never incomplete).
-        daysOverdue: missed.length > 0
-          ? diffDays(missed[0], dateStr)
-          : (status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr() && (log as any)?.dueDate)
-            ? diffDays(String((log as any)?.dueDate ?? dateStr), dateStr)
-            : 0),
-        daysIncomplete: missed.length > 0
-          ? diffDays(missed[0], dateStr)
-          : (status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr() && (log as any)?.dueDate)
-            ? diffDays(String((log as any)?.dueDate ?? dateStr), dateStr)
-            : 0),
+        // Consecutive-miss count is filled by the streak pass below (needs the
+        // tray's unresolved-day sets, fetched after this loop).
+        daysOverdue: 0,
+        daysIncomplete: 0,
       };
     });
   const OPEN = new Set(['pending', 'inprogress', 'overdue', 'not_done']);
@@ -475,14 +485,32 @@ async function computeDashboard(
     if (!overdueFilesByLog.has(k)) overdueFilesByLog.set(k, []);
     overdueFilesByLog.get(k)!.push(f);
   }
-  const overdueList = (overdueLogs as any[])
+  const overdueLogsScoped = (overdueLogs as any[])
     .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
     // Range grace: unresolved rows inside a still-open window stay out of the
     // Incomplete tray until the window's last day passes.
     .filter((log: any) => {
       const g = graceByTemplate.get(String((log as any).templateId));
       return !g || String((log as any).dueDate) < g;
-    })
+    });
+  // Unresolved-day sets per template (open instances before `dateStr`) — the
+  // input for consecutive-miss streaks on both today's cards and tray rows.
+  const unresolvedByTemplate = new Map<string, Set<string>>();
+  for (const log of overdueLogsScoped) {
+    const k = String((log as any).templateId);
+    if (!unresolvedByTemplate.has(k)) unresolvedByTemplate.set(k, new Set());
+    unresolvedByTemplate.get(k)!.add(String((log as any).dueDate).slice(0, 10));
+  }
+  const templateById = new Map<string, any>((templates as any[]).map((t) => [String(t.id), t]));
+  // Streak pass: today's cards count the trailing run before today…
+  for (const it of items as any[]) {
+    const tpl = templateById.get(String(it.templateId));
+    const set = unresolvedByTemplate.get(String(it.templateId)) ?? new Set<string>();
+    const s = tpl ? missStreak(tpl, addDays(dateStr, -1), set) : 0;
+    it.daysOverdue = s;
+    it.daysIncomplete = s;
+  }
+  const overdueList = overdueLogsScoped
     .map((log: any) => {
       const t: any = log.template;
       let metricsSchema: any = null;
@@ -516,10 +544,18 @@ async function computeDashboard(
         missed: [],
         overdue: true,
         incomplete: true,
-        daysOverdue: diffDays(String(log.dueDate), dateStr),
-        daysIncomplete: diffDays(String(log.dueDate), dateStr),
+        daysOverdue: 0, // streak pass below
+        daysIncomplete: 0, // streak pass below
       };
     });
+  // …and each tray row counts the trailing run ending on its own due date.
+  for (const row of overdueList as any[]) {
+    const tpl = templateById.get(String(row.templateId));
+    const set = unresolvedByTemplate.get(String(row.templateId)) ?? new Set<string>();
+    const s = tpl ? missStreak(tpl, String(row.dueDate), set) : 0;
+    row.daysOverdue = s;
+    row.daysIncomplete = s;
+  }
   // Historical done — last 30 days BEFORE today, lane-scoped, capped.
   // Gives the Done tab's missing context and powers the new History view.
   const historyLogsRaw = await (prisma as any).digitalMarketingTaskLog.findMany({
@@ -607,6 +643,9 @@ async function computeDashboard(
     meta: {
       date: dateStr,
       today: istDateStr(),
+      // Calc version tag (shown tiny in the UI header): proves which backend
+      // logic produced these numbers. Bump when the dashboard math changes.
+      computeV: 'streak-1',
       total: items.length,
       open: openCount,
       inProgress: inProgressCount,
