@@ -606,6 +606,37 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     const key = `neodove_user_report:${reportDate}`;
     const value = JSON.stringify({ reportDate, fetchedAt: new Date().toISOString(), rows });
     await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+    // Auto-add new NeoDove users as additional roster entries (assignEstimateFollowUps=0,
+    // deleted=0) so a new hire like Piyush auto-appears in the roster without manual
+    // INSERT — same as the 2026-09-17 manual Piyush 6e3800aa…/13889a99… add.
+    try {
+      const nowIso = new Date().toISOString();
+      const existing = await (prisma as any).telecaller.findMany({ select: { neodoveUserId: true } });
+      const have = new Set((existing as any[]).map((r) => String(r.neodoveUserId ?? '')).filter(Boolean));
+      const existingByName = new Set((await (prisma as any).telecaller.findMany({ select: { name: true } })).map((r: any) => String(r.name ?? '').toLowerCase().trim()));
+      let maxOrder = 0;
+      try {
+        const all = await (prisma as any).telecaller.findMany({ select: { order: true } });
+        for (const r of all as any[]) maxOrder = Math.max(maxOrder, Number((r as any).order ?? 0));
+      } catch {}
+      let added = 0;
+      for (const r of rows as any[]) {
+        const uid = String(r?.userId ?? '').trim();
+        const uname = String(r?.userName ?? '').trim();
+        if (!uid || !uname || have.has(uid)) continue;
+        if (existingByName.has(uname.toLowerCase())) continue;
+        const id = (globalThis as any).crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+        await (prisma as any).telecaller.create({
+          data: { id, name: uname, neodoveUserId: uid, neodoveUserName: uname, assignEstimateFollowUps: false, order: maxOrder + 1 + added, createdAt: nowIso, deleted: false },
+        });
+        added++;
+        have.add(uid);
+      }
+      if (added > 0) {
+        const { invalidateRiskCache } = require('../../automations/telecalling/service');
+        try { await invalidateRiskCache(); } catch {}
+      }
+    } catch (e) { console.warn('neodove auto-add roster failed', e); }
     notifyLive(c, { type: 'neodove', date: reportDate });
     const { invalidateNeodoveCache } = require('../../automations/neodove-telecaller-report');
     await invalidateNeodoveCache();
