@@ -195,70 +195,26 @@ export default function EnquiryList({
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Header — title lives in the tracker shell ("Daily Enquiries") */}
-      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-end gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <button 
-            onClick={onExportCSV} 
-            className="inline-flex items-center justify-center gap-1.5 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            <span>Export CSV</span>
-          </button>
-
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={onImportCSV} 
-            accept=".csv" 
-            className="hidden" 
-          />
+      {/* Header — New Enquiry only; Export/Import removed */}
+      <div className="flex justify-end">
+        <div className="flex items-center gap-2">
+          <input type="file" ref={fileInputRef} onChange={onImportCSV} accept=".csv" className="hidden" />
           {!redacted && (
-          <>
-          <button 
-            onClick={triggerCSVInput} 
-            className="inline-flex items-center justify-center gap-1.5 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            <span>Import CSV</span>
-          </button>
-
-          {!redacted && (
-          <button 
-            onClick={onOpenCreate} 
-            className="inline-flex items-center justify-center gap-2 bg-brand-indigo hover:opacity-90 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-600/20 transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            <span>New Enquiry</span>
-          </button>
-          )}
-          </>
+            <button 
+              onClick={onOpenCreate} 
+              className="inline-flex items-center justify-center gap-2 bg-brand-indigo hover:opacity-90 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-600/20 transition-all duration-200 cursor-pointer"
+              type="button"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              <span>New Enquiry</span>
+            </button>
           )}
         </div>
       </div>
 
-      {/* Pending queue toggle (procurement/management work queues) */}
-      {queueToggle && (
-        <div className="flex flex-row flex-wrap gap-2">
-          <button onClick={() => setQueueOnly(true)} type="button"
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
-            {queueToggle.pendingLabel} ({pendingCount})
-          </button>
-          <button onClick={() => setQueueOnly(false)} type="button"
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${!queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
-            All enquiries ({enquiries.length})
-          </button>
-        </div>
-      )}
+      {/* Queue toggle removed: All view hidden */}
 
       {/* Horizontal Calendar Selector */}
       <CalendarRibbon
