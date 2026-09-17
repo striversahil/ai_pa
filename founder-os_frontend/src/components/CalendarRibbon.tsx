@@ -23,32 +23,91 @@ export default function CalendarRibbon({
   dateTabs,
   dateInputRef,
   handleCalendarClick,
+  totalCount
 }: CalendarRibbonProps) {
-  const todayStr = new Date().toISOString().split("T")[0];
   return (
-    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-2.5 py-2 flex items-center gap-2 overflow-hidden">
-      <div className="flex items-center gap-1 text-[10px] font-bold tracking-widest text-zinc-500 uppercase shrink-0 pr-2 border-r border-zinc-200 dark:border-zinc-800">
-        <svg className="w-3 h-3 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-        Dates
+    <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider flex items-center gap-1.5">
+          <svg className="w-4 h-4 text-brand-indigo" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span>Calendar Navigation</span>
+        </span>
+        {selectedDate && (
+          <button 
+            onClick={() => setSelectedDate(null)} 
+            className="text-xs font-bold text-brand-indigo hover:underline flex items-center gap-1 cursor-pointer bg-transparent border-0"
+          >
+            <span>Show All Days</span>
+            <span>&times;</span>
+          </button>
+        )}
       </div>
-      <div className="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1">
-        {dateTabs.map((d) => {
-          const isSelected = selectedDate === d.dateStr;
-          const isToday = d.dateStr === todayStr;
+      
+      <div className="flex items-center gap-3 overflow-x-auto pb-1.5">
+        {/* "All" button */}
+        <button
+          onClick={() => setSelectedDate(null)}
+          className={`flex-shrink-0 px-4 py-2 rounded-xl border flex flex-col items-center justify-center min-w-[70px] cursor-pointer transition-all duration-200
+            ${!selectedDate 
+              ? "bg-brand-indigo border-brand-indigo text-white shadow-md shadow-indigo-600/20" 
+              : "bg-[var(--bg-input)] border-[var(--border-card)] hover:border-brand-indigo text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+          type="button"
+        >
+          <span className="text-[9px] font-bold uppercase tracking-wider">View</span>
+          <span className="text-sm font-extrabold mt-0.5">All</span>
+          <span className="text-[9px] font-medium opacity-80 mt-0.5">{totalCount} Enq</span>
+        </button>
+
+        {/* Date Cards */}
+        {dateTabs.map(dateObj => {
+          const isSelected = selectedDate === dateObj.dateStr;
           return (
-            <button key={d.dateStr} onClick={() => setSelectedDate(d.dateStr)} type="button"
-              className={`shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-full border text-[11px] font-semibold cursor-pointer
-                ${isSelected ? "bg-indigo-600 border-indigo-600 text-white" : isToday ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 text-indigo-700" : "bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300"}`}>
-              <span className="text-[10px] font-bold opacity-70">{d.dayOfWeek.slice(0,2).toUpperCase()}</span>
-              <span className="text-xs font-extrabold">{d.dayOfMonth}</span>
-              <span className={`text-[10px] ${isSelected ? "text-white/80" : "text-zinc-500"}`}>{d.count}</span>
+            <button
+              key={dateObj.dateStr}
+              onClick={() => setSelectedDate(dateObj.dateStr)}
+              className={`flex-shrink-0 px-4 py-2 rounded-xl border flex flex-col items-center justify-center min-w-[75px] cursor-pointer transition-all duration-200
+                ${isSelected 
+                  ? "bg-brand-indigo border-brand-indigo text-white shadow-md shadow-indigo-600/20" 
+                  : "bg-[var(--bg-input)] border-[var(--border-card)] hover:border-brand-indigo text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                }`}
+              type="button"
+            >
+              <span className="text-[9px] font-bold uppercase tracking-wider">{dateObj.dayOfWeek}</span>
+              <span className="text-sm font-extrabold mt-0.5">{dateObj.dayOfMonth}</span>
+              <span className="text-[9px] font-medium mt-0.5">{dateObj.monthStr} • {dateObj.count}</span>
             </button>
           );
         })}
-      </div>
-      <div className="shrink-0">
-        <input type="date" ref={dateInputRef} value={selectedDate || todayStr} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="absolute opacity-0 pointer-events-none w-0 h-0" />
-        <button type="button" onClick={handleCalendarClick} className="w-7 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-500 hover:text-indigo-600 cursor-pointer" title="Jump"><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg></button>
+
+        {/* Inline Date Picker Jump Box */}
+        <div className="flex-shrink-0 relative">
+          <input 
+            type="date"
+            ref={dateInputRef}
+            value={selectedDate || ""}
+            onChange={(e) => {
+              if (e.target.value) {
+                setSelectedDate(e.target.value);
+              } else {
+                setSelectedDate(null);
+              }
+            }}
+            className="absolute inset-0 opacity-0 pointer-events-none w-0 h-0"
+          />
+          <button 
+            type="button"
+            onClick={handleCalendarClick}
+            className="px-4 py-3 border border-[var(--border-card)] hover:border-brand-indigo rounded-xl bg-[var(--bg-input)] hover:bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all duration-200 flex items-center justify-center gap-1.5 min-w-[75px] cursor-pointer"
+          >
+            <svg className="w-5 h-5 text-brand-indigo" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span className="text-xs font-bold">Jump</span>
+          </button>
+        </div>
       </div>
     </div>
   );

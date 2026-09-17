@@ -193,49 +193,70 @@ export default function EnquiryList({
   const pageClamped = Math.min(page, totalPages);
   const visibleEnquiries = filteredEnquiries.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
 
-  // Header stats (today-aware)
-  const todayStr = new Date().toISOString().split("T")[0];
-  const stats = (() => {
-    const total = enquiries.length;
-    const todayCount = enquiries.filter(e => e.createdAt && new Date(e.createdAt).toISOString().split("T")[0] === todayStr).length;
-    const pending = enquiries.filter(e => (e.rateStatus ?? "") !== "sent").length;
-    const sent = enquiries.filter(e => (e.rateStatus ?? "") === "sent").length;
-    const overdue = enquiries.filter(e => (e.rateStatus ?? "") !== "sent" && e.createdAt && new Date(e.createdAt).toISOString().split("T")[0] < todayStr).length;
-    return { total, todayCount, pending, sent, overdue };
-  })();
-
   return (
-    <div className="space-y-3 animate-fade-in">
-      {/* Slim stats bar */}
-      <div className="flex items-center justify-between gap-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2">
-        <div className="flex items-center gap-4 text-xs">
-          <span className="flex items-baseline gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-indigo-500"></span><span className="font-bold text-zinc-900 dark:text-white">{stats.todayCount}</span><span className="text-zinc-500">Today</span><span className="text-zinc-400">· {filteredEnquiries.length} shown</span></span>
-          <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700"></span>
-          <span className="flex items-baseline gap-1"><span className="font-bold text-zinc-900 dark:text-white">{stats.pending}</span><span className="text-zinc-500">Pending</span>{stats.overdue>0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold">{stats.overdue} overdue</span>}</span>
-          <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700 hidden sm:block"></span>
-          <span className="hidden sm:flex items-baseline gap-1"><span className="font-bold text-emerald-600">{stats.sent}</span><span className="text-zinc-500">Sent</span><span className="text-zinc-400">· {stats.total} total</span></span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button onClick={onExportCSV} className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] font-bold hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer" type="button">Export</button>
-          {!redacted && <button onClick={triggerCSVInput} className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] font-bold hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer hidden sm:inline-flex" type="button">Import</button>}
-          {!redacted && <button onClick={onOpenCreate} className="ml-1 px-3 py-1 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer" type="button">+ New</button>}
-        </div>
-      </div>
+    <div className="space-y-4 animate-fade-in">
+      {/* Header — title lives in the tracker shell ("Daily Enquiries") */}
+      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-end gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button 
+            onClick={onExportCSV} 
+            className="inline-flex items-center justify-center gap-1.5 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all duration-200 cursor-pointer"
+            type="button"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <span>Export CSV</span>
+          </button>
 
-      {/* Header actions moved into hero; keep hidden file input */}
-      <div className="hidden">
-        <input 
+          <input 
             type="file" 
             ref={fileInputRef} 
             onChange={onImportCSV} 
             accept=".csv" 
             className="hidden" 
           />
+          {!redacted && (
+          <>
+          <button 
+            onClick={triggerCSVInput} 
+            className="inline-flex items-center justify-center gap-1.5 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all duration-200 cursor-pointer"
+            type="button"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            <span>Import CSV</span>
+          </button>
+
+          {!redacted && (
+          <button 
+            onClick={onOpenCreate} 
+            className="inline-flex items-center justify-center gap-2 bg-brand-indigo hover:opacity-90 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-600/20 transition-all duration-200 cursor-pointer"
+            type="button"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            <span>New Enquiry</span>
+          </button>
+          )}
+          </>
+          )}
+        </div>
       </div>
+
       {/* Pending queue toggle (procurement/management work queues) */}
       {queueToggle && (
         <div className="flex flex-row flex-wrap gap-2">
-          <span className="px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white shadow-sm">{queueToggle.pendingLabel} ({pendingCount})</span>
+          <button onClick={() => setQueueOnly(true)} type="button"
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+            {queueToggle.pendingLabel} ({pendingCount})
+          </button>
+          <button onClick={() => setQueueOnly(false)} type="button"
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${!queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+            All enquiries ({enquiries.length})
+          </button>
         </div>
       )}
 
