@@ -193,70 +193,66 @@ export default function EnquiryList({
   const pageClamped = Math.min(page, totalPages);
   const visibleEnquiries = filteredEnquiries.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
 
+  // Header stats (today-aware)
+  const todayStr = new Date().toISOString().split("T")[0];
+  const stats = (() => {
+    const total = enquiries.length;
+    const todayCount = enquiries.filter(e => e.createdAt && new Date(e.createdAt).toISOString().split("T")[0] === todayStr).length;
+    const pending = enquiries.filter(e => (e.rateStatus ?? "") !== "sent").length;
+    const sent = enquiries.filter(e => (e.rateStatus ?? "") === "sent").length;
+    const overdue = enquiries.filter(e => (e.rateStatus ?? "") !== "sent" && e.createdAt && new Date(e.createdAt).toISOString().split("T")[0] < todayStr).length;
+    return { total, todayCount, pending, sent, overdue };
+  })();
+
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Header — title lives in the tracker shell ("Daily Enquiries") */}
-      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-end gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <button 
-            onClick={onExportCSV} 
-            className="inline-flex items-center justify-center gap-1.5 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            <span>Export CSV</span>
-          </button>
+      {/* Hero stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white p-4 flex flex-col justify-between shadow-lg shadow-indigo-600/20">
+          <span className="text-[11px] font-bold tracking-widest opacity-80 uppercase">Today</span>
+          <span className="text-2xl font-extrabold mt-1">{stats.todayCount}</span>
+          <span className="text-xs opacity-80">{filteredEnquiries.length} shown</span>
+        </div>
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 flex flex-col justify-between">
+          <span className="text-[11px] font-bold tracking-widest text-zinc-500 uppercase">Pending</span>
+          <span className="text-2xl font-extrabold text-zinc-900 dark:text-white mt-1">{stats.pending}</span>
+          <span className="text-xs text-amber-600 dark:text-amber-400">{stats.overdue} overdue</span>
+        </div>
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 flex flex-col justify-between">
+          <span className="text-[11px] font-bold tracking-widest text-zinc-500 uppercase">Sent</span>
+          <span className="text-2xl font-extrabold text-emerald-600 mt-1">{stats.sent}</span>
+          <span className="text-xs text-zinc-500">{stats.total} total</span>
+        </div>
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold tracking-widest text-zinc-500 uppercase">Actions</span>
+            <div className="mt-1 flex gap-1.5">
+              <button onClick={onExportCSV} className="px-2.5 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs font-bold hover:border-zinc-300 cursor-pointer" type="button">Export</button>
+              {!redacted && <button onClick={triggerCSVInput} className="px-2.5 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs font-bold hover:border-zinc-300 cursor-pointer" type="button">Import</button>}
+            </div>
+          </div>
+          {!redacted && (
+            <button onClick={onOpenCreate} className="w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-md shadow-indigo-600/20 cursor-pointer" type="button">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+            </button>
+          )}
+        </div>
+      </div>
 
-          <input 
+      {/* Header actions moved into hero; keep hidden file input */}
+      <div className="hidden">
+        <input 
             type="file" 
             ref={fileInputRef} 
             onChange={onImportCSV} 
             accept=".csv" 
             className="hidden" 
           />
-          {!redacted && (
-          <>
-          <button 
-            onClick={triggerCSVInput} 
-            className="inline-flex items-center justify-center gap-1.5 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            <span>Import CSV</span>
-          </button>
-
-          {!redacted && (
-          <button 
-            onClick={onOpenCreate} 
-            className="inline-flex items-center justify-center gap-2 bg-brand-indigo hover:opacity-90 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-600/20 transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            <span>New Enquiry</span>
-          </button>
-          )}
-          </>
-          )}
-        </div>
       </div>
-
       {/* Pending queue toggle (procurement/management work queues) */}
       {queueToggle && (
         <div className="flex flex-row flex-wrap gap-2">
-          <button onClick={() => setQueueOnly(true)} type="button"
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
-            {queueToggle.pendingLabel} ({pendingCount})
-          </button>
-          <button onClick={() => setQueueOnly(false)} type="button"
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${!queueOnly ? "bg-indigo-600 text-white shadow-sm" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
-            All enquiries ({enquiries.length})
-          </button>
+          <span className="px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white shadow-sm">{queueToggle.pendingLabel} ({pendingCount})</span>
         </div>
       )}
 

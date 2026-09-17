@@ -24,14 +24,19 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   const isOverdue = !sent && hoursOverdue >= 24;
   const overdueLevel = isOverdue ? Math.min(3, Math.floor((hoursOverdue - 24) / 24)) : -1; // 0:24-48,1:48-72,2:72-96,3:96+
   const overdueLabel = isOverdue ? (hoursOverdue >= 48 ? `${Math.floor(hoursOverdue/24)}d overdue` : `${hoursOverdue}h overdue`) : null;
-  const overdueCardClass = overdueLevel === -1 ? "border-[var(--border-card)] bg-[var(--bg-card)]"
-    : overdueLevel === 0 ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-950/20"
-    : overdueLevel === 1 ? "border-red-400 bg-red-100 dark:border-red-500/50 dark:bg-red-900/30"
-    : overdueLevel === 2 ? "border-red-500 bg-red-200 dark:border-red-600/60 dark:bg-red-900/40"
-    : "border-red-700 bg-red-300 dark:border-red-700 dark:bg-red-900/60";
+  const overdueCardClass = overdueLevel === -1 ? "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900"
+    : overdueLevel === 0 ? "border-red-200 dark:border-red-900/50 bg-red-50/70 dark:bg-red-950/20"
+    : overdueLevel === 1 ? "border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-900/30"
+    : overdueLevel === 2 ? "border-red-400 dark:border-red-700 bg-red-100/80 dark:bg-red-900/40"
+    : "border-red-600 dark:border-red-700 bg-red-100 dark:bg-red-900/50";
+  const overdueAccent = overdueLevel === -1 ? "" 
+    : overdueLevel === 0 ? "border-l-red-400" 
+    : overdueLevel === 1 ? "border-l-red-500" 
+    : overdueLevel === 2 ? "border-l-red-600" 
+    : "border-l-red-700";
   return (
     <div
-      className={`flex cursor-pointer flex-col items-start gap-3 rounded-xl border p-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:border-[var(--color-brand-indigo)]/50 hover:bg-[var(--bg-input)]/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6 ${overdueCardClass}`}
+      className={`group flex cursor-pointer flex-col items-start gap-3 rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all duration-150 hover:border-indigo-200 dark:hover:border-indigo-800 hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6 border-l-4 ${overdueCardClass} ${overdueAccent || "border-l-zinc-200 dark:border-l-zinc-800"}`}
       onClick={() => onViewDetail(enq.id)}
     >
       <div className="min-w-0">
