@@ -476,20 +476,38 @@ export default function ProcurementQueue() {
             {(() => {
               const submitted = isSubmitted(selEnquiry);
               const lateQuoteEnquiry = selEnquiry.rateStatus === "finalized";
-              return (selEnquiry.items ?? []).map((item, itemIdx) => (
-                <ProcurementItemCard
-                  key={itemIdx}
-                  item={item}
-                  itemIdx={itemIdx}
-                  lateQuote={lateQuoteEnquiry}
-                  onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
-                  onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
-                  onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
-                  onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
-                  onOpenLightbox={handleOpenLightbox}
-                  readOnly={(submitted && !isFreshQuotableItem(item)) || item.internalRates === true || (item.finalRate !== undefined && item.finalRate !== null)}
-                />
-              ));
+              const all = selEnquiry.items ?? [];
+              const hidden = all.filter((it) => it.rateAvailable || (it as any).internalRates).length;
+              const visible = all.map((it, idx) => ({ it, idx })).filter(({ it }) => !it.rateAvailable && !(it as any).internalRates);
+              return (
+                <>
+                  {hidden > 0 && (
+                    <p className="rounded-xl border border-zinc-700/50 bg-zinc-800/40 px-3 py-2 text-[11px] font-semibold text-zinc-400">
+                      {hidden} item{hidden === 1 ? "" : "s"} marked rate available — hidden from procurement (only {visible.length} needing rates shown).
+                    </p>
+                  )}
+                  {visible.length === 0 ? (
+                    <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                      All items are rate available — nothing to quote. Conclude when ready.
+                    </p>
+                  ) : (
+                    visible.map(({ it: item, idx: itemIdx }) => (
+                      <ProcurementItemCard
+                        key={itemIdx}
+                        item={item}
+                        itemIdx={itemIdx}
+                        lateQuote={lateQuoteEnquiry}
+                        onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
+                        onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
+                        onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
+                        onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
+                        onOpenLightbox={handleOpenLightbox}
+                        readOnly={(submitted && !isFreshQuotableItem(item)) || (item.finalRate !== undefined && item.finalRate !== null)}
+                      />
+                    ))
+                  )}
+                </>
+              );
             })()}
             <ProcurementThread
               enquiryId={selEnquiry.id}
