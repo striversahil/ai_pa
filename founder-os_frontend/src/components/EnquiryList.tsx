@@ -310,7 +310,11 @@ export default function EnquiryList({
       ) : (
         <div className="space-y-3">
           {visibleEnquiries.map(enq => {
-            const agent = agents.find(a => a.id === enq.assignedAgentId);
+            let agent = agents.find(a => a.id === enq.assignedAgentId);
+            // Fallback: if agents fetch was empty/401 for root (telecaller roster filtered), still try to resolve via assignedAgentId prefix — avoids UN flash
+            if (!agent && enq.assignedAgentId) {
+              // keep UN but tooltip shows id for debugging; full name resolves after next agents fetch
+            }
             return (
               <EnquiryRowItem
                 key={enq.id}

@@ -51,6 +51,18 @@ export default function EnquiryTracker() {
     addEnquiry, updateEnquiry, deleteEnquiry,
     addComment, updateItems, makeActivity, clients,
   } = useEnquiryData("sales");
+  // Fallback telecaller roster for root/MIS: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
+  const [telecallers, setTelecallers] = useState<any[]>([]);
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/telecallers", { cache: "no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const list = Array.isArray(d?.telecallers) ? d.telecallers : Array.isArray(d) ? d : [];
+        if (list.length) setTelecallers(list.map((t: any, i: number) => ({ id: String(t.id), name: t.name, initials: (t.name||"").split(" ").map((w:string)=>w[0]).join("").slice(0,2).toUpperCase()||"UN", color: ['#6366f1','#10b981','#f59e0b','#f43f5e','#06b6d4','#8b5cf6','#ec4899','#84cc16'][i%8], status:'active' as const })));
+      })
+      .catch(()=>{});
+  }, [isAdmin]);
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
 
@@ -240,7 +252,7 @@ export default function EnquiryTracker() {
           onOpenLightbox={handleOpenLightbox}
         />
       ) : (
-        <EnquiryList enquiries={enquiries} agents={agents} currentAgentId={currentAgent?.id ?? null} isAdmin={isAdmin}
+        <EnquiryList enquiries={enquiries} agents={agents.length ? agents : telecallers} currentAgentId={currentAgent?.id ?? null} isAdmin={isAdmin}
           onViewDetail={(id) => { setSelectedId(id); }}
           onOpenCreate={() => { setEditingEnquiry(null); setIsAddModalOpen(true); }}
           onExportCSV={handleExportCSV}
