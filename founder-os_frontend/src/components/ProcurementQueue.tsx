@@ -160,14 +160,30 @@ export default function ProcurementQueue() {
   const historyEnquiries: EnquiryList = useMemo(() => {
     return [...enquiries].filter(isProcurementHistoryEnquiry).sort(byActivity);
   }, [enquiries]);
-  // History pagination (like Daily Enquiries)
+  // History search + pagination (client/EST/item/vendor)
+  const [historySearch, setHistorySearch] = useState("");
+  const filteredHistory = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return historyEnquiries;
+    const qDigits = q.replace(/\D/g, "");
+    return historyEnquiries.filter(e => {
+      const hay = [
+        e.clientCompany ?? "", e.title ?? "", e.estNumber ?? "", (e as any).enquiryNumber ?? "", (e as any).sourceLead ?? "", (e as any).location ?? "",
+        e.contactName ?? "", (e as any).contactEmail ?? "", e.contactPhone ?? "", e.description ?? "", e.source ?? "", String(e.dailyNo ?? ""),
+        ...((e.items ?? []) as any[]).flatMap((it:any)=> [it?.name ?? "", it?.qty ?? "", it?.spec ?? "", it?.verbatim ?? "", ...((it?.rates ?? []).map((r:any)=> r?.vendor ?? ""))]),
+      ].join(" ").toLowerCase();
+      if (hay.includes(q)) return true;
+      if (qDigits.length >= 3 && (e.estNumber ?? "").replace(/\D/g,"").includes(qDigits)) return true;
+      return false;
+    });
+  }, [historyEnquiries, historySearch]);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState<number>(50);
   const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
-  useEffect(() => { setHistoryPage(1); }, [historyEnquiries.length, historyPageSize]);
-  const historyTotalPages = Math.max(1, Math.ceil(historyEnquiries.length / historyPageSize));
+  useEffect(() => { setHistoryPage(1); }, [filteredHistory.length, historyPageSize, historySearch]);
+  const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / historyPageSize));
   const historyPageClamped = Math.min(historyPage, historyTotalPages);
-  const visibleHistory = useMemo(() => historyEnquiries.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize), [historyEnquiries, historyPageClamped, historyPageSize]);
+  const visibleHistory = useMemo(() => filteredHistory.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize), [filteredHistory, historyPageClamped, historyPageSize]);
   const emptyEnquiries = useMemo(
     () => [...enquiries].filter((e) => (e.items ?? []).length === 0).sort(byNewest),
     [enquiries],
@@ -386,9 +402,17 @@ export default function ProcurementQueue() {
 
           {historyEnquiries.length > 0 && (
             <ClosedDropdown count={historyEnquiries.length}>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex-1 relative">
+                  <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z" /></svg>
+                  <input value={historySearch} onChange={(e)=> setHistorySearch(e.target.value)} placeholder="Search client, EST No., title, item, vendor…" className="w-full pl-8 pr-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] text-xs focus:outline-none focus:border-brand-indigo" />
+                  {historySearch && <button type="button" onClick={()=> setHistorySearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs">×</button>}
+                </div>
+                {historySearch && <span className="text-xs text-[var(--text-secondary)]">{filteredHistory.length} match</span>}
+              </div>
               {enquiryTable(visibleHistory, "history")}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[var(--border-card)] mt-3">
-                <span className="text-xs font-semibold text-[var(--text-secondary)]">Showing {(historyPageClamped - 1) * historyPageSize + 1}–{Math.min(historyPageClamped * historyPageSize, historyEnquiries.length)} of {historyEnquiries.length} {historyTotalPages > 1 ? `· page ${historyPageClamped} of ${historyTotalPages}` : ""}</span>
+                <span className="text-xs font-semibold text-[var(--text-secondary)]">Showing {filteredHistory.length ? (historyPageClamped - 1) * historyPageSize + 1 : 0}–{Math.min(historyPageClamped * historyPageSize, filteredHistory.length)} of {filteredHistory.length} {historyTotalPages > 1 ? `· page ${historyPageClamped} of ${historyTotalPages}` : ""}</span>
                 <div className="flex items-center gap-2">
                   <label className="text-xs font-semibold text-[var(--text-secondary)]">Show</label>
                   <select value={historyPageSize} onChange={(e) => setHistoryPageSize(Number(e.target.value))} className="px-2 py-1 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg text-xs font-semibold cursor-pointer">
