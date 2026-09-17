@@ -18,20 +18,15 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   // Management-decided items on an open enquiry = partial rates received
   // (per-enquiry tag; the per-item rates live in the detail view).
   const hasPartialRates = !finalized && !sent && items.some((it) => it.finalRate !== undefined && it.finalRate !== null);
-  // Overdue: not sent and older than 24h → red, darkening with hours overdue
+  // Overdue: not sent and older than 24h → chip in red (card stays neutral)
   const createdMs = enq.createdAt ? new Date(enq.createdAt).getTime() : 0;
   const hoursOverdue = !sent && createdMs ? Math.floor((Date.now() - createdMs) / 3600000) : 0;
   const isOverdue = !sent && hoursOverdue >= 24;
   const overdueLevel = isOverdue ? Math.min(3, Math.floor((hoursOverdue - 24) / 24)) : -1; // 0:24-48,1:48-72,2:72-96,3:96+
   const overdueLabel = isOverdue ? (hoursOverdue >= 48 ? `${Math.floor(hoursOverdue/24)}d overdue` : `${hoursOverdue}h overdue`) : null;
-  const overdueCardClass = overdueLevel === -1 ? "border-[var(--border-card)] bg-[var(--bg-card)]"
-    : overdueLevel === 0 ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-950/20"
-    : overdueLevel === 1 ? "border-red-400 bg-red-100 dark:border-red-500/50 dark:bg-red-900/30"
-    : overdueLevel === 2 ? "border-red-500 bg-red-200 dark:border-red-600/60 dark:bg-red-900/40"
-    : "border-red-700 bg-red-300 dark:border-red-700 dark:bg-red-900/60";
   return (
     <div
-      className={`flex cursor-pointer flex-col items-start gap-3 rounded-xl border p-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:border-[var(--color-brand-indigo)]/50 hover:bg-[var(--bg-input)]/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6 ${overdueCardClass}`}
+      className="flex cursor-pointer flex-col items-start gap-3 rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)] p-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:border-[var(--color-brand-indigo)]/50 hover:bg-[var(--bg-input)]/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6"
       onClick={() => onViewDetail(enq.id)}
     >
       <div className="min-w-0">
