@@ -8,6 +8,9 @@ interface EnquiryListProps {
   enquiries: Enquiry[];
   agents: Agent[];
   redacted?: boolean;
+  /** Sales scoping: non-admin agents see own enquiries only unless searching. */
+  currentAgentId?: string | null;
+  isAdmin?: boolean;
   /** Pending-only queue (procurement/management): {label, predicate}. When
    *  provided, the list defaults to pending items with an "All" toggle. */
   queueToggle?: { pendingLabel: string; isPending: (e: Enquiry) => boolean };
@@ -23,6 +26,8 @@ export default function EnquiryList({
   enquiries,
   agents,
   redacted = false,
+  currentAgentId = null,
+  isAdmin = false,
   queueToggle,
   onViewDetail,
   onOpenCreate,
@@ -108,8 +113,13 @@ export default function EnquiryList({
   const filteredEnquiries = useMemo(() => {
     const inQueue = queueToggle && queueOnly ? enquiries.filter(queueToggle.isPending) : enquiries;
     const agentNameById = new Map(agents.map(a => [a.id, (a.name || "").toLowerCase()]));
+    const todayStr = new Date().toISOString().split("T")[0];
+    const isTodaySelected = selectedDate === todayStr;
+    const rawSearch = searchQuery.trim();
+    // Scoped view: non-admin sales agents see only own enquiries unless searching (search expands to all)
+    const isScoped = !isAdmin && !!currentAgentId && !redacted && rawSearch === "";
     return inQueue.filter(e => {
-      const rawQuery = searchQuery.trim().toLowerCase();
+      const rawQuery = rawSearch.toLowerCase();
       const query = rawQuery;
       // Empty query matches all
       let matchSearch = true;
@@ -141,19 +151,38 @@ export default function EnquiryList({
         matchSearch = direct || digitMatch;
       }
 
-      const matchAgent = agentFilter === "all" || e.assignedAgentId === agentFilter;
+      // Agent scoping: own-only when scoped and no search; otherwise respect agentFilter dropdown
+      const matchAgent = isScoped
+        ? e.assignedAgentId === currentAgentId
+        : (agentFilter === "all" || e.assignedAgentId === agentFilter);
       const matchSource = sourceFilter === "all" || (e.source || "TL") === sourceFilter;
       const matchRates = ratesFilter === "all"
         || (ratesFilter === "ready" && (e.rateStatus ?? "") === "finalized")
         || (ratesFilter === "awaiting" && (e.rateStatus ?? "") !== "sent")
         || (ratesFilter === "sent" && (e.rateStatus ?? "") === "sent");
 
-      // Global search: when a text query is active, ignore the calendar date filter so any day's enquiry is findable by EST No. etc.
-      const matchDate = rawQuery ? true : (!selectedDate || new Date(e.createdAt).toISOString().split("T")[0] === selectedDate);
+      // Calendar date: today tab re-appears overdue not-sent enquiries (created before today) every day until sent.
+      // Search bypasses date as before. Scoped overdue respects own-only (via matchAgent above).
+      let matchDate: boolean;
+      if (rawQuery) {
+        matchDate = true;
+      } else if (!selectedDate) {
+        matchDate = true;
+      } else {
+        const eDateStr = e.createdAt ? new Date(e.createdAt).toISOString().split("T")[0] : "";
+        if (eDateStr === selectedDate) {
+          matchDate = true;
+        } else if (isTodaySelected && (e.rateStatus ?? "") !== "sent" && eDateStr && eDateStr < selectedDate) {
+          // Overdue: not sent and created before today → line up on today tab every day
+          matchDate = true;
+        } else {
+          matchDate = false;
+        }
+      }
 
       return matchSearch && matchAgent && matchSource && matchRates && matchDate;
     });
-  }, [enquiries, agents, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly]);
+  }, [enquiries, agents, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly, currentAgentId, isAdmin, redacted]);
 
   const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 

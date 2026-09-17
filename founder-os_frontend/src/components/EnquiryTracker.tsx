@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
 import { useLiveEvent } from "@/hooks/useLiveData";
+import { useAuth } from "@/auth/AuthContext";
 import EnquiryList from "@/components/EnquiryList";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
@@ -43,6 +44,8 @@ export default function EnquiryTracker() {
   // Access is governed ONLY by the admin-panel grant (enquiry-tracker scope):
   // whoever can open this dashboard sees the full sales pipeline — no
   // in-view department gates here.
+  const { me } = useAuth();
+  const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes("mis") || (me?.scopes ?? []).includes("admin");
   const {
     enquiries, comments, agents, currentAgent, loaded,
     addEnquiry, updateEnquiry, deleteEnquiry,
@@ -237,7 +240,7 @@ export default function EnquiryTracker() {
           onOpenLightbox={handleOpenLightbox}
         />
       ) : (
-        <EnquiryList enquiries={enquiries} agents={agents}
+        <EnquiryList enquiries={enquiries} agents={agents} currentAgentId={currentAgent?.id ?? null} isAdmin={isAdmin}
           onViewDetail={(id) => { setSelectedId(id); }}
           onOpenCreate={() => { setEditingEnquiry(null); setIsAddModalOpen(true); }}
           onExportCSV={handleExportCSV}
