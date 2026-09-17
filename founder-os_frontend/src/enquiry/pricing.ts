@@ -18,12 +18,12 @@ export const fmtINR = (n: number | null | undefined): string =>
  *  epsilon keeps float dust (e.g. 1050.0000001) from jumping a bracket. */
 export const ceil5 = (x: number): number => Math.ceil((x - 1e-6) / 5) * 5;
 
-/** Under ₹100 the ceil5 rounding is skipped — small hardware is quoted
+/** Under 100 the ceil5 rounding is skipped — small hardware is quoted
  *  to the rupee. Mirrors the same rule in ManagementRatesPanel. */
 export const finalRound = (x: number): number => (x < 100 ? Math.round(x) : ceil5(x));
 
 /** Final customer rate: vendor rate → vendor discount → management margin →
- *  finalRound (ceil5 ≥₹100, rupee-round <₹100). Mirrors the backend decision math (same order, same rounding). */
+ *  finalRound (ceil5 >=100, rupee-round <100). Mirrors the backend decision math (same order, same rounding). */
 export function finalFromMargin(vendorRate: number, discountPercent: number | undefined, marginPercent: number): number {
   const d = discountPercent !== undefined && Number.isFinite(discountPercent) ? discountPercent : 0;
   const discounted = vendorRate * (1 - d / 100);
@@ -44,8 +44,8 @@ export function shareKey(itemIndex: number, r: { vendor?: string; rate?: number 
   return `${itemIndex}|${String(r?.vendor ?? "")}|${Number(r?.rate)}`;
 }
 
-/** Bulk combined-final split: one total ₹ across N vendor bases, proportional
- *  to each base, each finalRound (ceil5 ≥₹100, rupee-round <₹100; last line absorbs drift). */
+/** Bulk combined-final split: one total across N vendor bases, proportional
+ *  to each base, each finalRound (ceil5 >=100, rupee-round <100; last line absorbs drift). */
 export function splitBulkTotal(bases: number[], total: number): number[] {
   const sum = bases.reduce((a, b) => a + b, 0);
   if (!(sum > 0) || !(total >= 0) || bases.length === 0) return bases.map(() => 0);

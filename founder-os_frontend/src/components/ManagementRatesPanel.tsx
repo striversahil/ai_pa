@@ -230,8 +230,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
    *  Discount (procurement's vendor offer is info-only; management's final
    *  discount is applied on the selected vendor rate before markup):
    *    discountedBase = rate * (1 - finalDiscount/100)
-   *    final = finalRound(discountedBase * (1 + markup%/100)) or direct final ₹
-   *  finalRound = ceil5 ≥₹100, rupee-round <₹100. Null when nothing entered
+   *    final = finalRound(discountedBase * (1 + markup%/100)) or direct final
+   *  finalRound = ceil5 >=100, rupee-round <100. Null when nothing entered
    *  and nothing stored (preserve as-is). */
   const computeItem = (i: number, it: EnquiryItem): { markup: number; finalRate: number; unrounded: number; discount: number } | null => {
     const ri = selRateIdx(i, it);
