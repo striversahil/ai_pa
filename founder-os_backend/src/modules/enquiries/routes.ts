@@ -503,6 +503,17 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     const merged: any[] = Array.isArray((updates as any).items)
       ? (updates as any).items
       : (Array.isArray((storedForItems as any)?.items) ? (storedForItems as any).items : []);
+    // Every non-held item must have either a vendor rate or be marked
+    // rateAvailable — otherwise a half-quoted enquiry could be finalized/sent.
+    // Sales saw this as "Mark as sent works even though some items have no
+    // rates" (2026-09-17). Block here so both roles get the same hard gate.
+    const missingRates = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates && ((it as any)?.rates ?? []).length === 0);
+    if (missingRates.length > 0) {
+      const verb = (updates as any).rateStatus === 'sent' ? 'mark as sent' : 'finalize';
+      return json(400, {
+        error: `${missingRates.length} item${missingRates.length === 1 ? "" : "s"} still need vendor rates (or mark rate available) before you ${verb}`,
+      });
+    }
     const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable);
     const done = loop.filter((it) =>
       it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));

@@ -96,6 +96,11 @@ export default function EnquiryDetail({
   const rateLoopItems = (selectedEnquiry.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable);
   const decidedRateItems = rateLoopItems.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
   const showPartialTag = sentState !== "finalized" && sentState !== "sent" && decidedRateItems > 0;
+  // Hide "Mark as sent" until every non-held item is either rate-available or
+  // has at least one vendor rate — otherwise a half-quoted row would appear
+  // sendable (seen 2026-09-17).
+  const missingForSent = (selectedEnquiry.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable && !(it as any).internalRates && ((it as any).rates ?? []).length === 0).length;
+  const canMarkSent = sentState === "finalized" && missingForSent === 0;
   const doMarkSent = async () => {
     if (!selectedEnquiry.estNumber.trim()) {
       setSentError("Add EST No. before marking as sent.");
@@ -250,7 +255,7 @@ export default function EnquiryDetail({
             <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
               ✓ Marked as sent
             </span>
-          ) : sentState === "finalized" && onMarkSent ? (
+          ) : canMarkSent && onMarkSent ? (
             <span className="inline-flex items-center gap-1.5">
               <button
                 onClick={() => void doMarkSent()}
@@ -269,6 +274,10 @@ export default function EnquiryDetail({
                   Add EST No.
                 </button>
               )}
+            </span>
+          ) : sentState === "finalized" && onMarkSent ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
+              {missingForSent} item{missingForSent === 1 ? "" : "s"} still need vendor rates (or mark rate available)
             </span>
           ) : null}
           <button 
