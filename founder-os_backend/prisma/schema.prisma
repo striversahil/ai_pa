@@ -810,14 +810,14 @@ model AccountsTaskTemplate {
 }
 
 // One concrete task instance per (template, due date). Status + remark is the
-// daily logging surface: accountants tick done/skip with a remark; overdue is
-// derived (dueDate < today AND status = pending).
+// daily logging surface: accountants tick done / not_done with a remark;
+// past unresolved rows read as incomplete (never rewritten).
 model AccountsTaskLog {
   id           String               @id @default(uuid())
   templateId   String
   template     AccountsTaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   dueDate      String // YYYY-MM-DD (IST)
-  status       String   @default("pending") // pending | done | skipped | overdue
+  status       String   @default("pending") // pending | done | not_done | skipped | overdue (legacy) | inprogress (legacy)
   remark       String?
   doneBy       String?
   // Time taken to finish, entered as hours+minutes on the taskbar and stored
@@ -1014,7 +1014,7 @@ model DigitalMarketingTaskLog {
   templateId   String
   template     DigitalMarketingTaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   dueDate      String // YYYY-MM-DD IST
-  status       String   @default("pending") // pending | inprogress | done | skipped | overdue
+  status       String   @default("pending") // pending | inprogress (legacy) | done | not_done | skipped | overdue (legacy)
   remark       String?
   doneBy       String?
   // Structured metrics for the 4 daily numeric tasks (stored as JSON string).

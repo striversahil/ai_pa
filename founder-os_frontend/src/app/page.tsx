@@ -99,7 +99,7 @@ function AppInner() {
               {(me.user.name || me.user.email || "U").charAt(0).toUpperCase()}
             </div>
           )}
-          <span className="font-heading text-base font-extrabold tracking-tight">Brindavan Udyog</span>
+          <span className="font-heading text-base font-extrabold tracking-tight">Brindavan Udyog India</span>
         </div>
         <button onClick={toggleTheme} className="rounded-lg p-2 text-[var(--text-secondary)] transition hover:bg-[var(--bg-input)]">
           {isDark ? (

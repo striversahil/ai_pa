@@ -3,23 +3,14 @@
 import React, { useState, useEffect } from "react";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { parseMoneyInput, historyDateChip } from "@/types";
+import { RATE_STATUS_LABEL, fmtINR, ceil5, shareKey } from "@/enquiry/pricing";
+import { itemHasUnreviewedQuotes } from "@/enquiry/queue";
 import FlagThread from "@/components/FlagThread";
 import ItemRateForm from "@/components/ItemRateForm";
 
-export const RATE_STATUS_LABEL: Record<string, string> = {
-  "": "Rate Pending",
-  rate_pending: "Rate Pending",
-  rates_received: "Rates Received",
-  finalized: "Finalized",
-  sent: "Sent to Client",
-};
-
-const fmtINR = (n: number | null | undefined): string =>
-  `₹${Number(n || 0).toLocaleString("en-IN")}`;
-
-/** Round UP to the next multiple of 5 (exact multiples stay). The 1e-6
- *  epsilon keeps float dust (e.g. 1050.0000001) from jumping a bracket. */
-export const ceil5 = (x: number): number => Math.ceil((x - 1e-6) / 5) * 5;
+// Re-exported from @/enquiry/pricing (single home for pricing math); kept
+// here so existing imports keep working.
+export { RATE_STATUS_LABEL, fmtINR, ceil5 };
 
 type MarkupMode = "percent" | "final";
 
@@ -48,9 +39,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [savedTick, setSavedTick] = useState(false);
   // Rate-requests back to procurement (incorrect quote / different vendor
   // needed): per-item note overrides applied at save time.
-  const [reqs, setReqs] = useState<Record<number, string | null>>({});
   const [reqOpen, setReqOpen] = useState<number | null>(null);
   const [reqNote, setReqNote] = useState("");
+  const [flagBusy, setFlagBusy] = useState(false);
   // Optional per-item management remark (e.g. "valid 7 days", "transport
   // extra"): saved into the item thread alongside the rates, visible to
   // Sales under the decided rate.
@@ -63,8 +54,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // to the stored flag at save, so live procurement edits never silently
   // unshare). Keyed vendor+rate so appended/dropped rows can't shift them.
   const [shareToggled, setShareToggled] = useState<Record<string, boolean>>({});
-  const shareKey = (i: number, r: any): string =>
-    `${i}|${String(r?.vendor ?? "")}|${Number(r?.rate)}`;
+  // shareKey (vendor+rate identity) lives in @/enquiry/pricing.
   // Bulk decisions: checkboxes select items, then one margin % applies to
   // all, or one combined final ₹ splits proportionally across selected
   // vendor rates (each ceil5; the computed total is shown).
@@ -113,7 +103,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     setFinalInputs(f);
     setDiscountInputs(d);
     setSalesNotes(sn);
-    setReqs({});
     setReqOpen(null);
     setReqNote("");
     setRemarks({});
@@ -308,17 +297,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       if (ri !== undefined && noteEdited) {
         out.rates = (out.rates ?? []).map((r: any, k: number) => k === ri ? { ...r, salesNote: salesNotes[i].trim() || undefined } : r);
       }
-      // Management rate-request (incorrect quote / different vendor needed):
-      // attaches the flag + timestamp; null withdraws an unanswered request.
-      if (reqs[i] !== undefined) {
-        if (reqs[i] === null) {
-          delete out.ratesRequested;
-          delete out.ratesRequestedAt;
-        } else {
-          out.ratesRequested = reqs[i] || "requested";
-          out.ratesRequestedAt = new Date().toISOString();
-        }
-      }
+      // Management rate-request (incorrect quote / different vendor needed)
+      // is sent IMMEDIATELY via sendFlagNow (not staged) — see below. Items
+      // arriving here already carry the stored request, which spreads through
+      // untouched (withdrawing uses withdrawFlagNow's explicit "").
       const c = computeItem(i, it);
       // Final customer discount % (0–100) — management's decided giveaway on
       // this item's vendor rate (before markup). Empty/0 = no discount.
@@ -367,8 +349,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     }
   };
 
-  // Take an item into management-internal sourcing (leaves the procurement
-  // queue), or return it. Saves immediately; markup flow continues.
+  // Return a legacy internal item to procurement (exit path only — marking
+  // NEW items internal is removed; everything flows through procurement).
+  // Saves immediately; markup flow continues.
   const toggleInternal = (i: number, next: boolean) => {
     setSaveError(null);
     const at = new Date().toISOString();
@@ -384,10 +367,48 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     })();
   };
 
-  const submitRequest = (i: number) => {
-    setReqs((prev) => ({ ...prev, [i]: reqNote.trim() }));
-    setReqOpen(null);
-    setReqNote("");
+  // Flag procurement IMMEDIATELY (no separate Save needed): the request is
+  // PATCHed straight away so it can never be lost by closing the panel —
+  // the old staged-then-save flow silently dropped flags on locked
+  // (finalized/sent) enquiries where Save is disabled, so procurement was
+  // never flagged. Reopens a finalized decision server-side.
+  const sendFlagNow = (i: number) => {
+    const note = reqNote.trim();
+    setSaveError(null);
+    setFlagBusy(true);
+    const at = new Date().toISOString();
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, ratesRequested: note || "requested", ratesRequestedAt: at } : it)),
+          false,
+        );
+        setReqOpen(null);
+        setReqNote("");
+      } catch (e: any) {
+        setSaveError(e?.message || "Flag failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+
+  // Withdraw an unanswered request (explicit "" clears server-side).
+  const withdrawFlagNow = (i: number) => {
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, ratesRequested: "" } : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Withdraw failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
   };
 
   const checkedIdx = items
@@ -453,7 +474,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       setDiscountInputs({});
       setSalesNotes({});
       setModes({});
-      setReqs({});
       setReqOpen(null);
       setRemarks({});
       setRemarkOpen(null);
@@ -600,9 +620,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               );
             }
             if (it.rateAvailable) return null; // rate already available — skips Management entirely
-            // Management-internal with no rate yet: enter the sourced rate
-            // here, then mark up + finalize as usual. (Rated internal items
-            // render through the standard flow below.)
+            // Legacy internal rows with no rate yet: enter the sourced rate
+            // here, then mark up + finalize as usual. (Marking NEW items
+            // internal is removed — everything flows through procurement.)
             if (it.internalRates && (it.rates ?? []).length === 0 && !locked) {
               return (
                 <div key={i} className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
@@ -807,6 +827,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         );
                       })()}
                       <p className="text-[10px] text-zinc-500">Committed — sales sees this rate.{(it as any).finalDiscountPercent ? ` Discount ${String((it as any).finalDiscountPercent)}% applied.` : ""}</p>
+                      {itemHasUnreviewedQuotes(it as any) && !revise[i] && (
+                        <p className="text-[11px] font-bold text-amber-400">↓ New vendor quotes since this decision — Revise to review &amp; share them with sales.</p>
+                      )}
                       {locked ? (
                         <button type="button" onClick={() => setRevise((prev) => ({ ...prev, [i]: true }))}
                           className="px-2.5 py-1.5 bg-transparent border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
@@ -896,9 +919,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   {(finalized || sent) && it.finalRate !== undefined && it.finalRate !== null && (
                     <span className="block text-[11px] text-zinc-500">Locked at {fmtINR(it.finalRate)}</span>
                   )}
-                  {(it.ratesRequested || reqs[i]) && (
+                  {it.ratesRequested && (
                     <p className="text-[10px] font-semibold text-indigo-400">
-                      Rates requested from procurement{it.ratesRequested && it.ratesRequested !== "requested" ? `: ${it.ratesRequested}` : "…"}
+                      Rates requested from procurement{it.ratesRequested !== "requested" ? `: ${it.ratesRequested}` : "…"}
                     </p>
                   )}
                   {revise[i] && (
@@ -921,15 +944,16 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         className="w-full px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
                       />
                       <div className="flex gap-2">
-                        <button type="button" onClick={() => submitRequest(i)}
-                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0">
-                          Flag procurement
+                        <button type="button" onClick={() => sendFlagNow(i)} disabled={flagBusy}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-50">
+                          {flagBusy ? "Flagging…" : "Flag procurement"}
                         </button>
                         <button type="button" onClick={() => { setReqOpen(null); setReqNote(""); }}
                           className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
                           Cancel
                         </button>
                       </div>
+                      <p className="text-[10px] text-zinc-500">Sends immediately — procurement is flagged live, no Save needed.</p>
                     </div>
                   ) : (
                     <button type="button" onClick={() => { setReqOpen(i); setReqNote(""); }}
@@ -937,17 +961,20 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       Flag procurement
                     </button>
                   )}
-                  {it.internalRates ? (
+                  {it.ratesRequested && (
+                    <button type="button" onClick={() => withdrawFlagNow(i)} disabled={flagBusy}
+                      className="px-2.5 py-1.5 bg-transparent border-0 text-[11px] font-bold text-zinc-500 hover:text-zinc-300 cursor-pointer disabled:opacity-50">
+                      Withdraw request
+                    </button>
+                  )}
+                  {/* Legacy exit only: items already marked internal can return
+                      to procurement. Marking NEW items internal is removed —
+                      everything flows through the procurement queue. */}
+                  {it.internalRates && (
                     <button type="button" onClick={() => toggleInternal(i, false)}
                       title="Return this item to the procurement queue"
                       className="px-2.5 py-1.5 bg-transparent border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
                       Return to procurement
-                    </button>
-                  ) : (
-                    <button type="button" onClick={() => toggleInternal(i, true)}
-                      title="Management sources this item's rates itself — leaves the procurement queue"
-                      className="px-2.5 py-1.5 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
-                      Handle internally
                     </button>
                   )}
                   {remarkOpen === i ? (

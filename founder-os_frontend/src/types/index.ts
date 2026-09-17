@@ -99,6 +99,12 @@ export interface EnquiryItem {
    *  procurement adds or edits a rate. */
   ratesRequested?: string;
   ratesRequestedAt?: string;
+  /** Sales → procurement alternate request (non-blocking): free text like
+   *  "client wants ABB make" entered via "Request alternate option".
+   *  Needs NO management approval — procurement quotes it as a new rate row
+   *  (which clears it). Sales may withdraw anytime. */
+  variationRequest?: string;
+  variationRequestedAt?: string;
   /** Back-and-forth loop trail (server-authored): flags, remarks, fixes,
    *  requests — oldest first. Visible in procurement. */
   thread?: FlagThreadEntry[];
@@ -118,104 +124,23 @@ export interface FlagThreadEntry {
   at: string;
 }
 
-/** Loop-eligible for Procurement: rate unavailable, NOT management-internal,
- *  and (still unquoted OR management asked for more quotes). Spec-held items
- *  (specIssue) stay visible via the pending enquiry — the row chip shows
- *  their hold state. */
-export function itemNeedsRates(it: Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "ratesRequested">): boolean {
-  return !it?.rateAvailable && !it?.internalRates && (((it?.rates ?? []).length === 0) || !!it?.ratesRequested);
-}
-
-/** Submitted to management: the explicit procurement handoff. Only
- *  submitted enquiries conclude in procurement and enter review. */
-export function isSubmitted(e: { procurementSubmittedAt?: string }): boolean {
-  return !!String(e?.procurementSubmittedAt ?? "").trim();
-}
-
-/** Loop-eligible for Management: rate unavailable, spec undisputed, not
- *  finalized — and either quoted OR management-internal (management enters
- *  the rate itself in the review panel). */
-export function itemNeedsDecision(it: Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate" | "specIssue">): boolean {
-  return !it?.rateAvailable
-    && (((it?.rates ?? []).length > 0) || it?.internalRates === true)
-    && (it?.finalRate === undefined || it?.finalRate === null)
-    && !it?.specIssue;
-}
-
-/** Enquiry-level queue predicates — THE single source of truth for all three
- *  dashboards (backend predicates mirror these; keep them in sync).
- *  Pending and history are DISJOINT: an enquiry is either awaiting work or
- *  done, never both. Empty enquiries (no items yet) are sales-only — they
- *  wait on sales to add items, not on procurement.
- *  Procurement stays ACTIVE until "Enquiry Concluded" (procurementSubmittedAt):
- *  even when every item is quoted, it remains in Active — management sees the
- *  live incoming vendor rates the whole time. */
-/** Fresh unquoted work: client-added lines with no vendor rates and no
- *  decision yet (after submit/finalize/sent). These reopen the procurement
- *  Active queue even on concluded rows — the client keeps asking. */
-export function hasFreshUnquotedWork(e: Pick<Enquiry, "items">): boolean {
-  return (e.items ?? []).some((it) => !it?.rateAvailable && !it?.internalRates && !it?.specIssue
-    && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null));
-}
-
-/** One fresh line is quotable even on a concluded row (its card renders
- *  editable while decided siblings stay locked). */
-export function isFreshQuotableItem(it: Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate" | "specIssue">): boolean {
-  return !it?.rateAvailable && !it?.internalRates && !it?.specIssue
-    && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null);
-}
-
-export function isProcurementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
-  if (isSubmitted(e) && !hasFreshUnquotedWork(e)) return false;
-  const items = e.items ?? [];
-  if (items.length === 0) return false;
-  // Any quotable work (rate not already available, not management-internal)
-  // keeps the enquiry active until the explicit Concluded handoff — flagged
-  // items (awaiting sales fix) and fully-quoted-but-not-yet-concluded both
-  // stay here. Rate-available/internal-only enquiries have no procurement work.
-  const hasQuotable = items.some((it) => !it?.rateAvailable && !it?.internalRates);
-  return hasQuotable;
-}
-
-export function isProcurementHistoryEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
-  const items = e.items ?? [];
-  if (!isSubmitted(e)) return false;
-  // Fresh unquoted lines live in Active (pending above), never double-listed.
-  if (hasFreshUnquotedWork(e)) return false;
-  return items.some((it) => (it.rates ?? []).length > 0 && !it.ratesRequested);
-}
-
-export function isManagementPendingEnquiry(e: Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }): boolean {
-  void isSubmitted; // live visibility — submitted flag no longer gates management
-  const items = e.items ?? [];
-  // Management sees live incoming vendor rates as procurement adds them —
-  // no "Submit to Management" gate. Any item needing a decision appears here
-  // instantly (correct spec, quoted or internal, not yet finalized).
-  return items.some(itemNeedsDecision);
-}
-
-/** Submit readiness: every quotable loop item (correct spec, rate not
- *  already available, not management-internal) carries at least one vendor
- *  rate. Flagged items stay out — they are sales' problem, not procurement's. */
-export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
-  const loop = (e.items ?? []).filter((it) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
-  if (loop.length === 0) return { ok: false, reason: "No quotable items yet" };
-  const unrated = loop.filter((it) => (it?.rates ?? []).length === 0).length;
-  if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates` };
-  const flagged = (e.items ?? []).filter((it) => it?.specIssue).length;
-  if (flagged > 0) return { ok: false, reason: `${flagged} item${flagged === 1 ? "" : "s"} awaiting sales spec fix` };
-  return { ok: true, reason: "" };
-}
-
-export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items">): boolean {
-  const items = e.items ?? [];
-  if (items.length === 0) return false;
-  if (isManagementPendingEnquiry(e)) return false;
-  // History only when every quotable item (correct spec, not rateAvailable) has a finalRate — partial finalizes stay in Active
-  const loop = items.filter((it) => !it?.specIssue && !it?.rateAvailable);
-  if (loop.length === 0) return false;
-  return loop.every((it) => it.finalRate !== undefined && it.finalRate !== null);
-}
+// Queue predicates live in @/enquiry/queue (single frontend source of truth,
+// mirroring the backend `modules/enquiries/queues.ts`). Re-exported here so
+// existing `@/types` imports keep working.
+export {
+  itemNeedsRates,
+  isSubmitted,
+  itemNeedsDecision,
+  hasFreshUnquotedWork,
+  hasPendingVariationWork,
+  itemHasUnreviewedQuotes,
+  isFreshQuotableItem,
+  isProcurementPendingEnquiry,
+  isProcurementHistoryEnquiry,
+  isManagementPendingEnquiry,
+  procurementSubmittable,
+  isManagementHistoryEnquiry,
+} from "@/enquiry/queue";
 
 export interface Enquiry {
   id: string;

@@ -5,8 +5,8 @@ import PwaRegister from "@/components/PwaRegister";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Brindavan Udyog (India) - B2B Enquiry Tracker",
-  description: "Industrial grain milling accessories and bag closing machine enquiry tracking panel.",
+  title: "Brindavan Udyog India",
+  description: "Brindavan Udyog India — executive assistant: WhatsApp, Zoho estimates, CRM, dashboards and team chat.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: "/icons/icon-192.png",
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Founder OS",
+    title: "Brindavan Udyog India",
   },
   themeColor: "#6366f1",
 };

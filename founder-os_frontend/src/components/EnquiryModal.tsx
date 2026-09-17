@@ -206,6 +206,14 @@ export default function EnquiryModal({
               />
             </div>
 
+            {/* Awareness: paste the quotation/description text — product/part
+                photos are NOT accepted. Shown on the log form so sales agents
+                see it at the moment they attach photos. */}
+            <div className="rounded-xl overflow-hidden border border-[var(--border-card)]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/accepted_awareness.png" alt="Accepted: quotation / description text. Not accepted: product image / physical part photo." className="w-full h-auto block" loading="lazy" />
+            </div>
+
             <div
               className={`space-y-2 rounded-xl p-2 -m-2 transition-colors ${photoDragOver ? "bg-brand-indigo/10 outline-2 outline-dashed outline-brand-indigo" : ""}`}
               onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setPhotoDragOver(true); } }}

@@ -3,7 +3,9 @@ import { runDailyRollover, getAccountsDashboardData } from './service';
 
 /**
  * Accounts automation: daily rollover ensures one log instance per due
- * recurring template + flags stale pendings overdue. Deterministic, no LLM.
+ * recurring template. Per-day model — past unresolved rows stay as-is and
+ * read as not-done in the Incomplete tab (never rewritten). Deterministic,
+ * no LLM.
  * Live cadence: POST /api/trigger/accounts (GH cron or manual).
  */
 export async function handler(_ctx: AutomationContext): Promise<void> {

@@ -95,7 +95,7 @@ export default function MobileDrawer({
               </svg>
             </div>
             <div className="leading-tight">
-              <span className="block font-heading text-sm font-extrabold tracking-tight text-white">Brindavan Udyog</span>
+              <span className="block font-heading text-sm font-extrabold tracking-tight text-white">Brindavan Udyog India</span>
               <span className="block text-[10px] font-medium uppercase tracking-wider text-white/40">Founder OS</span>
             </div>
           </div>

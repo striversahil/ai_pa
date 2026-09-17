@@ -1,35 +1,58 @@
-import { Enquiry, EnquiryStore, parseItemMedia, parseItemRates, numOrUndefined, rateIdxOrUndefined, normalizeEnquirySource, nextDailyNo, isoOrUndefined, enquiryLabelText, normalizeQty, parseFlagThread, normalizeVisibility, type FlagThreadBy, type FlagThreadEntry } from "./store";
+// routes.ts — enquiry CRUD orchestrator (thin).
+//
+// Domain logic lives in focused modules; this file only wires store calls,
+// scope checks, and live broadcasts:
+//   types.ts    — row/item/comment/thread shapes + daily-no/label helpers
+//   parse.ts    — pure parsers (media/rates/thread/qty/money/ISO)
+//   queues.ts   — queue predicates (which enquiry sits in which dashboard)
+//   scopes.ts   — authz (isRestrictedViewer/canManageRates), margin policy,
+//                 money validation, live summaries, creator-agent resolve
+//   redaction.ts— procurement-safe AI redaction cache (hash-verified)
+//   update.ts   — item lifecycles (normalizeItemWrites/applyRateLifecycles/…)
+//   store.ts    — persistence (D1/Memory/Prisma via store-prisma.ts)
+// Re-exports below preserve existing `EnquiryRoutes.*` import paths.
+import type { Enquiry, EnquiryStore, FlagThreadBy, FlagThreadEntry } from "./types";
+import {
+  parseItemMedia,
+  parseItemRates,
+  numOrUndefined,
+  rateIdxOrUndefined,
+  normalizeQty,
+  parseFlagThread,
+  normalizeVisibility,
+  isoOrUndefined,
+} from "./parse";
+import { normalizeEnquirySource, nextDailyNo, enquiryLabelText } from "./types";
+import {
+  isRestrictedViewer,
+  canManageRates,
+  redactEnquiryPII,
+  stripMarginFields,
+  normalizeMoneyInput,
+  validateRatesInput,
+  summarizeEnquiry,
+  resolveCreatorAgentId,
+  type EnquiryLiveSummary,
+} from "./scopes";
+import { asRedactedViewCache, hashItem } from "./redaction";
+export {
+  isRestrictedViewer,
+  canManageRates,
+  redactEnquiryPII,
+  stripMarginFields,
+  normalizeMoneyInput,
+  validateRatesInput,
+  summarizeEnquiry,
+  resolveCreatorAgentId,
+  asRedactedViewCache,
+  hashItem,
+};
+export type { EnquiryLiveSummary };
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
 import { cacheGet } from "../../shared/cache";
 import { linkEnquiryEstimate } from "../../automations/telecalling/service";
-
-/** v1 cache entries (description-only) predate the comments/requirements map —
- *  treat them as missing so they get re-enriched, never served. The `items`
- *  map (added later) defaults to {} so v2 entries stay valid. */
-function asRedactedViewCache(e: unknown): RedactedViewCache | null {
-  if (!e || typeof e !== 'object') return null;
-  const v = e as Record<string, unknown>;
-  if (typeof v.descHash !== 'string') return null;
-  if (!v.comments || typeof v.comments !== 'object') return null;
-  if (!v.requirements || typeof v.requirements !== 'object') return null;
-  const out = e as RedactedViewCache;
-  if (!out.items || typeof out.items !== 'object') out.items = {};
-  return out;
-}
-
-/** Stable hash of one sales line item — serve-time freshness check for the
- *  cached procurement rewrite. Must match the writer (runEnquiryExtraction).
- *  Media URLs pass through unredacted (technical drawings, same as the
- *  enquiry-level imageUrls) but ARE part of the hash, so a media change
- *  re-triggers enrichment and is never served stale. */
-export function hashItem(item: { name: string; qty: string; spec: string; media?: Array<{ type: string; url: string }> }): string {
-  const media = Array.isArray(item?.media)
-    ? item.media.map((m) => `${m?.type === 'video' ? 'v' : 'i'}:${String(m?.url ?? '')}`)
-    : [];
-  return hashText(JSON.stringify([String(item?.name ?? ''), String(item?.qty ?? ''), String(item?.spec ?? ''), media]));
-}
 
 export interface EnquiryResult {
   status: number;
@@ -39,36 +62,6 @@ export interface EnquiryResult {
 
 const json = (status: number, body: any): EnquiryResult => ({ status, body });
 const err = (message: string, status = 403): EnquiryResult => json(status, { error: message });
-
-/**
- * Procurement-safe viewer check (mirrors the telecalling scoped-view pattern).
- * Full client PII + lead attribution + the agent roster is served ONLY to
- * admins, MIS holders, sales-scope holders, and holders of the
- * `enquiry-tracker` dashboard grant (the admin panel assigns that scope to
- * the sales role — without it, granted sales staff land in the restricted
- * view with an empty Lead By dropdown). Every other authenticated viewer
- * (e.g. procurement staff) gets the same pipeline with PII blanked and an
- * empty agent roster — enforced in the API, never just hidden in the UI.
- */
-export function isRestrictedViewer(me: MeResponse): boolean {
-  if (!me) return true;
-  if (me.isAdmin || (me as any).isRoot) return false;
-  const scopes: string[] = (me as any).scopes || [];
-  if (scopes.includes('mis') || scopes.includes('sales') || scopes.includes('enquiry-tracker')) return false;
-  return true;
-}
-
-const PII_FIELDS = ['clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'estNumber'] as const;
-
-// Status is hidden from restricted viewers too, but it is NOT a scrub term:
-// values like "new"/"won" would nuke ordinary words in free text.
-const HIDDEN_FIELDS = ['status'] as const;
-
-export function redactEnquiryPII<T extends Record<string, any>>(enquiry: T): T {
-  const out: Record<string, any> = { ...enquiry };
-  for (const f of [...PII_FIELDS, ...HIDDEN_FIELDS]) out[f] = '';
-  return out as T;
-}
 
 // ── Procurement view: AI-only redaction ─────────────────────────────────────
 // Restricted viewers NEVER receive raw free text. The procurement rewrite
@@ -128,7 +121,10 @@ function pick(data: any): Partial<Enquiry> | null {
         rateAvailable: r?.rateAvailable === true,
         internalRates: r?.internalRates === true,
         internalRatesAt: isoOrUndefined(r?.internalRatesAt),
-        ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
+        // ""-preserving: management withdraws a rate request by saving an
+        // explicit empty string (mirrors variationRequest below). Absent =
+        // leave stored; answering procurement clears via rate change.
+        ratesRequested: (r as any)?.ratesRequested !== undefined ? String((r as any).ratesRequested).slice(0, 500) : undefined,
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         // ""-preserving (unlike the fields above): sales withdraws a
         // variation request by saving an explicit empty string.
@@ -156,164 +152,6 @@ function pick(data: any): Partial<Enquiry> | null {
     (out as any).procurementSubmittedAt = v ? (isoOrUndefined(v) ?? '') : '';
   }
   return Object.keys(out).length ? out : null;
-}
-
-/** Privileged = can decide markup + finalize rates (admin / root / MIS). */
-export function canManageRates(me: MeResponse): boolean {
-  if (!me) return false;
-  if (me.isAdmin || (me as any).isRoot) return true;
-  return ((me as any).scopes || []).includes('mis');
-}
-
-/** Margin fields are Management-only: non-privileged readers (sales AND
- *  procurement) see final rates but never the chosen vendor NAME or the
- *  markup. Final discount % is visible to sales (it's the customer offer),
- *  but vendor-level discounts stay hidden. Stored rows untouched — only API
- *  response. */
-export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T {
-  if (!enquiry || !Array.isArray((enquiry as any).items)) return enquiry;
-  return {
-    ...(enquiry as any),
-    items: (enquiry as any).items.map((it: any) => {
-      if (!it || typeof it !== 'object') return it;
-      const { selectedVendor, markup, ...rest } = it;
-      // Vendor discounts are procurement→management info only; strip from sales.
-      if (Array.isArray((rest as any).rates)) {
-        (rest as any).rates = (rest as any).rates.map((r: any) => {
-          if (!r || typeof r !== 'object') return r;
-          const { discountPercent, ...rr } = r;
-          if (selectedVendor && r.vendor === selectedVendor) return { ...rr, selected: true };
-          return rr;
-        });
-      }
-      return rest;
-    }),
-  } as T;
-}
-
-/** Money input normalization shared with validation: strips currency
- *  symbols, thousand separators and whitespace so "₹1,200.50" saves as
- *  1200.50 instead of being silently dropped by the strict parser. */
-export function normalizeMoneyInput(v: unknown): number | undefined {
-  if (v === undefined || v === null) return undefined;
-  const s = String(v).trim().replace(/[₹\s,]/g, '');
-  if (!/^\d+(\.\d+)?$/.test(s)) return undefined;
-  const n = Number(s);
-  return Number.isFinite(n) && n >= 0 ? n : undefined;
-}
-
-/** Rate validation: a vendor name with an unparseable amount is a 400 with a
- *  human message — never a silent drop (the old parse-then-filter made quotes
- *  "save" and then vanish). Vendor-less rows are still ignored. */
-export function validateRatesInput(items: unknown): string | null {
-  if (!Array.isArray(items)) return null;
-  for (let i = 0; i < items.length; i++) {
-    for (const f of ['markup', 'finalRate', 'expectedRate'] as const) {
-      const raw = (items[i] as any)?.[f];
-      if (raw !== undefined && raw !== null && raw !== '' && normalizeMoneyInput(raw) === undefined) {
-        return `Item ${i + 1}: "${String(raw)}" is not a valid ${f === 'markup' ? 'markup' : f === 'finalRate' ? 'final rate' : 'expected price'} — use digits only`;
-      }
-    }
-    const fd = (items[i] as any)?.finalDiscountPercent;
-    if (fd !== undefined && fd !== null && fd !== '') {
-      const n = Number(String(fd).trim());
-      if (!Number.isFinite(n) || n < 0 || n > 100) return `Item ${i + 1}: discount must be 0–100%`;
-    }
-    const rates = (items[i] as any)?.rates;
-    if (!Array.isArray(rates)) continue;
-    for (let j = 0; j < rates.length; j++) {
-      const r = rates[j] as any;
-      if (!String(r?.vendor ?? '').trim()) continue;
-      if (normalizeMoneyInput(r?.rate) === undefined) {
-        return `Item ${i + 1}, quote ${j + 1}: "${String(r?.rate ?? '')}" is not a valid amount — use digits only (e.g. 1200 or 1200.50)`;
-      }
-      const d = r?.discountPercent;
-      if (d !== undefined && d !== null && d !== '') {
-        const n = Number(String(d).trim());
-        if (!Number.isFinite(n) || n < 0 || n > 100) return `Item ${i + 1}, quote ${j + 1}: discount must be 0–100%`;
-      }
-    }
-  }
-  return null;
-}
-
-// ── Scope-safe live summaries ────────────────────────────────────────────────
-// The EventHub fans out GLOBALLY (no per-user filtering), so live payloads
-// must never carry PII or free text: no description, comments, requirements,
-// client fields, or per-vendor rates. Every view refetches its own scoped
-// payload on these events (debounced) instead of applying a full row.
-export interface EnquiryLiveSummary {
-  id: string;
-  dailyNo: number | null;
-  source: string;
-  createdAt: string;
-  updatedAt: string;
-  title: string;
-  rateStatus: string;
-  ratesCount: number;
-  flaggedCount: number;
-  specDiffCount: number;
-  requestedCount: number;
-}
-
-export function summarizeEnquiry(e: any): EnquiryLiveSummary {
-  const items = Array.isArray(e?.items) ? e.items : [];
-  let ratesCount = 0;
-  let flaggedCount = 0;
-  let specDiffCount = 0;
-  let requestedCount = 0;
-  for (const it of items) {
-    ratesCount += Array.isArray((it as any)?.rates) ? (it as any).rates.length : 0;
-    if ((it as any)?.specIssue) flaggedCount += 1;
-    if ((it as any)?.ratesRequested) requestedCount += 1;
-    for (const r of (Array.isArray((it as any)?.rates) ? (it as any).rates : [])) {
-      if ((r as any)?.specSame === false) specDiffCount += 1;
-    }
-  }
-  return {
-    id: String(e?.id ?? ''),
-    dailyNo: e?.dailyNo === undefined || e?.dailyNo === null ? null : Number(e.dailyNo),
-    source: String(e?.source ?? 'TL'),
-    createdAt: String(e?.createdAt ?? ''),
-    updatedAt: String((e as any)?.updatedAt ?? e?.createdAt ?? ''),
-    title: String(e?.title ?? ''),
-    rateStatus: String((e as any)?.rateStatus ?? ''),
-    ratesCount,
-    flaggedCount,
-    specDiffCount,
-    requestedCount,
-  };
-}
-
-/** Lead inference (telecalling creator-first pattern): resolve the signed-in
- *  user to a sales agent via their email on the Telecaller roster. Falls
- *  back to Google display-name matching (roster rows often lack an email).
- *  Returns the telecaller id, or null when no roster row matches. */
-export async function resolveCreatorAgentId(prisma: any, me: MeResponse): Promise<string | null> {
-  const email = String((me as any)?.user?.email ?? '').toLowerCase().trim();
-  const name = String((me as any)?.user?.name ?? '').toLowerCase().trim();
-  if (!email && !name) return null;
-  // Local-part comparison covers roster emails stored bare (`buisales4`)
-  // vs full logins (`buisales4@…`), and vice versa.
-  const local = (e: string): string => e.split('@')[0].trim();
-  try {
-    const roster = await prisma.telecaller.findMany();
-    const rows = ((roster as any[]) ?? []).filter((t) => t && !t?.deleted);
-    if (email) {
-      const hit = rows.find((t) => {
-        const e = String(t?.email ?? '').toLowerCase().trim();
-        return e && (e === email || local(e) === local(email));
-      });
-      if (hit) return String(hit.id);
-    }
-    if (name) {
-      const hit = rows.find((t) => String(t?.name ?? '').toLowerCase().trim() === name);
-      if (hit) return String(hit.id);
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 export interface RedactOpts {
@@ -455,6 +293,13 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
       if ((it as any)?.ratesRequested) {
         served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
         if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
+      }
+      // Sales alternate-requests are live workflow metadata too: procurement
+      // must see them (banner + queue) the moment sales asks — never gated
+      // on the AI rewrite cache.
+      if ((it as any)?.variationRequest) {
+        served.variationRequest = String((it as any).variationRequest).slice(0, 500);
+        if ((it as any)?.variationRequestedAt) served.variationRequestedAt = String((it as any).variationRequestedAt);
       }
       // Loop trail is live workflow metadata too: always the stored values.
       served.thread = parseFlagThread((it as any)?.thread);

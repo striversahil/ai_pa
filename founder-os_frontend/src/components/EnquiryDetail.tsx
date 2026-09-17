@@ -17,7 +17,7 @@ interface EnquiryDetailProps {
   onUpdateStatus: (id: string, newStatus: Enquiry["status"]) => void;
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
-  onUpdateItems?: (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => void;
+  onUpdateItems?: (id: string, items: EnquiryItem[]) => void;
   /** Accept a price-memory suggestion: marks the item rate-available (skips the loop). */
   onAcceptSuggestion?: (id: string, itemIndex: number) => Promise<void>;
   onMarkSent?: (id: string) => Promise<void>;

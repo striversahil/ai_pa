@@ -15,11 +15,6 @@ interface ProcurementItemCardProps {
   onRemoveRate: (rateIdx: number) => void;
   onFlag: (reason: string) => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
-  /** Management-internal handoff (MIS-gated by the parent): mark the item
-   *  for management sourcing, or return it to the procurement queue. */
-  canMarkInternal?: boolean;
-  onMarkInternal?: () => void;
-  onUnmarkInternal?: () => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
   /** Late-quote window: the row is finalized (committed) but still accepting
@@ -35,7 +30,7 @@ interface ProcurementItemCardProps {
 // vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
   item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox,
-  canMarkInternal = false, onMarkInternal, onUnmarkInternal, readOnly = false,
+  readOnly = false,
   lateQuote = false,
 }: ProcurementItemCardProps) {
   const [showAdd, setShowAdd] = useState(false);
@@ -162,6 +157,16 @@ export default function ProcurementItemCard({
           )}
           <p className="mt-1 text-[var(--text-tertiary)]">
             Add or edit a rate below to answer — the request clears automatically.
+          </p>
+        </div>
+      )}
+
+      {(item as any).variationRequest && (
+        <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5 text-[11px] leading-relaxed">
+          <p className="font-extrabold text-sky-600 dark:text-sky-400 uppercase tracking-wide text-[10px]">Sales requested an alternate option</p>
+          <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((item as any).variationRequest)}</p>
+          <p className="mt-1 text-[var(--text-tertiary)]">
+            Quote it as a new vendor rate below — the request clears automatically.
           </p>
         </div>
       )}
@@ -321,23 +326,6 @@ export default function ProcurementItemCard({
         </div>
       )}
 
-      {canMarkInternal && !locked && (
-        <div className="flex flex-wrap items-center gap-2 pt-0.5">
-          {item.internalRates ? (
-            <button type="button" onClick={onUnmarkInternal}
-              title="Return this item to the procurement queue"
-              className="px-2.5 py-1.5 bg-transparent border border-violet-500/40 text-violet-500 hover:bg-violet-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
-              Return to procurement
-            </button>
-          ) : (
-            <button type="button" onClick={onMarkInternal}
-              title="Management sources this item's rates itself — leaves the procurement queue"
-              className="px-2.5 py-1.5 bg-violet-500/10 text-violet-500 hover:bg-violet-500/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
-              Handle internally
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

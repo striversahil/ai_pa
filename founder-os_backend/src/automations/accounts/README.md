@@ -1,12 +1,15 @@
 # Accounts
 
 Recurring accounts/compliance taskbar — the accounts-team equivalent of the
-telecalling roster + MIS controller.
+telecalling roster + MIS controller. Per-day model: every task gets a fresh
+instance each day it is due; anything not done by EOD stays on its own day as
+"not done" and surfaces in the Incomplete tab (no overdue rewrite, no
+carryover status change). Deterministic, no LLM.
 
 Files:
 
-- `index.ts` — `handler()` rolls today's task instances forward + flags
-  overdue; `data` serves `GET /api/automations/accounts/data`.
+- `index.ts` — `handler()` rolls today's task instances forward;
+  `data` serves `GET /api/automations/accounts/data`.
 - `service.ts` — everything: roster, templates, log instances, dashboard agg.
 - `rule.json` — handler, daily `30 3 * * *` (03:30 IST rollover), scope `accounts`.
 
@@ -19,9 +22,12 @@ Files:
   daily|weekly|monthly|quarterly|yearly, ownerRole senior|junior|either,
   dueDay, dueMonth, active`). MIS-owned (`/api/accounts/templates`).
 - **AccountsTaskLog** — one instance per `(templateId, dueDate)`. Accountants
-  log `done|skipped` + free-text `remark` from the taskbar; anything still
-  `pending` past its due date reads `overdue` (derived at serve time, and
-  materialised by the daily handler).
+  log `done` / `not_done` (explicitly conceded with reason + owner) + free-text
+  `remark` (+ optional time + proof files) from the taskbar; the UI autosaves
+  remark/time/owner while typing (no Save button) and offers Done / Not Done /
+  Pending (no In Progress). Anything still open past its due date reads
+  `incomplete` ("Not Done") at serve time and lists in the Incomplete tab —
+  legacy `overdue` / `inprogress` rows render the same way.
 
 Due-date grammar (`ruleType` + `ruleJson`, source of truth
 `data/accounts_follow_up.json`): `not_applicable` (daily → every working day

@@ -4,10 +4,12 @@ import { cached, cacheDel } from '../../shared/cache';
 
 export const FREQUENCIES = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
 export const OWNER_ROLES = ['manager', 'either'] as const;
-// Live workflow: pending → inprogress → done. `skipped` is legacy (old UI
-// offered it; no longer offered, still rendered). `overdue` is materialised
-// by the rollover for stale pendings/in-progress rows.
-export const LOG_STATUSES = ['pending', 'inprogress', 'done', 'skipped'] as const;
+// Per-day workflow: pending → done, or pending → not_done (explicitly conceded
+// with a reason + owner). `inprogress` / `skipped` / `overdue` are legacy (old
+// UI offered inprogress; rollover once materialised overdue). Tasks never carry
+// over: anything not done by EOD stays on its own day as "not done" and
+// surfaces in the Incomplete tab. Past rows are never rewritten.
+export const LOG_STATUSES = ['pending', 'inprogress', 'done', 'skipped', 'not_done'] as const;
 
 const DATA_TTL_MS = 5 * 60 * 1000;
 const DATA_CACHE_PREFIX = 'digital-marketing:dashboard:';
@@ -155,6 +157,48 @@ export function isDueOn(t: any, dateStr: string): boolean {
   return legacyDueOn(t, y, m, d, wd, dim);
 }
 
+// ── Range-window grace ─────────────────────────────────────────────────────
+// Window rules (`day_range`, `month_day_range`, `week_of_month`, or a matching
+// window inside `multi_occurrence`) are due EVERY day of a span, and the span —
+// not each day — is the deadline. While the window is still open (t is due on
+// `dateStr` via a window rule), earlier unresolved days inside the SAME window
+// are grace: the card stays plain pending, no red. Only once the last day
+// passes do they read incomplete. Single-occasion rules (daily, fixed_day,
+// multiple_days, weekday) get no grace — a missed day turns red next day.
+/** Rule types whose span (not each day) is the deadline. */
+const WINDOW_RULES = new Set(['day_range', 'month_day_range', 'week_of_month']);
+
+function windowMatchToday(rule: any, t: any, y: number, m: number, d: number, wd: number, dim: number): boolean {
+  if (!rule || typeof rule !== 'object') return false;
+  const type = String(rule.type || '');
+  if (type === 'multi_occurrence') {
+    return (Array.isArray(rule.occurrences) ? rule.occurrences : []).some((o: any) =>
+      windowMatchToday(o, t, y, m, d, wd, dim),
+    );
+  }
+  if (!WINDOW_RULES.has(type)) return false;
+  return evalRule(rule, y, m, d, wd, dim, String((t as any)?.frequency || 'daily'));
+}
+
+/** Grace-window start (inclusive) for template `t` as of `dateStr`, or null.
+ *  Non-null only while the window is still open. Unresolved instance dates in
+ *  [start, dateStr) are grace — not misses. */
+export function windowGraceStart(t: any, dateStr: string): string | null {
+  const rule = parseRule(t);
+  if (!rule) return null;
+  const { y, m, d } = parseDay(dateStr);
+  const dim = daysInMonth(y, m);
+  const wd = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();
+  if (!windowMatchToday(rule, t, y, m, d, wd, dim)) return null;
+  let start = dateStr;
+  let cur = addDays(dateStr, -1);
+  for (let i = 0; i < 370 && isDueOn(t, cur); i++) {
+    start = cur;
+    cur = addDays(cur, -1);
+  }
+  return start;
+}
+
 /** Real follow-up list (generated from data/accounts_follow_up.json). */
 import { SEED_TASKS } from './seed-tasks';
 
@@ -203,28 +247,20 @@ export async function ensureInstances(dateStr: string): Promise<number> {
   }
 }
 
-/** Mark stale pending rows overdue (materialised reminder state). */
-export async function flagOverdue(todayStr: string): Promise<number> {
-  const stale = await prisma.digitalMarketingTaskLog.findMany({
-    where: { dueDate: { lt: todayStr }, status: 'pending' },
-    select: { id: true },
-    take: 500,
-  });
-  let n = 0;
-  for (const r of stale as any[]) {
-    try {
-      await prisma.digitalMarketingTaskLog.update({ where: { id: r.id }, data: { status: 'overdue' } });
-      n++;
-    } catch { /* ignore */ }
-  }
-  return n;
+/** No-op since the per-day model: past unresolved rows are NOT rewritten.
+ *  They stay pending/inprogress on their own day and read as "not done" in
+ *  the Incomplete tab. Legacy `overdue` rows (materialised before this
+ *  change) are still treated as incomplete at serve time. Kept for the
+ *  rollover call-site compat. */
+export async function flagOverdue(_todayStr: string): Promise<number> {
+  return 0;
 }
 
 /**
  * Carryover: unresolved (pending/overdue/inprogress) instances of the given
  * templates from BEFORE `dateStr` (lookback window). The today-only taskbar
  * would otherwise hide a missed window day behind today's fresh instance —
- * this map lets today's row wear a "missed 15th" badge and count as overdue.
+ * this map lets today's row wear a "missed 15th" badge and count as incomplete.
  */
 export async function getCarriedOverdue(
   templateIds: string[], dateStr: string, lookbackDays = 120,
@@ -236,7 +272,7 @@ export async function getCarriedOverdue(
     where: {
       templateId: { in: templateIds },
       dueDate: { gte: from, lt: dateStr },
-      status: { in: ['pending', 'overdue', 'inprogress'] },
+      status: { in: ['pending', 'overdue', 'inprogress', 'not_done'] },
     },
     select: { templateId: true, dueDate: true },
     orderBy: { dueDate: 'asc' },
@@ -297,6 +333,20 @@ async function computeDashboard(
   const inLane = (t: any) => !laneEnforced || (laneRole !== null && (t.ownerRole === 'either' || t.ownerRole === laneRole));
   const dueTemplates = active.filter((t) => inLane(t) && isDueOn(t, dateStr));
   const carried = await getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr);
+  // Range grace: while a window is still open, earlier unresolved days inside
+  // the same window are grace (plain pending, no red) — strip them from the
+  // carryover so neither today's card nor the Incomplete tray counts them.
+  const graceByTemplate = new Map<string, string>();
+  for (const t of dueTemplates as any[]) {
+    const g = windowGraceStart(t, dateStr);
+    if (g) graceByTemplate.set(String(t.id), g);
+  }
+  const carriedEffective = new Map<string, string[]>();
+  for (const [k, v] of carried) {
+    const g = graceByTemplate.get(k);
+    const kept = g ? v.filter((dd) => dd < g) : v;
+    if (kept.length) carriedEffective.set(k, kept);
+  }
   const filesByLog = new Map<string, any[]>();
   for (const f of attachments as any[]) {
     const k = String(f.logId);
@@ -305,15 +355,15 @@ async function computeDashboard(
   }
   // Include due-but-not-yet-instantiated templates defensively.
   // Repeat rule: EVERY due template gets its own fresh entry each day even
-  // when an older instance of the same task is still overdue — the overdue
-  // row stays in the Overdue tray with its own days-overdue count, and today
+  // when an older instance of the same task is still not done — the missed
+  // row stays in the Incomplete tray with its own days-missed count, and today
   // always shows as a new entry (never suppressed by the backlog).
   const items = dueTemplates
     .map((t) => {
       const log = byTemplate.get(String(t.id));
       const status = log?.status ?? 'pending';
-      const missed = carried.get(String(t.id)) ?? [];
-      const isOverdueRow = missed.length > 0 || status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr());
+      const missed = carriedEffective.get(String(t.id)) ?? [];
+      const isOverdueRow = missed.length > 0 || status === 'overdue' || status === 'not_done' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr());
       let metricsSchema: any = null;
       try { metricsSchema = t.metricsSchema ? JSON.parse(String(t.metricsSchema)) : null; } catch { metricsSchema = null; }
       let metricsJson: any = null;
@@ -341,38 +391,44 @@ async function computeDashboard(
         accountantName: log?.accountant?.name ?? null,
         updatedAt: log?.updatedAt ?? null,
         attachments: log ? (filesByLog.get(String(log.id)) ?? []) : [],
-        // Missed earlier window days (carryover) + stale materialised rows.
+        // Missed earlier window days (carryover) + stale legacy rows.
         missed,
         overdue: isOverdueRow,
-        // Days overdue for this card: oldest missed day wins; else the row's
-        // own past-due age. 0 = not overdue.
+        incomplete: isOverdueRow,
+        // Days missed for this card: oldest missed day wins; else the row's
+        // own past-due age. 0 = complete-able (fresh day-1 entries are never incomplete).
         daysOverdue: missed.length > 0
+          ? diffDays(missed[0], dateStr)
+          : (status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr() && (log as any)?.dueDate)
+            ? diffDays(String((log as any)?.dueDate ?? dateStr), dateStr)
+            : 0),
+        daysIncomplete: missed.length > 0
           ? diffDays(missed[0], dateStr)
           : (status === 'overdue' || ((status === 'pending' || status === 'inprogress') && String(dateStr) < istDateStr() && (log as any)?.dueDate)
             ? diffDays(String((log as any)?.dueDate ?? dateStr), dateStr)
             : 0),
       };
     });
-  const OPEN = new Set(['pending', 'inprogress', 'overdue']);
+  const OPEN = new Set(['pending', 'inprogress', 'overdue', 'not_done']);
   const overdueCount = items.filter((i) => i.overdue && i.status !== 'done' && i.status !== 'skipped').length;
   const openCount = items.filter((i) => OPEN.has(i.status)).length;
   const inProgressCount = items.filter((i) => i.status === 'inprogress').length;
   const doneCount = items.filter((i) => i.status === 'done').length;
   const split = (role: string) => items.filter((i) => i.ownerRole === role || i.ownerRole === 'either');
-  // Frequency breakdown for TODAY — lets the dashboard show daily / weekly / monthly / quarterly / yearly completion vs overdue.
+  // Frequency breakdown for TODAY — lets the dashboard show daily / weekly / monthly / quarterly / yearly completion vs incomplete.
   const FREQ_ORDER = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
   const freqStats = FREQ_ORDER.map((freq) => {
     const group = items.filter((i) => i.frequency === freq);
     const total = group.length;
     const done = group.filter((i) => i.status === 'done').length;
-    const overdue = group.filter((i) => i.overdue && i.status !== 'done' && i.status !== 'skipped').length;
+    const overdue = group.filter((i) => (i.overdue || i.status === 'not_done') && i.status !== 'done' && i.status !== 'skipped').length;
     const inprogress = group.filter((i) => i.status === 'inprogress').length;
     const pending = group.filter((i) => i.status === 'pending' || i.status === 'overdue').length;
     const completionPct = total > 0 ? Math.round((done / total) * 100) : 100;
-    return { frequency: freq, total, done, pending, inprogress, overdue, completionPct };
+    return { frequency: freq, total, done, pending, inprogress, overdue, incomplete: overdue, completionPct };
   });
   // Reference tasks with no fixed date (variable_per_item / to_be_decided):
-  // always visible, never auto-instantiated, never overdue.
+  // always visible, never auto-instantiated, never incomplete.
   const unscheduled = (templates as any[])
     .filter((t) => inLane(t) && UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')))
     .map((t) => {
@@ -392,13 +448,15 @@ async function computeDashboard(
         metricsSchema,
       };
     });
-  // Overdue tray: EVERY unresolved instance BEFORE today (same 120-day window
+  // Incomplete tray: EVERY unresolved instance BEFORE today (same 120-day window
   // as carryover, capped at 500). Each repeat shows as its own row — a daily
-  // missed 3 days in a row lists 3 rows, each with its own days-overdue age.
+  // missed 3 days in a row lists 3 rows, each with its own days-missed age.
+  // Per-day model: rows are never rewritten to `overdue`; legacy `overdue`
+  // rows are included as not-done.
   const overdueLogs = await (prisma as any).digitalMarketingTaskLog.findMany({
     where: {
       dueDate: { gte: addDays(dateStr, -120), lt: dateStr },
-      status: { in: ['pending', 'overdue', 'inprogress'] },
+      status: { in: ['pending', 'overdue', 'inprogress', 'not_done'] },
     },
     include: { template: true, accountant: true },
     orderBy: { dueDate: 'asc' },
@@ -419,6 +477,12 @@ async function computeDashboard(
   }
   const overdueList = (overdueLogs as any[])
     .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
+    // Range grace: unresolved rows inside a still-open window stay out of the
+    // Incomplete tray until the window's last day passes.
+    .filter((log: any) => {
+      const g = graceByTemplate.get(String((log as any).templateId));
+      return !g || String((log as any).dueDate) < g;
+    })
     .map((log: any) => {
       const t: any = log.template;
       let metricsSchema: any = null;
@@ -451,7 +515,9 @@ async function computeDashboard(
         attachments: overdueFilesByLog.get(String(log.id)) ?? [],
         missed: [],
         overdue: true,
+        incomplete: true,
         daysOverdue: diffDays(String(log.dueDate), dateStr),
+        daysIncomplete: diffDays(String(log.dueDate), dateStr),
       };
     });
   // Historical done — last 30 days BEFORE today, lane-scoped, capped.
@@ -512,6 +578,7 @@ async function computeDashboard(
         attachments: historyFilesByLog.get(String(log.id)) ?? [],
         missed: [],
         overdue: false,
+        incomplete: false,
       };
     });
   // Active Meta Ads campaign window (Saturday start → daily capture during run).
@@ -535,6 +602,7 @@ async function computeDashboard(
       (todayRun as any).campaignCarried = true;
     }
   }
+  const team = await computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs });
   return {
     meta: {
       date: dateStr,
@@ -544,6 +612,7 @@ async function computeDashboard(
       inProgress: inProgressCount,
       done: doneCount,
       overdue: overdueCount,
+      incomplete: overdueCount,
       generatedAt: new Date().toISOString(),
       isAdmin: scope?.isAdmin ?? true,
       self: scope && !scope.isAdmin && scope.scope
@@ -561,11 +630,12 @@ async function computeDashboard(
     junior: [],
     items,
     overdueList,
+    incompleteList: overdueList,
     history,
     freqStats,
     unscheduled,
     metaAdsCampaign,
-    team: await computeTeam(dateStr, carried, { roster, todayLogs: logs }),
+    team: { ...team, incompleteToday: (team as any).overdueToday },
   };
 }
 export const getAccountsDashboardData = getDigitalMarketingDashboardData;
@@ -687,6 +757,15 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
   }
   const base = String(origin || '').replace(/\/$/, '');
   const rows: Record<string, unknown>[] = [];
+  let completed = 0;
+  // Range grace as of today: rows inside a still-open window read pending,
+  // not overdue — consistent with the dashboard.
+  const graceToday = new Map<string, string>();
+  for (const t of templates as any[]) {
+    if (!t.active) continue;
+    const g = windowGraceStart(t, today);
+    if (g) graceToday.set(String(t.id), g);
+  }
   // Meta campaign windows declared in-range (Saturday starts): any dmm-06 log
   // carrying a valid [fromDate, toDate] defines a run. Weekday rows inside a
   // run inherit category/amount/from-to when their own log left them blank —
@@ -710,7 +789,12 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
     for (const t of due) {
       const log: any = byTemplate.get(String(t.id));
       const status = log?.status ?? 'not-logged';
-      const open = status === 'pending' || status === 'inprogress' || status === 'overdue' || status === 'not-logged';
+      const open = status === 'pending' || status === 'inprogress' || status === 'overdue' || status === 'not_done' || status === 'not-logged';
+      // What matters: completed vs not completed. Only `done` counts as
+      // completed — everything else is not completed.
+      const result = status === 'done' ? 'Completed' : 'Not Completed';
+      if (status === 'done') completed += 1;
+      const graceStart = graceToday.get(String(t.id));
       const m = parseMetricsJson(log?.metricsJson);
       const win = String(t.id) === 'dmm-06' ? coveringWindow(date) : null;
       const mFrom = String((m as any).fromDate ?? (win as any)?.f ?? '').slice(0, 10) || null;
@@ -724,7 +808,8 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
         shared: !!t.isShared,
         due: t.rawText ?? null,
         status,
-        overdue: status === 'overdue' || (open && date < today),
+        result,
+        overdue: status === 'overdue' || (open && date < today && !(graceStart && date >= graceStart)),
         doneBy: log?.doneBy ?? null,
         accountant: log?.accountant?.name ?? null,
         remark: log?.remark ?? null,
@@ -749,7 +834,11 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
       });
     }
   }
-  return { from, to: today, days, total: rows.length, rows };
+  return {
+    from, to: today, days, total: rows.length, rows,
+    completed, notCompleted: rows.length - completed,
+    completionPct: rows.length > 0 ? Math.round((completed / rows.length) * 100) : 100,
+  };
 }
 
 // ── Identity scoping (lane enforcement) ─────────────────────────────────────
@@ -923,19 +1012,25 @@ export async function updateTemplate(id: string, input: Record<string, any>) {
 }
 
 // ── Logging (taskbar write: status + remark + optional proof files) ─────────
-// Status bar: pending → inprogress → done. EVERY status change must carry a
+// Status bar: pending → done. EVERY status change must carry a
 // recorded reason: an empty remark on a transition is rejected (400) unless
 // the log already holds one (which is then preserved, never wiped).
+// `inprogress` / `overdue` / `skipped` are accepted for legacy compat only —
+// the UI only sends pending/done. `overdue` was once system-set and is now
+// never written (past rows surface as incomplete without a status rewrite).
 // Whatsapp (dmm-08) + Email (dmm-09) marketing additionally require, on Done:
 //   1. a "data used" source (metrics.dataSource — which list/database was used)
 //   2. at least one proof attachment (the data file / screenshot attached below)
 const MARKETING_PROOF_TEMPLATES = new Set(['dmm-08', 'dmm-09']);
 export async function logTask(logId: string, input: Record<string, any>, actor: string | null) {
   const status = String(input.status || '');
-  // `overdue` is system-set by the rollover; users move pending/inprogress/done
-  // (`skipped` accepted for legacy API compat — the UI no longer offers it).
-  if (!['pending', 'inprogress', 'done', 'skipped'].includes(status)) {
-    throw new Error('status must be pending|inprogress|done');
+  // the UI sends pending/done/not_done (`not_done` = explicitly conceded with
+  // a reason + owner; counts as not completed everywhere). `inprogress` /
+  // `overdue` / `skipped` are accepted for legacy compat only — `overdue` was
+  // once system-set and is now never written (past rows surface as incomplete
+  // without a status rewrite).
+  if (!['pending', 'inprogress', 'done', 'skipped', 'not_done'].includes(status)) {
+    throw new Error('status must be pending|done|not_done');
   }
   const current: any = await prisma.digitalMarketingTaskLog.findUnique({ where: { id: logId } });
   if (!current) throw new Error('task log not found');

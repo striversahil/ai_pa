@@ -41,6 +41,11 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [expOpen, setExpOpen] = useState<number | null>(null);
   const [expRate, setExpRate] = useState("");
   const [expNote, setExpNote] = useState("");
+  // Sales alternate request: "client wants a different make/option" goes
+  // straight to procurement as variationRequest — NO management approval.
+  // Procurement quoting a new rate clears it; sales may withdraw anytime.
+  const [altReqOpen, setAltReqOpen] = useState<number | null>(null);
+  const [altReqText, setAltReqText] = useState("");
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
   const editable = !!onUpdateItems && !redacted;
@@ -200,6 +205,22 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const copyItem = (idx: number) => {
     if (!onUpdateItems) return;
     onUpdateItems([...items.slice(0, idx + 1), duplicateItem(items[idx]), ...items.slice(idx + 1)]);
+  };
+  // Request an alternate option for item idx: saves variationRequest
+  // directly (no management approval — procurement picks it up live).
+  const sendAlternateRequest = (idx: number) => {
+    const text = altReqText.trim().slice(0, 500);
+    if (!text || !onUpdateItems) return;
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: text } : it)));
+    setAltReqText("");
+    setAltReqOpen(null);
+  };
+  // Withdraw a pending alternate request (explicit "" clears server-side).
+  const withdrawAlternateRequest = (idx: number) => {
+    if (!onUpdateItems) return;
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: "" } : it)));
+    setAltReqOpen(null);
+    setAltReqText("");
   };
 
   return (
@@ -487,26 +508,74 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 ))}
                               </div>
                             )}
-                            {hasRate && alts.length > 0 && (
+                            {/* Alternates + alternate requests. The request UI stays
+                                visible while a request is pending even after the
+                                previous quotes are cleared for the fresh round
+                                (no finalRate/alts left to gate on). */}
+                            {(hasRate || String((it as any)?.variationRequest ?? "").trim()) && (alts.length > 0 || editable) && (
                               <div className="pt-1.5 mt-1 border-t border-emerald-500/10 space-y-1">
-                                <p className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-                                  Alternate option{alts.length === 1 ? "" : "s"} — quoted rate above stays default
-                                </p>
-                                {alts.map((a, ai) => {
-                                  const altFinal = (a as any)?.sharedFinalRate !== undefined && (a as any)?.sharedFinalRate !== null
-                                    ? Number((a as any).sharedFinalRate) : Number(a.rate);
-                                  return (
-                                  <div key={ai} className="space-y-0.5">
-                                    <p className="text-[11px] font-bold text-[var(--text-primary)]">
-                                      {a.vendor} · <span className="font-mono">₹{altFinal.toLocaleString("en-IN")}</span>
+                                {alts.length > 0 && (
+                                  <>
+                                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
+                                      Alternate option{alts.length === 1 ? "" : "s"} — quoted rate above stays default
                                     </p>
-                                    {(a as any)?.salesNote && (
-                                      <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((a as any).salesNote)}</p>
-                                    )}
-                                  </div>
-                                  );
-                                })}
-                                <p className="text-[10px] text-[var(--text-tertiary)]">If the client prefers an alternate, ask management to revise — the quoted rate can't be switched from here.</p>
+                                    {alts.map((a, ai) => {
+                                      const altFinal = (a as any)?.sharedFinalRate !== undefined && (a as any)?.sharedFinalRate !== null
+                                        ? Number((a as any).sharedFinalRate) : Number(a.rate);
+                                      return (
+                                      <div key={ai} className="space-y-0.5">
+                                        <p className="text-[11px] font-bold text-[var(--text-primary)]">
+                                          Alternate option {ai + 1} · <span className="font-mono font-extrabold text-emerald-600 dark:text-emerald-400">₹{altFinal.toLocaleString("en-IN")}</span>
+                                        </p>
+                                        {(a as any)?.salesNote && (
+                                          <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((a as any).salesNote)}</p>
+                                        )}
+                                      </div>
+                                      );
+                                    })}
+                                  </>
+                                )}
+                                {editable && (
+                                  (it as any)?.variationRequest ? (
+                                    <div className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2 space-y-1">
+                                      <p className="text-[11px] font-extrabold text-sky-600 dark:text-sky-400">
+                                        Alternate requested — with procurement
+                                      </p>
+                                      <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((it as any).variationRequest)}</p>
+                                      <p className="text-[10px] text-[var(--text-tertiary)]">Previous quotes were cleared for a fresh round — the new option appears here once quoted.</p>
+                                      <button type="button" onClick={() => withdrawAlternateRequest(idx)}
+                                        className="text-[11px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0">
+                                        Withdraw request
+                                      </button>
+                                    </div>
+                                  ) : altReqOpen === idx ? (
+                                    <div className="space-y-1.5 rounded-lg border border-dashed border-sky-500/40 p-2">
+                                      <textarea
+                                        value={altReqText}
+                                        onChange={(e) => setAltReqText(e.target.value)}
+                                        placeholder="Describe what the client wants — e.g. ABB make instead, higher capacity…"
+                                        rows={2}
+                                        className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-sky-500 text-xs resize-y text-[var(--text-primary)]"
+                                      />
+                                      <div className="flex gap-2">
+                                        <button type="button" onClick={() => sendAlternateRequest(idx)} disabled={!altReqText.trim()}
+                                          className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50 border-0">
+                                          Request alternate
+                                        </button>
+                                        <button type="button" onClick={() => { setAltReqOpen(null); setAltReqText(""); }}
+                                          className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                                          Cancel
+                                        </button>
+                                      </div>
+                                      <p className="text-[10px] text-[var(--text-tertiary)]">Goes straight to procurement — no approval needed. The new option appears here once quoted.</p>
+                                    </div>
+                                  ) : (
+                                    <button type="button" onClick={() => { setAltReqOpen(idx); setAltReqText(""); }}
+                                      className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:opacity-80 cursor-pointer bg-transparent border-0">
+                                      💬 Request alternate option
+                                    </button>
+                                  )
+                                )}
                               </div>
                             )}
                           </div>

@@ -1,13 +1,30 @@
-# Enquiry Tracker
+# Enquiry Tracker (Sales Pipeline)
 
-Live sales pipeline dashboard. Enquiries and comments are stored in D1 (Worker)
-or Postgres (Express) and pushed to open dashboards over the EventHub
-(`LiveEvent.Enquiries`). No scheduled processing — this automation exists so the
-tracker shows up in the Automations registry with a `View Dashboard` entry
-(`rule.json` trigger is `manual`).
+Live sales pipeline dashboard — the **origin** of every enquiry. Sales logs
+unstructured enquiries here; Procurement (`enquiry-procurement`) quotes them;
+Management (`enquiry-management`) decides margins. All three dashboards read
+the SAME `Enquiry + items[]` row via `/api/enquiries/*` and stay in sync over
+the EventHub (`LiveEvent.Enquiries`, summary-only broadcasts).
+
+```
+Sales (tracker) ──items[]──▶ Procurement (quotes rates) ──rates[]──▶ Management (markup+finalize) ──finalRate──▶ Sales (mark sent)
+       ▲                                                                                                                   │
+       └────────────────────── spec fixes / variation requests / rateAvailable ─────────────────────────────────────────────┘
+```
+
+## Pipeline states (`rateStatus`)
+
+`rate_pending` (created) → `rates_received` (first vendor rate, auto) →
+`finalized` (management, all loop items decided) → `sent` (sales, needs EST No.)
+
+Per-item flags drive the queues: `rates[]`, `ratesRequested`, `specIssue`
+(procurement hold), `rateAvailable` (sales bypass), `internalRates`
+(management self-quote), `selectedVendor/markup/finalRate/finalizedAt`
+(management decision), `thread[]` (server-authored flag/fix/request/quoted trail).
 
 ## API
-- `GET  /api/enquiries` → `{ enquiries, comments }`
+- `GET  /api/enquiries` → `{ enquiries, comments }` (privileged: full PII;
+  margins stripped unless MIS — see `modules/enquiries/scopes.ts`)
 - `GET  /api/enquiries/clients` → `[{ name, openEstimates, enquiries }]` —
   client master merged from Zoho customers + companies used on enquiries
   (procurement gets `[]`; client PII stays hidden there)
@@ -51,6 +68,17 @@ part of the freshness hash. Visible in both views with inline video players +
 Lightbox playback. Money inputs accept `₹`/commas (`₹1,200.50` → 1200.50);
 anything else non-numeric is a 400 with a message.
 
+## Alternate options (sales view)
+Management-shared alternates reach sales ANONYMIZED (API-enforced in
+`scopes.ts` `stripMarginFields`): "Alternate option N" + green final rate +
+forwarded note — never vendor names. If the client wants a different
+make/option, sales taps **Request alternate option**, describes it, and it
+goes straight to procurement as `variationRequest` — NO management approval.
+Procurement quoting a new rate clears it; sales may withdraw anytime.
+A FRESH request starts a new quoting round: previous vendor rates + old
+decision linkage are removed server-side (trailed in the item thread), so
+procurement re-quotes the requested variation clean.
+
 ## Price memory (Pinecone)
 Finalized items (`finalRate` set, spec undisputed) are embedded (HF
 MiniLM 384-dim, spec text only — never PII) into the `enquiry-items` index,
@@ -73,3 +101,25 @@ stay summary-only (+ `visibility` in the event extra).
 ## Dashboard
 - Slug: `enquiry-tracker`
 - Frontend renderer: `EnquiryTracker` (mounted via `Automations.tsx`), scope `enquiries`.
+
+## Code map (maintainability)
+Backend (`founder-os_backend/src/modules/enquiries/` — one concern per file):
+- `types.ts` — row/item/comment/thread shapes + daily-no/label helpers
+- `parse.ts` — pure parsers (media/rates/thread/qty/money/ISO)
+- `queues.ts` — queue predicates (which enquiry sits in which dashboard;
+  mirrors frontend `src/enquiry/queue.ts` — keep in sync)
+- `scopes.ts` — authz (`isRestrictedViewer`/`canManageRates`), margin policy
+  (`stripMarginFields`), money validation, live summaries, creator resolve
+- `redaction.ts` — procurement-safe AI redaction cache (hash-verified)
+- `update.ts` — item lifecycles (`normalizeItemWrites`, `applyRateLifecycles`,
+  `applyLateQuoteReopen`, `applyIntakeBulkResult`)
+- `routes.ts` — CRUD orchestrator only (imports the above; re-exports for compat)
+- `store.ts` — persistence (D1/Memory; Prisma in `store-prisma.ts`)
+
+Frontend (`founder-os_frontend/src/enquiry/` + components):
+- `enquiry/queue.ts` — queue predicates (single frontend truth; `types/index.ts`
+  re-exports for compat)
+- `enquiry/normalize.ts` — `toEnquiry`/`toComment`/`initialsOf` (hook imports)
+- `enquiry/pricing.ts` — `ceil5`/`fmtINR`/`RATE_STATUS_LABEL`/final-rate math
+- `hooks/useEnquiryData.ts` — live list + optimistic mutations + write chains
+- `components/EnquiryTracker|List|Detail|Modal|RowItem|Chat.tsx` — sales views

@@ -4,8 +4,8 @@ Single-manager daily taskbar — BUI digital marketing KRA/KPI.
 
 Files:
 
-- `index.ts` — `handler()` rolls today's task instances forward + flags overdue; `data` serves `GET /api/automations/digital-marketing/data`.
-- `service.ts` — everything: roster, templates, log instances, dashboard agg + numeric metrics (Meta/B2B/Whatsapp/Email).
+- `index.ts` — `handler()` rolls today's task instances forward; `data` serves `GET /api/automations/digital-marketing/data`.
+- `service.ts` — everything: roster, templates, log instances, dashboard agg + numeric metrics (Meta/B2B/Whatsapp/Email). Per-day model: not done by EOD stays as "not done" in the Incomplete tab (no overdue rewrite); remark/metrics/time/owner autosave while typing, Done / Not Done / Pending only.
 - `rule.json` — handler, daily `30 3 * * *` (03:30 IST rollover), scope `digital-marketing`.
 
 ## Concepts

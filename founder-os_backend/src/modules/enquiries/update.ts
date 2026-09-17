@@ -6,9 +6,11 @@ import {
   parseItemRates,
   parseFlagThread,
   numOrUndefined,
-  type FlagThreadBy,
-  type FlagThreadEntry,
-} from "./store";
+} from "./parse";
+import type {
+  FlagThreadBy,
+  FlagThreadEntry,
+} from "./types";
 
 export interface ItemWriteCtx {
   storedItems: any[];
@@ -136,12 +138,47 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // it. Plain sales writers follow the stored value so a stale edit can
     // never forge or wipe an active request; procurement clears it by
     // changing rates (handled in the restricted branch above).
+    // withdrewRequest tracks an explicit privileged withdraw ("") so the
+    // loop trail below stamps it correctly (declared here — used below).
+    // clearedRound tracks a fresh request round that wiped the previous
+    // vendor quotes for a clean re-quote (declared here — trailed below).
+    let withdrewRequest = false;
+    let clearedRound = false;
+    // Drop the previous quoting round for a clean re-quote: old vendor rates
+    // go, and the old decision linkage with them (unlink). Trailed below.
+    // Only fires when something actually exists to clear (no-op saves stay
+    // silent) — and only on FRESH requests, so unrelated edits echoing the
+    // stored text can never wipe quotes.
+    const clearQuotingRound = () => {
+      const hadRates = Array.isArray(base.rates) && base.rates.length > 0;
+      const hadDecision = base.selectedVendor !== undefined || base.markup !== undefined
+        || base.finalRate !== undefined || base.finalDiscountPercent !== undefined
+        || base.finalizedAt !== undefined || (base as any).selectedRateIdx !== undefined;
+      if (!hadRates && !hadDecision) return;
+      base.rates = [];
+      base.selectedVendor = undefined;
+      (base as any).selectedRateIdx = undefined;
+      base.markup = undefined;
+      base.finalRate = undefined;
+      base.finalDiscountPercent = undefined;
+      base.finalizedAt = undefined;
+      clearedRound = true;
+    };
     if (!privileged && !restricted) {
       base.ratesRequested = stored.ratesRequested;
       base.ratesRequestedAt = stored.ratesRequestedAt;
       base.internalRates = stored.internalRates === true;
       base.internalRatesAt = stored.internalRatesAt ?? undefined;
     } else {
+      // Explicit "" from a privileged writer withdraws an unanswered request
+      // (pick() preserves it; absent still means "leave stored"). Remember
+      // the withdraw so the loop trail below stamps it as withdrawn, not as
+      // answered-by-quotes.
+      if (privileged && (base as any).ratesRequested === "") {
+        withdrewRequest = true;
+        base.ratesRequested = undefined;
+        base.ratesRequestedAt = undefined;
+      }
       // Submitted value stands (privileged set it, or the restricted
       // branch above already resolved it) — but a concurrent rate change
       // answers the request, so drop it.
@@ -149,6 +186,12 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       if (ratesChanged) {
         base.ratesRequested = undefined;
         base.ratesRequestedAt = undefined;
+      }
+      // A fresh management request starts a new quoting round on top of the
+      // reopen: previous vendor rates are removed so procurement re-quotes
+      // clean (the request text says what is wrong / which vendor is needed).
+      if (privileged && base.ratesRequested && !stored.ratesRequested) {
+        clearQuotingRound();
       }
       // A fresh management request on a finalized item reopens it — the
       // previous decision clears so the new quotes flow back to review.
@@ -229,11 +272,23 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       });
     }
     if (reqSet) trail.push({ by: role, kind: 'request', text: String(base.ratesRequested).slice(0, 500), at: nowIso });
-    if (reqCleared) trail.push({ by: role, kind: 'quoted', text: 'New vendor rates added', at: nowIso });
+    if (reqCleared) {
+      trail.push(withdrewRequest
+        ? { by: role, kind: 'remark', text: 'Rate request withdrawn', at: nowIso }
+        : { by: role, kind: 'quoted', text: 'New vendor rates added', at: nowIso });
+    }
+    // Fresh request round wiped the previous quotes above — say so plainly
+    // in the trail so every desk sees why the old rates are gone.
+    if (clearedRound) {
+      trail.push({ by: role, kind: 'remark', text: 'Previous vendor quotes cleared — fresh round for the new request', at: nowIso });
+    }
     // Sales variation requests (non-blocking): sales sets the text (stamped
     // once per change) or withdraws with an explicit ""; unrelated saves
     // echo the stored value back and must never wipe a pending request.
-    // Procurement answering (new rate above) trails below as 'quoted'.
+    // A FRESH request starts a new quoting round: previous vendor rates +
+    // old decision linkage are removed so procurement quotes the requested
+    // variation clean. Procurement answering (new rate above) trails below
+    // as 'quoted'.
     if (!privileged && !restricted) {
       const inVar = (it as any)?.variationRequest;
       const stVar = String(stored.variationRequest ?? "");
@@ -242,7 +297,14 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.variationRequest = text;
         if (text !== stVar.trim()) {
           base.variationRequestedAt = nowIso;
+          clearQuotingRound();
           trail.push({ by: role, kind: 'remark', text: `Variation requested: ${text}`.slice(0, 500), at: nowIso });
+          // clearedRound is trailed in the shared section above for the
+          // privileged path — but this sales block runs AFTER it, so stamp
+          // the wipe here (no double: only this branch can set it this late).
+          if (clearedRound) {
+            trail.push({ by: role, kind: 'remark', text: 'Previous vendor quotes cleared — fresh round for the new request', at: nowIso });
+          }
         } else {
           base.variationRequestedAt = stored.variationRequestedAt ?? nowIso;
         }

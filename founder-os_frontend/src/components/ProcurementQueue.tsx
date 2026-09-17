@@ -11,7 +11,8 @@ import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
-import { enquiryLabel, historyDateChip, itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, procurementSubmittable } from "@/types";
+import { enquiryLabel, historyDateChip } from "@/types";
+import { itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, procurementSubmittable } from "@/enquiry/queue";
 
 /** Pending = items still needing rates. Empty enquiries (no items yet) wait
  *  on sales, not procurement — they render in their own section below. */
@@ -43,6 +44,14 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
   const pendingItems = items.filter(itemNeedsRates);
   const flagged = pendingItems.filter((it) => it.specIssue).length;
   const requested = pendingItems.filter((it) => it.ratesRequested && !it.specIssue).length;
+  const alternates = items.filter((it) => String((it as any)?.variationRequest ?? "").trim()).length;
+  if (alternates > 0) {
+    return (
+      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30">
+        Alternate requested{items.length > 1 ? ` (${alternates}/${items.length})` : ""}
+      </span>
+    );
+  }
   if (flagged > 0) {
     return (
       <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-red-500/10 text-red-500 border-red-500/30">
@@ -80,10 +89,8 @@ export default function ProcurementQueue() {
   const { me } = useAuth();
   const scopes = me?.scopes ?? [];
   const allowed = !!me && (me.isAdmin || scopes.includes("mis") || scopes.includes("procurement"));
-  // Internal handoff is management-only: MIS holders working this queue may
-  // mark items; pure procurement writers never see the buttons (the server
-  // pins the flag for non-privileged writers regardless).
-  const canMarkInternal = !!me && (me.isAdmin || scopes.includes("mis"));
+  // Handle-internally is removed: everything flows through this queue.
+  // Legacy internal rows still render their badge; no new flags settable.
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   // Single enquiry modal: opening an enquiry shows ALL its items (rates,
   // forms, flags) together — never one modal per item.
@@ -206,14 +213,6 @@ export default function ProcurementQueue() {
   const handleFlag = useCallback((enquiryId: string, itemIdx: number, reason: string) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, specIssue: reason, specFlaggedAt: new Date().toISOString() } : it)), [patchItems]);
-
-  const handleMarkInternal = useCallback((enquiryId: string, itemIdx: number) =>
-    void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...it, internalRates: true, internalRatesAt: new Date().toISOString() } : it)), [patchItems]);
-
-  const handleUnmarkInternal = useCallback((enquiryId: string, itemIdx: number) =>
-    void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...it, internalRates: false, internalRatesAt: undefined } : it)), [patchItems]);
 
   // Enquiry Concluded: explicit procurement handoff — enquiry stays Active
   // (quoted) until this is clicked; management sees live rates the whole
@@ -487,9 +486,6 @@ export default function ProcurementQueue() {
                   onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
                   onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
                   onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
-                  canMarkInternal={canMarkInternal}
-                  onMarkInternal={() => handleMarkInternal(selEnquiry.id, itemIdx)}
-                  onUnmarkInternal={() => handleUnmarkInternal(selEnquiry.id, itemIdx)}
                   onOpenLightbox={handleOpenLightbox}
                   readOnly={(submitted && !isFreshQuotableItem(item)) || item.internalRates === true || (item.finalRate !== undefined && item.finalRate !== null)}
                 />

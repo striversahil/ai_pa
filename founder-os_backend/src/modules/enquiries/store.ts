@@ -2,358 +2,79 @@
 // Two implementations: D1 (Cloudflare Worker) and Prisma (Express/Postgres).
 // The Worker build imports ONLY this file; the Prisma implementation lives in
 // store-prisma.ts so the Prisma client never enters the Worker bundle.
+//
+// Slim orchestrator: domain types live in types.ts, pure parsers in parse.ts,
+// queue predicates in queues.ts, authz in scopes.ts, redaction in
+// redaction.ts. This file keeps ONLY row mapping + sanitize + the Memory/D1
+// stores. Re-exports below preserve existing import paths (no caller changes).
+import {
+  ENQUIRY_SOURCES,
+  normalizeEnquirySource,
+  istDayKey,
+  nextDailyNo,
+  enquiryLabelText,
+} from "./types";
+import type {
+  Enquiry,
+  EnquiryActivity,
+  EnquiryComment,
+  EnquiryItem,
+  EnquiryMedia,
+  EnquiryItemRate,
+  EnquiryRequirement,
+  CommentVisibility,
+  EnquiryStore,
+  FlagThreadBy,
+  FlagThreadEntry,
+} from "./types";
+import {
+  parseFlagThread,
+  normalizeVisibility,
+  isoOrUndefined,
+  rateIdxOrUndefined,
+  normalizeQty,
+  parseItemMedia,
+  parseItemRates,
+  parseDiscountPercent,
+  strictNum,
+  numOrUndefined,
+  parseItems,
+  parseRequirements,
+} from "./parse";
 
-/** Allowed enquiry sources (New Enquiry form selector, default TL). */
-export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B"] as const;
-
-export function normalizeEnquirySource(v: unknown): string {
-  const s = String(v ?? "TL").trim();
-  return (ENQUIRY_SOURCES as readonly string[]).includes(s) ? s : "TL";
-}
-
-/** IST calendar-day key (YYYY-MM-DD) — the daily counter resets on this. */
-export function istDayKey(d: Date = new Date()): string {
-  const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
-  return ist.toISOString().slice(0, 10);
-}
-
-const MON3 = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-
-/** Display label shared by Sales/Procurement/Management:
- *  `Enquiry No 10 - 10 SEP TL` (daily counter, IST creation date, source).
- *  New enquiries are titled with this (the Title form field is removed). */
-export function enquiryLabelText(dailyNo: number | null | undefined, createdAtISO: string, source: string): string {
-  const no = dailyNo === undefined || dailyNo === null ? "–" : String(dailyNo);
-  let dd = "–", mon = "–––";
-  const d = new Date(createdAtISO);
-  if (!Number.isNaN(d.getTime())) {
-    const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
-    dd = String(ist.getUTCDate()).padStart(2, "0");
-    mon = MON3[ist.getUTCMonth()] ?? "–––";
-  }
-  return `Enquiry No ${no} - ${dd} ${mon} ${source || "TL"}`;
-}
-
-/** Next daily sequence number: max dailyNo already assigned today (IST) + 1. */
-export function nextDailyNo(existing: Array<{ createdAt?: string; dailyNo?: number | null }>, now: Date = new Date()): number {
-  const today = istDayKey(now);
-  let max = 0;
-  for (const e of existing) {
-    if (!e?.createdAt) continue;
-    const dt = new Date(e.createdAt);
-    if (Number.isNaN(dt.getTime()) || istDayKey(dt) !== today) continue;
-    const n = Number((e as any).dailyNo ?? 0);
-    if (Number.isFinite(n) && n > max) max = n;
-  }
-  return max + 1;
-}
-
-export interface EnquiryRequirement {
-  text: string;
-  imageUrl?: string;
-}
-
-/** One purchasable line item AI-split from the unstructured description
- *  (Specifications & Scope). Rendered as Item 1..N in both Sales and
- *  Procurement views; sales can edit/delete/reorder manually. */
-export interface EnquiryMedia {
-  type: 'image' | 'video' | 'pdf';
-  url: string;
-  name?: string;
-}
-
-export interface EnquiryItemRate {
-  vendor: string;
-  rate: number;
-  /** Procurement-entered discount % the vendor offers (0-100). */
-  discountPercent?: number;
-  /** Per-quote vendor description (address/contact/terms). */
-  description?: string;
-  /** Procurement note intended for the sales team / customer — only the
-   *  selected vendor's salesNote is forwarded to sales with the final rate
-   *  (founder can edit it in the review panel before finalizing). */
-  salesNote?: string;
-  /** Management-shared alternate: true = this quote is shown to sales as a
-   *  visible option beside the decided rate (same vendor, two makes), so the
-   *  team can discuss which material to quote. The decided finalRate stays
-   *  the quoted default; picking the alternate goes through Revise. */
-  sharedWithSales?: boolean;
-  /** Per-quote sales final for a shared alternate: the item's margin %
-   *  applied to THIS quote (same discount first, same ceil5). Sales sees one
-   *  final per option; direct Final-₹ entry is locked out in multi-quote
-   *  mode because a single final can't express per-quote finals. */
-  sharedFinalRate?: number;
-  /** False when this quote's spec differs from the item spec. */
-  specSame?: boolean;
-  /** The differing spec, logged when specSame is false. */
-  specDiff?: string;
-  /** Per-vendor reference attachments (photos/drawings/PDFs backing THIS
-   *  quote). The selected vendor's refs forward to sales with the final rate. */
-  references?: EnquiryMedia[];
-  /** IST instant the quote was logged (stamped on add; older rows lack it). */
-  quotedAt?: string;
-}
-
-export interface EnquiryItem {
-  name: string;
-  qty: string;
-  spec: string;
-  media: EnquiryMedia[];
-  /** KYP category assigned by AI intake (exact v2 name or Uncategorized). */
-  category?: string;
-  /** Client's own wording for this line (AI intake); shown under the
-   *  canonical name so sales can see what was actually asked for. */
-  verbatim?: string;
-  /** Vendor rates collected by Procurement (multiple vendors per item). */
-  rates?: EnquiryItemRate[];
-  /** Management decision: chosen vendor + markup + finalized rate. */
-  selectedVendor?: string;
-  /** Index into `rates` of the management-chosen quote — disambiguates
-   *  duplicate vendor names (same vendor, two makes). Sales renders the
-   *  exact decided row; falls back to selectedVendor name matching. */
-  selectedRateIdx?: number;
-  markup?: number;
-  finalRate?: number;
-  /** Management-decided discount % to pass to customer (0-100). */
-  finalDiscountPercent?: number;
-  /** IST instant the item was finalized (stamped on finalize). */
-  finalizedAt?: string;
-  /** Procurement spec dispute: present = spec flagged incorrect, awaiting a
-   *  sales spec edit (which auto-clears it). Flagged items are held out of
-   *  Management until resolved. */
-  specIssue?: string;
-  specFlaggedAt?: string;
-  /** Rate availability (sales-marked): true = rate already available, the item
-   *  skips the procurement→management loop. False/absent = rate unavailable,
-   *  flows to Procurement for quoting and then Management for finalize. */
-  rateAvailable?: boolean;
-  /** Management-internal handling: true = management sources this item's
-   *  rates itself; the procurement queue skips it. Management-only flag. */
-  internalRates?: boolean;
-  internalRatesAt?: string;
-  /** Management → procurement request: present = management asked for (more)
-   *  vendor rates (incorrect quote / different vendor needed). The item
-   *  returns to the procurement active queue until procurement adds or edits
-   *  a rate, which clears it. */
-  ratesRequested?: string;
-  ratesRequestedAt?: string;
-  /** Sales → procurement variation request (non-blocking): free text like
-   *  "client wants ABB make" entered via "Request different variation".
-   *  Reopens the procurement Active queue until procurement quotes the
-   *  variation as a new rate row (which clears it); management sharing that
-   *  row adds it to the sales variants list. Sales may withdraw anytime. */
-  variationRequest?: string;
-  variationRequestedAt?: string;
-  /** Back-and-forth loop trail (server-authored): every flag, remark, fix
-   *  and request on this item, oldest first. Rendered in procurement so the
-   *  full 2–3 round history stays visible. */
-  thread?: FlagThreadEntry[];
-  /** AI bulk intake: true = this raw item (unstructured spec + photos from
-   *  the detail-view "Add via AI" flow) is awaiting the GH intake action,
-   *  which replaces it with vision-split items. Manual edits clear it. */
-  aiPending?: boolean;
-  /** Sales-negotiated target: the client-side expected price for this item
-   *  (plus an optional note — "client quoted X elsewhere", "budget cap").
-   *  Sales-owned; procurement sees it as the negotiation target, management
-   *  beside vendor rates. Never blocks the loop. */
-  expectedRate?: number;
-  expectedNote?: string;
-}
-
-export type FlagThreadBy = 'sales' | 'procurement' | 'management';
-export type FlagThreadKind = 'flag' | 'remark' | 'fix' | 'request' | 'quoted';
-
-export interface FlagThreadEntry {
-  by: FlagThreadBy;
-  kind: FlagThreadKind;
-  text: string;
-  at: string;
-}
-
-const THREAD_BY = new Set(['sales', 'procurement', 'management']);
-const THREAD_KIND = new Set(['flag', 'remark', 'fix', 'request', 'quoted']);
-
-export function parseFlagThread(raw: unknown): FlagThreadEntry[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((e: any) => ({
-      by: (THREAD_BY.has(String(e?.by)) ? String(e.by) : 'sales') as FlagThreadBy,
-      kind: (THREAD_KIND.has(String(e?.kind)) ? String(e.kind) : 'remark') as FlagThreadKind,
-      text: String(e?.text ?? '').slice(0, 2000),
-      at: isoOrUndefined(e?.at) ?? new Date(0).toISOString(),
-    }))
-    .filter((e: FlagThreadEntry) => e.text.trim().length > 0)
-    .slice(-50);
-}
-
-/** ISO instant passthrough (quotedAt/finalizedAt) — invalid values dropped. */
-export const isoOrUndefined = (v: unknown): string | undefined => {
-  if (v === undefined || v === null || v === '') return undefined;
-  const d = new Date(String(v));
-  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+export {
+  ENQUIRY_SOURCES,
+  normalizeEnquirySource,
+  istDayKey,
+  nextDailyNo,
+  enquiryLabelText,
+  parseFlagThread,
+  normalizeVisibility,
+  isoOrUndefined,
+  rateIdxOrUndefined,
+  normalizeQty,
+  parseItemMedia,
+  parseItemRates,
+  parseDiscountPercent,
+  strictNum,
+  numOrUndefined,
+  parseItems,
+  parseRequirements,
 };
-
-/** Rate-row index passthrough (selectedRateIdx) — invalid values dropped. */
-export const rateIdxOrUndefined = (v: unknown): number | undefined => {
-  const n = typeof v === 'number' ? v : Number(String(v ?? '').trim());
-  return Number.isInteger(n) && (n as number) >= 0 ? (n as number) : undefined;
+export type {
+  Enquiry,
+  EnquiryActivity,
+  EnquiryComment,
+  EnquiryItem,
+  EnquiryMedia,
+  EnquiryItemRate,
+  EnquiryRequirement,
+  CommentVisibility,
+  EnquiryStore,
+  FlagThreadBy,
+  FlagThreadEntry,
 };
-
-/** Quantity keeps digits + units (`3 PCS`): anything without a digit is
- *  not a quantity and normalizes to "". */
-export function normalizeQty(v: unknown): string {
-  const s = String(v ?? '').trim().slice(0, 120);
-  return /\d/.test(s) ? s : '';
-}
-
-/** ~10MB binary per attachment (base64 inflates ~4/3). Enforced client-side
- *  and re-checked server-side in routes pick(). */
-export const MAX_ITEM_MEDIA_URL_CHARS = 15_000_000;
-export const MAX_ITEM_MEDIA_COUNT = 10;
-
-export function parseItemMedia(raw: unknown): EnquiryMedia[] {
-  if (!Array.isArray(raw)) return [];
-  const shaped: EnquiryMedia[] = raw.map((m: any) => ({
-    type: (m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image') as EnquiryMedia['type'],
-    url: String(m?.url ?? ''),
-    name: m?.name ? String(m.name).slice(0, 200) : undefined,
-  }));
-  return shaped
-    .filter((m) => m.url.length > 0 && m.url.length <= MAX_ITEM_MEDIA_URL_CHARS)
-    .slice(0, MAX_ITEM_MEDIA_COUNT);
-}
-
-function parseDiscountPercent(v: unknown): number | undefined {
-  if (v === undefined || v === null || v === '') return undefined;
-  const n = Number(String(v).trim());
-  if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
-  return Math.round(n * 100) / 100;
-}
-
-export function parseItemRates(raw: unknown): EnquiryItemRate[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((r: any) => {
-      const specSame = r?.specSame === false ? false : true;
-      return {
-        vendor: String(r?.vendor ?? '').slice(0, 200),
-        rate: strictNum(r?.rate) ?? NaN,
-        discountPercent: parseDiscountPercent(r?.discountPercent),
-        description: r?.description ? String(r.description).slice(0, 2000) : undefined,
-        salesNote: r?.salesNote ? String(r.salesNote).slice(0, 2000) : undefined,
-        sharedWithSales: r?.sharedWithSales === true ? true : undefined,
-        sharedFinalRate: (() => {
-          const v = strictNum(r?.sharedFinalRate);
-          return v !== undefined && v >= 0 ? v : undefined;
-        })(),
-        specSame,
-        specDiff: !specSame && r?.specDiff ? String(r.specDiff).slice(0, 2000) : undefined,
-        references: parseItemMedia(r?.references),
-        quotedAt: isoOrUndefined(r?.quotedAt),
-      };
-    })
-    .filter((r) => r.vendor.trim().length > 0 && Number.isFinite(r.rate) && r.rate >= 0)
-    .slice(0, 50);
-}
-
-/** Strict numeric for money fields (rates/markup/finals — margin math runs on
- *  these): plain digits with an optional decimal part only. Rejects empties
- *  (Number('') is 0!), whitespace, hex, exponents and trailing words.
- *  Currency symbols, thousand separators and spaces are stripped first, so
- *  "₹1,200.50" parses as 1200.50 instead of being silently dropped. */
-export const strictNum = (v: unknown): number | undefined => {
-  if (v === undefined || v === null) return undefined;
-  const s = String(v).trim().replace(/[₹\s,]/g, '');
-  if (!/^\d+(\.\d+)?$/.test(s)) return undefined;
-  const n = Number(s);
-  return Number.isFinite(n) && n >= 0 ? n : undefined;
-};
-
-export const numOrUndefined = (v: unknown): number | undefined => strictNum(v);
-
-export interface Enquiry {
-  id: string;
-  estNumber: string;
-  /** Daily sequence: Enquiry No {dailyNo} - {DD} {MON} {source}. Auto-assigned
-   *  at creation; the counter resets every IST day. */
-  dailyNo: number | null;
-  /** Enquiry source: TL | AI | Incoming | B2B (default TL). */
-  source: string;
-  /** Sales-agent lead details (parsed by AI from the first 1–2 comments). */
-  enquiryNumber: string;
-  sourceLead: string;
-  location: string;
-  clientCompany: string;
-  contactName: string;
-  contactEmail: string;
-  contactPhone: string;
-  title: string;
-  description: string;
-  priority: string;
-  status: string;
-  /** Procurement workflow stage: '' (legacy) | rate_pending | rates_received
-   *  | finalized | sent (sales marked the quoted rates sent to the client;
-   *  requires EST No.). */
-  rateStatus: string;
-  /** Explicit procurement handoff: ISO instant procurement pressed
-   *  "Submit to Management". Only submitted enquiries enter the management
-   *  queue; cleared when management requests more rates (reopen). */
-  procurementSubmittedAt: string;
-  assignedAgentId: string;
-  createdAt: string;
-  updatedAt: string;
-  imageUrls: string[];
-  activities: EnquiryActivity[];
-  additionalRequirements: EnquiryRequirement[];
-  items: EnquiryItem[];
-}
-
-export interface EnquiryActivity {
-  id: string;
-  type: "creation" | "assignment" | "status_change";
-  text: string;
-  timestamp: string;
-  agentId?: number;
-}
-
-export type CommentVisibility = 'sales' | 'procurement';
-
-/** Normalize a visibility value from any writer (server-authored, forge-proof:
- *  anything but an explicit 'procurement' becomes 'sales'). */
-export function normalizeVisibility(v: unknown): CommentVisibility {
-  return String(v ?? '').trim().toLowerCase() === 'procurement' ? 'procurement' : 'sales';
-}
-
-export interface EnquiryComment {
-  id: string;
-  enquiryId: string;
-  agentId: number;
-  content: string;
-  createdAt: string;
-  parentId: string | null;
-  imageUrl?: string;
-  /** Discussion scope: 'sales' (private) or 'procurement' (shared ops thread). */
-  visibility?: CommentVisibility;
-}
-
-export interface EnquiryStore {
-  listEnquiries(): Promise<Enquiry[]>;
-  /** Newest-first page + total count (queue tables fetch 10/50 at a time). */
-  listEnquiriesPaged(offset: number, limit: number): Promise<{ rows: Enquiry[]; total: number }>;
-  /** Comments for exactly these enquiries (one query per page). */
-  listCommentsFor(enquiryIds: string[]): Promise<EnquiryComment[]>;
-  /** Atomic daily sequence allocation: next Enquiry No for today (IST).
-   *  Backed by a Setting counter (`enquiry:daily:<YYYY-MM-DD>`), so concurrent
-   *  creates can never share a number (the old max+1 scan raced). */
-  allocateDailyNo(now?: Date): Promise<number>;
-  getEnquiry(id: string): Promise<Enquiry | null>;
-  createEnquiry(data: Omit<Enquiry, "id" | "createdAt" | "updatedAt">): Promise<Enquiry>;
-  updateEnquiry(id: string, updates: Partial<Omit<Enquiry, "id" | "createdAt">>): Promise<Enquiry | null>;
-  deleteEnquiry(id: string): Promise<void>;
-  listComments(enquiryId: string): Promise<EnquiryComment[]>;
-  addComment(data: Omit<EnquiryComment, "id" | "createdAt">): Promise<EnquiryComment>;
-  listAllComments(): Promise<EnquiryComment[]>;
-}
+export { MAX_ITEM_MEDIA_URL_CHARS, MAX_ITEM_MEDIA_COUNT } from "./parse";
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -388,59 +109,6 @@ export function mapEnquiry(row: any): Enquiry | null {
     additionalRequirements: parseRequirements(row.additionalRequirements),
     items: parseItems(row.items ?? null),
   };
-}
-
-export function parseItems(raw: string | null): EnquiryItem[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((r: any) => ({
-        name: String(r?.name ?? '').slice(0, 300),
-        qty: normalizeQty(r?.qty).slice(0, 120),
-        spec: String(r?.spec ?? '').slice(0, 2000),
-        media: parseItemMedia(r?.media),
-        category: r?.category ? String(r.category).slice(0, 120) : undefined,
-        verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
-        rates: parseItemRates(r?.rates),
-        selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
-        selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
-        markup: numOrUndefined(r?.markup),
-        finalRate: numOrUndefined(r?.finalRate),
-        finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
-        finalizedAt: isoOrUndefined(r?.finalizedAt),
-        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
-        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
-        rateAvailable: r?.rateAvailable === true,
-        internalRates: r?.internalRates === true,
-        internalRatesAt: isoOrUndefined(r?.internalRatesAt),
-        thread: parseFlagThread(r?.thread),
-        ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
-        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
-        variationRequest: r?.variationRequest ? String(r.variationRequest).slice(0, 500) : undefined,
-        variationRequestedAt: isoOrUndefined(r?.variationRequestedAt),
-        aiPending: r?.aiPending === true ? true : undefined,
-        expectedRate: numOrUndefined(r?.expectedRate),
-        expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
-      }))
-      .filter((r: EnquiryItem) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
-      .slice(0, 100);
-  } catch {
-    return [];
-  }
-}
-
-export function parseRequirements(raw: string | null): EnquiryRequirement[] {  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((r: any) => (typeof r === "string" ? { text: r } : { text: String(r?.text ?? ""), imageUrl: r?.imageUrl || undefined }))
-      .filter((r: EnquiryRequirement) => r.text.trim().length > 0);
-  } catch {
-    return [];
-  }
 }
 
 export function mapComment(row: any): EnquiryComment | null {
@@ -544,26 +212,26 @@ class MemoryEnquiryStore implements EnquiryStore {
   async getEnquiry(id: string) {
     return this.enquiries.find((e) => e.id === id) ?? null;
   }
-  async createEnquiry(data) {
+  async createEnquiry(data: Omit<Enquiry, "id" | "createdAt" | "updatedAt">) {
     const now = new Date().toISOString();
     const e: Enquiry = { ...data, id: newId(), createdAt: now, updatedAt: now };
     this.enquiries.push(e);
     return e;
   }
-  async updateEnquiry(id, updates) {
+  async updateEnquiry(id: string, updates: Partial<Omit<Enquiry, "id" | "createdAt">>) {
     const i = this.enquiries.findIndex((e) => e.id === id);
     if (i === -1) return null;
     this.enquiries[i] = { ...this.enquiries[i], ...updates, updatedAt: new Date().toISOString() };
     return this.enquiries[i];
   }
-  async deleteEnquiry(id) {
+  async deleteEnquiry(id: string) {
     this.enquiries = this.enquiries.filter((e) => e.id !== id);
     this.comments = this.comments.filter((c) => c.enquiryId !== id);
   }
-  async listComments(enquiryId) {
+  async listComments(enquiryId: string) {
     return this.comments.filter((c) => c.enquiryId === enquiryId).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
-  async addComment(data) {
+  async addComment(data: Omit<EnquiryComment, "id" | "createdAt">) {
     const c: EnquiryComment = { ...data, id: newId(), createdAt: new Date().toISOString() };
     this.comments.push(c);
     return c;
@@ -602,8 +270,6 @@ class D1EnquiryStore implements EnquiryStore {
     return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
   }
   async allocateDailyNo(now: Date = new Date()): Promise<number> {
-    // Single-statement atomic increment on the Setting counter (D1 is a
-    // single writer — concurrent creates serialize here, never share a no).
     const key = `enquiry:daily:${istDayKey(now)}`;
     const at = new Date().toISOString();
     await this.db.prepare(
@@ -613,7 +279,6 @@ class D1EnquiryStore implements EnquiryStore {
     const row: any = await this.db.prepare(`SELECT value FROM Setting WHERE key = ?`).bind(key).first();
     const n = Number(row?.value ?? 1);
     if (Number.isFinite(n) && n >= 1) return Math.floor(n);
-    // Fallback (counter row unreadable): legacy max+1 scan for today.
     const all = await this.listEnquiries().catch(() => [] as Enquiry[]);
     return nextDailyNo(all, now);
   }
@@ -621,7 +286,7 @@ class D1EnquiryStore implements EnquiryStore {
     const row = await this.db.prepare("SELECT * FROM Enquiry WHERE id = ?").bind(id).first();
     return mapEnquiry(row);
   }
-  async createEnquiry(data) {
+  async createEnquiry(data: Omit<Enquiry, "id" | "createdAt" | "updatedAt">) {
     const now = new Date().toISOString();
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
@@ -636,7 +301,7 @@ class D1EnquiryStore implements EnquiryStore {
       .run();
     return e;
   }
-  async updateEnquiry(id, updates) {
+  async updateEnquiry(id: string, updates: Partial<Omit<Enquiry, "id" | "createdAt">>) {
     const existing = await this.getEnquiry(id);
     if (!existing) return null;
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
@@ -653,15 +318,15 @@ class D1EnquiryStore implements EnquiryStore {
       .run();
     return merged;
   }
-  async deleteEnquiry(id) {
+  async deleteEnquiry(id: string) {
     await this.db.prepare("DELETE FROM EnquiryComment WHERE enquiryId = ?").bind(id).run();
     await this.db.prepare("DELETE FROM Enquiry WHERE id = ?").bind(id).run();
   }
-  async listComments(enquiryId) {
+  async listComments(enquiryId: string) {
     const { results } = await this.db.prepare("SELECT * FROM EnquiryComment WHERE enquiryId = ? ORDER BY createdAt ASC").bind(enquiryId).all();
     return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
   }
-  async addComment(data) {
+  async addComment(data: Omit<EnquiryComment, "id" | "createdAt">) {
     const c: EnquiryComment = { ...data, visibility: normalizeVisibility((data as any)?.visibility), id: newId(), createdAt: new Date().toISOString() };
     await this.db
       .prepare("INSERT INTO EnquiryComment (id, enquiryId, agentId, content, createdAt, parentId, imageUrl, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")

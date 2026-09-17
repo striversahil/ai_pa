@@ -56,6 +56,28 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - Google OAuth gate: paths in `AUTH_EXEMPT` (context.ts) skip it; runners auth via `SHARED_SECRET` (`requireSecret`), MIS endpoints via the `mis` scope (`requireMisScope`). Roster/telecaller writes are MIS-only.
 - Admin panel (`UserAdmin`): root sees Roles + Users; holders of the `user-admin` scope (auto-merged into the `mis` role by `ensureRolesSeeded`) see Users only and can assign roles. The backend rejects touching the root user or granting `admin` (`asUserManager` in `modules/auth/routes.ts`); role create/edit/delete stays root-only; role saves use `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE` (which would cascade-wipe user assignments).
 
+## Code structure (modular pattern — always follow this)
+- **One concern per file; split before a file passes ~400 lines.** A domain module grows as
+  `types.ts` (shapes + identity helpers) · `parse.ts` (pure parsers/normalizers) · `queues.ts`
+  (queue predicates — which row sits in which dashboard) · `scopes.ts` (authz + response-shape
+  guards + validation) · `redaction.ts` (PII-safe views) · `update.ts` (write lifecycles) ·
+  `routes.ts` (CRUD orchestrator ONLY — imports the above, no inline domain logic) ·
+  `store.ts` (persistence ONLY — mapping + D1/Memory stores). Reference: `src/modules/enquiries/`.
+- **Route handlers stay thin orchestrators** (parse input → scope check → store call → broadcast).
+  Pure logic (predicates, pricing math, validation, normalization) lives in importable
+  framework-free modules, never inline in handlers or components.
+- **Single source of truth, mirrored backend↔frontend.** Queue predicates / pricing math exist
+  once per side (`backend/.../queues.ts` ↔ `frontend/src/<domain>/queue.ts`) with the same
+  names + semantics — change both together, never drift. Comment each copy with its mirror path.
+- **Frontend mirrors the split**: `src/<domain>/` holds `queue.ts` (predicates) ·
+  `normalize.ts` (API→UI mappers) · `pricing.ts` (pure math); `hooks/` holds data + mutations;
+  components hold staged-input state + rendering only. Shared helpers are imported, never copy-pasted
+  (old copies become re-exports for compat). Reference: `founder-os_frontend/src/enquiry/`.
+- **Refactor by extract + re-export, never by rewrite.** Move code verbatim into the new module,
+  keep the old path re-exporting it, so existing imports keep working and behavior can't change.
+  Verify every structural change with `build-worker.mjs` + `smoke-worker.mjs` (+ frontend `tsc` /
+  `npm run build` when touched) and deploy per policy.
+
 ## Domain quirks worth knowing
 - **Telecalling**: `Telecaller.assignEstimateFollowUps` (renamed from `active`, migration 0015) marks conversion specialists — only they get estimate follow-up assignments. Creator-first assignment still lets the lead-gen creator close their own estimate. Score ledger `TelecallerScoreEvent` (close slabs ₹0–1L 50 / ₹1–2.5L 75 / ₹2.5–5L 100 / ≥₹5L 200 split 20/80 generator/closer — 10/15/20/40 + 40/60/80/160; −10 remark / −15 legacy snatch / −20 retired decline). EOD run skips non-working days (zero NeoDove calls), shields genuine spread effort per customer (2+ attempts 3h apart or a connect), honors dated next steps (`Estimate.nextStepDate`, migration 0028; future/today protects, past-due reads red), accepts `?dry=1` preview.
 - Zoho comments: DB stores `date` (date-only) + `dateFormatted` (full IST time). Risk model must read `dateFormatted` (parse as `+05:30`) or every today-comment looks 12h stale.

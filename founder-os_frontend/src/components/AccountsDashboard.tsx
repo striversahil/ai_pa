@@ -36,7 +36,9 @@ interface TaskItem {
   attachments?: FileItem[];
   missed?: string[];
   overdue: boolean;
+  incomplete?: boolean;
   daysOverdue?: number | null;
+  daysIncomplete?: number | null;
 }
 
 interface UnscheduledItem {
@@ -95,6 +97,7 @@ interface FreqStat {
   pending: number;
   inprogress: number;
   overdue: number;
+  incomplete?: number;
   completionPct: number;
 }
 
@@ -106,6 +109,7 @@ interface TeamData {
   openToday: number;
   inProgressToday?: number;
   overdueToday: number;
+  incompleteToday?: number;
   completionPct: number;
   weekDone: number;
   monthDone: number;
@@ -113,12 +117,13 @@ interface TeamData {
 }
 
 interface DashData {
-  meta: { date: string; today: string; total: number; open: number; done: number; overdue: number; generatedAt: string; isAdmin?: boolean; self?: { id: string; name: string; role: string } | null };
+  meta: { date: string; today: string; total: number; open: number; done: number; overdue: number; incomplete?: number; generatedAt: string; isAdmin?: boolean; self?: { id: string; name: string; role: string } | null };
   roster: RosterRow[];
   senior: TaskItem[];
   junior: TaskItem[];
   items: TaskItem[];
   overdueList?: TaskItem[];
+  incompleteList?: TaskItem[];
   history?: TaskItem[];
   freqStats?: FreqStat[];
   unscheduled?: UnscheduledItem[];
@@ -128,16 +133,18 @@ interface DashData {
 const FREQS = ["daily", "weekly", "monthly", "quarterly", "yearly"];
 const ROLES = ["senior", "junior", "either"];
 
-function StatusChip({ status, overdue }: { status: string; overdue: boolean }) {
+function StatusChip({ status, overdue, incomplete }: { status: string; overdue: boolean; incomplete?: boolean }) {
   const base = "inline-flex items-center gap-1 shrink-0 rounded-full border font-semibold px-2 py-0.5 text-[11px]";
   if (status === "done")
     return <span className={`${base} bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30`}>✓ Done</span>;
-  if (status === "inprogress")
-    return <span className={`${base} bg-blue-500/10 text-blue-500 dark:text-blue-400 border-blue-500/30`}>▶ In Progress</span>;
   if (status === "skipped")
     return <span className={`${base} bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border-zinc-400/40`}>⏭ Skipped</span>;
-  if (overdue || status === "overdue")
-    return <span className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>⚠ Overdue</span>;
+  if (status === "not_done")
+    return <span className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>✕ Not Done</span>;
+  // Per-day model: anything not done by EOD reads "Not Done" (legacy
+  // `overdue` / `inprogress` rows included) and lives in the Incomplete tab.
+  if (incomplete || overdue || status === "overdue" || status === "inprogress")
+    return <span className={`${base} bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/30`}>✕ Not Done</span>;
   return <span className={`${base} bg-amber-500/10 text-amber-500 dark:text-amber-400 border-amber-500/30`}>● Pending</span>;
 }
 
@@ -229,16 +236,64 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
     const m = Math.max(0, Math.floor(Number(mins) || 0));
     return h * 60 + m;
   })();
-  const timeInit = t.timeSpentMin ?? null;
   // Explicit per-row override; otherwise the log's recorded owner, otherwise
   // the device's "Acting as" identity. Never goes stale: derived every render.
   const [whoOverride, setWhoOverride] = useState("");
   const whoId = whoOverride || t.accountantId || defaultWho || "";
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const dirty = remark !== (t.remark ?? "") || timeTotal !== timeInit;
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lane = roster.filter((r) => t.ownerRole === "either" || r.role === t.ownerRole);
   const whoName = lane.find((r) => r.id === whoId)?.name ?? roster.find((r) => r.id === whoId)?.name ?? null;
+  const isIncomplete = !!(t.incomplete ?? t.overdue);
+
+  // ── Autosave (no Save button): remark / time / owner persist
+  // optimistically ~800ms after the last keystroke. Status transitions
+  // (Done / Pending buttons) save immediately via `save()`.
+  const lastSent = React.useRef<string>("");
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snapshot = JSON.stringify([remark, hrs, mins, whoId, t.status]);
+  React.useEffect(() => {
+    if (!t.logId) return;
+    // Baseline on mount / log switch — don't write back what we just loaded.
+    if (!lastSent.current) {
+      lastSent.current = JSON.stringify([t.remark ?? "", initHrs, initMins, t.accountantId || defaultWho || "", t.status]);
+    }
+    if (snapshot === lastSent.current) return;
+    setSaveState("saving");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      const body = {
+        status: t.status,
+        remark: remark.trim() || null,
+        accountantId: whoId || null,
+        timeSpentMin: timeTotal,
+      };
+      lastSent.current = snapshot;
+      try {
+        await onSave(t.logId!, body, {
+          remark: remark.trim() || t.remark,
+          accountantId: whoId || t.accountantId,
+          accountantName: whoName ?? t.accountantName,
+          timeSpentMin: timeTotal,
+          updatedAt: new Date().toISOString(),
+        });
+        setSaveState("saved");
+      } catch (e) {
+        console.error(e);
+        setSaveState("error");
+      }
+    }, 800);
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
+  // Reset the autosave baseline when switching to a different log row.
+  React.useEffect(() => {
+    lastSent.current = "";
+    setSaveState("idle");
+  }, [t.logId]);
 
   const save = async (status: string) => {
     if (!t.logId) return;
@@ -246,6 +301,8 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
     // parent), reconcile in background; failure resyncs + alerts.
     const nextRemark = remark.trim() || t.remark;
     const nextName = status === "done" ? whoName : t.doneBy;
+    if (timer.current) clearTimeout(timer.current);
+    lastSent.current = JSON.stringify([remark, hrs, mins, whoId, status]);
     setBusy(true);
     try {
       await onSave(t.logId, {
@@ -263,9 +320,12 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
         timeSpentMin: timeTotal,
         updatedAt: new Date().toISOString(),
         overdue: status === "done" || status === "skipped" ? false : t.overdue,
+        incomplete: status === "done" || status === "skipped" ? false : isIncomplete,
       });
+      setSaveState("saved");
     } catch (e) {
       console.error(e);
+      setSaveState("error");
       alert("Save failed — try again");
     } finally {
       setBusy(false);
@@ -305,14 +365,14 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
   const needReason = !hasReason ? " — add a remark (reason) first" : "";
 
   return (
-    <div className={`rounded-xl border p-3 sm:p-4 ${t.overdue && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
+    <div className={`rounded-xl border p-3 sm:p-4 ${isIncomplete && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="font-semibold text-zinc-900 dark:text-white text-sm">{t.title}</div>
           {t.description && <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t.description}</div>}
           <div className="flex flex-wrap gap-1.5 mt-1.5">
             <FreqChip f={t.frequency} />
-            <StatusChip status={t.status} overdue={t.overdue} />
+            <StatusChip status={t.status} overdue={t.overdue} incomplete={t.incomplete} />
             {t.isShared ? (
               <span title={`Shared task${t.employeeRaw ? ` · sheet: ${t.employeeRaw}` : ""}`} className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-400">
                 👥 shared
@@ -330,9 +390,9 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
                 📅 due {fmtShort(t.dueDate)}
               </span>
             )}
-            {(t.daysOverdue ?? 0) > 0 && (
+            {(t.daysIncomplete ?? t.daysOverdue ?? 0) > 0 && (
               <span title={t.dueDate ? `Originally due ${t.dueDate}` : "Days past due"} className="inline-flex items-center gap-1 rounded-full border border-rose-500/50 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-rose-600 dark:text-rose-300">
-                ⏳ {t.daysOverdue} day{t.daysOverdue === 1 ? "" : "s"} overdue
+                ⏳ {(t.daysIncomplete ?? t.daysOverdue ?? 0)} day{(t.daysIncomplete ?? t.daysOverdue ?? 0) === 1 ? "" : "s"} missed
               </span>
             )}
             {t.doneBy && <span className="text-[11px] text-zinc-500">by {t.doneBy}</span>}
@@ -345,14 +405,14 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
           </div>
         </div>
         <div className="flex gap-1.5 shrink-0">
-          {(t.status === "pending" || t.status === "overdue") && (
-            <button disabled={busy || !t.logId || !hasReason} title={`Start work${needReason}`} onClick={() => save("inprogress")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 cursor-pointer border-0">▶ In Progress</button>
+          {t.status !== "pending" && (
+            <button disabled={busy || !t.logId} onClick={() => save("pending")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 cursor-pointer border-0" title="Back to pending">↩ Pending</button>
           )}
           {(t.status === "pending" || t.status === "overdue" || t.status === "inprogress") && (
-            <button disabled={busy || !t.logId || !hasReason} title={`Mark done${needReason}`} onClick={() => save("done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer border-0">✓ Done</button>
+            <button disabled={busy || !t.logId || !hasReason} title={`Mark not done${needReason}`} onClick={() => save("not_done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-50 cursor-pointer border-0">✕ Not Done</button>
           )}
-          {t.status !== "pending" && (
-            <button disabled={busy || !t.logId || !hasReason} onClick={() => save("pending")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 cursor-pointer border-0" title={`Back to pending${needReason}`}>↩ Pending</button>
+          {(t.status === "pending" || t.status === "overdue" || t.status === "inprogress" || t.status === "not_done") && (
+            <button disabled={busy || !t.logId || !hasReason} title={`Mark done${needReason}`} onClick={() => save("done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer border-0">✓ Done</button>
           )}
         </div>
       </div>
@@ -367,13 +427,15 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
           <option value="">Who?…</option>
           {lane.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
-        <span title="Time taken to finish (hours + minutes) — optional, saved with Done" className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500">
+        <span title="Time taken to finish (hours + minutes) — optional, auto-saved" className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500">
           ⏱
           <input value={hrs} onChange={(e) => setHrs(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="h" inputMode="numeric" aria-label="Hours taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
           <span className="text-zinc-400">:</span>
           <input value={mins} onChange={(e) => setMins(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="m" inputMode="numeric" aria-label="Minutes taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
         </span>
-        <button disabled={busy || !dirty || !t.logId} onClick={() => save(t.status)} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0">Save</button>
+        <span className="inline-flex items-center px-1 text-[11px] font-semibold text-zinc-400 shrink-0" title="Remark, time and owner save automatically while you type">
+          {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved" : saveState === "error" ? "⚠ Retry" : ""}
+        </span>
       </div>
       {files.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-2">
@@ -400,7 +462,7 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
   );
 }
 
-type AccountsView = "dashboard" | "tasks" | "overdue" | "history" | "senior" | "junior" | "my" | "controller";
+type AccountsView = "dashboard" | "tasks" | "incomplete" | "history" | "senior" | "junior" | "my" | "controller";
 
 // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
 // (MIS/root see every lane; others see Dashboard + their own "My Tasks").
@@ -437,7 +499,7 @@ export default function AccountsDashboard() {
   // reconciles in the background — the same contract as sales enquiries.
   // All payload lists holding log rows; rapid taps on one log serialize via
   // the mutation key, taps on different logs run concurrently.
-  const LISTS = useMemo(() => ["items", "senior", "junior", "overdueList", "history"] as const, []);
+  const LISTS = useMemo(() => ["items", "senior", "junior", "overdueList", "incompleteList", "history"] as const, []);
   const { mutate } = useOptimisticMutation(dash);
   const saveLog = React.useCallback((logId: string, body: Record<string, unknown>, patch: Partial<TaskItem>) =>
     mutate(
@@ -474,9 +536,9 @@ export default function AccountsDashboard() {
       },
       { key: logId },
     ), [mutate, LISTS]);
-  const [statusFilter, setStatusFilter] = useState<"pending" | "inprogress" | "done" | "all">("pending");
-  // Inner tabs for Senior/Junior/My: today (today's taskbar) vs overdue (role's backlog) vs history (role's last-30d done)
-  const [roleSub, setRoleSub] = useState<"today" | "overdue" | "history">("today");
+  const [statusFilter, setStatusFilter] = useState<"pending" | "done" | "all">("pending");
+  // Inner tabs for Senior/Junior/My: today (today's taskbar) vs incomplete (role's not-done backlog) vs history (role's last-30d done)
+  const [roleSub, setRoleSub] = useState<"today" | "incomplete" | "history">("today");
   React.useEffect(() => { if (["senior", "junior", "my"].includes(view)) setRoleSub("today"); }, [view]);
   const selfId = useMemo(() => matchSelfRoster(me as any, data?.roster ?? []), [me, data]);
   // Shared logins can't be told apart by auth — each device declares its human
@@ -510,19 +572,17 @@ export default function AccountsDashboard() {
     if (!data) return [];
     if (view === "senior") return data.senior;
     if (view === "junior") return data.junior;
-    if (view === "overdue") return [];
+    if (view === "incomplete") return [];
     // Scoped "My Tasks" and the admin "All Tasks" both render the payload's
     // items, which the backend already lane-filtered for non-admin viewers.
     return data.items;
   }, [data, view]);
   const visible = useMemo(() => {
-    if (statusFilter === "inprogress") return lane.filter((t) => t.status === "inprogress");
     if (statusFilter === "done") return lane.filter((t) => t.status === "done");
     if (statusFilter === "all") return lane;
-    return lane.filter((t) => t.status === "pending" || t.status === "overdue");
+    return lane.filter((t) => t.status !== "done" && t.status !== "skipped");
   }, [lane, statusFilter]);
-  const pendingCount = lane.filter((t) => t.status === "pending" || t.status === "overdue").length;
-  const inprogCount = lane.filter((t) => t.status === "inprogress").length;
+  const pendingCount = lane.filter((t) => t.status !== "done" && t.status !== "skipped").length;
   const doneCount = lane.filter((t) => t.status === "done").length;
 
   // Identity-aware nav: MIS/root see every lane; everyone else sees Dashboard
@@ -549,18 +609,18 @@ export default function AccountsDashboard() {
           { key: "dashboard", label: "Dashboard", icon: "📊" },
         ];
   const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
-  const isOverdueView = view === "overdue";
+  const isIncompleteView = view === "incomplete";
   const isHistoryView = view === "history";
-  // Overdue tab shows the full backlog (past-due unresolved logs). The payload
-  // is already lane-scoped server-side, so admins see everything and everyone
-  // else sees their own lane — no further narrowing by lane tab.
-  const overdueCount = data?.overdueList?.length ?? 0;
-  const overdueTray = useMemo(() => {
-    const list = data?.overdueList ?? [];
-    if (isOverdueView || view === "tasks") return list;
+  // Incomplete tab shows the full not-done backlog (past-due unresolved logs).
+  // The payload is already lane-scoped server-side, so admins see everything and
+  // everyone else sees their own lane — no further narrowing by lane tab.
+  const incompleteCount = (data?.incompleteList ?? data?.overdueList ?? []).length;
+  const incompleteTray = useMemo(() => {
+    const list = data?.incompleteList ?? data?.overdueList ?? [];
+    if (isIncompleteView || view === "tasks") return list;
     if (view === "my") return selfRole ? list.filter((t) => t.ownerRole === "either" || t.ownerRole === selfRole) : list;
     return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
-  }, [data, view, selfRole, isOverdueView]);
+  }, [data, view, selfRole, isIncompleteView]);
   const historyCount = data?.history?.length ?? 0;
   const historyTray = useMemo(() => {
     const list = data?.history ?? [];
@@ -569,6 +629,18 @@ export default function AccountsDashboard() {
     if (view === "senior" || view === "junior") return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
     return list;
   }, [data, view, selfRole, isHistoryView]);
+  // Completed vs not completed per lane (today) + past backlog count —
+  // feeds the dashboard hero so the one number that matters is unmissable.
+  const laneStats = useMemo(() => {
+    if (!data) return null;
+    const stat = (arr: TaskItem[]): LaneStat => {
+      const total = arr.length;
+      const done = arr.filter((t) => t.status === "done").length;
+      return { done, total, not: total - done };
+    };
+    return { senior: stat(data.senior), junior: stat(data.junior) };
+  }, [data]);
+  const backlogCount = (data?.incompleteList ?? data?.overdueList ?? []).length;
   // Reference items follow the same lane visibility as tasks.
   const inUnscheduled = (u: UnscheduledItem) => {
     if (view === "my") return !selfRole || u.ownerRole === "either" || u.ownerRole === selfRole;
@@ -590,9 +662,9 @@ export default function AccountsDashboard() {
           {data && (
             <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px]">
               <span className="font-bold text-zinc-800 dark:text-zinc-100 text-xs">📅 Today · {fmtToday(data.meta.date)}</span>
-              <span className="font-bold text-emerald-500">✓ {data.meta.done}</span>
-              <span className="font-bold text-amber-500">● {data.meta.open} open</span>
-              {data.meta.overdue > 0 && <span className="font-bold text-rose-500">⚠ {data.meta.overdue} overdue</span>}
+              <span className="font-bold text-emerald-500">✓ {data.meta.done} completed</span>
+              <span className="font-bold text-amber-500">✕ {data.meta.open} not completed</span>
+              {(data.meta.incomplete ?? data.meta.overdue) > 0 && <span className="font-bold text-rose-500">✕ {data.meta.incomplete ?? data.meta.overdue} incomplete</span>}
             </div>
           )}
         </div>
@@ -614,7 +686,7 @@ export default function AccountsDashboard() {
           <nav className="flex flex-row flex-wrap gap-2">
             {visibleTabs.filter((t) => t.key !== "controller" || canMIS).map((t) => {
               const active = view === t.key;
-              const count = t.key === "overdue" ? overdueCount : t.key === "history" ? historyCount : null;
+              const count = t.key === "incomplete" ? incompleteCount : t.key === "history" ? historyCount : null;
               return (
                 <button
                   key={t.key}
@@ -640,7 +712,7 @@ export default function AccountsDashboard() {
 
         {/* Content (seamless switch — queries stay mounted) */}
         <div className="flex-1 min-w-0">
-          {data && view === "dashboard" && <TeamBoard team={data.team ?? null} freqStats={data.freqStats ?? []} />}
+          {data && view === "dashboard" && <TeamBoard team={data.team ?? null} freqStats={data.freqStats ?? []} laneStats={laneStats} backlog={backlogCount} />}
 
       {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
       {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
@@ -651,7 +723,6 @@ export default function AccountsDashboard() {
           <div className="flex flex-wrap gap-1.5">
             {([
               { key: "pending", label: `● Pending (${pendingCount})` },
-              { key: "inprogress", label: `▶ In Progress (${inprogCount})` },
               { key: "done", label: `✓ Done (${doneCount})` },
               { key: "all", label: `All (${lane.length})` },
             ] as const).map((s) => (
@@ -662,7 +733,7 @@ export default function AccountsDashboard() {
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-            {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done in this view yet — today's completions will appear here (past done is in History tab)." : statusFilter === "inprogress" ? "Nothing in progress — tap ▶ In Progress on a pending task to start it." : "No pending tasks in this view."}</div>}
+            {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done in this view yet — today's completions will appear here (past done is in History tab)." : "No pending tasks in this view."}</div>}
           </div>
           {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
             <div className="space-y-2">
@@ -684,13 +755,13 @@ export default function AccountsDashboard() {
         </>
       )}
 
-      {/* Senior / Junior / My — individual tabs: Today / Overdue (by role) / History (by role) */}
+      {/* Senior / Junior / My — individual tabs: Today / Incomplete (by role) / History (by role) */}
       {data && (view === "senior" || view === "junior" || view === "my") && (
         <div className="space-y-4">
           <div className="flex flex-wrap gap-1.5">
             {([
               { key: "today" as const, label: `📋 Today (${lane.length})` },
-              { key: "overdue" as const, label: `⚠ Overdue (${overdueTray.length})` },
+              { key: "incomplete" as const, label: `✕ Incomplete (${incompleteTray.length})` },
               { key: "history" as const, label: `🕘 History (${historyTray.length})` },
             ]).map((t) => (
               <button key={t.key} onClick={() => setRoleSub(t.key)} className={`px-3 py-1.5 text-xs font-bold rounded-full cursor-pointer border ${roleSub === t.key ? "bg-indigo-600 text-white border-transparent" : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>
@@ -704,7 +775,6 @@ export default function AccountsDashboard() {
               <div className="flex flex-wrap gap-1.5">
                 {([
                   { key: "pending", label: `● Pending (${pendingCount})` },
-                  { key: "inprogress", label: `▶ In Progress (${inprogCount})` },
                   { key: "done", label: `✓ Done (${doneCount})` },
                   { key: "all", label: `All (${lane.length})` },
                 ] as const).map((s) => (
@@ -715,7 +785,7 @@ export default function AccountsDashboard() {
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-                {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today for this lane — switch to History for past completions." : statusFilter === "inprogress" ? "Nothing in progress — tap ▶ In Progress on a pending task to start it." : "No pending tasks for this lane today."}</div>}
+                {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today for this lane — switch to History for past completions." : "No pending tasks for this lane today."}</div>}
               </div>
               {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
                 <div className="space-y-2">
@@ -737,14 +807,14 @@ export default function AccountsDashboard() {
             </>
           )}
 
-          {roleSub === "overdue" && (
+          {roleSub === "incomplete" && (
             <div className="space-y-2">
-              {overdueTray.length > 0 ? (
+              {incompleteTray.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {overdueTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
+                  {incompleteTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — no overdue for this lane. 🎉</div>
+                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — nothing incomplete for this lane. 🎉</div>
               )}
             </div>
           )}
@@ -770,20 +840,61 @@ export default function AccountsDashboard() {
   );
 }
 
-function TeamBoard({ team, freqStats }: { team: TeamData | null; freqStats?: FreqStat[] }) {
+interface LaneStat {
+  done: number;
+  total: number;
+  not: number;
+}
+
+function TeamBoard({ team, freqStats, laneStats, backlog }: {
+  team: TeamData | null;
+  freqStats?: FreqStat[];
+  laneStats?: { senior: LaneStat; junior: LaneStat } | null;
+  backlog?: number;
+}) {
   if (!team) return <div className="py-12 text-center text-sm text-zinc-500">Team stats unavailable.</div>;
   const maxMonth = Math.max(1, ...team.members.map((m) => m.doneMonth));
   const medal = (i: number) => (i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`);
   const freqIcon: Record<string, string> = { daily: "📅", weekly: "🗓", monthly: "📆", quarterly: "📊", yearly: "🎯" };
+  // What truly matters: completed vs not completed. Today first, backlog next.
+  const doneToday = team.doneToday;
+  const notToday = team.openToday;
+  const totalToday = doneToday + notToday;
+  const backlogCount = backlog ?? team.incompleteToday ?? team.overdueToday;
   return (
     <div className="space-y-6">
+      {/* Hero: completed vs not completed — the one number that matters */}
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4 sm:p-5">
+        <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-extrabold">Today — completed vs not completed</div>
+        <div className="mt-2 flex flex-wrap items-end gap-x-8 gap-y-2">
+          <div>
+            <span className="text-3xl font-extrabold text-emerald-500">✓ {doneToday}</span>
+            <span className="ml-2 text-xs font-semibold text-zinc-500">completed</span>
+          </div>
+          <div>
+            <span className="text-3xl font-extrabold text-rose-500">✕ {notToday}</span>
+            <span className="ml-2 text-xs font-semibold text-zinc-500">not completed</span>
+          </div>
+          <div className="ml-auto text-right">
+            <span className="text-2xl font-extrabold text-indigo-400">{team.completionPct}%</span>
+            <div className="text-[10px] uppercase text-zinc-500 font-bold">of {totalToday} due today</div>
+          </div>
+        </div>
+        <div className="h-2.5 rounded-full bg-zinc-100 dark:bg-zinc-800 mt-3 overflow-hidden">
+          <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500" style={{ width: `${team.completionPct}%` }} />
+        </div>
+        <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold">
+          {laneStats && (
+            <>
+              <span className="text-zinc-600 dark:text-zinc-300">👔 Senior: <span className="text-emerald-500">✓ {laneStats.senior.done}</span> <span className="text-zinc-500">/</span> <span className="text-rose-500">✕ {laneStats.senior.not}</span> <span className="text-zinc-500 font-normal">of {laneStats.senior.total}</span></span>
+              <span className="text-zinc-600 dark:text-zinc-300">🧾 Junior: <span className="text-emerald-500">✓ {laneStats.junior.done}</span> <span className="text-zinc-500">/</span> <span className="text-rose-500">✕ {laneStats.junior.not}</span> <span className="text-zinc-500 font-normal">of {laneStats.junior.total}</span></span>
+            </>
+          )}
+          <span className={backlogCount > 0 ? "text-rose-500" : "text-zinc-500"}>📦 Backlog: {backlogCount} past task{backlogCount === 1 ? "" : "s"} still not done</span>
+        </div>
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Done today", value: team.doneToday, accent: "text-emerald-400" },
-          { label: "In progress", value: team.inProgressToday ?? 0, accent: "text-blue-400" },
-          { label: "Open today", value: team.openToday, accent: "text-amber-300" },
-          { label: "Overdue", value: team.overdueToday, accent: "text-rose-400" },
-          { label: "Completion", value: `${team.completionPct}%`, accent: "text-indigo-300" },
           { label: "Done this week", value: team.weekDone, accent: "text-zinc-900 dark:text-zinc-100" },
           { label: "Done this month", value: team.monthDone, accent: "text-zinc-900 dark:text-zinc-100" },
         ].map((k) => (
@@ -796,7 +907,7 @@ function TeamBoard({ team, freqStats }: { team: TeamData | null; freqStats?: Fre
       {freqStats && freqStats.length > 0 && (
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden">
           <div className="px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider text-zinc-600 dark:text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-            📊 Today by frequency — daily / weekly / monthly / quarterly / yearly
+            📊 Today by frequency — completed vs not completed
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-y divide-zinc-100 dark:divide-zinc-800/60">
             {freqStats.map((f) => (
@@ -811,15 +922,14 @@ function TeamBoard({ team, freqStats }: { team: TeamData | null; freqStats?: Fre
                     <span className="block text-[9px] uppercase text-zinc-500">done</span>
                   </span>
                   <span className="flex-1">
-                    <span className="block text-sm font-extrabold text-rose-500">{f.overdue}</span>
-                    <span className="block text-[9px] uppercase text-zinc-500">overdue</span>
+                    <span className="block text-sm font-extrabold text-rose-500">{f.incomplete ?? f.overdue}</span>
+                    <span className="block text-[9px] uppercase text-zinc-500">not done</span>
                   </span>
                   <span className="flex-1">
                     <span className="block text-sm font-extrabold text-amber-500">{f.pending}</span>
                     <span className="block text-[9px] uppercase text-zinc-500">pending</span>
                   </span>
                 </div>
-                {f.inprogress > 0 && <div className="mt-1 text-[10px] text-blue-500 font-semibold text-center">▶ {f.inprogress} in progress</div>}
                 <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 mt-2 overflow-hidden">
                   <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500" style={{ width: `${f.completionPct}%` }} />
                 </div>
@@ -831,7 +941,7 @@ function TeamBoard({ team, freqStats }: { team: TeamData | null; freqStats?: Fre
       )}
       <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
         <div className="px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider text-zinc-600 dark:text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-          🏆 Leaderboard · tasks done per person <span className="normal-case font-medium">(week starts Monday)</span>
+          🏆 Per person · completed vs pending <span className="normal-case font-medium">(week starts Monday)</span>
         </div>
         {team.members.length === 0 && <div className="p-6 text-center text-xs text-zinc-500">No accountants on the roster yet — MIS adds them from the Controller tab.</div>}
         {team.members.map((m, i) => (
@@ -841,6 +951,11 @@ function TeamBoard({ team, freqStats }: { team: TeamData | null; freqStats?: Fre
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <span className="font-bold text-sm truncate">{m.name}</span>
                 <span className={`text-[10px] font-bold uppercase ${m.role === "senior" ? "text-indigo-400" : "text-zinc-500"}`}>{m.role}</span>
+              </div>
+              <div className="mt-0.5 text-[11px] font-semibold">
+                <span className="text-emerald-500">✓ {m.doneToday} done today</span>
+                <span className="text-zinc-500 font-normal"> · </span>
+                <span className={m.openLaneToday > 0 ? "text-rose-500" : "text-zinc-500"}>✕ {m.openLaneToday} pending in {m.role} lane</span>
               </div>
               <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 mt-1 overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500" style={{ width: `${Math.round((m.doneMonth / maxMonth) * 100)}%` }} />
@@ -882,13 +997,14 @@ function ExportCard() {
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       const rows = (data.rows ?? []) as Record<string, any>[];
-      const header = ["Date", "Task", "Frequency", "Lane", "Shared", "Due", "Status", "Overdue", "Done By", "Accountant", "Remark", "Attachments", "Updated At"];
+      const header = ["Date", "Task", "Frequency", "Lane", "Shared", "Due", "Status", "Completed / Not Completed", "Done By", "Accountant", "Remark", "Attachments", "Updated At"];
       const lines = [header.map(csvCell).join(",")];
       for (const r of rows) {
         const files = (r.attachments ?? []).map((f: any) => `${f.name} (${f.url})`).join("; ");
+        const result = r.result ?? (r.status === "done" ? "Completed" : "Not Completed");
         lines.push([
           r.date, r.task, r.frequency, r.lane, r.shared ? "yes" : "no", r.due,
-          r.status, r.overdue ? "yes" : "no", r.doneBy, r.accountant, r.remark, files, r.updatedAt,
+          r.status, result, r.doneBy, r.accountant, r.remark, files, r.updatedAt,
         ].map(csvCell).join(","));
       }
       const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
@@ -899,7 +1015,10 @@ function ExportCard() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      setInfo(`Exported ${rows.length} rows (${data.from} → ${data.to}).`);
+      const done = data.completed ?? rows.filter((r) => r.status === "done").length;
+      const not = data.notCompleted ?? (rows.length - done);
+      const pct = data.completionPct ?? (rows.length > 0 ? Math.round((done / rows.length) * 100) : 100);
+      setInfo(`Exported ${rows.length} rows (${data.from} → ${data.to}): ✓ ${done} completed, ✕ ${not} not completed (${pct}%).`);
     } catch (e) {
       console.error(e);
       setInfo(e instanceof Error ? e.message : "Export failed");
@@ -912,8 +1031,8 @@ function ExportCard() {
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 lg:col-span-2">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="font-bold text-sm">📤 MIS export — full task history</h3>
-          <div className="text-[11px] text-zinc-500 mt-0.5">Every due task per day with lane, pending / in-progress / done status, who did it, remarks and attachment links. Opens in Excel.</div>
+          <h3 className="font-bold text-sm">📤 MIS export — completed vs not completed</h3>
+          <div className="text-[11px] text-zinc-500 mt-0.5">Every due task per day with lane, completed / not completed result, who did it, remarks and attachment links. Opens in Excel.</div>
         </div>
         <label className="text-[11px] text-zinc-500 flex items-center gap-1.5">
           From

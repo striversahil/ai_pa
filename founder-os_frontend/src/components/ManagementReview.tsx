@@ -9,7 +9,8 @@ import Modal from "@/components/Modal";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry } from "@/types";
-import { enquiryLabel, historyDateChip, itemNeedsDecision, isManagementPendingEnquiry, isManagementHistoryEnquiry } from "@/types";
+import { enquiryLabel, historyDateChip } from "@/types";
+import { itemNeedsDecision, isManagementPendingEnquiry, isManagementHistoryEnquiry, itemHasUnreviewedQuotes } from "@/enquiry/queue";
 
 /** Only correct-spec, rate-UNAVAILABLE, rated-but-unfinalized items need a
  *  decision — flagged items stay with Sales until the spec is fixed, then
@@ -123,7 +124,9 @@ export default function ManagementReview() {
 
   const loopProgress = (e: Enquiry): { done: number; total: number } => {
     const loop = (e.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable);
-    const done = loop.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
+    // Items with new unshared quotes since the decision still need a review
+    // pass — never count them done while the row sits in Active.
+    const done = loop.filter((it) => it.finalRate !== undefined && it.finalRate !== null && !itemHasUnreviewedQuotes(it as any)).length;
     return { done, total: loop.length };
   };
 
@@ -250,17 +253,24 @@ export default function ManagementReview() {
           onClose={() => setSelectedId(null)}
           wide
         >
-          <div className="rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/30 p-3">
-            <p className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">Client</p>
-            <p className="text-base font-extrabold text-[var(--text-primary)]">{sel.clientCompany || "—"}</p>
-            {sel.contactName && (
-              <p className="mt-0.5 text-xs font-semibold text-[var(--text-secondary)]">
-                {sel.contactName}
-                {sel.contactPhone ? ` · ${sel.contactPhone}` : ""}
-                {sel.contactEmail ? ` · ${sel.contactEmail}` : ""}
-              </p>
-            )}
-          </div>
+          {/* Floating client details sit FLUSH under the modal header (gap 0):
+              first child + -mt-4 cancels the modal body's top padding, so no
+              transparent strip remains where scrolled text could show through.
+              Solid bg (no translucency) for the same reason. The old separate
+              client card below was removed (same fields live here) so opening
+              the enquiry shows details instantly. */}
+          {info.length > 0 && (
+            <div className="sticky top-0 z-10 -mx-5 -mt-4 px-5 py-3 bg-[var(--bg-card)] border-b border-[var(--border-card)]/50">
+              <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1.5 rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/30 p-3">
+                {info.map(([k, v]) => (
+                  <div key={k} className="min-w-0">
+                    <dt className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">{k}</dt>
+                    <dd className="text-xs font-semibold text-[var(--text-primary)] break-words">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <span className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border ${
               sel.priority === "high"
@@ -275,18 +285,6 @@ export default function ManagementReview() {
               </span>
             )}
           </div>
-          {info.length > 0 && (
-            <div className="sticky top-0 z-10 -mx-5 px-5 py-3 bg-[var(--bg-card)]/95 backdrop-blur supports-[backdrop-filter]:bg-[var(--bg-card)]/80 border-y border-[var(--border-card)]/50">
-              <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1.5 rounded-xl border border-[var(--border-card)]/60 bg-[var(--bg-input)]/30 p-3">
-                {info.map(([k, v]) => (
-                  <div key={k} className="min-w-0">
-                    <dt className="text-[9px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">{k}</dt>
-                    <dd className="text-xs font-semibold text-[var(--text-primary)] break-words">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          )}
           {sel.description && (
             <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{sel.description}</p>
           )}

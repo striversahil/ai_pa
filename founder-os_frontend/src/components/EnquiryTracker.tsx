@@ -7,7 +7,7 @@ import EnquiryList from "@/components/EnquiryList";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
 import Lightbox from "@/components/Lightbox";
-import type { Enquiry, Comment } from "@/types";
+import type { Enquiry, Comment, EnquiryItem } from "@/types";
 import { enquiryLabel } from "@/types";
 
 // Sales Enquiries dashboard (mounted as the `enquiry-tracker` automation).
@@ -183,7 +183,7 @@ export default function EnquiryTracker() {
     await addComment(newComment);
   }, [addComment]);
 
-  const handleUpdateItems = useCallback(async (id: string, items: Array<{ name: string; qty: string; spec: string; media?: Array<{ type: 'image' | 'video' | 'pdf'; url: string; name?: string }> }>) => {
+  const handleUpdateItems = useCallback(async (id: string, items: EnquiryItem[]) => {
     await updateItems(id, items, "sales");
   }, [updateItems]);
 
