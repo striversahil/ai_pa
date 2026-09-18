@@ -58,6 +58,14 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     defaultModel: OPENROUTER_VISION_MODEL,
     visionModel: OPENROUTER_VISION_MODEL,
   },
+  requestly: {
+    id: 'requestly',
+    baseURL: 'https://router.requestly.com/v1/chat/completions',
+    supportsReasoning: true,
+    jsonMode: { type: 'json_object' },
+    defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+    visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+  },
 };
 
 // ── Errors + provider detection ──────────────────────────────────────────────
@@ -191,6 +199,8 @@ export class KeyPool {
     for (const key of raw(env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
+    for (const key of raw(env.REQUESTLY_API_KEY).split(',')) add('requestly', key);
+    for (const key of raw((env as any).REQUESTLY_API_KEYS).split(',')) add('requestly', key);
     for (const key of raw(env.DEEPSEEK_API_KEYS).split(',')) add('deepseek', key);
     for (const key of raw(env.TOGETHER_API_KEYS).split(',')) add('together', key);
     for (const key of raw(env.OPENAI_API_KEYS).split(',')) add('openai', key);

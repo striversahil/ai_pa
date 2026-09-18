@@ -29,6 +29,9 @@ jobs:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
+          AI_KEYS: ${{ secrets.AI_KEYS }}
         run: node scripts/whatsapp-digest-runner.js
 
   whatsapp-autopilot:
@@ -40,6 +43,9 @@ jobs:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
+          AI_KEYS: ${{ secrets.AI_KEYS }}
         run: node scripts/whatsapp-autopilot-runner.js
 
   # New-SO latency: 5 min. The 15-min ticks coincide with 5-min ticks
@@ -66,6 +72,11 @@ jobs:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
+          REQUESTLY_API_KEYS: ${{ secrets.REQUESTLY_API_KEYS }}
+          AI_KEYS: ${{ secrets.AI_KEYS }}
           NEODOVE_AGENT_NAMES: Muskan
           ZOHO_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
         run: node scripts/zoho-sent-runner.js

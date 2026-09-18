@@ -34,6 +34,14 @@ const PROVIDERS = {
     defaultModel: OPENROUTER_VISION_MODEL,
     visionModel: OPENROUTER_VISION_MODEL,
   },
+  requestly: {
+    id: 'requestly',
+    baseURL: 'https://router.requestly.com/v1/chat/completions',
+    supportsReasoning: true,
+    jsonMode: { type: 'json_object' },
+    defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+    visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+  },
 };
 
 /** Extract the first JSON object/array from model prose (providers without
@@ -122,6 +130,8 @@ class KeyPool {
     for (const key of raw(env && env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env && env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env && env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
+    for (const key of raw(env && env.REQUESTLY_API_KEY).split(',')) add('requestly', key);
+    for (const key of raw(env && env.REQUESTLY_API_KEYS).split(',')) add('requestly', key);
     const aiKeys = raw(env && env.AI_KEYS);
     if (aiKeys) {
       for (const entry of aiKeys.split(',')) {
