@@ -217,7 +217,20 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     const mediaKey = (m: any): string => `${m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image'}:${String(m?.url ?? '')}`;
     const storedUrls = new Set(parseItemMedia(stored.media ?? []).map(mediaKey));
     const mediaAdded = parseItemMedia(base.media ?? []).map(mediaKey).some((u) => !storedUrls.has(u));
-    const fixed = specChanged || (mediaAdded && !actingProcurement);
+    // Sales remark on a flagged item also resolves it (permanent fix for
+    // procurement not seeing the fix: sales wrote "Size 8 x 32" as a remark
+    // but spec stayed "" so the flag never cleared). A fresh sales remark
+    // now clears the hold and, if spec is still empty, promotes the remark
+    // text into spec so procurement has the size without a second edit.
+    const storedThreadForFix = parseFlagThread((stored as any)?.thread);
+    const seenForFix = new Set(storedThreadForFix.map((e) => `${e.at}|${e.kind}|${e.text}`));
+    const incomingRemarksForFix = parseFlagThread((it as any)?.thread).filter((e) => e.kind === 'remark');
+    const freshSalesRemark = incomingRemarksForFix.find((e) => !seenForFix.has(`${e.at}|${e.kind}|${e.text}`) && (e.by === 'sales' || (!actingProcurement && !privileged)));
+    const remarkFix = !!freshSalesRemark && hadFlag;
+    if (remarkFix && !String(base.spec ?? "").trim()) {
+      base.spec = String(freshSalesRemark.text).slice(0, 2000);
+    }
+    const fixed = specChanged || (mediaAdded && !actingProcurement) || remarkFix;
     if (stored.finalRate !== undefined && stored.finalRate !== null) {
       // Privileged re-flag (incorrect rates / need other vendors): reopen
       // the item — the flag attaches and the previous decision clears, so
