@@ -125,7 +125,8 @@ export function toEnquiry(raw: any): Enquiry {
     imageUrls,
     additionalRequirements,
     items,
-  };
+    zohoStatus: (raw as any).zohoStatus ? String((raw as any).zohoStatus) : null,
+  } as any;
 }
 
 export type { Enquiry, Comment, Activity, EnquiryItem };
