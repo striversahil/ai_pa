@@ -14,9 +14,8 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   const hasRates = items.some((it) => (it.rates ?? []).length > 0);
   const finalized = (enq.rateStatus ?? "") === "finalized";
   const sent = (enq.rateStatus ?? "") === "sent";
-  const flagged = items.some((it) => it.specIssue);
-  // Management-decided items on an open enquiry = partial rates received
-  // (per-enquiry tag; the per-item rates live in the detail view).
+  // Rate available overrides the hold — kept hidden in D1 (update.ts:239), UI must not show Fix Spec for it; sent is terminal (even flagged rows show Marked as Sent)
+  const flagged = items.some((it) => it.specIssue && !it.rateAvailable && !(it as any).internalRates);
   const hasPartialRates = !finalized && !sent && items.some((it) => it.finalRate !== undefined && it.finalRate !== null);
   // Overdue: not sent and older than 24h → chip in red (card stays neutral)
   const createdMs = enq.createdAt ? new Date(enq.createdAt).getTime() : 0;
@@ -56,17 +55,17 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
           )}
           {!hideIdentity && (
             <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
-              flagged
-                ? "bg-red-500/10 text-red-500 border-red-500/30"
-                : sent
+              sent
                 ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
+                : flagged
+                ? "bg-red-500/10 text-red-500 border-red-500/30"
                 : finalized
-                 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
                 : hasPartialRates || hasRates
-                   ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                   : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
-             }`}>
-              {flagged ? "Fix Spec" : sent ? "Marked as Sent" : finalized ? "Rates Ready" : hasPartialRates ? "Partial rates" : hasRates ? "Rating…" : "Awaiting rates"}
+                    ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                    : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
+              }`}>
+              {sent ? "Marked as Sent" : flagged ? "Fix Spec" : finalized ? "Rates Ready" : hasPartialRates ? "Partial rates" : hasRates ? "Rating…" : "Awaiting rates"}
             </span>
           )}
         </div>
