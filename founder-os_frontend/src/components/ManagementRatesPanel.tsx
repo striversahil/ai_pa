@@ -589,10 +589,15 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             {bulkError && <p className="text-[11px] font-semibold text-red-400">{bulkError}</p>}
           </div>
           {items.map((it, i) => {
+            // Rate available overrides everything — keep state hidden (like the
+            // procurement queue's `visible = !rateAvailable && !internalRates`);
+            // the item stays in D1 (rates/flag preserved) but this view shows
+            // nothing. Once toggled off, the stored flag/rates reappear.
+            if (it.rateAvailable) return null; // rate already available — skips Management entirely
             // Held for a sales spec correction: visible read-only (spec +
             // procurement's flag reason) so Management sees what's stuck and
             // why — no vendor, markup, or request actions until Sales fixes it.
-            if (it.specIssue) {
+            if (it.specIssue && !sent) {
               return (
                 <div key={i} className="rounded-xl border border-red-500/25 bg-red-500/5 p-3 space-y-2">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -620,7 +625,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 </div>
               );
             }
-            if (it.rateAvailable) return null; // rate already available — skips Management entirely
             // Legacy internal rows with no rate yet: enter the sourced rate
             // here, then mark up + finalize as usual. (Marking NEW items
             // internal is removed — everything flows through procurement.)
