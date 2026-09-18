@@ -68,6 +68,17 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
               {sent ? "Marked as Sent" : flagged ? "Fix Spec" : finalized ? "Rates Ready" : hasPartialRates ? "Partial rates" : hasRates ? "Rating…" : "Awaiting rates"}
             </span>
           )}
+          {enq.estNumber && (enq as any).zohoStatus && (
+            <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
+              (enq as any).zohoStatus === 'sent' ? "bg-sky-500/10 text-sky-600 border-sky-500/30"
+              : (enq as any).zohoStatus === 'accepted' ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+              : (enq as any).zohoStatus === 'draft' ? "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
+              : (enq as any).zohoStatus === 'declined' ? "bg-red-500/10 text-red-500 border-red-500/30"
+              : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
+            }`} title="Live Zoho status (5-min sync)">
+              Zoho: {(enq as any).zohoStatus}
+            </span>
+          )}
         </div>
       </div>
 

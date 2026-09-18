@@ -245,6 +245,19 @@ export default function EnquiryDetail({
                   </span>
                 </>
               )}
+              {(selectedEnquiry as any).zohoStatus && selectedEnquiry.estNumber && (
+                <>
+                  <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
+                  <span className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
+                    (selectedEnquiry as any).zohoStatus === 'sent' ? "bg-sky-500/10 text-sky-600 border-sky-500/30"
+                    : (selectedEnquiry as any).zohoStatus === 'accepted' ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                    : (selectedEnquiry as any).zohoStatus === 'declined' ? "bg-red-500/10 text-red-500 border-red-500/30"
+                    : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
+                  }`} title="Live Zoho status (5-min sync)">
+                    Zoho: {(selectedEnquiry as any).zohoStatus}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -177,6 +177,9 @@ export interface Enquiry {
   /** Procurement view only: true while the AI secure rewrite is still being
    *  prepared (pieces withheld until ready, client refetches on live event). */
   redactedPending?: boolean;
+  /** Live Zoho status for the linked estimate (from Estimate table, 5-min sync).
+   *  Enriched by GET /api/enquiries list/single — no extra Zoho read, no AI. */
+  zohoStatus?: string | null;
 }
 
 export interface Comment {

@@ -157,8 +157,14 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       void fetchEnquiriesRef.current();
     }
   }, []);
+  // Zoho status chip goes live via Estimate changes (5-min zoho-sent sync).
+  // Enquiries subscribe only to `enquiries` events, but Estimate status
+  // flips broadcast `estimates` — also refetch enquiries so the Zoho chip
+  // updates without an extra poll.
   useLiveEvent((e) => {
-    if (!e || (e as any).type !== 'enquiries') return;
+    if (!e || ((e as any).type !== 'enquiries' && (e as any).type !== 'estimates')) return;
+    if ((e as any).type === 'estimates') { void fetchEnquiriesRef.current(); return; }
+
     const ev = e as any;
     // Summary-only event (current backend): full view merges the one changed
     // row; redacted view refetches its list payload (debounced).

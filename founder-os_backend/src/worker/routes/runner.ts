@@ -691,6 +691,12 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const { applyStatusUpdates } = await import('../../modules/estimates/status-sync');
     const { updated } = await applyStatusUpdates(updates);
     notifyLive(c, { type: 'estimates' });
+    // Zoho status chip on Sales Enquiry dashboard is derived from Estimate.status
+    // (enriched in /api/enquiries list via Estimate table, no extra Zoho reads).
+    // Sales enquiries subscribe only to `enquiries` live events, so a status
+    // flip must also nudge enquiries live or the Zoho chip stays stale until
+    // the next 5-min poll. Same pattern as lead-details below.
+    if (updated > 0) notifyLive(c, { type: LiveEvent.Enquiries });
     // A status flip to accepted/confirmed writes a slab close credit into the
     // telecalling ledger (recordConversionClose above) — the Telecalling
     // dashboard subscribes narrowly to automation/telecalling events, so it

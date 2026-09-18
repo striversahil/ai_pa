@@ -48,6 +48,26 @@ function kick(c: any, id: string): void {
   } catch { /* enrichment never fails a request */ }
 }
 
+  // Live Zoho status chip: enrich enquiries with Estimate.status (from the
+  // 5-min zoho-sent sync's 400 last-modified window). Single D1 IN query,
+  // no extra Zoho reads, no AI — status goes live via the same 5-min tick.
+  async function attachZohoStatus(enquiries: any[]): Promise<void> {
+    const nums = [...new Set((enquiries as any[]).map((e) => String((e as any)?.estNumber ?? '').trim()).filter(Boolean))];
+    if (!nums.length) return;
+    try {
+      const { prisma } = deps();
+      const rows = await (prisma as any).estimate.findMany({
+        where: { estimateNumber: { in: nums } },
+        select: { estimateNumber: true, status: true },
+      });
+      const map = new Map<string, string>((rows as any[]).map((r) => [String(r.estimateNumber), String(r.status)]));
+      for (const e of enquiries as any[]) {
+        const s = map.get(String((e as any)?.estNumber ?? '').trim());
+        (e as any).zohoStatus = s ?? null;
+      }
+    } catch {}
+  }
+
 export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/enquiries', async (c) => {
     const me = await enquiryMe(c);
@@ -67,6 +87,11 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
           }
         : undefined;
     const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me, opts);
+    // Enrich with live Zoho status (from Estimate table, already synced every 5min)
+    try {
+      const list = (r.body as any)?.enquiries;
+      if (Array.isArray(list)) await attachZohoStatus(list);
+    } catch {}
     if (restricted) {
       for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
     }
@@ -195,6 +220,10 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryGet(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
+    try {
+      const enq = (r.body as any)?.enquiry;
+      if (enq) await attachZohoStatus([enq]);
+    } catch {}
     return c.json(r.body, r.status as any);
   });
   app.get('/api/enquiries/:id/comments', async (c) => {    const me = await enquiryMe(c);
