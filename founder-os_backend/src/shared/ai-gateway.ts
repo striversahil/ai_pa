@@ -60,7 +60,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
   },
   requestly: {
     id: 'requestly',
-    baseURL: 'https://router.requestly.com/v1/chat/completions',
+    baseURL: 'https://router.requesty.ai/v1/chat/completions',
     supportsReasoning: true,
     jsonMode: { type: 'json_object' },
     defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
