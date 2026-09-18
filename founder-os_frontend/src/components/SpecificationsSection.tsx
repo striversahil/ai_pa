@@ -489,7 +489,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             {hasRate && (
                               <p className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400">
                                 {it.internalRates ? "Rate available internally" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
-                                {(it as any).finalDiscountPercent ? ` · ${(it as any).finalDiscountPercent}% off` : ""}
+                                {/* discount hidden in enquiry-tracker (sales) — management-only */}
+                                {mode !== "none" && (it as any).finalDiscountPercent ? ` · ${(it as any).finalDiscountPercent}% off` : ""}
                               </p>
                             )}
                             {note && <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{note}</p>}
