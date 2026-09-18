@@ -35,7 +35,7 @@ export function GroupCard({ title, subtitle, count, defaultOpen = true, children
   );
 }
 
-export function ClosedDropdown({ count, children }: { count: number; children: React.ReactNode }) {
+export function ClosedDropdown({ count, children, label }: { count: number; children: React.ReactNode; label?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)]/60 overflow-hidden">
@@ -46,7 +46,7 @@ export function ClosedDropdown({ count, children }: { count: number; children: R
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
         <span className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-          Closed — decision made ({count})
+          {label ?? `Closed — decision made`} ({count})
         </span>
       </button>
       {open && <div className="border-t border-[var(--border-card)]/60 p-3 space-y-2">{children}</div>}

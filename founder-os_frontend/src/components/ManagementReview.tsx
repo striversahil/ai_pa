@@ -84,6 +84,12 @@ export default function ManagementReview() {
   const historyEnquiries: Enquiry[] = useMemo(() => {
     return enquiries.filter(isManagementHistoryEnquiry).sort(byActivity);
   }, [enquiries]);
+  // Unprocessed (new): everything not fully decided — includes items still
+  // with procurement (e.g. Enq 3 - 18 SEP one line without rates) + partially
+  // decided. Lets management see all open work at a glance.
+  const unprocessedEnquiries: Enquiry[] = useMemo(() => {
+    return enquiries.filter((e) => !isManagementHistoryEnquiry(e as any) && (e.items ?? []).length > 0).sort(byActivity);
+  }, [enquiries]);
   // History search + pagination (like Daily Enquiries) — client/EST/title/item
   const [historySearch, setHistorySearch] = useState("");
   const filteredHistory = useMemo(() => {
@@ -109,6 +115,30 @@ export default function ManagementReview() {
   const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / historyPageSize));
   const historyPageClamped = Math.min(historyPage, historyTotalPages);
   const visibleHistory = useMemo(() => filteredHistory.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize), [filteredHistory, historyPageClamped, historyPageSize]);
+  // Unprocessed search + pagination (same UX as history)
+  const [unprocessedSearch, setUnprocessedSearch] = useState("");
+  const filteredUnprocessed = useMemo(() => {
+    const q = unprocessedSearch.trim().toLowerCase();
+    if (!q) return unprocessedEnquiries;
+    const qDigits = q.replace(/\D/g, "");
+    return unprocessedEnquiries.filter(e => {
+      const hay = [
+        e.clientCompany ?? "", e.title ?? "", e.estNumber ?? "", (e as any).enquiryNumber ?? "", (e as any).sourceLead ?? "", (e as any).location ?? "",
+        e.contactName ?? "", (e as any).contactEmail ?? "", e.contactPhone ?? "", e.description ?? "", e.source ?? "", String(e.dailyNo ?? ""),
+        ...((e.items ?? []) as any[]).flatMap((it: any) => [it?.name ?? "", it?.qty ?? "", it?.spec ?? "", it?.verbatim ?? "", ...((it?.rates ?? []).map((r:any)=> r?.vendor ?? ""))]),
+        (agents ?? []).find((a:any)=> String(a.id)===String((e as any).assignedAgentId))?.name ?? "",
+      ].join(" ").toLowerCase();
+      if (hay.includes(q)) return true;
+      if (qDigits.length >= 3 && (e.estNumber ?? "").replace(/\D/g,"").includes(qDigits)) return true;
+      return false;
+    });
+  }, [unprocessedEnquiries, unprocessedSearch, agents]);
+  const [unprocessedPage, setUnprocessedPage] = useState(1);
+  const [unprocessedPageSize, setUnprocessedPageSize] = useState<number>(50);
+  useEffect(() => { setUnprocessedPage(1); }, [filteredUnprocessed.length, unprocessedPageSize, unprocessedSearch]);
+  const unprocessedTotalPages = Math.max(1, Math.ceil(filteredUnprocessed.length / unprocessedPageSize));
+  const unprocessedPageClamped = Math.min(unprocessedPage, unprocessedTotalPages);
+  const visibleUnprocessed = useMemo(() => filteredUnprocessed.slice((unprocessedPageClamped - 1) * unprocessedPageSize, unprocessedPageClamped * unprocessedPageSize), [filteredUnprocessed, unprocessedPageClamped, unprocessedPageSize]);
 
   const leadName = useCallback((agentId: string) => {
     if (!agentId) return "";
@@ -238,6 +268,31 @@ export default function ManagementReview() {
               </p>
               {enquiryTable(pending, "active")}
             </section>
+          )}
+
+          {unprocessedEnquiries.length > 0 && (
+            <ClosedDropdown count={unprocessedEnquiries.length} label={`Unprocessed — not yet fully decided`}>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex-1 relative">
+                  <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z" /></svg>
+                  <input value={unprocessedSearch} onChange={(e)=> setUnprocessedSearch(e.target.value)} placeholder="Search client, EST No., title, item, vendor…" className="w-full pl-8 pr-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] text-xs focus:outline-none focus:border-brand-indigo" />
+                  {unprocessedSearch && <button type="button" onClick={()=> setUnprocessedSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs">×</button>}
+                </div>
+                {unprocessedSearch && <span className="text-xs text-[var(--text-secondary)]">{filteredUnprocessed.length} match</span>}
+              </div>
+              {enquiryTable(visibleUnprocessed, "history")}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[var(--border-card)] mt-3">
+                <span className="text-xs font-semibold text-[var(--text-secondary)]">Showing {filteredUnprocessed.length ? (unprocessedPageClamped - 1) * unprocessedPageSize + 1 : 0}–{Math.min(unprocessedPageClamped * unprocessedPageSize, filteredUnprocessed.length)} of {filteredUnprocessed.length} {unprocessedTotalPages > 1 ? `· page ${unprocessedPageClamped} of ${unprocessedTotalPages}` : ""}</span>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-[var(--text-secondary)]">Show</label>
+                  <select value={unprocessedPageSize} onChange={(e) => setUnprocessedPageSize(Number(e.target.value))} className="px-2 py-1 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg text-xs font-semibold cursor-pointer">
+                    {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n} / page</option>)}
+                  </select>
+                  <button type="button" disabled={unprocessedPageClamped <= 1} onClick={() => setUnprocessedPage(unprocessedPageClamped - 1)} className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer">‹ Prev</button>
+                  <button type="button" disabled={unprocessedPageClamped >= unprocessedTotalPages} onClick={() => setUnprocessedPage(unprocessedPageClamped + 1)} className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer">Next ›</button>
+                </div>
+              </div>
+            </ClosedDropdown>
           )}
 
           {historyEnquiries.length > 0 && (
