@@ -698,7 +698,16 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   </p>
                 )}
                 {rates.length === 0 ? (
-                  <p className="text-[11px] text-zinc-500 italic">No vendor rates yet — procurement adds them per item.</p>
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-zinc-500 italic">No vendor rates yet — add one here to finalize directly.</p>
+                    {!isItemLocked && (
+                      <ItemRateForm
+                        submitLabel="Add rate & finalize"
+                        onAdd={(rate) => void addInternalRate(i, rate)}
+                      />
+                    )}
+                    <p className="text-[10px] text-zinc-500">Adds a vendor rate as your final source — use the sales-note field below (shown after adding) for the original sales note forwarded to the client.</p>
+                  </div>
                 ) : (
                   <div className="space-y-1">
                     {rates.map((r, rj) => (
