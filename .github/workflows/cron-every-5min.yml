@@ -67,13 +67,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: zoho-sent-analyzer (full sync + AI on runner)
+      - name: zoho-sent-analyzer (full sync + AI on runner) — groq → requestly (nemotron) only, no openrouter for this analysis
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
           REQUESTLY_API_KEYS: ${{ secrets.REQUESTLY_API_KEYS }}
           AI_KEYS: ${{ secrets.AI_KEYS }}
