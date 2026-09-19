@@ -443,17 +443,10 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 </div>
                               </div>
                             ) : (
-                              <span className="mt-1.5 flex flex-wrap items-center gap-2">
-                                <button type="button" onClick={() => { setRemarkIdx(idx); setRemarkText(""); }}
-                                  className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">
-                                  Add remark
-                                </button>
-                                <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-red-500/30 bg-white/60 hover:bg-red-500/10 cursor-pointer text-[11px] font-bold text-red-500">
-                                  + Attach reference
-                                  <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={(e) => { void addItemMedia(idx, e.target.files); e.target.value=""; }} />
-                                </label>
-                                <span className="text-[10px] text-[var(--text-tertiary)]">Resolves flag — visible in thread + item attachments</span>
-                              </span>
+                              <button type="button" onClick={() => { setRemarkIdx(idx); setRemarkText(""); }}
+                                className="mt-1.5 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">
+                                Add remark
+                              </button>
                             )
                           )}
                         </div>
