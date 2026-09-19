@@ -520,14 +520,14 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     // rateAvailable — otherwise a half-quoted enquiry could be finalized/sent.
     // Sales saw this as "Mark as sent works even though some items have no
     // rates" (2026-09-17). Block here so both roles get the same hard gate.
-    const missingRates = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates && ((it as any)?.rates ?? []).length === 0);
+    const missingRates = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && ((it as any)?.rates ?? []).length === 0);
     if (missingRates.length > 0) {
       const verb = (updates as any).rateStatus === 'sent' ? 'mark as sent' : 'finalize';
       return json(400, {
-        error: `${missingRates.length} item${missingRates.length === 1 ? "" : "s"} still need vendor rates (or mark rate available) before you ${verb}`,
+        error: `${missingRates.length} item${missingRates.length === 1 ? "" : "s"} still need vendor rates (or mark rate available / not available) before you ${verb}`,
       });
     }
-    const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable);
+    const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable);
     const done = loop.filter((it) =>
       it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
     if (done.length < loop.length) {
