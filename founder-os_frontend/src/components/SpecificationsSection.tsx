@@ -392,8 +392,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
                           <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
-                          {mode !== "none" && <FlagThread thread={it.thread ?? []} />}
-                          {mode !== "none" && editable && (
+                          <FlagThread thread={it.thread ?? []} />
+                          {editable && (
                             remarkIdx === idx ? (
                               <div className="mt-2 space-y-1.5">
                                 <textarea

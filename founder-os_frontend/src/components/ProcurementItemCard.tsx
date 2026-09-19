@@ -191,7 +191,7 @@ export default function ProcurementItemCard({
         </div>
       )}
 
-      <FlagThread thread={item.thread ?? []} hideSalesRemarks />
+      <FlagThread thread={item.thread ?? []} />
 
       {rates.length > 0 && (
         <ul className="space-y-1">
