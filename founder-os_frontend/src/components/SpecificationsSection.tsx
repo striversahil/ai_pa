@@ -419,7 +419,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {!redacted && !it.specIssue && (it.thread ?? []).length > 0 && (
                         <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
                       )}
-                      {it.specIssue && !redacted && !it.rateAvailable && (
+                       {it.specIssue && !redacted && !it.rateAvailable && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
@@ -443,10 +443,17 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 </div>
                               </div>
                             ) : (
-                              <button type="button" onClick={() => { setRemarkIdx(idx); setRemarkText(""); }}
-                                className="mt-1.5 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">
-                                Add remark
-                              </button>
+                              <span className="mt-1.5 flex flex-wrap items-center gap-2">
+                                <button type="button" onClick={() => { setRemarkIdx(idx); setRemarkText(""); }}
+                                  className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">
+                                  Add remark
+                                </button>
+                                <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-red-500/30 bg-white/60 hover:bg-red-500/10 cursor-pointer text-[11px] font-bold text-red-500">
+                                  + Attach reference
+                                  <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={(e) => { void addItemMedia(idx, e.target.files); e.target.value=""; }} />
+                                </label>
+                                <span className="text-[10px] text-[var(--text-tertiary)]">Resolves flag — visible in thread + item attachments</span>
+                              </span>
                             )
                           )}
                         </div>

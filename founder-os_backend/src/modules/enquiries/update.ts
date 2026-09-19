@@ -128,8 +128,8 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       const storedVarMedia = parseItemMedia((stored as any).variationRequestMedia ?? []);
       const ratesGrew = (base.rates ?? []).length >= (stored.rates ?? []).length;
       const baseMedia = parseItemMedia(base.media ?? []);
-      const storedMedia = parseItemMedia(stored.media ?? []);
-      const storedMediaKeys = new Set(storedMedia.map((m: any) => `${m.type}:${m.url}`));
+      const storedMedia2 = parseItemMedia(stored.media ?? []);
+      const storedMediaKeys = new Set(storedMedia2.map((m: any) => `${m.type}:${m.url}`));
       const mediaAdded = baseMedia.some((m: any) => !storedMediaKeys.has(`${m.type}:${m.url}`));
       if (storedVar && ((ratesChanged && ratesGrew) || mediaAdded)) {
         base.variationRequest = undefined;
@@ -212,6 +212,26 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.finalizedAt = undefined;
       }
     }
+    // Media merge for sales/management (non-restricted) — same append
+    // semantics as procurement but allows explicit deletions: if incoming is
+    // a strict non-empty subset of stored (user removed an image), respect
+    // it; if incoming is empty while stored has data (stale read wiping a
+    // recent reference), preserve stored; otherwise union stored + new.
+    if (!restricted) {
+      const storedList = parseItemMedia(stored.media ?? []);
+      const incomingList = parseItemMedia(base.media ?? []);
+      const storedSet = new Set(storedList.map((m: any) => `${m.type}:${m.url}`));
+      const isSubset = incomingList.length > 0 && incomingList.length < storedList.length && incomingList.every((m: any) => storedSet.has(`${m.type}:${m.url}`));
+      const isStaleEmpty = incomingList.length === 0 && storedList.length > 0;
+      if (isSubset) {
+        base.media = incomingList;
+      } else if (isStaleEmpty) {
+        base.media = storedList;
+      } else {
+        base.media = [...storedList, ...incomingList.filter((m: any) => !storedSet.has(`${m.type}:${m.url}`))];
+      }
+      if ((base.media as any[]).length === 0) delete (base as any).media;
+    }
     // Spec-dispute lifecycle (all writers):
     // - a spec text change clears an open flag from any surface;
     // - fresh reference media clears it ONLY from a non-procurement surface
@@ -224,7 +244,8 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     const specChanged = String(base.spec ?? "") !== String(stored.spec ?? "");
     const mediaKey = (m: any): string => `${m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image'}:${String(m?.url ?? '')}`;
     const storedUrls = new Set(parseItemMedia(stored.media ?? []).map(mediaKey));
-    const mediaAdded = parseItemMedia(base.media ?? []).map(mediaKey).some((u) => !storedUrls.has(u));
+    const newMedia = parseItemMedia(base.media ?? []).filter((m: any) => !storedUrls.has(mediaKey(m)));
+    const mediaAdded = newMedia.length > 0;
     // Sales remark on a flagged item also resolves it (permanent fix for
     // procurement not seeing the fix: sales wrote "Size 8 x 32" as a remark
     // but spec stayed "" so the flag never cleared). A fresh sales remark
@@ -296,7 +317,8 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         text: specChanged && mediaAdded ? 'Spec corrected with new references'
           : mediaAdded ? 'Reference attachments added' : 'Spec corrected',
         at: nowIso,
-      });
+        media: mediaAdded && newMedia.length ? newMedia : undefined,
+      } as FlagThreadEntry);
     }
     if (reqSet) trail.push({ by: role, kind: 'request', text: String(base.ratesRequested).slice(0, 500), at: nowIso });
     if (reqCleared) {
