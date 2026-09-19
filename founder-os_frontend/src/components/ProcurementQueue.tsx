@@ -149,9 +149,12 @@ export default function ProcurementQueue() {
       ? s.threadCount
       : ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
     if (threadRef.current[id] !== undefined && threadCount > threadRef.current[id]) {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-      setToast({ id, label, title, kind: "thread" });
-      toastTimer.current = setTimeout(() => setToast(null), 10000);
+      const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin || (scopes ?? []).includes("mis");
+      if (!isPrivilegedToast) {
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        setToast({ id, label, title, kind: "thread" });
+        toastTimer.current = setTimeout(() => setToast(null), 10000);
+      }
     }
     threadRef.current[id] = threadCount;
   });
@@ -256,6 +259,11 @@ export default function ProcurementQueue() {
   const handlePostThread = useCallback((enquiryId: string, itemIdx: number, text: string, media: EnquiryItem["media"]) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, thread: [...(it.thread ?? []), { by: "procurement" as const, kind: "remark" as const, text: text.slice(0,2000), at: new Date().toISOString(), media: media?.length ? media : undefined }] } : it)), [patchItems]);
+
+  const handleResolveThread = useCallback((enquiryId: string, itemIdx: number) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) => i === itemIdx ? { ...it, threadResolved: true } as any : it)), [patchItems]);
+  const handleReopenThread = useCallback((enquiryId: string, itemIdx: number) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) => i === itemIdx ? { ...it, threadResolved: false } as any : it)), [patchItems]);
 
   // Enquiry Concluded: explicit procurement handoff — enquiry stays Active
   // (quoted) until this is clicked; management sees live rates the whole
@@ -566,6 +574,8 @@ export default function ProcurementQueue() {
                         onOpenLightbox={handleOpenLightbox}
                         onAddItemMedia={(media) => handleAddItemMedia(selEnquiry.id, itemIdx, media)}
                         onPostThread={(text, media) => handlePostThread(selEnquiry.id, itemIdx, text, media)}
+                        onResolveThread={() => handleResolveThread(selEnquiry.id, itemIdx)}
+                        onReopenThread={() => handleReopenThread(selEnquiry.id, itemIdx)}
                         readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest)}
                       />
                     ))

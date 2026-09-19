@@ -99,6 +99,9 @@ export interface EnquiryItem {
   /** Common attachment for the variation/info request: sales example ↔ procurement fulfillment (merged). */
   variationRequestMedia?: EnquiryMedia[];
   thread?: FlagThreadEntry[];
+  threadResolved?: boolean;
+  threadResolvedBy?: FlagThreadBy;
+  threadResolvedAt?: string;
   aiPending?: boolean;
   expectedRate?: number;
   expectedNote?: string;

@@ -257,6 +257,14 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     setThreadComposeImages([]);
     setThreadComposeIdx(null);
   };
+  const resolveThread = (idx: number) => {
+    if (!onUpdateItems) return;
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, threadResolved: true } : it)));
+  };
+  const reopenThread = (idx: number) => {
+    if (!onUpdateItems) return;
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, threadResolved: false } : it)));
+  };
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
@@ -772,7 +780,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           ))}
                         </div>
                       )}
-                      {!redacted && (
+                      {!redacted && !(it as any).threadResolved && (
                         <div className="mt-2 pt-2 border-t border-[var(--border-card)]/60">
                           {threadComposeIdx === idx ? (
                             <div className="space-y-1.5">
@@ -802,6 +810,14 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             <button type="button" onClick={() => { setThreadComposeIdx(idx); setThreadComposeText(""); setThreadComposeImages([]); }} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">💬 Thread — ask / reply (always open)</button>
                           )}
                         </div>
+                      )}
+                      {(it as any).threadResolved ? (
+                        <div className="mt-2 flex items-center gap-2 text-[11px] border border-emerald-500/20 bg-emerald-500/5 rounded-lg px-2.5 py-1.5">
+                          <span className="font-bold text-emerald-600">✓ Resolved by {(it as any).threadResolvedBy || "—"}</span>
+                          <button onClick={() => reopenThread(idx)} className="ml-auto text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Reopen</button>
+                        </div>
+                      ) : (
+                        !redacted && <button onClick={() => resolveThread(idx)} className="mt-2 text-[11px] font-bold text-[var(--text-tertiary)] hover:text-emerald-600 cursor-pointer bg-transparent border-0">✓ Mark thread as resolved</button>
                       )}
                       {editable && (
                         <label className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">

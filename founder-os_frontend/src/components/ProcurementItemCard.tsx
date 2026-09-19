@@ -17,6 +17,8 @@ interface ProcurementItemCardProps {
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   onAddItemMedia?: (media: import("@/types").EnquiryMedia[]) => void;
   onPostThread?: (text: string, media: import("@/types").EnquiryMedia[]) => void;
+  onResolveThread?: () => void;
+  onReopenThread?: () => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
   /** Late-quote window: the row is finalized (committed) but still accepting
@@ -31,7 +33,7 @@ interface ProcurementItemCardProps {
 // its hold banner (held from Management) but still allows adding/editing
 // vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddItemMedia, onPostThread,
+  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddItemMedia, onPostThread, onResolveThread, onReopenThread,
   readOnly = false,
   lateQuote = false,
 }: ProcurementItemCardProps) {
@@ -132,35 +134,45 @@ export default function ProcurementItemCard({
       )}
 
       <FlagThread thread={item.thread ?? []} onOpenLightbox={onOpenLightbox} />
-      {onPostThread && (
-        <div className="mt-2">
-          {threadOpen ? (
-            <div className="space-y-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-input)]/20 p-2">
-              <textarea value={threadText} onChange={(e) => setThreadText(e.target.value)} placeholder="Reply in thread — any question except negotiation, text + image…" rows={2} className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y" />
-              <input ref={threadFileRef} type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={async (e) => { await handleThreadImages(e.target.files); e.target.value=""; }} />
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => threadFileRef.current?.click()} className="px-2.5 py-1 border border-dashed border-[var(--border-card)] rounded-lg text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach</button>
-                {threadImages.length>0 && <span className="text-[11px] text-[var(--text-tertiary)]">{threadImages.length} attached</span>}
-              </div>
-              {threadImages.length>0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {threadImages.map((url,i) => (
-                    <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                      <img src={url} alt={`thread ${i+1}`} className="w-full h-full object-cover" />
-                      <button type="button" onClick={() => setThreadImages(prev=>prev.filter((_,j)=>j!==i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <button type="button" onClick={() => { if (!threadText.trim() && threadImages.length===0) return; const media = threadImages.map(url=>({type:"image" as const,url})); onPostThread(threadText.trim() || "Attachment", media); setThreadText(""); setThreadImages([]); setThreadOpen(false); }} disabled={!threadText.trim() && threadImages.length===0} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">Send to thread</button>
-                <button type="button" onClick={() => { setThreadOpen(false); setThreadText(""); setThreadImages([]); }} className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" onClick={() => setThreadOpen(true)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">💬 Thread — ask / reply (always open)</button>
-          )}
+      {(item as any).threadResolved ? (
+        <div className="mt-2 flex items-center gap-2 text-[11px] border border-emerald-500/20 bg-emerald-500/5 rounded-lg px-2.5 py-1.5">
+          <span className="font-bold text-emerald-600">✓ Resolved by {(item as any).threadResolvedBy || "—"}</span>
+          {onReopenThread && <button type="button" onClick={onReopenThread} className="ml-auto text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Reopen</button>}
         </div>
+      ) : (
+        <>
+          {onPostThread && (
+            <div className="mt-2">
+              {threadOpen ? (
+                <div className="space-y-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-input)]/20 p-2">
+                  <textarea value={threadText} onChange={(e) => setThreadText(e.target.value)} placeholder="Reply in thread — any question except negotiation, text + image…" rows={2} className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y" />
+                  <input ref={threadFileRef} type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={async (e) => { await handleThreadImages(e.target.files); e.target.value=""; }} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => threadFileRef.current?.click()} className="px-2.5 py-1 border border-dashed border-[var(--border-card)] rounded-lg text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach</button>
+                    {threadImages.length>0 && <span className="text-[11px] text-[var(--text-tertiary)]">{threadImages.length} attached</span>}
+                  </div>
+                  {threadImages.length>0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {threadImages.map((url,i) => (
+                        <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--border-card)]">
+                          <img src={url} alt={`thread ${i+1}`} className="w-full h-full object-cover" />
+                          <button type="button" onClick={() => setThreadImages(prev=>prev.filter((_,j)=>j!==i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { if (!threadText.trim() && threadImages.length===0) return; const media = threadImages.map(url=>({type:"image" as const,url})); onPostThread(threadText.trim() || "Attachment", media); setThreadText(""); setThreadImages([]); setThreadOpen(false); }} disabled={!threadText.trim() && threadImages.length===0} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">Send to thread</button>
+                    <button type="button" onClick={() => { setThreadOpen(false); setThreadText(""); setThreadImages([]); }} className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setThreadOpen(true)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">💬 Thread — ask / reply (always open)</button>
+              )}
+            </div>
+          )}
+          {onResolveThread && <button type="button" onClick={onResolveThread} className="mt-2 text-[11px] font-bold text-[var(--text-tertiary)] hover:text-emerald-600 cursor-pointer bg-transparent border-0">✓ Mark thread as resolved</button>}
+        </>
       )}
 
       {media.length > 0 && (

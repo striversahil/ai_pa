@@ -116,6 +116,9 @@ export function toEnquiry(raw: any): Enquiry {
               }))
               .filter((e: any) => e.text.trim() || (e.media ?? []).length > 0)
           : [],
+        threadResolved: (r as any)?.threadResolved === true,
+        threadResolvedBy: (['sales','procurement','management'] as const).includes((r as any)?.threadResolvedBy) ? (r as any).threadResolvedBy : undefined,
+        threadResolvedAt: (r as any)?.threadResolvedAt ? String((r as any).threadResolvedAt) : undefined,
       })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
     : [];
   return {

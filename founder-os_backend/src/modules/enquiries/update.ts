@@ -375,6 +375,24 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         trail.push({ by: role, kind: 'remark', text: 'Returned to the procurement queue', at: nowIso });
       }
     }
+    // Thread resolved lifecycle (either side can resolve/reopen per item) — always open unless resolved.
+    const incomingResolved = (it as any)?.threadResolved;
+    const storedResolved = !!(stored as any)?.threadResolved;
+    if (incomingResolved === true && !storedResolved) {
+      (base as any).threadResolved = true;
+      (base as any).threadResolvedBy = role;
+      (base as any).threadResolvedAt = nowIso;
+      trail.push({ by: role, kind: 'remark', text: 'Thread resolved', at: nowIso });
+    } else if (incomingResolved === false && storedResolved) {
+      (base as any).threadResolved = undefined;
+      (base as any).threadResolvedBy = undefined;
+      (base as any).threadResolvedAt = undefined;
+      trail.push({ by: role, kind: 'remark', text: 'Thread reopened', at: nowIso });
+    } else {
+      (base as any).threadResolved = (stored as any)?.threadResolved;
+      (base as any).threadResolvedBy = (stored as any)?.threadResolvedBy;
+      (base as any).threadResolvedAt = (stored as any)?.threadResolvedAt;
+    }
     base.thread = trail.slice(-50);
     return base;
   }).filter((it: any) => it !== null);

@@ -132,7 +132,8 @@ export default function EnquiryTracker() {
     const prevThread = threadCountRef.current[id];
     threadCountRef.current[id] = threadCount;
     if (prevThread !== undefined && threadCount > prevThread) {
-      flashToast(id, label, title, "thread");
+      const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin || (me?.scopes ?? []).includes("mis") || (me?.scopes ?? []).includes("admin");
+      if (!isPrivilegedToast) flashToast(id, label, title, "thread");
     }
   });
 

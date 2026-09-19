@@ -107,6 +107,9 @@ export interface EnquiryItem {
   variationRequestedAt?: string;
   /** Common attachment for the merged info/alternate request. */
   variationRequestMedia?: EnquiryMedia[];
+  threadResolved?: boolean;
+  threadResolvedBy?: 'sales' | 'procurement' | 'management';
+  threadResolvedAt?: string;
   /** Back-and-forth loop trail (server-authored): flags, remarks, fixes,
    *  requests — oldest first. Visible in procurement. */
   thread?: FlagThreadEntry[];

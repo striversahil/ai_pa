@@ -131,6 +131,9 @@ function pick(data: any): Partial<Enquiry> | null {
         variationRequest: (r as any)?.variationRequest !== undefined ? String((r as any).variationRequest).slice(0, 500) : undefined,
         variationRequestMedia: (r as any)?.variationRequestMedia !== undefined ? parseItemMedia((r as any).variationRequestMedia) : undefined,
         thread: parseFlagThread(r?.thread),
+        threadResolved: (r as any)?.threadResolved === true ? true : (r as any)?.threadResolved === false ? false : undefined,
+        threadResolvedBy: (r as any)?.threadResolvedBy ? String((r as any).threadResolvedBy).slice(0, 20) : undefined,
+        threadResolvedAt: isoOrUndefined((r as any)?.threadResolvedAt),
         // Detail-view "Add via AI" flag — the GH intake action replaces
         // these raw rows with vision-split lines (applyIntakeBulkResult).
         // Dropped here, the runner computes lines the merge then discards.
