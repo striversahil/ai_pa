@@ -70,10 +70,12 @@ export default function EnquiryDetail({
   const addReqFileRef = useRef<HTMLInputElement>(null);
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Mark-as-sent: finalized → sent (EST No. required, server-enforced too).
-  const [sentBusy, setSentBusy] = useState(false);
-  const [sentError, setSentError] = useState<string | null>(null);
+  // Sent is now Zoho-driven: any non-draft Zoho status (sent/accepted/declined…)
+  // auto-means internal `sent` (5-min sync + list derive). No manual button.
   const sentState = String((selectedEnquiry as any).rateStatus ?? "");
+  const zohoStatusLower = String((selectedEnquiry as any).zohoStatus ?? '').toLowerCase();
+  const isZohoSent = !!zohoStatusLower && zohoStatusLower !== 'draft';
+  const effectiveSent = sentState === "sent" || isZohoSent;
   // Copilot rail (per-enquiry AI sidebar) — closed by default for sales;
   // opens only on manual click, persisted per browser.
   const [copilotOpen, setCopilotOpen] = useState<boolean>(() => {
@@ -95,28 +97,7 @@ export default function EnquiryDetail({
   // while the enquiry is still open. Committed enquiries need no tag.
   const rateLoopItems = (selectedEnquiry.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable);
   const decidedRateItems = rateLoopItems.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
-  const showPartialTag = sentState !== "finalized" && sentState !== "sent" && decidedRateItems > 0;
-  // Hide "Mark as sent" until every non-held item is either rate-available or
-  // has at least one vendor rate — otherwise a half-quoted row would appear
-  // sendable (seen 2026-09-17).
-  const missingForSent = (selectedEnquiry.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable && !(it as any).internalRates && ((it as any).rates ?? []).length === 0).length;
-  const canMarkSent = sentState === "finalized" && missingForSent === 0;
-  const doMarkSent = async () => {
-    if (!selectedEnquiry.estNumber.trim()) {
-      setSentError("Add EST No. before marking as sent.");
-      return;
-    }
-    if (!onMarkSent) return;
-    setSentBusy(true);
-    setSentError(null);
-    try {
-      await onMarkSent(selectedEnquiry.id);
-    } catch (e: any) {
-      setSentError(e?.message || "Mark as sent failed.");
-    } finally {
-      setSentBusy(false);
-    }
-  };
+  const showPartialTag = !effectiveSent && sentState !== "finalized" && decidedRateItems > 0;
 
   const handleSaveNewItems = () => {
     const fresh = newItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0);
@@ -264,33 +245,13 @@ export default function EnquiryDetail({
 
         {!redacted && (
         <div className="flex items-center gap-2 flex-wrap">
-          {sentState === "sent" ? (
-            <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
-              ✓ Marked as sent
+          {effectiveSent ? (
+            <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400" title={isZohoSent ? `Zoho: ${zohoStatusLower}` : 'Marked as sent'}>
+              ✓ {isZohoSent ? `Sent (Zoho: ${zohoStatusLower})` : 'Marked as sent'}
             </span>
-          ) : canMarkSent && onMarkSent ? (
-            <span className="inline-flex items-center gap-1.5">
-              <button
-                onClick={() => void doMarkSent()}
-                disabled={sentBusy}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer disabled:opacity-50"
-                type="button"
-              >
-                {sentBusy ? "Marking…" : "Mark as sent"}
-              </button>
-              {!selectedEnquiry.estNumber.trim() && (
-                <button
-                  onClick={() => onOpenEdit(selectedEnquiry)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-[var(--bg-card)] border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                  type="button"
-                >
-                  Add EST No.
-                </button>
-              )}
-            </span>
-          ) : sentState === "finalized" && onMarkSent ? (
+          ) : sentState === "finalized" ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
-              {missingForSent} item{missingForSent === 1 ? "" : "s"} still need vendor rates (or mark rate available)
+              Finalized — awaiting Zoho send (still draft)
             </span>
           ) : null}
           <button 
@@ -323,9 +284,6 @@ export default function EnquiryDetail({
             <span>Delete</span>
           </button>
         </div>
-        )}
-        {sentError && (
-          <p className="mt-2 text-xs font-bold text-red-500">{sentError}</p>
         )}
       </div>
 

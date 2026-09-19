@@ -51,6 +51,11 @@ function kick(c: any, id: string): void {
   // Live Zoho status chip: enrich enquiries with Estimate.status (from the
   // 5-min zoho-sent sync's 400 last-modified window). Single D1 IN query,
   // no extra Zoho reads, no AI — status goes live via the same 5-min tick.
+  // When Zoho is no longer `draft` (sent/accepted/declined…), the internal
+  // `rateStatus` is auto-promoted to `sent` (Zoho = source of truth — the
+  // manual "Mark as sent" button is being eliminated). The read stays fast:
+  // the promotion runs as a fire-and-forget `waitUntil` and the chip already
+  // reads as sent via `zohoStatus` on this same response.
   async function attachZohoStatus(enquiries: any[]): Promise<void> {
     const nums = [...new Set((enquiries as any[]).map((e) => String((e as any)?.estNumber ?? '').trim()).filter(Boolean))];
     if (!nums.length) return;
@@ -64,7 +69,55 @@ function kick(c: any, id: string): void {
       for (const e of enquiries as any[]) {
         const s = map.get(String((e as any)?.estNumber ?? '').trim());
         (e as any).zohoStatus = s ?? null;
+        // Stash original so the background promotion can tell whether DB was
+        // already `sent` before we derived it for this response.
+        (e as any)._origRateStatus = String((e as any)?.rateStatus ?? '');
+        // Derive `rateStatus` for this response so the UI reads as sent even
+        // before the background DB promotion lands.
+        const zs = String(s ?? '').toLowerCase();
+        if (zs && zs !== 'draft' && String((e as any)?.rateStatus ?? '') !== 'sent') {
+          (e as any).rateStatus = 'sent';
+        }
       }
+    } catch {}
+  }
+
+  // Fire-and-forget DB promotion: Zoho non-draft → Enquiry `sent`.
+  // Called after `attachZohoStatus` so the DB catches up to what the response
+  // already derived. Never blocks the request.
+  function maybePromoteEnquiriesSent(c: any, enquiries: any[]): void {
+    try {
+      const ids: string[] = [];
+      for (const e of enquiries as any[]) {
+        const s = String((e as any)?.zohoStatus ?? '').toLowerCase();
+        if (!s || s === 'draft') continue;
+        if (String((e as any)?.rateStatus ?? '') === 'sent') continue;
+        const origRateStatus = String((e as any)?._origRateStatus ?? (e as any)?.rateStatus ?? '');
+        // Only promote rows that were NOT already `sent` in the DB (derived above
+        // already flipped the in-memory copy). We need the pre-derived value —
+        // stash it in attach if needed. Simpler: re-check the map: if zoho non-draft
+        // and DB still not sent, update. We track ids via `id`.
+        if (origRateStatus === 'sent') continue;
+        if (e?.id) ids.push(String(e.id));
+      }
+      if (!ids.length) return;
+      const task = (async () => {
+        try {
+          const { prisma } = deps();
+          // One bulk update per tick is enough; do them individually to avoid
+          // D1 `IN` chunking quirks inside updateMany.
+          for (const id of ids) {
+            try {
+              await (prisma as any).enquiry.updateMany({
+                where: { id, rateStatus: { not: 'sent' } as any },
+                data: { rateStatus: 'sent' },
+              });
+            } catch {}
+          }
+        } catch {}
+      })();
+      if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') c.executionCtx.waitUntil(task);
+      else void task;
     } catch {}
   }
 
@@ -90,7 +143,10 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // Enrich with live Zoho status (from Estimate table, already synced every 5min)
     try {
       const list = (r.body as any)?.enquiries;
-      if (Array.isArray(list)) await attachZohoStatus(list);
+      if (Array.isArray(list)) {
+        await attachZohoStatus(list);
+        maybePromoteEnquiriesSent(c, list);
+      }
     } catch {}
     if (restricted) {
       for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
@@ -222,7 +278,10 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const r = await EnquiryRoutes.enquiryGet(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
     try {
       const enq = (r.body as any)?.enquiry;
-      if (enq) await attachZohoStatus([enq]);
+      if (enq) {
+        await attachZohoStatus([enq]);
+        maybePromoteEnquiriesSent(c, [enq]);
+      }
     } catch {}
     return c.json(r.body, r.status as any);
   });

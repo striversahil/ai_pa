@@ -13,7 +13,10 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   const items = enq.items ?? [];
   const hasRates = items.some((it) => (it.rates ?? []).length > 0);
   const finalized = (enq.rateStatus ?? "") === "finalized";
-  const sent = (enq.rateStatus ?? "") === "sent";
+  // Zoho is source of truth: sent/accepted/declined/etc. (non-draft) auto-means internal `sent`.
+  const zohoStatus = String((enq as any)?.zohoStatus ?? '').toLowerCase();
+  const isZohoSent = !!zohoStatus && zohoStatus !== 'draft';
+  const sent = (enq.rateStatus ?? "") === "sent" || isZohoSent;
   // Rate available overrides the hold — kept hidden in D1 (update.ts:239), UI must not show Fix Spec for it; sent is terminal (even flagged rows show Marked as Sent)
   const flagged = items.some((it) => it.specIssue && !it.rateAvailable && !(it as any).internalRates);
   const hasPartialRates = !finalized && !sent && items.some((it) => it.finalRate !== undefined && it.finalRate !== null);
