@@ -93,6 +93,8 @@ export interface EnquiryItem {
   notAvailable?: boolean;
   notAvailableReason?: string;
   notAvailableAt?: string;
+  notAvailableRequested?: string;
+  notAvailableRequestedAt?: string;
   internalRates?: boolean;
   internalRatesAt?: string;
   ratesRequested?: string;

@@ -177,9 +177,6 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       base.ratesRequestedAt = stored.ratesRequestedAt;
       base.internalRates = stored.internalRates === true;
       base.internalRatesAt = stored.internalRatesAt ?? undefined;
-      (base as any).notAvailable = stored.notAvailable === true;
-      (base as any).notAvailableReason = stored.notAvailableReason ? String(stored.notAvailableReason).slice(0, 500) : undefined;
-      (base as any).notAvailableAt = stored.notAvailableAt ?? undefined;
     } else {
       // Explicit "" from a privileged writer withdraws an unanswered request
       // (pick() preserves it; absent still means "leave stored"). Remember
@@ -215,7 +212,8 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.finalizedAt = undefined;
       }
     }
-    // Not available normalization for allowed writers (procurement/management): boolean + reason
+    // Not available: procurement requests, management approves (shared text) → sales sees notAvailable
+    // Procurement sets notAvailableRequested, management promotes to notAvailable with shared reason.
     if (privileged || restricted) {
       const hasNotAvailable = Object.prototype.hasOwnProperty.call(it as any, 'notAvailable');
       if (hasNotAvailable) {
@@ -224,6 +222,9 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
           (base as any).notAvailable = true;
           const r = typeof (base as any).notAvailableReason === 'string' ? String((base as any).notAvailableReason).trim().slice(0, 500) : '';
           (base as any).notAvailableReason = r || undefined;
+          // Approving clears the procurement request
+          (base as any).notAvailableRequested = undefined;
+          (base as any).notAvailableRequestedAt = undefined;
         } else {
           (base as any).notAvailable = undefined;
           (base as any).notAvailableReason = undefined;
@@ -234,6 +235,27 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
         (base as any).notAvailableAt = (stored as any).notAvailableAt;
       }
+      // Procurement → management request (material not available)
+      const hasRequested = Object.prototype.hasOwnProperty.call(it as any, 'notAvailableRequested');
+      if (hasRequested) {
+        const req = typeof (it as any).notAvailableRequested === 'string' ? String((it as any).notAvailableRequested).trim().slice(0, 500) : '';
+        if (req) {
+          (base as any).notAvailableRequested = req;
+        } else {
+          (base as any).notAvailableRequested = undefined;
+          (base as any).notAvailableRequestedAt = undefined;
+        }
+      } else {
+        (base as any).notAvailableRequested = (stored as any).notAvailableRequested ? String((stored as any).notAvailableRequested).slice(0, 500) : undefined;
+        (base as any).notAvailableRequestedAt = (stored as any).notAvailableRequestedAt;
+      }
+    } else {
+      // Sales cannot touch either
+      (base as any).notAvailable = (stored as any).notAvailable === true ? true : undefined;
+      (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
+      (base as any).notAvailableAt = (stored as any).notAvailableAt;
+      (base as any).notAvailableRequested = (stored as any).notAvailableRequested ? String((stored as any).notAvailableRequested).slice(0, 500) : undefined;
+      (base as any).notAvailableRequestedAt = (stored as any).notAvailableRequestedAt;
     }
     // Media merge for sales/management (non-restricted) — same append
     // semantics as procurement but allows explicit deletions: if incoming is
@@ -420,7 +442,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         trail.push({ by: role, kind: 'remark', text: 'Returned to the procurement queue', at: nowIso });
       }
     }
-    // Not available lifecycle (procurement + management): stamp and trail
+    // Not available lifecycle (procurement → management approval → sales)
     const notAvailableSet = !(stored as any)?.notAvailable && (base as any)?.notAvailable === true;
     const notAvailableCleared = !!(stored as any)?.notAvailable && !(base as any)?.notAvailable;
     if (notAvailableSet) {
@@ -432,6 +454,16 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       (base as any).notAvailableAt = undefined;
       (base as any).notAvailableReason = undefined;
       trail.push({ by: role, kind: 'remark', text: 'Not available cleared — back to queue', at: nowIso });
+    }
+    const notAvailableRequestedSet = !String((stored as any)?.notAvailableRequested ?? "").trim() && String((base as any)?.notAvailableRequested ?? "").trim();
+    const notAvailableRequestedCleared = !!String((stored as any)?.notAvailableRequested ?? "").trim() && !String((base as any)?.notAvailableRequested ?? "").trim();
+    if (notAvailableRequestedSet) {
+      (base as any).notAvailableRequestedAt = nowIso;
+      trail.push({ by: role, kind: 'request', text: `Not available requested: ${String((base as any).notAvailableRequested).slice(0, 500)}`, at: nowIso });
+    }
+    if (notAvailableRequestedCleared && !notAvailableSet) {
+      (base as any).notAvailableRequestedAt = undefined;
+      trail.push({ by: role, kind: 'remark', text: 'Not available request withdrawn/rejected', at: nowIso });
     }
     // Thread resolved lifecycle (either side can resolve/reopen per item) — always open unless resolved.
     const incomingResolved = (it as any)?.threadResolved;

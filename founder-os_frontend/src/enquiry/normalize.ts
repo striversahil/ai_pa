@@ -82,6 +82,8 @@ export function toEnquiry(raw: any): Enquiry {
         notAvailable: (r as any)?.notAvailable === true,
         notAvailableReason: (r as any)?.notAvailableReason ? String((r as any).notAvailableReason) : undefined,
         notAvailableAt: (r as any)?.notAvailableAt ? String((r as any).notAvailableAt) : undefined,
+        notAvailableRequested: (r as any)?.notAvailableRequested ? String((r as any).notAvailableRequested) : undefined,
+        notAvailableRequestedAt: (r as any)?.notAvailableRequestedAt ? String((r as any).notAvailableRequestedAt) : undefined,
         internalRates: r?.internalRates === true,
         internalRatesAt: r?.internalRatesAt ? String(r.internalRatesAt) : undefined,
         ratesRequested: r?.ratesRequested ? String(r.ratesRequested) : undefined,

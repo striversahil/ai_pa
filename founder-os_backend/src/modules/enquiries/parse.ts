@@ -133,6 +133,8 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         notAvailable: r?.notAvailable === true,
         notAvailableReason: r?.notAvailableReason ? String(r.notAvailableReason).slice(0, 500) : undefined,
         notAvailableAt: isoOrUndefined(r?.notAvailableAt),
+        notAvailableRequested: r?.notAvailableRequested ? String(r.notAvailableRequested).slice(0, 500) : undefined,
+        notAvailableRequestedAt: isoOrUndefined(r?.notAvailableRequestedAt),
         internalRates: r?.internalRates === true,
         internalRatesAt: isoOrUndefined(r?.internalRatesAt),
         thread: parseFlagThread(r?.thread),

@@ -451,6 +451,23 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     })();
   };
 
+  const handleRejectNotAvailable = (i: number) => {
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...(it as any), notAvailableRequested: undefined, notAvailableRequestedAt: undefined } as any : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Reject failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+
   const checkedIdx = items
     .map((it, i) => ({ it, i }))
     .filter(({ it, i }) => checked[i] && !it.specIssue && !it.rateAvailable && !(it as any).notAvailable)
@@ -664,6 +681,65 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
                     ↩ Clear — available again
                   </button>
+                </div>
+              );
+            }
+            if ((it as any).notAvailableRequested) {
+              return (
+                <div key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-xs font-extrabold text-white">
+                      Item {i + 1}{it.name ? ` — ${it.name}` : ""}
+                    </span>
+                    {it.qty && (
+                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
+                    )}
+                    <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-400 border-amber-500/30">
+                      Not available requested
+                    </span>
+                  </div>
+                  {it.spec && (
+                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                  )}
+                  <div className="rounded-lg border border-amber-500/30 bg-black/20 p-2.5 text-[11px] leading-relaxed">
+                    <p className="font-extrabold text-amber-400 uppercase tracking-wide text-[10px]">Procurement says not available</p>
+                    <p className="mt-0.5 text-zinc-300 whitespace-pre-wrap">{String((it as any).notAvailableRequested)}</p>
+                    <p className="mt-1 text-zinc-500">
+                      Requested {historyDateChip((it as any).notAvailableRequestedAt) || "recently"} · Approve to show sales.
+                    </p>
+                  </div>
+                  <FlagThread thread={it.thread ?? []} tone="dark" />
+                  {notAvailableOpen === i ? (
+                    <div className="space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+                      <input
+                        value={notAvailableReason}
+                        onChange={(e) => setNotAvailableReason(e.target.value)}
+                        placeholder="Shared text for sales (e.g. Material not available — alternative suggested…)"
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                      />
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => handleNotAvailable(i)} disabled={flagBusy}
+                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-50">
+                          {flagBusy ? "Approving…" : "Approve — share with sales"}
+                        </button>
+                        <button type="button" onClick={() => { setNotAvailableOpen(null); setNotAvailableReason(""); }}
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => { setNotAvailableOpen(i); setNotAvailableReason(String((it as any).notAvailableRequested ?? "")); }}
+                        className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                        Approve — share with sales
+                      </button>
+                      <button type="button" onClick={() => handleRejectNotAvailable(i)} disabled={flagBusy}
+                        className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700 hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
+                        Reject — keep in procurement
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             }

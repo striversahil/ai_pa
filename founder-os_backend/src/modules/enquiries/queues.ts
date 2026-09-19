@@ -19,7 +19,7 @@ type EnquiryShape = Pick<Enquiry, "items"> & { procurementSubmittedAt?: string }
 
 /** Loop-eligible for Procurement: unavailable, not internal, unquoted or re-requested. */
 export function itemNeedsRates(it: ItemRateShape): boolean {
-  return !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && (((it?.rates ?? []).length === 0) || !!(it as any)?.ratesRequested);
+  return !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates && (((it?.rates ?? []).length === 0) || !!(it as any)?.ratesRequested);
 }
 
 /** Loop-eligible for Management: unavailable, undisputed, quoted/internal, undecided. */
@@ -37,7 +37,7 @@ export function isSubmitted(e: { procurementSubmittedAt?: string }): boolean {
 
 /** Fresh unquoted work reopens procurement Active even on concluded rows. */
 export function hasFreshUnquotedWork(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && !it?.specIssue
+  return ((e as any).items ?? []).some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates && !it?.specIssue
     && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null));
 }
 
@@ -46,6 +46,11 @@ export function hasFreshUnquotedWork(e: Pick<Enquiry, "items">): boolean {
  *  procurement Active queue even on concluded rows. */
 export function hasPendingVariationWork(e: Pick<Enquiry, "items">): boolean {
   return ((e as any).items ?? []).some((it: any) => String(it?.variationRequest ?? "").trim().length > 0);
+}
+
+/** Pending not-available request: procurement says material not available, awaiting management approval. */
+export function hasPendingNotAvailableWork(e: Pick<Enquiry, "items">): boolean {
+  return ((e as any).items ?? []).some((it: any) => String(it?.notAvailableRequested ?? "").trim().length > 0);
 }
 
 /** New vendor quotes since the decision: a decided item (finalRate set) with
@@ -68,7 +73,7 @@ export function itemHasUnreviewedQuotes(it: any): boolean {
 
 /** One fresh line is quotable even on a concluded row (card stays editable). */
 export function isFreshQuotableItem(it: ItemDecisionShape): boolean {
-  return !(it as any)?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.internalRates && !(it as any)?.specIssue
+  return !(it as any)?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !(it as any)?.internalRates && !(it as any)?.specIssue
     && (((it as any)?.rates ?? []).length === 0) && ((it as any)?.finalRate === undefined || (it as any)?.finalRate === null);
 }
 
@@ -79,31 +84,33 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   // queue even on concluded rows — the client keeps asking.
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return true;
   if (isSubmitted(e)) return false;
-  return items.some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
+  return items.some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates);
 }
 
 export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
   if (!isSubmitted(e)) return false;
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return false;
-  return items.some((it: any) => ((it.rates ?? []).length > 0 && !it.ratesRequested) || (it as any).notAvailable || it.rateAvailable);
+  if (hasPendingNotAvailableWork(e as any)) return false;
+  return items.some((it: any) => ((it.rates ?? []).length > 0 && !it.ratesRequested) || (it as any).notAvailable || (it as any).notAvailableRequested || it.rateAvailable);
 }
 
 export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
   // Decided items with new unshared vendor quotes since the decision
-  // (variation answers, late quotes) come back for review/share.
-  return items.some((it: any) => itemNeedsDecision(it) || itemHasUnreviewedQuotes(it));
+  // (variation answers, late quotes) come back for review/share — plus
+  // procurement's not-available requests awaiting approval.
+  return items.some((it: any) => itemNeedsDecision(it) || itemHasUnreviewedQuotes(it) || !!(it as any).notAvailableRequested);
 }
 
 /** Submit readiness: every quotable loop item carries ≥1 vendor rate. */
 export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
   const items = ((e as any).items ?? []) as any[];
-  const flagged = items.filter((it: any) => it?.specIssue && !(it as any)?.notAvailable).length;
+  const flagged = items.filter((it: any) => it?.specIssue && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
   if (flagged > 0) return { ok: false, reason: `${flagged} item${flagged === 1 ? "" : "s"} awaiting sales spec fix` };
-  const loop = items.filter((it: any) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
+  const loop = items.filter((it: any) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates);
   if (loop.length === 0) {
-    const hasBypass = items.some((it: any) => it?.rateAvailable || (it as any)?.notAvailable || it?.internalRates);
+    const hasBypass = items.some((it: any) => it?.rateAvailable || (it as any)?.notAvailable || (it as any)?.notAvailableRequested || it?.internalRates);
     if (hasBypass) return { ok: true, reason: "" };
     return { ok: false, reason: "No quotable items yet" };
   }
@@ -116,7 +123,7 @@ export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items" | "rateStatu
   const items = (e as any).items ?? [];
   if (items.length === 0) return false;
   if (isManagementPendingEnquiry(e as any)) return false;
-  const relevant = items.filter((it: any) => !it?.specIssue);
+  const relevant = items.filter((it: any) => !it?.specIssue && !(it as any)?.notAvailableRequested);
   if (relevant.length === 0) return false;
   // Every non-held item must be accounted for — either rate-available / not-available or
   // decided. Pure bypass rows only belong here after commit, otherwise

@@ -254,11 +254,11 @@ export default function ProcurementQueue() {
 
   const handleNotAvailable = useCallback((enquiryId: string, itemIdx: number, reason: string) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...(it as any), notAvailable: true, notAvailableReason: reason || undefined, notAvailableAt: new Date().toISOString() } as any : it)), [patchItems]);
+      i === itemIdx ? { ...(it as any), notAvailableRequested: reason || "Not available", notAvailableRequestedAt: new Date().toISOString() } as any : it)), [patchItems]);
 
   const handleClearNotAvailable = useCallback((enquiryId: string, itemIdx: number) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...(it as any), notAvailable: undefined, notAvailableReason: undefined, notAvailableAt: undefined } as any : it)), [patchItems]);
+      i === itemIdx ? { ...(it as any), notAvailableRequested: undefined, notAvailableRequestedAt: undefined } as any : it)), [patchItems]);
 
   const handleAddItemMedia = useCallback((enquiryId: string, itemIdx: number, media: EnquiryItem["media"]) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
@@ -586,7 +586,7 @@ export default function ProcurementQueue() {
                         onPostThread={(text, media) => handlePostThread(selEnquiry.id, itemIdx, text, media)}
                         onResolveThread={() => handleResolveThread(selEnquiry.id, itemIdx)}
                         onReopenThread={() => handleReopenThread(selEnquiry.id, itemIdx)}
-                        readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest) || !!(item as any).notAvailable}
+                        readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest) || !!(item as any).notAvailable || !!(item as any).notAvailableRequested}
                       />
                     ))
                   )}

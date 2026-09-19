@@ -172,6 +172,8 @@ export function sanitize(e: any): Enquiry {
         notAvailable: (r as any)?.notAvailable === true,
         notAvailableReason: (r as any)?.notAvailableReason ? String((r as any).notAvailableReason).slice(0, 500) : undefined,
         notAvailableAt: isoOrUndefined((r as any)?.notAvailableAt),
+        notAvailableRequested: (r as any)?.notAvailableRequested ? String((r as any).notAvailableRequested).slice(0, 500) : undefined,
+        notAvailableRequestedAt: isoOrUndefined((r as any)?.notAvailableRequestedAt),
         internalRates: r?.internalRates === true,
         internalRatesAt: isoOrUndefined(r?.internalRatesAt),
         thread: parseFlagThread(r?.thread),

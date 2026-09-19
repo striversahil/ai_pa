@@ -90,11 +90,13 @@ export interface EnquiryItem {
   /** Rate availability (sales-marked): true = rate already available, the item
    *  skips the procurement→management loop. False/absent = rate unavailable. */
   rateAvailable?: boolean;
-  /** Not available (procurement/management-marked): true = item cannot be
-   *  supplied; sales sees a distinct badge with reason. Skips both queues. */
+  /** Not available: procurement requests, management approves (shared text) → sales sees badge. */
   notAvailable?: boolean;
   notAvailableReason?: string;
   notAvailableAt?: string;
+  /** Procurement → management request: “material not available” awaiting approval. */
+  notAvailableRequested?: string;
+  notAvailableRequestedAt?: string;
   /** Management-internal handling: true = management sources this item's
    *  rates itself; the procurement queue skips it. Management-only flag. */
   internalRates?: boolean;
