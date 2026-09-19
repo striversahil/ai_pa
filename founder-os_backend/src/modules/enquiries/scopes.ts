@@ -132,6 +132,7 @@ export interface EnquiryLiveSummary {
   flaggedCount: number;
   specDiffCount: number;
   requestedCount: number;
+  threadCount: number;
 }
 
 export function summarizeEnquiry(e: any): EnquiryLiveSummary {
@@ -148,6 +149,8 @@ export function summarizeEnquiry(e: any): EnquiryLiveSummary {
       if ((r as any)?.specSame === false) specDiffCount += 1;
     }
   }
+  let threadCount = 0;
+  for (const it of items) threadCount += Array.isArray((it as any)?.thread) ? (it as any).thread.length : 0;
   return {
     id: String(e?.id ?? ''),
     dailyNo: e?.dailyNo === undefined || e?.dailyNo === null ? null : Number(e.dailyNo),
@@ -160,6 +163,7 @@ export function summarizeEnquiry(e: any): EnquiryLiveSummary {
     flaggedCount,
     specDiffCount,
     requestedCount,
+    threadCount,
   };
 }
 

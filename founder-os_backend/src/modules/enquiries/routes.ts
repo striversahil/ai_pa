@@ -488,8 +488,8 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     // Item lifecycles (rates/spec/thread per role) — see update.ts.
     const { normalizeItemWrites } = await import('./update');
     (updates as any).items = normalizeItemWrites((updates as any).items, {
-      storedItems, privileged, restricted, actingProcurement,
-    });
+      storedItems, privileged, restricted, actingProcurement, surface: declaredSurface,
+    } as any);
   }
   // Submit-to-Management lifecycle + reopen + auto-finalize — see update.ts.
   {

@@ -17,6 +17,7 @@ export interface ItemWriteCtx {
   privileged: boolean;
   restricted: boolean;
   actingProcurement: boolean;
+  surface?: string;
 }
 
 /**
@@ -264,8 +265,14 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // ignored — only client remarks are kept (once each). Rendered in
     // procurement so multi-round back-and-forth stays visible. The stamp
     // follows the acting surface (procurement queue work reads Procurement
-    // even when the writer holds MIS/admin).
-    const role: FlagThreadBy = actingProcurement ? 'procurement' : privileged ? 'management' : 'sales';
+    // even when the writer holds MIS/admin). Surface-aware: a privileged
+    // writer using the sales UI (surface=sales) must stamp as sales, not
+    // management — fixes "Management Remark" when sales asks.
+    const surface = String((ctx as any).surface ?? '').toLowerCase();
+    const role: FlagThreadBy = surface === 'procurement' ? 'procurement'
+      : surface === 'sales' ? 'sales'
+      : surface === 'management' ? 'management'
+      : actingProcurement ? 'procurement' : privileged ? 'management' : 'sales';
     const storedThread = parseFlagThread((stored as any)?.thread);
     const seen = new Set(storedThread.map((e) => `${e.at}|${e.kind}|${e.text}|${(e.media ?? []).map((m:any)=>m.url).join(',')}`));
     const trail: FlagThreadEntry[] = [...storedThread];

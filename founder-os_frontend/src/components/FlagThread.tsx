@@ -31,7 +31,7 @@ const BY_LABEL: Record<FlagThreadEntry["by"], string> = {
 // remarks are appended by the sales remark box. hideSalesRemarks drops
 // free-text sales remarks in PII-redacted views (flag/fix/request lines are
 // workflow metadata and always safe).
-export default function FlagThread({ thread, hideSalesRemarks = false, tone = "auto", hideKinds = [] }: { thread: FlagThreadEntry[]; hideSalesRemarks?: boolean; tone?: "auto" | "dark"; hideKinds?: FlagThreadEntry["kind"][] }) {
+export default function FlagThread({ thread, hideSalesRemarks = false, tone = "auto", hideKinds = [], onOpenLightbox }: { thread: FlagThreadEntry[]; hideSalesRemarks?: boolean; tone?: "auto" | "dark"; hideKinds?: FlagThreadEntry["kind"][]; onOpenLightbox?: (url: string, list?: string[], idx?: number) => void }) {
   const all = Array.isArray(thread) ? thread : [];
   const hidden = new Set(hideKinds);
   const entries = all.filter((e) => !hidden.has(e.kind) && !(hideSalesRemarks && e.by === "sales" && e.kind === "remark"));
@@ -55,15 +55,16 @@ export default function FlagThread({ thread, hideSalesRemarks = false, tone = "a
             <span className={`block ${bodyCls} whitespace-pre-wrap break-words`}>{e.text}</span>
             {Array.isArray((e as any).media) && (e as any).media.length > 0 && (
               <span className="mt-1 flex flex-wrap gap-1.5">
-                {(e as any).media.map((m: any, mi: number) => (
-                  m.type === "video" ? (
+                {(e as any).media.map((m: any, mi: number) => {
+                  const list = (e as any).media.filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
+                  return m.type === "video" ? (
                     <video key={mi} src={m.url} controls preload="metadata" className="w-24 h-14 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
                   ) : m.type === "pdf" ? (
                     <a key={mi} href={m.url} download={m.name || `thread-${i}-${mi}.pdf`} className="px-2 py-1 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 text-[10px] font-bold">PDF</a>
                   ) : (
-                    <img key={mi} src={m.url} alt={`thread ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)]" />
-                  )
-                ))}
+                    <img key={mi} src={m.url} alt={`thread ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => onOpenLightbox?.(m.url, list.length ? list : [m.url], Math.max(0, list.indexOf(m.url)))} />
+                  );
+                })}
               </span>
             )}
           </span>

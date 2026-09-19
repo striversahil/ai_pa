@@ -102,9 +102,10 @@ export default function ProcurementQueue() {
 
   // Live intimations: management rate-requests (act on the item) and sales
   // spec fixes (flagged item reshared with corrections/reference media).
-  const [toast, setToast] = useState<{ id: string; label: string; title: string; kind: "request" | "fixed" } | null>(null);
+  const [toast, setToast] = useState<{ id: string; label: string; title: string; kind: "request" | "fixed" | "thread" } | null>(null);
   const requestedRef = useRef<Record<string, number>>({});
   const flaggedRef = useRef<Record<string, number>>({});
+  const threadRef = useRef<Record<string, number>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   useEffect(() => {
@@ -112,6 +113,7 @@ export default function ProcurementQueue() {
     for (const e of enquiries) {
       if (requestedRef.current[e.id] === undefined) requestedRef.current[e.id] = (e.items ?? []).filter((it) => it.ratesRequested).length;
       if (flaggedRef.current[e.id] === undefined) flaggedRef.current[e.id] = (e.items ?? []).filter((it) => it.specIssue).length;
+      if (threadRef.current[e.id] === undefined) threadRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
     }
   }, [loaded, enquiries]);
   useLiveEvent((e: any) => {
@@ -143,6 +145,15 @@ export default function ProcurementQueue() {
       toastTimer.current = setTimeout(() => setToast(null), 10000);
     }
     flaggedRef.current[id] = flagged;
+    const threadCount = typeof s.threadCount === "number"
+      ? s.threadCount
+      : ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
+    if (threadRef.current[id] !== undefined && threadCount > threadRef.current[id]) {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      setToast({ id, label, title, kind: "thread" });
+      toastTimer.current = setTimeout(() => setToast(null), 10000);
+    }
+    threadRef.current[id] = threadCount;
   });
 
   const pending = useMemo(() => enquiries.filter(isProcurementPending).sort(byNewest), [enquiries]);
@@ -355,15 +366,15 @@ export default function ProcurementQueue() {
 
       {toast && (
         <div className={`fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)] ${
-          toast.kind === "request" ? "border-indigo-500/40" : "border-emerald-500/40"
+          toast.kind === "request" ? "border-indigo-500/40" : toast.kind === "thread" ? "border-sky-500/40" : "border-emerald-500/40"
         }`}>
           <div className="flex items-start gap-3">
             <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base ${
-              toast.kind === "request" ? "bg-indigo-500/15" : "bg-emerald-500/15"
-            }`}>{toast.kind === "request" ? "📩" : "✅"}</span>
+              toast.kind === "request" ? "bg-indigo-500/15" : toast.kind === "thread" ? "bg-sky-500/15" : "bg-emerald-500/15"
+            }`}>{toast.kind === "request" ? "📩" : toast.kind === "thread" ? "💬" : "✅"}</span>
             <div className="min-w-0 flex-1">
-              <p className={`text-xs font-extrabold ${toast.kind === "request" ? "text-indigo-500" : "text-emerald-600 dark:text-emerald-400"}`}>
-                {toast.kind === "request" ? "Management requested more rates" : "Spec fixed — item reshared"}
+              <p className={`text-xs font-extrabold ${toast.kind === "request" ? "text-indigo-500" : toast.kind === "thread" ? "text-sky-600 dark:text-sky-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {toast.kind === "request" ? "Management requested more rates" : toast.kind === "thread" ? "New thread message" : "Spec fixed — item reshared"}
               </p>
               <p className="truncate text-sm font-bold text-[var(--text-primary)]">{toast.title}</p>
               <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{toast.label}</p>
