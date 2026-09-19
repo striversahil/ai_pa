@@ -212,9 +212,8 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.finalizedAt = undefined;
       }
     }
-    // Not available: procurement requests, management approves (shared text) → sales sees notAvailable
-    // Procurement sets notAvailableRequested, management promotes to notAvailable with shared reason.
-    if (privileged || restricted) {
+    // Not available: procurement requests (notAvailableRequested), management approves (notAvailable + shared text) → sales sees notAvailable
+    if (privileged) {
       const hasNotAvailable = Object.prototype.hasOwnProperty.call(it as any, 'notAvailable');
       if (hasNotAvailable) {
         const want = (base as any).notAvailable === true;
@@ -235,7 +234,6 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
         (base as any).notAvailableAt = (stored as any).notAvailableAt;
       }
-      // Procurement → management request (material not available)
       const hasRequested = Object.prototype.hasOwnProperty.call(it as any, 'notAvailableRequested');
       if (hasRequested) {
         const req = typeof (it as any).notAvailableRequested === 'string' ? String((it as any).notAvailableRequested).trim().slice(0, 500) : '';
@@ -248,6 +246,37 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       } else {
         (base as any).notAvailableRequested = (stored as any).notAvailableRequested ? String((stored as any).notAvailableRequested).slice(0, 500) : undefined;
         (base as any).notAvailableRequestedAt = (stored as any).notAvailableRequestedAt;
+      }
+    } else if (restricted) {
+      // Procurement can only request, never directly approve
+      (base as any).notAvailable = (stored as any).notAvailable === true ? true : undefined;
+      (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
+      (base as any).notAvailableAt = (stored as any).notAvailableAt;
+      // If procurement mistakenly sends notAvailable:true (old frontend), treat as requested
+      if (Object.prototype.hasOwnProperty.call(it as any, 'notAvailable') && (it as any).notAvailable === true) {
+        const r = typeof (it as any).notAvailableReason === 'string' ? String((it as any).notAvailableReason).trim().slice(0, 500) : (typeof (it as any).notAvailableRequested === 'string' ? String((it as any).notAvailableRequested).trim().slice(0, 500) : '');
+        if (r || (it as any).notAvailable === true) {
+          (base as any).notAvailableRequested = r || String((it as any).notAvailableRequested ?? "Not available").slice(0, 500) || "Not available";
+        }
+      }
+      const hasRequested = Object.prototype.hasOwnProperty.call(it as any, 'notAvailableRequested');
+      if (hasRequested) {
+        const req = typeof (it as any).notAvailableRequested === 'string' ? String((it as any).notAvailableRequested).trim().slice(0, 500) : '';
+        if (req) {
+          (base as any).notAvailableRequested = req;
+        } else {
+          // Only clear if not being set via notAvailable above
+          if (!Object.prototype.hasOwnProperty.call(it as any, 'notAvailable') || (it as any).notAvailable !== true) {
+            (base as any).notAvailableRequested = undefined;
+            (base as any).notAvailableRequestedAt = undefined;
+          }
+        }
+      } else {
+        // Preserve stored if not sending, unless we just set via notAvailable above
+        if (!(base as any).notAvailableRequested) {
+          (base as any).notAvailableRequested = (stored as any).notAvailableRequested ? String((stored as any).notAvailableRequested).slice(0, 500) : undefined;
+          (base as any).notAvailableRequestedAt = (stored as any).notAvailableRequestedAt;
+        }
       }
     } else {
       // Sales cannot touch either
