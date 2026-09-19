@@ -373,7 +373,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           onAccept={onAcceptSuggestion}
                         />
                       )}
-                      {!it.rateAvailable && !it.specIssue && (it.thread ?? []).length > 0 && !redacted && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && (
+                      {mode !== "none" && !it.rateAvailable && !it.specIssue && (it.thread ?? []).length > 0 && !redacted && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && (
                         <FlagThread thread={it.thread ?? []} hideSalesRemarks={redacted} />
                       )}
                       {it.specIssue && !redacted && !it.rateAvailable && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && (
@@ -381,8 +381,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
                           <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
-                          <FlagThread thread={it.thread ?? []} />
-                          {editable && (
+                          {mode !== "none" && <FlagThread thread={it.thread ?? []} />}
+                          {mode !== "none" && editable && (
                             remarkIdx === idx ? (
                               <div className="mt-2 space-y-1.5">
                                 <textarea

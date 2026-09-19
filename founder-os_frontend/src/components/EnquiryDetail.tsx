@@ -380,7 +380,7 @@ export default function EnquiryDetail({
               <div className="space-y-5 flex-grow flex flex-col">
                 {!redacted && (
                 <div className="flex gap-1.5">
-                  {(["sales", "procurement"] as const).map((s) => (
+                  {(ratesMode === "none" ? (["sales"] as const) : (["sales", "procurement"] as const)).map((s) => (
                     <button
                       key={s}
                       type="button"
