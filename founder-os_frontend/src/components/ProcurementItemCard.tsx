@@ -15,6 +15,7 @@ interface ProcurementItemCardProps {
   onRemoveRate: (rateIdx: number) => void;
   onFlag: (reason: string) => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
+  onAddItemMedia?: (media: import("@/types").EnquiryMedia[]) => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
   /** Late-quote window: the row is finalized (committed) but still accepting
@@ -29,7 +30,7 @@ interface ProcurementItemCardProps {
 // its hold banner (held from Management) but still allows adding/editing
 // vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox,
+  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddItemMedia,
   readOnly = false,
   lateQuote = false,
 }: ProcurementItemCardProps) {
@@ -175,6 +176,18 @@ export default function ProcurementItemCard({
           <p className="mt-1 text-[var(--text-tertiary)]">
             Quote as new vendor rate or attach reference media to item attachments — request clears automatically (no management queue).
           </p>
+          {onAddItemMedia && (
+            <label className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-dashed border-sky-500/40 bg-white/50 hover:bg-sky-500/10 cursor-pointer text-[11px] font-bold text-sky-600">
+              + Attach reference to item
+              <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={async (e) => {
+                const files = e.target.files;
+                if (!files || files.length===0) return;
+                const { media } = await filesToMedia(Array.from(files));
+                if (media.length) onAddItemMedia(media);
+                e.target.value="";
+              }} />
+            </label>
+          )}
         </div>
       )}
 
