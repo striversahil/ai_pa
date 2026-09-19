@@ -60,6 +60,7 @@ export function hasPendingVariationWork(e: Pick<Enquiry, "items">): boolean {
  *  be reviewed/shared (Revise → share). Rows lacking timestamps fall back to
  *  the old behavior (not pending) — never false-positive on legacy rows. */
 export function itemHasUnreviewedQuotes(it: Pick<EnquiryItem, "rates" | "finalRate"> & { finalizedAt?: string }): boolean {
+  if ((it as any)?.rateAvailable) return false;
   if ((it as any)?.finalRate === undefined || (it as any)?.finalRate === null) return false;
   const fin = Date.parse(String((it as any)?.finalizedAt ?? ""));
   if (!Number.isFinite(fin)) return false;

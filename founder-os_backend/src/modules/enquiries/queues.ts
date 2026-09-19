@@ -51,8 +51,10 @@ export function hasPendingVariationWork(e: Pick<Enquiry, "items">): boolean {
 /** New vendor quotes since the decision: a decided item (finalRate set) with
  *  quotes logged AFTER it was finalized that management hasn't shared yet.
  *  Surfaces the item back in the management queue. Rows lacking timestamps
- *  fall back to not-pending (never false-positive on legacy rows). */
+ *  fall back to not-pending (never false-positive on legacy rows).
+ *  Rate-available items skip the loop entirely — never unreviewed. */
 export function itemHasUnreviewedQuotes(it: any): boolean {
+  if ((it as any)?.rateAvailable) return false;
   if (it?.finalRate === undefined || it?.finalRate === null) return false;
   const fin = Date.parse(String(it?.finalizedAt ?? ""));
   if (!Number.isFinite(fin)) return false;
