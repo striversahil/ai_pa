@@ -88,7 +88,7 @@ export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   // Fresh unquoted lines / pending alternate requests live in Active
   // (pending above), never double-listed.
   if (hasFreshUnquotedWork(e) || hasPendingVariationWork(e)) return false;
-  return items.some((it) => (it.rates ?? []).length > 0 && !it.ratesRequested);
+  return items.some((it) => ((it.rates ?? []).length > 0 && !it.ratesRequested) || (it as any).notAvailable || it.rateAvailable);
 }
 
 export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
@@ -102,14 +102,17 @@ export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
 
 /** Submit readiness: every quotable loop item carries ≥1 vendor rate. */
 export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
-  const loop = (e.items ?? []).filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
-  if (loop.length === 0) return { ok: false, reason: "No quotable items yet" };
-  const unrated = loop.filter((it) => (it?.rates ?? []).length === 0).length;
-  if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates` };
-  const flagged = (e.items ?? []).filter((it) => it?.specIssue).length;
+  const items = e.items ?? [];
+  const flagged = items.filter((it) => it?.specIssue && !(it as any)?.notAvailable).length;
   if (flagged > 0) return { ok: false, reason: `${flagged} item${flagged === 1 ? "" : "s"} awaiting sales spec fix` };
-  const unavailable = (e.items ?? []).filter((it) => (it as any)?.notAvailable).length;
-  if (unavailable > 0 && loop.length === 0) return { ok: true, reason: "" };
+  const loop = items.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
+  if (loop.length === 0) {
+    const hasBypass = items.some((it) => it?.rateAvailable || (it as any)?.notAvailable || it?.internalRates);
+    if (hasBypass) return { ok: true, reason: "" };
+    return { ok: false, reason: "No quotable items yet" };
+  }
+  const unrated = loop.filter((it) => (it?.rates ?? []).length === 0).length;
+  if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates (or mark rate available / not available)` };
   return { ok: true, reason: "" };
 }
 
