@@ -163,10 +163,17 @@ export default function ProcurementItemCard({
 
       {(item as any).variationRequest && (
         <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5 text-[11px] leading-relaxed">
-          <p className="font-extrabold text-sky-600 dark:text-sky-400 uppercase tracking-wide text-[10px]">Sales requested an alternate option</p>
+          <p className="font-extrabold text-sky-600 dark:text-sky-400 uppercase tracking-wide text-[10px]">Sales requested info / alternate</p>
           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((item as any).variationRequest)}</p>
+          {Array.isArray((item as any).variationRequestMedia) && (item as any).variationRequestMedia.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1.5">
+              {(item as any).variationRequestMedia.map((m: any, mi: number) => (
+                <img key={mi} src={m.url} alt={`Request ref ${mi+1}`} className="w-12 h-12 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => onOpenLightbox(m.url, (item as any).variationRequestMedia.map((x: any)=>x.url), mi)} />
+              ))}
+            </div>
+          )}
           <p className="mt-1 text-[var(--text-tertiary)]">
-            Quote it as a new vendor rate below — the request clears automatically.
+            Quote as new vendor rate or attach reference media to item attachments — request clears automatically (no management queue).
           </p>
         </div>
       )}

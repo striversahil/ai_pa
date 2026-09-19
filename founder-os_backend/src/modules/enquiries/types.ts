@@ -96,6 +96,8 @@ export interface EnquiryItem {
   ratesRequestedAt?: string;
   variationRequest?: string;
   variationRequestedAt?: string;
+  /** Common attachment for the variation/info request: sales example ↔ procurement fulfillment (merged). */
+  variationRequestMedia?: EnquiryMedia[];
   thread?: FlagThreadEntry[];
   aiPending?: boolean;
   expectedRate?: number;

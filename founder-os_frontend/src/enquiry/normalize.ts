@@ -85,6 +85,15 @@ export function toEnquiry(raw: any): Enquiry {
         ratesRequestedAt: r?.ratesRequestedAt ? String(r.ratesRequestedAt) : undefined,
         variationRequest: r?.variationRequest ? String(r.variationRequest) : undefined,
         variationRequestedAt: r?.variationRequestedAt ? String(r.variationRequestedAt) : undefined,
+        variationRequestMedia: Array.isArray(r?.variationRequestMedia)
+          ? r.variationRequestMedia
+              .map((m: any) => ({
+                type: m?.type === "video" ? "video" : m?.type === "pdf" ? "pdf" : "image",
+                url: String(m?.url ?? ""),
+                name: m?.name ? String(m.name) : undefined,
+              }))
+              .filter((m: any) => m.url.length > 0)
+          : undefined,
         aiPending: r?.aiPending === true ? true : undefined,
         expectedRate: r?.expectedRate !== undefined && r?.expectedRate !== null && r?.expectedRate !== "" ? Number(r.expectedRate) : undefined,
         expectedNote: r?.expectedNote ? String(r.expectedNote) : undefined,

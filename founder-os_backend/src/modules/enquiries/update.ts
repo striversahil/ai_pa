@@ -120,18 +120,25 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       const ratesChanged = JSON.stringify(base.rates ?? []) !== JSON.stringify(stored.rates ?? []);
       base.ratesRequested = ratesChanged ? undefined : stored.ratesRequested;
       base.ratesRequestedAt = ratesChanged ? undefined : stored.ratesRequestedAt;
-      // A fresh/edited rate (not a pure removal) answers sales' variation
-      // request the same way — the quoted variation flows to management,
-      // which shares it into the sales variants list. Anything else keeps
-      // the pending request (and its text) exactly as stored.
+      // A fresh/edited rate (not a pure removal) OR new item media (reference
+      // picture) answers sales' merged variation/reference request the same way.
+      // Anything else keeps the pending request (and its text+media) exactly as stored.
       const storedVar = String(stored.variationRequest ?? "").trim();
+      const storedVarMedia = parseItemMedia((stored as any).variationRequestMedia ?? []);
       const ratesGrew = (base.rates ?? []).length >= (stored.rates ?? []).length;
-      if (storedVar && ratesChanged && ratesGrew) {
+      const baseMedia = parseItemMedia(base.media ?? []);
+      const storedMedia = parseItemMedia(stored.media ?? []);
+      const storedMediaKeys = new Set(storedMedia.map((m: any) => `${m.type}:${m.url}`));
+      const mediaAdded = baseMedia.some((m: any) => !storedMediaKeys.has(`${m.type}:${m.url}`));
+      if (storedVar && ((ratesChanged && ratesGrew) || mediaAdded)) {
         base.variationRequest = undefined;
         base.variationRequestedAt = undefined;
+        (base as any).variationRequestMedia = undefined;
       } else {
         base.variationRequest = stored.variationRequest;
         base.variationRequestedAt = stored.variationRequestedAt;
+        (base as any).variationRequestMedia = storedVar ? parseItemMedia((stored as any).variationRequestMedia ?? []) : undefined;
+        if (!storedVar) (base as any).variationRequestMedia = undefined;
       }
     }
     // Management rate-request lifecycle: only privileged writers may set
@@ -295,46 +302,57 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     if (clearedRound) {
       trail.push({ by: role, kind: 'remark', text: 'Previous vendor quotes cleared — fresh round for the new request', at: nowIso });
     }
-    // Sales variation requests (non-blocking): sales sets the text (stamped
-    // once per change) or withdraws with an explicit ""; unrelated saves
-    // echo the stored value back and must never wipe a pending request.
-    // A FRESH request starts a new quoting round: previous vendor rates +
-    // old decision linkage are removed so procurement quotes the requested
-    // variation clean. Procurement answering (new rate above) trails below
-    // as 'quoted'.
+    // Sales merged variation/reference requests (non-blocking, per-item):
+    // sales sets text + optional common attachment (example picture); procurement
+    // fulfills with a new rate (alternate make) OR new item media (reference
+    // picture) — text keeps pending until fulfilled. Merged so one banner covers
+    // both "alternate make" and "need reference picture". Procurement reopen only
+    // (hasPendingVariationWork), never management — not a price enquiry.
+    // Unlike the old alternate path, we keep previous vendor rates/finalRate
+    // intact so a reference request on a finalized item doesn't wipe the sales
+    // price — procurement just attaches the reference.
     if (!privileged && !restricted) {
       const inVar = (it as any)?.variationRequest;
+      const inVarMedia = parseItemMedia((it as any)?.variationRequestMedia ?? []);
       const stVar = String(stored.variationRequest ?? "");
-      if (typeof inVar === "string" && inVar.trim()) {
-        const text = inVar.trim().slice(0, 500);
+      const stVarMedia = parseItemMedia((stored as any).variationRequestMedia ?? []);
+      const text = typeof inVar === "string" ? inVar.trim().slice(0, 500) : "";
+      const hasText = !!text;
+      const hasMedia = inVarMedia.length > 0;
+      const stText = stVar.trim();
+      const stMediaKeys = new Set(stVarMedia.map((m: any) => `${m.type}:${m.url}`));
+      const inMediaKeys = new Set(inVarMedia.map((m: any) => `${m.type}:${m.url}`));
+      const mediaChanged = hasMedia && (inVarMedia.length !== stVarMedia.length || inVarMedia.some((m: any) => !stMediaKeys.has(`${m.type}:${m.url}`)));
+      const textChanged = hasText && text !== stText;
+      if (hasText) {
         base.variationRequest = text;
-        if (text !== stVar.trim()) {
+        (base as any).variationRequestMedia = inVarMedia.length ? inVarMedia : undefined;
+        if (textChanged || mediaChanged) {
           base.variationRequestedAt = nowIso;
-          clearQuotingRound();
-          trail.push({ by: role, kind: 'remark', text: `Variation requested: ${text}`.slice(0, 500), at: nowIso });
-          // clearedRound is trailed in the shared section above for the
-          // privileged path — but this sales block runs AFTER it, so stamp
-          // the wipe here (no double: only this branch can set it this late).
-          if (clearedRound) {
-            trail.push({ by: role, kind: 'remark', text: 'Previous vendor quotes cleared — fresh round for the new request', at: nowIso });
-          }
+          // No quoting-round wipe for merged reference flow — keep rates/finalRate
+          // so a "need reference picture" on a finalized item doesn't reset pricing.
+          const mediaPart = hasMedia ? ` + ${inVarMedia.length} attachment(s)` : "";
+          trail.push({ by: role, kind: 'remark', text: `Info/alternate requested: ${text}${mediaPart}`.slice(0, 500), at: nowIso });
         } else {
           base.variationRequestedAt = stored.variationRequestedAt ?? nowIso;
+          if (stVarMedia.length) (base as any).variationRequestMedia = stVarMedia;
         }
       } else if (inVar === "" && stVar) {
         base.variationRequest = undefined;
         base.variationRequestedAt = undefined;
-        trail.push({ by: role, kind: 'remark', text: 'Variation request withdrawn', at: nowIso });
+        (base as any).variationRequestMedia = undefined;
+        trail.push({ by: role, kind: 'remark', text: 'Info/alternate request withdrawn', at: nowIso });
       } else {
         base.variationRequest = stored.variationRequest;
         base.variationRequestedAt = stored.variationRequestedAt;
+        if (stVar) (base as any).variationRequestMedia = stVarMedia.length ? stVarMedia : undefined;
       }
     }
-    // Procurement answered a variation request with a fresh rate (cleared
-    // above) — trail it so sales sees the loop close. Sales' own withdraw
+    // Procurement fulfilled the merged request with a fresh rate or new media
+    // (reference) — trail it so sales sees the loop close. Sales' own withdraw
     // already trailed above and never takes this branch.
     if (!!String(stored.variationRequest ?? "").trim() && !(base as any).variationRequest && actingProcurement) {
-      trail.push({ by: role, kind: 'quoted', text: 'Variation quoted', at: nowIso });
+      trail.push({ by: role, kind: 'quoted', text: 'Info/alternate fulfilled', at: nowIso });
     }
     // Internal-handling lifecycle (privileged only — other roles are
     // pinned to stored above): stamp the handoff, trail the transition.

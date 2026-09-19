@@ -129,6 +129,7 @@ function pick(data: any): Partial<Enquiry> | null {
         // ""-preserving (unlike the fields above): sales withdraws a
         // variation request by saving an explicit empty string.
         variationRequest: (r as any)?.variationRequest !== undefined ? String((r as any).variationRequest).slice(0, 500) : undefined,
+        variationRequestMedia: (r as any)?.variationRequestMedia !== undefined ? parseItemMedia((r as any).variationRequestMedia) : undefined,
         thread: parseFlagThread(r?.thread),
         // Detail-view "Add via AI" flag — the GH intake action replaces
         // these raw rows with vision-split lines (applyIntakeBulkResult).
@@ -294,12 +295,15 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
         served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
         if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
       }
-      // Sales alternate-requests are live workflow metadata too: procurement
+      // Sales alternate/info requests are live workflow metadata too: procurement
       // must see them (banner + queue) the moment sales asks — never gated
-      // on the AI rewrite cache.
+      // on the AI rewrite cache. Common attachment travels with the text.
       if ((it as any)?.variationRequest) {
         served.variationRequest = String((it as any).variationRequest).slice(0, 500);
         if ((it as any)?.variationRequestedAt) served.variationRequestedAt = String((it as any).variationRequestedAt);
+        if (Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0) {
+          served.variationRequestMedia = parseItemMedia((it as any).variationRequestMedia);
+        }
       }
       // Loop trail is live workflow metadata too: always the stored values.
       served.thread = parseFlagThread((it as any)?.thread);

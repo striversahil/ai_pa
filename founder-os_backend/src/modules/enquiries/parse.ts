@@ -136,6 +136,7 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
         variationRequest: r?.variationRequest ? String(r.variationRequest).slice(0, 500) : undefined,
         variationRequestedAt: isoOrUndefined(r?.variationRequestedAt),
+        variationRequestMedia: parseItemMedia(r?.variationRequestMedia),
         aiPending: r?.aiPending === true ? true : undefined,
         expectedRate: numOrUndefined(r?.expectedRate),
         expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,

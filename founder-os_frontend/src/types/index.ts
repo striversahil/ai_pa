@@ -105,6 +105,8 @@ export interface EnquiryItem {
    *  (which clears it). Sales may withdraw anytime. */
   variationRequest?: string;
   variationRequestedAt?: string;
+  /** Common attachment for the merged info/alternate request. */
+  variationRequestMedia?: EnquiryMedia[];
   /** Back-and-forth loop trail (server-authored): flags, remarks, fixes,
    *  requests — oldest first. Visible in procurement. */
   thread?: FlagThreadEntry[];

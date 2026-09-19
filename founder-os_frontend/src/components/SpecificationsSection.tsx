@@ -41,11 +41,20 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [expOpen, setExpOpen] = useState<number | null>(null);
   const [expRate, setExpRate] = useState("");
   const [expNote, setExpNote] = useState("");
-  // Sales alternate request: "client wants a different make/option" goes
-  // straight to procurement as variationRequest — NO management approval.
-  // Procurement quoting a new rate clears it; sales may withdraw anytime.
+  // Sales merged info/alternate request: text + common attachment (example pic)
+  // goes straight to procurement as variationRequest — NO management approval.
+  // Procurement fulfilling with a new rate OR new item media clears it; sales may withdraw anytime.
   const [altReqOpen, setAltReqOpen] = useState<number | null>(null);
   const [altReqText, setAltReqText] = useState("");
+  const [altReqImages, setAltReqImages] = useState<string[]>([]);
+  const altReqFileRef = React.useRef<HTMLInputElement>(null);
+  const handleAltReqImages = async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
+    const list = Array.from(files);
+    const { media } = await import("../lib/imageFiles").then((m) => m.filesToMedia(list));
+    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
+    if (urls.length > 0) setAltReqImages((prev) => [...prev, ...urls]);
+  };
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
   const editable = !!onUpdateItems && !redacted;
@@ -206,21 +215,23 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     if (!onUpdateItems) return;
     onUpdateItems([...items.slice(0, idx + 1), duplicateItem(items[idx]), ...items.slice(idx + 1)]);
   };
-  // Request an alternate option for item idx: saves variationRequest
-  // directly (no management approval — procurement picks it up live).
+  // Request info/alternate for item idx: saves variationRequest + common attachment.
   const sendAlternateRequest = (idx: number) => {
     const text = altReqText.trim().slice(0, 500);
     if (!text || !onUpdateItems) return;
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: text } : it)));
+    const media = altReqImages.map((url) => ({ type: "image" as const, url }));
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: text, variationRequestMedia: media.length ? media : undefined } : it)));
     setAltReqText("");
+    setAltReqImages([]);
     setAltReqOpen(null);
   };
-  // Withdraw a pending alternate request (explicit "" clears server-side).
+  // Withdraw a pending request (explicit "" clears server-side).
   const withdrawAlternateRequest = (idx: number) => {
     if (!onUpdateItems) return;
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: "" } : it)));
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: "", variationRequestMedia: undefined } : it)));
     setAltReqOpen(null);
     setAltReqText("");
+    setAltReqImages([]);
   };
 
   return (
@@ -543,10 +554,17 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                   (it as any)?.variationRequest ? (
                                     <div className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2 space-y-1">
                                       <p className="text-[11px] font-extrabold text-sky-600 dark:text-sky-400">
-                                        Alternate requested — with procurement
+                                        Info/alternate requested — with procurement
                                       </p>
                                       <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((it as any).variationRequest)}</p>
-                                      <p className="text-[10px] text-[var(--text-tertiary)]">Previous quotes were cleared for a fresh round — the new option appears here once quoted.</p>
+                                      {Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 pt-1">
+                                          {(it as any).variationRequestMedia.map((m: any, mi: number) => (
+                                            <img key={mi} src={m.url} alt={`Request ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => onOpenLightbox(m.url, (it as any).variationRequestMedia.map((x: any)=>x.url), mi)} />
+                                          ))}
+                                        </div>
+                                      )}
+                                      <p className="text-[10px] text-[var(--text-tertiary)]">With procurement — quoted rate or reference media will clear this.</p>
                                       <button type="button" onClick={() => withdrawAlternateRequest(idx)}
                                         className="text-[11px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0">
                                         Withdraw request
@@ -557,26 +575,41 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                       <textarea
                                         value={altReqText}
                                         onChange={(e) => setAltReqText(e.target.value)}
-                                        placeholder="Describe what the client wants — e.g. ABB make instead, higher capacity…"
+                                        placeholder="Ask for alternate make or reference — e.g. ABB make, or need reference picture/datasheet…"
                                         rows={2}
                                         className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-sky-500 text-xs resize-y text-[var(--text-primary)]"
                                       />
+                                      <input ref={altReqFileRef} type="file" accept="image/*,video/*,.pdf" multiple className="hidden" onChange={(e) => { void handleAltReqImages(e.target.files); e.target.value=""; }} />
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <button type="button" onClick={() => altReqFileRef.current?.click()} className="px-2.5 py-1 border border-dashed border-[var(--border-card)] rounded-lg text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach reference</button>
+                                        <span className="text-[10px] text-[var(--text-tertiary)]">Common attachment for sales ↔ procurement</span>
+                                      </div>
+                                      {altReqImages.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {altReqImages.map((url, i) => (
+                                            <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--border-card)]">
+                                              <img src={url} alt={`req ${i+1}`} className="w-full h-full object-cover" />
+                                              <button type="button" onClick={() => setAltReqImages(prev => prev.filter((_, j) => j !== i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
                                       <div className="flex gap-2">
                                         <button type="button" onClick={() => sendAlternateRequest(idx)} disabled={!altReqText.trim()}
                                           className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50 border-0">
-                                          Request alternate
+                                          Request info/alternate
                                         </button>
-                                        <button type="button" onClick={() => { setAltReqOpen(null); setAltReqText(""); }}
+                                        <button type="button" onClick={() => { setAltReqOpen(null); setAltReqText(""); setAltReqImages([]); }}
                                           className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                                           Cancel
                                         </button>
                                       </div>
-                                      <p className="text-[10px] text-[var(--text-tertiary)]">Goes straight to procurement — no approval needed. The new option appears here once quoted.</p>
+                                      <p className="text-[10px] text-[var(--text-tertiary)]">Goes straight to procurement — quoted rate or attached reference will clear this. No management queue.</p>
                                     </div>
                                   ) : (
-                                    <button type="button" onClick={() => { setAltReqOpen(idx); setAltReqText(""); }}
+                                    <button type="button" onClick={() => { setAltReqOpen(idx); setAltReqText(""); setAltReqImages([]); }}
                                       className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:opacity-80 cursor-pointer bg-transparent border-0">
-                                      💬 Request alternate option
+                                      💬 Request info / alternate
                                     </button>
                                   )
                                 )}
