@@ -7,6 +7,7 @@ import { PrismaAuthStore } from '../modules/auth/store-prisma';
 import {
   listDigitalMarketingManagers, createDigitalMarketingManager, updateDigitalMarketingManager,
   listTemplates, createTemplate, updateTemplate, logTask, getDigitalMarketingExport,
+  resolveSelfDigitalMarketingManager,
 } from '../automations/digital-marketing/service';
 
 void prisma;
@@ -64,7 +65,15 @@ router.get('/export', misGuard, asyncHandler(async (req, res) => {
 router.patch('/logs/:id', asyncHandler(async (req, res) => {
   const me = await getMe(store as any, req.headers.cookie || null).catch(() => null);
   const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? null;
-  try { res.json(await logTask(String(req.params.id), req.body || {}, actor)); }
+  const self = await resolveSelfDigitalMarketingManager(
+    (req.body as any)?.as ?? (req.query as any)?.as ?? null, me as any,
+  ).catch(() => null);
+  try {
+    res.json(await logTask(
+      String(req.params.id), req.body || {}, actor,
+      self ? { selfId: self.selfId, selfName: self.selfName } : null,
+    ));
+  }
   catch (e: any) { res.status(400).json({ error: e?.message ?? 'log failed' }); }
 }));
 

@@ -809,14 +809,18 @@ model AccountsTaskTemplate {
   @@index([active, frequency])
 }
 
-// One concrete task instance per (template, due date). Status + remark is the
-// daily logging surface: accountants tick done / not_done with a remark;
-// past unresolved rows read as incomplete (never rewritten).
+// One concrete task instance per (template, due date, slot). Status + remark
+// is the daily logging surface: accountants tick done / not_done with a
+// remark; past unresolved rows read as incomplete (never rewritten).
+// slot: 'main' for ordinary tasks; shared templates get one instance per
+// lane ('senior' + 'junior') so each lane completes its own copy — a Done in
+// one lane must never flip the other lane's card.
 model AccountsTaskLog {
   id           String               @id @default(uuid())
   templateId   String
   template     AccountsTaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   dueDate      String // YYYY-MM-DD (IST)
+  slot         String   @default("main") // main | senior | junior (lane copy for shared templates)
   status       String   @default("pending") // pending | done | not_done | skipped | overdue (legacy) | inprogress (legacy)
   remark       String?
   doneBy       String?
@@ -829,7 +833,7 @@ model AccountsTaskLog {
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
 
-  @@unique([templateId, dueDate])
+  @@unique([templateId, dueDate, slot])
   @@index([dueDate, status])
   @@index([accountantId])
   attachments      AccountsTaskAttachment[]

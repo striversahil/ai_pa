@@ -405,6 +405,11 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           </div>
                         ) : null
                       ) : null}
+                      {(it as any).notAvailable && (
+                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-200 text-[11px] font-extrabold">
+                          Not available{(it as any).notAvailableReason ? ` — ${String((it as any).notAvailableReason).slice(0, 80)}` : ""}
+                        </div>
+                      )}
                       {(it as any).aiPending === true && (
                         <AiProcessingLoader compact />
                       )}
@@ -419,7 +424,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {!redacted && !it.specIssue && (it.thread ?? []).length > 0 && (
                         <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
                       )}
-                       {it.specIssue && !redacted && !it.rateAvailable && (
+                       {it.specIssue && !redacted && !it.rateAvailable && !(it as any).notAvailable && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
@@ -451,9 +456,19 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           )}
                         </div>
                       )}
+                      {(it as any).notAvailable && !redacted && (
+                        <div className="mt-1.5 rounded-lg border border-zinc-700 bg-zinc-800/40 p-2 text-[11px] leading-relaxed">
+                          <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Not available — flagged by procurement/management</p>
+                          {(it as any).notAvailableReason && (
+                            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
+                          )}
+                          <p className="mt-1 text-[var(--text-tertiary)]">Sales sees this item as not available.</p>
+                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
+                        </div>
+                      )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
                       {it.spec && <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed mt-0.5">{it.spec}</p>}
-                       {!it.rateAvailable && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && it.internalRates && (it.finalRate === undefined || it.finalRate === null) && (
+                       {!it.rateAvailable && !(it as any).notAvailable && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && it.internalRates && (it.finalRate === undefined || it.finalRate === null) && (
                         <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-violet-500/10 border border-violet-500/30 text-violet-600 dark:text-violet-400 text-[11px] font-extrabold">
                           Handled internally — rate to follow
                         </div>
@@ -513,7 +528,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         )
                       )}
                                               {(() => {
-                        if (it.rateAvailable) return null; // rate available overrides — hide stored final/notes (state kept hidden in D1, restored when toggled off)
+                        if (it.rateAvailable || (it as any).notAvailable) return null; // rate available / not available overrides — hide stored final/notes (state kept hidden in D1, restored when toggled off)
                         const selIdx = (it as any)?.selectedRateIdx;
                         const selRate = (it.rates ?? []).find((r) => (r as any).selected === true)
                           ?? (typeof selIdx === "number" ? (it.rates ?? [])[selIdx] : undefined)
@@ -650,7 +665,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           </div>
                         );
                       })()}
-                      {!it.rateAvailable && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && mode !== "none" && ((it.rates ?? []).length > 0 || ratesEditable) && (
+                      {!it.rateAvailable && !(it as any).notAvailable && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && mode !== "none" && ((it.rates ?? []).length > 0 || ratesEditable) && (
                         <div className="mt-2 space-y-1.5">
                           {(it.rates ?? []).map((r, ri) => (
                             <div key={ri} className="rounded-lg border border-[var(--border-card)]/60 p-2 space-y-1">

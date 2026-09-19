@@ -119,6 +119,9 @@ function pick(data: any): Partial<Enquiry> | null {
         specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
         specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
+        notAvailable: (r as any)?.notAvailable !== undefined ? (r as any).notAvailable === true : undefined,
+        notAvailableReason: (r as any)?.notAvailableReason !== undefined ? String((r as any).notAvailableReason).slice(0, 500) : undefined,
+        notAvailableAt: isoOrUndefined((r as any)?.notAvailableAt),
         internalRates: r?.internalRates === true,
         internalRatesAt: isoOrUndefined(r?.internalRatesAt),
         // ""-preserving: management withdraws a rate request by saving an
@@ -289,9 +292,12 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
         served.specIssue = String(it.specIssue).slice(0, 2000);
         if (it?.specFlaggedAt) served.specFlaggedAt = String(it.specFlaggedAt);
       }
-      // Rate-availability is live workflow metadata too: the procurement queue
+      // Rate-availability / not-available is live workflow metadata too: the procurement queue
       // predicate depends on it, so it rides along regardless of cache path.
       served.rateAvailable = (it as any)?.rateAvailable === true;
+      served.notAvailable = (it as any)?.notAvailable === true;
+      if ((it as any)?.notAvailableReason) served.notAvailableReason = String((it as any).notAvailableReason).slice(0, 500);
+      if ((it as any)?.notAvailableAt) served.notAvailableAt = String((it as any).notAvailableAt);
       // Management rate-requests are live workflow metadata as well: overlay
       // stored values so the queue predicate never waits on the AI cache.
       if ((it as any)?.ratesRequested) {

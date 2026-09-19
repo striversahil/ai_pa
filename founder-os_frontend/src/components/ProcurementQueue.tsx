@@ -252,6 +252,14 @@ export default function ProcurementQueue() {
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, specIssue: reason, specFlaggedAt: new Date().toISOString() } : it)), [patchItems]);
 
+  const handleNotAvailable = useCallback((enquiryId: string, itemIdx: number, reason: string) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) =>
+      i === itemIdx ? { ...(it as any), notAvailable: true, notAvailableReason: reason || undefined, notAvailableAt: new Date().toISOString() } as any : it)), [patchItems]);
+
+  const handleClearNotAvailable = useCallback((enquiryId: string, itemIdx: number) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) =>
+      i === itemIdx ? { ...(it as any), notAvailable: undefined, notAvailableReason: undefined, notAvailableAt: undefined } as any : it)), [patchItems]);
+
   const handleAddItemMedia = useCallback((enquiryId: string, itemIdx: number, media: EnquiryItem["media"]) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, media: [...(it.media ?? []), ...(media ?? [])] } : it)), [patchItems]);
@@ -547,18 +555,18 @@ export default function ProcurementQueue() {
               const submitted = isSubmitted(selEnquiry);
               const lateQuoteEnquiry = selEnquiry.rateStatus === "finalized";
               const all = selEnquiry.items ?? [];
-              const hidden = all.filter((it) => it.rateAvailable || (it as any).internalRates).length;
-              const visible = all.map((it, idx) => ({ it, idx })).filter(({ it }) => !it.rateAvailable && !(it as any).internalRates);
+              const hidden = all.filter((it) => it.rateAvailable || (it as any).internalRates || (it as any).notAvailable).length;
+              const visible = all.map((it, idx) => ({ it, idx })).filter(({ it }) => !it.rateAvailable && !(it as any).internalRates && !(it as any).notAvailable);
               return (
                 <>
                   {hidden > 0 && (
                     <p className="rounded-xl border border-zinc-700/50 bg-zinc-800/40 px-3 py-2 text-[11px] font-semibold text-zinc-400">
-                      {hidden} item{hidden === 1 ? "" : "s"} marked rate available — hidden from procurement (only {visible.length} needing rates shown).
+                      {hidden} item{hidden === 1 ? "" : "s"} marked rate available / not available / internal — hidden from procurement (only {visible.length} needing rates shown).
                     </p>
                   )}
                   {visible.length === 0 ? (
                     <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                      All items are rate available — nothing to quote. Conclude when ready.
+                      All items are rate available / not available / internal — nothing to quote. Conclude when ready.
                     </p>
                   ) : (
                     visible.map(({ it: item, idx: itemIdx }) => (
@@ -571,12 +579,14 @@ export default function ProcurementQueue() {
                         onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
                         onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
                         onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
+                        onNotAvailable={(reason) => handleNotAvailable(selEnquiry.id, itemIdx, reason)}
+                        onClearNotAvailable={() => handleClearNotAvailable(selEnquiry.id, itemIdx)}
                         onOpenLightbox={handleOpenLightbox}
                         onAddItemMedia={(media) => handleAddItemMedia(selEnquiry.id, itemIdx, media)}
                         onPostThread={(text, media) => handlePostThread(selEnquiry.id, itemIdx, text, media)}
                         onResolveThread={() => handleResolveThread(selEnquiry.id, itemIdx)}
                         onReopenThread={() => handleReopenThread(selEnquiry.id, itemIdx)}
-                        readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest)}
+                        readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest) || !!(item as any).notAvailable}
                       />
                     ))
                   )}

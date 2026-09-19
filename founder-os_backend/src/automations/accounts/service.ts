@@ -12,7 +12,24 @@ export const OWNER_ROLES = ['senior', 'junior', 'either'] as const;
 export const LOG_STATUSES = ['pending', 'inprogress', 'done', 'skipped', 'not_done'] as const;
 
 const DATA_TTL_MS = 5 * 60 * 1000;
-const DATA_CACHE_PREFIX = 'accounts:dashboard:';
+// v2: payload rows for shared templates split per lane (slot). Bump on any
+// dashboard-shape change so stale KV never serves the old row layout.
+const DATA_CACHE_PREFIX = 'accounts:dashboard:v2:';
+
+/** Lane slots for AccountsTaskLog rows. Shared templates get one instance per
+ *  lane so each lane completes its own copy; ordinary tasks use 'main'. */
+export const SLOT_MAIN = 'main';
+export const SLOT_SENIOR = 'senior';
+export const SLOT_JUNIOR = 'junior';
+export const LANE_SLOTS = [SLOT_SENIOR, SLOT_JUNIOR] as const;
+
+export function slotsFor(t: any): string[] {
+  return t?.isShared ? [SLOT_SENIOR, SLOT_JUNIOR] : [SLOT_MAIN];
+}
+
+export function slotKey(templateId: unknown, slot: unknown): string {
+  return `${String(templateId)}::${String(slot ?? SLOT_MAIN)}`;
+}
 
 export function istDateStr(d = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -236,33 +253,124 @@ export async function ensureSeedTemplates(): Promise<void> {
 /** Ensure one log row per due template for `dateStr` (idempotent). */
 export async function ensureInstances(dateStr: string): Promise<number> {
   await ensureSeedTemplates();
+  await splitSharedMains();
   const templates = await prisma.accountsTaskTemplate.findMany({ where: { active: true } });
   const due = templates.filter((t: any) => isDueOn(t, dateStr));
   if (due.length === 0) return 0;
+  const wanted = new Map<string, { t: any; slot: string }>();
+  for (const t of due as any[]) {
+    for (const slot of slotsFor(t)) wanted.set(slotKey((t as any).id, slot), { t, slot });
+  }
   const existing = await prisma.accountsTaskLog.findMany({
     where: { dueDate: dateStr, templateId: { in: due.map((t: any) => t.id) } },
-    select: { templateId: true },
+    select: { templateId: true, slot: true },
   });
-  const have = new Set((existing as any[]).map((r) => String(r.templateId)));
-  const missing = (due as any[]).filter((t) => !have.has(String(t.id)));
+  const have = new Set((existing as any[]).map((r) => slotKey(r.templateId, r.slot)));
+  const missing = [...wanted.entries()].filter(([k]) => !have.has(k));
   if (missing.length === 0) return 0;
   // One batched INSERT + one re-read (2 round trips total). Unique
-  // (templateId, dueDate) keeps concurrent rollovers idempotent — on conflict
-  // the batch throws and we fall back to idempotent per-row creates.
+  // (templateId, dueDate, slot) keeps concurrent rollovers idempotent — on
+  // conflict the batch throws and we fall back to idempotent per-row creates.
   try {
     const rows = await (prisma as any).accountsTaskLog.createManyAndReturn({
-      data: missing.map((t: any) => ({ templateId: String(t.id), dueDate: dateStr, status: 'pending' })),
+      data: missing.map(([, { t, slot }]) => ({ templateId: String(t.id), dueDate: dateStr, slot, status: 'pending' })),
     });
     return Array.isArray(rows) ? rows.length : missing.length;
   } catch {
-    const results = await Promise.all(missing.map(async (t: any) => {
+    const results = await Promise.all(missing.map(async ([, { t, slot }]) => {
       try {
-        await prisma.accountsTaskLog.create({ data: { templateId: t.id, dueDate: dateStr, status: 'pending' } });
+        await prisma.accountsTaskLog.create({ data: { templateId: t.id, dueDate: dateStr, slot, status: 'pending' } });
         return 1;
       } catch { return 0; /* unique race — ignore */ }
     }));
     return results.reduce<number>((a, b) => a + b, 0);
   }
+}
+
+/**
+ * One-time-per-row backfill for the shared-slot change (migration 0042):
+ * shared templates whose instance is still the legacy slot='main' get one
+ * copy per lane and the main row is removed (its proof files are duplicated
+ * onto the copies — metadata only, bytes shared via the same KV key).
+ * A Done stays done ONLY in the lane of whoever did it (roster-matched via
+ * accountantId, else doneBy-name); the other lane restarts as pending with a
+ * clean slate. Idempotent — no-ops when no shared mains remain.
+ */
+export async function splitSharedMains(): Promise<number> {
+  const mains = await (prisma as any).accountsTaskLog.findMany({
+    where: { slot: SLOT_MAIN },
+    include: { template: true },
+  }).catch(() => []);
+  const shared = (mains as any[]).filter((l) => !!l?.template?.isShared);
+  if (!shared.length) return 0;
+  const roster = (await prisma.accountant.findMany({ where: { deleted: false } }).catch(() => [])) as any[];
+  const laneOf = (accId: unknown, doneBy: unknown): string | null => {
+    if (accId) {
+      const r = roster.find((x) => String(x.id) === String(accId));
+      if (r && (String(r.role) === SLOT_SENIOR || String(r.role) === SLOT_JUNIOR)) return String(r.role);
+    }
+    const n = normName(doneBy);
+    if (n && n.length >= 3) {
+      const hits = roster.filter((x) => {
+        const rn = normName(x.name);
+        return rn && (rn === n || rn.startsWith(n) || n.startsWith(rn));
+      });
+      if (hits.length === 1) return String(hits[0].role);
+    }
+    return null;
+  };
+  let split = 0;
+  for (const m of shared) {
+    const wasDone = String(m.status) === 'done';
+    const doneLane = wasDone ? (laneOf(m.accountantId, m.doneBy) ?? SLOT_SENIOR) : null;
+    const base = {
+      templateId: String(m.templateId),
+      dueDate: String(m.dueDate),
+      remark: m.remark ?? null,
+      timeSpentMin: m.timeSpentMin ?? null,
+      updatedBy: m.updatedBy ?? null,
+    };
+    const copies: any[] = [];
+    for (const slot of LANE_SLOTS) {
+      const keep = !wasDone || slot === doneLane;
+      const row: any = await (prisma as any).accountsTaskLog.create({
+        data: {
+          ...base,
+          slot,
+          status: keep ? String(m.status) : 'pending',
+          remark: keep ? base.remark : null,
+          doneBy: keep ? (m.doneBy ?? null) : null,
+          timeSpentMin: keep ? base.timeSpentMin : null,
+          accountantId: keep ? (m.accountantId ?? null) : null,
+        },
+      }).catch(() => null);
+      if (!row) break;
+      copies.push(row);
+    }
+    if (copies.length !== LANE_SLOTS.length) continue; // race — leave main for next pass
+    const files = await (prisma as any).accountsTaskAttachment.findMany({
+      where: { logId: String(m.id) },
+    }).catch(() => []);
+    for (const target of copies) {
+      // Proof belongs to the lane that earned it; open rows share it (same
+      // work-in-progress evidence for both lanes).
+      if (wasDone && String((target as any).slot) !== doneLane) continue;
+      for (const f of files as any[]) {
+        await (prisma as any).accountsTaskAttachment.create({
+          data: {
+            logId: String((target as any).id),
+            fileName: f.fileName, mime: f.mime, size: f.size,
+            kvKey: f.kvKey, uploadedBy: f.uploadedBy,
+          },
+        }).catch(() => {});
+      }
+    }
+    await (prisma as any).accountsTaskLog.delete({ where: { id: String(m.id) } }).catch(() => {});
+    await (prisma as any).accountsTaskAttachment.deleteMany({ where: { logId: String(m.id) } }).catch(() => {});
+    split++;
+  }
+  if (split) await invalidateAccountsCache();
+  return split;
 }
 
 /** No-op since the per-day model: past unresolved rows are NOT rewritten.
@@ -292,12 +400,12 @@ export async function getCarriedOverdue(
       dueDate: { gte: from, lt: dateStr },
       status: { in: ['pending', 'overdue', 'inprogress', 'not_done'] },
     },
-    select: { templateId: true, dueDate: true },
+    select: { templateId: true, dueDate: true, slot: true },
     orderBy: { dueDate: 'asc' },
     take: 2000,
   }).catch(() => []);
   for (const r of rows as any[]) {
-    const k = String(r.templateId);
+    const k = slotKey(r.templateId, r.slot);
     if (!out.has(k)) out.set(k, []);
     out.get(k)!.push(String(r.dueDate));
   }
@@ -340,15 +448,20 @@ async function computeDashboard(
       orderBy: { createdAt: 'asc' },
     }).catch(() => [])
     : [];
-  const byTemplate = new Map((logs as any[]).map((l) => [String(l.templateId), l]));
+  const bySlot = new Map((logs as any[]).map((l) => [slotKey(l.templateId, l.slot), l]));
   const active = (templates as any[]).filter((t) => !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')));
   // Lane enforcement: non-MIS viewers only receive their own lane (their role
-  // plus shared). Admins, and logged-out callers where the auth gate is off
-  // (local/dev), receive everything. Logged-in non-roster viewers receive
-  // nothing but the team board.
+  // plus shared). Shared templates are visible in BOTH lanes regardless of
+  // ownerRole — each lane gets its own slot copy (see slotsFor). Admins, and
+  // logged-out callers where the auth gate is off (local/dev), receive
+  // everything. Logged-in non-roster viewers receive nothing but the team board.
   const laneRole = scope && !scope.isAdmin ? (scope.scope?.selfRole ?? null) : null;
   const laneEnforced = !!scope && !scope.isAdmin;
-  const inLane = (t: any) => !laneEnforced || (laneRole !== null && (t.ownerRole === 'either' || t.ownerRole === laneRole));
+  const inLane = (t: any) => !laneEnforced || (laneRole !== null && (t.ownerRole === 'either' || t.ownerRole === laneRole || !!t.isShared));
+  // A shared template in the wrong lane renders nothing: lane viewers only
+  // ever see their own slot copy (a senior must never see/touch the junior
+  // copy, and vice versa — that was the shared-Done bug).
+  const inSlot = (t: any, slot: string) => !laneEnforced || !(t as any).isShared || slot === laneRole;
   const dueTemplates = active.filter((t) => inLane(t) && isDueOn(t, dateStr));
   const carried = await getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr);
   // Range grace: while a window is still open, earlier unresolved days inside
@@ -361,7 +474,8 @@ async function computeDashboard(
   }
   const carriedEffective = new Map<string, string[]>();
   for (const [k, v] of carried) {
-    const g = graceByTemplate.get(k);
+    // Carryover keys are per (template :: slot); grace windows are per template.
+    const g = graceByTemplate.get(String(k).split('::')[0]);
     const kept = g ? v.filter((dd) => dd < g) : v;
     if (kept.length) carriedEffective.set(k, kept);
   }
@@ -379,11 +493,9 @@ async function computeDashboard(
   // Day-1 rule: a fresh entry is simply done / not-done — it reads incomplete
   // only after its own day has passed (dueDate < today). Past misses live in
   // the Incomplete tab, never on today's card.
-  const items = dueTemplates
-    .map((t) => {
-      const log = byTemplate.get(String(t.id));
+  const toItem = (t: any, log: any, slot: string) => {
       const status = log?.status ?? 'pending';
-      const missed = carriedEffective.get(String(t.id)) ?? [];
+      const missed = carriedEffective.get(slotKey(t.id, (t as any).isShared ? slot : SLOT_MAIN)) ?? [];
       const pastDue = String(dateStr) < istDateStr();
       const isOverdueRow = status === 'overdue' || status === 'not_done' || ((status === 'pending' || status === 'inprogress') && pastDue);
       return {
@@ -397,6 +509,7 @@ async function computeDashboard(
         ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
         dueLabel: t.rawText ?? null,
         isShared: !!t.isShared,
+        slot,
         employeeRaw: t.employeeRaw ?? null,
         logId: log?.id ?? null,
         status,
@@ -416,13 +529,26 @@ async function computeDashboard(
         daysOverdue: 0,
         daysIncomplete: 0,
       };
+    };
+  const items = dueTemplates
+    .flatMap((t) => {
+      // Shared templates render once per lane, each bound to its own slot
+      // copy — a Done in one lane can never flip the other lane's card.
+      const slots = (t as any).isShared ? [...LANE_SLOTS] : [SLOT_MAIN];
+      return slots
+        .filter((slot) => inSlot(t, slot))
+        .map((slot) => toItem(t, bySlot.get(slotKey((t as any).id, slot)), slot));
     });
   const OPEN = new Set(['pending', 'inprogress', 'overdue', 'not_done']);
   const overdueCount = items.filter((i) => i.overdue && i.status !== 'done' && i.status !== 'skipped').length;
   const openCount = items.filter((i) => OPEN.has(i.status)).length;
   const inProgressCount = items.filter((i) => i.status === 'inprogress').length;
   const doneCount = items.filter((i) => i.status === 'done').length;
-  const split = (role: string) => items.filter((i) => i.ownerRole === role || i.ownerRole === 'either');
+  // Shared items carry their lane in `slot`: each lane lists only its own
+  // copy. Ordinary 'either' tasks stay single-row (first Done wins for all).
+  const split = (role: string) => items.filter((i) => (i as any).isShared
+    ? (i as any).slot === role
+    : (i.ownerRole === role || i.ownerRole === 'either'));
   // Frequency breakdown for TODAY — lets the dashboard show daily / weekly / monthly / quarterly / yearly completion vs incomplete.
   const FREQ_ORDER = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
   const freqStats = FREQ_ORDER.map((freq) => {
@@ -487,12 +613,20 @@ async function computeDashboard(
     .filter((log: any) => {
       const g = graceByTemplate.get(String((log as any).templateId));
       return !g || String((log as any).dueDate) < g;
+    })
+    // Lane viewers see only their own slot copy of shared rows (same rule as
+    // today's cards — prevents cross-lane Done leakage in the tray too).
+    .filter((log: any) => {
+      const t: any = log.template;
+      if (!laneEnforced || !t?.isShared) return true;
+      return String((log as any).slot ?? SLOT_MAIN) === laneRole;
     });
-  // Unresolved-day sets per template (open instances before `dateStr`) — the
-  // input for consecutive-miss streaks on both today's cards and tray rows.
+  // Unresolved-day sets per (template :: slot) — the input for
+  // consecutive-miss streaks on both today's cards and tray rows. A miss in
+  // one lane must not inflate the other lane's streak.
   const unresolvedByTemplate = new Map<string, Set<string>>();
   for (const log of overdueLogsScoped) {
-    const k = String((log as any).templateId);
+    const k = slotKey((log as any).templateId, (log as any).slot);
     if (!unresolvedByTemplate.has(k)) unresolvedByTemplate.set(k, new Set());
     unresolvedByTemplate.get(k)!.add(String((log as any).dueDate).slice(0, 10));
   }
@@ -500,7 +634,7 @@ async function computeDashboard(
   // Streak pass: today's cards count the trailing run before today…
   for (const it of items as any[]) {
     const tpl = templateById.get(String(it.templateId));
-    const set = unresolvedByTemplate.get(String(it.templateId)) ?? new Set<string>();
+    const set = unresolvedByTemplate.get(slotKey(it.templateId, (it as any).isShared ? (it as any).slot : SLOT_MAIN)) ?? new Set<string>();
     const s = tpl ? missStreak(tpl, addDays(dateStr, -1), set) : 0;
     it.daysOverdue = s;
     it.daysIncomplete = s;
@@ -519,6 +653,7 @@ async function computeDashboard(
         ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
         dueLabel: t.rawText ?? null,
         isShared: !!t.isShared,
+        slot: String((log as any).slot ?? SLOT_MAIN),
         employeeRaw: t.employeeRaw ?? null,
         logId: log.id,
         dueDate: String(log.dueDate),
@@ -540,7 +675,7 @@ async function computeDashboard(
   // …and each tray row counts the trailing run ending on its own due date.
   for (const row of overdueList as any[]) {
     const tpl = templateById.get(String(row.templateId));
-    const set = unresolvedByTemplate.get(String(row.templateId)) ?? new Set<string>();
+    const set = unresolvedByTemplate.get(slotKey(row.templateId, row.isShared ? row.slot : SLOT_MAIN)) ?? new Set<string>();
     const s = tpl ? missStreak(tpl, String(row.dueDate), set) : 0;
     row.daysOverdue = s;
     row.daysIncomplete = s;
@@ -571,6 +706,11 @@ async function computeDashboard(
   }
   const history = (historyLogsRaw as any[])
     .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
+    .filter((log: any) => {
+      const t: any = log.template;
+      if (!laneEnforced || !t?.isShared) return true;
+      return String((log as any).slot ?? SLOT_MAIN) === laneRole;
+    })
     .map((log: any) => {
       const t: any = log.template;
       return {
@@ -584,6 +724,7 @@ async function computeDashboard(
         ruleType: t.ruleType ?? parseRule(t)?.type ?? null,
         dueLabel: t.rawText ?? null,
         isShared: !!t.isShared,
+        slot: String((log as any).slot ?? SLOT_MAIN),
         employeeRaw: t.employeeRaw ?? null,
         logId: log.id,
         dueDate: String(log.dueDate),
@@ -607,7 +748,7 @@ async function computeDashboard(
       today: istDateStr(),
       // Calc version tag (shown tiny in the UI header): proves which backend
       // logic produced these numbers. Bump when the dashboard math changes.
-      computeV: 'streak-1',
+      computeV: 'slot-1',
       total: items.length,
       open: openCount,
       inProgress: inProgressCount,
@@ -732,9 +873,13 @@ export async function getAccountsExport(daysRaw: unknown, origin: string, fromRa
     const due = (templates as any[]).filter(
       (t) => t.active && !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')) && isDueOn(t, date),
     );
-    const byTemplate = new Map((logs as any[]).filter((l) => String(l.dueDate) === date).map((l) => [String(l.templateId), l]));
+    const dayLogs = (logs as any[]).filter((l) => String(l.dueDate) === date);
+    const bySlot = new Map(dayLogs.map((l) => [slotKey(l.templateId, l.slot), l]));
     for (const t of due) {
-      const log: any = byTemplate.get(String(t.id));
+      // Shared templates export one row per lane (each lane has its own log).
+      const slots = t.isShared ? [...LANE_SLOTS] : [SLOT_MAIN];
+      for (const slot of slots) {
+      const log: any = bySlot.get(slotKey(t.id, slot));
       const status = log?.status ?? 'not-logged';
       const open = status === 'pending' || status === 'inprogress' || status === 'overdue' || status === 'not_done' || status === 'not-logged';
       // What matters: completed vs not completed. Only `done` counts as
@@ -747,7 +892,7 @@ export async function getAccountsExport(daysRaw: unknown, origin: string, fromRa
         date,
         task: t.title,
         frequency: t.frequency,
-        lane: t.ownerRole,
+        lane: t.isShared ? slot : t.ownerRole,
         shared: !!t.isShared,
         due: t.rawText ?? null,
         status,
@@ -766,6 +911,7 @@ export async function getAccountsExport(daysRaw: unknown, origin: string, fromRa
         })),
         updatedAt: log?.updatedAt instanceof Date ? log.updatedAt.toISOString() : (log?.updatedAt ? String(log.updatedAt) : null),
       });
+      }
     }
   }
   const total = rows.length;
@@ -942,7 +1088,15 @@ export async function updateTemplate(id: string, input: Record<string, any>) {
 // recorded reason: an empty remark on a transition is rejected (400) unless
 // the log already holds one (which is then preserved, never wiped).
 // `inprogress` / `overdue` / `skipped` are accepted for legacy compat only —
-export async function logTask(logId: string, input: Record<string, any>, actor: string | null) {
+export async function logTask(
+  logId: string,
+  input: Record<string, any>,
+  actor: string | null,
+  // Server-resolved identity (roster id + name from the session / declared
+  // `as`). Authoritative: the UI no longer sends who — Done is credited to
+  // whoever is signed in, never to a client-supplied name.
+  identity: { selfId: string; selfName: string } | null = null,
+) {
   const status = String(input.status || '');
   // the UI sends pending/done/not_done (`not_done` = explicitly conceded with
   // a reason + owner; counts as not completed everywhere). `inprogress` /
@@ -962,8 +1116,20 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
     else throw new Error('A remark (reason) is required to change status');
   }
   const data: Record<string, any> = { status, remark, updatedBy: actor };
-  if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
-  if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
+  const selfId = identity?.selfId ? String(identity.selfId) : null;
+  if (selfId) {
+    // Inferred identity wins. Marking done credits the signed-in (or
+    // declared) person; other transitions leave the recorded owner alone.
+    if (status === 'done') {
+      data.accountantId = selfId;
+      if (identity?.selfName) data.doneBy = String(identity.selfName).slice(0, 200);
+    }
+  } else {
+    // No resolvable identity (MIS/admin not on the roster, or unresolved
+    // shared login): honor explicit client values, then fall back to actor.
+    if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
+    if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
+  }
   // Time taken (hours+minutes in the UI, integer minutes here). Optional and
   // editable on any status — correcting logged time never needs a transition.
   if (input.timeSpentMin !== undefined) {
@@ -1114,7 +1280,16 @@ async function computeTeam(
     if (l.status === 'overdue') { overdueToday += 1; continue; }
     openToday += 1;
     if (l.status === 'inprogress') inProgressToday += 1;
-    const role = String(l.template?.ownerRole || 'either');
+    // Shared rows count in their own slot's lane only (never double-counted).
+    const tpl: any = l.template;
+    const slot = String(l.slot ?? SLOT_MAIN);
+    if (tpl?.isShared) {
+      if (slot === SLOT_SENIOR) openByRole.senior += 1;
+      else if (slot === SLOT_JUNIOR) openByRole.junior += 1;
+      else { openByRole.senior += 1; openByRole.junior += 1; } // legacy main
+      continue;
+    }
+    const role = String(tpl?.ownerRole || 'either');
     if (role === 'senior' || role === 'either') openByRole.senior += 1;
     if (role === 'junior' || role === 'either') openByRole.junior += 1;
   }
@@ -1137,7 +1312,9 @@ async function computeTeam(
   return {
     date: todayStr, weekStart, monthStart,
     doneToday, openToday, inProgressToday,
-    overdueToday: overdueToday + (carried ? carried.size : 0),
+    // Carryover keys are per (template :: slot) — count distinct templates so
+    // one shared task missed in both lanes still counts once here.
+    overdueToday: overdueToday + (carried ? new Set([...carried.keys()].map((k) => String(k).split('::')[0])).size : 0),
     completionPct, weekDone, monthDone,
     members,
   };

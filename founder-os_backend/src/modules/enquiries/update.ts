@@ -177,6 +177,9 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       base.ratesRequestedAt = stored.ratesRequestedAt;
       base.internalRates = stored.internalRates === true;
       base.internalRatesAt = stored.internalRatesAt ?? undefined;
+      (base as any).notAvailable = stored.notAvailable === true;
+      (base as any).notAvailableReason = stored.notAvailableReason ? String(stored.notAvailableReason).slice(0, 500) : undefined;
+      (base as any).notAvailableAt = stored.notAvailableAt ?? undefined;
     } else {
       // Explicit "" from a privileged writer withdraws an unanswered request
       // (pick() preserves it; absent still means "leave stored"). Remember
@@ -210,6 +213,26 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.finalRate = undefined;
         base.finalDiscountPercent = undefined;
         base.finalizedAt = undefined;
+      }
+    }
+    // Not available normalization for allowed writers (procurement/management): boolean + reason
+    if (privileged || restricted) {
+      const hasNotAvailable = Object.prototype.hasOwnProperty.call(it as any, 'notAvailable');
+      if (hasNotAvailable) {
+        const want = (base as any).notAvailable === true;
+        if (want) {
+          (base as any).notAvailable = true;
+          const r = typeof (base as any).notAvailableReason === 'string' ? String((base as any).notAvailableReason).trim().slice(0, 500) : '';
+          (base as any).notAvailableReason = r || undefined;
+        } else {
+          (base as any).notAvailable = undefined;
+          (base as any).notAvailableReason = undefined;
+          (base as any).notAvailableAt = undefined;
+        }
+      } else {
+        (base as any).notAvailable = (stored as any).notAvailable === true ? true : undefined;
+        (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
+        (base as any).notAvailableAt = (stored as any).notAvailableAt;
       }
     }
     // Media merge for sales/management (non-restricted) — same append
@@ -396,6 +419,19 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.internalRatesAt = undefined;
         trail.push({ by: role, kind: 'remark', text: 'Returned to the procurement queue', at: nowIso });
       }
+    }
+    // Not available lifecycle (procurement + management): stamp and trail
+    const notAvailableSet = !(stored as any)?.notAvailable && (base as any)?.notAvailable === true;
+    const notAvailableCleared = !!(stored as any)?.notAvailable && !(base as any)?.notAvailable;
+    if (notAvailableSet) {
+      (base as any).notAvailableAt = nowIso;
+      const reason = (base as any).notAvailableReason ? `: ${(base as any).notAvailableReason}` : '';
+      trail.push({ by: role, kind: 'remark', text: `Marked as not available${reason}`.slice(0, 500), at: nowIso });
+    }
+    if (notAvailableCleared) {
+      (base as any).notAvailableAt = undefined;
+      (base as any).notAvailableReason = undefined;
+      trail.push({ by: role, kind: 'remark', text: 'Not available cleared — back to queue', at: nowIso });
     }
     // Thread resolved lifecycle (either side can resolve/reopen per item) — always open unless resolved.
     const incomingResolved = (it as any)?.threadResolved;
@@ -584,14 +620,14 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
   // press needed. Previously privileged-only, but a sales `rateAvailable`
   // toggle that clears the last actionable item must also advance so
   // `Mark as sent` enables immediately (flag→available case). `hasBlockingFlag`
-  // keeps a pure flagged item blocking; flagged+available is not blocking.
+  // keeps a pure flagged item blocking; flagged+available / flagged+notAvailable is not blocking.
   // finalizedAt is stamped for items that lack it, mirroring an explicit finalize.
   if ((updates as any).rateStatus === undefined && Array.isArray((updates as any).items)) {
     const merged = (updates as any).items as any[];
-    // `rateAvailable` is a sales-owned availability bypass — a procurement-
-    // flagged (`specIssue`) item that is also marked available no longer
-    // blocks the loop. Pure flagged items (no availability) still block.
-    const hasBlockingFlag = merged.some((it) => it?.specIssue && !it?.rateAvailable);
+    // `rateAvailable` / `notAvailable` are bypasses — a procurement-
+    // flagged (`specIssue`) item that is also marked available/notAvailable no longer
+    // blocks the loop. Pure flagged items (no bypass) still block.
+    const hasBlockingFlag = merged.some((it) => it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable);
     const curStatus = String((storedForItems as any)?.rateStatus ?? '');
     if (hasBlockingFlag) {
       // Procurement hold persists — do not auto-finalize while a non-
@@ -604,11 +640,11 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
         (updates as any).rateStatus = 'rates_received';
       }
     } else {
-      const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
+      const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
       const done = loop.filter((it) =>
         it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
-      // Empty loop means every item is either rate-available, internal, or
-      // flagged+available — nothing left to decide, so the enquiry is
+      // Empty loop means every item is either rate-available / not-available, internal, or
+      // flagged+bypass — nothing left to decide, so the enquiry is
       // considered decided (previous `loop.length > 0` guard blocked this and
       // kept `sent` disabled after a flag→available toggle).
       const loopDone = loop.length === 0 ? merged.length > 0 : done.length === loop.length;
@@ -616,7 +652,7 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
         if (curStatus === '' || curStatus === 'rate_pending' || curStatus === 'rates_received') {
           const nowIso = new Date().toISOString();
           (updates as any).items = merged.map((it) =>
-            (!it?.specIssue && !it?.rateAvailable && !it?.internalRates
+            (!it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates
               && it?.finalRate !== undefined && it?.finalRate !== null && !it?.finalizedAt)
               ? { ...it, finalizedAt: nowIso }
               : it);

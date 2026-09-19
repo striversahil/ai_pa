@@ -11,6 +11,7 @@ import {
   listDigitalMarketingManagers, createDigitalMarketingManager, updateDigitalMarketingManager,
   listTemplates, createTemplate, updateTemplate, logTask, getDigitalMarketingExport,
   createAttachmentRecord, getAttachment, deleteAttachmentRecord, toAttachmentJson,
+  resolveSelfDigitalMarketingManager,
 } from '../../automations/digital-marketing/service';
 
 async function actorName(c: any): Promise<string | null> {
@@ -102,10 +103,20 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   // ── Taskbar logging (any signed-in accounts viewer; MIS included) ──
+  // Who is inferred server-side (session → roster, declared `as` first) —
+  // the client never declares attribution.
   app.patch('/api/digital-marketing/logs/:id', async (c) => {
     const body = await c.req.json().catch(() => ({}));
     try {
-      const row = await logTask(c.req.param('id'), body || {}, await actorName(c));
+      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+      const self = await resolveSelfDigitalMarketingManager(
+        (body as any)?.as ?? c.req.query('as') ?? null, me as any,
+      ).catch(() => null);
+      const row = await logTask(
+        c.req.param('id'), body || {},
+        (me as any)?.user?.name ?? (me as any)?.user?.email ?? null,
+        self ? { selfId: self.selfId, selfName: self.selfName } : null,
+      );
       notifyLive(c, { type: LiveEvent.DigitalMarketing });
       return c.json(row);
     } catch (e: any) { return c.json({ error: e?.message ?? 'log failed' }, 400); }

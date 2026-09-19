@@ -90,6 +90,9 @@ export interface EnquiryItem {
   specIssue?: string;
   specFlaggedAt?: string;
   rateAvailable?: boolean;
+  notAvailable?: boolean;
+  notAvailableReason?: string;
+  notAvailableAt?: string;
   internalRates?: boolean;
   internalRatesAt?: string;
   ratesRequested?: string;

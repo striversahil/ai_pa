@@ -214,10 +214,13 @@ export function matchSelfRoster(me: { user: { email: string; name: string } } | 
 
 const ACTOR_KEY = "accounts_actor_id";
 
-function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
+function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today }: {
   t: TaskItem;
   roster: RosterRow[];
-  defaultWho: string;
+  // Inferred doer: the device's "Acting as" identity, else the signed-in
+  // user's roster match, else the server-resolved name. Shown optimistically
+  // on Done; the server stamps the same identity authoritatively.
+  identity: { id: string; name: string | null; as: string };
   onSave: (logId: string, body: Record<string, unknown>, patch: Partial<TaskItem>) => Promise<unknown>;
   onAttach: (logId: string, file: File) => Promise<unknown>;
   onDetach: (logId: string, fileId: string) => Promise<unknown>;
@@ -236,28 +239,26 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
     const m = Math.max(0, Math.floor(Number(mins) || 0));
     return h * 60 + m;
   })();
-  // Explicit per-row override; otherwise the log's recorded owner, otherwise
-  // the device's "Acting as" identity. Never goes stale: derived every render.
-  const [whoOverride, setWhoOverride] = useState("");
-  const whoId = whoOverride || t.accountantId || defaultWho || "";
+  // No per-row "who" picker: Done is credited to the inferred identity
+  // (device's "Acting as", else the signed-in user's roster match). The
+  // server resolves and stamps the same identity — the client sends no who.
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lane = roster.filter((r) => t.ownerRole === "either" || r.role === t.ownerRole);
-  const whoName = lane.find((r) => r.id === whoId)?.name ?? roster.find((r) => r.id === whoId)?.name ?? null;
   const isIncomplete = !!(t.incomplete ?? t.overdue);
 
-  // ── Autosave (no Save button): remark / time / owner persist
+  // ── Autosave (no Save button): remark / time persist
   // optimistically ~800ms after the last keystroke. Status transitions
   // (Done / Pending buttons) save immediately via `save()`.
   const lastSent = React.useRef<string>("");
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const snapshot = JSON.stringify([remark, hrs, mins, whoId, t.status]);
+  const snapshot = JSON.stringify([remark, hrs, mins, t.status]);
   React.useEffect(() => {
     if (!t.logId) return;
     // Baseline on mount / log switch — don't write back what we just loaded.
     if (!lastSent.current) {
-      lastSent.current = JSON.stringify([t.remark ?? "", initHrs, initMins, t.accountantId || defaultWho || "", t.status]);
+      lastSent.current = JSON.stringify([t.remark ?? "", initHrs, initMins, t.status]);
     }
     if (snapshot === lastSent.current) return;
     setSaveState("saving");
@@ -266,15 +267,12 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
       const body = {
         status: t.status,
         remark: remark.trim() || null,
-        accountantId: whoId || null,
         timeSpentMin: timeTotal,
       };
       lastSent.current = snapshot;
       try {
         await onSave(t.logId!, body, {
           remark: remark.trim() || t.remark,
-          accountantId: whoId || t.accountantId,
-          accountantName: whoName ?? t.accountantName,
           timeSpentMin: timeTotal,
           updatedAt: new Date().toISOString(),
         });
@@ -299,24 +297,25 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
     if (!t.logId) return;
     // Shared optimistic module: paint instantly (per-log serialized in the
     // parent), reconcile in background; failure resyncs + alerts.
+    // Attribution rides along: Done paints the inferred doer, the server
+    // stamps the same identity authoritatively.
     const nextRemark = remark.trim() || t.remark;
-    const nextName = status === "done" ? whoName : t.doneBy;
+    const nextName = status === "done" ? (identity.name ?? t.doneBy) : t.doneBy;
     if (timer.current) clearTimeout(timer.current);
-    lastSent.current = JSON.stringify([remark, hrs, mins, whoId, status]);
+    lastSent.current = JSON.stringify([remark, hrs, mins, status]);
     setBusy(true);
     try {
       await onSave(t.logId, {
         status,
         remark: remark.trim() || null,
-        accountantId: whoId || null,
-        doneBy: status === "done" ? whoName : undefined,
+        ...(identity.as ? { as: identity.as } : {}),
         timeSpentMin: timeTotal,
       }, {
         status,
         remark: nextRemark,
         doneBy: nextName,
-        accountantId: whoId || t.accountantId,
-        accountantName: whoName ?? t.accountantName,
+        accountantId: status === "done" ? (identity.id || t.accountantId) : t.accountantId,
+        accountantName: status === "done" ? (identity.name ?? t.accountantName) : t.accountantName,
         timeSpentMin: timeTotal,
         updatedAt: new Date().toISOString(),
         overdue: status === "done" || status === "skipped" ? false : t.overdue,
@@ -423,17 +422,13 @@ function TaskRow({ t, roster, defaultWho, onSave, onAttach, onDetach, today }: {
           placeholder="Remark — e.g. paid via HDFC, ref 4821…"
           className="flex-1 min-w-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
         />
-        <select value={whoId} onChange={(e) => setWhoOverride(e.target.value)} title="Who did this task" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1.5 text-xs max-w-[130px]">
-          <option value="">Who?…</option>
-          {lane.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
         <span title="Time taken to finish (hours + minutes) — optional, auto-saved" className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500">
           ⏱
           <input value={hrs} onChange={(e) => setHrs(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="h" inputMode="numeric" aria-label="Hours taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
           <span className="text-zinc-400">:</span>
           <input value={mins} onChange={(e) => setMins(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="m" inputMode="numeric" aria-label="Minutes taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
         </span>
-        <span className="inline-flex items-center px-1 text-[11px] font-semibold text-zinc-400 shrink-0" title="Remark, time and owner save automatically while you type">
+        <span className="inline-flex items-center px-1 text-[11px] font-semibold text-zinc-400 shrink-0" title="Remark and time save automatically while you type">
           {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved" : saveState === "error" ? "⚠ Retry" : ""}
         </span>
       </div>
@@ -562,7 +557,15 @@ export default function AccountsDashboard() {
     dash.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actorPick]);
-  const defaultWho = actorPick || selfId;
+  // Inferred doer for instant Done paint: the device's "Acting as"
+  // identity, else the signed-in user's roster match, else the
+  // server-resolved name. The server stamps the same identity — no who
+  // is ever sent from the client.
+  const identity = useMemo(() => {
+    const id = actorPick || selfId;
+    const name = (id && data?.roster.find((r) => r.id === id)?.name) ?? data?.meta?.self?.name ?? null;
+    return { id, name, as: actorPick };
+  }, [actorPick, selfId, data]);
   // A remembered identity can go stale (person removed from the roster):
   // drop it so "Acting as" never credits a deleted accountant.
   React.useEffect(() => {
@@ -733,7 +736,7 @@ export default function AccountsDashboard() {
             ))}
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
+                {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} identity={identity} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
             {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done in this view yet — today's completions will appear here (past done is in History tab)." : "No pending tasks in this view."}</div>}
           </div>
           {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
@@ -785,7 +788,7 @@ export default function AccountsDashboard() {
                 ))}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
+            {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} identity={identity} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
                 {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today for this lane — switch to History for past completions." : "No pending tasks for this lane today."}</div>}
               </div>
               {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
@@ -812,7 +815,7 @@ export default function AccountsDashboard() {
             <div className="space-y-2">
               {incompleteTray.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {incompleteTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
+                  {incompleteTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} identity={identity} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — nothing incomplete for this lane. 🎉</div>
@@ -824,7 +827,7 @@ export default function AccountsDashboard() {
             <div className="space-y-2">
               {historyTray.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {historyTray.map((t) => <TaskRow key={t.logId ?? `${t.templateId}-${t.dueDate}`} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
+                  {historyTray.map((t) => <TaskRow key={t.logId ?? `${t.templateId}-${t.dueDate}`} t={t} roster={data.roster} identity={identity} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">No completed tasks in the last 30 days for this lane.</div>
@@ -970,7 +973,7 @@ function TeamBoard({ team, freqStats, laneStats, backlog }: {
           </div>
         ))}
       </div>
-      <div className="text-[11px] text-zinc-500">Tip: pick your name in the “Who?…” box when marking a task Done to climb the board. Shared tasks credit whoever logs them.</div>
+      <div className="text-[11px] text-zinc-500">Tip: Done credits whoever is signed in (or the device's “Acting as” identity) — no need to pick a name. Shared tasks credit whoever logs them.</div>
     </div>
   );
 }

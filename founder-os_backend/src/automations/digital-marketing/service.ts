@@ -1061,7 +1061,15 @@ export async function updateTemplate(id: string, input: Record<string, any>) {
 //   1. a "data used" source (metrics.dataSource — which list/database was used)
 //   2. at least one proof attachment (the data file / screenshot attached below)
 const MARKETING_PROOF_TEMPLATES = new Set(['dmm-08', 'dmm-09']);
-export async function logTask(logId: string, input: Record<string, any>, actor: string | null) {
+export async function logTask(
+  logId: string,
+  input: Record<string, any>,
+  actor: string | null,
+  // Server-resolved identity (roster id + name from the session / declared
+  // `as`). Authoritative: the UI no longer sends who — Done is credited to
+  // whoever is signed in, never to a client-supplied name.
+  identity: { selfId: string; selfName: string } | null = null,
+) {
   const status = String(input.status || '');
   // the UI sends pending/done/not_done (`not_done` = explicitly conceded with
   // a reason + owner; counts as not completed everywhere). `inprogress` /
@@ -1081,8 +1089,20 @@ export async function logTask(logId: string, input: Record<string, any>, actor: 
     else throw new Error('A remark (reason) is required to change status');
   }
   const data: Record<string, any> = { status, remark, updatedBy: actor };
-  if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
-  if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
+  const selfId = identity?.selfId ? String(identity.selfId) : null;
+  if (selfId) {
+    // Inferred identity wins. Marking done credits the signed-in (or
+    // declared) person; other transitions leave the recorded owner alone.
+    if (status === 'done') {
+      data.accountantId = selfId;
+      if (identity?.selfName) data.doneBy = String(identity.selfName).slice(0, 200);
+    }
+  } else {
+    // No resolvable identity (MIS/admin not on the roster, or unresolved
+    // shared login): honor explicit client values, then fall back to actor.
+    if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
+    if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;
+  }
   // Structured metrics for daily numeric tasks (Meta/B2B/Whatsapp/Email).
   if (input.metricsJson !== undefined) {
     if (input.metricsJson === null || input.metricsJson === '') data.metricsJson = null;

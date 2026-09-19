@@ -66,6 +66,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // previous rate until a revision is saved — revise unlocks one item at a
   // time, late quotes never auto-clear.
   const [revise, setRevise] = useState<Record<number, boolean>>({});
+  const [notAvailableOpen, setNotAvailableOpen] = useState<number | null>(null);
+  const [notAvailableReason, setNotAvailableReason] = useState("");
   // Decided-rates summary: collapsed "Closed" dropdown above the item cards.
   const [showClosed, setShowClosed] = useState(false);
 
@@ -128,7 +130,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // locked. Without this the panel is a dead end: Save disabled, no Revise
   // button on never-committed items (Enquiry No 5 case).
   const hasUndecidedInLocked =
-    locked && items.some((it) => !it.specIssue && !it.rateAvailable && (it.finalRate === undefined || it.finalRate === null));
+    locked && items.some((it) => !it.specIssue && !it.rateAvailable && !(it as any).notAvailable && (it.finalRate === undefined || it.finalRate === null));
   const canSaveLocked = revisingLocked || hasUndecidedInLocked;
 
   // Live auto-select single-rate items (procurement just added the only quote while the panel is open)
@@ -138,7 +140,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     let changed = false;
     items.forEach((it, i) => {
       if (sel[i] !== undefined || it.selectedVendor) return;
-      if (it.specIssue || it.rateAvailable) return;
+      if (it.specIssue || it.rateAvailable || (it as any).notAvailable) return;
       if ((it.rates ?? []).length === 1) {
         patch[i] = 0;
         changed = true;
@@ -146,9 +148,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     });
     if (changed) setSel((prev) => ({ ...prev, ...patch }));
   }, [items, locked, sel]);
-  // Rate-available items skip the loop entirely: never shown, never touched,
+  // Rate-available / not-available items skip the loop entirely: never shown, never touched,
   // never counted here (same rule as the pending queue predicate).
-  const actionableCount = items.filter((it) => !it.specIssue && !it.rateAvailable).length;
+  const actionableCount = items.filter((it) => !it.specIssue && !it.rateAvailable && !(it as any).notAvailable).length;
 
   // Selected rate ROW for item i: explicit index first, else the stored
   // vendor name's first match (backwards compatible). Every consumer
@@ -264,16 +266,16 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // partial "Save rates" is progress, and Finalize unlocks only at 100%.
   const actionableIdx = items
     .map((it, i) => ({ it, i }))
-    .filter(({ it }) => !it.specIssue && !it.rateAvailable)
+    .filter(({ it }) => !it.specIssue && !it.rateAvailable && !(it as any).notAvailable)
     .map(({ i }) => i);
   const decidedCount = actionableIdx.filter((i) => computeItem(i, items[i]) !== null).length;
   const allDecided = actionableIdx.length > 0 && decidedCount === actionableIdx.length;
 
   const buildItems = (finalize: boolean): EnquiryItem[] =>
     items.map((it, i) => {
-      // Held for a sales spec correction, or rate already available: never
+      // Held for a sales spec correction, or rate already available / not available: never
       // touched here, never finalized.
-      if (it.specIssue || it.rateAvailable) return { ...it };
+      if (it.specIssue || it.rateAvailable || (it as any).notAvailable) return { ...it };
       const ri = selRateIdx(i, it);
       const picked = ri === undefined ? undefined : (it.rates ?? [])[ri];
       const out: EnquiryItem = { ...it, selectedVendor: picked?.vendor || undefined };
@@ -412,9 +414,46 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     })();
   };
 
+  const handleNotAvailable = (i: number) => {
+    const reason = notAvailableReason.trim();
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...(it as any), notAvailable: true, notAvailableReason: reason || undefined, notAvailableAt: new Date().toISOString() } as any : it)),
+          false,
+        );
+        setNotAvailableOpen(null);
+        setNotAvailableReason("");
+      } catch (e: any) {
+        setSaveError(e?.message || "Mark failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+
+  const handleClearNotAvailable = (i: number) => {
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...(it as any), notAvailable: undefined, notAvailableReason: undefined, notAvailableAt: undefined } as any : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Clear failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+
   const checkedIdx = items
     .map((it, i) => ({ it, i }))
-    .filter(({ it, i }) => checked[i] && !it.specIssue && !it.rateAvailable)
+    .filter(({ it, i }) => checked[i] && !it.specIssue && !it.rateAvailable && !(it as any).notAvailable)
     .map(({ i }) => i);
 
   const applyBulkMargin = () => {
@@ -589,11 +628,45 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             {bulkError && <p className="text-[11px] font-semibold text-red-400">{bulkError}</p>}
           </div>
           {items.map((it, i) => {
-            // Rate available overrides everything — keep state hidden (like the
+            // Rate available / not available overrides everything — keep state hidden (like the
             // procurement queue's `visible = !rateAvailable && !internalRates`);
             // the item stays in D1 (rates/flag preserved) but this view shows
             // nothing. Once toggled off, the stored flag/rates reappear.
             if (it.rateAvailable) return null; // rate already available — skips Management entirely
+            if ((it as any).notAvailable) {
+              return (
+                <div key={i} className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-3 space-y-2">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-xs font-extrabold text-white">
+                      Item {i + 1}{it.name ? ` — ${it.name}` : ""}
+                    </span>
+                    {it.qty && (
+                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
+                    )}
+                    <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-zinc-700 text-zinc-300 border-zinc-600">
+                      Not available
+                    </span>
+                  </div>
+                  {it.spec && (
+                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                  )}
+                  <div className="rounded-lg border border-zinc-600 bg-black/20 p-2.5 text-[11px] leading-relaxed">
+                    <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Marked as not available — visible to sales</p>
+                    {(it as any).notAvailableReason && (
+                      <p className="mt-0.5 text-zinc-400 whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
+                    )}
+                    <p className="mt-1 text-zinc-500">
+                      Marked {historyDateChip((it as any).notAvailableAt) || "recently"} · Sales sees this as not available.
+                    </p>
+                  </div>
+                  <FlagThread thread={it.thread ?? []} tone="dark" />
+                  <button type="button" onClick={() => handleClearNotAvailable(i)} disabled={flagBusy}
+                    className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
+                    ↩ Clear — available again
+                  </button>
+                </div>
+              );
+            }
             // Held for a sales spec correction: visible read-only (spec +
             // procurement's flag reason) so Management sees what's stuck and
             // why — no vendor, markup, or request actions until Sales fixes it.
@@ -1014,6 +1087,31 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     <button type="button" onClick={() => setRemarkOpen(i)}
                       className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
                       Add remark{(remarks[i] ?? "").trim() ? " ✓" : ""}
+                    </button>
+                  )}
+                  {notAvailableOpen === i ? (
+                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+                      <input
+                        value={notAvailableReason}
+                        onChange={(e) => setNotAvailableReason(e.target.value)}
+                        placeholder="Reason not available (visible to sales)…"
+                        className="w-full px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/40"
+                      />
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => handleNotAvailable(i)} disabled={flagBusy}
+                          className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-50">
+                          {flagBusy ? "Saving…" : "Mark not available"}
+                        </button>
+                        <button type="button" onClick={() => { setNotAvailableOpen(null); setNotAvailableReason(""); }}
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => { setNotAvailableOpen(i); setNotAvailableReason(""); }}
+                      className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
+                      Not Available
                     </button>
                   )}
                 </div>

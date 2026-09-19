@@ -11,6 +11,7 @@ import {
   listAccountants, createAccountant, updateAccountant,
   listTemplates, createTemplate, updateTemplate, logTask, getAccountsExport,
   createAttachmentRecord, getAttachment, deleteAttachmentRecord, toAttachmentJson,
+  resolveSelfAccountant,
 } from '../../automations/accounts/service';
 
 async function actorName(c: any): Promise<string | null> {
@@ -102,10 +103,20 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   // ── Taskbar logging (any signed-in accounts viewer; MIS included) ──
+  // Who is inferred server-side (session → roster, declared `as` first) —
+  // the client never declares attribution.
   app.patch('/api/accounts/logs/:id', async (c) => {
     const body = await c.req.json().catch(() => ({}));
     try {
-      const row = await logTask(c.req.param('id'), body || {}, await actorName(c));
+      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+      const self = await resolveSelfAccountant(
+        (body as any)?.as ?? c.req.query('as') ?? null, me as any,
+      ).catch(() => null);
+      const row = await logTask(
+        c.req.param('id'), body || {},
+        (me as any)?.user?.name ?? (me as any)?.user?.email ?? null,
+        self ? { selfId: self.selfId, selfName: self.selfName } : null,
+      );
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
     } catch (e: any) { return c.json({ error: e?.message ?? 'log failed' }, 400); }

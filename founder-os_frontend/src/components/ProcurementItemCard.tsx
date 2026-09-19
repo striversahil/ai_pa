@@ -14,6 +14,8 @@ interface ProcurementItemCardProps {
   onEditRate: (rateIdx: number, rate: EnquiryItemRate) => void;
   onRemoveRate: (rateIdx: number) => void;
   onFlag: (reason: string) => void;
+  onNotAvailable?: (reason: string) => void;
+  onClearNotAvailable?: () => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   onAddItemMedia?: (media: import("@/types").EnquiryMedia[]) => void;
   onPostThread?: (text: string, media: import("@/types").EnquiryMedia[]) => void;
@@ -33,7 +35,7 @@ interface ProcurementItemCardProps {
 // its hold banner (held from Management) but still allows adding/editing
 // vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddItemMedia, onPostThread, onResolveThread, onReopenThread,
+  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onNotAvailable, onClearNotAvailable, onOpenLightbox, onAddItemMedia, onPostThread, onResolveThread, onReopenThread,
   readOnly = false,
   lateQuote = false,
 }: ProcurementItemCardProps) {
@@ -41,6 +43,8 @@ export default function ProcurementItemCard({
   const [editingRate, setEditingRate] = useState<number | null>(null);
   const [showFlag, setShowFlag] = useState(false);
   const [flagReason, setFlagReason] = useState("");
+  const [showNotAvailable, setShowNotAvailable] = useState(false);
+  const [notAvailableReason, setNotAvailableReason] = useState("");
   const [refError, setRefError] = useState<string | null>(null);
   const [refDropRi, setRefDropRi] = useState<number | null>(null);
   const [threadOpen, setThreadOpen] = useState(false);
@@ -66,6 +70,14 @@ export default function ProcurementItemCard({
     onFlag(reason);
     setFlagReason("");
     setShowFlag(false);
+  };
+
+  const submitNotAvailable = () => {
+    const reason = notAvailableReason.trim();
+    if (!onNotAvailable) return;
+    onNotAvailable(reason);
+    setNotAvailableReason("");
+    setShowNotAvailable(false);
   };
 
   // Per-vendor reference attachments: each quote carries its own photos /
@@ -114,6 +126,11 @@ export default function ProcurementItemCard({
         {item.internalRates && (
           <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-violet-500/10 text-violet-500 border-violet-500/30">
             Internal — management
+          </span>
+        )}
+        {(item as any).notAvailable && (
+          <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-zinc-800 text-zinc-300 border-zinc-600">
+            Not available
           </span>
         )}
       </div>
@@ -202,6 +219,21 @@ export default function ProcurementItemCard({
           <p className="mt-1 text-[var(--text-tertiary)]">
             Flagged {historyDateChip(item.specFlaggedAt) || "recently"} · Sales edits the spec to release this item.
           </p>
+        </div>
+      )}
+
+      {(item as any).notAvailable && (
+        <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-2.5 text-[11px] leading-relaxed">
+          <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Not available — visible to sales</p>
+          {(item as any).notAvailableReason && (
+            <p className="mt-0.5 text-zinc-400 whitespace-pre-wrap">{String((item as any).notAvailableReason)}</p>
+          )}
+          <p className="mt-1 text-zinc-500">
+            Marked {historyDateChip((item as any).notAvailableAt) || "recently"} · Sales sees this as not available.
+          </p>
+          {!readOnly && onClearNotAvailable && (
+            <button type="button" onClick={() => onClearNotAvailable()} className="mt-2 text-[11px] font-bold text-zinc-300 hover:text-white cursor-pointer bg-transparent border-0">↩ Clear — available again</button>
+          )}
         </div>
       )}
 
@@ -368,7 +400,7 @@ export default function ProcurementItemCard({
               + Add vendor rate
             </button>
           )}
-          {!flagged && !locked && !showAdd && (
+          {!flagged && !locked && !(item as any).notAvailable && !showAdd && !showNotAvailable && (
             showFlag ? (
               <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-red-500/40 p-2">
                 <textarea
@@ -393,6 +425,34 @@ export default function ProcurementItemCard({
               <button type="button" onClick={() => setShowFlag(true)}
                 className="px-2.5 py-1.5 bg-transparent border border-red-500/40 text-red-500 hover:bg-red-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
                 Incorrect Spec
+              </button>
+            )
+          )}
+          {!(item as any).notAvailable && !flagged && !locked && !showAdd && !showFlag && onNotAvailable && (
+            showNotAvailable ? (
+              <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+                <textarea
+                  value={notAvailableReason}
+                  onChange={(e) => setNotAvailableReason(e.target.value)}
+                  placeholder="Reason not available (optional) — visible to sales…"
+                  rows={2}
+                  className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-zinc-500 text-xs resize-y text-[var(--text-primary)]"
+                />
+                <div className="flex gap-2">
+                  <button type="button" onClick={submitNotAvailable}
+                    className="px-3 py-1.5 bg-zinc-700 text-white hover:bg-zinc-600 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                    Mark not available
+                  </button>
+                  <button type="button" onClick={() => { setShowNotAvailable(false); setNotAvailableReason(""); }}
+                    className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" onClick={() => setShowNotAvailable(true)}
+                className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 font-bold text-[11px] rounded-lg cursor-pointer">
+                Not Available
               </button>
             )
           )}

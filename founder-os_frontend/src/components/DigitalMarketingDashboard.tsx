@@ -202,7 +202,7 @@ function runDays(from: string, to: string): string {
 /** Match the signed-in user to a roster entry by NAME only (never email —
  *  the team shares logins, so email can't distinguish humans). Session name,
  *  then session email local-part, each accepted only on a single clear hit.
- *  Returns "" when ambiguous — the row's "Who?…" picker then decides. */
+ *  Returns "" when ambiguous — the server then credits the session name. */
 export function matchSelfRoster(me: { user: { email: string; name: string } } | null, roster: RosterRow[]): string {
   if (!me) return "";
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -217,7 +217,16 @@ export function matchSelfRoster(me: { user: { email: string; name: string } } | 
   return "";
 }
 
-function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; roster: RosterRow[]; defaultWho: string; onLogged: () => void; today?: string }) {
+function TaskRow({ t, roster, identity, onLogged, today }: {
+  t: TaskItem;
+  roster: RosterRow[];
+  // Inferred doer: the signed-in user's roster match (else the
+  // server-resolved name). Shown optimistically on Done; the server stamps
+  // the same identity authoritatively.
+  identity: { id: string; name: string | null };
+  onLogged: () => void;
+  today?: string;
+}) {
   const [remark, setRemark] = useState(t.remark ?? "");
   // Time taken, entered as hours + minutes, stored as integer minutes.
   // Prefilled from the recorded value so it can be corrected later.
@@ -243,30 +252,28 @@ function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; rost
     if (schema) for (const f of schema) if (!(f.key in init)) init[f.key] = "";
     return init;
   });
-  // Explicit per-row override; otherwise the log's recorded owner, otherwise
-  // the signed-in user's roster match. Never goes stale: derived every render.
-  const [whoOverride, setWhoOverride] = useState("");
-  const whoId = whoOverride || t.accountantId || defaultWho || "";
+  // No per-row "who" picker: Done is credited to the inferred identity
+  // (the signed-in user's roster match). The server resolves and stamps the
+  // same identity — the client sends no who.
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lane = roster.filter((r) => t.ownerRole === "either" || r.role === t.ownerRole);
-  const whoName = lane.find((r) => r.id === whoId)?.name ?? roster.find((r) => r.id === whoId)?.name ?? null;
   const isIncomplete = !!((t as any).incomplete ?? t.overdue);
   const metricsPayload = () => ((t as any).metricsSchema
     ? Object.fromEntries(Object.entries(metrics).map(([k, v]) => [k, v.trim() === "" ? null : (isNaN(Number(v)) ? v.trim() : Number(v))]))
     : undefined);
 
-  // ── Autosave (no Save button): remark / time / owner / metrics persist
+  // ── Autosave (no Save button): remark / time / metrics persist
   // ~800ms after the last keystroke with the row's current status. Status
   // transitions (Done / Pending buttons) save immediately via `save()`.
   const lastSent = React.useRef<string>("");
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const snapshot = JSON.stringify([remark, hrs, mins, whoId, metrics, t.status]);
+  const snapshot = JSON.stringify([remark, hrs, mins, metrics, t.status]);
   React.useEffect(() => {
     if (!t.logId) return;
     if (!lastSent.current) {
-      lastSent.current = JSON.stringify([t.remark ?? "", initHrs, initMins, t.accountantId || defaultWho || "", metrics, t.status]);
+      lastSent.current = JSON.stringify([t.remark ?? "", initHrs, initMins, metrics, t.status]);
     }
     if (snapshot === lastSent.current) return;
     setSaveState("saving");
@@ -281,7 +288,6 @@ function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; rost
           body: JSON.stringify({
             status: t.status,
             remark: remark.trim() || null,
-            accountantId: whoId || null,
             timeSpentMin: timeTotal,
             metricsJson: metricsPayload(),
           }),
@@ -308,7 +314,10 @@ function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; rost
   const save = async (status: string) => {
     if (!t.logId) return;
     if (timer.current) clearTimeout(timer.current);
-    lastSent.current = JSON.stringify([remark, hrs, mins, whoId, metrics, status]);
+    // Attribution rides along: Done paints the inferred doer instantly, the
+    // server stamps the same identity authoritatively; the live refetch
+    // reconciles any difference.
+    lastSent.current = JSON.stringify([remark, hrs, mins, metrics, status]);
     setBusy(true);
     try {
       const res = await fetch(`/api/digital-marketing/logs/${t.logId}`, {
@@ -317,8 +326,6 @@ function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; rost
         body: JSON.stringify({
           status,
           remark: remark.trim() || null,
-          accountantId: whoId || null,
-          doneBy: status === "done" ? whoName : undefined,
           timeSpentMin: timeTotal,
           metricsJson: metricsPayload(),
         }),
@@ -495,17 +502,13 @@ function TaskRow({ t, roster, defaultWho, onLogged, today }: { t: TaskItem; rost
           placeholder="Remark — e.g. leads: 5 Meta, 3 B2B…"
           className="flex-1 min-w-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
         />
-        <select value={whoId} onChange={(e) => setWhoOverride(e.target.value)} title="Who did this task" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1.5 text-xs max-w-[130px]">
-          <option value="">Who?…</option>
-          {lane.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
         <span title="Time taken to finish (hours + minutes) — optional, auto-saved" className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500">
           ⏱
           <input value={hrs} onChange={(e) => setHrs(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="h" inputMode="numeric" aria-label="Hours taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
           <span className="text-zinc-400">:</span>
           <input value={mins} onChange={(e) => setMins(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} placeholder="m" inputMode="numeric" aria-label="Minutes taken" className="w-7 bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400" />
         </span>
-        <span className="inline-flex items-center px-1 text-[11px] font-semibold text-zinc-400 shrink-0" title="Remark, metrics, time and owner save automatically while you type">
+        <span className="inline-flex items-center px-1 text-[11px] font-semibold text-zinc-400 shrink-0" title="Remark, metrics and time save automatically while you type">
           {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved" : saveState === "error" ? "⚠ Retry" : ""}
         </span>
       </div>
@@ -571,9 +574,13 @@ export default function AccountsDashboard() {
   React.useEffect(() => { if (view === "tasks") setRoleSub("today"); }, [view]);
   const selfId = useMemo(() => matchSelfRoster(me as any, data?.roster ?? []), [me, data]);
   // No "Acting as" switcher here — a single manager works this taskbar.
-  // Credit defaults to the signed-in user's roster match, overridable per row
-  // via the "Who?…" picker.
-  const defaultWho = selfId;
+  // Credit is inferred: the signed-in user's roster match (the server
+  // resolves and stamps the same identity — the client sends no who).
+  const identity = useMemo(() => {
+    const id = selfId;
+    const name = (id && data?.roster.find((r) => r.id === id)?.name) ?? data?.meta?.self?.name ?? null;
+    return { id, name };
+  }, [selfId, data]);
   const lane = useMemo(() => data?.items ?? [], [data]);
   const visible = useMemo(() => {
     if (statusFilter === "done") return lane.filter((t) => t.status === "done");
@@ -702,8 +709,8 @@ export default function AccountsDashboard() {
                   const meta = visible.find((x) => x.templateId === "dmm-06");
                   const rest = visible.filter((x) => x.templateId !== "dmm-06");
                   return (<>
-                    {meta && <div className="md:col-span-2"><TaskRow key={meta.templateId} t={meta} roster={data.roster} defaultWho={defaultWho} onLogged={() => dash.refresh()} /></div>}
-                    {rest.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} onLogged={() => dash.refresh()} />)}
+                    {meta && <div className="md:col-span-2"><TaskRow key={meta.templateId} t={meta} roster={data.roster} identity={identity} onLogged={() => dash.refresh()} /></div>}
+                    {rest.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} identity={identity} onLogged={() => dash.refresh()} />)}
                   </>);
                 })()}
                 {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today — switch to History for past completions." : "No tasks pending today."}</div>}
@@ -732,7 +739,7 @@ export default function AccountsDashboard() {
             <div className="space-y-2">
               {incompleteTray.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {incompleteTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onLogged={() => dash.refresh()} />)}
+                  {incompleteTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} identity={identity} today={data.meta.date} onLogged={() => dash.refresh()} />)}
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — nothing incomplete. 🎉</div>
@@ -744,7 +751,7 @@ export default function AccountsDashboard() {
             <div className="space-y-2">
               {historyTray.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {historyTray.map((t) => <TaskRow key={t.logId ?? `${t.templateId}-${t.dueDate}`} t={t} roster={data.roster} defaultWho={defaultWho} today={data.meta.date} onLogged={() => dash.refresh()} />)}
+                  {historyTray.map((t) => <TaskRow key={t.logId ?? `${t.templateId}-${t.dueDate}`} t={t} roster={data.roster} identity={identity} today={data.meta.date} onLogged={() => dash.refresh()} />)}
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">No completed tasks in the last 30 days.</div>
@@ -872,7 +879,7 @@ function TeamBoard({ team, freqStats, backlog }: { team: TeamData | null; freqSt
           </div>
         ))}
       </div>
-      <div className="text-[11px] text-zinc-500">Tip: pick your name in the “Who?…” box when marking a task Done to climb the board. Shared tasks credit whoever logs them.</div>
+      <div className="text-[11px] text-zinc-500">Tip: Done credits whoever is signed in — no need to pick a name. Shared tasks credit whoever logs them.</div>
     </div>
   );
 }
@@ -1229,7 +1236,7 @@ function Controller({ onChanged }: { onChanged: () => void }) {
       <ExportCard />
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
         <h3 className="font-bold text-sm">👥 Managers — people who work this taskbar</h3>
-        <div className="text-[11px] text-zinc-500">Each person is mapped by name + email. Done / remarks credit whoever logs them (or the name picked in a row's "Who?…" box).</div>
+        <div className="text-[11px] text-zinc-500">Each person is mapped by name + email. Done / remarks credit whoever is signed in.</div>
         <div className="grid grid-cols-2 gap-1.5">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name — e.g. Ramesh" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email — e.g. ramesh@…" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />

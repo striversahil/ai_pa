@@ -13,18 +13,18 @@
 //   `internalRates` / `specIssue` are per-item bypasses/holds.
 import type { Enquiry, EnquiryItem } from "./types";
 
-type ItemRateShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "ratesRequested">;
-type ItemDecisionShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate" | "specIssue">;
+type ItemRateShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "ratesRequested"> & { notAvailable?: boolean };
+type ItemDecisionShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate" | "specIssue"> & { notAvailable?: boolean };
 type EnquiryShape = Pick<Enquiry, "items"> & { procurementSubmittedAt?: string };
 
 /** Loop-eligible for Procurement: unavailable, not internal, unquoted or re-requested. */
 export function itemNeedsRates(it: ItemRateShape): boolean {
-  return !it?.rateAvailable && !it?.internalRates && (((it?.rates ?? []).length === 0) || !!(it as any)?.ratesRequested);
+  return !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && (((it?.rates ?? []).length === 0) || !!(it as any)?.ratesRequested);
 }
 
 /** Loop-eligible for Management: unavailable, undisputed, quoted/internal, undecided. */
 export function itemNeedsDecision(it: ItemDecisionShape): boolean {
-  return !it?.rateAvailable
+  return !it?.rateAvailable && !(it as any)?.notAvailable
     && ((((it as any)?.rates ?? []).length > 0) || (it as any)?.internalRates === true)
     && ((it as any)?.finalRate === undefined || (it as any)?.finalRate === null)
     && !(it as any)?.specIssue;
@@ -37,7 +37,7 @@ export function isSubmitted(e: { procurementSubmittedAt?: string }): boolean {
 
 /** Fresh unquoted work reopens procurement Active even on concluded rows. */
 export function hasFreshUnquotedWork(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => !it?.rateAvailable && !it?.internalRates && !it?.specIssue
+  return ((e as any).items ?? []).some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && !it?.specIssue
     && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null));
 }
 
@@ -52,9 +52,9 @@ export function hasPendingVariationWork(e: Pick<Enquiry, "items">): boolean {
  *  quotes logged AFTER it was finalized that management hasn't shared yet.
  *  Surfaces the item back in the management queue. Rows lacking timestamps
  *  fall back to not-pending (never false-positive on legacy rows).
- *  Rate-available items skip the loop entirely — never unreviewed. */
+ *  Rate-available / not-available items skip the loop entirely — never unreviewed. */
 export function itemHasUnreviewedQuotes(it: any): boolean {
-  if ((it as any)?.rateAvailable) return false;
+  if ((it as any)?.rateAvailable || (it as any)?.notAvailable) return false;
   if (it?.finalRate === undefined || it?.finalRate === null) return false;
   const fin = Date.parse(String(it?.finalizedAt ?? ""));
   if (!Number.isFinite(fin)) return false;
@@ -68,7 +68,7 @@ export function itemHasUnreviewedQuotes(it: any): boolean {
 
 /** One fresh line is quotable even on a concluded row (card stays editable). */
 export function isFreshQuotableItem(it: ItemDecisionShape): boolean {
-  return !(it as any)?.rateAvailable && !(it as any)?.internalRates && !(it as any)?.specIssue
+  return !(it as any)?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.internalRates && !(it as any)?.specIssue
     && (((it as any)?.rates ?? []).length === 0) && ((it as any)?.finalRate === undefined || (it as any)?.finalRate === null);
 }
 
@@ -79,7 +79,7 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   // queue even on concluded rows — the client keeps asking.
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return true;
   if (isSubmitted(e)) return false;
-  return items.some((it: any) => !it?.rateAvailable && !it?.internalRates);
+  return items.some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
 }
 
 export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
@@ -98,7 +98,7 @@ export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
 
 /** Submit readiness: every quotable loop item carries ≥1 vendor rate. */
 export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
-  const loop = ((e as any).items ?? []).filter((it: any) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
+  const loop = ((e as any).items ?? []).filter((it: any) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
   if (loop.length === 0) return { ok: false, reason: "No quotable items yet" };
   const unrated = loop.filter((it: any) => (it?.rates ?? []).length === 0).length;
   if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates` };
@@ -113,13 +113,13 @@ export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items" | "rateStatu
   if (isManagementPendingEnquiry(e as any)) return false;
   const relevant = items.filter((it: any) => !it?.specIssue);
   if (relevant.length === 0) return false;
-  // Every non-held item must be accounted for — either rate-available or
-  // decided. Pure rateAvailable rows only belong here after commit, otherwise
+  // Every non-held item must be accounted for — either rate-available / not-available or
+  // decided. Pure bypass rows only belong here after commit, otherwise
   // they'd appear as history before any decision (loop empty → false fix).
-  const allRateAvailable = relevant.every((it: any) => it?.rateAvailable);
-  if (allRateAvailable) {
+  const allBypass = relevant.every((it: any) => it?.rateAvailable || (it as any)?.notAvailable);
+  if (allBypass) {
     const s = String((e as any)?.rateStatus ?? "");
     return s === "finalized" || s === "sent";
   }
-  return relevant.every((it: any) => it?.rateAvailable || (it.finalRate !== undefined && it.finalRate !== null));
+  return relevant.every((it: any) => it?.rateAvailable || (it as any)?.notAvailable || (it.finalRate !== undefined && it.finalRate !== null));
 }
