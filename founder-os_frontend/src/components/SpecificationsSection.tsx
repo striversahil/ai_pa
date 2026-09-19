@@ -417,14 +417,14 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         />
                       )}
                       {!redacted && !it.specIssue && (it.thread ?? []).length > 0 && (
-                        <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} />
+                        <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
                       )}
                       {it.specIssue && !redacted && !it.rateAvailable && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
                           <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
-                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} />
+                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
                           {editable && (
                             remarkIdx === idx ? (
                               <div className="mt-2 space-y-1.5">
