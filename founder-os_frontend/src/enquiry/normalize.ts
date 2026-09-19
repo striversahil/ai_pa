@@ -126,6 +126,7 @@ export function toEnquiry(raw: any): Enquiry {
     additionalRequirements,
     items,
     zohoStatus: (raw as any).zohoStatus ? String((raw as any).zohoStatus) : null,
+    zohoCustomerName: (raw as any).zohoCustomerName ? String((raw as any).zohoCustomerName) : null,
   } as any;
 }
 

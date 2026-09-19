@@ -180,6 +180,9 @@ export interface Enquiry {
   /** Live Zoho status for the linked estimate (from Estimate table, 5-min sync).
    *  Enriched by GET /api/enquiries list/single — no extra Zoho read, no AI. */
   zohoStatus?: string | null;
+  /** Live Zoho customer name for the linked estimate — used for mismatch chip
+   *  against `clientCompany` (loosely normalized). */
+  zohoCustomerName?: string | null;
 }
 
 export interface Comment {

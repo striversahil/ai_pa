@@ -63,12 +63,15 @@ function kick(c: any, id: string): void {
       const { prisma } = deps();
       const rows = await (prisma as any).estimate.findMany({
         where: { estimateNumber: { in: nums } },
-        select: { estimateNumber: true, status: true },
+        select: { estimateNumber: true, status: true, customerName: true },
       });
-      const map = new Map<string, string>((rows as any[]).map((r) => [String(r.estimateNumber), String(r.status)]));
+      const statusMap = new Map<string, string>((rows as any[]).map((r) => [String(r.estimateNumber), String(r.status)]));
+      const customerMap = new Map<string, string>((rows as any[]).map((r) => [String(r.estimateNumber), String(r.customerName ?? '')]));
       for (const e of enquiries as any[]) {
-        const s = map.get(String((e as any)?.estNumber ?? '').trim());
+        const key = String((e as any)?.estNumber ?? '').trim();
+        const s = statusMap.get(key);
         (e as any).zohoStatus = s ?? null;
+        (e as any).zohoCustomerName = customerMap.get(key) ?? null;
         // Stash original so the background promotion can tell whether DB was
         // already `sent` before we derived it for this response.
         (e as any)._origRateStatus = String((e as any)?.rateStatus ?? '');

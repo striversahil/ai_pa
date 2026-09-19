@@ -1,6 +1,7 @@
 import React from "react";
 import { Agent, Enquiry, enquiryLabel } from "../types";
 import { StatusBadge, PriorityBadge } from "./ui";
+import { companiesDiffer } from "@/enquiry/company";
 
 interface EnquiryRowItemProps {
   enq: Enquiry;
@@ -80,6 +81,11 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
               : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
             }`} title="Live Zoho status (5-min sync)">
               Zoho: {(enq as any).zohoStatus}
+            </span>
+          )}
+          {!hideIdentity && enq.estNumber && (enq as any).zohoCustomerName && companiesDiffer(enq.clientCompany, String((enq as any).zohoCustomerName)) && (
+            <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40" title={`Client mismatch — Enquiry: "${enq.clientCompany}" vs Zoho: "${String((enq as any).zohoCustomerName)}" (loosely normalized)`}>
+              ⚠ Name mismatch
             </span>
           )}
         </div>

@@ -8,6 +8,7 @@ import SpecificationsSection from "./SpecificationsSection";
 import ActivityTimeline from "./ActivityTimeline";
 import Modal from "./Modal";
 import ItemBoxList, { blankItem } from "./ItemBoxList";
+import { companiesDiffer } from "@/enquiry/company";
 
 interface EnquiryDetailProps {
   selectedEnquiry: Enquiry;
@@ -239,6 +240,14 @@ export default function EnquiryDetail({
                   </span>
                 </>
               )}
+              {selectedEnquiry.estNumber && (selectedEnquiry as any).zohoCustomerName && companiesDiffer(selectedEnquiry.clientCompany, String((selectedEnquiry as any).zohoCustomerName)) && (
+                <>
+                  <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
+                  <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40" title={`Client mismatch — Enquiry: "${selectedEnquiry.clientCompany}" vs Zoho: "${String((selectedEnquiry as any).zohoCustomerName)}" (loosely normalized)`}>
+                    ⚠ Name mismatch — Zoho: {String((selectedEnquiry as any).zohoCustomerName)}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -286,6 +295,21 @@ export default function EnquiryDetail({
         </div>
         )}
       </div>
+
+      {selectedEnquiry.estNumber && (selectedEnquiry as any).zohoCustomerName && companiesDiffer(selectedEnquiry.clientCompany, String((selectedEnquiry as any).zohoCustomerName)) && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 flex items-start gap-3">
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-400 text-sm">⚠</span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-extrabold text-amber-700 dark:text-amber-400">Client name mismatch — Zoho vs Enquiry</p>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
+              Enquiry: <span className="font-bold text-[var(--text-primary)]">"{selectedEnquiry.clientCompany}"</span>
+              <span className="mx-1.5 text-[var(--text-tertiary)]">vs</span>
+              Zoho: <span className="font-bold text-[var(--text-primary)]">"{String((selectedEnquiry as any).zohoCustomerName)}"</span>
+            </p>
+            <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">Loosely normalized (case/punctuation/Pvt Ltd stripped). Fix the Zoho customer or enquiry client name to clear.</p>
+          </div>
+        </div>
+      )}
 
       {/* Split View */}
       <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
