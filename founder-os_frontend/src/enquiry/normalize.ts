@@ -104,8 +104,17 @@ export function toEnquiry(raw: any): Enquiry {
                 kind: ['flag', 'remark', 'fix', 'request', 'quoted'].includes(e?.kind) ? e.kind : 'remark',
                 text: String(e?.text ?? ''),
                 at: String(e?.at ?? ''),
+                media: Array.isArray(e?.media)
+                  ? e.media
+                      .map((m: any) => ({
+                        type: m?.type === "video" ? "video" : m?.type === "pdf" ? "pdf" : "image",
+                        url: String(m?.url ?? ""),
+                        name: m?.name ? String(m.name) : undefined,
+                      }))
+                      .filter((m: any) => m.url.length > 0)
+                  : undefined,
               }))
-              .filter((e: any) => e.text.trim())
+              .filter((e: any) => e.text.trim() || (e.media ?? []).length > 0)
           : [],
       })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
     : [];

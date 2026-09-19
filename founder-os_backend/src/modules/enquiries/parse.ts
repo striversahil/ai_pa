@@ -16,8 +16,9 @@ export function parseFlagThread(raw: unknown): FlagThreadEntry[] {
       kind: (THREAD_KIND.has(String(e?.kind)) ? String(e.kind) : 'remark') as FlagThreadEntry['kind'],
       text: String(e?.text ?? '').slice(0, 2000),
       at: isoOrUndefined(e?.at) ?? new Date(0).toISOString(),
+      media: parseItemMedia(e?.media),
     }))
-    .filter((e: FlagThreadEntry) => e.text.trim().length > 0)
+    .filter((e: FlagThreadEntry) => e.text.trim().length > 0 || (e.media ?? []).length > 0)
     .slice(-50);
 }
 

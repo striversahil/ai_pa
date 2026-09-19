@@ -53,6 +53,19 @@ export default function FlagThread({ thread, hideSalesRemarks = false, tone = "a
               <span className={`ml-1.5 text-[10px] ${timeCls}`}>{historyDateChip(e.at)}</span>
             )}
             <span className={`block ${bodyCls} whitespace-pre-wrap break-words`}>{e.text}</span>
+            {Array.isArray((e as any).media) && (e as any).media.length > 0 && (
+              <span className="mt-1 flex flex-wrap gap-1.5">
+                {(e as any).media.map((m: any, mi: number) => (
+                  m.type === "video" ? (
+                    <video key={mi} src={m.url} controls preload="metadata" className="w-24 h-14 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
+                  ) : m.type === "pdf" ? (
+                    <a key={mi} href={m.url} download={m.name || `thread-${i}-${mi}.pdf`} className="px-2 py-1 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 text-[10px] font-bold">PDF</a>
+                  ) : (
+                    <img key={mi} src={m.url} alt={`thread ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)]" />
+                  )
+                ))}
+              </span>
+            )}
           </span>
         </li>
       ))}

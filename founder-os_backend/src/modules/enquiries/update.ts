@@ -267,14 +267,14 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // even when the writer holds MIS/admin).
     const role: FlagThreadBy = actingProcurement ? 'procurement' : privileged ? 'management' : 'sales';
     const storedThread = parseFlagThread((stored as any)?.thread);
-    const seen = new Set(storedThread.map((e) => `${e.at}|${e.kind}|${e.text}`));
+    const seen = new Set(storedThread.map((e) => `${e.at}|${e.kind}|${e.text}|${(e.media ?? []).map((m:any)=>m.url).join(',')}`));
     const trail: FlagThreadEntry[] = [...storedThread];
     for (const e of parseFlagThread((it as any)?.thread)) {
       if (e.kind !== 'remark') continue;
-      const key = `${e.at}|${e.kind}|${e.text}`;
+      const key = `${e.at}|${e.kind}|${e.text}|${(e.media ?? []).map((m:any)=>m.url).join(',')}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      trail.push({ by: e.by === role ? e.by : role, kind: 'remark', text: e.text, at: e.at });
+      trail.push({ by: e.by === role ? e.by : role, kind: 'remark', text: e.text, at: e.at, media: e.media?.length ? e.media : undefined });
     }
     const nowIso = new Date().toISOString();
     const flagSet = !stored.specIssue && base.specIssue;

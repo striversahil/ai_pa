@@ -46,17 +46,16 @@ export function canManageRates(me: MeResponse): boolean {
  *  Management-shared ALTERNATES reach sales anonymized: vendor name +
  *  vendor description blanked (they identify the source) — sales sees the
  *  option + green final rate + forwarded salesNote only.
- *  Item thread (flag/remark/fix/request/quoted trail) is procurement↔management
- *  internal and must be completely invisible to sales — only `salesNote` on
- *  the selected/alternate rate is the intentional cross-surface note. */
+ *  Item thread is the common sales↔procurement channel (per-item, always open,
+ *  even after sent — negotiation stays separate). Sales sees thread but
+ *  quoted entries with vendor names are stripped (internal). */
 export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T {
   if (!enquiry || !Array.isArray((enquiry as any).items)) return enquiry;
   return {
     ...(enquiry as any),
     items: (enquiry as any).items.map((it: any) => {
       if (!it || typeof it !== 'object') return it;
-      const { selectedVendor, markup, thread, ...rest } = it;
-      void thread; // thread is internal — never to sales (see FlagThread isolation)
+      const { selectedVendor, markup, ...rest } = it;
       if (Array.isArray((rest as any).rates)) {
         (rest as any).rates = (rest as any).rates.map((r: any) => {
           if (!r || typeof r !== 'object') return r;
@@ -69,6 +68,13 @@ export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T 
             return anon;
           }
           return rr;
+        });
+      }
+      // Thread is common channel — keep for sales but strip internal quoted vendor leaks.
+      if (Array.isArray((rest as any).thread)) {
+        (rest as any).thread = (rest as any).thread.filter((e: any) => {
+          if (e?.kind === 'quoted' && String(e?.by ?? '') !== 'sales') return false;
+          return true;
         });
       }
       return rest;

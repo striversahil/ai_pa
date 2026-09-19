@@ -112,6 +112,7 @@ export interface FlagThreadEntry {
   kind: FlagThreadKind;
   text: string;
   at: string;
+  media?: EnquiryMedia[];
 }
 
 export interface Enquiry {

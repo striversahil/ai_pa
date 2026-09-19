@@ -124,6 +124,7 @@ export interface FlagThreadEntry {
   kind: 'flag' | 'remark' | 'fix' | 'request' | 'quoted';
   text: string;
   at: string;
+  media?: EnquiryMedia[];
 }
 
 // Queue predicates live in @/enquiry/queue (single frontend source of truth,

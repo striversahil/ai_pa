@@ -242,6 +242,10 @@ export default function ProcurementQueue() {
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, media: [...(it.media ?? []), ...(media ?? [])] } : it)), [patchItems]);
 
+  const handlePostThread = useCallback((enquiryId: string, itemIdx: number, text: string, media: EnquiryItem["media"]) =>
+    void patchItems(enquiryId, (items) => items.map((it, i) =>
+      i === itemIdx ? { ...it, thread: [...(it.thread ?? []), { by: "procurement" as const, kind: "remark" as const, text: text.slice(0,2000), at: new Date().toISOString(), media: media?.length ? media : undefined }] } : it)), [patchItems]);
+
   // Enquiry Concluded: explicit procurement handoff — enquiry stays Active
   // (quoted) until this is clicked; management sees live rates the whole
   // time via the live predicate, this just marks the enquiry done.
@@ -550,6 +554,7 @@ export default function ProcurementQueue() {
                         onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
                         onOpenLightbox={handleOpenLightbox}
                         onAddItemMedia={(media) => handleAddItemMedia(selEnquiry.id, itemIdx, media)}
+                        onPostThread={(text, media) => handlePostThread(selEnquiry.id, itemIdx, text, media)}
                         readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest)}
                       />
                     ))

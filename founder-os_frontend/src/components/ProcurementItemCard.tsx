@@ -16,6 +16,7 @@ interface ProcurementItemCardProps {
   onFlag: (reason: string) => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   onAddItemMedia?: (media: import("@/types").EnquiryMedia[]) => void;
+  onPostThread?: (text: string, media: import("@/types").EnquiryMedia[]) => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
   /** Late-quote window: the row is finalized (committed) but still accepting
@@ -30,7 +31,7 @@ interface ProcurementItemCardProps {
 // its hold banner (held from Management) but still allows adding/editing
 // vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddItemMedia,
+  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onOpenLightbox, onAddItemMedia, onPostThread,
   readOnly = false,
   lateQuote = false,
 }: ProcurementItemCardProps) {
@@ -40,6 +41,16 @@ export default function ProcurementItemCard({
   const [flagReason, setFlagReason] = useState("");
   const [refError, setRefError] = useState<string | null>(null);
   const [refDropRi, setRefDropRi] = useState<number | null>(null);
+  const [threadOpen, setThreadOpen] = useState(false);
+  const [threadText, setThreadText] = useState("");
+  const [threadImages, setThreadImages] = useState<string[]>([]);
+  const threadFileRef = React.useRef<HTMLInputElement>(null);
+  const handleThreadImages = async (files: FileList | File[] | null) => {
+    if (!files || files.length===0) return;
+    const { media } = await filesToMedia(Array.from(files));
+    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
+    if (urls.length) setThreadImages((prev) => [...prev, ...urls]);
+  };
 
   const rates = item.rates ?? [];
   const flagged = !!item.specIssue;
@@ -192,6 +203,37 @@ export default function ProcurementItemCard({
       )}
 
       <FlagThread thread={item.thread ?? []} />
+      {onPostThread && (
+        <div className="mt-2 pt-2 border-t border-[var(--border-card)]/60">
+          {threadOpen ? (
+            <div className="space-y-1.5">
+              <textarea value={threadText} onChange={(e) => setThreadText(e.target.value)} placeholder="Reply in thread — any question except negotiation, text + image…" rows={2} className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y" />
+              <input ref={threadFileRef} type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={async (e) => { await handleThreadImages(e.target.files); e.target.value=""; }} />
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => threadFileRef.current?.click()} className="px-2.5 py-1 border border-dashed border-[var(--border-card)] rounded-lg text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach</button>
+                {threadImages.length>0 && <span className="text-[11px] text-[var(--text-tertiary)]">{threadImages.length} attached</span>}
+              </div>
+              {threadImages.length>0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {threadImages.map((url,i) => (
+                    <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--border-card)]">
+                      <img src={url} alt={`thread ${i+1}`} className="w-full h-full object-cover" />
+                      <button type="button" onClick={() => setThreadImages(prev=>prev.filter((_,j)=>j!==i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { if (!threadText.trim() && threadImages.length===0) return; const media = threadImages.map(url=>({type:"image" as const,url})); onPostThread(threadText.trim() || "Attachment", media); setThreadText(""); setThreadImages([]); setThreadOpen(false); }} disabled={!threadText.trim() && threadImages.length===0} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">Send to thread</button>
+                <button type="button" onClick={() => { setThreadOpen(false); setThreadText(""); setThreadImages([]); }} className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
+              </div>
+              <p className="text-[10px] text-[var(--text-tertiary)]">Common channel per item — always open, even after sent. Sales sees it live.</p>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setThreadOpen(true)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">💬 Thread — ask / reply (always open)</button>
+          )}
+        </div>
+      )}
 
       {rates.length > 0 && (
         <ul className="space-y-1">
