@@ -9,11 +9,10 @@ const persist = require('./persist');
 void cleanHtml;
 void isRealSalesComment;
 
-// Quota pacing: Groq on_demand keys cap at ~8k TPM and HIGH-reasoning 120b
-// calls burn 1-4k tokens each — 2 workers + a short pause per estimate keeps
-// bursts inside quotas; full passes take longer but complete instead of failing.
-const AI_CONCURRENCY = 2;
-const AI_PACING_MS = 2000;
+// Quota pacing: Agnes free 20 RPM + Cloudflare 1015 (72s) on bursts — single worker + 3s gap keeps us under 20/min.
+// Groq on_demand 8k TPM also safe at this pace. Full 71×2 passes take ~7 min instead of 3, but never trigger 1015.
+const AI_CONCURRENCY = 1;
+const AI_PACING_MS = 3000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function badgePrompt(agentRoster) {

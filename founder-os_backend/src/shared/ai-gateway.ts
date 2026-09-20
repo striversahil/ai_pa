@@ -419,15 +419,25 @@ export class AiGateway {
         lastErr = err;
         const status = this.pool.extractStatus(err);
         if (status === 429) {
-          // Agnes single-key 429 should fail fast — don't hammer 50× and hang the Worker (30s CPU limit).
-          // Burst limits are per-minute; retrying the same key immediately just burns the 30s window.
           if (provider.id === 'agnes') {
+            const msg = String((err as any)?.message ?? '');
+            const isCf1015 = /1015|error code: 1015/i.test(msg);
             const retryAfter = this.extractRetryAfter(err);
-            const cd = retryAfter ?? 60_000;
+            // Cloudflare 1015 is egress IP limiting (72s), not key quota — don't blame the key, just back off and retry.
+            if (isCf1015) {
+              const cd = retryAfter ?? 72_000;
+              logger.warn?.(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — backing off ${Math.round(cd/1000)}s, not cooling key`);
+              if (attempt < maxAttempts - 1) {
+                await sleep(Math.min(cd, 5_000));
+                continue;
+              }
+            }
+            const rawCd = retryAfter ?? 60_000;
+            const cd = Math.min(rawCd, 60_000);
             key.cooldownUntil = Date.now() + cd;
             key.failures++;
             key.lastError = `429 rate-limited`;
-            logger.warn?.(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s, failing fast`);
+            logger.warn?.(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), failing fast`);
             const e: any = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(cd/1000)}s)`);
             e.status = 429; e.retryAfter = cd; throw e;
           }

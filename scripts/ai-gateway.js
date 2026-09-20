@@ -333,6 +333,29 @@ class AiGateway {
         lastErr = err;
         const status = this.pool.extractStatus(err);
         if (status === 429) {
+          if (provider.id === 'agnes') {
+            const msg = String((err && err.message) || '');
+            const isCf1015 = /1015|error code: 1015/i.test(msg);
+            if (isCf1015) {
+              const retryAfter = err && err.retryAfter;
+              const cd = typeof retryAfter === 'number' ? retryAfter : 72000;
+              console.warn(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — backing off ${Math.round(cd/1000)}s, not cooling key`);
+              if (attempt < maxAttempts - 1) {
+                const ra = err && err.retryAfter;
+                await sleep(Math.min(typeof ra === 'number' ? ra : 5000, 5000));
+                continue;
+              }
+            }
+            const retryAfter = err && err.retryAfter;
+            const rawCd = typeof retryAfter === 'number' ? retryAfter : 60000;
+            const cd = Math.min(rawCd, 60000);
+            key.cooldownUntil = Date.now() + cd;
+            key.failures++;
+            key.lastError = `429 rate-limited`;
+            console.warn(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), failing fast`);
+            const e2 = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(cd/1000)}s)`);
+            e2.status = 429; e2.retryAfter = cd; throw e2;
+          }
           streak429++;
           if (
             !req.model && !wantsVision && provider.id === 'openrouter' &&
