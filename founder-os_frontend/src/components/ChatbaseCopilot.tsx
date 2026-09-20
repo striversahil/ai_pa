@@ -253,17 +253,17 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
         <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]" onClick={onClose} />
       )}
 
-      {/* Floating chat window — centered above pill, Chatbase style but dark */}
+      {/* Floating chat window — widened to pill width */}
       {open && (
         <div
-          className="fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[min(420px,calc(100vw-24px))] h-[min(560px,calc(100vh-140px))] bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in"
+          className="fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[min(560px,calc(100vw-24px))] h-[min(560px,calc(100vh-140px))] bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in"
           role="dialog"
           aria-label="AI Agent"
-          style={{ fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
+          style={{ fontFamily: "'Geist', 'Outfit', Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-card)] bg-[var(--bg-card)]">
-            <p className="text-[13px] font-bold text-[var(--text-primary)] tracking-tight">AI Agent</p>
+            <p className="text-[14px] font-bold text-[var(--text-primary)] tracking-tight">AI Agent</p>
             <button
               type="button"
               onClick={handleRefresh}
@@ -280,27 +280,15 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
           {/* Messages */}
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-[var(--bg-card)]">
             {msgs.length === 0 && !busy ? (
-              <div className="space-y-3">
-                <div className="flex justify-end">
-                  <div className="h-8 w-8 rounded-full bg-[#3b82f6] flex items-center justify-center text-white text-xs font-bold">S</div>
-                </div>
-                <div className="bg-[#2a2a2e] dark:bg-[#2a2a2e] border border-[var(--border-card)]/40 rounded-2xl rounded-tr-md px-4 py-3 text-[13px] leading-relaxed text-[var(--text-primary)]">
-                  Please share the product or requirement you would like help with, such as a bearing, chain sprocket, conveyor belt, coupling, or plansifter accessory. I'll help identify the required specifications and prepare the quotation details.
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)] px-1">
-                  <span>Just now</span>
-                  <span className="opacity-40">|</span>
-                  <button type="button" className="hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0" aria-label="thumbs up">👍</button>
-                  <button type="button" className="hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0" aria-label="thumbs down">👎</button>
-                </div>
-                {/* suggestions as quick chips */}
-                <div className="flex flex-wrap gap-1.5 pt-2">
+              <div className="space-y-3 py-2">
+                <p className="text-[14px] font-medium leading-relaxed text-[var(--text-secondary)]">How can I help with this enquiry?</p>
+                <div className="flex flex-wrap gap-2">
                   {SUGGESTIONS.map((s) => (
                     <button
                       key={s}
                       type="button"
                       onClick={() => void send(s)}
-                      className="px-3 py-1.5 text-[11px] font-medium rounded-full border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent text-left"
+                      className="px-3.5 py-2 text-[12px] font-medium rounded-full border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent text-left"
                     >
                       {s}
                     </button>
@@ -314,10 +302,10 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
                     {m.role === "user" ? (
                       <div className="flex justify-end">
                         <div className="flex items-center gap-2">
-                          <div className="max-w-[78%] rounded-2xl rounded-br-md bg-[#3b82f6] text-white px-4 py-2 text-[13px] leading-relaxed whitespace-pre-wrap">
+                          <div className="max-w-[78%] rounded-2xl rounded-br-md bg-[#3b82f6] text-white px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap font-medium">
                             {m.text}
                           </div>
-                          <div className="h-7 w-7 rounded-full bg-[#3b82f6] flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0">S</div>
+                          <div className="h-7 w-7 rounded-full bg-[#3b82f6] flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">S</div>
                         </div>
                       </div>
                     ) : (
@@ -325,16 +313,16 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
                         {m.activity && m.activity.length > 0 && (
                           <div className="flex flex-wrap gap-1">
                             {m.activity.map((a, ai) => (
-                              <span key={ai} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-[var(--border-card)]">
+                              <span key={ai} className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-[var(--border-card)]">
                                 <span>{TOOL_ICON[a.tool] ?? "⚙️"}</span>{a.label}
                               </span>
                             ))}
                           </div>
                         )}
-                        <div className="bg-[var(--bg-input)]/80 dark:bg-[#252529] border border-[var(--border-card)]/50 rounded-2xl rounded-tl-md px-4 py-3 text-[13px] leading-relaxed text-[var(--text-primary)]">
+                        <div className="bg-[var(--bg-input)]/80 dark:bg-[#252529] border border-[var(--border-card)]/50 rounded-2xl rounded-tl-md px-4 py-3.5 text-[14px] leading-relaxed text-[var(--text-primary)] font-[450]">
                           <Markdown text={m.text} />
                         </div>
-                        <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)] px-1">
+                        <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1">
                           <span>Just now</span>
                           <span className="opacity-40">|</span>
                           <button type="button" className="hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0">👍</button>
@@ -346,10 +334,10 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
                               const key = mi * 100 + pi;
                               const done = confirmed.has(key);
                               return (
-                                <div key={pi} className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-2">
-                                  <p className="font-bold text-[11px] text-indigo-400">{p.label}</p>
-                                  {(p.text || p.spec) && <p className="mt-1 text-[11px] text-[var(--text-secondary)] whitespace-pre-wrap">{p.text || p.spec}</p>}
-                                  <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-2 px-3 py-1 text-[11px] font-bold rounded-lg bg-indigo-500 text-white hover:opacity-90 disabled:opacity-50 cursor-pointer border-0">
+                                <div key={pi} className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-2.5">
+                                  <p className="font-bold text-[12px] text-indigo-400">{p.label}</p>
+                                  {(p.text || p.spec) && <p className="mt-1 text-[12px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
+                                  <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-2 px-3.5 py-1.5 text-[12px] font-bold rounded-lg bg-indigo-500 text-white hover:opacity-90 disabled:opacity-50 cursor-pointer border-0">
                                     {done ? "✓ Applied" : "Confirm & apply"}
                                   </button>
                                 </div>
@@ -362,19 +350,13 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
                   </div>
                 ))}
                 {busy && (
-                  <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)] px-1">
-                    <span className="inline-block h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1">
+                    <span className="inline-block h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     Consulting the enquiry…
                   </div>
                 )}
               </>
             )}
-          </div>
-
-          {/* Footer powered by */}
-          <div className="px-4 py-2.5 border-t border-[var(--border-card)] flex items-center justify-center gap-1.5 text-[11px] text-[var(--text-tertiary)] bg-[var(--bg-card)]">
-            <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-[var(--text-tertiary)]/20 text-[10px]">◈</span>
-            Powered by Agnes
           </div>
         </div>
       )}
@@ -382,8 +364,8 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
       {/* Bottom pill — fixed center, hovered, dark */}
       <div className="fixed z-50 left-1/2 -translate-x-1/2 bottom-4 w-[min(560px,calc(100vw-24px))]">
         <div
-          className="flex items-center gap-2 bg-[var(--bg-card)] border border-[var(--border-card)] rounded-full px-3 py-2 shadow-[0_8px_32px_rgba(0,0,0,0.35)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.45)] transition-shadow"
-          style={{ fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
+          className="flex items-center gap-2 bg-[var(--bg-card)] border border-[var(--border-card)] rounded-full px-4 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.35)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.45)] transition-shadow"
+          style={{ fontFamily: "'Geist', 'Outfit', Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
           onClick={() => { if (!open) onOpen(); inputRef.current?.focus(); }}
         >
           <input
@@ -393,7 +375,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
             onFocus={() => { if (!open) onOpen(); }}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(input); } }}
             placeholder="Message..."
-            className="flex-1 bg-transparent outline-none text-[13px] placeholder:text-[var(--text-tertiary)] text-[var(--text-primary)] px-2"
+            className="flex-1 bg-transparent outline-none text-[14px] font-medium placeholder:text-[var(--text-tertiary)] text-[var(--text-primary)] px-2"
           />
           <button
             type="button"
