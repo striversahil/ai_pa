@@ -32,6 +32,7 @@ interface EnquiryDetailProps {
 export default function EnquiryDetail({
   selectedEnquiry,
   agents,
+  currentAgent,
   onUpdateStatus,
   onUpdateAgent,
   onUpdateItems,
@@ -44,6 +45,7 @@ export default function EnquiryDetail({
   redacted = false,
   ratesMode
 }: EnquiryDetailProps) {
+  const userInitial = String(currentAgent?.name || currentAgent?.id || "S").trim().charAt(0).toUpperCase() || "S";
 
   // Multi-item add: same item boxes as the B2B form (name/qty/spec/media +
   // duplicate + new-item box), appended to the enquiry's items on save.
@@ -284,6 +286,7 @@ export default function EnquiryDetail({
           open={copilotOpen}
           onClose={() => toggleCopilot(false)}
           onOpen={() => toggleCopilot(true)}
+          userInitial={userInitial}
         />
       )}
 

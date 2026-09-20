@@ -23,11 +23,12 @@ const TOOL_ICON: Record<string, string> = {
   propose_spec_fix: "🛠️",
 };
 
-export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
+export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, userInitial = "S" }: {
   enquiryId: string;
   open: boolean;
   onClose: () => void;
   onOpen: () => void;
+  userInitial?: string;
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
@@ -262,8 +263,8 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
           style={{ fontFamily: "'Geist', 'Outfit', Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-card)] bg-[var(--bg-card)]">
-            <p className="text-[14px] font-bold text-[var(--text-primary)] tracking-tight">AI Agent</p>
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border-card)] bg-[var(--bg-card)]">
+            <p className="text-[15px] font-bold text-[var(--text-primary)] tracking-tight">AI Agent</p>
             <button
               type="button"
               onClick={handleRefresh}
@@ -277,18 +278,18 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
             </button>
           </div>
 
-          {/* Messages */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-[var(--bg-card)]">
+          {/* Messages — larger fonts, AI/User avatars */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-5 bg-[var(--bg-card)]">
             {msgs.length === 0 && !busy ? (
               <div className="space-y-3 py-2">
-                <p className="text-[14px] font-medium leading-relaxed text-[var(--text-secondary)]">How can I help with this enquiry?</p>
+                <p className="text-[15px] font-medium leading-relaxed text-[var(--text-secondary)]">How can I help with this enquiry?</p>
                 <div className="flex flex-wrap gap-2">
                   {SUGGESTIONS.map((s) => (
                     <button
                       key={s}
                       type="button"
                       onClick={() => void send(s)}
-                      className="px-3.5 py-2 text-[12px] font-medium rounded-full border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent text-left"
+                      className="px-4 py-2 text-[13px] font-medium rounded-full border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent text-left"
                     >
                       {s}
                     </button>
@@ -301,57 +302,57 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
                   <div key={mi} className="space-y-1">
                     {m.role === "user" ? (
                       <div className="flex justify-end">
-                        <div className="flex items-center gap-2">
-                          <div className="max-w-[78%] rounded-2xl rounded-br-md bg-[#3b82f6] text-white px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap font-medium">
+                        <div className="flex items-start gap-2.5 max-w-[85%]">
+                          <div className="rounded-2xl rounded-br-md bg-[#3b82f6] text-white px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap font-medium shadow-sm">
                             {m.text}
                           </div>
-                          <div className="h-7 w-7 rounded-full bg-[#3b82f6] flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">S</div>
+                          <div className="h-8 w-8 rounded-full bg-[#3b82f6] flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0 mt-0.5">{String(userInitial).charAt(0).toUpperCase()}</div>
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-1.5">
-                        {m.activity && m.activity.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            {m.activity.map((a, ai) => (
-                              <span key={ai} className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-[var(--border-card)]">
-                                <span>{TOOL_ICON[a.tool] ?? "⚙️"}</span>{a.label}
-                              </span>
-                            ))}
+                      <div className="flex gap-2.5 items-start">
+                        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white text-[11px] font-extrabold flex-shrink-0 mt-0.5 shadow-sm">AI</div>
+                        <div className="flex-1 space-y-1.5 min-w-0">
+                          {m.activity && m.activity.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {m.activity.map((a, ai) => (
+                                <span key={ai} className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-[var(--border-card)]">
+                                  <span>{TOOL_ICON[a.tool] ?? "⚙️"}</span>{a.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="bg-[var(--bg-input)]/90 dark:bg-[#252529] border border-[var(--border-card)]/50 rounded-2xl rounded-tl-md px-4 py-3.5 text-[15px] leading-relaxed text-[var(--text-primary)] font-[450]">
+                            <Markdown text={m.text} />
                           </div>
-                        )}
-                        <div className="bg-[var(--bg-input)]/80 dark:bg-[#252529] border border-[var(--border-card)]/50 rounded-2xl rounded-tl-md px-4 py-3.5 text-[14px] leading-relaxed text-[var(--text-primary)] font-[450]">
-                          <Markdown text={m.text} />
-                        </div>
-                        <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1">
-                          <span>Just now</span>
-                          <span className="opacity-40">|</span>
-                          <button type="button" className="hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0">👍</button>
-                          <button type="button" className="hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0">👎</button>
-                        </div>
-                        {m.proposals && m.proposals.length > 0 && (
-                          <div className="space-y-1.5">
-                            {m.proposals.map((p, pi) => {
-                              const key = mi * 100 + pi;
-                              const done = confirmed.has(key);
-                              return (
-                                <div key={pi} className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-2.5">
-                                  <p className="font-bold text-[12px] text-indigo-400">{p.label}</p>
-                                  {(p.text || p.spec) && <p className="mt-1 text-[12px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
-                                  <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-2 px-3.5 py-1.5 text-[12px] font-bold rounded-lg bg-indigo-500 text-white hover:opacity-90 disabled:opacity-50 cursor-pointer border-0">
-                                    {done ? "✓ Applied" : "Confirm & apply"}
-                                  </button>
-                                </div>
-                              );
-                            })}
+                          <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1">
+                            <span>Just now</span>
                           </div>
-                        )}
+                          {m.proposals && m.proposals.length > 0 && (
+                            <div className="space-y-1.5">
+                              {m.proposals.map((p, pi) => {
+                                const key = mi * 100 + pi;
+                                const done = confirmed.has(key);
+                                return (
+                                  <div key={pi} className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3.5 py-3">
+                                    <p className="font-bold text-[13px] text-indigo-400">{p.label}</p>
+                                    {(p.text || p.spec) && <p className="mt-1 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
+                                    <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-2.5 px-4 py-2 text-[13px] font-bold rounded-lg bg-indigo-500 text-white hover:opacity-90 disabled:opacity-50 cursor-pointer border-0">
+                                      {done ? "✓ Applied" : "Confirm & apply"}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
                 ))}
                 {busy && (
-                  <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1">
-                    <span className="inline-block h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  <div className="flex items-center gap-2.5 text-[13px] text-[var(--text-tertiary)] px-1">
+                    <span className="inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     Consulting the enquiry…
                   </div>
                 )}
@@ -375,7 +376,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen }: {
             onFocus={() => { if (!open) onOpen(); }}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(input); } }}
             placeholder="Message..."
-            className="flex-1 bg-transparent outline-none text-[14px] font-medium placeholder:text-[var(--text-tertiary)] text-[var(--text-primary)] px-2"
+            className="flex-1 bg-transparent outline-none text-[15px] font-medium placeholder:text-[var(--text-tertiary)] text-[var(--text-primary)] px-2"
           />
           <button
             type="button"
