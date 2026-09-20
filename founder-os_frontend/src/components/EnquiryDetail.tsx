@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../types";
-import EnquiryChat from "./EnquiryChat";
+import ChatbaseCopilot from "./ChatbaseCopilot";
 import { useIntake } from "../hooks/useIntake";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
@@ -121,7 +121,7 @@ export default function EnquiryDetail({
   };
 
   return (
-    <div className={`space-y-6 animate-fade-in ${!redacted && copilotOpen ? "xl:pr-[346px]" : ""}`}>
+    <div className="space-y-6 animate-fade-in">
       {/* Header / Actions */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-[var(--border-card)]">
         <div className="flex items-center gap-3">
@@ -274,36 +274,18 @@ export default function EnquiryDetail({
           {redacted && selectedEnquiry.redactedPending && (
             <p className="text-[11px] text-amber-500 font-semibold px-1">Securing the latest updates for this view…</p>
           )}
-
-          {/* Copilot dock — fixed viewport box on xl (independent of page
-              layout, so the input is always visible); collapses to a slim tab */}
-          {!redacted && (
-            <div className="hidden xl:block">
-              {copilotOpen ? (
-                <div className="fixed top-4 bottom-4 right-4 w-[330px] z-30">
-                  <EnquiryChat enquiryId={selectedEnquiry.id} open docked onClose={() => toggleCopilot(false)} />
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => toggleCopilot(true)}
-                  title="Open copilot"
-                  className="fixed top-1/3 right-4 z-30 flex flex-col items-center gap-2 py-4 px-2 rounded-2xl border border-dashed border-brand-indigo/40 bg-[var(--bg-card)] text-brand-indigo hover:bg-brand-indigo/5 cursor-pointer"
-                >
-                  <span className="text-lg">✨</span>
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider" style={{ writingMode: "vertical-rl" }}>Copilot</span>
-                </button>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
-        {!redacted && (
-          <div className="xl:hidden">
-            <EnquiryChat enquiryId={selectedEnquiry.id} open={copilotOpen} onClose={() => toggleCopilot(false)} />
-          </div>
-        )}
+      {/* Chatbase-style copilot: bottom-center pill + centered popup, enquiry-scoped, dark */}
+      {!redacted && (
+        <ChatbaseCopilot
+          enquiryId={selectedEnquiry.id}
+          open={copilotOpen}
+          onClose={() => toggleCopilot(false)}
+          onOpen={() => toggleCopilot(true)}
+        />
+      )}
 
       {/* Delete confirmation */}
       {confirmDelete && (
