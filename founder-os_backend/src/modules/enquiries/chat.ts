@@ -1,6 +1,6 @@
 // chat.ts — per-enquiry sidebar copilot (edge-safe: fetch only, no Node deps).
 //
-// OpenRouter-only (standing rule: Groq is never used in the enquiry
+// Agnes-primary (standing rule: Groq is never used in the enquiry
 // workflow). Agentic loop, max 6 steps: the model calls scoped tools, the
 // module executes them against the same guarded route functions the REST API
 // uses (isRestrictedViewer / canManageRates / stripMarginFields), then the
@@ -273,7 +273,7 @@ async function execTool(ctx: Ctx, name: string, args: Record<string, any>): Prom
   return { result: { error: `unknown tool ${name}` } };
 }
 
-/** Run one chat turn. OpenRouter-only; returns a config notice without keys. */
+/** Run one chat turn. Agnes-primary; returns a config notice without keys. */
 export async function chatTurn(
   env: Record<string, unknown>,
   store: EnquiryStore,
@@ -282,9 +282,12 @@ export async function chatTurn(
   message: string,
 ): Promise<ChatReply> {
   const gateway = getGateway(env);
-  if (!gateway.health().some((h) => h.provider === 'openrouter')) {
-    return { reply: 'AI chat is not configured (no OpenRouter key).', proposals: [], activity: [] };
+  const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
+  const hasOpenrouter = gateway.health().some((h) => h.provider === 'openrouter');
+  if (!hasAgnes && !hasOpenrouter) {
+    return { reply: 'AI chat is not configured (no Agnes/OpenRouter key).', proposals: [], activity: [] };
   }
+  const provider: 'agnes' | 'openrouter' = hasAgnes ? 'agnes' : 'openrouter';
   const ctx: Ctx = {
     env, store, me, enquiryId,
     restricted: isRestrictedViewer(me),
@@ -312,15 +315,16 @@ export async function chatTurn(
     { role: 'user', content: String(message ?? '').slice(0, 2000) },
   ];
 
-  const chatModel = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || undefined;
+  const chatModel = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || (provider === 'agnes' ? 'agnes-3.0-flash' : undefined);
   const proposals: ChatProposal[] = [];
   const activity: ChatActivity[] = [];
   let reply = '';
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await gateway.complete({
       messages, temperature: 0.2, maxTokens: 1200,
-      provider: 'openrouter',
+      provider,
       ...(chatModel ? { model: chatModel } : {}),
+      ...(provider === 'agnes' ? { reasoningEffort: 'medium' as const } : {}),
       tools, toolChoice: 'auto',
     });
     if (res.toolCalls && res.toolCalls.length > 0) {

@@ -23,8 +23,8 @@ const PROVIDERS = {
     baseURL: 'https://apihub.agnes-ai.com/v1/chat/completions',
     supportsReasoning: true,
     jsonMode: { type: 'json_object' },
-    defaultModel: 'agnes-2.5-flash',
-    visionModel: 'agnes-2.5-flash',
+    defaultModel: 'agnes-3.0-flash',
+    visionModel: 'agnes-3.0-flash',
   },
   groq: {
     id: 'groq',
