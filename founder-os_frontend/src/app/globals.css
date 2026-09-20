@@ -518,6 +518,37 @@ label:has(input[type="radio"]) {
   animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes chat-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-chat-in {
+  animation: chat-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes chat-in-right {
+  from { opacity: 0; transform: translateY(8px) translateX(8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) translateX(0) scale(1); }
+}
+.animate-chat-in-right {
+  animation: chat-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes float-pill {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-1px); }
+}
+@keyframes dots-bounce {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+@keyframes shimmer-slow {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 8px 32px rgba(91,94,240,0.12), 0 1px 3px rgba(0,0,0,0.3); }
+  50% { box-shadow: 0 12px 40px rgba(91,94,240,0.18), 0 1px 3px rgba(0,0,0,0.3); }
+}
+
 /* Markdown (AI replies) */
 .md-text {
   font-size: 12px;
