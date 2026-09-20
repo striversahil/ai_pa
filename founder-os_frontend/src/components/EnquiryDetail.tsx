@@ -1,11 +1,9 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useRef } from "react";
 import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../types";
-import CommentNode from "./CommentNode";
 import EnquiryChat from "./EnquiryChat";
 import { useIntake } from "../hooks/useIntake";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
-import ActivityTimeline from "./ActivityTimeline";
 import Modal from "./Modal";
 import ItemBoxList, { blankItem } from "./ItemBoxList";
 import { companiesDiffer } from "@/enquiry/company";
@@ -34,11 +32,8 @@ interface EnquiryDetailProps {
 export default function EnquiryDetail({
   selectedEnquiry,
   agents,
-  currentAgent,
-  comments,
   onUpdateStatus,
   onUpdateAgent,
-  onAddComment,
   onUpdateItems,
   onAcceptSuggestion,
   onMarkSent,
@@ -49,16 +44,6 @@ export default function EnquiryDetail({
   redacted = false,
   ratesMode
 }: EnquiryDetailProps) {
-  // Localized view states
-  const [activeDetailTab, setActiveDetailTab] = useState<"comments" | "activity">("comments");
-  
-  // Comment posting states
-  const [commentInput, setCommentInput] = useState("");
-  const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
-  const [commentImage, setCommentImage] = useState<string | null>(null);
-  // Discussion scope: sales (private) vs procurement (shared ops thread).
-  // Replies always inherit the parent's scope (server-enforced too).
-  const [commentScope, setCommentScope] = useState<"sales" | "procurement">("sales");
 
   // Multi-item add: same item boxes as the B2B form (name/qty/spec/media +
   // duplicate + new-item box), appended to the enquiry's items on save.
@@ -133,70 +118,6 @@ export default function EnquiryDetail({
     setAddReqText("");
     setAddReqImages([]);
     setItemsOpen(false);
-  };
-
-  // Nested comment trees calculations (scoped: one thread per visibility).
-  const nestedComments = useMemo(() => {
-    const enquiryComments = comments.filter(
-      (c) => c.enquiryId === selectedEnquiry.id && (c.visibility ?? "sales") === commentScope,
-    );
-    const sorted = [...enquiryComments].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-    const commentMap: Record<string, Comment & { replies: Comment[] }> = {};
-    const rootComments: (Comment & { replies: Comment[] })[] = [];
-
-    sorted.forEach(c => {
-      commentMap[c.id] = { ...c, replies: [] };
-    });
-
-    sorted.forEach(c => {
-      const mapped = commentMap[c.id];
-      if (c.parentId && commentMap[c.parentId]) {
-        commentMap[c.parentId].replies.push(mapped);
-      } else {
-        rootComments.push(mapped);
-      }
-    });
-
-    // Sort root comments by newest first so the latest parent thread is at the top
-    rootComments.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    return rootComments;
-  }, [comments, selectedEnquiry.id, commentScope]);
-
-  // Post Comment / Reply inside thread (replies inherit the parent's scope).
-  const handlePostComment = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!commentInput.trim()) return;
-    const parent = replyToCommentId ? comments.find((c) => c.id === replyToCommentId) : null;
-
-    const newComment: Comment = {
-      id: `com-${Date.now()}`,
-      enquiryId: selectedEnquiry.id,
-      agentId: currentAgent.id,
-      content: commentInput.trim(),
-      createdAt: new Date().toISOString(),
-      parentId: replyToCommentId,
-      imageUrl: commentImage || undefined,
-      visibility: parent ? (parent.visibility ?? "sales") : commentScope,
-    };
-
-    onAddComment(newComment);
-    setCommentInput("");
-    setReplyToCommentId(null);
-    setCommentImage(null);
-  };
-
-  // Convert uploaded image file to data URI
-  const handleCommentImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setCommentImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
   };
 
   return (
@@ -354,121 +275,6 @@ export default function EnquiryDetail({
             <p className="text-[11px] text-amber-500 font-semibold px-1">Securing the latest updates for this view…</p>
           )}
 
-          {/* Right Column Twitter threads & audit log */}
-          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm flex flex-col min-h-[500px]">
-            <div className="flex items-center justify-between border-b border-[var(--border-card)] pb-4 mb-4">
-              <div className="flex gap-4">
-                <button 
-                  onClick={() => setActiveDetailTab("comments")}
-                  className={`text-sm font-bold pb-2 relative transition-all cursor-pointer ${activeDetailTab === "comments" ? "text-brand-indigo after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-brand-indigo" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
-                  type="button"
-                >
-                  Confirmations Timeline
-                </button>
-                <button 
-                  onClick={() => setActiveDetailTab("activity")}
-                  className={`text-sm font-bold pb-2 relative transition-all cursor-pointer ${activeDetailTab === "activity" ? "text-brand-indigo after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-brand-indigo" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
-                  type="button"
-                >
-                  Activity Audit Logs
-                </button>
-              </div>
-            </div>
-
-            {/* TAB 1: Threaded Discussion Feed */}
-            {activeDetailTab === "comments" && (
-              <div className="space-y-5 flex-grow flex flex-col">
-                {!redacted && (
-                <div className="flex gap-1.5">
-                  {(ratesMode === "none" ? (["sales"] as const) : (["sales", "procurement"] as const)).map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => { setCommentScope(s); setReplyToCommentId(null); }}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-full border cursor-pointer ${commentScope === s ? "bg-brand-indigo text-white border-brand-indigo" : "bg-transparent text-[var(--text-secondary)] border-[var(--border-card)] hover:bg-[var(--bg-input)]"}`}
-                      title={s === "sales" ? "Private sales thread" : "Shared with procurement"}
-                    >
-                      {s === "sales" ? "Sales" : "Procurement"}
-                    </button>
-                  ))}
-                </div>
-                )}
-                {/* Input block at the top */}
-                <div className="bg-[var(--bg-input)]/20 p-4 rounded-xl border border-[var(--border-card)] mb-2">
-                  {replyToCommentId && (
-                    <div className="flex items-center justify-between bg-brand-indigo/10 px-3 py-1.5 rounded-lg mb-2 text-xs">
-                      <span className="font-semibold text-brand-indigo">Replying to comment...</span>
-                      <button onClick={() => setReplyToCommentId(null)} className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer font-bold bg-transparent border-0">&times;</button>
-                    </div>
-                  )}
-                  
-                  <form onSubmit={handlePostComment} className="space-y-3">
-                    <textarea 
-                      value={commentInput}
-                      onChange={(e) => setCommentInput(e.target.value)}
-                      placeholder={replyToCommentId ? "Write a threaded reply..." : "Type your update or status confirmation..."}
-                      className="w-full bg-transparent border-0 text-sm outline-none resize-none placeholder-[var(--text-tertiary)] text-[var(--text-primary)] min-h-[60px]"
-                    />
-
-                    {commentImage && (
-                      <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                        <img src={commentImage} alt="Attachment preview" className="w-full h-full object-cover" />
-                        <button type="button" onClick={() => setCommentImage(null)} className="absolute top-1 right-1 bg-black/75 text-zinc-900 dark:text-white w-5 h-5 rounded-full flex items-center justify-center text-xs cursor-pointer font-bold border-0">&times;</button>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between items-center pt-2 border-t border-[var(--border-card)]/50">
-                      <div className="flex gap-2">
-                        <label className="p-1.5 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer rounded-lg bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-all">
-                          <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          <input type="file" onChange={handleCommentImageUpload} accept="image/*" className="hidden" />
-                        </label>
-                      </div>
-
-                      <button type="submit" className="bg-brand-indigo hover:opacity-90 text-zinc-900 dark:text-white font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition-all duration-200 cursor-pointer">
-                        {replyToCommentId ? "Reply" : "Comment"}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-
-                {/* Comments List Underneath */}
-                {nestedComments.length === 0 ? (
-                  <div className="flex-grow flex flex-col items-center justify-center text-center p-8 gap-2 text-[var(--text-secondary)]">
-                    <svg className="w-10 h-10 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                    <span className="text-xs">No status confirmations recorded. Post the first update above!</span>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {nestedComments.map(comment => (
-                      <CommentNode 
-                        key={comment.id} 
-                        comment={comment} 
-                        agents={agents} 
-                        redacted={redacted}
-                        onReplyClick={(cid) => setReplyToCommentId(cid)} 
-                        onImageClick={(url) => onOpenLightbox(url)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB 2: Audit Logs timeline */}
-            {activeDetailTab === "activity" && (
-              <ActivityTimeline
-                activities={selectedEnquiry.activities}
-                agents={agents}
-              />
-            )}
-            </div>
-          </div>
-
           {/* Copilot dock — fixed viewport box on xl (independent of page
               layout, so the input is always visible); collapses to a slim tab */}
           {!redacted && (
@@ -491,6 +297,7 @@ export default function EnquiryDetail({
             </div>
           )}
         </div>
+      </div>
 
         {!redacted && (
           <div className="xl:hidden">
