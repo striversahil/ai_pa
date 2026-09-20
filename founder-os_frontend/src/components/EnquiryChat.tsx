@@ -71,18 +71,24 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
     setBusy(true);
     setMsgs((p) => [...p, { role: "user", text: q }]);
     setInput("");
-    // Streaming primary (agnes-3.0-flash) — falls back to non-streaming JSON on any failure
+    // Streaming primary (agnes-3.0-flash, falls back to Groq inside Worker on 1015) — bounded, never hangs.
     const tryStream = async (): Promise<boolean> => {
       try {
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 45000);
+        const t = setTimeout(() => ctrl.abort(), 20000);
         const res = await fetch(`/api/enquiries/${enquiryId}/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
           body: JSON.stringify({ message: q }),
           signal: ctrl.signal,
         });
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          // Worker now returns 429 JSON fast (<1s) instead of hanging — surface it and go to fallback
+          if (res.status === 429) throw new Error("Rate-limited");
+          throw new Error(`HTTP ${res.status} ${errText.slice(0,120)}`);
+        }
+        if (!res.body) throw new Error("no body");
         const ct = res.headers.get("content-type") || "";
         if (!ct.includes("text/event-stream")) throw new Error("not SSE");
         const reader = res.body.getReader();
@@ -94,7 +100,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
         let sawDone = false;
         // placeholder for live markdown table rendering
         setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
-        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 40000);
+        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 18000);
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -168,10 +174,10 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
     };
     const streamed = await tryStream();
     if (streamed) { setBusy(false); return; }
-    // Fallback: non-streaming JSON
+    // Fallback: non-streaming JSON (Worker will have already retried on Groq, so this is also fast)
     try {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 30000);
+      const t = setTimeout(() => ctrl.abort(), 20000);
       const res = await fetch(`/api/enquiries/${enquiryId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

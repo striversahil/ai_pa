@@ -185,6 +185,7 @@ export function isSecure(c: any): boolean {
   return new URL(c.req.url).protocol === 'https:';
 }
 export const AUTH_EXEMPT = [
+  '/api/debug/',
   '/api/auth/',
   '/api/runner/',
   '/api/trigger/',

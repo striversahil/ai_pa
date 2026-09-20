@@ -7,5 +7,10 @@ export const onRequest: PagesFunction = async ({ request, env }) => {
   const dest = new URL('/api' + url.pathname.replace(/^\/api/, '') + url.search, target);
   const upstream = new Request(dest.toString(), request);
   upstream.headers.set('origin', target);
-  return fetch(upstream);
+  // Crucial for SSE: don't buffer, pass the Worker stream through verbatim
+  const res = await fetch(upstream);
+  const headers = new Headers(res.headers);
+  headers.set('X-Accel-Buffering', 'no');
+  headers.set('Cache-Control', 'no-cache');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 };

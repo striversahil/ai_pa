@@ -423,14 +423,15 @@ export class AiGateway {
             const msg = String((err as any)?.message ?? '');
             const isCf1015 = /1015|error code: 1015/i.test(msg);
             const retryAfter = this.extractRetryAfter(err);
-            // Cloudflare 1015 is egress IP limiting (72s), not key quota — don't blame the key, just back off and retry.
             if (isCf1015) {
-              const cd = retryAfter ?? 72_000;
-              logger.warn?.(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — backing off ${Math.round(cd/1000)}s, not cooling key`);
-              if (attempt < maxAttempts - 1) {
-                await sleep(Math.min(cd, 5_000));
-                continue;
-              }
+              const rawCd = retryAfter ?? 72_000;
+              const cd = Math.min(rawCd, 60_000);
+              key.cooldownUntil = Date.now() + cd;
+              key.failures++;
+              key.lastError = `429 Cloudflare 1015`;
+              logger.warn?.(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — failing fast, cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s)`);
+              const e: any = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
+              e.status = 429; e.retryAfter = cd; throw e;
             }
             const rawCd = retryAfter ?? 60_000;
             const cd = Math.min(rawCd, 60_000);

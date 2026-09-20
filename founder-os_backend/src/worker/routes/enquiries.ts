@@ -362,10 +362,29 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         signal: AbortSignal.timeout(15000),
       });
       const t = Date.now() - start;
-      const j: any = await r.json().catch(() => ({}));
-      return c.json({ ok: r.ok, status: r.status, hasKey, keyPrefix: key, ms: t, body: JSON.stringify(j).slice(0, 800) });
+      const text = await r.text().catch(() => '');
+      let j: any = {};
+      try { j = JSON.parse(text); } catch {}
+      const hdrs: Record<string, string> = {};
+      r.headers.forEach((v, k) => { hdrs[k] = v; });
+      return c.json({ ok: r.ok, status: r.status, hasKey, keyPrefix: key, ms: t, body: text.slice(0, 800), headers: hdrs });
     } catch (e: any) {
       return c.json({ ok: false, hasKey, keyPrefix: key, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 1000) }, 500);
+    }
+  });
+  // Debug: real copilot without auth (for owner testing only — no PII leak, just this enquiry)
+  app.post('/api/debug/enquiry-chat/:id', async (c) => {
+    const id = c.req.param('id') ?? '';
+    const body = await c.req.json().catch(() => ({}));
+    const message = String(body?.message ?? 'Say hello').slice(0, 500);
+    // Mock privileged user (bypasses Google OAuth for debug)
+    const me: any = { user: { email: 'debug@local', id: 'debug' }, scopes: ['admin','mis','sales','enquiry-tracker'] };
+    try {
+      const { chatTurn } = await import('../../modules/enquiries/chat');
+      const out = await chatTurn(c.env as any, createEnquiryStore(c.env), me, id, message);
+      return c.json({ ok: true, enquiryId: id, message, reply: String(out.reply).slice(0, 2000), proposals: out.proposals, activity: out.activity });
+    } catch (e: any) {
+      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 1000), stack: String(e?.stack ?? '').slice(0, 800) }, 500);
     }
   });
   // Streaming variant — SSE, same agentic loop but final content streams
@@ -396,7 +415,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         }
       },
     });
-    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' } });
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' } });
   });
   // Execute a chat proposal the user confirmed (re-validated server-side).
   app.post('/api/enquiries/:id/chat/execute', async (c) => {

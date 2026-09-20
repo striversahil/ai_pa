@@ -315,18 +315,37 @@ export async function chatTurn(
     { role: 'user', content: String(message ?? '').slice(0, 2000) },
   ];
 
-  const chatModel = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || (provider === 'agnes' ? 'agnes-3.0-flash' : undefined);
+  const chatModelAgnes = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || 'agnes-3.0-flash';
+  const chatModelGroq = 'openai/gpt-oss-120b';
+  let activeProvider: 'agnes' | 'groq' | 'openrouter' = provider;
+  let activeModel: string | undefined = provider === 'agnes' ? chatModelAgnes : undefined;
   const proposals: ChatProposal[] = [];
   const activity: ChatActivity[] = [];
   let reply = '';
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await gateway.complete({
-      messages, temperature: 0.2, maxTokens: 800,
-      provider,
-      ...(chatModel ? { model: chatModel } : {}),
-      // No reasoningEffort for chat — keep it fast (<4s). Tables still work without thinking.
-      tools, toolChoice: 'auto',
-    });
+    let res: any;
+    try {
+      res = await gateway.complete({
+        messages, temperature: 0.2, maxTokens: 800,
+        provider: activeProvider,
+        ...(activeModel ? { model: activeModel } : {}),
+        tools, toolChoice: 'auto',
+      });
+    } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      const is429 = /429|rate-limit|1015/i.test(msg) || e?.status === 429;
+      // Agnes hit Cloudflare 1015 / 20 RPM — fall back to Groq in the SAME turn (<2s extra) so the user never sees "Consulting..." hang.
+      if (is429 && activeProvider === 'agnes') {
+        activeProvider = 'groq';
+        activeModel = chatModelGroq;
+        // one retry immediately on Groq
+        res = await gateway.complete({
+          messages, temperature: 0.2, maxTokens: 800,
+          provider: activeProvider, model: activeModel,
+          tools, toolChoice: 'auto',
+        });
+      } else throw e;
+    }
     if (res.toolCalls && res.toolCalls.length > 0) {
       messages.push({
         role: 'assistant',
@@ -398,7 +417,10 @@ export async function* streamChatTurn(
     ...history,
     { role: 'user', content: String(message ?? '').slice(0, 2000) },
   ];
-  const chatModel = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || (provider === 'agnes' ? 'agnes-3.0-flash' : undefined);
+  const chatModelAgnes = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || 'agnes-3.0-flash';
+  const chatModelGroq = 'openai/gpt-oss-120b';
+  let activeProvider: 'agnes' | 'groq' | 'openrouter' = provider;
+  let activeModel: string | undefined = provider === 'agnes' ? chatModelAgnes : undefined;
   const proposals: ChatProposal[] = [];
   const activity: ChatActivity[] = [];
   let reply = '';
@@ -409,8 +431,8 @@ export async function* streamChatTurn(
     let finishReason: string | undefined;
     try {
       for await (const chunk of gateway.stream({
-        messages, temperature: 0.2, maxTokens: 800, provider,
-        ...(chatModel ? { model: chatModel } : {}),
+        messages, temperature: 0.2, maxTokens: 800, provider: activeProvider,
+        ...(activeModel ? { model: activeModel } : {}),
         tools, toolChoice: 'auto',
       })) {
         if (chunk.contentDelta) {
@@ -432,10 +454,16 @@ export async function* streamChatTurn(
         if (chunk.finishReason) finishReason = String(chunk.finishReason);
       }
     } catch (e: any) {
-      // Fallback to non-streaming on stream failure (no thinking for speed)
+      const emsg = String(e?.message ?? '');
+      const is429 = /429|rate-limit|1015/i.test(emsg) || (e as any)?.status === 429;
+      if (is429 && activeProvider === 'agnes') {
+        // Agnes hit Cloudflare 1015 / 20 RPM — fall back to Groq in the SAME turn so the user never sees "Consulting..." hang.
+        activeProvider = 'groq'; activeModel = chatModelGroq;
+      }
+      // Fallback to non-streaming on stream failure (now on Groq if we just switched)
       const res = await gateway.complete({
-        messages, temperature: 0.2, maxTokens: 800, provider,
-        ...(chatModel ? { model: chatModel } : {}),
+        messages, temperature: 0.2, maxTokens: 800, provider: activeProvider,
+        ...(activeModel ? { model: activeModel } : {}),
         tools, toolChoice: 'auto',
       });
       if (res.toolCalls && res.toolCalls.length) {
