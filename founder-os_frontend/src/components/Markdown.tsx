@@ -29,8 +29,45 @@ function render(src: string): string {
       inList = null;
     }
   };
+  const isTableSep = (s: string) => /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(s);
+  const splitRow = (s: string) => {
+    let t = s.trim();
+    if (t.startsWith("|")) t = t.slice(1);
+    if (t.endsWith("|")) t = t.slice(0, -1);
+    return t.split("|").map((c) => c.trim());
+  };
   while (i < lines.length) {
     const line = lines[i];
+    // table: header | sep | rows
+    if (line.trim().includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      closeList();
+      const header = splitRow(line);
+      const alignRaw = splitRow(lines[i + 1]);
+      const aligns = header.map((_, idx) => {
+        const c = (alignRaw[idx] ?? "").trim();
+        if (c.startsWith(":") && c.endsWith(":")) return "center";
+        if (c.endsWith(":")) return "right";
+        return "left";
+      });
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].trim().includes("|") && lines[i].trim() !== "") {
+        // stop if not table-like (no pipe)
+        if (!lines[i].includes("|")) break;
+        rows.push(splitRow(lines[i]));
+        i++;
+      }
+      html.push('<div class="md-table-wrap"><table><thead><tr>');
+      header.forEach((c, idx) => html.push(`<th style="text-align:${aligns[idx]}">${inline(c)}</th>`));
+      html.push("</tr></thead><tbody>");
+      rows.forEach((r) => {
+        html.push("<tr>");
+        header.forEach((_, idx) => html.push(`<td style="text-align:${aligns[idx]}">${inline(r[idx] ?? "")}</td>`));
+        html.push("</tr>");
+      });
+      html.push("</tbody></table></div>");
+      continue;
+    }
     const fence = line.trim().startsWith("```");
     if (fence) {
       closeList();

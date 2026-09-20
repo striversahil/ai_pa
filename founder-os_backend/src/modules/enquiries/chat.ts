@@ -363,6 +363,122 @@ export async function chatTurn(
   return { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
 }
 
+/** Streaming variant — yields SSE events for live typing. Keeps the SAME agentic loop
+ *  (tools are still executed server-side), but the final assistant `content` is streamed
+ *  delta-by-delta so the UI can render markdown tables live. */
+export async function* streamChatTurn(
+  env: Record<string, unknown>,
+  store: EnquiryStore,
+  me: MeResponse,
+  enquiryId: string,
+  message: string,
+): AsyncGenerator<{ type: string; data: any }, ChatReply, unknown> {
+  const gateway = getGateway(env);
+  const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
+  const hasOpenrouter = gateway.health().some((h) => h.provider === 'openrouter');
+  if (!hasAgnes && !hasOpenrouter) {
+    const r: ChatReply = { reply: 'AI chat is not configured (no Agnes/OpenRouter key).', proposals: [], activity: [] };
+    yield { type: 'done', data: r };
+    return r;
+  }
+  const provider: 'agnes' | 'openrouter' = hasAgnes ? 'agnes' : 'openrouter';
+  const ctx: Ctx = { env, store, me, enquiryId, restricted: isRestrictedViewer(me), privileged: canManageRates(me) };
+  const key = threadKey(enquiryId, me);
+  let history: ChatMessage[] = [];
+  try {
+    const cached = await cacheGet<ChatMessage[]>(key, THREAD_TTL_MS);
+    if (Array.isArray(cached)) history = cached.slice(-MAX_HISTORY);
+  } catch {}
+  const tools = toolDefs(ctx);
+  const scopeNote = ctx.restricted
+    ? 'The viewer is procurement: NEVER reveal client identity, contacts, or final rates/margins.'
+    : ctx.privileged ? 'The viewer is management: full detail allowed.' : 'The viewer is sales: full pipeline detail, but margin internals (selected vendor, markup) stay hidden.';
+  const messages: ChatMessage[] = [
+    { role: 'system', content: `You are the copilot for ONE sales enquiry (ID ${enquiryId}). Answer questions using the tools — never invent specs, rates, or statuses. Keep replies short. When the user wants something changed (post a note, fix a spec), call the propose_* tool so they can confirm; do not claim it is done. ${scopeNote} When you need to compare items, specs, or prices, use a markdown table.` },
+    ...history,
+    { role: 'user', content: String(message ?? '').slice(0, 2000) },
+  ];
+  const chatModel = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || (provider === 'agnes' ? 'agnes-3.0-flash' : undefined);
+  const proposals: ChatProposal[] = [];
+  const activity: ChatActivity[] = [];
+  let reply = '';
+  for (let step = 0; step < MAX_STEPS; step++) {
+    // Stream this step — accumulate tool calls and content
+    let stepContent = '';
+    const toolMap = new Map<number, { id: string; name: string; args: string }>();
+    let finishReason: string | undefined;
+    try {
+      for await (const chunk of gateway.stream({
+        messages, temperature: 0.2, maxTokens: 1200, provider,
+        ...(chatModel ? { model: chatModel } : {}),
+        ...(provider === 'agnes' ? { reasoningEffort: 'medium' as const } : {}),
+        tools, toolChoice: 'auto',
+      })) {
+        if (chunk.contentDelta) {
+          stepContent += chunk.contentDelta;
+          yield { type: 'delta', data: { text: chunk.contentDelta } };
+        }
+        if (chunk.toolCallDelta) {
+          for (const tc of chunk.toolCallDelta as any[]) {
+            const idx = Number(tc.index ?? 0);
+            const cur = toolMap.get(idx) ?? { id: '', name: '', args: '' };
+            if (tc.id) cur.id = String(tc.id);
+            if (tc.function?.name) cur.name = String(tc.function.name);
+            if (tc.function?.arguments) cur.args += String(tc.function.arguments);
+            // OpenAI streams also send type/id once; handle id without index
+            if (!cur.id && tc.id) cur.id = String(tc.id);
+            toolMap.set(idx, cur);
+          }
+        }
+        if (chunk.finishReason) finishReason = String(chunk.finishReason);
+      }
+    } catch (e: any) {
+      // Fallback to non-streaming on stream failure
+      const res = await gateway.complete({
+        messages, temperature: 0.2, maxTokens: 1200, provider,
+        ...(chatModel ? { model: chatModel } : {}),
+        ...(provider === 'agnes' ? { reasoningEffort: 'medium' as const } : {}),
+        tools, toolChoice: 'auto',
+      });
+      if (res.toolCalls && res.toolCalls.length) {
+        for (const tc of res.toolCalls) toolMap.set(toolMap.size, { id: tc.id, name: tc.name, args: tc.arguments });
+        finishReason = 'tool_calls';
+      } else {
+        stepContent = res.content ?? '';
+        if (stepContent) yield { type: 'delta', data: { text: stepContent } };
+        finishReason = res.toolCalls ? 'tool_calls' : 'stop';
+      }
+    }
+    const toolCalls = [...toolMap.values()].filter((t) => t.name);
+    if (toolCalls.length > 0) {
+      messages.push({
+        role: 'assistant', content: stepContent,
+        tool_calls: toolCalls.map((tc) => ({ id: tc.id || `call_${Math.random().toString(36).slice(2)}`, type: 'function' as const, function: { name: tc.name, arguments: tc.args || '{}' } })),
+      });
+      for (const tc of toolCalls.slice(0, 3)) {
+        const args = parseArgs(tc.args);
+        let out: { result: unknown; proposals?: ChatProposal[] };
+        try { out = await execTool(ctx, tc.name, args); } catch (e: any) { out = { result: { error: String(e?.message ?? e).slice(0, 200) } }; }
+        if (out.proposals) proposals.push(...out.proposals);
+        const act = { tool: tc.name, label: activityLabel(tc.name, args, out) };
+        activity.push(act);
+        yield { type: 'activity', data: act };
+        messages.push({ role: 'tool', content: JSON.stringify(out.result).slice(0, 3000), tool_call_id: tc.id });
+      }
+      continue;
+    }
+    // No tool calls — this was the final streamed answer
+    reply = stepContent.trim() || 'I can’t help with that — try asking about items, specs, prices in memory, or the ops thread.';
+    break;
+  }
+  if (!reply) reply = 'I ran out of steps — try a narrower question.';
+  const next: ChatMessage[] = [...history, { role: 'user' as const, content: String(message).slice(0, 2000) }, { role: 'assistant' as const, content: reply.slice(0, 2000) }].slice(-MAX_HISTORY);
+  try { await cacheSet(key, next, THREAD_TTL_MS); } catch {}
+  const final: ChatReply = { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
+  yield { type: 'done', data: final };
+  return final;
+}
+
 /** Execute a confirmed proposal through the guarded route functions. */
 export async function executeProposal(
   store: EnquiryStore,

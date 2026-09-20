@@ -65,29 +65,128 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
 
   if (!open) return null;
 
+  const [streamText, setStreamText] = useState("");
+  const [streamActivity, setStreamActivity] = useState<ChatActivity[]>([]);
+
   const send = async (text: string) => {
     const q = text.trim();
     if (!q || busy) return;
     setBusy(true);
+    setStreamText("");
+    setStreamActivity([]);
     setMsgs((p) => [...p, { role: "user", text: q }]);
     setInput("");
+    // Try streaming first, fallback to non-streaming JSON
     try {
-      const res = await fetch(`/api/enquiries/${enquiryId}/chat`, {
+      const res = await fetch(`/api/enquiries/${enquiryId}/chat/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({ message: q }),
       });
-      const data = await res.json();
-      setMsgs((p) => [...p, {
-        role: "assistant",
-        text: String(data.reply || data.error || "No answer."),
-        proposals: Array.isArray(data.proposals) ? data.proposals : [],
-        activity: Array.isArray(data.activity) ? data.activity : [],
-      }]);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("text/event-stream")) throw new Error("not SSE");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accText = "";
+      let accActivity: ChatActivity[] = [];
+      let accProposals: ChatProposal[] = [];
+      let done = false;
+      // create a placeholder assistant msg that we update live via streamText/streamActivity
+      setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
+      while (!done) {
+        const { done: rDone, value } = await reader.read();
+        if (rDone) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") { done = true; break; }
+          try {
+            const evt = JSON.parse(payload);
+            if (evt.type === "delta" && typeof evt.data?.text === "string") {
+              accText += evt.data.text;
+              setStreamText(accText);
+              // update last msg text live for immediate markdown table rendering
+              setMsgs((p) => {
+                const cp = [...p];
+                const last = cp[cp.length - 1];
+                if (last && last.role === "assistant") last.text = accText;
+                return [...cp];
+              });
+            } else if (evt.type === "activity" && evt.data) {
+              accActivity = [...accActivity, evt.data as ChatActivity];
+              setStreamActivity(accActivity);
+              setMsgs((p) => {
+                const cp = [...p];
+                const last = cp[cp.length - 1];
+                if (last && last.role === "assistant") last.activity = [...accActivity];
+                return [...cp];
+              });
+            } else if (evt.type === "done" && evt.data) {
+              const d = evt.data;
+              accText = String(d.reply ?? accText);
+              accActivity = Array.isArray(d.activity) ? d.activity : accActivity;
+              accProposals = Array.isArray(d.proposals) ? d.proposals : [];
+              setMsgs((p) => {
+                const cp = [...p];
+                const last = cp[cp.length - 1];
+                if (last && last.role === "assistant") {
+                  last.text = accText;
+                  last.activity = accActivity;
+                  last.proposals = accProposals;
+                }
+                return [...cp];
+              });
+            } else if (evt.type === "error") {
+              setMsgs((p) => {
+                const cp = [...p];
+                const last = cp[cp.length - 1];
+                if (last && last.role === "assistant" && !last.text) last.text = String(evt.data?.error || "No answer.");
+                return [...cp];
+              });
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      // if stream ended without done (empty), fallback will have filled via deltas
     } catch {
-      setMsgs((p) => [...p, { role: "assistant", text: "Chat failed — please retry." }]);
+      // Fallback: non-streaming JSON (old endpoint)
+      try {
+        const res2 = await fetch(`/api/enquiries/${enquiryId}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: q }),
+        });
+        const data = await res2.json();
+        // replace last placeholder if streaming had created one
+        setMsgs((p) => {
+          const last = p[p.length - 1];
+          if (last && last.role === "assistant" && last.text === "" && p.length > 1 && p[p.length - 2].role === "user") {
+            const cp = p.slice(0, -1);
+            return [...cp, { role: "assistant", text: String(data.reply || data.error || "No answer."), proposals: Array.isArray(data.proposals) ? data.proposals : [], activity: Array.isArray(data.activity) ? data.activity : [] }];
+          }
+          return [...p, { role: "assistant", text: String(data.reply || data.error || "No answer."), proposals: Array.isArray(data.proposals) ? data.proposals : [], activity: Array.isArray(data.activity) ? data.activity : [] }];
+        });
+      } catch {
+        setMsgs((p) => {
+          const last = p[p.length - 1];
+          if (last && last.role === "assistant" && last.text === "") {
+            const cp = [...p];
+            cp[cp.length - 1].text = "Chat failed — please retry.";
+            return [...cp];
+          }
+          return [...p, { role: "assistant", text: "Chat failed — please retry." }];
+        });
+      }
     } finally {
       setBusy(false);
+      setStreamText("");
+      setStreamActivity([]);
     }
   };
 

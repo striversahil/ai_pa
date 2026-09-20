@@ -453,6 +453,68 @@ export class AiGateway {
     throw new AiGatewayError(`All AI keys exhausted after ${maxAttempts} attempts`, lastErr, maxAttempts);
   }
 
+  /** Streaming: yields content/reasoning/tool deltas via SSE (OpenAI `stream:true`). */
+  async *stream(req: CompletionRequest): AsyncGenerator<{ contentDelta?: string; reasoningDelta?: string; toolCallDelta?: any[]; finishReason?: string; usage?: any }, void, unknown> {
+    if (!req.provider && req.model && req.model.startsWith('agnes-')) {
+      req = { ...req, provider: 'agnes' };
+    }
+    const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider) : this.pool.select(req.provider);
+    if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)');
+    const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
+    const wantsVision = req.messages.some((m) => Array.isArray(m.content));
+    const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${key.key}` };
+    const body: Record<string, unknown> = {
+      model, messages: req.messages, temperature: req.temperature ?? 0.2,
+      ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+      ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
+      ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
+      ...provider.extraParams, stream: true,
+    };
+    if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
+    if (provider.id === 'agnes' && req.reasoningEffort) (body as any).chat_template_kwargs = { enable_thinking: true };
+    else if (provider.reasoningObject) (body as any).reasoning = { enabled: true };
+    else if (provider.supportsReasoning && req.reasoningEffort) (body as any).reasoning_effort = req.reasoningEffort;
+    const res = await fetch(provider.baseURL, { method: 'POST', headers, body: JSON.stringify(body), signal: req.signal });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err: any = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+      err.status = res.status; throw err;
+    }
+    if (!res.body) return;
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]' || data === '') continue;
+          try {
+            const json: any = JSON.parse(data);
+            const choice = json.choices?.[0];
+            if (!choice) { if (json.usage) yield { usage: json.usage }; continue; }
+            const delta = choice.delta ?? {};
+            if (typeof delta.content === 'string' && delta.content) yield { contentDelta: delta.content };
+            if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) yield { reasoningDelta: delta.reasoning_content };
+            if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) yield { toolCallDelta: delta.tool_calls };
+            if (choice.finish_reason) yield { finishReason: choice.finish_reason };
+            if (json.usage) yield { usage: json.usage };
+          } catch { /* ignore parse */ }
+        }
+      }
+    } finally {
+      try { reader.releaseLock(); } catch {}
+    }
+  }
+
   /** Convenience: complete + parse JSON (falls back to extracting the first
    *  JSON object/array when the model wraps it in prose — providers without
    *  structured-output support need this). */

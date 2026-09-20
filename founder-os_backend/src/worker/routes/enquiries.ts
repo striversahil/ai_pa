@@ -303,7 +303,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const r = await EnquiryRoutes.enquiryIntake(me, c.req.param('id') ?? '');
     return c.json(r.body, r.status as any);
   });
-  // Per-enquiry copilot: agentic sidebar chat (OpenRouter-only tools loop).
+  // Per-enquiry copilot: agentic sidebar chat (Agnes-primary tools loop).
   app.post('/api/enquiries/:id/chat', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
@@ -312,6 +312,36 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!message) return c.json({ error: 'message required' }, 400);
     const out = await chatTurn(c.env as any, createEnquiryStore(c.env), me, c.req.param('id') ?? '', message);
     return c.json(out);
+  });
+  // Streaming variant — SSE, same agentic loop but final content streams
+  app.post('/api/enquiries/:id/chat/stream', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    const body = await c.req.json().catch(() => ({}));
+    const message = String(body?.message ?? '').trim().slice(0, 2000);
+    if (!message) return c.json({ error: 'message required' }, 400);
+    const { streamChatTurn } = await import('../../modules/enquiries/chat');
+    const gen = streamChatTurn(c.env as any, createEnquiryStore(c.env), me, c.req.param('id') ?? '', message);
+    const stream = new ReadableStream({
+      async start(controller) {
+        const enc = new TextEncoder();
+        const send = (type: string, data: any) => {
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ type, data })}\n\n`));
+        };
+        try {
+          for await (const evt of gen) {
+            send(evt.type, evt.data);
+          }
+          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+        } catch (e: any) {
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'error', data: { error: String(e?.message ?? e).slice(0, 500) } })}\n\n`));
+          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' } });
   });
   // Execute a chat proposal the user confirmed (re-validated server-side).
   app.post('/api/enquiries/:id/chat/execute', async (c) => {

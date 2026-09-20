@@ -562,6 +562,11 @@ label:has(input[type="radio"]) {
   color: var(--color-brand-indigo);
   text-decoration: underline;
 }
+.md-table-wrap { overflow-x: auto; margin: 0.6em 0; border-radius: 10px; border: 1px solid var(--border-card); }
+.md-table-wrap table { width: 100%; border-collapse: collapse; font-size: 11px; line-height: 1.5; min-width: 320px; }
+.md-table-wrap th { text-align: left; font-weight: 800; background: color-mix(in srgb, var(--bg-input) 85%, transparent); color: var(--text-primary); padding: 6px 8px; border-bottom: 1px solid var(--border-card); white-space: nowrap; }
+.md-table-wrap td { padding: 6px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border-card) 65%, transparent); color: var(--text-secondary); vertical-align: top; }
+.md-table-wrap tr:last-child td { border-bottom: none; }
 
 .animate-fade-in {
   animation: fade-in 0.25s ease-out forwards;
