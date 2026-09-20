@@ -72,11 +72,19 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
     setMsgs((p) => [...p, { role: "user", text: q }]);
     setInput("");
     try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 30000);
       const res = await fetch(`/api/enquiries/${enquiryId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: q }),
+        signal: ctrl.signal,
       });
+      clearTimeout(t);
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(errText || `HTTP ${res.status}`);
+      }
       const data = await res.json();
       setMsgs((p) => [...p, {
         role: "assistant",
@@ -84,8 +92,9 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
         proposals: Array.isArray(data.proposals) ? data.proposals : [],
         activity: Array.isArray(data.activity) ? data.activity : [],
       }]);
-    } catch {
-      setMsgs((p) => [...p, { role: "assistant", text: "Chat failed — please retry." }]);
+    } catch (e: any) {
+      const msg = e?.name === "AbortError" ? "Chat timed out (30s) — please retry." : "Chat failed — please retry.";
+      setMsgs((p) => [...p, { role: "assistant", text: msg }]);
     } finally {
       setBusy(false);
     }

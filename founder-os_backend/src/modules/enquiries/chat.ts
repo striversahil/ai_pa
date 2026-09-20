@@ -321,10 +321,10 @@ export async function chatTurn(
   let reply = '';
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await gateway.complete({
-      messages, temperature: 0.2, maxTokens: 1200,
+      messages, temperature: 0.2, maxTokens: 800,
       provider,
       ...(chatModel ? { model: chatModel } : {}),
-      ...(provider === 'agnes' ? { reasoningEffort: 'medium' as const } : {}),
+      // No reasoningEffort for chat — keep it fast (<4s). Tables still work without thinking.
       tools, toolChoice: 'auto',
     });
     if (res.toolCalls && res.toolCalls.length > 0) {
@@ -403,15 +403,14 @@ export async function* streamChatTurn(
   const activity: ChatActivity[] = [];
   let reply = '';
   for (let step = 0; step < MAX_STEPS; step++) {
-    // Stream this step — accumulate tool calls and content
+    // Stream this step — accumulate tool calls and content (no thinking for speed)
     let stepContent = '';
     const toolMap = new Map<number, { id: string; name: string; args: string }>();
     let finishReason: string | undefined;
     try {
       for await (const chunk of gateway.stream({
-        messages, temperature: 0.2, maxTokens: 1200, provider,
+        messages, temperature: 0.2, maxTokens: 800, provider,
         ...(chatModel ? { model: chatModel } : {}),
-        ...(provider === 'agnes' ? { reasoningEffort: 'medium' as const } : {}),
         tools, toolChoice: 'auto',
       })) {
         if (chunk.contentDelta) {
@@ -433,11 +432,10 @@ export async function* streamChatTurn(
         if (chunk.finishReason) finishReason = String(chunk.finishReason);
       }
     } catch (e: any) {
-      // Fallback to non-streaming on stream failure
+      // Fallback to non-streaming on stream failure (no thinking for speed)
       const res = await gateway.complete({
-        messages, temperature: 0.2, maxTokens: 1200, provider,
+        messages, temperature: 0.2, maxTokens: 800, provider,
         ...(chatModel ? { model: chatModel } : {}),
-        ...(provider === 'agnes' ? { reasoningEffort: 'medium' as const } : {}),
         tools, toolChoice: 'auto',
       });
       if (res.toolCalls && res.toolCalls.length) {
