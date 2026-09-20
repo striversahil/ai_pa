@@ -602,6 +602,27 @@ label:has(input[type="radio"]) {
 .animate-fade-in {
   animation: fade-in 0.25s ease-out forwards;
 }
+@keyframes scale-down {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to { opacity: 0; transform: scale(0.96) translateY(14px); }
+}
+.animate-scale-down {
+  animation: scale-down 0.26s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.animate-fade-out {
+  animation: fade-out 0.2s ease-out forwards;
+}
+/* Chat tables — match normal chat 16px, not the small 11px default */
+.chat-markdown .md-text { font-size: 16px !important; line-height: 1.7 !important; font-family: 'Geist','Outfit',Inter,ui-sans-serif,system-ui !important; }
+.chat-markdown .md-table-wrap { margin: 0.7em 0; }
+.chat-markdown .md-table-wrap table { font-size: 14px !important; line-height: 1.6 !important; }
+.chat-markdown .md-table-wrap th { font-size: 13px !important; padding: 8px 10px !important; }
+.chat-markdown .md-table-wrap td { font-size: 14px !important; padding: 8px 10px !important; }
+.chat-markdown .md-text code { font-size: 13px !important; }
 
 /* Skeleton shimmer */
 .skeleton {

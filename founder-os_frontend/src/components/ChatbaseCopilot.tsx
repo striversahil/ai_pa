@@ -35,6 +35,8 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
   const [listening, setListening] = useState(false);
+  const [visible, setVisible] = useState(open);
+  const [exiting, setExiting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recogRef = useRef<any>(null);
@@ -43,10 +45,15 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [msgs, busy, open]);
+  }, [msgs, busy, open, visible]);
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 120);
-  }, [open]);
+    if (open) { setVisible(true); setExiting(false); setTimeout(() => inputRef.current?.focus(), 120); }
+    else if (visible) {
+      setExiting(true);
+      const t = setTimeout(() => { setVisible(false); setExiting(false); }, 260);
+      return () => clearTimeout(t);
+    }
+  }, [open, visible]);
 
   const send = async (text: string) => {
     const q = text.trim();
@@ -230,15 +237,15 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
 
   return (
     <>
-      {/* Backdrop with blur fade */}
-      {open && (
-        <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm animate-fade-in" onClick={onClose} />
+      {/* Backdrop with blur fade — slides/fades on close */}
+      {visible && (
+        <div className={`fixed inset-0 z-40 bg-black/30 backdrop-blur-sm ${exiting ? "animate-fade-out" : "animate-fade-in"}`} onClick={onClose} />
       )}
 
-      {/* Floating chat window — aesthetic dark glass */}
-      {open && (
+      {/* Floating chat window — slide-down on outside click */}
+      {visible && (
         <div
-          className="fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[min(560px,calc(100vw-24px))] h-[min(560px,calc(100vh-140px))] bg-[var(--bg-card)]/95 backdrop-blur-xl border border-white/[0.08] rounded-[20px] shadow-[0_20px_60px_rgba(0,0,0,0.5),0_1px_3px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.04)] flex flex-col overflow-hidden animate-scale-up"
+          className={`fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[min(560px,calc(100vw-24px))] h-[min(560px,calc(100vh-140px))] bg-[var(--bg-card)]/95 backdrop-blur-xl border border-white/[0.08] rounded-[20px] shadow-[0_20px_60px_rgba(0,0,0,0.5),0_1px_3px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.04)] flex flex-col overflow-hidden ${exiting ? "animate-scale-down" : "animate-scale-up"}`}
           role="dialog"
           aria-label="AI Agent"
           style={{ fontFamily: "'Geist', 'Outfit', Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
@@ -319,7 +326,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                               ))}
                             </div>
                           )}
-                          <div className="bg-[var(--bg-input)]/90 backdrop-blur-sm border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3.5 text-[16px] leading-[1.7] text-[var(--text-primary)] font-[450] shadow-sm hover:shadow-md hover:border-white/[0.08] hover:bg-[var(--bg-input)] transition-all duration-300">
+                          <div className="bg-[var(--bg-input)]/90 backdrop-blur-sm border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3.5 text-[16px] leading-[1.7] text-[var(--text-primary)] font-[450] shadow-sm hover:shadow-md hover:border-white/[0.08] hover:bg-[var(--bg-input)] transition-all duration-300 chat-markdown">
                             <Markdown text={m.text} className="md-text !text-[16px] !leading-[1.7]" />
                           </div>
                           <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1 font-medium">
