@@ -40,8 +40,9 @@ const analyze = require('./zoho-sync/analyze');
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-// SO_ONLY=1 (manual sales-orders-today tick) needs no LLM keys.
-if (process.env.SO_ONLY !== '1' && !process.env.GROQ_API_KEYS) missing.push('GROQ_API_KEYS');
+// SO_ONLY=1 (manual sales-orders-today tick) needs no LLM keys. Now Agnes primary — accept AGNES_API_KEY(S) or AI_KEYS (agnes:...) as LLM source.
+const hasLLM = (process.env.GROQ_API_KEYS || process.env.AGNES_API_KEY || process.env.AGNES_API_KEYS || process.env.AI_KEYS || process.env.REQUESTLY_API_KEY);
+if (process.env.SO_ONLY !== '1' && !hasLLM) missing.push('GROQ_API_KEYS or AGNES_API_KEY/AI_KEYS');
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
   process.exit(1);

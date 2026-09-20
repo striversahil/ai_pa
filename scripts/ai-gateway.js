@@ -6,16 +6,26 @@
  * exactly so both runtimes share one key-management contract:
  *
  * Key sources (single contract, both runtimes):
- *   env.GROQ_API_KEYS = "key1,key2,..." (Groq direct)
+ *   env.AGNES_API_KEY / env.AGNES_API_KEYS = Agnes keys (primary, sk-...)
+ *   env.GROQ_API_KEYS = Groq keys (fallback, gsk_...)
  *   env.OPENROUTER_API_KEYS / env.OPENROUTER_API_KEY = OpenRouter keys
- *     (default model inclusionai/ling-3.0-flash-vl:free, text+vision)
- *   env.AI_KEYS = "provider:key:label,..." (either provider)
+ *   env.AI_KEYS = "provider:key:label,..." (e.g. "agnes:sk-...:primary")
+ * Agnes primary via https://apihub.agnes-ai.com/v1 (agnes-2.5-flash, 512K),
+ * reasoning via chat_template_kwargs.enable_thinking (mapped from reasoningEffort).
  * 429s are retried immediately (up to 50 attempts) — burst limits wave off.
  */
 
 // ── Provider registry (mirror of TS) ─────────────────────────────────────────
 const OPENROUTER_VISION_MODEL = 'inclusionai/ling-3.0-flash-vl:free';
 const PROVIDERS = {
+  agnes: {
+    id: 'agnes',
+    baseURL: 'https://apihub.agnes-ai.com/v1/chat/completions',
+    supportsReasoning: true,
+    jsonMode: { type: 'json_object' },
+    defaultModel: 'agnes-2.5-flash',
+    visionModel: 'agnes-2.5-flash',
+  },
   groq: {
     id: 'groq',
     baseURL: 'https://api.groq.com/openai/v1/chat/completions',
@@ -124,9 +134,9 @@ class KeyPool {
       this.keys.push(this.makeKey(provider, k, label));
     };
 
-    // Key sources: GROQ_API_KEYS (groq) + OPENROUTER_API_KEYS/OPENROUTER_API_KEY
-    // (openrouter, singular also accepted). AI_KEYS "provider:key:label" entries
-    // are honored too.
+    // Key sources: AGNES_API_KEY(S) (primary) + GROQ etc (fallback). AI_KEYS "provider:key:label" honored too.
+    for (const key of raw(env && env.AGNES_API_KEY).split(',')) add('agnes', key);
+    for (const key of raw(env && env.AGNES_API_KEYS).split(',')) add('agnes', key);
     for (const key of raw(env && env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env && env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env && env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
@@ -136,7 +146,19 @@ class KeyPool {
     if (aiKeys) {
       for (const entry of aiKeys.split(',')) {
         const parts = entry.split(':');
-        if (parts.length >= 2) add((parts[0] || '').trim() || 'groq', parts.slice(1).join(':'));
+        if (parts.length >= 2) {
+          const prov = (parts[0] || '').trim();
+          let key, label;
+          if (parts.length >= 3) {
+            label = parts[parts.length - 1];
+            key = parts.slice(1, parts.length - 1).join(':');
+          } else {
+            key = parts[1];
+          }
+          let provider = prov || (key.trim().startsWith('gsk_') ? 'groq' : key.trim().startsWith('sk-') ? 'agnes' : 'agnes');
+          if (!provider) provider = key.trim().startsWith('gsk_') ? 'groq' : 'agnes';
+          add(provider, key, label);
+        }
       }
     }
 
@@ -161,7 +183,15 @@ class KeyPool {
       if (f.length > 0) pool = f;
     }
     if (pool.length === 0) return null;
-    pool.sort((a, b) => a.failures - b.failures || a.lastUsedAt - b.lastUsedAt);
+    const priority = { agnes: 0, groq: 1, openrouter: 2, requestly: 3 };
+    pool.sort((a, b) => {
+      if (!provider) {
+        const pa = priority[a.provider] ?? 99;
+        const pb = priority[b.provider] ?? 99;
+        if (pa !== pb) return pa - pb;
+      }
+      return a.failures - b.failures || a.lastUsedAt - b.lastUsedAt;
+    });
     return pool[0];
   }
 
@@ -270,6 +300,7 @@ class AiGateway {
   }
 
   async complete(req) {
+    if (!req.provider && req.model && req.model.startsWith('agnes-')) req = { ...req, provider: 'agnes' };
     // Free-tier burst limits clear in seconds — hammer through 429s with up to
     // 50 immediate retries instead of surfacing an error to the caller.
     // OpenRouter text requests additionally rotate OPENROUTER_FREE_MODELS
@@ -361,10 +392,8 @@ class AiGateway {
       ...(provider.extraParams || {}),
     };
     if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
-    // Small deterministic JSON tasks (intake split) opt out via noReasoning:
-    // uncapped reasoning shares the max_tokens budget and the answer JSON
-    // gets cut mid-stream, failing strict parse on every attempt.
-    if (provider.reasoningObject && !req.noReasoning) body.reasoning = { enabled: true };
+    if (provider.id === 'agnes' && req.reasoningEffort) body.chat_template_kwargs = { enable_thinking: true };
+    else if (provider.reasoningObject && !req.noReasoning) body.reasoning = { enabled: true };
     else if (provider.supportsReasoning && req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
 
     const res = await fetch(provider.baseURL, {

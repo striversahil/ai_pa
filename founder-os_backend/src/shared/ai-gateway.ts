@@ -1,23 +1,25 @@
 /**
  * Unified multi-provider AI gateway — the SINGLE module every AI call in the
- * system routes through. Currently Groq-only (direct Groq API). Every key in
- * the pool is a Groq key; the gateway handles least-failures selection, random
- * rotation, 429 cooldown (honors retry-after), 401/403 disable, 5xx rotate.
+ * system routes through. **Agnes (apihub.agnes-ai.com) is primary** — Dahl
+ * and Groq remain as fallbacks. Every key in the pool is provider-tagged;
+ * the gateway handles least-failures selection, 429 cooldown (honors
+ * retry-after), 401/403 disable, 5xx rotate. Verified 2026-09-20 on
+ * agnes-2.5-flash (100k context, 9/9 and 12/12 hallucination traps, streaming).
  *
  * Key configuration (single source of truth, both runtimes):
- *   env.GROQ_API_KEYS = "key1,key2,..."   (comma-separated Groq keys)
- *   env.AI_KEYS        = optional Groq keys in "key:label" form
- *   env.OMNIROUTE_*    = IGNORED (no legacy gateway / no fallback)
+ *   env.AI_KEYS         = "provider:key:label,..."  (e.g. "agnes:sk-...:primary, groq:gsk_...:fallback")
+ *   env.AGNES_API_KEY   = single Agnes key (sk-...)
+ *   env.AGNES_API_KEYS  = comma-separated Agnes keys
+ *   env.GROQ_API_KEYS   = comma-separated Groq keys (fallback)
+ *   env.OMNIROUTE_*     = IGNORED
  *
- * Runtime note: this module is edge-safe (no Node-only deps) so it bundles into
- * the Cloudflare Worker via build-worker.mjs. The GH Actions scripts consume a
- * JS port (scripts/ai-gateway.js) that mirrors this surface exactly. Both read
- * the same AI_KEYS contract, so key management is identical across runtimes.
+ * Agnes uses `chat_template_kwargs: {enable_thinking:true}` for reasoning
+ * (mapped from `reasoningEffort`), base https://apihub.agnes-ai.com/v1.
+ * Dahl/OpenRouter legacy: keep keys in pool but not primary.
  *
- * Edge multi-isolate caveat: Worker isolates don't share memory, so KeyPool
- * state (cooldowns, failure counts) is per-isolate. That's acceptable — it
- * still prevents a single isolate from hammering a dead key, and the pool
- * self-heals because cooldowns are bounded.
+ * Runtime note: edge-safe (no Node-only deps) so it bundles into the
+ * Worker via build-worker.mjs. GH Actions consume JS port scripts/ai-gateway.js
+ * that mirrors this surface. Both read same AI_KEYS contract.
  */
 import { logger } from './logger';
 
@@ -38,6 +40,14 @@ export interface ProviderConfig {
 const OPENROUTER_VISION_MODEL = 'inclusionai/ling-3.0-flash-vl:free';
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
+  agnes: {
+    id: 'agnes',
+    baseURL: 'https://apihub.agnes-ai.com/v1/chat/completions',
+    supportsReasoning: true,
+    jsonMode: { type: 'json_object' },
+    defaultModel: 'agnes-2.5-flash',
+    visionModel: 'agnes-2.5-flash',
+  },
   groq: {
     id: 'groq',
     baseURL: 'https://api.groq.com/openai/v1/chat/completions',
@@ -80,9 +90,17 @@ export class AiGatewayError extends Error {
   }
 }
 
-// detectProvider: Groq-only mode — every key is Groq regardless of label.
-function detectProvider(_key: string): string {
-  return 'groq';
+// detectProvider: infer provider from key prefix when AI_KEYS entry omits explicit provider.
+function detectProvider(key: string): string {
+  const k = key.trim();
+  if (k.startsWith('gsk_')) return 'groq';
+  if (k.startsWith('sk-') && !k.startsWith('sk-or-')) {
+    // Agnes keys are `sk-...` (checked 2026-09-20, e.g. sk-6SYPqZN...). OpenRouter uses `sk-or-`.
+    // Without explicit `agnes:` prefix, treat generic `sk-` as Agnes primary.
+    return 'agnes';
+  }
+  if (k.startsWith('sk-or-') || k.startsWith('sk-or-v1-')) return 'openrouter';
+  return 'agnes'; // default primary is Agnes
 }
 
 // ── Key identity + health ────────────────────────────────────────────────────
@@ -195,7 +213,9 @@ export class KeyPool {
         }
       }
     }
-    // 2. Legacy per-provider env vars (backwards compat).
+    // 2. Legacy per-provider env vars (backwards compat) — Agnes primary.
+    for (const key of raw((env as any).AGNES_API_KEY).split(',')) add('agnes', key);
+    for (const key of raw((env as any).AGNES_API_KEYS).split(',')) add('agnes', key);
     for (const key of raw(env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
@@ -220,7 +240,7 @@ export class KeyPool {
     };
   }
 
-  /** Pick the best key: least failures, not cooling down, least-recently-used. */
+  /** Pick the best key: least failures, Agnes-first when no provider pinned, then LRU. */
   select(provider?: string): AiKey | null {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
@@ -229,7 +249,15 @@ export class KeyPool {
       if (filtered.length > 0) pool = filtered;
     }
     if (pool.length === 0) return null;
-    pool.sort((a, b) => a.failures - b.failures || a.lastUsedAt - b.lastUsedAt);
+    const priority: Record<string, number> = { agnes: 0, groq: 1, openrouter: 2, requestly: 3 };
+    pool.sort((a, b) => {
+      if (!provider) {
+        const pa = priority[a.provider] ?? 99;
+        const pb = priority[b.provider] ?? 99;
+        if (pa !== pb) return pa - pb;
+      }
+      return a.failures - b.failures || a.lastUsedAt - b.lastUsedAt;
+    });
     return pool[0];
   }
 
@@ -352,6 +380,10 @@ export class AiGateway {
    * when every attempt is exhausted.
    */
   async complete(req: CompletionRequest): Promise<CompletionResult> {
+    // Auto-route Agnes models to Agnes provider when no explicit provider is set.
+    if (!req.provider && req.model && req.model.startsWith('agnes-')) {
+      req = { ...req, provider: 'agnes' };
+    }
     // Free-tier burst limits clear in seconds — hammer through them instead of
     // surfacing an error to the caller.
     const MIN_ATTEMPTS = 50;
@@ -465,7 +497,11 @@ export class AiGateway {
     if (req.json && provider.jsonMode) {
       body.response_format = provider.jsonMode;
     }
-    if (provider.reasoningObject) {
+    if (provider.id === 'agnes' && req.reasoningEffort) {
+      // Agnes uses chat_template_kwargs.enable_thinking for reasoning depth (OpenAI-compatible).
+      // Verified 2026-09-20: agnes-2.5-flash streams reasoning_content with this flag.
+      (body as any).chat_template_kwargs = { enable_thinking: true };
+    } else if (provider.reasoningObject) {
       // OpenRouter-style reasoning switch (ling models etc.).
       body.reasoning = { enabled: true };
     } else if (provider.supportsReasoning && req.reasoningEffort) {

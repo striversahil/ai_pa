@@ -28,6 +28,8 @@ jobs:
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
           REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
@@ -42,6 +44,8 @@ jobs:
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
           REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
@@ -67,10 +71,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: zoho-sent-analyzer (full sync + AI on runner) — groq → requestly (nemotron) only, no openrouter for this analysis
+      - name: zoho-sent-analyzer (full sync + AI on runner) — agnes primary (agnes-2.5-flash) → groq/requestly fallback
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
           REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
           REQUESTLY_API_KEYS: ${{ secrets.REQUESTLY_API_KEYS }}
