@@ -115,13 +115,17 @@ function computeHasNew(fetchedByEst, prevByEst, maxCommentIdByEst) {
 // AI-worthy rows only: processable statuses with a real change signal.
 // closeOut flags the just-transitioned rows so analyze.js applies the
 // close-out classification (movingSlow 'No') instead of the active one.
+// ZOHO_FORCE is a human-triggered migration — even then, only `sent` should
+// be reclassified (the analyzer is zoho-SENT-analyzer, not all-status).
 function selectWorkItems({ estimates, existingByEstId, fetchedByEst, forced }) {
   const workItems = [];
   let skipped = 0;
   let failed = 0;
   for (const est of estimates) {
     const estId = est.estimate_id;
-    if (!PROCESSABLE.has(String(est.status ?? '').toLowerCase())) { skipped++; continue; }
+    const statusLower = String(est.status ?? '').toLowerCase();
+    if (!PROCESSABLE.has(statusLower)) { skipped++; continue; }
+    if (forced && statusLower !== 'sent') { skipped++; continue; }
     const existingEstimate = existingByEstId.get(estId);
     const lastModified = est.last_modified_time ? new Date(est.last_modified_time) : null;
     const statusChanged = !existingEstimate || existingEstimate.status !== est.status;
