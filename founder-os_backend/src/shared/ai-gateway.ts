@@ -419,6 +419,18 @@ export class AiGateway {
         lastErr = err;
         const status = this.pool.extractStatus(err);
         if (status === 429) {
+          // Agnes single-key 429 should fail fast — don't hammer 50× and hang the Worker (30s CPU limit).
+          // Burst limits are per-minute; retrying the same key immediately just burns the 30s window.
+          if (provider.id === 'agnes') {
+            const retryAfter = this.extractRetryAfter(err);
+            const cd = retryAfter ?? 60_000;
+            key.cooldownUntil = Date.now() + cd;
+            key.failures++;
+            key.lastError = `429 rate-limited`;
+            logger.warn?.(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s, failing fast`);
+            const e: any = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(cd/1000)}s)`);
+            e.status = 429; e.retryAfter = cd; throw e;
+          }
           // Immediate retry path: burst limits wave off — short sleep, reuse
           // the key at once (no long cooldown), keep counting attempts.
           streak429++;

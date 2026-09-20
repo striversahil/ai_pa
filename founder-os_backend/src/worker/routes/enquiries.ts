@@ -310,8 +310,63 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const body = await c.req.json().catch(() => ({}));
     const message = String(body?.message ?? '').trim().slice(0, 2000);
     if (!message) return c.json({ error: 'message required' }, 400);
-    const out = await chatTurn(c.env as any, createEnquiryStore(c.env), me, c.req.param('id') ?? '', message);
-    return c.json(out);
+    try {
+      const out = await chatTurn(c.env as any, createEnquiryStore(c.env), me, c.req.param('id') ?? '', message);
+      return c.json(out);
+    } catch (e: any) {
+      const msg = String(e?.message ?? 'chat failed');
+      const is429 = /429|rate-limit/i.test(msg) || (e as any)?.status === 429;
+      console.error('chatTurn failed', e?.stack ?? msg);
+      if (is429) return c.json({ error: 'Rate-limited — please wait a minute and retry.', reply: 'The AI is busy (rate-limited). Please retry in 60 seconds.' }, 429);
+      return c.json({ error: msg.slice(0, 500), reply: 'Chat failed — please retry.' }, 500);
+    }
+  });
+  app.get('/api/debug/ai-health', async (c) => {
+    try {
+      const gw = getGateway(c.env as any);
+      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes') });
+    } catch (e: any) {
+      return c.json({ error: String(e?.message ?? e) }, 500);
+    }
+  });
+  app.post('/api/debug/chat-test', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const msg = String(body?.message ?? 'ping').slice(0, 500);
+    try {
+      const gw = getGateway(c.env as any);
+      const res = await gw.complete({ messages: [{ role: 'user', content: msg }], model: 'agnes-3.0-flash', maxTokens: 200 });
+      return c.json({ ok: true, provider: res.provider, model: res.model, content: res.content.slice(0, 500), usage: res.usage });
+    } catch (e: any) {
+      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 1000) }, 500);
+    }
+  });
+  app.get('/api/debug/chat-test', async (c) => {
+    const msg = String(c.req.query('message') ?? 'ping').slice(0, 500);
+    try {
+      const gw = getGateway(c.env as any);
+      const res = await gw.complete({ messages: [{ role: 'user', content: msg }], model: 'agnes-3.0-flash', maxTokens: 200 });
+      return c.json({ ok: true, provider: res.provider, model: res.model, content: res.content.slice(0, 500), usage: res.usage });
+    } catch (e: any) {
+      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 1000), stack: String(e?.stack ?? '').slice(0, 500) }, 500);
+    }
+  });
+  app.get('/api/debug/direct-agnes', async (c) => {
+    const key = String((c.env as any)?.AGNES_API_KEY ?? '').slice(0, 10);
+    const hasKey = !!String((c.env as any)?.AGNES_API_KEY ?? '').trim();
+    const start = Date.now();
+    try {
+      const r = await fetch('https://apihub.agnes-ai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${String((c.env as any)?.AGNES_API_KEY ?? '').trim()}` },
+        body: JSON.stringify({ model: 'agnes-3.0-flash', messages: [{ role: 'user', content: 'ping' }], max_tokens: 10 }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const t = Date.now() - start;
+      const j: any = await r.json().catch(() => ({}));
+      return c.json({ ok: r.ok, status: r.status, hasKey, keyPrefix: key, ms: t, body: JSON.stringify(j).slice(0, 800) });
+    } catch (e: any) {
+      return c.json({ ok: false, hasKey, keyPrefix: key, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 1000) }, 500);
+    }
   });
   // Streaming variant — SSE, same agentic loop but final content streams
   app.post('/api/enquiries/:id/chat/stream', async (c) => {

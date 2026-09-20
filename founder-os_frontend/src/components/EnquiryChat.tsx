@@ -71,6 +71,104 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
     setBusy(true);
     setMsgs((p) => [...p, { role: "user", text: q }]);
     setInput("");
+    // Streaming primary (agnes-3.0-flash) — falls back to non-streaming JSON on any failure
+    const tryStream = async (): Promise<boolean> => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 45000);
+        const res = await fetch(`/api/enquiries/${enquiryId}/chat/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+          body: JSON.stringify({ message: q }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const ct = res.headers.get("content-type") || "";
+        if (!ct.includes("text/event-stream")) throw new Error("not SSE");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let accText = "";
+        let accActivity: ChatActivity[] = [];
+        let accProposals: ChatProposal[] = [];
+        let sawDone = false;
+        // placeholder for live markdown table rendering
+        setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
+        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 40000);
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const raw of lines) {
+              const line = raw.trim();
+              if (!line.startsWith("data:")) continue;
+              const payload = line.slice(5).trim();
+              if (payload === "[DONE]") { sawDone = true; break; }
+              try {
+                const evt = JSON.parse(payload);
+                if (evt.type === "delta" && typeof evt.data?.text === "string") {
+                  accText += evt.data.text;
+                  setMsgs((p) => {
+                    const cp = [...p]; const last = cp[cp.length - 1];
+                    if (last?.role === "assistant") last.text = accText;
+                    return [...cp];
+                  });
+                } else if (evt.type === "activity" && evt.data) {
+                  accActivity = [...accActivity, evt.data as ChatActivity];
+                  setMsgs((p) => {
+                    const cp = [...p]; const last = cp[cp.length - 1];
+                    if (last?.role === "assistant") last.activity = [...accActivity];
+                    return [...cp];
+                  });
+                } else if (evt.type === "done" && evt.data) {
+                  accText = String(evt.data.reply ?? accText);
+                  accActivity = Array.isArray(evt.data.activity) ? evt.data.activity : accActivity;
+                  accProposals = Array.isArray(evt.data.proposals) ? evt.data.proposals : [];
+                  setMsgs((p) => {
+                    const cp = [...p]; const last = cp[cp.length - 1];
+                    if (last?.role === "assistant") {
+                      last.text = accText || "No answer.";
+                      last.activity = accActivity;
+                      last.proposals = accProposals;
+                    }
+                    return [...cp];
+                  });
+                  sawDone = true;
+                } else if (evt.type === "error") {
+                  setMsgs((p) => {
+                    const cp = [...p]; const last = cp[cp.length - 1];
+                    if (last?.role === "assistant" && !last.text) last.text = String(evt.data?.error || "No answer.");
+                    return [...cp];
+                  });
+                }
+              } catch {}
+            }
+            if (sawDone) break;
+          }
+        } finally {
+          clearTimeout(timeout);
+          clearTimeout(t);
+          try { reader.releaseLock(); } catch {}
+        }
+        // if we never got any text but did get activity, keep it; otherwise ensure at least fallback
+        if (!accText && accProposals.length === 0 && accActivity.length === 0) throw new Error("empty stream");
+        return true;
+      } catch {
+        // remove placeholder if streaming failed before any content
+        setMsgs((p) => {
+          const last = p[p.length - 1];
+          if (last?.role === "assistant" && last.text === "" && last.proposals?.length === 0) return p.slice(0, -1);
+          return p;
+        });
+        return false;
+      }
+    };
+    const streamed = await tryStream();
+    if (streamed) { setBusy(false); return; }
+    // Fallback: non-streaming JSON
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 30000);
@@ -83,6 +181,8 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
       clearTimeout(t);
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
+        // surface 429 rate-limit clearly
+        if (res.status === 429) throw new Error("Rate-limited — please wait a minute and retry.");
         throw new Error(errText || `HTTP ${res.status}`);
       }
       const data = await res.json();
@@ -93,7 +193,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
         activity: Array.isArray(data.activity) ? data.activity : [],
       }]);
     } catch (e: any) {
-      const msg = e?.name === "AbortError" ? "Chat timed out (30s) — please retry." : "Chat failed — please retry.";
+      const msg = e?.name === "AbortError" ? "Chat timed out (30s) — please retry." : String(e?.message || "Chat failed — please retry.").slice(0, 200);
       setMsgs((p) => [...p, { role: "assistant", text: msg }]);
     } finally {
       setBusy(false);
