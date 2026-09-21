@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useLiveEvent } from "./useLiveData";
 
 export interface IntakeSuggestion {
   itemIndex: number;
@@ -23,26 +24,28 @@ export interface IntakeData {
 export const SHOW_INTAKE_REMARKS = false;
 
 /** AI intake payload for one enquiry (KV, written by the intake runner).
- *  Refetches when the enquiry row changes (result POSTs bump updatedAt). */
+ *  Refetches when the enquiry row changes (result POSTs bump updatedAt) and live on Enquiries events. */
 export function useIntake(enquiryId: string | null, updatedAt?: string): IntakeData | null {
   const [data, setData] = useState<IntakeData | null>(null);
 
-  useEffect(() => {
-    if (!enquiryId) {
-      setData(null);
-      return;
-    }
-    let cancelled = false;
-    fetch(`/api/enquiries/${enquiryId}/intake`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (!cancelled && j) setData(j);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [enquiryId, updatedAt]);
+  const fetchIntake = useCallback(async () => {
+    if (!enquiryId) { setData(null); return; }
+    try {
+      const r = await fetch(`/api/enquiries/${enquiryId}/intake`, { cache: "no-store" });
+      if (r.ok) { const j = await r.json(); setData(j); }
+    } catch {}
+  }, [enquiryId]);
+
+  useEffect(() => { void fetchIntake(); }, [fetchIntake, updatedAt]);
+
+  // Live: vision-intake broadcasts Enquiries updated → refetch intake so loader unsticks without refresh
+  useLiveEvent((e: any) => {
+    if (!enquiryId) return;
+    if (!e || e.type !== "enquiries") return;
+    const id = String(e.id ?? e.enquiryId ?? "");
+    if (id && id !== enquiryId) return;
+    void fetchIntake();
+  });
 
   return data;
 }

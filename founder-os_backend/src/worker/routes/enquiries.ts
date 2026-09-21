@@ -17,8 +17,24 @@ function kickAgnesIntake(c: any, id: string): void {
       try {
         const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
         await runAgnesVisionIntake(c.env as any, store, String(id));
+        // Broadcast so EnquiryDetail auto-populates without refresh (useIntake depends on updatedAt)
+        try {
+          const { LiveEvent } = await import('../../live');
+          const { broadcastLive } = await import('../../live');
+          // Use the same live channel as enquiry mutations — useEnquiryData merges the row live
+          broadcastLive(c, LiveEvent.Enquiries, { action: 'updated', id: String(id) });
+          // Also bust the tracker KV so next list fetch isn't stale
+          const { cacheDel } = await import('../../shared/cache');
+          const p = cacheDel(`enquiry:redacted:${String(id)}`);
+          if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(p);
+        } catch {}
       } catch (e: any) {
         console.error('[kickAgnesIntake] failed', e?.message ?? e);
+        // Even on failure, unstick the UI — write empty intake already handled inside vision-intake, but ensure live
+        try {
+          const { LiveEvent, broadcastLive } = await import('../../live');
+          broadcastLive(c, LiveEvent.Enquiries, { action: 'updated', id: String(id) });
+        } catch {}
       }
     })();
     if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') c.executionCtx.waitUntil(task);
