@@ -11,7 +11,7 @@ on:
         default: "330"
       hostname:
         description: "Public relay hostname (named tunnel, static)"
-        default: "egress-gh-bak.apotza.com"
+        default: "agnes-relay-bak.apotza.com"
 
 concurrency:
   group: agnes-relay-bak
