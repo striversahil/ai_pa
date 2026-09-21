@@ -1,0 +1,43 @@
+name: Oneshot - Agnes egress test (TEMPORARY, delete after run)
+# One-off experiment: does GitHub-hosted runner egress (Azure IPs) bypass
+# Agnes's Cloudflare 1015 throttle? ~2-3 min of runner time, then DELETE this file.
+on:
+  workflow_dispatch:
+jobs:
+  egress-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Runner egress identity
+        run: |
+          echo "--- public IP (ipify) ---"
+          curl -s --max-time 15 https://api.ipify.org; echo
+          echo "--- region hint (ipinfo, truncated) ---"
+          curl -s --max-time 15 https://ipinfo.io/json | head -c 400; echo
+      - name: Agnes reachability (no auth, 3x timing)
+        run: |
+          for i in 1 2 3; do
+            curl -o /dev/null -s -w "try$i: http=%{http_code} total=%{time_total}s connect=%{time_connect}s tls=%{time_appconnect}s ttfb=%{time_starttransfer}s\n" \
+              --max-time 20 https://apihub.agnes-ai.com/v1/models
+          done
+      - name: Agnes authenticated ping (real key, value NEVER echoed)
+        env:
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          AI_KEYS: ${{ secrets.AI_KEYS }}
+        run: |
+          KEY="$AGNES_API_KEY"
+          if [ -z "$KEY" ]; then
+            KEY=$(echo "$AI_KEYS" | tr ',' '\n' | grep -o 'agnes:[^:]*' | head -n1 | cut -d: -f2)
+          fi
+          if [ -z "$KEY" ]; then echo "NO-KEY-CONFIGURED"; exit 1; fi
+          echo "key present, length=${#KEY} (value hidden, GitHub masks secrets + sed redacts)"
+          for i in 1 2 3; do
+            curl -s --max-time 25 -X POST https://apihub.agnes-ai.com/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $KEY" \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120" \
+              -d '{"model":"agnes-3.0-flash","messages":[{"role":"user","content":"ping"}],"max_tokens":10}' \
+              -w "\ntry$i: http=%{http_code} total=%{time_total}s ttfb=%{time_starttransfer}s\n" \
+              | sed -E 's/sk-[A-Za-z0-9_.-]+/[REDACTED]/g' | head -c 600
+            echo
+          done
