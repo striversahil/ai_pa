@@ -1,0 +1,63 @@
+name: Oneshot - 10x convo latency test (TEMPORARY, delete after run)
+# Realistic load test: 10 parallel runners x 4-turn flour-mill enquiry
+# conversation each (40 completions). Measures per-turn TTFB/total, counts
+# 429/1015s. ~30-40 runner-minutes total, then DELETE this file.
+on:
+  workflow_dispatch:
+jobs:
+  convo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        lane: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    env:
+      LANE: ${{ matrix.lane }}
+    steps:
+      - name: 4-turn conversation with per-turn latency
+        env:
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
+          AI_KEYS: ${{ secrets.AI_KEYS }}
+        run: |
+          # Resolve key like the gateway: single key, else rotate multi-key pool by lane
+          KEY="$AGNES_API_KEY"
+          if [ -z "$KEY" ] && [ -n "$AGNES_API_KEYS" ]; then
+            IFS=',' read -ra ARR <<< "$AGNES_API_KEYS"
+            N=${#ARR[@]}
+            KEY="${ARR[$((LANE % N))]}"
+            echo "lane=$LANE using pooled key idx=$((LANE % N)) of $N (fingerprint hidden)"
+          elif [ -n "$KEY" ]; then
+            echo "lane=$LANE using AGNES_API_KEY (fingerprint hidden)"
+          fi
+          if [ -z "$KEY" ]; then
+            KEY=$(echo "$AI_KEYS" | tr ',' '\n' | grep -o 'agnes:[^:]*' | head -n1 | cut -d: -f2)
+          fi
+          if [ -z "$KEY" ]; then echo "NO-KEY-CONFIGURED"; exit 1; fi
+          SYS="You are the sales staff helper for ONE flour-mill spare enquiry. Answer short, telecaller style, Hinglish ok. Never invent specs or rates."
+          T1="New enquiry just came in: Rajdhani Flour Mill, Haryana needs 24GG milling fabric 136cm, 50 meters. What details should I ask the client before sending this for rates?"
+          T2="Client replied: it is for their plansifter, make Imas, and they also want conveyor belt fastener 1000 nos. Update the requirement and tell me what is still missing."
+          T3="Show me both items as a markdown table with item, qty and spec columns."
+          T4="Draft a short Hinglish message I can send the client asking only for the missing details."
+          HIST=$(jq -n --arg s "$SYS" '[{role:"system",content:$s}]')
+          for T in 1 2 3 4; do
+            case $T in
+              1) U="$T1";; 2) U="$T2";; 3) U="$T3";; 4) U="$T4";;
+            esac
+            HIST=$(echo "$HIST" | jq --arg u "$U" '. + [{role:"user",content:$u}]')
+            RESP=$(curl -s --max-time 60 -X POST https://apihub.agnes-ai.com/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $KEY" \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120" \
+              -d "$(jq -n --argjson m "$HIST" '{model:"agnes-3.0-flash",messages:$m,temperature:0.2,max_tokens:300}')" \
+              -w "\nHTTP_STATUS:%{http_code} TOTAL:%{time_total} TTFB:%{time_starttransfer}")
+            META=$(echo "$RESP" | grep -a 'HTTP_STATUS:' | tail -n1)
+            BODY=$(echo "$RESP" | grep -a -v 'HTTP_STATUS:')
+            REPLY=$(echo "$BODY" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -c 150 | tr '\n' ' ')
+            TOK=$(echo "$BODY" | jq -r '"tok=" + (.usage.total_tokens|tostring)' 2>/dev/null)
+            echo "lane=$LANE turn=$T $META $TOK reply=\"$(echo "$REPLY" | sed -E 's/sk-[A-Za-z0-9_.-]+/[REDACTED]/g')\""
+            if [ -n "$REPLY" ]; then
+              HIST=$(echo "$HIST" | jq --arg a "$(echo "$BODY" | jq -r '.choices[0].message.content')" '. + [{role:"assistant",content:$a}]')
+            fi
+          done
+          echo "lane=$LANE DONE"
