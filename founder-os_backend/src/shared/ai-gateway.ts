@@ -12,10 +12,12 @@
  *   env.AGNES_API_KEYS  = comma-separated Agnes keys
  *   env.GROQ_API_KEYS   = IGNORED (founder decision 2026-09-21: hallucination quality)
  *   env.OMNIROUTE_*     = IGNORED
- * Home-egress proxy (optional, Agnes only — see home-egress/):
- *   env.AGNES_PROXY_URL = tunnel URL of the home proxy (unset = direct egress)
+ * Egress-relay proxy (optional, Agnes only — see home-egress/ + agnes-relay.yml):
+ *   env.AGNES_PROXY_URL = STATIC named-tunnel hostname of the relay (unset = direct egress)
  *   env.AGNES_PROXY_SECRET = shared secret the proxy requires per call
  *   env.AGNES_PROXY_TIMEOUT_MS = proxy attempt cap, default 25000 (max 60000)
+ *   env.AGNES_PROXY_ALWAYS = '1' for an always-on home/GCP lane (default: on-demand
+ *     GH relay, used only while KV ai:relay:active is fresh — see RELAY_* below)
  *
  * Agnes uses `chat_template_kwargs: {enable_thinking:true}` for reasoning
  * (mapped from `reasoningEffort`), base https://apihub.agnes-ai.com/v1.
@@ -424,6 +426,13 @@ export class KeyPool {
 // ── Gateway ──────────────────────────────────────────────────────────────────
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// On-demand GH relay KV contract (runner.ts + cron.ts import these — keep in sync).
+export const RELAY_ACTIVE_KEY = 'ai:relay:active';
+export const RELAY_TTL_MS = 6 * 60 * 60_000;
+export const RELAY_COOLDOWN_KEY = 'ai:relay:cooldown';
+export const RELAY_COOLDOWN_MS = 30 * 60_000;
+const RELAY_MEMO_MS = 60_000;
+
 export class AiGateway {
   private pool = new KeyPool();
   private visionModelOverride = '';
@@ -436,14 +445,19 @@ export class AiGateway {
   // as reverse proxy with caching/rate-limiting/logging. Custom providers (agnes, openrouter) use `custom-{slug}`.
   private aigAccount = '';
   private aigGateway = '';
-  // Home-egress proxy (home-egress/docker): the Worker's shared egress IPs
-  // get throttled by Agnes's firewall (HTTP 1015), so the home PC serves as
-  // a FALLBACK lane, never the first attempt: direct egress always goes
-  // first (fastest), and only an IP-level 1015 or a direct transport failure
-  // reroutes that same attempt through the proxy. Proxy faults fall through
-  // with zero pool penalty. Proxied calls intentionally bypass the CF AI
-  // Gateway (same shared-egress fate). Runners (scripts/ai-gateway.js) don't
-  // read these vars — GitHub egress is clean.
+  // Egress-relay proxy (Agnes only — the 1015-throttled provider).
+  // AGNES_PROXY_URL points at the relay's STATIC named-tunnel hostname
+  // (e.g. https://egress-gh.apotza.com). Two lanes share this slot:
+  //  - on-demand GH relay: used ONLY while KV `ai:relay:active` is fresh
+  //    (the relay run registers itself via POST /api/runner/relay/register
+  //    and heartbeats; TTL ~6h bounds cost when a run dies). Flag absent →
+  //    direct egress only, zero overhead.
+  //  - always-on home/GCP lane: set AGNES_PROXY_ALWAYS=1 to skip the gate.
+  // Proxy faults (unreachable/timeout/tunnel-down 502) fall through to
+  // direct with zero pool penalty. A proxy 429 is a REAL upstream answer.
+  // Proxied calls intentionally bypass the CF AI Gateway (same shared-egress
+  // fate). Runners (scripts/ai-gateway.js) don't read these vars — GitHub
+  // egress is clean.
   private proxyUrl = '';
   private proxySecret = '';
   // Proxy attempt cap: high enough for legit reasoning responses (they take
@@ -456,6 +470,11 @@ export class AiGateway {
   // cap already bounds the worst case, so local memory suffices.)
   private proxyFailStreak = 0;
   private proxySkipUntil = 0;
+  // Always-on lane escape hatch (home PC / GCP VM): skip the relay gate.
+  private proxyAlways = false;
+  // Relay-gate memo (per isolate): one KV read per 60s max, not per call.
+  private relayMemoVal = false;
+  private relayMemoUntil = 0;
 
   constructor(env?: Record<string, unknown>) {
     if (env) this.configure(env);
@@ -470,6 +489,7 @@ export class AiGateway {
     if (aigAcc) { this.aigAccount = aigAcc; this.aigGateway = aigId; }
     const pUrl = String((env as any)?.AGNES_PROXY_URL ?? '').trim().replace(/\/+$/, '');
     if (pUrl) { this.proxyUrl = pUrl; this.proxySecret = String((env as any)?.AGNES_PROXY_SECRET ?? '').trim(); }
+    this.proxyAlways = String((env as any)?.AGNES_PROXY_ALWAYS ?? '').trim() === '1';
     const pTo = Number(String((env as any)?.AGNES_PROXY_TIMEOUT_MS ?? '').trim());
     if (Number.isFinite(pTo) && pTo > 0) this.proxyTimeoutMs = Math.min(pTo, 60_000);
     const models = String((env as any)?.OPENROUTER_FREE_MODELS ?? '')
@@ -487,9 +507,30 @@ export class AiGateway {
     return this.pool.health();
   }
 
-  /** Home proxy usable for this provider? (Agnes only — the throttled one.) */
+  /** Home proxy configured for this provider? (Agnes only — the throttled one.) */
   private proxyEnabled(provider: ProviderConfig): boolean {
     return provider.id === 'agnes' && !!this.proxyUrl && !!this.proxySecret && Date.now() >= this.proxySkipUntil;
+  }
+
+  /** On-demand GH relay live? Memoized 60s per isolate (KV read, not per call). */
+  private async isRelayActive(): Promise<boolean> {
+    const now = Date.now();
+    if (now < this.relayMemoUntil) return this.relayMemoVal;
+    let active = false;
+    try {
+      active = !!(await cacheGet(RELAY_ACTIVE_KEY, RELAY_TTL_MS));
+    } catch { active = false; }
+    this.relayMemoVal = active;
+    this.relayMemoUntil = now + RELAY_MEMO_MS;
+    return active;
+  }
+
+  /** Proxy usable for this attempt? Always-on lane skips the relay gate;
+   *  the on-demand relay must have registered itself (flag fresh). */
+  private async proxyUsable(provider: ProviderConfig): Promise<boolean> {
+    if (!this.proxyEnabled(provider)) return false;
+    if (this.proxyAlways) return true;
+    return this.isRelayActive();
   }
 
   private proxySucceeded(): void {
@@ -503,10 +544,12 @@ export class AiGateway {
   }
 
   /** Debug: worker→proxy leg health. Hostname only — never leaks the secret. */
-  async proxyStatus(): Promise<{ configured: boolean; host: string | null; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string }> {
+  async proxyStatus(): Promise<{ configured: boolean; host: string | null; skipActive: boolean; failStreak: number; relayActive: boolean; alwaysOn: boolean; reachable: boolean; ms: number; body?: string; error?: string }> {
     let host: string | null = null;
     try { host = new URL(this.proxyUrl).host; } catch { /* unset */ }
-    const base = { configured: !!this.proxyUrl && !!this.proxySecret, host, skipActive: Date.now() < this.proxySkipUntil, failStreak: this.proxyFailStreak };
+    let relayActive = false;
+    try { relayActive = await this.isRelayActive(); } catch { /* ignore */ }
+    const base = { configured: !!this.proxyUrl && !!this.proxySecret, host, skipActive: Date.now() < this.proxySkipUntil, failStreak: this.proxyFailStreak, relayActive, alwaysOn: this.proxyAlways };
     if (!this.proxyUrl) return { ...base, reachable: false, ms: 0, error: 'AGNES_PROXY_URL unset' };
     const start = Date.now();
     try {
@@ -547,8 +590,32 @@ export class AiGateway {
       fault.proxyFault = true;
       throw fault;
     }
+    // Dead named tunnel (no relay run alive): Cloudflare edge answers
+    // 502/503/530 with an HTML "Bad Gateway / tunnel" page. That is OUR
+    // lane being down, not an Agnes answer — fall through to direct WITHOUT
+    // penalising the AI key (a genuine Agnes 502/503 carries a JSON body and
+    // still passes through as an upstream answer below).
+    if ((res.status === 502 || res.status === 503 || res.status === 530) && (await this.looksLikeTunnelDown(res))) {
+      this.proxyFaulted();
+      const fault: any = new Error(`proxy tunnel down (HTTP ${res.status})`);
+      fault.proxyFault = true;
+      throw fault;
+    }
     this.proxySucceeded();
     return res;
+  }
+
+  /** True when a proxy-leg 5xx looks like a dead-tunnel edge page (HTML /
+   *  Bad Gateway / tunnel / 1033 markers) rather than an Agnes JSON answer.
+   *  Reads a clone so the original response stays consumable. */
+  private async looksLikeTunnelDown(res: Response): Promise<boolean> {
+    try {
+      const ct = res.headers.get('content-type') || '';
+      const head = (await res.clone().text()).slice(0, 500);
+      return /text\/html/.test(ct) || /cloudflare|bad gateway|tunnel|1033|error code/i.test(head);
+    } catch {
+      return false;
+    }
   }
 
   /** True when a 429 body carries Cloudflare's 1015 edge-throttle signature
@@ -789,7 +856,7 @@ export class AiGateway {
     // A proxy 429 is a real upstream answer — only faults and our own 403s
     // fall through (handled inside tryProxy by returning null).
     const tryProxy = async (): Promise<Response | null> => {
-      if (!this.proxyEnabled(provider)) return null;
+      if (!(await this.proxyUsable(provider))) return null;
       try {
         const path = new URL(provider.baseURL).pathname;
         const pres = await this.fetchViaProxy(path, payload, headers, req.signal, streamCap);
@@ -941,7 +1008,7 @@ export class AiGateway {
     };
     const proxyPath = new URL(provider.baseURL).pathname;
     const tryProxyFirst = async (): Promise<Response | null> => {
-      if (!this.proxyEnabled(provider)) return null;
+      if (!(await this.proxyUsable(provider))) return null;
       try {
         const pres = await this.fetchViaProxy(proxyPath, payload, headers, req.signal, req.timeoutMs);
         if (pres.status === 403) {

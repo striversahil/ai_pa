@@ -27,6 +27,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { bootstrapEnv, refreshNeodoveReport, neodoveTodayIst, type Bindings } from './context';
 import { getTelecallingDashboardData } from '../automations/telecalling/service';
+import { cacheGet, cacheSet } from '../shared/cache';
+import { RELAY_ACTIVE_KEY, RELAY_TTL_MS, RELAY_COOLDOWN_KEY, RELAY_COOLDOWN_MS } from '../shared/ai-gateway';
 
 const GITHUB_REPO = 'striversahil/ai_pa';
 const GITHUB_REF = 'main';
@@ -173,6 +175,24 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   if (runs.length > 0) {
     ctx.waitUntil(Promise.all(runs));
   }
+
+  // Agnes 1015 storm → on-demand GH relay lane. chat.ts sets ai:storm:agnes
+  // (120s TTL) on throttles; the relay run registers ai:relay:active itself
+  // and heartbeats it. Cooldown prevents dispatch flapping; the relay TTL
+  // bounds cost (~6h max per storm). Best-effort — never fails the tick.
+  ctx.waitUntil((async () => {
+    try {
+      const storm = await cacheGet('ai:storm:agnes', 120_000);
+      if (!storm) return;
+      if (await cacheGet(RELAY_ACTIVE_KEY, RELAY_TTL_MS)) return;
+      if (await cacheGet(RELAY_COOLDOWN_KEY, RELAY_COOLDOWN_MS)) return;
+      await cacheSet(RELAY_COOLDOWN_KEY, { at: Date.now() }, RELAY_COOLDOWN_MS);
+      await dispatchGitHubWorkflow('agnes-relay.yml', token, { duration_min: '330' });
+      console.log('[cron] 1015 storm → dispatched agnes-relay');
+    } catch (e: any) {
+      console.error('[cron] relay auto-dispatch failed:', e?.message);
+    }
+  })());
 }
 
 export const scheduled: ExportedHandlerScheduledHandler<Bindings, unknown> = async (event, env, ctx) => {
