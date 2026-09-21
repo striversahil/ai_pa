@@ -220,6 +220,35 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
       console.error('[cron] relay auto-dispatch failed:', e?.message);
     }
   })());
+
+  // Relay keepalive (AGNES_RELAY_KEEPALIVE=1): both lanes live 24/7 with
+  // rolling ~3h restarts. Redispatch a lane when its flag is missing or its
+  // run expires within 15 min — the new run boots (~3 min) and registers
+  // BEFORE the old run exits, so a lane is never dark. runId CAS in the
+  // register endpoint makes the overlap safe; the pending marker covers the
+  // boot window so ticks don't stack dispatches.
+  if (String((env as any)?.AGNES_RELAY_KEEPALIVE ?? '').trim() === '1') {
+    ctx.waitUntil((async () => {
+      try {
+        const LANES = [
+          { name: 'primary', activeKey: RELAY_ACTIVE_KEY, workflow: 'agnes-relay.yml' },
+          { name: 'bak', activeKey: RELAY_ACTIVE_KEY_BAK, workflow: 'agnes-relay-bak.yml' },
+        ];
+        for (const lane of LANES) {
+          const flag: any = await cacheGet(lane.activeKey, RELAY_TTL_MS);
+          const exp = Number(flag?.expiresAt ?? 0);
+          const alive = !!flag && exp > Date.now();
+          if (alive && exp - Date.now() > 15 * 60_000) continue;
+          if (await cacheGet(`ai:relay:pending:${lane.name}`, 20 * 60_000)) continue;
+          await cacheSet(`ai:relay:pending:${lane.name}`, { at: Date.now() }, 20 * 60_000);
+          await dispatchGitHubWorkflow(lane.workflow, token, { duration_min: '180' });
+          console.log(`[cron] relay keepalive → dispatched ${lane.workflow} (${!flag ? 'missing' : 'rolling restart'})`);
+        }
+      } catch (e: any) {
+        console.error('[cron] relay keepalive failed:', e?.message);
+      }
+    })());
+  }
 }
 
 /** Cancel one Actions run (best-effort; 404/409 when already finished). */

@@ -2,20 +2,17 @@ name: Agnes Relay Backup (hot standby)
 # Mirror of agnes-relay.yml on an INDEPENDENT tunnel + run lifecycle, so a
 # poisoned primary is replaceable without touching the backup (and vice
 # versa). Gateway fails over primary→bak per attempt (seconds); cron replaces
-# poisoned lanes in background. Same cost bounds as primary.
+# poisoned lanes in background. Rolling-restart safe (no concurrency cap —
+# runId CAS in the register endpoint makes overlap safe).
 on:
   workflow_dispatch:
     inputs:
       duration_min:
-        description: "Relay window in minutes (job hard-caps at 360)"
-        default: "330"
+        description: "Relay window in minutes (job hard-caps at 360; keepalive uses 180)"
+        default: "180"
       hostname:
         description: "Public relay hostname (named tunnel, static)"
         default: "agnes-relay-bak.apotza.com"
-
-concurrency:
-  group: agnes-relay-bak
-  cancel-in-progress: false
 
 jobs:
   relay:
@@ -44,22 +41,13 @@ jobs:
           sudo dpkg -i /tmp/cloudflared.deb
           cloudflared --version
 
-      - name: Register relay ACTIVE with Worker
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-        run: |
-          curl -s --max-time 20 -X POST "$WORKER_URL/api/runner/relay/register" \
-            -H "Authorization: Bearer $SHARED_SECRET" \
-            -H "Content-Type: application/json" \
-            -d "{\"active\":true,\"lane\":\"bak\",\"runId\":\"$GITHUB_RUN_ID\",\"ttlSec\":21600}"
-
-      - name: Join named tunnel + heartbeat until window ends
+      - name: Join named tunnel + register ACTIVE
         env:
           TUNNEL_TOKEN: ${{ secrets.RELAY_TUNNEL_TOKEN_BAK }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           HOSTNAME: ${{ inputs.hostname }}
+          DURATION: ${{ inputs.duration_min }}
         run: |
           test -n "$TUNNEL_TOKEN" || { echo "RELAY_TUNNEL_TOKEN_BAK unset"; exit 1; }
           cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > /tmp/relay-tunnel.log 2>&1 &
@@ -69,24 +57,38 @@ jobs:
           done
           grep "Registered tunnel connection" /tmp/relay-tunnel.log | head -n 2 \
             || { echo "tunnel never registered"; tail -n 20 /tmp/relay-tunnel.log; exit 1; }
-          echo "--- public leg ---"
           curl -s --max-time 20 "https://$HOSTNAME/health" || echo "public health not yet serving (tunnel propagating)"
-          END=$((SECONDS + ${{ inputs.duration_min }} * 60))
+          # Register only once the lane actually serves (runId CAS makes overlap safe)
+          curl -s --max-time 20 -X POST "$WORKER_URL/api/runner/relay/register" \
+            -H "Authorization: Bearer $SHARED_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"active\":true,\"lane\":\"bak\",\"runId\":\"$GITHUB_RUN_ID\",\"ttlSec\":21600,\"durationMin\":\"$DURATION\"}"
+
+      - name: Heartbeat until window ends
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          HOSTNAME: ${{ inputs.hostname }}
+          DURATION: ${{ inputs.duration_min }}
+        run: |
+          END=$((SECONDS + DURATION * 60))
           while [ $SECONDS -lt $END ]; do
             P=$(curl -s -m 10 http://127.0.0.1:8787/health || echo DOWN)
             Q=$(curl -s -m 15 "https://$HOSTNAME/health" || echo DOWN)
             echo "$(date -u +%H:%M:%S) local=$P public=$Q"
             echo "--- relayed requests since last beat (proof of lane) ---"
             tail -n 20 /tmp/relay-proxy.log | grep -a "\[proxy\]" || echo "(no AI traffic via relay yet)"
-            curl -s -m 20 -X POST "$WORKER_URL/api/runner/relay/register" \
+            R=$(curl -s -m 20 -X POST "$WORKER_URL/api/runner/relay/register" \
               -H "Authorization: Bearer $SHARED_SECRET" \
               -H "Content-Type: application/json" \
-              -d "{\"active\":true,\"lane\":\"bak\",\"runId\":\"$GITHUB_RUN_ID\",\"ttlSec\":21600}" > /dev/null
+              -d "{\"active\":true,\"lane\":\"bak\",\"runId\":\"$GITHUB_RUN_ID\",\"ttlSec\":21600,\"durationMin\":\"$DURATION\"}")
+            echo "$R" | head -c 200; echo
+            echo "$R" | grep -q superseded && { echo "SUPERSEDED by newer run — exiting early"; break; }
             sleep 300
           done
           echo RELAY-WINDOW-DONE
 
-      - name: Deregister relay (OFF)
+      - name: Deregister relay (OFF, only if still owner)
         if: always()
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
@@ -95,4 +97,4 @@ jobs:
           curl -s --max-time 20 -X POST "$WORKER_URL/api/runner/relay/register" \
             -H "Authorization: Bearer $SHARED_SECRET" \
             -H "Content-Type: application/json" \
-            -d '{"active":false,"lane":"bak"}' || true
+            -d "{\"active\":false,\"lane\":\"bak\",\"runId\":\"$GITHUB_RUN_ID\"}" || true

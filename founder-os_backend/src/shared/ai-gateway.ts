@@ -584,17 +584,28 @@ export class AiGateway {
     if (lane.failStreak >= 3) lane.skipUntil = Date.now() + 60_000;
   }
 
-  /** Debug: worker→proxy leg health per lane. Hostnames only — never secrets. */
-  async proxyStatus(): Promise<{ ok: true; alwaysOn: boolean; lanes: Array<{ name: string; configured: boolean; host: string | null; relayActive: boolean; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string }> }> {
-    type LaneStatus = { name: string; configured: boolean; host: string | null; relayActive: boolean; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string };
+  /** Debug: worker→proxy leg health per lane. Hostnames + runIds only — never secrets. */
+  async proxyStatus(): Promise<{ ok: true; alwaysOn: boolean; lanes: Array<{ name: string; configured: boolean; host: string | null; relayActive: boolean; runId: string | null; expiresAt: number | null; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string }> }> {
+    type LaneStatus = { name: string; configured: boolean; host: string | null; relayActive: boolean; runId: string | null; expiresAt: number | null; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string };
     const lanes: LaneStatus[] = [];
     for (const lane of this.lanes) {
       let host: string | null = null;
       try { host = new URL(lane.url).host; } catch { /* unset */ }
       let relayActive = false;
-      try { relayActive = await this.isLaneActive(lane); } catch { /* ignore */ }
+      let runId: string | null = null;
+      let expiresAt: number | null = null;
+      try {
+        const flag: any = await cacheGet(lane.activeKey, RELAY_TTL_MS);
+        relayActive = !!flag;
+        lane.memoVal = relayActive;
+        lane.memoUntil = Date.now() + RELAY_MEMO_MS;
+        if (flag) {
+          runId = String(flag.runId ?? '') || null;
+          expiresAt = Number(flag.expiresAt ?? 0) || null;
+        }
+      } catch { /* ignore */ }
       const base = {
-        name: lane.name, configured: !!lane.url && !!lane.secret, host, relayActive,
+        name: lane.name, configured: !!lane.url && !!lane.secret, host, relayActive, runId, expiresAt,
         skipActive: Date.now() < lane.skipUntil, failStreak: lane.failStreak,
       };
       if (!lane.url) {
