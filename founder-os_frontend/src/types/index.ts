@@ -158,6 +158,7 @@ export {
   isProcurementPendingEnquiry,
   isProcurementHistoryEnquiry,
   isZohoCancelledStatus,
+  isZohoClosedStatus,
   isManagementPendingEnquiry,
   procurementSubmittable,
   isManagementHistoryEnquiry,

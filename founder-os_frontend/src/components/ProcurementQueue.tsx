@@ -12,7 +12,7 @@ import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
-import { itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, procurementSubmittable } from "@/enquiry/queue";
+import { itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, isZohoClosedStatus, procurementSubmittable } from "@/enquiry/queue";
 
 /** Pending = items still needing rates. Empty enquiries (no items yet) wait
  *  on sales, not procurement — they render in their own section below. */
@@ -199,8 +199,8 @@ export default function ProcurementQueue() {
   const historyPageClamped = Math.min(historyPage, historyTotalPages);
   const visibleHistory = useMemo(() => filteredHistory.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize), [filteredHistory, historyPageClamped, historyPageSize]);
   const emptyEnquiries = useMemo(
-    // Cancelled requirements are dead client-side — never "waiting on sales".
-    () => [...enquiries].filter((e) => (e.items ?? []).length === 0 && !isZohoCancelledStatus((e as any)?.zohoStatus)).sort(byNewest),
+    // Closed requirements are dead/won client-side — never "waiting on sales".
+    () => [...enquiries].filter((e) => (e.items ?? []).length === 0 && !isZohoClosedStatus((e as any)?.zohoStatus)).sort(byNewest),
     [enquiries],
   );
   // Enquiry-level requirements grouped by enquiry (legacy rows; new adds land
@@ -520,14 +520,17 @@ export default function ProcurementQueue() {
               );
             }
             if (submitted && !lateQuoteEnquiry) {
-              // Auto-concluded rows (Zoho declined/void/cancelled) name the
-              // reason — the requirement died client-side, nothing to quote.
-              const cancelled = isZohoCancelledStatus((selEnquiry as any)?.zohoStatus);
+              // Auto-concluded rows (Zoho declined/accepted/…) name the
+              // reason — terminal client decisions need no further quoting.
+              const closed = isZohoClosedStatus((selEnquiry as any)?.zohoStatus);
+              const accepted = closed && !isZohoCancelledStatus((selEnquiry as any)?.zohoStatus);
               return (
-                <p className={`rounded-xl border px-3 py-2 text-[11px] font-bold ${cancelled ? "border-zinc-500/30 bg-zinc-500/5 text-[var(--text-secondary)]" : "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"}`}>
-                  {cancelled
-                    ? `Auto-concluded — Zoho estimate ${String((selEnquiry as any)?.zohoStatus ?? 'declined')} (requirement cancelled client-side). No further quoting needed.`
-                    : "Enquiry Concluded — vendor rates locked. Management sees the live quotes already; late quotes reopen via a management rate request."}
+                <p className={`rounded-xl border px-3 py-2 text-[11px] font-bold ${closed ? "border-zinc-500/30 bg-zinc-500/5 text-[var(--text-secondary)]" : "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"}`}>
+                  {accepted
+                    ? `Auto-concluded — Zoho estimate ${String((selEnquiry as any)?.zohoStatus ?? 'accepted')} (order won). No further quoting needed.`
+                    : closed
+                      ? `Auto-concluded — Zoho estimate ${String((selEnquiry as any)?.zohoStatus ?? 'declined')} (requirement cancelled client-side). No further quoting needed.`
+                      : "Enquiry Concluded — vendor rates locked. Management sees the live quotes already; late quotes reopen via a management rate request."}
                 </p>
               );
             }
@@ -539,12 +542,16 @@ export default function ProcurementQueue() {
               );
             }
             const gate = procurementSubmittable(selEnquiry);
-            // Cancelled requirement: no conclude click needed — it is already
-            // out of Active (auto-conclude stamps the handoff in the background).
-            if (isZohoCancelledStatus((selEnquiry as any)?.zohoStatus)) {
+            // Closed requirement (terminal Zoho state): no conclude click
+            // needed — it is already out of Active (auto-conclude stamps the
+            // handoff in the background).
+            if (isZohoClosedStatus((selEnquiry as any)?.zohoStatus)) {
+              const accepted = !isZohoCancelledStatus((selEnquiry as any)?.zohoStatus);
               return (
                 <p className="rounded-xl border border-zinc-500/30 bg-zinc-500/5 px-3 py-2 text-[11px] font-bold text-[var(--text-secondary)]">
-                  Auto-concluded — Zoho estimate {String((selEnquiry as any)?.zohoStatus ?? 'declined')} (requirement cancelled client-side). No further quoting needed.
+                  {accepted
+                    ? `Auto-concluded — Zoho estimate ${String((selEnquiry as any)?.zohoStatus ?? 'accepted')} (order won). No further quoting needed.`
+                    : `Auto-concluded — Zoho estimate ${String((selEnquiry as any)?.zohoStatus ?? 'declined')} (requirement cancelled client-side). No further quoting needed.`}
                 </p>
               );
             }

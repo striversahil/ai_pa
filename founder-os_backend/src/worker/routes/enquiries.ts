@@ -7,6 +7,7 @@ import { chatTurn, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
+import { isZohoClosedStatus, procurementSubmittable } from '../../modules/enquiries/queues';
 
 // Agnes vision intake — Worker-native, no GH Actions (fast edge, <5s).
 // Replaces the GH runner `enquiry-intake-runner.js` (OpenRouter vision).
@@ -119,16 +120,20 @@ function kick(c: any, id: string): void {
   }
 
   // Fire-and-forget DB promotion: Zoho non-draft → Enquiry `sent`.
-  // Plus: Zoho-cancelled (declined/void/cancelled — the requirement itself is
-  // dead client-side) → auto-stamp `procurementSubmittedAt` ("Enquiry
-  // Concluded") so the row drops out of the procurement Active queue into
-  // History without a manual click. Never clears an existing stamp.
-  // Called after `attachZohoStatus` so the DB catches up to what the response
-  // already derived. Never blocks the request.
+  // Plus auto-conclude (`procurementSubmittedAt`) so concluded rows drop out
+  // of the procurement Active queue into History without a manual click:
+  // - terminal client decisions (declined/void/cancelled/accepted) stamp
+  //   unconditionally — quoting is over either way;
+  // - `sent` (estimate awaiting decision) stamps only once quotable work is
+  //   done (`procurementSubmittable().ok` on the STORED row) — rows procurement
+  //   is still quoting stay Active until the last rate lands.
+  // Never clears an existing stamp. Never blocks the request.
   function maybePromoteEnquiriesSent(c: any, enquiries: any[]): void {
     try {
       const ids: string[] = [];
-      const concludeIds: string[] = [];
+      // id → 'terminal' | 'sent': terminal stamps unconditionally, sent only
+      // when the stored row has nothing left to quote.
+      const conclude = new Map<string, 'terminal' | 'sent'>();
       for (const e of enquiries as any[]) {
         const s = String((e as any)?.zohoStatus ?? '').toLowerCase();
         if (!s || s === 'draft') continue;
@@ -142,12 +147,14 @@ function kick(c: any, id: string): void {
           // and DB still not sent, update. We track ids via `id`.
           if (origRateStatus !== 'sent' && e?.id) ids.push(String(e.id));
         }
-        // Auto-conclude: cancelled requirement + not yet concluded.
-        if (e?.id && isZohoCancelled(s) && !String((e as any)?.procurementSubmittedAt ?? '').trim()) {
-          concludeIds.push(String(e.id));
+        // Auto-conclude: terminal decisions always; `sent` only when quoting
+        // is provably done (checked against the stored row below). Skip rows
+        // that already carry the handoff.
+        if (e?.id && !String((e as any)?.procurementSubmittedAt ?? '').trim()) {
+          conclude.set(String(e.id), isZohoClosedStatus(s) ? 'terminal' : 'sent');
         }
       }
-      if (!ids.length && !concludeIds.length) return;
+      if (!ids.length && !conclude.size) return;
       const task = (async () => {
         try {
           const { prisma } = deps();
@@ -161,10 +168,13 @@ function kick(c: any, id: string): void {
               });
             } catch {}
           }
-          // Auto-conclude cancelled requirements (guarded: only stamp when
-          // still empty so a manual conclude timestamp is never overwritten).
+          // Auto-conclude (guarded: only stamp when still empty so a manual
+          // conclude timestamp is never overwritten). Terminal decisions stamp
+          // outright; `sent` stamps only when the STORED row has nothing left
+          // to quote — evaluated on stored items (the redacted response items
+          // omit internalRates, so the in-memory row can't be trusted here).
           const concluded: string[] = [];
-          for (const id of concludeIds) {
+          for (const [id, kind] of conclude) {
             try {
               let current: any = null;
               try {
@@ -174,6 +184,13 @@ function kick(c: any, id: string): void {
               }
               const already = String((current as any)?.procurementSubmittedAt ?? '').trim();
               if (already) continue;
+              if (kind === 'sent') {
+                try {
+                  if (!procurementSubmittable({ items: (current as any)?.items ?? [] } as any).ok) continue;
+                } catch {
+                  continue;
+                }
+              }
               const stamped = new Date().toISOString();
               try {
                 await (prisma as any).enquiry.updateMany({

@@ -87,12 +87,22 @@ export function isZohoCancelledStatus(s: unknown): boolean {
   return v.includes('declin') || v.includes('cancel') || v === 'void' || v.includes('reject');
 }
 
+/** Zoho-closed requirement: cancelled-like OR client-accepted. Both are
+ *  terminal client decisions — procurement quoting is over. `sent` is NOT
+ *  closed (estimate awaiting decision; concludes only once quotable work is
+ *  done — see the conditional stamp in worker/routes/enquiries.ts). */
+export function isZohoClosedStatus(s: unknown): boolean {
+  const v = String(s ?? '').toLowerCase().trim();
+  if (!v) return false;
+  return isZohoCancelledStatus(v) || v.includes('accept');
+}
+
 export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
   if (items.length === 0) return false;
-  // Cancelled requirement: dead client-side — never Active, even with
+  // Closed requirement: dead/won client-side — never Active, even with
   // unquoted lines (the auto-stamp persists this; the guard makes it instant).
-  if (isZohoCancelledStatus((e as any).zohoStatus)) return false;
+  if (isZohoClosedStatus((e as any).zohoStatus)) return false;
   // Fresh work (new unquoted lines, pending alternate requests) reopens the
   // queue even on concluded rows — the client keeps asking.
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return true;
@@ -102,9 +112,9 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
 
 export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
-  // Cancelled requirement: concluded automatically — visible in History even
+  // Closed requirement: concluded automatically — visible in History even
   // before/without the explicit handoff stamp.
-  if (isZohoCancelledStatus((e as any).zohoStatus)) return items.length > 0;
+  if (isZohoClosedStatus((e as any).zohoStatus)) return items.length > 0;
   if (!isSubmitted(e)) return false;
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return false;
   if (hasPendingNotAvailableWork(e as any)) return false;

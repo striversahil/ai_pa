@@ -130,7 +130,10 @@
             "namda tape",
             "felt tape",
             "Nivard tape",
-            "gasket felt"
+            "gasket felt",
+            "namda sheet",
+            "felt sheet",
+            "namda felt"
           ],
           "required_attributes": [
             "Ask which type: Namda tape, cotton tape (Nivard), or glue-backed (peel-paper) tape -- construction and MOQ differ by type",
@@ -573,7 +576,9 @@
             "AA-style bucket",
             "double A bucket",
             "elevator cups",
-            "grain elevator buckets"
+            "grain elevator buckets",
+            "elevator bucket",
+            "elevator balti"
           ],
           "required_attributes": [
             "Ask size (width x projection x depth, usually in inches)",
@@ -614,7 +619,12 @@
           "subcategory": "Conveyor Belts",
           "aliases": [
             "rubber conveyor belt",
-            "black belting"
+            "black belting",
+            "chevron belt",
+            "chevron conveyor belt",
+            "chevron cleated belt",
+            "cleated conveyor belt",
+            "inclined conveyor belt"
           ],
           "required_attributes": [
             "Ask width required",

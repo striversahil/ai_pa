@@ -455,14 +455,22 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                               )}
                             </div>
                             {isIncomplete && Array.isArray(kypMissing) && kypMissing.length > 0 && (
-                              <ul className="space-y-1">
-                                {(kypMissing as string[]).map((q, i) => (
-                                  <li key={i} className="flex gap-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                                    <span className="mt-0.5 flex-shrink-0 w-1.5 h-1.5 rounded-full bg-amber-500/70" />
-                                    <span>{q}</span>
-                                  </li>
-                                ))}
-                              </ul>
+                              <div className="md-table-wrap mt-2 !my-2 !border-amber-500/20">
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th className="!bg-amber-500/10 !text-amber-700 dark:!text-amber-300 !border-amber-500/20">Missing Detail — client se poochna hai</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(kypMissing as string[]).map((q, i) => (
+                                      <tr key={i}>
+                                        <td className="!text-[11px] !leading-relaxed !py-2">{q}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
                             )}
                             {isComplete && (
                               <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">All required details present — price lookup enabled for this item.</p>
