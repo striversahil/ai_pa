@@ -161,6 +161,20 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   // Enquiries subscribe only to `enquiries` events, but Estimate status
   // flips broadcast `estimates` — also refetch enquiries so the Zoho chip
   // updates without an extra poll.
+  // Safety net: if live WebSocket drops and a fresh enquiry is still AI-reading (empty), poll every 4s so it auto-populates without manual refresh
+  useEffect(() => {
+    const hasFreshEmpty = enquiries.some((e: any) => {
+      const createdMs = new Date(e.createdAt).getTime();
+      const isFresh = Number.isFinite(createdMs) && Date.now() - createdMs < 15 * 60 * 1000;
+      const hasSource = !!(e.description?.trim() || (e.imageUrls ?? []).length > 0 || (e.additionalRequirements ?? []).length > 0);
+      const empty = !(e.items && e.items.length > 0);
+      return isFresh && hasSource && empty;
+    });
+    if (!hasFreshEmpty) return;
+    const id = setInterval(() => void fetchEnquiriesRef.current(), 4000);
+    return () => clearInterval(id);
+  }, [enquiries]);
+
   useLiveEvent((e) => {
     if (!e || ((e as any).type !== 'enquiries' && (e as any).type !== 'estimates')) return;
     if ((e as any).type === 'estimates') { void fetchEnquiriesRef.current(); return; }

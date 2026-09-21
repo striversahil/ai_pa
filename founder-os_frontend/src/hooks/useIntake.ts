@@ -41,11 +41,23 @@ export function useIntake(enquiryId: string | null, updatedAt?: string): IntakeD
   // Live: vision-intake broadcasts Enquiries updated → refetch intake so loader unsticks without refresh
   useLiveEvent((e: any) => {
     if (!enquiryId) return;
-    if (!e || e.type !== "enquiries") return;
+    if (!e || (e.type !== "enquiries" && e.type !== "data-changed")) return;
     const id = String(e.id ?? e.enquiryId ?? "");
-    if (id && id !== enquiryId) return;
+    if (id && id !== enquiryId) {
+      // generic data-changed has no id — refetch anyway while fresh
+      if (e.type !== "data-changed") return;
+    }
     void fetchIntake();
   });
+
+  // Safety net: while AI is still reading (no data yet and enquiry is fresh), poll every 3s
+  // in case the WebSocket is disconnected — guarantees auto-populate even without live
+  useEffect(() => {
+    if (!enquiryId) return;
+    if (data !== null) return;
+    const t = setInterval(() => void fetchIntake(), 3000);
+    return () => clearInterval(t);
+  }, [enquiryId, data, fetchIntake]);
 
   return data;
 }
