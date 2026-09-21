@@ -69,13 +69,22 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   if (!enquiry) return;
 
   const gateway = getGateway(env as any);
-  const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
-  const hasOpenRouter = gateway.health().some((h) => h.provider === 'openrouter');
-  if (!hasAgnes && !hasOpenRouter) {
-    console.warn('[vision-intake] no Agnes/OpenRouter key — skipping');
+  const health = gateway.health();
+  const hasAgnes = health.some((h) => h.provider === 'agnes');
+  const hasGroq = health.some((h) => h.provider === 'groq');
+  const hasOpenRouter = health.some((h) => h.provider === 'openrouter');
+  if (!hasAgnes && !hasGroq && !hasOpenRouter) {
+    console.warn('[vision-intake] no AI key — skipping');
     return;
   }
-  const provider = hasAgnes ? 'agnes' : 'openrouter';
+  // Standardized fallback chain: Agnes primary → Groq vision → OpenRouter vision
+  // Ensures manual intake never sticks on Agnes 1015 WAF (Cloudflare IP throttled)
+  const providers: string[] = [];
+  if (hasAgnes) providers.push('agnes');
+  if (hasGroq) providers.push('groq');
+  if (hasOpenRouter) providers.push('openrouter');
+  // Dedupe while preserving order
+  const chain = [...new Set(providers)];
 
   // Determine text to split: aiBulkText (Add via AI) takes precedence, otherwise description.
   const items: any[] = Array.isArray(enquiry.items) ? enquiry.items : [];
@@ -84,8 +93,11 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     ? `New items to split (ignore everything else):\n${aiBulkText.slice(0, 3000)}`
     : `Enquiry text:\n${String(enquiry.description || '').slice(0, 3000)}`;
 
-  // Collect images: enquiry-level + per-item media (cap 4, data-URI or https)
-  const enquiryImages: string[] = Array.isArray((enquiry as any).enquiryImages) ? (enquiry as any).enquiryImages.map((m: any) => m?.url).filter(Boolean) : [];
+  // Collect images: enquiry-level imageUrls (string[] data-URI/https) + per-item media (cap 4)
+  const rawImageUrls: any = (enquiry as any).imageUrls ?? (enquiry as any).enquiryImages;
+  const enquiryImages: string[] = Array.isArray(rawImageUrls)
+    ? rawImageUrls.map((m: any) => typeof m === 'string' ? m : String(m?.url ?? '')).filter(Boolean)
+    : [];
   const itemImages: string[] = [];
   for (const it of items) for (const m of (it.media || [])) if (m?.url) itemImages.push(String(m.url));
   const allImages = [...enquiryImages, ...itemImages].slice(0, 4);
@@ -95,36 +107,44 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     console.log(`[vision-intake] ${id}: WARNING ${allImages.length} image(s) present but none attached to vision call`);
   }
 
-  let routed: any;
+  let routed: any = null;
   let lastErr: any = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      // Cap vision call at 12s — gateway now fails fast (3 attempts, <6s total), so intake never hangs 35s.
-      const ac = new AbortController();
-      const t = setTimeout(() => ac.abort(), 12_000);
+  let successProvider = chain[0] ?? 'agnes';
+  // Try each provider in chain until one succeeds (handles Agnes 1015 WAF without empty poison)
+  outer: for (const prov of chain) {
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        routed = await gateway.completeJson<any>({
-          messages: [{ role: 'system', content: ROUTER_SYSTEM_AGNES }, { role: 'user', content }],
-          temperature: 0, json: true, maxTokens: 4000, provider, signal: ac.signal as any,
-        });
-      } finally { clearTimeout(t); }
-      lastErr = null;
-      break;
-    } catch (e: any) {
-      lastErr = e;
-      const is429 = /429|rate-limit|1015/i.test(String(e?.message ?? '')) || (e as any)?.status === 429;
-      console.log(`[vision-intake] ${id}: attempt ${attempt + 1}/2 failed (${String(e?.message ?? e).slice(0, 120)})`);
-      if (is429) break; // fail fast on rate-limit — don't hammer, write empty intake below
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 20_000);
+        try {
+          routed = await gateway.completeJson<any>({
+            messages: [{ role: 'system', content: ROUTER_SYSTEM_AGNES }, { role: 'user', content }],
+            temperature: 0, json: true, maxTokens: 4000, provider: prov, signal: ac.signal as any,
+          });
+        } finally { clearTimeout(t); }
+        lastErr = null;
+        successProvider = prov;
+        break outer;
+      } catch (e: any) {
+        lastErr = e;
+        const msg = String(e?.message ?? e);
+        const is429 = /429|rate-limit|1015/i.test(msg) || (e as any)?.status === 429;
+        const is1015 = /1015/i.test(msg);
+        console.log(`[vision-intake] ${id}: provider=${prov} attempt ${attempt + 1}/2 failed (${msg.slice(0, 120)})${is1015 ? ' [1015 WAF]' : ''}`);
+        if (is429) {
+          // For 1015/429, try next provider immediately (don't hammer same provider)
+          break;
+        }
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+      }
     }
   }
-  if (lastErr) {
+  if (lastErr && !routed) {
     const is429 = /429|rate-limit|1015/i.test(String(lastErr?.message ?? '')) || (lastErr as any)?.status === 429;
     if (is429) {
-      console.warn(`[vision-intake] ${id}: rate-limited — writing empty intake so UI unsticks, will retry on next edit`);
+      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.join('→')}) — writing empty intake so UI unsticks, will retry on next edit`);
       try {
         await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000);
-        // also mark done so old GH queue skips
         try {
           const db: any = (env as any)?.DB;
           if (db) {
@@ -139,10 +159,9 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
         } catch {}
       } catch {}
     } else {
-      console.error(`[vision-intake] ${id}: vision failed: ${String(lastErr?.message ?? lastErr).slice(0, 300)}`);
+      console.error(`[vision-intake] ${id}: vision failed on all providers ${chain.join('→')}: ${String(lastErr?.message ?? lastErr).slice(0, 300)}`);
     }
     if (is429) return;
-    // For non-rate-limit errors, also unstick UI with empty intake
     try { await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000); } catch {}
     return;
   }
@@ -255,5 +274,5 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       ]);
     }
   } catch {}
-  console.log(`[vision-intake] ${id}: provider=${provider} items=${outItems.length} fields=${Object.keys(fields).join(',') || 'none'}`);
+  console.log(`[vision-intake] ${id}: provider=${successProvider} items=${outItems.length} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
 }
