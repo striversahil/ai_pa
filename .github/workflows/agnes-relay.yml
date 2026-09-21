@@ -81,6 +81,8 @@ jobs:
             P=$(curl -s -m 10 http://127.0.0.1:8787/health || echo DOWN)
             Q=$(curl -s -m 15 "https://$HOSTNAME/health" || echo DOWN)
             echo "$(date -u +%H:%M:%S) local=$P public=$Q"
+            echo "--- relayed requests since last beat (proof of lane) ---"
+            tail -n 20 /tmp/relay-proxy.log | grep -a "\[proxy\]" || echo "(no AI traffic via relay yet)"
             curl -s -m 20 -X POST "$WORKER_URL/api/runner/relay/register" \
               -H "Authorization: Bearer $SHARED_SECRET" \
               -H "Content-Type: application/json" \
