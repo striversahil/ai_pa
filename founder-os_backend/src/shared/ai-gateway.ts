@@ -12,12 +12,14 @@
  *   env.AGNES_API_KEYS  = comma-separated Agnes keys
  *   env.GROQ_API_KEYS   = IGNORED (founder decision 2026-09-21: hallucination quality)
  *   env.OMNIROUTE_*     = IGNORED
- * Egress-relay proxy (optional, Agnes only — see home-egress/ + agnes-relay.yml):
+ * Egress-relay proxy (optional, Agnes only — see home-egress/ + agnes-relay*.yml):
  *   env.AGNES_PROXY_URL = STATIC named-tunnel hostname of the relay (unset = direct egress)
  *   env.AGNES_PROXY_SECRET = shared secret the proxy requires per call
+ *   env.AGNES_PROXY_URL_BAK / _SECRET_BAK = hot-standby second lane (agnes-relay-bak)
+ *     — per-attempt failover primary→bak in seconds; per-lane poison replace.
  *   env.AGNES_PROXY_TIMEOUT_MS = proxy attempt cap, default 25000 (max 60000)
  *   env.AGNES_PROXY_ALWAYS = '1' for an always-on home/GCP lane (default: on-demand
- *     GH relay, used only while KV ai:relay:active is fresh — see RELAY_* below)
+ *     GH relay, used only while KV ai:relay:active[:bak] is fresh — see RELAY_* below)
  *
  * Agnes uses `chat_template_kwargs: {enable_thinking:true}` for reasoning
  * (mapped from `reasoningEffort`), base https://apihub.agnes-ai.com/v1.
@@ -431,7 +433,29 @@ export const RELAY_ACTIVE_KEY = 'ai:relay:active';
 export const RELAY_TTL_MS = 6 * 60 * 60_000;
 export const RELAY_COOLDOWN_KEY = 'ai:relay:cooldown';
 export const RELAY_COOLDOWN_MS = 30 * 60_000;
+// Set when a 1015 arrives THROUGH the relay leg (Azure egress itself
+// throttled) — cron replaces the run (new runner ≈ new IP). TTL bounds it.
+export const RELAY_POISONED_KEY = 'ai:relay:poisoned';
+export const RELAY_POISONED_TTL_MS = 30 * 60_000;
+// Backup lane keys (second tunnel/runner — hot standby, independent lifecycle).
+export const RELAY_ACTIVE_KEY_BAK = 'ai:relay:active:bak';
+export const RELAY_POISONED_KEY_BAK = 'ai:relay:poisoned:bak';
 const RELAY_MEMO_MS = 60_000;
+
+/** One egress lane: its own tunnel URL, secret, KV lifecycle flag, and
+ *  health state. Primary + backup run as independent GH runs so a poisoned
+ *  lane is replaceable without touching the other. */
+export interface ProxyLane {
+  name: string;
+  url: string;
+  secret: string;
+  activeKey: string;
+  poisonedKey: string;
+  failStreak: number;
+  skipUntil: number;
+  memoVal: boolean;
+  memoUntil: number;
+}
 
 export class AiGateway {
   private pool = new KeyPool();
@@ -458,8 +482,7 @@ export class AiGateway {
   // Proxied calls intentionally bypass the CF AI Gateway (same shared-egress
   // fate). Runners (scripts/ai-gateway.js) don't read these vars — GitHub
   // egress is clean.
-  private proxyUrl = '';
-  private proxySecret = '';
+  private lanes: ProxyLane[] = [];
   // Proxy attempt cap: high enough for legit reasoning responses (they take
   // 6–15s), low enough to bound a dead tunnel. A down PC fails FAST anyway
   // (refused/DNS, milliseconds) — this cap only binds genuine stalls.
@@ -468,13 +491,8 @@ export class AiGateway {
   // proxy for 60s instead of paying the timeout on every attempt. Success
   // resets the streak. (Cross-isolate learning would need KV — the timeout
   // cap already bounds the worst case, so local memory suffices.)
-  private proxyFailStreak = 0;
-  private proxySkipUntil = 0;
   // Always-on lane escape hatch (home PC / GCP VM): skip the relay gate.
   private proxyAlways = false;
-  // Relay-gate memo (per isolate): one KV read per 60s max, not per call.
-  private relayMemoVal = false;
-  private relayMemoUntil = 0;
 
   constructor(env?: Record<string, unknown>) {
     if (env) this.configure(env);
@@ -487,8 +505,27 @@ export class AiGateway {
     const aigAcc = String((env as any)?.CLOUDFLARE_ACCOUNT_ID ?? (env as any)?.CF_AIG_ACCOUNT_ID ?? '').trim();
     const aigId = String((env as any)?.CF_AIG_GATEWAY_ID ?? (env as any)?.AI_GATEWAY_ID ?? 'founder-os').trim();
     if (aigAcc) { this.aigAccount = aigAcc; this.aigGateway = aigId; }
-    const pUrl = String((env as any)?.AGNES_PROXY_URL ?? '').trim().replace(/\/+$/, '');
-    if (pUrl) { this.proxyUrl = pUrl; this.proxySecret = String((env as any)?.AGNES_PROXY_SECRET ?? '').trim(); }
+    const mkLane = (
+      name: string, urlRaw: unknown, secRaw: unknown, activeKey: string, poisonedKey: string,
+    ): ProxyLane | null => {
+      const url = String(urlRaw ?? '').trim().replace(/\/+$/, '');
+      const secret = String(secRaw ?? '').trim();
+      if (!url || !secret) return null;
+      const prev = this.lanes.find((l) => l.name === name);
+      return {
+        name, url, secret, activeKey, poisonedKey,
+        failStreak: prev?.failStreak ?? 0,
+        skipUntil: prev?.skipUntil ?? 0,
+        memoVal: prev?.memoVal ?? false,
+        memoUntil: prev?.memoUntil ?? 0,
+      };
+    };
+    // Rebuilt per configure() but health/memo survive via prev-carry above
+    // (getGateway re-configures on every call; without this, streaks reset).
+    this.lanes = [
+      mkLane('primary', (env as any)?.AGNES_PROXY_URL, (env as any)?.AGNES_PROXY_SECRET, RELAY_ACTIVE_KEY, RELAY_POISONED_KEY),
+      mkLane('bak', (env as any)?.AGNES_PROXY_URL_BAK, (env as any)?.AGNES_PROXY_SECRET_BAK ?? (env as any)?.AGNES_PROXY_SECRET, RELAY_ACTIVE_KEY_BAK, RELAY_POISONED_KEY_BAK),
+    ].filter((l): l is ProxyLane => l !== null);
     this.proxyAlways = String((env as any)?.AGNES_PROXY_ALWAYS ?? '').trim() === '1';
     const pTo = Number(String((env as any)?.AGNES_PROXY_TIMEOUT_MS ?? '').trim());
     if (Number.isFinite(pTo) && pTo > 0) this.proxyTimeoutMs = Math.min(pTo, 60_000);
@@ -507,58 +544,73 @@ export class AiGateway {
     return this.pool.health();
   }
 
-  /** Home proxy configured for this provider? (Agnes only — the throttled one.) */
-  private proxyEnabled(provider: ProviderConfig): boolean {
-    return provider.id === 'agnes' && !!this.proxyUrl && !!this.proxySecret && Date.now() >= this.proxySkipUntil;
+  /** Lane configured for this provider? (Agnes only — the throttled one.)
+   *  Sync gate: URL + secret present and off the skip-ladder. */
+  private laneEnabled(lane: ProxyLane, provider: ProviderConfig): boolean {
+    return provider.id === 'agnes' && !!lane.url && !!lane.secret && Date.now() >= lane.skipUntil;
   }
 
-  /** On-demand GH relay live? Memoized 60s per isolate (KV read, not per call). */
-  private async isRelayActive(): Promise<boolean> {
+  /** Lane's relay run live? Memoized 60s per isolate per lane (KV, not per call). */
+  private async isLaneActive(lane: ProxyLane): Promise<boolean> {
     const now = Date.now();
-    if (now < this.relayMemoUntil) return this.relayMemoVal;
+    if (now < lane.memoUntil) return lane.memoVal;
     let active = false;
     try {
-      active = !!(await cacheGet(RELAY_ACTIVE_KEY, RELAY_TTL_MS));
+      active = !!(await cacheGet(lane.activeKey, RELAY_TTL_MS));
     } catch { active = false; }
-    this.relayMemoVal = active;
-    this.relayMemoUntil = now + RELAY_MEMO_MS;
+    lane.memoVal = active;
+    lane.memoUntil = now + RELAY_MEMO_MS;
     return active;
   }
 
-  /** Proxy usable for this attempt? Always-on lane skips the relay gate;
-   *  the on-demand relay must have registered itself (flag fresh). */
-  private async proxyUsable(provider: ProviderConfig): Promise<boolean> {
-    if (!this.proxyEnabled(provider)) return false;
-    if (this.proxyAlways) return true;
-    return this.isRelayActive();
-  }
-
-  private proxySucceeded(): void {
-    this.proxyFailStreak = 0;
-    this.proxySkipUntil = 0;
-  }
-
-  private proxyFaulted(): void {
-    this.proxyFailStreak++;
-    if (this.proxyFailStreak >= 3) this.proxySkipUntil = Date.now() + 60_000;
-  }
-
-  /** Debug: worker→proxy leg health. Hostname only — never leaks the secret. */
-  async proxyStatus(): Promise<{ configured: boolean; host: string | null; skipActive: boolean; failStreak: number; relayActive: boolean; alwaysOn: boolean; reachable: boolean; ms: number; body?: string; error?: string }> {
-    let host: string | null = null;
-    try { host = new URL(this.proxyUrl).host; } catch { /* unset */ }
-    let relayActive = false;
-    try { relayActive = await this.isRelayActive(); } catch { /* ignore */ }
-    const base = { configured: !!this.proxyUrl && !!this.proxySecret, host, skipActive: Date.now() < this.proxySkipUntil, failStreak: this.proxyFailStreak, relayActive, alwaysOn: this.proxyAlways };
-    if (!this.proxyUrl) return { ...base, reachable: false, ms: 0, error: 'AGNES_PROXY_URL unset' };
-    const start = Date.now();
-    try {
-      const r = await fetch(this.proxyUrl.replace(/\/+$/, '') + '/health', { signal: AbortSignal.timeout(15000) });
-      const text = await r.text().catch(() => '');
-      return { ...base, reachable: r.ok, ms: Date.now() - start, body: text.slice(0, 200), ...(!r.ok ? { error: `HTTP ${r.status}` } : {}) };
-    } catch (e: any) {
-      return { ...base, reachable: false, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 200) };
+  /** Lanes usable for this attempt, primary first. Always-on mode skips the
+   *  relay gate; otherwise each lane's run must have registered itself. */
+  private async usableLanes(provider: ProviderConfig): Promise<ProxyLane[]> {
+    const out: ProxyLane[] = [];
+    for (const lane of this.lanes) {
+      if (!this.laneEnabled(lane, provider)) continue;
+      if (this.proxyAlways || (await this.isLaneActive(lane))) out.push(lane);
     }
+    return out;
+  }
+
+  private laneSucceeded(lane: ProxyLane): void {
+    lane.failStreak = 0;
+    lane.skipUntil = 0;
+  }
+
+  private laneFaulted(lane: ProxyLane): void {
+    lane.failStreak++;
+    if (lane.failStreak >= 3) lane.skipUntil = Date.now() + 60_000;
+  }
+
+  /** Debug: worker→proxy leg health per lane. Hostnames only — never secrets. */
+  async proxyStatus(): Promise<{ ok: true; alwaysOn: boolean; lanes: Array<{ name: string; configured: boolean; host: string | null; relayActive: boolean; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string }> }> {
+    type LaneStatus = { name: string; configured: boolean; host: string | null; relayActive: boolean; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string };
+    const lanes: LaneStatus[] = [];
+    for (const lane of this.lanes) {
+      let host: string | null = null;
+      try { host = new URL(lane.url).host; } catch { /* unset */ }
+      let relayActive = false;
+      try { relayActive = await this.isLaneActive(lane); } catch { /* ignore */ }
+      const base = {
+        name: lane.name, configured: !!lane.url && !!lane.secret, host, relayActive,
+        skipActive: Date.now() < lane.skipUntil, failStreak: lane.failStreak,
+      };
+      if (!lane.url) {
+        lanes.push({ ...base, reachable: false, ms: 0, error: 'unset' });
+        continue;
+      }
+      const start = Date.now();
+      try {
+        const r = await fetch(lane.url.replace(/\/+$/, '') + '/health', { signal: AbortSignal.timeout(15000) });
+        const text = await r.text().catch(() => '');
+        lanes.push({ ...base, reachable: r.ok, ms: Date.now() - start, body: text.slice(0, 200), ...(!r.ok ? { error: `HTTP ${r.status}` } : {}) });
+      } catch (e: any) {
+        lanes.push({ ...base, reachable: false, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 200) });
+      }
+    }
+    return { ok: true as const, alwaysOn: this.proxyAlways, lanes };
   }
 
   /**
@@ -568,25 +620,25 @@ export class AiGateway {
    * timeout, proxy 502) so the caller falls through to direct egress
    * without touching pool health.
    */
-  private async fetchViaProxy(path: string, body: string, headers: Record<string, string>, signal: AbortSignal | undefined, timeoutMs?: number): Promise<Response> {
+  private async fetchViaProxy(lane: ProxyLane, path: string, body: string, headers: Record<string, string>, signal: AbortSignal | undefined, timeoutMs?: number): Promise<Response> {
     let res: Response;
     try {
-      res = await fetch(this.proxyUrl + path, {
+      res = await fetch(lane.url + path, {
         method: 'POST',
-        headers: { ...headers, 'x-proxy-secret': this.proxySecret },
+        headers: { ...headers, 'x-proxy-secret': lane.secret },
         body,
         signal: this.combineSignals(signal, timeoutMs ?? this.proxyTimeoutMs),
       });
     } catch (e) {
-      this.proxyFaulted();
-      const fault: any = new Error(`proxy unreachable: ${e instanceof Error ? e.message : String(e)}`);
+      this.laneFaulted(lane);
+      const fault: any = new Error(`proxy ${lane.name} unreachable: ${e instanceof Error ? e.message : String(e)}`);
       fault.proxyFault = true;
       throw fault;
     }
     if (res.status === 502 && res.headers.get('x-proxy-error') === '1') {
       try { await res.text().catch(() => ''); } catch {}
-      this.proxyFaulted();
-      const fault: any = new Error('proxy upstream failure');
+      this.laneFaulted(lane);
+      const fault: any = new Error(`proxy ${lane.name} upstream failure`);
       fault.proxyFault = true;
       throw fault;
     }
@@ -596,13 +648,26 @@ export class AiGateway {
     // penalising the AI key (a genuine Agnes 502/503 carries a JSON body and
     // still passes through as an upstream answer below).
     if ((res.status === 502 || res.status === 503 || res.status === 530) && (await this.looksLikeTunnelDown(res))) {
-      this.proxyFaulted();
-      const fault: any = new Error(`proxy tunnel down (HTTP ${res.status})`);
+      this.laneFaulted(lane);
+      const fault: any = new Error(`proxy ${lane.name} tunnel down (HTTP ${res.status})`);
       fault.proxyFault = true;
       throw fault;
     }
-    this.proxySucceeded();
+    this.laneSucceeded(lane);
     return res;
+  }
+
+  /** Upstream answered 1015 THROUGH the relay (Azure egress itself is now
+   *  throttled — genuinely new information). Flag it so cron replaces the run
+   *  (new runner ≈ new IP). Best-effort; the 429 itself still flows to the
+   *  caller for normal key rotation. Reads a clone; original stays consumable. */
+  private async flagRelayPoisoned(lane: ProxyLane, res: Response): Promise<void> {
+    try {
+      if (res.status === 429 && (await this.isIpThrottle(res))) {
+        await cacheSet(lane.poisonedKey, { at: Date.now(), lane: lane.name }, RELAY_POISONED_TTL_MS);
+        logger.warn?.(`[AiGateway] 1015 arrived via relay lane ${lane.name} — flagging run poisoned`);
+      }
+    } catch { /* best-effort */ }
   }
 
   /** True when a proxy-leg 5xx looks like a dead-tunnel edge page (HTML /
@@ -855,21 +920,29 @@ export class AiGateway {
     // Proxy-first (home egress); direct Cloudflare egress is the fallback.
     // A proxy 429 is a real upstream answer — only faults and our own 403s
     // fall through (handled inside tryProxy by returning null).
+    // Hot-standby lanes: try primary, then backup, per attempt. A faulted
+    // lane is skipped for the rest of this attempt (skip-ladder persists);
+    // a 1015 through a lane flags that lane poisoned for cron to replace.
+    // First usable upstream answer wins; all-lanes-faulted → null (direct).
     const tryProxy = async (): Promise<Response | null> => {
-      if (!(await this.proxyUsable(provider))) return null;
-      try {
-        const path = new URL(provider.baseURL).pathname;
-        const pres = await this.fetchViaProxy(path, payload, headers, req.signal, streamCap);
-        if (pres.status === 403) {
-          this.proxyFaulted();
-          logger.warn?.(`[AiGateway] home proxy 403 (secret?) — falling through to direct`);
-          return null;
+      const lanes = await this.usableLanes(provider);
+      if (lanes.length === 0) return null;
+      const path = new URL(provider.baseURL).pathname;
+      for (const lane of lanes) {
+        try {
+          const pres = await this.fetchViaProxy(lane, path, payload, headers, req.signal, streamCap);
+          if (pres.status === 403) {
+            this.laneFaulted(lane);
+            logger.warn?.(`[AiGateway] relay lane ${lane.name} 403 (secret?) — trying next lane`);
+            continue;
+          }
+          if (pres.status === 429) await this.flagRelayPoisoned(lane, pres);
+          return pres;
+        } catch (e) {
+          logger.warn?.(`[AiGateway] relay lane ${lane.name} failed (${(e as Error)?.message ?? e}) — trying next lane`);
         }
-        return pres;
-      } catch (e) {
-        logger.warn?.(`[AiGateway] home proxy failed (${(e as Error)?.message ?? e}) — falling through to direct`);
-        return null;
       }
+      return null;
     };
     let res: Response | null = await tryProxy();
     if (!res) {
@@ -1008,19 +1081,25 @@ export class AiGateway {
     };
     const proxyPath = new URL(provider.baseURL).pathname;
     const tryProxyFirst = async (): Promise<Response | null> => {
-      if (!(await this.proxyUsable(provider))) return null;
-      try {
-        const pres = await this.fetchViaProxy(proxyPath, payload, headers, req.signal, req.timeoutMs);
-        if (pres.status === 403) {
-          this.proxyFaulted();
-          logger.warn?.(`[AiGateway] home proxy 403 (secret?) — falling through to direct`);
-          return null;
+      const lanes = await this.usableLanes(provider);
+      if (lanes.length === 0) return null;
+      for (const lane of lanes) {
+        try {
+          const pres = await this.fetchViaProxy(lane, proxyPath, payload, headers, req.signal, req.timeoutMs);
+          if (pres.status === 403) {
+            this.laneFaulted(lane);
+            logger.warn?.(`[AiGateway] relay lane ${lane.name} 403 (secret?) — trying next lane`);
+            continue;
+          }
+          // Poisoned-lane detector: a 1015 that survives the relay means the
+          // relay's own egress is throttled — cron will replace that run.
+          if (pres.status === 429) await this.flagRelayPoisoned(lane, pres);
+          return pres;
+        } catch (e) {
+          logger.warn?.(`[AiGateway] relay lane ${lane.name} failed (${(e as Error)?.message ?? e}) — trying next lane`);
         }
-        return pres;
-      } catch (e) {
-        logger.warn?.(`[AiGateway] home proxy failed (${(e as Error)?.message ?? e}) — falling through to direct`);
-        return null;
       }
+      return null;
     };
     let res: Response | null = await tryProxyFirst();
     let directThrew: unknown = null;
@@ -1031,7 +1110,7 @@ export class AiGateway {
         directThrew = e;
       }
       if (!res) throw directThrew;
-      if (res.status === 429 && (await this.isIpThrottle(res)) && this.proxyEnabled(provider)) {
+      if (res.status === 429 && (await this.isIpThrottle(res)) && (await this.usableLanes(provider)).length > 0) {
         // Direct throttled at IP level while the proxy faulted a moment ago —
         // one last proxy recourse (skip-ladder permitting) before failing.
         const retry = await tryProxyFirst();

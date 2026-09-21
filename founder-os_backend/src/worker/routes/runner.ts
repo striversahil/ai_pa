@@ -11,7 +11,7 @@ import { logger } from '../../shared/logger';
 import { cacheSet, cacheDel } from '../../shared/cache';
 import { bulkAssignEstimates } from '../../automations/telecalling/service';
 import { syncEffortSnapshots } from '../../automations/telecalling/effort-sync';
-import { RELAY_ACTIVE_KEY, RELAY_TTL_MS } from '../../shared/ai-gateway';
+import { RELAY_ACTIVE_KEY, RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS } from '../../shared/ai-gateway';
 
 /** Procurement materials roll-up from final display rows (shared by the CRM
  *  snapshot POST and the incremental items-merge below, so both report the
@@ -49,17 +49,19 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/relay/register', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const body = await c.req.json().catch(() => ({}));
+    const lane = String(body?.lane ?? 'primary') === 'bak' ? 'bak' : 'primary';
+    const key = lane === 'bak' ? RELAY_ACTIVE_KEY_BAK : RELAY_ACTIVE_KEY;
     if (body?.active === false) {
-      await cacheDel(RELAY_ACTIVE_KEY);
-      return c.json({ ok: true, active: false });
+      await cacheDel(key);
+      return c.json({ ok: true, active: false, lane });
     }
     const ttlSec = Math.max(60, Math.min(Number(body?.ttlSec ?? RELAY_TTL_MS / 1000), RELAY_TTL_MS / 1000));
     try {
-      await cacheSet(RELAY_ACTIVE_KEY, { at: new Date().toISOString(), runId: String(body?.runId ?? '') }, ttlSec * 1000);
+      await cacheSet(key, { at: new Date().toISOString(), runId: String(body?.runId ?? ''), lane }, ttlSec * 1000);
     } catch (e: any) {
       return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 200) }, 500);
     }
-    return c.json({ ok: true, active: true, ttlSec });
+    return c.json({ ok: true, active: true, lane, ttlSec });
   });
   // ── whatsapp-digest runner ───────────────────────────────────────────────────
   app.get('/api/runner/messages/unprocessed', async (c) => {

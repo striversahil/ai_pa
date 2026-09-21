@@ -1,0 +1,98 @@
+name: Agnes Relay Backup (hot standby)
+# Mirror of agnes-relay.yml on an INDEPENDENT tunnel + run lifecycle, so a
+# poisoned primary is replaceable without touching the backup (and vice
+# versa). Gateway fails over primary→bak per attempt (seconds); cron replaces
+# poisoned lanes in background. Same cost bounds as primary.
+on:
+  workflow_dispatch:
+    inputs:
+      duration_min:
+        description: "Relay window in minutes (job hard-caps at 360)"
+        default: "330"
+      hostname:
+        description: "Public relay hostname (named tunnel, static)"
+        default: "egress-gh-bak.apotza.com"
+
+concurrency:
+  group: agnes-relay-bak
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Start Agnes proxy
+        env:
+          PROXY_SECRET: ${{ secrets.AGNES_RELAY_SECRET }}
+          PORT: 8787
+        run: |
+          test -n "$PROXY_SECRET" || { echo "AGNES_RELAY_SECRET unset"; exit 1; }
+          nohup node home-egress/proxy.js > /tmp/relay-proxy.log 2>&1 &
+          sleep 3
+          curl -s --max-time 10 http://127.0.0.1:8787/health || { echo "proxy failed to start"; cat /tmp/relay-proxy.log; exit 1; }
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+          cloudflared --version
+
+      - name: Register relay ACTIVE with Worker
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: |
+          curl -s --max-time 20 -X POST "$WORKER_URL/api/runner/relay/register" \
+            -H "Authorization: Bearer $SHARED_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"active\":true,\"lane\":\"bak\",\"runId\":\"$GITHUB_RUN_ID\",\"ttlSec\":21600}"
+
+      - name: Join named tunnel + heartbeat until window ends
+        env:
+          TUNNEL_TOKEN: ${{ secrets.RELAY_TUNNEL_TOKEN_BAK }}
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          HOSTNAME: ${{ inputs.hostname }}
+        run: |
+          test -n "$TUNNEL_TOKEN" || { echo "RELAY_TUNNEL_TOKEN_BAK unset"; exit 1; }
+          cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > /tmp/relay-tunnel.log 2>&1 &
+          for i in $(seq 1 24); do
+            grep -q "Registered tunnel connection" /tmp/relay-tunnel.log && break
+            sleep 5
+          done
+          grep "Registered tunnel connection" /tmp/relay-tunnel.log | head -n 2 \
+            || { echo "tunnel never registered"; tail -n 20 /tmp/relay-tunnel.log; exit 1; }
+          echo "--- public leg ---"
+          curl -s --max-time 20 "https://$HOSTNAME/health" || echo "public health not yet serving (tunnel propagating)"
+          END=$((SECONDS + ${{ inputs.duration_min }} * 60))
+          while [ $SECONDS -lt $END ]; do
+            P=$(curl -s -m 10 http://127.0.0.1:8787/health || echo DOWN)
+            Q=$(curl -s -m 15 "https://$HOSTNAME/health" || echo DOWN)
+            echo "$(date -u +%H:%M:%S) local=$P public=$Q"
+            echo "--- relayed requests since last beat (proof of lane) ---"
+            tail -n 20 /tmp/relay-proxy.log | grep -a "\[proxy\]" || echo "(no AI traffic via relay yet)"
+            curl -s -m 20 -X POST "$WORKER_URL/api/runner/relay/register" \
+              -H "Authorization: Bearer $SHARED_SECRET" \
+              -H "Content-Type: application/json" \
+              -d "{\"active\":true,\"lane\":\"bak\",\"runId\":\"$GITHUB_RUN_ID\",\"ttlSec\":21600}" > /dev/null
+            sleep 300
+          done
+          echo RELAY-WINDOW-DONE
+
+      - name: Deregister relay (OFF)
+        if: always()
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: |
+          curl -s --max-time 20 -X POST "$WORKER_URL/api/runner/relay/register" \
+            -H "Authorization: Bearer $SHARED_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"active":false,"lane":"bak"}' || true
