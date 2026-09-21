@@ -301,13 +301,10 @@ class AiGateway {
 
   async complete(req) {
     if (!req.provider && req.model && req.model.startsWith('agnes-')) req = { ...req, provider: 'agnes' };
-    // Free-tier burst limits clear in seconds — hammer through 429s with up to
-    // 50 immediate retries instead of surfacing an error to the caller.
-    // OpenRouter text requests additionally rotate OPENROUTER_FREE_MODELS
-    // every 5 consecutive 429s (vision + explicit models never rotate).
-    const MIN_ATTEMPTS = 50;
+    // Standardized: fail fast on 429, no 50× hammer. Heavy app queues at caller.
+    const MIN_ATTEMPTS = 3;
     const ROTATE_EVERY = 5;
-    const maxAttempts = Math.max(MIN_ATTEMPTS, this.pool.size || MIN_ATTEMPTS);
+    const maxAttempts = Math.max(MIN_ATTEMPTS, Math.min(this.pool.size || MIN_ATTEMPTS, 5));
     const wantsVision = Array.isArray(req.messages) && req.messages.some((m) => Array.isArray(m.content));
     let streak429 = 0;
     let rotatedModel;
@@ -318,11 +315,10 @@ class AiGateway {
         : this.pool.select(req.provider);
       if (!key) {
         const waitMs = this.pool.earliestCooldownMs();
-        if (waitMs > 0 && waitMs <= 30000 && attempt < maxAttempts - 1) {
-          await sleep(Math.min(waitMs, 5000));
-          continue;
-        }
-        throw new AiGatewayError('No AI key available (pool empty or all disabled)', lastErr, attempt);
+        const retryAfter = waitMs > 0 ? Math.min(waitMs, 60000) : 60000;
+        const e = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(retryAfter/1000)}s)`);
+        e.status = 429; e.retryAfter = retryAfter;
+        throw e;
       }
       const provider = PROVIDERS[key.provider] || PROVIDERS.groq;
       try {
@@ -370,13 +366,17 @@ class AiGateway {
           key.lastFailureAt = Date.now();
           key.cooldownUntil = 0;
           key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''}`;
-          console.warn(`[AiGateway] 429 on ${key.id}, immediate retry ${attempt + 1}/${maxAttempts}`);
           if (attempt < maxAttempts - 1) {
             const ra = err && err.retryAfter;
-            await sleep(Math.min(typeof ra === 'number' ? ra : 1500, 5000));
+            const backoff = Math.min(typeof ra === 'number' ? ra : 800 * Math.pow(2, attempt), 5000);
+            console.warn(`[AiGateway] 429 on ${key.id}, retry ${attempt + 1}/${maxAttempts} after ${backoff}ms`);
+            await sleep(backoff);
             continue;
           }
-          throw new AiGatewayError(`Rate-limited after ${maxAttempts} immediate retries`, lastErr, maxAttempts);
+          const ra2 = err && err.retryAfter;
+          const e4 = new Error(`HTTP 429: Rate-limited (retry after ${Math.round((typeof ra2 === 'number' ? ra2 : 60000)/1000)}s)`);
+          e4.status = 429; e4.retryAfter = typeof ra2 === 'number' ? ra2 : 60000;
+          throw e4;
         }
         const cooldown = this.pool.reportFailure(key, err, err && err.retryAfter);
         console.warn(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err && err.message ? err.message : err}`);

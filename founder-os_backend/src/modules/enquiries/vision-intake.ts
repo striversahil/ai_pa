@@ -99,20 +99,51 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   let lastErr: any = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      routed = await gateway.completeJson<any>({
-        messages: [{ role: 'system', content: ROUTER_SYSTEM_AGNES }, { role: 'user', content }],
-        temperature: 0, json: true, maxTokens: 4000, provider,
-      });
+      // Cap vision call at 12s — gateway now fails fast (3 attempts, <6s total), so intake never hangs 35s.
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 12_000);
+      try {
+        routed = await gateway.completeJson<any>({
+          messages: [{ role: 'system', content: ROUTER_SYSTEM_AGNES }, { role: 'user', content }],
+          temperature: 0, json: true, maxTokens: 4000, provider, signal: ac.signal as any,
+        });
+      } finally { clearTimeout(t); }
       lastErr = null;
       break;
     } catch (e: any) {
       lastErr = e;
+      const is429 = /429|rate-limit|1015/i.test(String(e?.message ?? '')) || (e as any)?.status === 429;
       console.log(`[vision-intake] ${id}: attempt ${attempt + 1}/2 failed (${String(e?.message ?? e).slice(0, 120)})`);
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 1500));
+      if (is429) break; // fail fast on rate-limit — don't hammer, write empty intake below
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
     }
   }
   if (lastErr) {
-    console.error(`[vision-intake] ${id}: vision failed: ${String(lastErr?.message ?? lastErr).slice(0, 300)}`);
+    const is429 = /429|rate-limit|1015/i.test(String(lastErr?.message ?? '')) || (lastErr as any)?.status === 429;
+    if (is429) {
+      console.warn(`[vision-intake] ${id}: rate-limited — writing empty intake so UI unsticks, will retry on next edit`);
+      try {
+        await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000);
+        // also mark done so old GH queue skips
+        try {
+          const db: any = (env as any)?.DB;
+          if (db) {
+            const nowIso = new Date().toISOString();
+            const doneAt = String((enquiry as any)?.updatedAt ?? nowIso);
+            const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
+            await db.batch([
+              db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:done:' + id, doneAt, nowIso),
+              db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + id, expired, nowIso),
+            ]);
+          }
+        } catch {}
+      } catch {}
+    } else {
+      console.error(`[vision-intake] ${id}: vision failed: ${String(lastErr?.message ?? lastErr).slice(0, 300)}`);
+    }
+    if (is429) return;
+    // For non-rate-limit errors, also unstick UI with empty intake
+    try { await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000); } catch {}
     return;
   }
   if (!routed || !Array.isArray(routed.lines) || routed.lines.length === 0) {
