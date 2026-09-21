@@ -21,13 +21,13 @@ jobs:
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
         run: node scripts/email-brain-index-runner.js
 
-  # Backstop for the event-driven intake (ops-enquiry-intake.yml): catches any
-  # enquiry the on-log dispatch missed. Watermark-gated — exits fast when idle.
+  # DISABLED: intake now Worker-native via Agnes vision (vision-intake.ts) — GH backstop removed, Worker waitUntil is instant.
   enquiry-intake-backstop:
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: enquiry-intake backstop (same runner, queue drain only)
+      - name: enquiry-intake backstop — DISABLED (Worker-native Agnes)
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}

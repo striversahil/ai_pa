@@ -7,24 +7,26 @@ import { chatTurn, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
-import { dispatchGitHubWorkflow, INTAKE_WORKFLOW } from '../cron';
 
-// Fire the intake workflow the moment an enquiry is logged (event-driven;
-// the 30-min backstop sweep covers anything the dispatch misses).
-// Best-effort via waitUntil —
-// never blocks or fails the request; no token locally means skip silently.
-function kickIntakeNow(c: any): void {
+// Agnes vision intake — Worker-native, no GH Actions (fast edge, <5s).
+// Replaces the GH runner `enquiry-intake-runner.js` (OpenRouter vision).
+function kickAgnesIntake(c: any, id: string): void {
   try {
-    const token = String((c.env as any)?.GITHUB_ACCESS_TOKEN ?? '').trim();
-    if (!token) return;
-    const task = dispatchGitHubWorkflow(INTAKE_WORKFLOW, token);
-    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
-      c.executionCtx.waitUntil(task);
-    } else {
-      void task;
-    }
-  } catch { /* intake dispatch never fails a request */ }
+    const store = createEnquiryStore(c.env);
+    const task = (async () => {
+      try {
+        const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
+        await runAgnesVisionIntake(c.env as any, store, String(id));
+      } catch (e: any) {
+        console.error('[kickAgnesIntake] failed', e?.message ?? e);
+      }
+    })();
+    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') c.executionCtx.waitUntil(task);
+    else void task;
+  } catch {}
 }
+// Legacy: keep dispatch for backwards compat, now no-op (GH intake removed).
+function kickIntakeNow(_c: any): void { /* GH intake removed — use kickAgnesIntake */ }
 
 function aiConfigured(c: any): boolean {
   try {
@@ -228,9 +230,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // redacted copy only appears after the next list fetch kicks enrichment.
     if ((r as any).status === 201 && (r.body as any)?.id) {
       kick(c, String((r.body as any).id));
-      // ...and the vision intake starts NOW (event-driven) instead of waiting
-      // for the next 1-minute sweep.
-      kickIntakeNow(c);
+      kickAgnesIntake(c, String((r.body as any).id));
     }
     return c.json(r.body, r.status as any);
   });
@@ -242,13 +242,9 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     enquirySend(c, r);
     if ((r as any).status === 200 && (r.body as any)?.id) {
       kick(c, String((r.body as any).id));
-      // Fresh free text → re-run vision intake now. Detail-view "Add via AI"
-      // saves carry `aiPending` items (unstructured spec + photos) — they
-      // kick intake too; plain item-only saves skip it (the sweep covers
-      // everything as backstop).
       const hasAiBulk = Array.isArray((patchBody as any)?.items)
         && (patchBody as any).items.some((it: any) => it?.aiPending === true);
-      if ((patchBody as any)?.description !== undefined || hasAiBulk) kickIntakeNow(c);
+      if ((patchBody as any)?.description !== undefined || hasAiBulk) kickAgnesIntake(c, String((r.body as any)?.id ?? c.req.param('id') ?? ''));
     }
     return c.json(r.body, r.status as any);
   });
@@ -370,6 +366,19 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ ok: r.ok, status: r.status, hasKey, keyPrefix: key, ms: t, body: text.slice(0, 800), headers: hdrs });
     } catch (e: any) {
       return c.json({ ok: false, hasKey, keyPrefix: key, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 1000) }, 500);
+    }
+  });
+  // Debug: Agnes vision intake without auth (owner testing — parses image+text via agnes-3.0-flash, no GH Actions)
+  app.post('/api/debug/vision-intake/:id', async (c) => {
+    const id = c.req.param('id') ?? '';
+    try {
+      const store = createEnquiryStore(c.env);
+      const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
+      await runAgnesVisionIntake(c.env as any, store, id);
+      const enq: any = await store.getEnquiry(id).catch(() => null);
+      return c.json({ ok: true, enquiryId: id, items: enq?.items ?? [], intake: await (await import('../../shared/cache')).cacheGet(`enquiry:intake:${id}`, 7*24*60*60*1000).catch(() => null) });
+    } catch (e: any) {
+      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 1000), stack: String(e?.stack ?? '').slice(0, 800) }, 500);
     }
   });
   // Debug: real copilot without auth (for owner testing only — no PII leak, just this enquiry)

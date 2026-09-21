@@ -41,10 +41,9 @@ export interface EnquiryAgentRef {
   name: string;
 }
 
-/** Enquiry pipeline provider: OpenRouter (ling-3.0-flash-vl, text+vision).
- *  Groq is NEVER used here — without an OpenRouter key the extraction skips
- *  (returns null) instead of falling back. */
-const ENQUIRY_PROVIDER = 'openrouter';
+/** Enquiry pipeline provider: Agnes (agnes-3.0-flash, text+vision) — direct Worker, no GH Actions.
+ *  Without an Agnes key the extraction skips (returns null). OpenRouter legacy kept as fallback. */
+const ENQUIRY_PROVIDER = 'agnes';
 
 /** AI line-item splitting is KEPT but OFF: sales agents enter items manually
  *  in the modal (Add Item + per-item documents), so the enrichment must never
@@ -235,20 +234,20 @@ export async function extractEnquiryFieldsRobust(
     return null;
   }
   try {
-    // OpenRouter-only: skip when no OpenRouter key is configured — never
-    // fall back to Groq for enquiry processing.
+    const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
     const hasOpenRouter = gateway.health().some((h) => h.provider === 'openrouter');
-    if (!hasOpenRouter) {
-      console.warn('[extract] no OpenRouter key configured — skipping extraction (Groq fallback disabled)');
+    if (!hasAgnes && !hasOpenRouter) {
+      console.warn('[extract] no Agnes/OpenRouter key configured — skipping extraction');
       return null;
     }
+    const provider = hasAgnes ? 'agnes' : 'openrouter';
     const parsed = await gateway.completeJson<any>({
       messages: [
         { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
         { role: 'user', content: buildPrompt(input) },
       ],
       temperature: 0,
-      provider: ENQUIRY_PROVIDER,
+      provider,
       json: true,
     });
     return shapeResult(parsed);
