@@ -11,6 +11,11 @@ function escapeHtml(s: string): string {
 
 function inline(s: string): string {
   let out = escapeHtml(s);
+  // formulas: $$...$$ block and $...$ inline — keep as styled code (no KaTeX dep, safe)
+  out = out.replace(/\$\$([\s\S]+?)\$\$/g, '<span class="md-formula-block">$1</span>');
+  out = out.replace(/(^|[^$])\$([^$\n]+?)\$(?=[^$])/g, '$1<span class="md-formula-inline">$2</span>');
+  // strikethrough
+  out = out.replace(/~~([^~]+)~~/g, "<s>$1</s>");
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>");
@@ -38,6 +43,40 @@ function render(src: string): string {
   };
   while (i < lines.length) {
     const line = lines[i];
+    // hr: --- or *** or ___
+    if (/^\s*([-*_]\s*){3,}\s*$/.test(line) && line.trim().length >= 3) {
+      closeList();
+      html.push('<hr />');
+      i++;
+      continue;
+    }
+    // blockquote: > ...
+    if (/^\s*>/.test(line)) {
+      closeList();
+      const buf: string[] = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) {
+        buf.push(lines[i].replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      // render inner as markdown (recursive lite: join and inline)
+      const inner = buf.join("\n");
+      // allow inner tables/lists to be re-parsed by pushing as blockquote wrapper
+      html.push(`<blockquote>${inline(inner).replace(/\n/g, "<br />")}</blockquote>`);
+      continue;
+    }
+    // formula block: $$ on its own line
+    if (line.trim() === "$$") {
+      closeList();
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && lines[i].trim() !== "$$") {
+        buf.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing $$
+      html.push(`<div class="md-formula-block">${escapeHtml(buf.join("\n"))}</div>`);
+      continue;
+    }
     // table: header | sep | rows
     if (line.trim().includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
       closeList();
