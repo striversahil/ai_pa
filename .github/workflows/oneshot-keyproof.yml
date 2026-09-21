@@ -1,0 +1,23 @@
+name: Oneshot - key fingerprints (TEMPORARY, delete after run)
+# Prints FIRST6...LAST4 fingerprints of runner-visible Agnes keys so we can
+# verify the fresh rotation landed. Fingerprints can't reconstruct keys.
+on:
+  workflow_dispatch:
+jobs:
+  keyproof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fingerprints only (never values)
+        env:
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
+          AI_KEYS: ${{ secrets.AI_KEYS }}
+        run: |
+          fp() { k="$1"; echo "${k:0:6}...${k: -4}(len=${#k})"; }
+          echo "--- AGNES_API_KEY ---"
+          [ -n "$AGNES_API_KEY" ] && fp "$AGNES_API_KEY" || echo EMPTY
+          echo "--- AGNES_API_KEYS ---"
+          echo "$AGNES_API_KEYS" | tr ',' '\n' | grep -v '^$' | while read -r k; do fp "$k"; done
+          echo "--- AI_KEYS (agnes entries) ---"
+          echo "$AI_KEYS" | tr ',' '\n' | grep '^agnes:' | while read -r e; do fp "$(echo "$e" | cut -d: -f2)"; done
