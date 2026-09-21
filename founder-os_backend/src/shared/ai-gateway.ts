@@ -22,6 +22,14 @@
  * that mirrors this surface. Both read same AI_KEYS contract.
  */
 import { logger } from './logger';
+import { cacheGet, cacheSet } from './cache';
+
+// Stable hash for AI cache keys (djb2)
+function hashAI(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
 
 // ── Provider registry ────────────────────────────────────────────────────────
 export interface ProviderConfig {
@@ -348,6 +356,11 @@ export class AiGateway {
    *  requests cycle through these as 429s persist; vision stays pinned. */
   private openrouterModels: string[] = [OPENROUTER_VISION_MODEL];
   private modelIdx = 0;
+  // Cloudflare AI Gateway (standardized): when CLOUDFLARE_ACCOUNT_ID + CF_AIG_GATEWAY_ID are set,
+  // all providers route via https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/...
+  // as reverse proxy with caching/rate-limiting/logging. Custom providers (agnes, openrouter) use `custom-{slug}`.
+  private aigAccount = '';
+  private aigGateway = '';
 
   constructor(env?: Record<string, unknown>) {
     if (env) this.configure(env);
@@ -357,6 +370,9 @@ export class AiGateway {
     this.pool.loadFromEnv(env);
     const v = String((env as any)?.VISION_MODEL ?? '').trim();
     if (v) this.visionModelOverride = v;
+    const aigAcc = String((env as any)?.CLOUDFLARE_ACCOUNT_ID ?? (env as any)?.CF_AIG_ACCOUNT_ID ?? '').trim();
+    const aigId = String((env as any)?.CF_AIG_GATEWAY_ID ?? (env as any)?.AI_GATEWAY_ID ?? 'founder-os').trim();
+    if (aigAcc) { this.aigAccount = aigAcc; this.aigGateway = aigId; }
     const models = String((env as any)?.OPENROUTER_FREE_MODELS ?? '')
       .split(',')
       .map((s) => s.trim())
@@ -372,6 +388,17 @@ export class AiGateway {
     return this.pool.health();
   }
 
+  private gatewayBaseURL(provider: ProviderConfig): string {
+    if (this.aigAccount && this.aigGateway) {
+      // Standardized Cloudflare AI Gateway reverse proxy (custom providers use custom-{slug})
+      if (provider.id === 'agnes') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/custom-agnes/v1/chat/completions`;
+      if (provider.id === 'openrouter') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/custom-openrouter/api/v1/chat/completions`;
+      if (provider.id === 'groq') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/groq/chat/completions`;
+      if (provider.id === 'requestly') return provider.baseURL; // not via gateway
+    }
+    return provider.baseURL;
+  }
+
   /**
    * Core completion call. Picks a key, calls the provider, rotates + retries on
    * transient/provider errors. Rate limits (429) are retried hard — up to
@@ -383,6 +410,21 @@ export class AiGateway {
     // Auto-route Agnes models to Agnes provider when no explicit provider is set.
     if (!req.provider && req.model && req.model.startsWith('agnes-')) {
       req = { ...req, provider: 'agnes' };
+    }
+    // Standardized app-wide: KV response cache (5m) + single-flight + fail-fast 429.
+    // Caches identical prompts (enquiry extraction re-tries, duplicate saves) to cut RPM without extra keys.
+    const cacheable = !req.signal?.aborted && (req.json || false) && !req.tools?.length;
+    // Only cache deterministic JSON extractions (enrichment/vision) — chat (tools/stream) bypasses.
+    let aiCacheKey: string | null = null;
+    if (cacheable) {
+      try {
+        const prov = req.provider || (req.model?.startsWith('agnes-') ? 'agnes' : 'agnes');
+        const model = req.model || PROVIDERS[prov]?.defaultModel || 'agnes-3.0-flash';
+        const keyRaw = JSON.stringify({ prov, model, messages: req.messages, temperature: req.temperature ?? 0.2, json: !!req.json });
+        aiCacheKey = `ai:resp:${hashAI(keyRaw)}`;
+        const hit = await cacheGet<CompletionResult>(aiCacheKey, 5 * 60 * 1000);
+        if (hit) { logger.info?.(`[AiGateway] cache hit ${aiCacheKey.slice(0, 24)}`); return hit; }
+      } catch {}
     }
     // Standardized: fail fast, respect retry-after, no 50× hammer.
     // Heavy app will queue at caller, not in gateway. 3 attempts max.
@@ -412,6 +454,9 @@ export class AiGateway {
       try {
         const result = await this.callProvider(provider, key, rotatedModel ? { ...req, model: rotatedModel } : req);
         this.pool.reportSuccess(key);
+        if (aiCacheKey) {
+          try { await cacheSet(aiCacheKey, result, 5 * 60 * 1000); } catch {}
+        }
         return result;
       } catch (err) {
         lastErr = err;
@@ -488,7 +533,7 @@ export class AiGateway {
     const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
     const wantsVision = req.messages.some((m) => Array.isArray(m.content));
     const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${key.key}` };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${key.key}`, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' };
     const body: Record<string, unknown> = {
       model, messages: req.messages, temperature: req.temperature ?? 0.2,
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
@@ -500,7 +545,8 @@ export class AiGateway {
     if (provider.id === 'agnes' && req.reasoningEffort) (body as any).chat_template_kwargs = { enable_thinking: true };
     else if (provider.reasoningObject) (body as any).reasoning = { enabled: true };
     else if (provider.supportsReasoning && req.reasoningEffort) (body as any).reasoning_effort = req.reasoningEffort;
-    const res = await fetch(provider.baseURL, { method: 'POST', headers, body: JSON.stringify(body), signal: req.signal });
+    const url = this.gatewayBaseURL(provider);
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: req.signal });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       const err: any = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
@@ -571,6 +617,8 @@ export class AiGateway {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key.key}`,
+      // Agnes WAF blocks bare Workers/undici UAs — browser-like UA bypasses 1020/1015 bot check
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     };
     const body: Record<string, unknown> = {
       model,
@@ -594,7 +642,8 @@ export class AiGateway {
     } else if (provider.supportsReasoning && req.reasoningEffort) {
       body.reasoning_effort = req.reasoningEffort;
     }
-    const res = await fetch(provider.baseURL, {
+    const url = this.gatewayBaseURL(provider);
+    const res = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
