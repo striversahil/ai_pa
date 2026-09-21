@@ -34,6 +34,13 @@ function send(res, status, obj) {
 }
 
 const server = http.createServer((req, res) => {
+  // One-line per-request marker (method + path + status + ms only — never
+  // headers or bodies, so keys can't leak). Lets relay-run logs prove which
+  // lane served each call.
+  const t0 = Date.now();
+  res.on('finish', () => {
+    console.log(`[proxy] ${req.method} ${req.url} -> ${res.statusCode} ${Date.now() - t0}ms`);
+  });
   if (req.method === 'GET' && req.url === '/health') {
     return send(res, 200, { ok: true, upstream: UPSTREAM });
   }
