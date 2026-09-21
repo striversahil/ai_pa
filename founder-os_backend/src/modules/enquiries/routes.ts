@@ -53,6 +53,7 @@ import { LiveEvent } from "../../live";
 import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
 import { cacheGet } from "../../shared/cache";
 import { linkEnquiryEstimate } from "../../automations/telecalling/service";
+import { estimateStatusByNumbers } from "./estimate-link";
 
 export interface EnquiryResult {
   status: number;
@@ -189,6 +190,25 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
   }
   const meta = total === null ? {} : { total, page, limit: lim };
+  // Live Zoho status (Estimate.status from the 5-min sync) rides the row in
+  // BOTH views: attached here pre-redaction so the procurement payload keeps
+  // `zohoStatus` even though `estNumber` itself is blanked below (the worker
+  // route preserves pre-attached values). Only the status travels redacted —
+  // `zohoCustomerName` stays full-view-only. Fail-open, never throws.
+  try {
+    const nums = (enquiries as any[]).map((e) => String((e as any)?.estNumber ?? '').trim()).filter(Boolean);
+    if (nums.length) {
+      const byNum = await estimateStatusByNumbers(nums);
+      for (const e of enquiries as any[]) {
+        const hit = byNum.get(String((e as any)?.estNumber ?? '').trim());
+        (e as any).zohoStatus = hit ? hit.status : null;
+      }
+    } else {
+      for (const e of enquiries as any[]) (e as any).zohoStatus = null;
+    }
+  } catch {
+    for (const e of enquiries as any[]) if ((e as any).zohoStatus === undefined) (e as any).zohoStatus = null;
+  }
   if (!opts?.redact) {
     // Sales sees final rates but never margin internals (selectedVendor /
     // markup stay Management-only). Management (MIS) gets the full row.

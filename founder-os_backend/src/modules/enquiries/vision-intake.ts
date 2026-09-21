@@ -2,17 +2,25 @@
  * vision-intake.ts — Worker-native Agnes vision intake (no GH Actions).
  *
  * Directly in the Worker (via waitUntil), uses Agnes agnes-3.0-flash vision
- * to split unstructured text + enquiry/item images into verbatim line items.
- * Replaces the GH runner `scripts/enquiry-intake-runner.js` which was
- * OpenRouter ling-3.0-flash-vl + 4-way parallel + price-memory.
+ * (probed alive 2026-09-21 PM; 2.5-flash remains the automatic fallback if
+ * the 3.0 channel ever hangs again).
+ *   Call 1 SEGMENT (vision+text, NO catalogue): splits unstructured text +
+ *   enquiry/item images into verbatim line items. The model never sees KYP
+ *   so it cannot hallucinate catalogue names or drop lines to fit them.
+ *   Call 2 LOOKUP (text-only, per verbatim line): deterministic alias-index
+ *   match first (zero tokens, data/kyp-lookup.ts codegen), one batched LLM
+ *   fallback for misses only (<0.5 confidence stays Uncategorized). Lookup
+ *   fills the category side-field only — verbatim wording is untouched.
  *
- * This path is fast (<4s, edge), handles the same `aiBulkText` vs description
- * branching as the runner, and applies fill-empty-only semantics via the
- * shared `applyIntakeBulkResult` helper. Price-memory (HF/Pinecone) is
- * best-effort and skipped when keys are absent — items still land.
+ * This path is fast (<4s typical, edge), handles the same `aiBulkText` vs
+ * description branching as the legacy GH runner, and applies fill-empty-only
+ * semantics via the shared `applyIntakeBulkResult` helper. Price-memory
+ * (HF/Pinecone) is best-effort and skipped when keys are absent — items
+ * still land.
  */
 import { getGateway, buildVisionUserContent } from '../../shared/ai-gateway';
 import { cacheSet } from '../../shared/cache';
+import { KYP_LOOKUP } from './kyp-lookup';
 import type { EnquiryStore } from './store';
 
 const ROUTER_SYSTEM_AGNES = `You are a B2B industrial-spare intake for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
@@ -62,6 +70,56 @@ function routeMatch(score: number, dimsEqual: boolean): string {
   return 'miss';
 }
 const canon = (s: string) => String(s || '').toLowerCase().replace(/["″]/g, ' in ').replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** ── Call-2 lookup: verbatim line → KYP category (verbatim never touched). ── */
+const normTok = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+const KYP_CATS = [...new Set(KYP_LOOKUP.map((e) => e.category))];
+const KYP_ITEMS_BY_CAT = new Map<string, Set<string>>(
+  KYP_CATS.map((c) => [c, new Set(KYP_LOOKUP.filter((e) => e.category === c).map((e) => normTok(e.item)))]),
+);
+interface KypKey { category: string; item: string; keys: Set<string> }
+const KYP_INDEX: KypKey[] = KYP_LOOKUP.map((e) => ({
+  category: e.category,
+  item: e.item,
+  keys: new Set([normTok(e.item), ...(e.aliases || []).map(normTok)]),
+}));
+function lookupDeterministic(verbatim: string, spec: string): KypKey | null {
+  const q = normTok(`${verbatim} ${spec}`);
+  for (const t of KYP_INDEX) {
+    if (normTok(t.item) === normTok(verbatim)) return t;
+  }
+  for (const t of KYP_INDEX) {
+    for (const key of t.keys) {
+      if (!key) continue;
+      if (q === key || normTok(verbatim) === key) return t;
+    }
+  }
+  let best: KypKey | null = null;
+  let bestScore = 0;
+  for (const t of KYP_INDEX) {
+    for (const key of t.keys) {
+      if (!key || key.length < 4) continue;
+      if (q.includes(key) && key.length > bestScore) {
+        bestScore = key.length;
+        best = t;
+      }
+    }
+  }
+  return best;
+}
+// Alias-inclusive fallback list, built at runtime from the slim artifact:
+// `1. Category: Item[alias,alias]; Item; ...` (~1.9k tokens).
+function buildLookupList(): string {
+  return KYP_CATS.map((c, i) => `${i + 1}. ${c}: ${KYP_LOOKUP.filter((e) => e.category === c).map((e) => {
+    const al = (e.aliases || []).filter(Boolean);
+    return al.length ? `${e.item}[${al.join(',')}]` : e.item;
+  }).join('; ')}`).join('\n');
+}
+const LOOKUP_FALLBACK_SYSTEM = `You are a product matcher for flour-mill spare parts. For EACH input line, pick the single best catalogue entry.
+Rules: "category" is the category NUMBER as a bare number; "item" is the item_name copied EXACTLY (never an alias, never invented); "confidence" is 0-1 — below 0.65 when the line genuinely matches nothing (custom/fabricated/as-per-drawing must be 0-0.3, never force a catalogue item); return STRICT JSON {"matches":[{"category":"...","item":"...","confidence":0.9}, ...]} with exactly one entry per input line, in order, and no other text.`;
+
+const SPEC_CHECK_SYSTEM = `You are a spec-completeness checker for flour-mill spare parts. For EACH item you receive its collected spec text and its checklist (required_attributes). Return which checklist entries are STILL MISSING.
+Rules: an entry is satisfied if the spec text contains a concrete value for it — e.g. "A70" satisfies V-belt number, "Fenner"/"Gates"/any brand token satisfies brand preference, "6 GG" satisfies grade, "115 cm" satisfies width, "2 pcs"/"10 meters"/"3m" satisfies quantity. A brand token anywhere (verbatim, spec, qty) counts; "as per sample" alone does NOT satisfy; return STRICT JSON {"checks":[{"missing":[0,2]}, ...]} where missing lists the 0-based indices of STILL-MISSING entries, one entry per input item, in order. Never invent checklist text — only return indices.`;
 
 export async function runAgnesVisionIntake(env: Record<string, unknown>, store: EnquiryStore, id: string): Promise<void> {
   let enquiry: any;
@@ -185,27 +243,186 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     if (v) fields[f] = v;
   }
 
-  // Verbatim items (no KYP renaming — keep client wording)
-  const outItems = lines.map((l: any) => ({
+  // Verbatim items + Call-2 lookup (category side-field only — the client's
+  // exact wording is never renamed). Deterministic alias-index first; one
+  // batched LLM fallback for the misses on the provider that won Call 1.
+  let nAlias = 0;
+  let nLlm = 0;
+  let nMisses = 0;
+  const kypHits: (KypKey | null)[] = lines.map((l: any) => {
+    const hit = lookupDeterministic(String(l.verbatim || ''), String(l.spec || ''));
+    if (hit) { nAlias++; return hit; }
+    nMisses++;
+    return null;
+  });
+  if (nMisses > 0) {
+    try {
+      const idx: number[] = [];
+      kypHits.forEach((h, i) => { if (!h) idx.push(i); });
+      const input = idx.map((i, k) => `${k}. ${String(lines[i].verbatim || '')}${lines[i].spec ? ` | ${lines[i].spec}` : ''}${lines[i].qty ? ` | ${lines[i].qty}` : ''}`.slice(0, 600)).join('\n');
+      const ac2 = new AbortController();
+      const t2 = setTimeout(() => ac2.abort(), 20_000);
+      let out: any;
+      try {
+        out = await gateway.completeJson<any>({
+          messages: [
+            { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList()}` },
+            { role: 'user', content: `Match each line:\n${input}` },
+          ],
+          temperature: 0, json: true, maxTokens: 4000, provider: successProvider, signal: ac2.signal as any,
+        });
+      } finally { clearTimeout(t2); }
+      const matches = Array.isArray(out?.matches) ? out.matches : [];
+      idx.forEach((lineIdx, k) => {
+        const m = matches[k] || {};
+        const raw = String((m as any).category ?? '').trim();
+        const n = /^\d{1,2}$/.test(raw) ? parseInt(raw, 10) : NaN;
+        const conf = Number((m as any).confidence);
+        const itemName = String((m as any).item || '');
+        if (Number.isFinite(n) && n >= 1 && n <= KYP_CATS.length && Number.isFinite(conf) && conf >= 0.65 && itemName
+          && (KYP_ITEMS_BY_CAT.get(KYP_CATS[n - 1]) || new Set()).has(normTok(itemName))) {
+          const cat = KYP_CATS[n - 1];
+          const hit = KYP_INDEX.find((e) => e.category === cat && normTok(e.item) === normTok(itemName)) ?? null;
+          kypHits[lineIdx] = hit;
+          if (hit) nLlm++;
+        } else {
+          kypHits[lineIdx] = null;
+        }
+      });
+    } catch (e: any) {
+      console.log(`[vision-intake] ${id}: lookup fallback failed (${String(e?.message ?? e).slice(0, 120)}) — ${nMisses} line(s) Uncategorized`);
+      // leave misses as null → Uncategorized
+    }
+  }
+  const cats: string[] = kypHits.map((h) => h?.category ?? 'Uncategorized');
+  const kypItems: (string | undefined)[] = kypHits.map((h) => h?.item ?? undefined);
+  const nUncat = cats.filter((c) => c === 'Uncategorized').length;
+  console.log(`[vision-intake] ${id}: lookup alias=${nAlias} llm=${nLlm} uncategorized=${nUncat}/${lines.length}`);
+
+  // Call-2.5 — spec completeness per matched item (one batched LLM call).
+  // Uses the per-item required_attributes from the slim artifact; falls back
+  // to "all missing" if the call fails. Uncategorized → no checklist.
+  const KYP_ATTRS_BY_KEY = new Map<string, string[]>(
+    KYP_LOOKUP.map((e) => [`${e.category}::${normTok(e.item)}`, e.required_attributes ?? []]),
+  );
+  const perItemAttrs: string[][] = kypHits.map((h) => {
+    if (!h) return [];
+    const raw = KYP_ATTRS_BY_KEY.get(`${h.category}::${normTok(h.item)}`) ?? [];
+    // Conditional fallbacks like "If the client is unsure of the grade, request a picture..." are
+    // not hard requirements when the primary spec is already given. Filter them from the
+    // completeness gate so a fully-specified item can actually reach complete.
+    return raw.filter((a) => {
+      const low = a.toLowerCase();
+      if (low.includes('if the client is unsure of the grade')) return false;
+      if (low.includes('request a picture or a physical swatch')) return false;
+      // Generic "request a picture" fallbacks that are conditional on not knowing the spec
+      if (low.startsWith('if the client is unsure') && low.includes('request a picture')) return false;
+      return true;
+    });
+  });
+  // kypMissing per line (subset of required_attributes that are still missing)
+  let kypMissing: (string[] | undefined)[] = kypHits.map(() => undefined);
+  let kypComplete: (boolean | undefined)[] = kypHits.map(() => undefined);
+  const checkableIdx: number[] = [];
+  kypHits.forEach((h, i) => { if (h && perItemAttrs[i].length > 0) checkableIdx.push(i); });
+  if (checkableIdx.length > 0) {
+    const checksInput = checkableIdx.map((i, k) => {
+      const specText = [lines[i].verbatim, lines[i].dims, lines[i].spec, lines[i].qty].filter(Boolean).join(' | ').slice(0, 800);
+      const checklist = perItemAttrs[i].map((a, ai) => `${ai}. ${a}`).join('\n');
+      return `Item ${k} spec: "${specText}"\nChecklist:\n${checklist}`;
+    }).join('\n\n---\n\n');
+    try {
+      const ac3 = new AbortController();
+      const t3 = setTimeout(() => ac3.abort(), 20_000);
+      let raw: any;
+      try {
+        raw = await gateway.completeJson<any>({
+          messages: [
+            { role: 'system', content: SPEC_CHECK_SYSTEM },
+            { role: 'user', content: checksInput },
+          ],
+          temperature: 0, json: true, maxTokens: 4000, provider: successProvider, signal: ac3.signal as any,
+        });
+      } finally { clearTimeout(t3); }
+      const checks = Array.isArray(raw?.checks) ? raw.checks : [];
+      checkableIdx.forEach((lineIdx, k) => {
+        const c = checks[k] || {};
+        const idxs: number[] = Array.isArray(c.missing) ? c.missing.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n) && n >= 0 && n < perItemAttrs[lineIdx].length) : [];
+        let missing = idxs.map((n) => perItemAttrs[lineIdx][n]).filter(Boolean);
+        // Deterministic fix for the micron/flour alternative: the single checklist entry covers
+        // "micron opening if known, else flour type". If spec already has "micron 80" or
+        // "maida"/"suji"/"rava"/"bran"/"chokar", that entry is satisfied regardless of LLM.
+        const hay = [lines[lineIdx].verbatim, lines[lineIdx].dims, lines[lineIdx].spec, lines[lineIdx].qty].join(' ').toLowerCase();
+        missing = missing.filter((m) => {
+          const low = m.toLowerCase();
+          if (low.includes('micron opening') && low.includes('flour it is sifting')) {
+            if (hay.includes('micron') || hay.includes('maida') || hay.includes('suji') || hay.includes('rava') || hay.includes('bran') || hay.includes('chokar')) return false;
+          }
+          return true;
+        });
+        kypMissing[lineIdx] = missing;
+        kypComplete[lineIdx] = missing.length === 0;
+      });
+      // Any checkable line not returned → treat as all-missing
+      checkableIdx.forEach((lineIdx) => {
+        if (kypMissing[lineIdx] === undefined) {
+          kypMissing[lineIdx] = [...perItemAttrs[lineIdx]];
+          kypComplete[lineIdx] = false;
+        }
+      });
+    } catch (e: any) {
+      console.log(`[vision-intake] ${id}: spec-check failed (${String(e?.message ?? e).slice(0, 120)}) — marking all checkable as incomplete`);
+      checkableIdx.forEach((lineIdx) => {
+        kypMissing[lineIdx] = [...perItemAttrs[lineIdx]];
+        kypComplete[lineIdx] = false;
+      });
+    }
+  }
+  // Matched items with empty checklist (should not happen) → complete
+  kypHits.forEach((h, i) => {
+    if (!h) { kypMissing[i] = undefined; kypComplete[i] = undefined; return; }
+    if (kypMissing[i] === undefined) {
+      kypMissing[i] = [];
+      kypComplete[i] = true;
+    }
+  });
+  const nComplete = kypComplete.filter((v) => v === true).length;
+  const nIncomplete = kypComplete.filter((v) => v === false).length;
+  if (checkableIdx.length > 0) console.log(`[vision-intake] ${id}: spec-check complete=${nComplete} incomplete=${nIncomplete}/${checkableIdx.length}`);
+  const outItems = lines.map((l: any, i: number) => ({
     name: l.name || l.verbatim.split('|')[0].trim().slice(0, 300) || l.verbatim.slice(0, 300),
     qty: l.qty,
     spec: [l.dims, l.spec].filter(Boolean).join(' | ').slice(0, 2000),
     verbatim: l.verbatim.slice(0, 500),
-    category: 'Uncategorized',
+    category: cats[i] || 'Uncategorized',
+    kypItem: kypItems[i],
+    kypMissing: kypMissing[i],
+    kypComplete: kypComplete[i],
   }));
 
-  // Price-memory (best-effort)
+  // Price-memory (best-effort) — gated: only kypComplete items get looked up.
+  // Uncategorized or incomplete items still land but with no price signal until specs are filled.
+  const priceEligible = new Set<number>();
+  outItems.forEach((it: any, i: number) => { if (it.kypComplete === true) priceEligible.add(i); });
+  // Legacy/uncategorized fallback: if we have no eligible items but Pinecone is configured,
+  // keep the old behavior for one run so existing flows don't go dark (remove after GA).
+  const legacyPriceFallback = priceEligible.size === 0 && outItems.length > 0;
   const suggestions: any[] = [];
   const candidates: any[] = [];
   try {
-    const specTexts = outItems.map((it) => [it.name, it.qty, it.spec].filter(Boolean).join(' | ').slice(0, 1000));
-    const vecs = await embed(specTexts, env as any);
+    const specTexts = outItems.map((it) => [it.name, (it as any).kypItem, it.qty, it.spec].filter(Boolean).join(' | ').slice(0, 1000));
+    const eligibleIdx = outItems.map((_, i) => i).filter((i) => legacyPriceFallback || priceEligible.has(i));
+    const vecs = eligibleIdx.length ? await embed(eligibleIdx.map((i) => specTexts[i]), env as any) : null;
+    // Map eligible index → vec position
+    const vecByIdx = new Map<number, number[]>();
+    if (vecs) eligibleIdx.forEach((idx, vi) => { if (vecs[vi]) vecByIdx.set(idx, vecs[vi]); });
     for (let i = 0; i < outItems.length; i++) {
-      if (!vecs || !vecs[i]) continue;
+      const vec = vecByIdx.get(i);
+      if (!vec) continue;
       const ns = namespaceFor(outItems[i].category);
       const matches = [
-        ...((await pineconeQuery(env as any, ns, vecs[i])) || []),
-        ...(ns !== 'uncategorized' ? (await pineconeQuery(env as any, 'uncategorized', vecs[i])) || [] : []),
+        ...((await pineconeQuery(env as any, ns, vec)) || []),
+        ...(ns !== 'uncategorized' ? (await pineconeQuery(env as any, 'uncategorized', vec)) || [] : []),
       ].sort((a, b) => b.score - a.score).slice(0, 5);
       for (const m of matches) {
         const md: any = m.metadata || {};
@@ -233,6 +450,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   if (existingItems.length === 0 && outItems.length > 0) {
     (updates as any).items = outItems.slice(0, 50).map((it: any) => ({
       name: it.name, qty: it.qty, spec: it.spec, media: [], category: it.category, verbatim: it.verbatim,
+      kypItem: it.kypItem, kypMissing: it.kypMissing, kypComplete: it.kypComplete,
     }));
   } else if (outItems.length > 0 && existingItems.length > 0) {
     const { applyIntakeBulkResult } = await import('./update');

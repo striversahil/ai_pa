@@ -10,14 +10,18 @@ interface IntakeItemMetaProps {
   missing: string[];
   /** Present in sales view: 1-click quote-from-memory (rateAvailable). */
   onAccept?: (itemIndex: number) => Promise<void> | void;
+  /** KYP spec gate — when false, suggestions are hidden behind the gate (price lookup gated on completeness). */
+  kypComplete?: boolean;
 }
 
 /** Per-item AI intake strip: missing-detail chips + past-price cards.
  *  Lives inside each item row (SpecificationsSection). */
-export default function IntakeItemMeta({ itemIndex, suggestions, missing, onAccept }: IntakeItemMetaProps) {
+export default function IntakeItemMeta({ itemIndex, suggestions, missing, onAccept, kypComplete }: IntakeItemMetaProps) {
   const [busy, setBusy] = useState(false);
   const mine = (suggestions ?? []).filter((s) => Number(s.itemIndex ?? -1) === itemIndex);
-  if (mine.length === 0 && (!SHOW_INTAKE_REMARKS || missing.length === 0)) return null;
+  // When spec is incomplete, the price card is gated — don't show stale suggestions as authoritative
+  const showSuggestions = kypComplete !== false ? mine : [];
+  if (showSuggestions.length === 0 && (!SHOW_INTAKE_REMARKS || missing.length === 0)) return null;
 
   const accept = async (idx: number) => {
     if (!onAccept || busy) return;
@@ -40,7 +44,7 @@ export default function IntakeItemMeta({ itemIndex, suggestions, missing, onAcce
           ))}
         </div>
       )}
-      {mine.map((s, i) => (
+      {showSuggestions.map((s, i) => (
         <div key={`${s.memoryId ?? i}`} className="flex items-center justify-between gap-2 rounded-lg border border-indigo-500/25 bg-indigo-500/5 px-2 py-1.5">
           <span className="text-[11px]">
             <span className={`inline-block px-1.5 py-px text-[10px] font-extrabold uppercase rounded mr-1.5 ${s.route === "exact" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-sky-500/15 text-sky-600 dark:text-sky-400"}`}>

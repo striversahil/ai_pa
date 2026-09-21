@@ -96,6 +96,28 @@ export async function reconcileEstimateCreator(estNumber: unknown): Promise<{ up
   }
 }
 
+/** Batch Zoho status lookup for the enquiry list (single query, fail-open).
+ *  Attached pre-redaction in `enquiryList` so the procurement payload keeps
+ *  `zohoStatus` even though `estNumber` itself is blanked below. */
+export async function estimateStatusByNumbers(nums: unknown[]): Promise<Map<string, { status: string; customerName: string }>> {
+  const out = new Map<string, { status: string; customerName: string }>();
+  const uniq = [...new Set((nums as any[]).map(normalizeEstNumber).filter(Boolean))];
+  if (!uniq.length) return out;
+  try {
+    const rows = await (prisma as any).estimate.findMany({
+      where: { estimateNumber: { in: uniq } },
+      select: { estimateNumber: true, status: true, customerName: true },
+    });
+    for (const r of (rows as any[]) ?? []) {
+      out.set(String((r as any)?.estimateNumber ?? ''), {
+        status: String((r as any)?.status ?? ''),
+        customerName: String((r as any)?.customerName ?? ''),
+      });
+    }
+  } catch { /* fail-open: rows simply carry no zohoStatus */ }
+  return out;
+}
+
 /** Lookup for the B2B EST-No. check button. */
 export async function lookupEstimateStatus(estNumber: unknown): Promise<{
   found: boolean;

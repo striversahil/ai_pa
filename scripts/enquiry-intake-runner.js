@@ -6,13 +6,16 @@
  * Runs on GH Actions (unlimited CPU). Per pending enquiry (from
  * GET /api/runner/enquiry-intake/pending), single source of truth is
  * founder-os_backend/data/know_your_product_v2.json (136 items, 10 cats):
- *   Stage A router (vision+text, slim category:item list ~630 tokens):
- *     free text + enquiry/item images → verbatim lines + category each +
- *     lead block. Client wording is NEVER renamed here.
- *   Stage B (verbatim-only, no LLM): each router line becomes one item with
- *     the client's exact wording (name/qty/spec split + cleaned layout).
- *     The grounder call is deliberately disabled — it hallucinated catalogue
- *     matches. Category is kept for price-memory namespacing only.
+ *   Call 1 SEGMENT (vision+text, NO catalogue — pure splitter): free text +
+ *     enquiry/item images → verbatim lines (name/qty/dims/spec split) + lead
+ *     block. Client wording is NEVER renamed here; the model never sees the
+ *     catalogue so it cannot hallucinate category/item names or drop lines
+ *     to fit them.
+ *   Call 2 LOOKUP (text-only, per verbatim line): deterministic alias-index
+ *     match first (zero tokens); LLM fallback ONLY for unmatched lines using
+ *     a slim `Category: item[aliases], ...` list (~1.9k tokens), batched into
+ *     one call. Below the confidence floor → Uncategorized, never a guess.
+ *     Lookup fills the kyp side-fields only — verbatim wording is untouched.
  *   Stage C (price memory): HF-embed spec → Pinecone query topK=5 in the
  *     item's category namespace + `uncategorized` → route exact/suggest/miss.
  *   POST /api/runner/enquiry-intake/result applies fill-empty-only updates +
@@ -54,22 +57,24 @@ const PC_KEY = (process.env.PINECONE_API_KEY || '').trim();
 
 const DATA_DIR = path.join(__dirname, '..', 'founder-os_backend', 'data');
 // Single source of truth: know_your_product_v2.json (136 items, 10 categories).
-// Two-stage extraction keeps prompts small:
-//   Stage A (router, vision+text): slim `Category: item, item, ...` list
-//     (~630 tokens) → verbatim lines + category each + lead block.
-//   Stage B (grounder, text-only, per routed category): full category detail
-//     (aliases + required_attributes, worst ~4k tokens) → exact item_name,
-//     verbatim spec, missing[] per required_attributes.
+// Segment → lookup keeps prompts small and hallucination-free:
+//   Call 1 (segment, vision+text): NO catalogue at all — pure splitter.
+//   Call 2 (lookup, text-only, unmatched lines only): slim
+//     `Category: item[aliases], ...` list (~1.9k tokens), batched one call.
 // No kyp_taxonomy.json / kyp_slots.json — deleted from this pipeline.
 const kyp = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'know_your_product_v2.json'), 'utf8'));
 
-// Slim routing list: NUMBERED categories + item names only (no attributes).
-// Numbers make the router copy a digit instead of a name — models reliably
-// echo `2` where they would otherwise echo a material or item word.
-const ROUTER_LINES = kyp.categories
-  .map((c, i) => `${i + 1}. ${c.category}: ${c.items.map((it) => it.item_name).join(', ')}`)
-  .join('\n');
+// Numbered-category count (validates Call-2 fallback digits).
 const ROUTER_COUNT = kyp.categories.length;
+
+// Alias-inclusive list for the Call-2 LLM fallback (unmatched lines only).
+// `1. Category: Item[alias,alias]; Item; ...` — one line per category.
+const LOOKUP_LINES = kyp.categories
+  .map((c, i) => `${i + 1}. ${c.category}: ${c.items.map((it) => {
+    const al = (it.aliases || []).filter(Boolean);
+    return al.length ? `${it.item_name}[${al.join(',')}]` : it.item_name;
+  }).join('; ')}`)
+  .join('\n');
 
 // Full detail per category for Stage B grounding.
 const CATEGORY_DETAIL = new Map(
@@ -122,13 +127,56 @@ function resolveV2(category, itemName) {
   return { category: String(category || 'Uncategorized').slice(0, 120), item_name: String(itemName || '').slice(0, 300) };
 }
 
-const ROUTER_SYSTEM = `You are a B2B industrial-spare intake router for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
-For EACH item return: {"verbatim": "client wording for the product, copied exactly as written/seen — NEVER rename or canonicalize", "category": "the category NUMBER (1-${ROUTER_COUNT}) from the numbered list below, as a bare number", "qty": "quantity with unit or empty", "dims": "dimensions as written", "spec": "material/variant/spec detail as written"}.
+// Canonical item-name set per category (validates the Call-2 LLM fallback).
+const CATEGORY_ITEMS = new Map(
+  kyp.categories.map((c) => [c.category, new Set(c.items.map((i) => normName(i.item_name)))]),
+);
+
+// Call 2 — lookup for lines the alias index could not resolve.
+// Deterministic first (zero tokens): exact item/alias hit inside a KNOWN
+// category wins. The LLM fallback runs once, batched over the remaining
+// lines; anything under the confidence floor stays Uncategorized.
+function lookupDeterministic(line) {
+  const r = resolveV2('', `${line.verbatim} ${line.spec}`);
+  if (r.category && CATEGORY_DETAIL.has(r.category) && r.item_name) return r;
+  return null;
+}
+
+async function lookupFallbackLLM(gateway, lines) {
+  if (!lines.length) return [];
+  const input = lines.map((l, i) => `${i}. ${l.verbatim}${l.spec ? ` | ${l.spec}` : ''}${l.qty ? ` | ${l.qty}` : ''}`.slice(0, 600)).join('\n');
+  const out = await gateway.completeJson({
+    messages: [{ role: 'system', content: LOOKUP_SYSTEM }, { role: 'user', content: `Match each line:\n${input}` }],
+    temperature: 0, json: true, maxTokens: 4000, noReasoning: true,
+    provider: 'openrouter',
+  });
+  const matches = Array.isArray(out.matches) ? out.matches : [];
+  return lines.map((_, i) => {
+    const m = matches[i] || {};
+    const n = /^\d{1,2}$/.test(String(m.category ?? '').trim()) ? parseInt(m.category, 10) : NaN;
+    const conf = Number(m.confidence);
+    if (!Number.isFinite(n) || n < 1 || n > ROUTER_COUNT) return null;
+    if (!Number.isFinite(conf) || conf < 0.65) return null;
+    const category = kyp.categories[n - 1].category;
+    const itemName = String(m.item || '').slice(0, 300);
+    if (!itemName || !(CATEGORY_ITEMS.get(category) || new Set()).has(normName(itemName))) return null;
+    return { category, item_name: itemName };
+  });
+}
+
+const ROUTER_SYSTEM = `You are a B2B industrial-spare intake segmenter for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
+For EACH item return: {"verbatim": "client wording for the product, copied exactly as written/seen — NEVER rename, canonicalize, or categorize", "qty": "quantity with unit or empty", "dims": "dimensions as written", "spec": "material/variant/spec detail as written"}.
 Also extract the lead block: {"lead": {"clientCompany": "customer company, or empty", "contactName": "contact person, or empty", "contactEmail": "or empty", "contactPhone": "mobile/phone, or empty", "location": "city/state, or empty", "sourceLead": "lead source like IndiaMART/reference, or empty"}} — NEVER invent; empty when not stated. The sales agent's own name ("Lead of ...") is NOT the customer — ignore it.
-Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); a trailing code like "150-30 pcs" splits to dims "150" + qty "30 pcs"; "category" MUST be copied EXACTLY from the
-category list below (it is always a multi-word department name like "Conveying
-Accessories" — NEVER a material, product, or alias word like "Nylon" or "Belt");
-never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
+Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); a trailing code like "150-30 pcs" splits to dims "150" + qty "30 pcs"; never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
+
+// Call-2 lookup fallback: maps verbatim lines the alias index could not
+// resolve. Batched — one call for all unmatched lines, aligned by index.
+// The model copies a category NUMBER (validated 1-N) plus the exact
+// item_name; confidence <0.65 parks the line under Uncategorized.
+const LOOKUP_SYSTEM = `You are a product matcher for flour-mill spare parts. For EACH input line, pick the single best catalogue entry.
+Catalogue (category NUMBER. Category: Item[aliases]; ...):
+${LOOKUP_LINES}
+Rules: "category" is the category NUMBER as a bare number; "item" is the item_name copied EXACTLY (never an alias, never invented); "confidence" is 0-1 — below 0.65 when the line genuinely matches nothing (custom/fabricated/as-per-drawing must be 0-0.3, never force a catalogue item); return STRICT JSON {"matches":[{"category":"...","item":"...","confidence":0.9}, ...]} with exactly one entry per input line, in order, and no other text.`;
 
 // NOTE: the Stage-B grounder prompt was removed — item renaming is disabled
 // (verbatim-only mode). The v2 catalogue is still the category reference for
@@ -176,23 +224,23 @@ function routeMatch(score, dimsEqual) {
 const canon = (s) => String(s || '').toLowerCase().replace(/["″]/g, ' in ').replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 async function processEnquiry(gateway, eq) {
-  // Stage A — router (vision+text, slim ~630-token list): verbatim lines +
-  // category each + lead block. Client wording is preserved here; canonical
-  // names are assigned in Stage B only.
+  // Call 1 — SEGMENT (vision+text, NO catalogue): pure splitter. Verbatim
+  // lines + lead block only; the model never sees KYP so it cannot bend
+  // lines toward catalogue names. (ROUTER_LINES intentionally NOT sent.)
   // AI bulk-add (detail-view "Add via AI"): the worker passes the pending
   // unstructured specs as aiBulkText — split ONLY this chunk (the enquiry
   // already has real items; the result endpoint replaces just the aiPending
   // rows, deduped). Otherwise split the enquiry description as usual.
   const bulkText = String(eq.aiBulkText || '').trim();
   if (!bulkText && Array.isArray(eq.items) && eq.items.length > 0) {
-    // No aiPending text on a row that already has items: the router falls
+    // No aiPending text on a row that already has items: the segmenter falls
     // back to the description and the result merge will discard the lines
     // (nothing to replace). Almost always a dropped aiPending flag upstream.
     console.log(`- ${eq.id}: WARNING no aiBulkText, splitting description on a ${eq.items.length}-item row — result will be discarded`);
   }
   const text = bulkText
-    ? `New items to split (ignore everything else):\n${bulkText.slice(0, 3000)}\n\nCategories (name: items):\n${ROUTER_LINES}`
-    : `Enquiry text:\n${String(eq.description || '').slice(0, 3000)}\n\nCategories (name: items):\n${ROUTER_LINES}`;
+    ? `New items to split (ignore everything else):\n${bulkText.slice(0, 3000)}`
+    : `Enquiry text:\n${String(eq.description || '').slice(0, 3000)}`;
   const images = [];
   for (const it of eq.items || []) for (const m of it.media || []) if (m.url) images.push(m.url);
   const content = buildVisionUserContent(text, images, 4);
@@ -207,7 +255,7 @@ async function processEnquiry(gateway, eq) {
     console.log(`- ${eq.id}: WARNING ${ _poolNote.length + images.length} image(s) present but none attached to vision call`);
   }
   // Free-tier models intermittently return empty/unparseable responses
-  // (burst limits) — retry the router call before giving up on the enquiry.
+  // (burst limits) — retry the segment call before giving up on the enquiry.
   let routed;
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -225,7 +273,7 @@ async function processEnquiry(gateway, eq) {
       break;
     } catch (e) {
       lastErr = e;
-      console.log(`- ${eq.id}: router attempt ${attempt + 1}/3 failed (${String(e.message).slice(0, 120)}) — retrying`);
+      console.log(`- ${eq.id}: segment attempt ${attempt + 1}/3 failed (${String(e.message).slice(0, 120)}) — retrying`);
       await new Promise((r) => setTimeout(r, 15000));
     }
   }
@@ -233,30 +281,38 @@ async function processEnquiry(gateway, eq) {
     return { error: `vision failed: ${lastErr.message}`, items: [], missing: [], suggestions: [], candidates: [] };
   }
   if (!Array.isArray(routed.lines) || routed.lines.length === 0) {
-    console.log(`- ${eq.id}: router returned 0 lines (lead: ${JSON.stringify(routed.lead || {}).slice(0, 300)})`);
+    console.log(`- ${eq.id}: segmenter returned 0 lines (lead: ${JSON.stringify(routed.lead || {}).slice(0, 300)})`);
   }
   const lines = (Array.isArray(routed.lines) ? routed.lines : []).slice(0, 30).map((l) => ({
     verbatim: String(l.verbatim || l.spec || '').slice(0, 500),
-    category: String(l.category || 'Uncategorized').slice(0, 120),
     qty: String(l.qty || '').slice(0, 120),
     dims: String(l.dims || '').slice(0, 500),
     spec: String(l.spec || '').slice(0, 2000),
   })).filter((l) => l.verbatim || l.qty || l.dims || l.spec);
-  // Guard: resolve the routed category NUMBER to an exact v2 name. A bare
-  // 1-N digit maps directly; an exact name still matches; anything else
-  // (material/item words the model echoed) is re-resolved from the verbatim
-  // wording or parked under Uncategorized — never stored as invented text.
+  // Call 2 — LOOKUP (text-only): deterministic alias-index first, single
+  // batched LLM fallback for the misses. Verbatim wording is NEVER touched —
+  // lookup only fills the category side-field (price-memory namespacing).
+  let nAlias = 0;
+  let nLlm = 0;
+  const needsLlm = [];
   for (const l of lines) {
-    const raw = String(l.category ?? '').trim();
-    const n = /^\d{1,2}$/.test(raw) ? parseInt(raw, 10) : NaN;
-    if (Number.isFinite(n) && n >= 1 && n <= ROUTER_COUNT) {
-      l.category = kyp.categories[n - 1].category;
-      continue;
-    }
-    if (CATEGORY_DETAIL.has(raw)) { l.category = raw; continue; }
-    const r = resolveV2('', `${l.verbatim} ${l.spec}`);
-    l.category = r.item_name && r.category && CATEGORY_DETAIL.has(r.category) ? r.category : 'Uncategorized';
+    const hit = lookupDeterministic(l);
+    if (hit) { l.category = hit.category; nAlias++; }
+    else needsLlm.push(l);
   }
+  if (needsLlm.length > 0) {
+    try {
+      const fb = await lookupFallbackLLM(gateway, needsLlm);
+      fb.forEach((r, i) => {
+        if (r) { needsLlm[i].category = r.category; nLlm++; }
+        else needsLlm[i].category = 'Uncategorized';
+      });
+    } catch (e) {
+      console.log(`- ${eq.id}: lookup fallback failed (${String(e.message).slice(0, 120)}) — ${needsLlm.length} line(s) Uncategorized`);
+      for (const l of needsLlm) l.category = 'Uncategorized';
+    }
+  }
+  console.log(`- ${eq.id}: lookup alias=${nAlias} llm=${nLlm} uncategorized=${lines.filter((l) => l.category === 'Uncategorized').length}/${lines.length}`);
   // Lead block: trimmed strings only; the worker applies fill-empty-only.
   const leadRaw = (routed.lead && typeof routed.lead === 'object') ? routed.lead : {};
   const fields = {};
@@ -264,12 +320,10 @@ async function processEnquiry(gateway, eq) {
     const v = String(leadRaw[f] || '').trim().slice(0, 300);
     if (v) fields[f] = v;
   }
-  // Stage B — VERBATIM-ONLY (no canonical renaming): the grounder LLM call
-  // is disabled because it hallucinated catalogue matches (e.g. COTTON PAD
-  // → Cotton Cleaner, dropped HOUSING PIN). Each router line becomes one
-  // item with the client's exact wording; the router already split
-  // qty/dims/spec and cleaned the layout. The Stage-A category is kept for
-  // price-memory namespacing only — never shown as the item name.
+  // VERBATIM-ONLY items: each segmenter line becomes one item with the
+  // client's exact wording (name/qty/spec split + cleaned layout). The
+  // looked-up category is kept for price-memory namespacing only — never
+  // shown as the item name.
   const items = [];
   const missing = [];
   for (const l of lines) {

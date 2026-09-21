@@ -87,9 +87,16 @@ function kick(c: any, id: string): void {
       const customerMap = new Map<string, string>((rows as any[]).map((r) => [String(r.estimateNumber), String(r.customerName ?? '')]));
       for (const e of enquiries as any[]) {
         const key = String((e as any)?.estNumber ?? '').trim();
-        const s = statusMap.get(key);
-        (e as any).zohoStatus = s ?? null;
-        (e as any).zohoCustomerName = customerMap.get(key) ?? null;
+        const s = key ? statusMap.get(key) : undefined;
+        if (s !== undefined) {
+          (e as any).zohoStatus = s;
+          (e as any).zohoCustomerName = customerMap.get(key) ?? null;
+        } else if ((e as any).zohoStatus === undefined) {
+          // Redacted (procurement) rows carry no estNumber but may already
+          // carry a pre-attached zohoStatus from `enquiryList` — keep it.
+          (e as any).zohoStatus = null;
+          (e as any).zohoCustomerName = null;
+        }
         // Stash original so the background promotion can tell whether DB was
         // already `sent` before we derived it for this response.
         (e as any)._origRateStatus = String((e as any)?.rateStatus ?? '');
@@ -103,25 +110,44 @@ function kick(c: any, id: string): void {
     } catch {}
   }
 
+  // Zoho-cancelled requirement (client side): declined / void / cancelled /
+  // rejected. Mirrors the DailyMovementTracker bucketing in ZohoEstimates.tsx.
+  function isZohoCancelled(s: unknown): boolean {
+    const v = String(s ?? '').toLowerCase().trim();
+    if (!v) return false;
+    return v.includes('declin') || v.includes('cancel') || v === 'void' || v.includes('reject');
+  }
+
   // Fire-and-forget DB promotion: Zoho non-draft → Enquiry `sent`.
+  // Plus: Zoho-cancelled (declined/void/cancelled — the requirement itself is
+  // dead client-side) → auto-stamp `procurementSubmittedAt` ("Enquiry
+  // Concluded") so the row drops out of the procurement Active queue into
+  // History without a manual click. Never clears an existing stamp.
   // Called after `attachZohoStatus` so the DB catches up to what the response
   // already derived. Never blocks the request.
   function maybePromoteEnquiriesSent(c: any, enquiries: any[]): void {
     try {
       const ids: string[] = [];
+      const concludeIds: string[] = [];
       for (const e of enquiries as any[]) {
         const s = String((e as any)?.zohoStatus ?? '').toLowerCase();
         if (!s || s === 'draft') continue;
-        if (String((e as any)?.rateStatus ?? '') === 'sent') continue;
-        const origRateStatus = String((e as any)?._origRateStatus ?? (e as any)?.rateStatus ?? '');
-        // Only promote rows that were NOT already `sent` in the DB (derived above
-        // already flipped the in-memory copy). We need the pre-derived value —
-        // stash it in attach if needed. Simpler: re-check the map: if zoho non-draft
-        // and DB still not sent, update. We track ids via `id`.
-        if (origRateStatus === 'sent') continue;
-        if (e?.id) ids.push(String(e.id));
+        if (String((e as any)?.rateStatus ?? '') === 'sent') {
+          // Already sent in this response — still eligible for auto-conclude.
+        } else {
+          const origRateStatus = String((e as any)?._origRateStatus ?? (e as any)?.rateStatus ?? '');
+          // Only promote rows that were NOT already `sent` in the DB (derived above
+          // already flipped the in-memory copy). We need the pre-derived value —
+          // stash it in attach if needed. Simpler: re-check the map: if zoho non-draft
+          // and DB still not sent, update. We track ids via `id`.
+          if (origRateStatus !== 'sent' && e?.id) ids.push(String(e.id));
+        }
+        // Auto-conclude: cancelled requirement + not yet concluded.
+        if (e?.id && isZohoCancelled(s) && !String((e as any)?.procurementSubmittedAt ?? '').trim()) {
+          concludeIds.push(String(e.id));
+        }
       }
-      if (!ids.length) return;
+      if (!ids.length && !concludeIds.length) return;
       const task = (async () => {
         try {
           const { prisma } = deps();
@@ -133,6 +159,41 @@ function kick(c: any, id: string): void {
                 where: { id, rateStatus: { not: 'sent' } as any },
                 data: { rateStatus: 'sent' },
               });
+            } catch {}
+          }
+          // Auto-conclude cancelled requirements (guarded: only stamp when
+          // still empty so a manual conclude timestamp is never overwritten).
+          const concluded: string[] = [];
+          for (const id of concludeIds) {
+            try {
+              let current: any = null;
+              try {
+                current = await (prisma as any).enquiry.findUnique?.({ where: { id } });
+              } catch {
+                current = null;
+              }
+              const already = String((current as any)?.procurementSubmittedAt ?? '').trim();
+              if (already) continue;
+              const stamped = new Date().toISOString();
+              try {
+                await (prisma as any).enquiry.updateMany({
+                  where: { id } as any,
+                  data: { procurementSubmittedAt: stamped } as any,
+                });
+              } catch {
+                await (prisma as any).enquiry.update({
+                  where: { id } as any,
+                  data: { procurementSubmittedAt: stamped } as any,
+                });
+              }
+              concluded.push(id);
+            } catch {}
+          }
+          // Wake open tabs: the concluded rows moved Active → History.
+          if (concluded.length) {
+            try {
+              const { LiveEvent, broadcastLive } = await import('../../live');
+              broadcastLive(c, LiveEvent.Enquiries, { action: 'auto-concluded', ids: concluded, reason: 'zoho-cancelled' });
             } catch {}
           }
         } catch {}
@@ -354,16 +415,31 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   app.get('/api/debug/chat-test', async (c) => {
     const msg = String(c.req.query('message') ?? 'ping').slice(0, 500);
+    // ?provider=groq|openrouter|agnes&model=... — per-provider health/latency probe (owner testing).
+    const provider = String(c.req.query('provider') ?? '').trim() || undefined;
+    const model = String(c.req.query('model') ?? '').trim() || (provider === 'agnes' || !provider ? 'agnes-3.0-flash' : undefined);
+    const start = Date.now();
     try {
       const gw = getGateway(c.env as any);
-      const res = await gw.complete({ messages: [{ role: 'user', content: msg }], model: 'agnes-3.0-flash', maxTokens: 200 });
-      return c.json({ ok: true, provider: res.provider, model: res.model, content: res.content.slice(0, 500), usage: res.usage });
+      const res = await gw.complete({ messages: [{ role: 'user', content: msg }], ...(model ? { model } : {}), ...(provider ? { provider } : {}), maxTokens: 200 });
+      return c.json({ ok: true, provider: res.provider, keyId: res.keyId, model: res.model, ms: Date.now() - start, content: res.content.slice(0, 500), usage: res.usage });
     } catch (e: any) {
-      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 1000), stack: String(e?.stack ?? '').slice(0, 500) }, 500);
+      return c.json({ ok: false, provider, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 1000), stack: String(e?.stack ?? '').slice(0, 500) }, 500);
     }
   });
-  app.get('/api/debug/direct-agnes', async (c) => {
-    const key = String((c.env as any)?.AGNES_API_KEY ?? '').slice(0, 10);
+  // Debug: Worker egress identity (proves which source IP Agnes's WAF sees).
+  app.get('/api/debug/egress', async (c) => {
+    try {
+      const r = await fetch('https://www.cloudflare.com/cdn-cgi/trace', { signal: AbortSignal.timeout(10000) });
+      const text = await r.text();
+      const ip = (text.match(/^ip=(.+)$/m) ?? [])[1]?.trim() ?? null;
+      const colo = (text.match(/^colo=(.+)$/m) ?? [])[1]?.trim() ?? null;
+      return c.json({ ok: true, egressIp: ip, colo });
+    } catch (e: any) {
+      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 300) }, 500);
+    }
+  });
+  app.get('/api/debug/direct-agnes', async (c) => {    const key = String((c.env as any)?.AGNES_API_KEY ?? '').slice(0, 10);
     const hasKey = !!String((c.env as any)?.AGNES_API_KEY ?? '').trim();
     const start = Date.now();
     try {
@@ -382,6 +458,16 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ ok: r.ok, status: r.status, hasKey, keyPrefix: key, ms: t, body: text.slice(0, 800), headers: hdrs });
     } catch (e: any) {
       return c.json({ ok: false, hasKey, keyPrefix: key, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 1000) }, 500);
+    }
+  });
+  // Debug: worker→home-proxy leg (proves the 1015 fallback lane is reachable
+  // from the Worker; hostname only, never leaks secrets).
+  app.get('/api/debug/proxy-health', async (c) => {
+    try {
+      const gw = getGateway(c.env as any);
+      return c.json({ ok: true, ...(await gw.proxyStatus()) });
+    } catch (e: any) {
+      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 300) }, 500);
     }
   });
   // Debug: Agnes vision intake without auth (owner testing — parses image+text via agnes-3.0-flash, no GH Actions)

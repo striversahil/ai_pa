@@ -65,7 +65,9 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
     const tryStream = async (): Promise<boolean> => {
       try {
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 20000);
+        // 60s budget: the primary may be throttled and the turn can fail over
+        // to a reasoning-model fallback running a multi-step tools loop.
+        const t = setTimeout(() => ctrl.abort(), 60000);
         const res = await fetch(`/api/enquiries/${enquiryId}/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
@@ -88,7 +90,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
         let accProposals: ChatProposal[] = [];
         let sawDone = false;
         setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
-        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 18000);
+        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 55000);
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -162,7 +164,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
     if (streamed) { setBusy(false); return; }
     try {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 20000);
+      const t = setTimeout(() => ctrl.abort(), 60000);
       const res = await fetch(`/api/enquiries/${enquiryId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

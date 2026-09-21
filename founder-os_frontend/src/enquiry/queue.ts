@@ -77,9 +77,21 @@ export function itemHasUnreviewedQuotes(it: Pick<EnquiryItem, "rates" | "finalRa
   });
 }
 
+/** Zoho-cancelled requirement (client side): declined / void / cancelled /
+ *  rejected. Dead rows never sit in Active — they conclude automatically.
+ *  Mirrors `founder-os_backend/src/modules/enquiries/queues.ts` — keep in sync. */
+export function isZohoCancelledStatus(s: unknown): boolean {
+  const v = String(s ?? '').toLowerCase().trim();
+  if (!v) return false;
+  return v.includes('declin') || v.includes('cancel') || v === 'void' || v.includes('reject');
+}
+
 export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   const items = e.items ?? [];
   if (items.length === 0) return false;
+  // Cancelled requirement: dead client-side — never Active, even with
+  // unquoted lines (the auto-stamp persists this; the guard makes it instant).
+  if (isZohoCancelledStatus((e as any).zohoStatus)) return false;
   // Fresh work (new unquoted lines, pending alternate requests) reopens the
   // queue even on concluded rows — the client keeps asking.
   if (hasFreshUnquotedWork(e) || hasPendingVariationWork(e)) return true;
@@ -89,6 +101,9 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
 
 export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   const items = e.items ?? [];
+  // Cancelled requirement: concluded automatically — visible in History even
+  // before/without the explicit handoff stamp.
+  if (isZohoCancelledStatus((e as any).zohoStatus)) return items.length > 0;
   if (!isSubmitted(e)) return false;
   // Fresh unquoted lines / pending alternate requests live in Active
   // (pending above), never double-listed.

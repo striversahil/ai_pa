@@ -10,9 +10,13 @@
  *   env.GROQ_API_KEYS = Groq keys (fallback, gsk_...)
  *   env.OPENROUTER_API_KEYS / env.OPENROUTER_API_KEY = OpenRouter keys
  *   env.AI_KEYS = "provider:key:label,..." (e.g. "agnes:sk-...:primary")
- * Agnes primary via https://apihub.agnes-ai.com/v1 (agnes-2.5-flash, 512K),
+ * Agnes primary via https://apihub.agnes-ai.com/v1 (agnes-3.0-flash, 512K;
+ * 2.5-flash is the automatic fallback),
  * reasoning via chat_template_kwargs.enable_thinking (mapped from reasoningEffort).
- * 429s are retried immediately (up to 50 attempts) — burst limits wave off.
+ * Rotation: one fresh key per attempt (bounded, ≤5) — plain Agnes 429 cools
+ * that key and rotates; Cloudflare 1015 cools briefly and also rotates. Optional
+ * req.sessionKey pins a conversation to one key via consistent hashing
+ * (cache affinity, no mid-chat hopping); one-shots spread randomly.
  */
 
 // ── Provider registry (mirror of TS) ─────────────────────────────────────────
@@ -108,6 +112,20 @@ function buildVisionUserContent(text, imageUrls, maxImages) {
   return [{ type: 'text', text }, ...imgs.map((url) => ({ type: 'image_url', image_url: { url } }))];
 }
 
+// ── Model fallback ───────────────────────────────────────────────────────────
+// Advanced model first, safe model on hang (mirror of TS contract). Runners
+// are short-lived, so the outage flag lives in-process instead of KV.
+const FALLBACK_MODEL = { 'agnes-3.0-flash': 'agnes-2.5-flash' };
+const MODEL_DOWN_TTL_MS = 10 * 60 * 1000;
+const modelDown = new Map();
+function modelFlagged(m) {
+  const t = modelDown.get(m);
+  if (!t) return false;
+  if (Date.now() - t > MODEL_DOWN_TTL_MS) { modelDown.delete(m); return false; }
+  return true;
+}
+function flagModelDown(m) { modelDown.set(m, Date.now()); }
+
 class AiGatewayError extends Error {
   constructor(message, cause, attempts) {
     super(message);
@@ -115,6 +133,13 @@ class AiGatewayError extends Error {
     this.cause = cause;
     this.attempts = attempts;
   }
+}
+
+// djb2 hash (mirror of TS hashAI) — consistent-hash sticky sessions.
+function hashAI(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
 }
 
 // ── Key pool ─────────────────────────────────────────────────────────────────
@@ -128,6 +153,10 @@ class KeyPool {
     const seen = new Set();
     const PLACEHOLDER = /^(your[_-]?api[_-]?key.*|replace[_-]?.*|xxx+|placeholder.*|\*+)$/i;
     const add = (provider, key, label) => {
+      // Founder decision (2026-09-21): Groq keys are NEVER loaded — the models
+      // hallucinate on our workflows. Single gate covers GROQ_API_KEYS,
+      // `groq:` AI_KEYS entries, and gsk_ auto-detect at once.
+      if (provider === 'groq') return;
       const k = key.trim();
       if (!k || seen.has(k) || PLACEHOLDER.test(k)) return;
       seen.add(k);
@@ -175,7 +204,25 @@ class KeyPool {
     };
   }
 
-  select(provider) {
+  /** Effective failures with time forgiveness: a key whose last error is
+   *  >10 min old rejoins the healthy tier (transient 429s don't exile a key
+   *  forever; repeat offenders stay out). */
+  effFailures(k, now) {
+    if (k.failures > 0 && k.lastFailureAt > 0 && now - k.lastFailureAt > 10 * 60 * 1000) return 0;
+    return k.failures;
+  }
+
+  /** Pick a key for one attempt (mirror of TS contract).
+   *
+   *  Generic rotation for every provider (current + future):
+   *  - Only healthy keys compete (enabled + off cooldown), provider-filtered.
+   *  - `sessionKey` set → consistent-hash pin: same conversation lands on the
+   *    same key while healthy (cache affinity; no mid-chat hopping). A
+   *    cooled/failed pin drops out and traffic shifts automatically.
+   *  - `sessionKey` absent → uniform random pick inside the least-failures
+   *    tier: statistical load-spreading, no coordination needed.
+   */
+  select(provider, sessionKey) {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
     if (provider) {
@@ -183,16 +230,14 @@ class KeyPool {
       if (f.length > 0) pool = f;
     }
     if (pool.length === 0) return null;
-    const priority = { agnes: 0, groq: 1, openrouter: 2, requestly: 3 };
-    pool.sort((a, b) => {
-      if (!provider) {
-        const pa = priority[a.provider] ?? 99;
-        const pb = priority[b.provider] ?? 99;
-        if (pa !== pb) return pa - pb;
-      }
-      return a.failures - b.failures || a.lastUsedAt - b.lastUsedAt;
-    });
-    return pool[0];
+    const eff = (k) => this.effFailures(k, now);
+    const minFailures = Math.min(...pool.map(eff));
+    const tier = pool.filter((k) => eff(k) <= minFailures).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    if (sessionKey) {
+      const start = parseInt(hashAI(`sess:${sessionKey}`), 36) % tier.length;
+      return tier[start];
+    }
+    return tier.length === 1 ? tier[0] : tier[Math.floor(Math.random() * tier.length)];
   }
 
   reportSuccess(key) {
@@ -309,10 +354,17 @@ class AiGateway {
     let streak429 = 0;
     let rotatedModel;
     let lastErr;
+    let activeModel = req.model;
+    let fellBack = false;
+    if (activeModel && FALLBACK_MODEL[activeModel] && modelFlagged(activeModel)) {
+      console.warn(`[AiGateway] ${activeModel} flagged down — starting on ${FALLBACK_MODEL[activeModel]}`);
+      activeModel = FALLBACK_MODEL[activeModel];
+      fellBack = true;
+    }
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const key = req.keyId
-        ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider))
-        : this.pool.select(req.provider);
+        ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider, req.sessionKey))
+        : this.pool.select(req.provider, req.sessionKey);
       if (!key) {
         const waitMs = this.pool.earliestCooldownMs();
         const retryAfter = waitMs > 0 ? Math.min(waitMs, 60000) : 60000;
@@ -322,11 +374,22 @@ class AiGateway {
       }
       const provider = PROVIDERS[key.provider] || PROVIDERS.groq;
       try {
-        const result = await this.callProvider(provider, key, rotatedModel ? { ...req, model: rotatedModel } : req);
+        const modelOverride = activeModel && activeModel !== req.model ? activeModel : rotatedModel;
+        const result = await this.callProvider(provider, key, modelOverride ? { ...req, model: modelOverride } : req);
         this.pool.reportSuccess(key);
         return result;
       } catch (err) {
         lastErr = err;
+        // Hung model channel (timeout only): flag the outage, switch models,
+        // retry immediately. Keys are never rotated for a hang.
+        const timedOut = (err && err.name) === 'TimeoutError' || /timeout/i.test(String((err && err.message) || ''));
+        if (timedOut && req.model && FALLBACK_MODEL[req.model] && !fellBack) {
+          fellBack = true;
+          flagModelDown(req.model);
+          console.warn(`[AiGateway] ${req.model} hung — failing over to ${FALLBACK_MODEL[req.model]}`);
+          activeModel = FALLBACK_MODEL[req.model];
+          continue;
+        }
         const status = this.pool.extractStatus(err);
         if (status === 429) {
           if (provider.id === 'agnes') {
@@ -338,20 +401,26 @@ class AiGateway {
               const cd = Math.min(rawCd, 60000);
               key.cooldownUntil = Date.now() + cd;
               key.failures++;
+              key.lastFailureAt = Date.now();
               key.lastError = `429 Cloudflare 1015`;
-              console.warn(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — failing fast, cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s)`);
-              const e2 = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
-              e2.status = 429; e2.retryAfter = cd; throw e2;
+              console.warn(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
+              if (attempt >= maxAttempts - 1) {
+                const e2 = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
+                e2.status = 429; e2.retryAfter = cd; throw e2;
+              }
+              continue;
             }
             const retryAfter = err && err.retryAfter;
             const rawCd = typeof retryAfter === 'number' ? retryAfter : 60000;
-            const cd = Math.min(rawCd, 60000);
-            key.cooldownUntil = Date.now() + cd;
             key.failures++;
+            key.lastFailureAt = Date.now();
+            // Escalate while the key keeps failing (60s→120s→240s→480s, cap
+            // 10min) so chronic-429 keys stop burning seconds on every rejoin.
+            const cd = Math.min(rawCd, 60000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600000);
+            key.cooldownUntil = Date.now() + cd;
             key.lastError = `429 rate-limited`;
-            console.warn(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), failing fast`);
-            const e3 = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(cd/1000)}s)`);
-            e3.status = 429; e3.retryAfter = cd; throw e3;
+            console.warn(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s, rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
+            continue;
           }
           streak429++;
           if (

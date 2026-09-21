@@ -110,6 +110,11 @@ export interface EnquiryItem {
   aiPending?: boolean;
   expectedRate?: number;
   expectedNote?: string;
+  /** KYP grounding: canonical product name inferred by Call-2 lookup (verbatim preserved in `name`/`verbatim`). */
+  kypItem?: string;
+  /** Per-item spec completeness against KYP required_attributes. */
+  kypMissing?: string[];
+  kypComplete?: boolean;
 }
 
 export type FlagThreadBy = 'sales' | 'procurement' | 'management';

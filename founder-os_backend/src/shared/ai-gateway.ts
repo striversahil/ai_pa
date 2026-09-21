@@ -3,15 +3,19 @@
  * system routes through. **Agnes (apihub.agnes-ai.com) is primary** — Dahl
  * and Groq remain as fallbacks. Every key in the pool is provider-tagged;
  * the gateway handles least-failures selection, 429 cooldown (honors
- * retry-after), 401/403 disable, 5xx rotate. Verified 2026-09-20 on
- * agnes-2.5-flash (100k context, 9/9 and 12/12 hallucination traps, streaming).
+ * retry-after), 401/403 disable, 5xx rotate. Primary model agnes-3.0-flash
+ * (2.5-flash is the automatic fallback if the 3.0 channel hangs).
  *
  * Key configuration (single source of truth, both runtimes):
  *   env.AI_KEYS         = "provider:key:label,..."  (e.g. "agnes:sk-...:primary, groq:gsk_...:fallback")
  *   env.AGNES_API_KEY   = single Agnes key (sk-...)
  *   env.AGNES_API_KEYS  = comma-separated Agnes keys
- *   env.GROQ_API_KEYS   = comma-separated Groq keys (fallback)
+ *   env.GROQ_API_KEYS   = IGNORED (founder decision 2026-09-21: hallucination quality)
  *   env.OMNIROUTE_*     = IGNORED
+ * Home-egress proxy (optional, Agnes only — see home-egress/):
+ *   env.AGNES_PROXY_URL = tunnel URL of the home proxy (unset = direct egress)
+ *   env.AGNES_PROXY_SECRET = shared secret the proxy requires per call
+ *   env.AGNES_PROXY_TIMEOUT_MS = proxy attempt cap, default 25000 (max 60000)
  *
  * Agnes uses `chat_template_kwargs: {enable_thinking:true}` for reasoning
  * (mapped from `reasoningEffort`), base https://apihub.agnes-ai.com/v1.
@@ -29,6 +33,32 @@ function hashAI(s: string): string {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
   return h.toString(36);
+}
+
+// ── Model fallback ───────────────────────────────────────────────────────────
+// Advanced model first, safe model on hang: when the requested model stalls
+// past the caller's timeoutMs (AbortError with no HTTP status), the gateway
+// fails over to the mapped model for the rest of the call and records a
+// cross-isolate KV flag (`ai:modeldown:<model>`, 10 min) so later calls skip
+// the dead model outright instead of re-paying the timeout. One level only,
+// generic across providers (add future pairs here).
+const FALLBACK_MODEL: Record<string, string> = {
+  'agnes-3.0-flash': 'agnes-2.5-flash',
+};
+const MODEL_DOWN_TTL_MS = 10 * 60_000;
+
+async function modelFlagged(model: string): Promise<boolean> {
+  try {
+    return !!(await cacheGet(`ai:modeldown:${model}`, MODEL_DOWN_TTL_MS));
+  } catch {
+    return false;
+  }
+}
+
+async function flagModelDown(model: string): Promise<void> {
+  try {
+    await cacheSet(`ai:modeldown:${model}`, { at: Date.now() }, MODEL_DOWN_TTL_MS);
+  } catch { /* best-effort */ }
 }
 
 // ── Provider registry ────────────────────────────────────────────────────────
@@ -161,6 +191,27 @@ export interface CompletionRequest {
   maxTokens?: number;
   provider?: string;
   keyId?: string;
+  /**
+   * Conversation affinity (e.g. `enquiry:chat:<id>:<user>`). When set, the
+   * gateway pins this request stream to ONE key via consistent hashing, so
+   * provider-side prefix-cache / Cloudflare AI Gateway cache affinity is
+   * preserved across turns — keys are NOT rotated mid-conversation while the
+   * pinned key stays healthy. On 429/5xx the pinned key cools and the ring
+   * probe transparently fails over to the next key. Omit for one-shot calls
+   * (extraction, runners): those spread randomly across the healthiest tier.
+   * Generic — works for every current and future provider in PROVIDERS.
+   */
+  sessionKey?: string;
+  /** Optional per-attempt wall-clock cap (ms). Hung attempts abort fast so
+   *  rotation moves on; callers with a UI budget (copilot) set this, batch
+   *  runners leave it unset (current unbounded behavior). */
+  timeoutMs?: number;
+  /** Probe cap for the pre-fallback primary model only (ms). Lets callers
+   *  sample an advanced-but-flaky model cheaply: the FIRST attempt(s) on the
+   *  requested model abort fast, while post-fallback attempts use timeoutMs.
+   *  E.g. { model: 'agnes-3.0-flash', probeTimeoutMs: 8000, timeoutMs: 20000 }
+   *  tests 3.0 for 8s, then serves from 2.5 with a 20s budget. */
+  probeTimeoutMs?: number;
   json?: boolean;
   model?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
@@ -197,6 +248,12 @@ export class KeyPool {
     const seen = new Set<string>(this.keys.map((k) => k.key));
     const PLACEHOLDER = /^(your[_-]?api[_-]?key.*|replace[_-]?.*|xxx+|placeholder.*|\*+)$/i;
     const add = (provider: string, key: string, label?: string) => {
+      // Founder decision (2026-09-21): Groq keys are NEVER loaded — the models
+      // hallucinate on our workflows. Dropping them here (single gate) covers
+      // GROQ_API_KEYS, `groq:` AI_KEYS entries, and gsk_ auto-detect at once.
+      // Callers that pinned provider 'groq' degrade via select()'s
+      // empty-filter fallback to the remaining pool.
+      if (provider === 'groq') return;
       const k = key.trim();
       if (!k || seen.has(k) || PLACEHOLDER.test(k)) return;
       seen.add(k);
@@ -248,8 +305,27 @@ export class KeyPool {
     };
   }
 
-  /** Pick the best key: least failures, Agnes-first when no provider pinned, then LRU. */
-  select(provider?: string): AiKey | null {
+  /** Effective failures with time forgiveness: a key whose last error is
+   *  >10 min old rejoins the healthy tier (transient 429s don't exile a key
+   *  forever; repeat offenders stay out). */
+  private effFailures(k: AiKey, now: number): number {
+    if (k.failures > 0 && k.lastFailureAt > 0 && now - k.lastFailureAt > 10 * 60_000) return 0;
+    return k.failures;
+  }
+
+  /** Pick a key for one attempt.
+   *
+   *  Generic rotation for every provider (current + future):
+   *  - Only healthy keys compete (enabled + off cooldown), provider-filtered.
+   *  - `sessionKey` set → consistent-hash pin: same conversation lands on the
+   *    same key while it stays healthy (cache affinity; no mid-chat hopping).
+   *    A cooled/failed pin drops out of the ring and traffic shifts to the
+   *    next key automatically — stateless, so it holds across Worker isolates.
+   *  - `sessionKey` absent → uniform random pick inside the least-failures
+   *    tier: statistical load-spreading with zero cross-isolate coordination
+   *    (per-isolate LRU alone would hammer key #0 on every cold start).
+   */
+  select(provider?: string, sessionKey?: string): AiKey | null {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
     if (provider) {
@@ -257,16 +333,15 @@ export class KeyPool {
       if (filtered.length > 0) pool = filtered;
     }
     if (pool.length === 0) return null;
-    const priority: Record<string, number> = { agnes: 0, groq: 1, openrouter: 2, requestly: 3 };
-    pool.sort((a, b) => {
-      if (!provider) {
-        const pa = priority[a.provider] ?? 99;
-        const pb = priority[b.provider] ?? 99;
-        if (pa !== pb) return pa - pb;
-      }
-      return a.failures - b.failures || a.lastUsedAt - b.lastUsedAt;
-    });
-    return pool[0];
+    const minFailures = Math.min(...pool.map((k) => this.effFailures(k, now)));
+    const tier = pool
+      .filter((k) => this.effFailures(k, now) <= minFailures)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    if (sessionKey) {
+      const start = parseInt(hashAI(`sess:${sessionKey}`), 36) % tier.length;
+      return tier[start];
+    }
+    return tier.length === 1 ? tier[0] : tier[Math.floor(Math.random() * tier.length)];
   }
 
   reportSuccess(key: AiKey): void {
@@ -361,6 +436,26 @@ export class AiGateway {
   // as reverse proxy with caching/rate-limiting/logging. Custom providers (agnes, openrouter) use `custom-{slug}`.
   private aigAccount = '';
   private aigGateway = '';
+  // Home-egress proxy (home-egress/docker): the Worker's shared egress IPs
+  // get throttled by Agnes's firewall (HTTP 1015), so the home PC serves as
+  // a FALLBACK lane, never the first attempt: direct egress always goes
+  // first (fastest), and only an IP-level 1015 or a direct transport failure
+  // reroutes that same attempt through the proxy. Proxy faults fall through
+  // with zero pool penalty. Proxied calls intentionally bypass the CF AI
+  // Gateway (same shared-egress fate). Runners (scripts/ai-gateway.js) don't
+  // read these vars — GitHub egress is clean.
+  private proxyUrl = '';
+  private proxySecret = '';
+  // Proxy attempt cap: high enough for legit reasoning responses (they take
+  // 6–15s), low enough to bound a dead tunnel. A down PC fails FAST anyway
+  // (refused/DNS, milliseconds) — this cap only binds genuine stalls.
+  private proxyTimeoutMs = 25000;
+  // Flaky-PC guard (per isolate): after 3 consecutive proxy faults, skip the
+  // proxy for 60s instead of paying the timeout on every attempt. Success
+  // resets the streak. (Cross-isolate learning would need KV — the timeout
+  // cap already bounds the worst case, so local memory suffices.)
+  private proxyFailStreak = 0;
+  private proxySkipUntil = 0;
 
   constructor(env?: Record<string, unknown>) {
     if (env) this.configure(env);
@@ -373,6 +468,10 @@ export class AiGateway {
     const aigAcc = String((env as any)?.CLOUDFLARE_ACCOUNT_ID ?? (env as any)?.CF_AIG_ACCOUNT_ID ?? '').trim();
     const aigId = String((env as any)?.CF_AIG_GATEWAY_ID ?? (env as any)?.AI_GATEWAY_ID ?? 'founder-os').trim();
     if (aigAcc) { this.aigAccount = aigAcc; this.aigGateway = aigId; }
+    const pUrl = String((env as any)?.AGNES_PROXY_URL ?? '').trim().replace(/\/+$/, '');
+    if (pUrl) { this.proxyUrl = pUrl; this.proxySecret = String((env as any)?.AGNES_PROXY_SECRET ?? '').trim(); }
+    const pTo = Number(String((env as any)?.AGNES_PROXY_TIMEOUT_MS ?? '').trim());
+    if (Number.isFinite(pTo) && pTo > 0) this.proxyTimeoutMs = Math.min(pTo, 60_000);
     const models = String((env as any)?.OPENROUTER_FREE_MODELS ?? '')
       .split(',')
       .map((s) => s.trim())
@@ -388,6 +487,82 @@ export class AiGateway {
     return this.pool.health();
   }
 
+  /** Home proxy usable for this provider? (Agnes only — the throttled one.) */
+  private proxyEnabled(provider: ProviderConfig): boolean {
+    return provider.id === 'agnes' && !!this.proxyUrl && !!this.proxySecret && Date.now() >= this.proxySkipUntil;
+  }
+
+  private proxySucceeded(): void {
+    this.proxyFailStreak = 0;
+    this.proxySkipUntil = 0;
+  }
+
+  private proxyFaulted(): void {
+    this.proxyFailStreak++;
+    if (this.proxyFailStreak >= 3) this.proxySkipUntil = Date.now() + 60_000;
+  }
+
+  /** Debug: worker→proxy leg health. Hostname only — never leaks the secret. */
+  async proxyStatus(): Promise<{ configured: boolean; host: string | null; skipActive: boolean; failStreak: number; reachable: boolean; ms: number; body?: string; error?: string }> {
+    let host: string | null = null;
+    try { host = new URL(this.proxyUrl).host; } catch { /* unset */ }
+    const base = { configured: !!this.proxyUrl && !!this.proxySecret, host, skipActive: Date.now() < this.proxySkipUntil, failStreak: this.proxyFailStreak };
+    if (!this.proxyUrl) return { ...base, reachable: false, ms: 0, error: 'AGNES_PROXY_URL unset' };
+    const start = Date.now();
+    try {
+      const r = await fetch(this.proxyUrl.replace(/\/+$/, '') + '/health', { signal: AbortSignal.timeout(15000) });
+      const text = await r.text().catch(() => '');
+      return { ...base, reachable: r.ok, ms: Date.now() - start, body: text.slice(0, 200), ...(!r.ok ? { error: `HTTP ${r.status}` } : {}) };
+    } catch (e: any) {
+      return { ...base, reachable: false, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 200) };
+    }
+  }
+
+  /**
+   * One attempt through the home proxy. Resolves with the upstream response
+   * (status passed through verbatim, INCLUDING 429s — those are real key
+   * signals). Rejects ONLY when the proxy/host itself is at fault (down,
+   * timeout, proxy 502) so the caller falls through to direct egress
+   * without touching pool health.
+   */
+  private async fetchViaProxy(path: string, body: string, headers: Record<string, string>, signal: AbortSignal | undefined, timeoutMs?: number): Promise<Response> {
+    let res: Response;
+    try {
+      res = await fetch(this.proxyUrl + path, {
+        method: 'POST',
+        headers: { ...headers, 'x-proxy-secret': this.proxySecret },
+        body,
+        signal: this.combineSignals(signal, timeoutMs ?? this.proxyTimeoutMs),
+      });
+    } catch (e) {
+      this.proxyFaulted();
+      const fault: any = new Error(`proxy unreachable: ${e instanceof Error ? e.message : String(e)}`);
+      fault.proxyFault = true;
+      throw fault;
+    }
+    if (res.status === 502 && res.headers.get('x-proxy-error') === '1') {
+      try { await res.text().catch(() => ''); } catch {}
+      this.proxyFaulted();
+      const fault: any = new Error('proxy upstream failure');
+      fault.proxyFault = true;
+      throw fault;
+    }
+    this.proxySucceeded();
+    return res;
+  }
+
+  /** True when a 429 body carries Cloudflare's 1015 edge-throttle signature
+   *  (IP-level block, not per-key quota). Reads a clone so the original
+   *  response stays consumable. */
+  private async isIpThrottle(res: Response): Promise<boolean> {
+    try {
+      const text = await res.clone().text();
+      return /1015|error code:\s*1015/i.test(text);
+    } catch {
+      return false;
+    }
+  }
+
   private gatewayBaseURL(provider: ProviderConfig): string {
     if (this.aigAccount && this.aigGateway) {
       // Standardized Cloudflare AI Gateway reverse proxy (custom providers use custom-{slug})
@@ -401,10 +576,16 @@ export class AiGateway {
 
   /**
    * Core completion call. Picks a key, calls the provider, rotates + retries on
-   * transient/provider errors. Rate limits (429) are retried hard — up to
-   * MIN_ATTEMPTS immediate retries — because burst limits wave off within
-   * seconds; other errors rotate keys as before. Throws AiGatewayError only
-   * when every attempt is exhausted.
+   * transient/provider errors (bounded by maxAttempts — one fresh key per
+   * attempt, so N keys ≈ N chances). Plain Agnes 429s cool that key and rotate
+   * to the next; Cloudflare 1015 fails fast (egress-IP based — rotating keys
+   * can't help). Sticky `sessionKey` requests stay pinned while healthy.
+   * Throws AiGatewayError only when every attempt is exhausted.
+   *
+   * Cloudflare AI Gateway note: rotation only swaps the `Authorization: Bearer`
+   * header value. URLs (incl. `custom-*` gateway paths), bodies, and models are
+   * untouched, so CF-side caching / logging / rate-limiting see zero change —
+   * and CF cache keys (method+URL+body) are unaffected by Bearer rotation.
    */
   async complete(req: CompletionRequest): Promise<CompletionResult> {
     // Auto-route Agnes models to Agnes provider when no explicit provider is set.
@@ -439,10 +620,20 @@ export class AiGateway {
     let streak429 = 0;
     let rotatedModel: string | undefined;
     let lastErr: unknown;
+    // Model fallback state: an explicitly requested model with a recorded
+    // outage starts on its fallback immediately; a mid-call hang switches
+    // over once (flagged for 10 min so later calls skip the probe).
+    let activeModel: string | undefined = req.model;
+    let fellBack = false;
+    if (activeModel && FALLBACK_MODEL[activeModel] && (await modelFlagged(activeModel))) {
+      logger.warn?.(`[AiGateway] ${activeModel} flagged down — starting on ${FALLBACK_MODEL[activeModel]}`);
+      activeModel = FALLBACK_MODEL[activeModel];
+      fellBack = true;
+    }
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const key = req.keyId
-        ? this.findKey(req.keyId) ?? this.pool.select(req.provider)
-        : this.pool.select(req.provider);
+        ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey)
+        : this.pool.select(req.provider, req.sessionKey);
       if (!key) {
         const waitMs = this.pool.earliestCooldownMs();
         const retryAfter = waitMs > 0 ? Math.min(waitMs, 60_000) : 60_000;
@@ -452,7 +643,14 @@ export class AiGateway {
       }
       const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
       try {
-        const result = await this.callProvider(provider, key, rotatedModel ? { ...req, model: rotatedModel } : req);
+        const modelOverride = activeModel && activeModel !== req.model ? activeModel : rotatedModel;
+        const callReq = { ...req };
+        if (modelOverride) callReq.model = modelOverride;
+        // Cheap probe: pre-fallback attempts on a flaky primary model get
+        // probeTimeoutMs; everything after fallback uses timeoutMs.
+        const probing = !fellBack && req.model && FALLBACK_MODEL[req.model] && req.probeTimeoutMs;
+        if (probing) callReq.timeoutMs = req.probeTimeoutMs;
+        const result = await this.callProvider(provider, key, callReq);
         this.pool.reportSuccess(key);
         if (aiCacheKey) {
           try { await cacheSet(aiCacheKey, result, 5 * 60 * 1000); } catch {}
@@ -460,6 +658,19 @@ export class AiGateway {
         return result;
       } catch (err) {
         lastErr = err;
+        // Hung model channel (timeout, no HTTP status — proxy faults and
+        // caller cancels excluded): record the outage, switch to the
+        // fallback model, retry immediately. Keys are never rotated for a
+        // hang — every key would hang identically on a dead channel.
+        const timedOut = (err as any)?.name === 'TimeoutError' || /timeout/i.test(String((err as any)?.message ?? ''));
+        const abortHang = !(err as any)?.proxyFault && timedOut;
+        if (abortHang && req.model && FALLBACK_MODEL[req.model] && !fellBack) {
+          fellBack = true;
+          await flagModelDown(req.model);
+          logger.warn?.(`[AiGateway] ${req.model} hung — failing over to ${FALLBACK_MODEL[req.model]}`);
+          activeModel = FALLBACK_MODEL[req.model];
+          continue;
+        }
         const status = this.pool.extractStatus(err);
         if (status === 429) {
           if (provider.id === 'agnes') {
@@ -467,23 +678,39 @@ export class AiGateway {
             const isCf1015 = /1015|error code: 1015/i.test(msg);
             const retryAfter = this.extractRetryAfter(err);
             if (isCf1015) {
+              // IP-level throttle, NOT key quota: cool briefly and ROTATE —
+              // the next key's direct call may land outside the throttle
+              // window, and every attempt also gets its proxy shot inside
+              // callProvider. Only the final attempt throws, preserving
+              // chat's busy-signal when truly everything is throttled.
               const rawCd = retryAfter ?? 72_000;
               const cd = Math.min(rawCd, 60_000);
               key.cooldownUntil = Date.now() + cd;
               key.failures++;
+              key.lastFailureAt = Date.now();
               key.lastError = `429 Cloudflare 1015`;
-              logger.warn?.(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — failing fast, cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s)`);
-              const e: any = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
-              e.status = 429; e.retryAfter = cd; throw e;
+              logger.warn?.(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
+              if (attempt >= maxAttempts - 1) {
+                const e: any = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
+                e.status = 429; e.retryAfter = cd; throw e;
+              }
+              continue;
             }
+            // Plain Agnes 429 is per-key quota: cool THIS key and rotate to
+            // the next one in the pool (bounded by maxAttempts). The next
+            // select() skips the cooling key, so a sticky sessionKey
+            // transparently fails over mid-conversation only when it must.
+            // Cooldown escalates while the key keeps failing (60s → 120s →
+            // 240s → 480s, capped 10 min) so chronic-429 keys stop burning
+            // seconds on every rejoin; one success resets the ladder.
             const rawCd = retryAfter ?? 60_000;
-            const cd = Math.min(rawCd, 60_000);
-            key.cooldownUntil = Date.now() + cd;
             key.failures++;
+            key.lastFailureAt = Date.now();
+            const cd = Math.min(rawCd, 60_000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600_000);
+            key.cooldownUntil = Date.now() + cd;
             key.lastError = `429 rate-limited`;
-            logger.warn?.(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), failing fast`);
-            const e: any = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(cd/1000)}s)`);
-            e.status = 429; e.retryAfter = cd; throw e;
+            logger.warn?.(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s, rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
+            continue;
           }
           // Immediate retry path: burst limits wave off — short sleep, reuse
           // the key at once (no long cooldown), keep counting attempts.
@@ -528,7 +755,18 @@ export class AiGateway {
     if (!req.provider && req.model && req.model.startsWith('agnes-')) {
       req = { ...req, provider: 'agnes' };
     }
-    const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider) : this.pool.select(req.provider);
+    // Skip a flagged-down model outright (mirrors complete()'s entry check
+    // — most turns never pay the probe).
+    const requestedFlaky = req.model && FALLBACK_MODEL[req.model] ? req.model : null;
+    if (requestedFlaky && (await modelFlagged(requestedFlaky))) {
+      logger.warn?.(`[AiGateway] stream: ${requestedFlaky} flagged down — starting on ${FALLBACK_MODEL[requestedFlaky]}`);
+      req = { ...req, model: FALLBACK_MODEL[requestedFlaky] };
+    }
+    // Unflagged flaky model: probe cheaply (probeTimeoutMs), flagged/fine
+    // models get the full timeoutMs so thinking steps aren't strangled.
+    const probing = !!requestedFlaky && req.model === requestedFlaky && !!req.probeTimeoutMs;
+    const streamCap = probing ? req.probeTimeoutMs : req.timeoutMs;
+    const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey) : this.pool.select(req.provider, req.sessionKey);
     if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)');
     const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
     const wantsVision = req.messages.some((m) => Array.isArray(m.content));
@@ -546,11 +784,55 @@ export class AiGateway {
     else if (provider.reasoningObject) (body as any).reasoning = { enabled: true };
     else if (provider.supportsReasoning && req.reasoningEffort) (body as any).reasoning_effort = req.reasoningEffort;
     const url = this.gatewayBaseURL(provider);
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: req.signal });
+    const payload = JSON.stringify(body);
+    // Proxy-first (home egress); direct Cloudflare egress is the fallback.
+    // A proxy 429 is a real upstream answer — only faults and our own 403s
+    // fall through (handled inside tryProxy by returning null).
+    const tryProxy = async (): Promise<Response | null> => {
+      if (!this.proxyEnabled(provider)) return null;
+      try {
+        const path = new URL(provider.baseURL).pathname;
+        const pres = await this.fetchViaProxy(path, payload, headers, req.signal, streamCap);
+        if (pres.status === 403) {
+          this.proxyFaulted();
+          logger.warn?.(`[AiGateway] home proxy 403 (secret?) — falling through to direct`);
+          return null;
+        }
+        return pres;
+      } catch (e) {
+        logger.warn?.(`[AiGateway] home proxy failed (${(e as Error)?.message ?? e}) — falling through to direct`);
+        return null;
+      }
+    };
+    let res: Response | null = await tryProxy();
+    if (!res) {
+      try {
+        res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, streamCap) });
+      } catch (e) {
+        // Hung model on a stream: flag the outage and fail with a retryable
+        // message — the caller re-issues via complete(), which starts on the
+        // fallback model thanks to the flag set here. Caller cancels (plain
+        // abort, no "timeout") never flag the model.
+        const timedOut = (e as any)?.name === 'TimeoutError' || /timeout/i.test(String((e as any)?.message ?? ''));
+        const abortHang = !(e as any)?.proxyFault && timedOut;
+        if (abortHang && req.model && FALLBACK_MODEL[req.model]) {
+          await flagModelDown(req.model);
+          throw new Error(`AI model ${req.model} timed out (fallback to ${FALLBACK_MODEL[req.model]} engaged) — retry the call`);
+        }
+        throw e;
+      }
+    }
+    if (res.status === 429 && (await this.isIpThrottle(res))) {
+      const proxied = await tryProxy();
+      if (proxied) res = proxied;
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       const err: any = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
-      err.status = res.status; throw err;
+      err.status = res.status; err.retryAfter = this.parseRetryAfter(res.headers);
+      // Feed pool health so the next turn rotates away from a 429'd key.
+      try { this.pool.reportFailure(key, err, err.retryAfter); } catch {}
+      throw err;
     }
     if (!res.body) return;
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();
@@ -584,6 +866,7 @@ export class AiGateway {
     } finally {
       try { reader.releaseLock(); } catch {}
     }
+    this.pool.reportSuccess(key);
   }
 
   /** Convenience: complete + parse JSON (falls back to extracting the first
@@ -642,13 +925,52 @@ export class AiGateway {
     } else if (provider.supportsReasoning && req.reasoningEffort) {
       body.reasoning_effort = req.reasoningEffort;
     }
+    const payload = JSON.stringify(body);
+    // Proxy-first (home egress): the fastest/cleanest lane goes first by
+    // default; direct Cloudflare egress is the fallback when the proxy is
+    // down, slow, or unconfigured. A proxy 429 is a REAL upstream answer
+    // (same key/account quota) and is returned as the attempt result — only
+    // proxy FAULTS (unreachable/timeout/502) and our own 403s (secret
+    // mismatch, never a provider signal) fall through to direct.
     const url = this.gatewayBaseURL(provider);
-    const res = await fetch(url, {
+    const directInit = {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
-      signal: req.signal,
-    });
+      body: payload,
+      signal: this.combineSignals(req.signal, req.timeoutMs),
+    };
+    const proxyPath = new URL(provider.baseURL).pathname;
+    const tryProxyFirst = async (): Promise<Response | null> => {
+      if (!this.proxyEnabled(provider)) return null;
+      try {
+        const pres = await this.fetchViaProxy(proxyPath, payload, headers, req.signal, req.timeoutMs);
+        if (pres.status === 403) {
+          this.proxyFaulted();
+          logger.warn?.(`[AiGateway] home proxy 403 (secret?) — falling through to direct`);
+          return null;
+        }
+        return pres;
+      } catch (e) {
+        logger.warn?.(`[AiGateway] home proxy failed (${(e as Error)?.message ?? e}) — falling through to direct`);
+        return null;
+      }
+    };
+    let res: Response | null = await tryProxyFirst();
+    let directThrew: unknown = null;
+    if (!res) {
+      try {
+        res = await fetch(url, directInit);
+      } catch (e) {
+        directThrew = e;
+      }
+      if (!res) throw directThrew;
+      if (res.status === 429 && (await this.isIpThrottle(res)) && this.proxyEnabled(provider)) {
+        // Direct throttled at IP level while the proxy faulted a moment ago —
+        // one last proxy recourse (skip-ladder permitting) before failing.
+        const retry = await tryProxyFirst();
+        if (retry) res = retry;
+      }
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       const err: any = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
@@ -681,8 +1003,20 @@ export class AiGateway {
     };
   }
 
-  private extractRetryAfter(err: unknown): number | undefined {
-    if (err && typeof err === 'object') {
+  /** Merge caller abort + per-attempt timeout into one signal (edge-safe). */
+  private combineSignals(signal: AbortSignal | undefined, timeoutMs: number | undefined): AbortSignal | undefined {
+    if (!timeoutMs || timeoutMs <= 0) return signal;
+    try {
+      const t = AbortSignal.timeout(timeoutMs);
+      if (!signal) return t;
+      if (typeof (AbortSignal as any).any === 'function') return (AbortSignal as any).any([signal, t]);
+      return signal;
+    } catch {
+      return signal;
+    }
+  }
+
+  private extractRetryAfter(err: unknown): number | undefined {    if (err && typeof err === 'object') {
       return (err as any).retryAfter;
     }
     return undefined;

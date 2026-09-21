@@ -314,6 +314,24 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     //   stays until sales fixes the spec;
     // - otherwise an open flag survives even if the write omits it;
     // - finalized items can't be newly flagged.
+    // KYP grounding: preserve inferred category/item; completeness is
+    // recomputed only by the AI intake (LLM spec-check). Manual edits keep
+    // the stored grounding so the checklist stays visible until next intake.
+    {
+      const hasKyp = Object.prototype.hasOwnProperty.call(it as any, 'kypItem') || Object.prototype.hasOwnProperty.call(it as any, 'kypMissing') || Object.prototype.hasOwnProperty.call(it as any, 'kypComplete');
+      if (hasKyp) {
+        if ((it as any).kypItem !== undefined) (base as any).kypItem = String((it as any).kypItem).slice(0, 120) || undefined;
+        if (Array.isArray((it as any).kypMissing)) (base as any).kypMissing = (it as any).kypMissing.slice(0, 25).map((s: any) => String(s).slice(0, 500));
+        if (typeof (it as any).kypComplete === 'boolean') (base as any).kypComplete = (it as any).kypComplete;
+        if ((it as any).category !== undefined) (base as any).category = String((it as any).category).slice(0, 120) || undefined;
+      } else {
+        (base as any).kypItem = (stored as any).kypItem;
+        (base as any).kypMissing = (stored as any).kypMissing ? [...(stored as any).kypMissing] : undefined;
+        (base as any).kypComplete = (stored as any).kypComplete;
+        if ((stored as any).category && !(base as any).category) (base as any).category = (stored as any).category;
+        if ((stored as any).kypItem && !(base as any).kypItem) (base as any).kypItem = (stored as any).kypItem;
+      }
+    }
     const hadFlag = !!stored.specIssue;
     const specChanged = String(base.spec ?? "") !== String(stored.spec ?? "");
     const mediaKey = (m: any): string => `${m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image'}:${String(m?.url ?? '')}`;
@@ -552,6 +570,9 @@ export function applyIntakeBulkResult(existingItems: any[], incomingItems: any[]
       spec: String(l?.spec ?? '').slice(0, 2000),
       category: l?.category ? String(l.category).slice(0, 120) : undefined,
       verbatim: l?.verbatim ? String(l.verbatim).slice(0, 500) : undefined,
+      kypItem: l?.kypItem ? String(l.kypItem).slice(0, 120) : undefined,
+      kypMissing: Array.isArray(l?.kypMissing) ? l.kypMissing.slice(0, 25).map((s: any) => String(s).slice(0, 500)) : undefined,
+      kypComplete: typeof l?.kypComplete === 'boolean' ? l.kypComplete : undefined,
     }))
     .filter((l) => l.name || l.qty || l.spec);
   if (incoming.length === 0) return clearFlags();
@@ -590,6 +611,10 @@ export function applyIntakeBulkResult(existingItems: any[], incomingItems: any[]
     }
     out.push(it);
   });
+  // Keep KYP grounding fresh when editing spec/qty on an existing item:
+  // if the spec text changed, recompute kypMissing/kypComplete from the
+  // stored required_attributes for that kypItem (best-effort, no LLM here;
+  // the next AI re-intake will fully re-evaluate).
   return out.slice(0, 100);
 }
 

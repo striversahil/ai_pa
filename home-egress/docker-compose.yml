@@ -1,0 +1,28 @@
+services:
+  proxy:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/health"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  # Named tunnel (dashboard-managed): ingress rules come from the Cloudflare
+  # dashboard, so no --url flag. Token lives in .env (git-ignored). The public
+  # hostname is static — set once as Worker secret AGNES_PROXY_URL and forget.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    env_file: .env
+    # Share the proxy's network namespace so the dashboard ingress target
+    # http://localhost:3000 lands on the proxy (port 3000 on the host itself
+    # is taken by the Next dev server, so host-mode was not an option).
+    network_mode: "service:proxy"
+    depends_on:
+      proxy:
+        condition: service_started
+    restart: unless-stopped

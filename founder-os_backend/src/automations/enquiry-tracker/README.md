@@ -51,14 +51,18 @@ The dashboard payload (`data()`) is KV-cached 60s and busted on every write.
 
 ## Line items (Item 1..N)
 The unstructured enquiry (`description` + enquiry-level photos) is AI-split
-into `items: [{ name, qty, spec, media, category }]` by the GH intake runner
-(`scripts/enquiry-intake-runner.js`, every 30 min via `cron-every-30min.yml`):
-two-stage grounding on `data/know_your_product_v2.json` ONLY (136 items,
-10 categories — no derived taxonomy/slot files): Stage A routes each line to
-a category from a slim `Category: item, …` list (~680 tokens, client wording
-kept verbatim) with vision; Stage B grounds each routed category with that
-category's full aliases + `required_attributes` (worst ~4k tokens) to the
-exact `item_name`, verbatim spec, and `missing[]`. Then a price-memory lookup. Results land
+ into `items: [{ name, qty, spec, media, category }]` worker-natively by
+ `modules/enquiries/vision-intake.ts` (`kickAgnesIntake` on create/update via
+ `waitUntil`, Agnes vision, edge <5s; legacy GH `scripts/enquiry-intake-runner.js`
+ follows the same design as fallback): segment → lookup on
+ `data/know_your_product_v2.json` ONLY (136 items, 10 categories — slim
+ codegen twin `src/modules/enquiries/kyp-lookup.ts` for the edge bundle, no
+ derived taxonomy/slot files): Call 1 segments each line (vision, NO catalogue
+ — pure splitter, client wording kept verbatim, so the model cannot
+ hallucinate catalogue names or drop lines to fit them); Call 2 looks each
+ verbatim line up (deterministic alias-index first, one batched LLM fallback
+ with the item+alias list only for misses, <0.5 confidence stays
+ Uncategorized). Then a price-memory lookup. Results land
 fill-empty-only (manual edits always win) plus KV suggestions at
 `enquiry:intake:<id>` (7d TTL) for the sales `IntakePanel`. Stored on the row;
 sales can edit/delete/add manually. Each item carries `media:

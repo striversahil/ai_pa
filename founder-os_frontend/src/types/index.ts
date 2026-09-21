@@ -127,6 +127,13 @@ export interface EnquiryItem {
    *  Procurement sees it as the negotiation target, management beside rates. */
   expectedRate?: number;
   expectedNote?: string;
+  /** KYP grounding: canonical product inferred by Call-2 lookup. */
+  kypItem?: string;
+  /** Category inferred by Call-2 lookup (mirrors backend `category`). */
+  category?: string;
+  /** Per-item spec completeness vs KYP required_attributes. */
+  kypMissing?: string[];
+  kypComplete?: boolean;
 }
 
 export interface FlagThreadEntry {
@@ -150,6 +157,7 @@ export {
   isFreshQuotableItem,
   isProcurementPendingEnquiry,
   isProcurementHistoryEnquiry,
+  isZohoCancelledStatus,
   isManagementPendingEnquiry,
   procurementSubmittable,
   isManagementHistoryEnquiry,

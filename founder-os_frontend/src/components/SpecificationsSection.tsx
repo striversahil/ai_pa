@@ -413,13 +413,93 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {(it as any).aiPending === true && (
                         <AiProcessingLoader compact />
                       )}
+                      {/* KYP grounding + spec completeness — inside each item, always visible */}
+                      {(() => {
+                        const kypItem = (it as any).kypItem as string | undefined;
+                        const kypMissing = (it as any).kypMissing as string[] | undefined;
+                        const kypComplete = (it as any).kypComplete as boolean | undefined;
+                        const cat = (it as any).category as string | undefined;
+                        const isUncat = !cat || cat === "Uncategorized";
+                        const hasGrounding = !!kypItem || (!isUncat && !!cat);
+                        if (!hasGrounding && kypComplete === undefined && !isUncat) return null;
+                        // Uncategorized items still get a badge so telecaller knows manual review is needed
+                        const total = Array.isArray(kypMissing) ? undefined : undefined;
+                        const missingCount = Array.isArray(kypMissing) ? kypMissing.length : 0;
+                        const isComplete = kypComplete === true;
+                        const isIncomplete = kypComplete === false;
+                        return (
+                          <div className="mt-2 rounded-xl border border-[var(--border-card)]/80 bg-[var(--bg-card)]/60 p-2.5 space-y-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full border ${isUncat ? "bg-zinc-500/10 text-zinc-500 border-zinc-500/20" : isComplete ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25" : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25"}`}>
+                                {isUncat ? "Uncategorized" : cat}
+                              </span>
+                              {kypItem && !isUncat && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-brand-indigo/10 text-brand-indigo border border-brand-indigo/20">{kypItem}</span>
+                              )}
+                              {!isUncat && kypComplete !== undefined && (
+                                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${isComplete ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border-amber-500/20"}`}>
+                                  {isComplete ? "Spec complete ✓" : `Needs ${missingCount} detail${missingCount === 1 ? "" : "s"}`}
+                                </span>
+                              )}
+                              {editable && isIncomplete && Array.isArray(kypMissing) && kypMissing.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const q = (kypMissing as string[]).join("\n");
+                                    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(q);
+                                  }}
+                                  className="ml-auto px-2 py-0.5 text-[10px] font-bold rounded-full bg-[var(--bg-input)] border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)]/80 cursor-pointer"
+                                >
+                                  Copy questions
+                                </button>
+                              )}
+                            </div>
+                            {isIncomplete && Array.isArray(kypMissing) && kypMissing.length > 0 && (
+                              <ul className="space-y-1">
+                                {(kypMissing as string[]).map((q, i) => (
+                                  <li key={i} className="flex gap-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                                    <span className="mt-0.5 flex-shrink-0 w-1.5 h-1.5 rounded-full bg-amber-500/70" />
+                                    <span>{q}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {isComplete && (
+                              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">All required details present — price lookup enabled for this item.</p>
+                            )}
+                            {isUncat && (
+                              <p className="text-[11px] text-[var(--text-tertiary)]">No catalogue match — ask client for a photo/sample and describe the part; price lookup will use manual spec.</p>
+                            )}
+                            {isIncomplete && editable && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cur = it.spec ?? "";
+                                  const appended = (kypMissing as string[]).join(" | ");
+                                  const nextSpec = cur ? `${cur} | ${appended}` : appended;
+                                  setDraft({ ...it, spec: nextSpec } as any);
+                                  setEditingIdx(idx);
+                                }}
+                                className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0 p-0"
+                              >
+                                Fill spec → edit to answer
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {intake && (
                         <IntakeItemMeta
                           itemIndex={idx}
                           suggestions={intake.suggestions ?? []}
                           missing={missingForItem(intake.missing ?? [], it.name ?? "", idx)}
                           onAccept={onAcceptSuggestion}
+                          kypComplete={(it as any).kypComplete}
                         />
+                      )}
+                      {/* Price gate: when spec incomplete, explain why no price card is shown */}
+                      {(it as any).kypComplete === false && (!intake || (intake.suggestions ?? []).filter((s: any) => Number(s.itemIndex) === idx).length === 0) && (
+                        <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">Complete the spec above to see price — lookup is gated on completeness.</p>
                       )}
                       {!redacted && !it.specIssue && (it.thread ?? []).length > 0 && (
                         <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />

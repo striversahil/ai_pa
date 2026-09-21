@@ -72,10 +72,11 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
     setMsgs((p) => [...p, { role: "user", text: q }]);
     setInput("");
     // Streaming primary (agnes-3.0-flash, falls back to Groq inside Worker on 1015) — bounded, never hangs.
+    // 60s budget: the turn can fail over to a reasoning-model fallback with a multi-step tools loop.
     const tryStream = async (): Promise<boolean> => {
       try {
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 20000);
+        const t = setTimeout(() => ctrl.abort(), 60000);
         const res = await fetch(`/api/enquiries/${enquiryId}/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
@@ -100,7 +101,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
         let sawDone = false;
         // placeholder for live markdown table rendering
         setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
-        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 18000);
+        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 55000);
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -174,10 +175,10 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
     };
     const streamed = await tryStream();
     if (streamed) { setBusy(false); return; }
-    // Fallback: non-streaming JSON (Worker will have already retried on Groq, so this is also fast)
+    // Fallback: non-streaming JSON (may run the full tools loop on the fallback provider — same 60s budget)
     try {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 20000);
+      const t = setTimeout(() => ctrl.abort(), 60000);
       const res = await fetch(`/api/enquiries/${enquiryId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

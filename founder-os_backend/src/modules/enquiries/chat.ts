@@ -23,6 +23,9 @@ import type { MeResponse } from '../auth/types';
 const MAX_STEPS = 6;
 const THREAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_HISTORY = 12;
+// Founder decision (2026-09-21): the copilot is Agnes-only. Weak fallback
+// models hallucinate, so a throttled pool answers "busy" instead of guessing.
+const BUSY_REPLY = 'The AI is busy (rate-limited) — please retry in a minute.';
 
 function threadKey(enquiryId: string, me: MeResponse): string {
   const who = String((me as any)?.user?.email ?? (me as any)?.user?.id ?? 'anon').toLowerCase();
@@ -65,7 +68,7 @@ function toolDefs(ctx: Ctx): ToolDefinition[] {
       type: 'function',
       function: {
         name: 'get_enquiry_summary',
-        description: 'Scoped summary of this enquiry: label, status, items with specs/rates, workflow stage, missing details.',
+        description: 'Scoped summary of this enquiry: label, status, items with specs/rates/category/kypItem/kypMissing/kypComplete, workflow stage, missing details and completeness counts.',
         parameters: { type: 'object', properties: {} },
       },
     },
@@ -174,15 +177,25 @@ async function execTool(ctx: Ctx, name: string, args: Record<string, any>): Prom
       name: String(it?.name ?? '') || `Item ${i + 1}`,
       qty: String(it?.qty ?? ''),
       spec: String(it?.spec ?? '').slice(0, 500),
+      category: String(it?.category ?? 'Uncategorized').slice(0, 120),
+      kypItem: it?.kypItem ? String(it.kypItem).slice(0, 120) : null,
+      kypMissing: Array.isArray(it?.kypMissing) ? it.kypMissing.slice(0, 10).map((s: any) => String(s).slice(0, 500)) : [],
+      kypComplete: typeof it?.kypComplete === 'boolean' ? it.kypComplete : null,
       rates: (it?.rates ?? []).length,
       finalRate: it?.finalRate ?? null,
       specIssue: it?.specIssue ? String(it.specIssue).slice(0, 300) : null,
       rateAvailable: it?.rateAvailable === true,
     }));
+    // Aggregate kypMissing across items for a quick overview (the UI's amber chips)
     let missing: string[] = [];
     try {
-      const intake = await cacheGet<Record<string, any>>(`enquiry:intake:${ctx.enquiryId}`, THREAD_TTL_MS);
-      if (intake && Array.isArray((intake as any).missing)) missing = (intake as any).missing;
+      // Prefer per-item kypMissing (the live completeness), fall back to legacy intake cache
+      const kypMissingAll = items.flatMap((it: any) => Array.isArray(it.kypMissing) ? it.kypMissing.map((m: string) => `Item ${it.index + 1} — ${m}`) : []);
+      if (kypMissingAll.length > 0) missing = kypMissingAll.slice(0, 25);
+      else {
+        const intake = await cacheGet<Record<string, any>>(`enquiry:intake:${ctx.enquiryId}`, THREAD_TTL_MS);
+        if (intake && Array.isArray((intake as any).missing)) missing = (intake as any).missing;
+      }
     } catch { /* ignore */ }
     return {
       result: {
@@ -191,6 +204,11 @@ async function execTool(ctx: Ctx, name: string, args: Record<string, any>): Prom
         status: ctx.restricted ? undefined : String(enquiry.status ?? ''),
         rateStatus: String(enquiry.rateStatus ?? ''),
         items, missing,
+        completeness: {
+          complete: items.filter((it: any) => it.kypComplete === true).length,
+          incomplete: items.filter((it: any) => it.kypComplete === false).length,
+          uncategorized: items.filter((it: any) => !it.category || it.category === 'Uncategorized').length,
+        },
       },
     };
   }
@@ -282,12 +300,21 @@ export async function chatTurn(
   message: string,
 ): Promise<ChatReply> {
   const gateway = getGateway(env);
-  const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
-  const hasOpenrouter = gateway.health().some((h) => h.provider === 'openrouter');
-  if (!hasAgnes && !hasOpenrouter) {
+  const usable = (p: string) => gateway.health().some((h) => h.provider === p && h.enabled && h.cooldownUntil <= Date.now());
+  const hasAnyKey = gateway.health().some((h) => h.provider === 'agnes' || h.provider === 'openrouter');
+  if (!hasAnyKey) {
     return { reply: 'AI chat is not configured (no Agnes/OpenRouter key).', proposals: [], activity: [] };
   }
-  const provider: 'agnes' | 'openrouter' = hasAgnes ? 'agnes' : 'openrouter';
+  // Agnes-only (see BUSY_REPLY): skip the turn fast when every Agnes key is
+  // throttled instead of answering from a hallucinating fallback model.
+  // The storm flag is cross-isolate memory (KV): if a sibling isolate just
+  // exhausted the pool, fail fast instead of burning ~60s rediscovering it.
+  let storm = false;
+  try { storm = !!(await cacheGet('ai:storm:agnes', 120_000)); } catch { /* ignore */ }
+  if (storm || !usable('agnes')) {
+    return { reply: BUSY_REPLY, proposals: [], activity: [] };
+  }
+  const provider: 'agnes' = 'agnes';
   const ctx: Ctx = {
     env, store, me, enquiryId,
     restricted: isRestrictedViewer(me),
@@ -306,19 +333,21 @@ export async function chatTurn(
     : ctx.privileged
       ? 'The viewer is management: full detail allowed.'
       : 'The viewer is sales: full pipeline detail, but margin internals (selected vendor, markup) stay hidden.';
+  const langNote = !ctx.restricted && !ctx.privileged
+    ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — telecaller style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
+    : '';
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: `You are the copilot for ONE sales enquiry (ID ${enquiryId}). Answer questions using the tools — never invent specs, rates, or statuses. Keep replies short. When the user wants something changed (post a note, fix a spec), call the propose_* tool so they can confirm; do not claim it is done. ${scopeNote}`,
+      content: `You are the sales staff helper — you work ON BEHALF of the BUI telecaller for ONE sales enquiry (ID ${enquiryId}). Act like their personal assistant: fill gaps, draft notes, fix specs, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing" and whether price lookup is gated (only kypComplete===true is price-eligible). Keep replies short. ${langNote} When the client needs something, draft it via propose_* so the telecaller can confirm with one tap — do not claim it is done until confirmed. ${scopeNote}`,
     },
     ...history,
     { role: 'user', content: String(message ?? '').slice(0, 2000) },
   ];
 
   const chatModelAgnes = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || 'agnes-3.0-flash';
-  const chatModelGroq = 'openai/gpt-oss-120b';
-  let activeProvider: 'agnes' | 'groq' | 'openrouter' = provider;
-  let activeModel: string | undefined = provider === 'agnes' ? chatModelAgnes : undefined;
+  let activeProvider: 'agnes' = provider;
+  let activeModel: string | undefined = chatModelAgnes;
   const proposals: ChatProposal[] = [];
   const activity: ChatActivity[] = [];
   let reply = '';
@@ -330,21 +359,22 @@ export async function chatTurn(
         provider: activeProvider,
         ...(activeModel ? { model: activeModel } : {}),
         tools, toolChoice: 'auto',
+        // Pin the whole conversation to one key (cache affinity); the
+        // gateway fails over automatically if that key 429s.
+        sessionKey: key,
+        // One slow/hung attempt must not eat the 60s UI budget.
+        timeoutMs: 20_000,
       });
     } catch (e: any) {
       const msg = String(e?.message ?? '');
       const is429 = /429|rate-limit|1015/i.test(msg) || e?.status === 429;
-      // Agnes hit Cloudflare 1015 / 20 RPM — fall back to Groq in the SAME turn (<2s extra) so the user never sees "Consulting..." hang.
-      if (is429 && activeProvider === 'agnes') {
-        activeProvider = 'groq';
-        activeModel = chatModelGroq;
-        // one retry immediately on Groq
-        res = await gateway.complete({
-          messages, temperature: 0.2, maxTokens: 800,
-          provider: activeProvider, model: activeModel,
-          tools, toolChoice: 'auto',
-        });
-      } else throw e;
+      // Agnes-only by decision: a mid-turn throttle returns "busy" (with
+      // whatever tool activity was gathered) instead of a hallucinated reply.
+      if (is429) {
+        try { await cacheSet('ai:storm:agnes', { at: Date.now() }, 120_000); } catch { /* best-effort */ }
+        return { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
+      }
+      throw e;
     }
     if (res.toolCalls && res.toolCalls.length > 0) {
       messages.push({
@@ -393,14 +423,24 @@ export async function* streamChatTurn(
   message: string,
 ): AsyncGenerator<{ type: string; data: any }, ChatReply, unknown> {
   const gateway = getGateway(env);
-  const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
-  const hasOpenrouter = gateway.health().some((h) => h.provider === 'openrouter');
-  if (!hasAgnes && !hasOpenrouter) {
+  const usable = (p: string) => gateway.health().some((h) => h.provider === p && h.enabled && h.cooldownUntil <= Date.now());
+  const hasAnyKey = gateway.health().some((h) => h.provider === 'agnes' || h.provider === 'openrouter');
+  if (!hasAnyKey) {
     const r: ChatReply = { reply: 'AI chat is not configured (no Agnes/OpenRouter key).', proposals: [], activity: [] };
     yield { type: 'done', data: r };
     return r;
   }
-  const provider: 'agnes' | 'openrouter' = hasAgnes ? 'agnes' : 'openrouter';
+  // Agnes-only (see BUSY_REPLY): yield "busy" fast when every Agnes key is
+  // throttled instead of answering from a hallucinating fallback model.
+  // Cross-isolate storm memory (KV) avoids re-burning ~60s per turn.
+  let storm = false;
+  try { storm = !!(await cacheGet('ai:storm:agnes', 120_000)); } catch { /* ignore */ }
+  if (storm || !usable('agnes')) {
+    const r: ChatReply = { reply: BUSY_REPLY, proposals: [], activity: [] };
+    yield { type: 'done', data: r };
+    return r;
+  }
+  const provider: 'agnes' = 'agnes';
   const ctx: Ctx = { env, store, me, enquiryId, restricted: isRestrictedViewer(me), privileged: canManageRates(me) };
   const key = threadKey(enquiryId, me);
   let history: ChatMessage[] = [];
@@ -412,15 +452,17 @@ export async function* streamChatTurn(
   const scopeNote = ctx.restricted
     ? 'The viewer is procurement: NEVER reveal client identity, contacts, or final rates/margins.'
     : ctx.privileged ? 'The viewer is management: full detail allowed.' : 'The viewer is sales: full pipeline detail, but margin internals (selected vendor, markup) stay hidden.';
+  const langNote = !ctx.restricted && !ctx.privileged
+    ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — telecaller style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
+    : '';
   const messages: ChatMessage[] = [
-    { role: 'system', content: `You are the copilot for ONE sales enquiry (ID ${enquiryId}). Answer questions using the tools — never invent specs, rates, or statuses. Keep replies short. When the user wants something changed (post a note, fix a spec), call the propose_* tool so they can confirm; do not claim it is done. ${scopeNote} When you need to compare items, specs, or prices, use a markdown table.` },
+    { role: 'system', content: `You are the sales staff helper — you work ON BEHALF of the BUI telecaller for ONE sales enquiry (ID ${enquiryId}). Act like their personal assistant: fill gaps, draft notes, fix specs, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing" and whether price lookup is gated (only kypComplete===true is price-eligible). Keep replies short. ${langNote} When the client needs something, draft it via propose_* so the telecaller can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items, specs, or prices, use a markdown table.` },
     ...history,
     { role: 'user', content: String(message ?? '').slice(0, 2000) },
   ];
   const chatModelAgnes = String((env as any)?.ENQUIRY_CHAT_MODEL ?? '').trim() || 'agnes-3.0-flash';
-  const chatModelGroq = 'openai/gpt-oss-120b';
-  let activeProvider: 'agnes' | 'groq' | 'openrouter' = provider;
-  let activeModel: string | undefined = provider === 'agnes' ? chatModelAgnes : undefined;
+  let activeProvider: 'agnes' = provider;
+  let activeModel: string | undefined = chatModelAgnes;
   const proposals: ChatProposal[] = [];
   const activity: ChatActivity[] = [];
   let reply = '';
@@ -434,6 +476,10 @@ export async function* streamChatTurn(
         messages, temperature: 0.2, maxTokens: 800, provider: activeProvider,
         ...(activeModel ? { model: activeModel } : {}),
         tools, toolChoice: 'auto',
+        sessionKey: key,
+        // Hung-model ejector: abort the step at 20s instead of hanging to
+        // the UI budget.
+        timeoutMs: 20_000,
       })) {
         if (chunk.contentDelta) {
           stepContent += chunk.contentDelta;
@@ -456,15 +502,21 @@ export async function* streamChatTurn(
     } catch (e: any) {
       const emsg = String(e?.message ?? '');
       const is429 = /429|rate-limit|1015/i.test(emsg) || (e as any)?.status === 429;
-      if (is429 && activeProvider === 'agnes') {
-        // Agnes hit Cloudflare 1015 / 20 RPM — fall back to Groq in the SAME turn so the user never sees "Consulting..." hang.
-        activeProvider = 'groq'; activeModel = chatModelGroq;
+      if (is429) {
+        // Agnes-only by decision: mid-turn throttle yields "busy" (with
+        // activity gathered so far) instead of a hallucinated reply.
+        try { await cacheSet('ai:storm:agnes', { at: Date.now() }, 120_000); } catch { /* best-effort */ }
+        const r: ChatReply = { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
+        yield { type: 'done', data: r };
+        return r;
       }
-      // Fallback to non-streaming on stream failure (now on Groq if we just switched)
+      // Fallback to non-streaming on stream failure
       const res = await gateway.complete({
         messages, temperature: 0.2, maxTokens: 800, provider: activeProvider,
         ...(activeModel ? { model: activeModel } : {}),
         tools, toolChoice: 'auto',
+        sessionKey: key,
+        timeoutMs: 20_000,
       });
       if (res.toolCalls && res.toolCalls.length) {
         for (const tc of res.toolCalls) toolMap.set(toolMap.size, { id: tc.id, name: tc.name, args: tc.arguments });
