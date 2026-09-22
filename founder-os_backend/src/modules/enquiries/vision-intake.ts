@@ -158,7 +158,19 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     : [];
   const itemImages: string[] = [];
   for (const it of items) for (const m of (it.media || [])) if (m?.url) itemImages.push(String(m.url));
-  const allImages = [...enquiryImages, ...itemImages].slice(0, 4);
+  // Add-via-AI / additional-requirement re-run: the prompt says "ignore
+  // everything else", so old enquiry photos must not be re-described (their
+  // lines would merge in as duplicates). Only media attached to the pending
+  // items themselves is in scope; full photo context applies to the
+  // description-based pass only.
+  const pendingMedia: string[] = [];
+  if (aiBulkText) {
+    for (const it of items) {
+      if (it?.aiPending !== true) continue;
+      for (const m of (it.media || [])) if (m?.url) pendingMedia.push(String(m.url));
+    }
+  }
+  const allImages = (aiBulkText ? pendingMedia : [...enquiryImages, ...itemImages]).slice(0, 4);
   const content = buildVisionUserContent(text, allImages, 4) as any;
   const attachedImgs = Array.isArray(content) ? content.filter((b: any) => b && b.type === 'image_url').length : 0;
   if (allImages.length > 0 && attachedImgs === 0) {

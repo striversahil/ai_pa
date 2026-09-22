@@ -298,6 +298,17 @@ async function runEnquiryExtractionLocal(id: string) {
   await runEnquiryExtraction(process.env as any, enquiryStore, id);
   try { await cacheDel('enquiry-tracker:data'); } catch { /* best-effort */ }
 }
+// Worker-native vision intake, run locally (same shared module the Worker
+// kicks via waitUntil — relay lanes when configured, direct otherwise).
+// Best-effort, never throws.
+async function runAgnesVisionIntakeLocal(id: string): Promise<void> {
+  try {
+    const { runAgnesVisionIntake } = await import('./modules/enquiries/vision-intake');
+    await runAgnesVisionIntake(process.env as any, enquiryStore, String(id));
+  } catch (e: any) {
+    console.error('[runAgnesVisionIntakeLocal] failed', e?.message ?? e);
+  }
+}
 // Event-driven intake: fire the GH intake workflow the moment an enquiry is
 // logged (the 30-min sweep stays as backstop). Best-effort, never throws.
 async function kickIntakeNowLocal(): Promise<void> {
@@ -321,6 +332,7 @@ app.post('/api/enquiries', async (req, res) => {
   const r = await EnquiryRoutes.enquiryCreate(enquiryStore, me, body);
   if (r.body?.id) {
     void runEnquiryExtractionLocal(r.body.id);
+    void runAgnesVisionIntakeLocal(r.body.id);
     void kickIntakeNowLocal();
   }
   res.status(r.status).json(r.body);
@@ -333,7 +345,10 @@ app.patch('/api/enquiries/:id', async (req, res) => {
     void runEnquiryExtractionLocal(r.body.id);
     const hasAiBulk = Array.isArray((req.body as any)?.items)
       && (req.body as any).items.some((it: any) => it?.aiPending === true);
-    if ((req.body as any)?.description !== undefined || hasAiBulk) void kickIntakeNowLocal();
+    if ((req.body as any)?.description !== undefined || hasAiBulk) {
+      void runAgnesVisionIntakeLocal(r.body.id);
+      void kickIntakeNowLocal();
+    }
   }
   res.status(r.status).json(r.body);
 });
@@ -341,6 +356,10 @@ app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const r = await EnquiryRoutes.enquiryAddRequirement(enquiryStore, me, req.params.id, req.body || {});
+  if ((r as any).status === 201) {
+    void runEnquiryExtractionLocal(req.params.id);
+    void runAgnesVisionIntakeLocal(req.params.id);
+  }
   res.status(r.status).json(r.body);
   // New free text needs its procurement-safe rewrite now — otherwise the
   // redacted copy only appears after the next list fetch kicks enrichment.

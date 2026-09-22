@@ -905,10 +905,12 @@ export class AiGateway {
       logger.warn?.(`[AiGateway] stream: ${requestedFlaky} flagged down — starting on ${FALLBACK_MODEL[requestedFlaky]}`);
       req = { ...req, model: FALLBACK_MODEL[requestedFlaky] };
     }
-    // Unflagged flaky model: probe cheaply (probeTimeoutMs), flagged/fine
-    // models get the full timeoutMs so thinking steps aren't strangled.
+    // Unflagged flaky model: first-data probe (probeTimeoutMs) — give up fast
+    // when the model sends NOTHING at all, but never strangle a stream that
+    // has started flowing. Flagged/fine models stream under the full timeoutMs.
     const probing = !!requestedFlaky && req.model === requestedFlaky && !!req.probeTimeoutMs;
-    const streamCap = probing ? req.probeTimeoutMs : req.timeoutMs;
+    const streamCap = req.timeoutMs;
+    const probeMs = probing ? req.probeTimeoutMs : undefined;
     const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey) : this.pool.select(req.provider, req.sessionKey);
     if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)');
     const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
@@ -989,11 +991,48 @@ export class AiGateway {
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
     let buf = '';
+    let gotData = false;
+    // Probe failure: the model sent nothing before the first-data deadline —
+    // flag it down (caller falls back to the fallback model) and throw a
+    // retryable error shaped like the whole-stream timeout below.
+    const failProbe = async (): Promise<never> => {
+      try { await reader.cancel(); } catch { /* ignore */ }
+      if (req.model && FALLBACK_MODEL[req.model]) await flagModelDown(req.model);
+      throw new Error(`AI model ${req.model} first token timeout (fallback to ${req.model && FALLBACK_MODEL[req.model]} engaged) — retry the call`);
+    };
     try {
+      // First-data deadline: abort only while NOTHING has arrived yet. A
+      // stalled model fails fast onto the fallback; a flowing stream is never
+      // strangled no matter how long the answer runs.
+      const firstDataDeadline = probeMs ? Date.now() + probeMs : 0;
       while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
+        let read: Awaited<ReturnType<typeof reader.read>> | undefined;
+        if (firstDataDeadline > 0 && !gotData) {
+          const remain = firstDataDeadline - Date.now();
+          if (remain <= 0) {
+            await failProbe();
+            continue;
+          }
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            read = await Promise.race([
+              reader.read(),
+              new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('probe-timeout')), remain); }),
+            ]);
+          } catch (e: any) {
+            if (e?.message === 'probe-timeout') {
+              await failProbe();
+              continue;
+            }
+            throw e;
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        } else {
+          read = await reader.read();
+        }
+        if (!read || read.done) break;
+        buf += decoder.decode(read.value, { stream: true });
         const lines = buf.split('\n');
         buf = lines.pop() ?? '';
         for (const rawLine of lines) {
@@ -1001,6 +1040,7 @@ export class AiGateway {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
           if (data === '[DONE]' || data === '') continue;
+          gotData = true;
           try {
             const json: any = JSON.parse(data);
             const choice = json.choices?.[0];

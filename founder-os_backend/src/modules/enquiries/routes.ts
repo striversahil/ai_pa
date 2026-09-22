@@ -483,6 +483,10 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
     spec: text.slice(0, 2000),
     media: parseItemMedia(imageUrl ? [{ type: "image", url: imageUrl }] : []),
     rates: [],
+    // Flagged aiPending so the Worker-native vision intake (kickAgnesIntake,
+    // relay lanes) splits this text into catalogue lines exactly like the
+    // detail-view "Add via AI" flow (see applyIntakeBulkResult).
+    aiPending: true,
   };
   const patch: any = { items: [...((existing as any).items || []), newItem] };
   // A finalized enquiry with a new item has pending work again — reopen it so
@@ -506,9 +510,10 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     if (rateError) return json(400, { error: rateError });
   }
   // Items derive from manual entry — except `aiPending` raw items from the
-  // detail-view "Add via AI" flow, which the GH intake action replaces with
-  // vision-split lines (see applyIntakeBulkResult): a description edit
-  // preserves them; explicit item saves carry `items`.
+  // detail-view "Add via AI" flow (and additional-requirements), which the
+  // Worker-native vision intake replaces with split lines (see
+  // applyIntakeBulkResult): a description edit preserves them; explicit
+  // item saves carry `items`.
   const privileged = canManageRates(me);
   const restricted = isRestrictedViewer(me);
   // Acting surface: privileged writers (MIS/admin) working inside the

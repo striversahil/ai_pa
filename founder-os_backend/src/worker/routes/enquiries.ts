@@ -347,7 +347,12 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryAddRequirement(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
     enquirySend(c, r);
-    if ((r as any).status === 201) kick(c, String(c.req.param('id') ?? ''));
+    if ((r as any).status === 201) {
+      kick(c, String(c.req.param('id') ?? ''));
+      // Requirement arrives as an aiPending raw item — split it in-Worker via
+      // the relay lanes (no GH container), same as Add-via-AI.
+      kickAgnesIntake(c, String(c.req.param('id') ?? ''));
+    }
     return c.json(r.body, r.status as any);
   });
   app.delete('/api/enquiries/:id', async (c) => {

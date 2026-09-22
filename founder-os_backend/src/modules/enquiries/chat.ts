@@ -362,8 +362,14 @@ export async function chatTurn(
         // Pin the whole conversation to one key (cache affinity); the
         // gateway fails over automatically if that key 429s.
         sessionKey: key,
-        // One slow/hung attempt must not eat the 60s UI budget.
+        // Stall guard: probe 3.0 for first data per step, then continue on
+        // 2.5-flash inside the same call (gateway FALLBACK_MODEL + 10-min
+        // flag) — caps p99 instead of eating the 20s budget on a hung model.
+        // 15s, not 8s: measured TTFB≈total with typical slow starts of
+        // 10-14s — an 8s probe would misfire on normal turns and park 3.0
+        // on the fallback flag for no reason.
         timeoutMs: 20_000,
+        probeTimeoutMs: 15_000,
       });
     } catch (e: any) {
       const msg = String(e?.message ?? '');
@@ -477,9 +483,11 @@ export async function* streamChatTurn(
         ...(activeModel ? { model: activeModel } : {}),
         tools, toolChoice: 'auto',
         sessionKey: key,
-        // Hung-model ejector: abort the step at 20s instead of hanging to
-        // the UI budget.
-        timeoutMs: 20_000,
+        // Hung-model ejector: first token must arrive in 15s (typical slow
+        // TTFB runs ~10-14s, so this trips only on the true stall tail, not
+        // normal slow turns); a flowing stream gets the full 20s so long
+        // answers are never cut.
+        timeoutMs: 20_000, probeTimeoutMs: 15_000,
       })) {
         if (chunk.contentDelta) {
           stepContent += chunk.contentDelta;
@@ -510,13 +518,14 @@ export async function* streamChatTurn(
         yield { type: 'done', data: r };
         return r;
       }
-      // Fallback to non-streaming on stream failure
+      // Fallback to non-streaming on stream failure (same probe semantics:
+      // the probe trip already flagged 3.0 down, so this lands on 2.5-flash).
       const res = await gateway.complete({
         messages, temperature: 0.2, maxTokens: 800, provider: activeProvider,
         ...(activeModel ? { model: activeModel } : {}),
         tools, toolChoice: 'auto',
         sessionKey: key,
-        timeoutMs: 20_000,
+        timeoutMs: 20_000, probeTimeoutMs: 15_000,
       });
       if (res.toolCalls && res.toolCalls.length) {
         for (const tc of res.toolCalls) toolMap.set(toolMap.size, { id: tc.id, name: tc.name, args: tc.arguments });
