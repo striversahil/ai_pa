@@ -16,12 +16,11 @@
 import type { MeResponse } from "../auth/types";
 import { strictNum } from "./parse";
 
-export function isRestrictedViewer(me: MeResponse): boolean {
-  if (!me) return true;
-  if (me.isAdmin || (me as any).isRoot) return false;
-  const scopes: string[] = (me as any).scopes || [];
-  if (scopes.includes('mis') || scopes.includes('sales') || scopes.includes('enquiry-tracker')) return false;
-  return true;
+export function isRestrictedViewer(_me: MeResponse): boolean {
+  // Founder decision 2026-09-22: don't gate enquiries — everyone sees everyone
+  // (search is global). Redacted procurement view disabled; all viewers get
+  // full PII. Re-enable by restoring scope check above.
+  return false;
 }
 
 const PII_FIELDS = ['clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'estNumber'] as const;

@@ -12,14 +12,14 @@
  *   env.AGNES_API_KEYS  = comma-separated Agnes keys
  *   env.GROQ_API_KEYS   = IGNORED (founder decision 2026-09-21: hallucination quality)
  *   env.OMNIROUTE_*     = IGNORED
- * Egress-relay proxy (optional, Agnes only — see home-egress/ + agnes-relay*.yml):
- *   env.AGNES_PROXY_URL = STATIC named-tunnel hostname of the relay (unset = direct egress)
+ * Egress-relay proxy (optional, Agnes only — see agnes-relay*.yml):
+ *   env.AGNES_PROXY_URL = STATIC named-tunnel hostname of the GH relay (unset = direct egress)
  *   env.AGNES_PROXY_SECRET = shared secret the proxy requires per call
  *   env.AGNES_PROXY_URL_BAK / _SECRET_BAK = hot-standby second lane (agnes-relay-bak)
  *     — per-attempt failover primary→bak in seconds; per-lane poison replace.
  *   env.AGNES_PROXY_TIMEOUT_MS = proxy attempt cap, default 25000 (max 60000)
- *   env.AGNES_PROXY_ALWAYS = '1' for an always-on home/GCP lane (default: on-demand
- *     GH relay, used only while KV ai:relay:active[:bak] is fresh — see RELAY_* below)
+ *   NOTE: home-egress/ (old home PC tunnel) is DISCARDED 2026-09-22 — AGNES_PROXY_ALWAYS
+ *   is ignored; lanes are on-demand GH relays only (KV ai:relay:active[:bak]).
  *
  * Agnes uses `chat_template_kwargs: {enable_thinking:true}` for reasoning
  * (mapped from `reasoningEffort`), base https://apihub.agnes-ai.com/v1.
@@ -930,13 +930,8 @@ export class AiGateway {
     else if (provider.supportsReasoning && req.reasoningEffort) (body as any).reasoning_effort = req.reasoningEffort;
     const url = this.gatewayBaseURL(provider);
     const payload = JSON.stringify(body);
-    // Proxy-first (home egress); direct Cloudflare egress is the fallback.
-    // A proxy 429 is a real upstream answer — only faults and our own 403s
-    // fall through (handled inside tryProxy by returning null).
-    // Hot-standby lanes: try primary, then backup, per attempt. A faulted
-    // lane is skipped for the rest of this attempt (skip-ladder persists);
-    // a 1015 through a lane flags that lane poisoned for cron to replace.
-    // First usable upstream answer wins; all-lanes-faulted → null (direct).
+    // Direct-first for streams: try Cloudflare egress first, relay only on
+    // 1015 or direct throw. Hot-standby lanes tried primary→bak per attempt.
     const tryProxy = async (): Promise<Response | null> => {
       const lanes = await this.usableLanes(provider);
       if (lanes.length === 0) return null;
@@ -957,27 +952,23 @@ export class AiGateway {
       }
       return null;
     };
-    let res: Response | null = await tryProxy();
-    if (!res) {
-      try {
-        res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, streamCap) });
-      } catch (e) {
-        // Hung model on a stream: flag the outage and fail with a retryable
-        // message — the caller re-issues via complete(), which starts on the
-        // fallback model thanks to the flag set here. Caller cancels (plain
-        // abort, no "timeout") never flag the model.
-        const timedOut = (e as any)?.name === 'TimeoutError' || /timeout/i.test(String((e as any)?.message ?? ''));
-        const abortHang = !(e as any)?.proxyFault && timedOut;
-        if (abortHang && req.model && FALLBACK_MODEL[req.model]) {
-          await flagModelDown(req.model);
-          throw new Error(`AI model ${req.model} timed out (fallback to ${FALLBACK_MODEL[req.model]} engaged) — retry the call`);
-        }
-        throw e;
+    let res: Response | null = null;
+    try {
+      res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, streamCap) });
+      if (res.status === 429 && (await this.isIpThrottle(res))) {
+        const proxied = await tryProxy();
+        if (proxied) res = proxied;
       }
-    }
-    if (res.status === 429 && (await this.isIpThrottle(res))) {
+    } catch (e) {
+      const timedOut = (e as any)?.name === 'TimeoutError' || /timeout/i.test(String((e as any)?.message ?? ''));
+      const abortHang = !(e as any)?.proxyFault && timedOut;
+      if (abortHang && req.model && FALLBACK_MODEL[req.model]) {
+        await flagModelDown(req.model);
+        throw new Error(`AI model ${req.model} timed out (fallback to ${FALLBACK_MODEL[req.model]} engaged) — retry the call`);
+      }
       const proxied = await tryProxy();
       if (proxied) res = proxied;
+      else throw e;
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -1124,14 +1115,8 @@ export class AiGateway {
     // proxy FAULTS (unreachable/timeout/502) and our own 403s (secret
     // mismatch, never a provider signal) fall through to direct.
     const url = this.gatewayBaseURL(provider);
-    const directInit = {
-      method: 'POST',
-      headers,
-      body: payload,
-      signal: this.combineSignals(req.signal, req.timeoutMs),
-    };
     const proxyPath = new URL(provider.baseURL).pathname;
-    const tryProxyFirst = async (): Promise<Response | null> => {
+    const tryProxy = async (): Promise<Response | null> => {
       const lanes = await this.usableLanes(provider);
       if (lanes.length === 0) return null;
       for (const lane of lanes) {
@@ -1142,8 +1127,6 @@ export class AiGateway {
             logger.warn?.(`[AiGateway] relay lane ${lane.name} 403 (secret?) — trying next lane`);
             continue;
           }
-          // Poisoned-lane detector: a 1015 that survives the relay means the
-          // relay's own egress is throttled — cron will replace that run.
           if (pres.status === 429) await this.flagRelayPoisoned(lane, pres);
           return pres;
         } catch (e) {
@@ -1152,21 +1135,21 @@ export class AiGateway {
       }
       return null;
     };
-    let res: Response | null = await tryProxyFirst();
+    // Direct-first: try Cloudflare egress first (fast path 0.6s), relay only
+    // on 1015 IP-throttle or direct fetch throw. Saves ~1s tunnel tax when WAF quiet.
+    let res: Response | null = null;
     let directThrew: unknown = null;
-    if (!res) {
-      try {
-        res = await fetch(url, directInit);
-      } catch (e) {
-        directThrew = e;
+    try {
+      res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, req.timeoutMs) });
+      if (res.status === 429 && (await this.isIpThrottle(res))) {
+        const proxied = await tryProxy();
+        if (proxied) res = proxied;
       }
-      if (!res) throw directThrew;
-      if (res.status === 429 && (await this.isIpThrottle(res)) && (await this.usableLanes(provider)).length > 0) {
-        // Direct throttled at IP level while the proxy faulted a moment ago —
-        // one last proxy recourse (skip-ladder permitting) before failing.
-        const retry = await tryProxyFirst();
-        if (retry) res = retry;
-      }
+    } catch (e) {
+      directThrew = e;
+      const proxied = await tryProxy();
+      if (proxied) res = proxied;
+      else throw directThrew;
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '');

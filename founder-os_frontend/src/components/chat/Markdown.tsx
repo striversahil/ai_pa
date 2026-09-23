@@ -1,8 +1,17 @@
 "use client";
 
 import React from "react";
+import katex from "katex";
 
-const INLINE_RE = /(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*\n]+)\*)|(~~([^~]+)~~)|(`([^`\n]+)`)|(https?:\/\/[^\s<>"]+)|(\$\$[\s\S]+?\$\$)|(\$[^$\n]+?\$)/g;
+function renderLatex(latex: string, display: boolean): string {
+  try {
+    return katex.renderToString(latex, { displayMode: display, throwOnError: false, strict: false });
+  } catch {
+    return `<span class="md-formula-error">${latex.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`;
+  }
+}
+
+const INLINE_RE = /(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*\n]+)\*)|(~~([^~]+)~~)|(`([^`\n]+)`)|(https?:\/\/[^\s<>"]+)|(\$\$[\s\S]+?\$\$)|(\\\[[\s\S]+?\\\])|(\\\(.+?\\\))|(\$[^$\n]+?\$)/g;
 
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
@@ -11,7 +20,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   for (const match of text.matchAll(INLINE_RE)) {
     const idx = match.index ?? 0;
     if (idx > last) out.push(text.slice(last, idx));
-    const [full, , bold, , underline, , italic, , strike, , code, link, formulaBlock, formulaInline] = match;
+    const [full, , bold, , underline, , italic, , strike, , code, link, formulaBlock, formulaDisplay, formulaParen, formulaInline] = match;
     const k = `${keyPrefix}-${i++}`;
     if (bold) out.push(<strong key={k} className="font-bold">{renderInline(bold, k)}</strong>);
     else if (underline) out.push(<u key={k}>{renderInline(underline, k)}</u>);
@@ -22,12 +31,20 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
         {code}
       </code>
     );
-    else if (formulaBlock) out.push(
-      <span key={k} className="md-formula-block inline-block rounded bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 font-mono text-[0.9em]">{formulaBlock.slice(2,-2)}</span>
-    );
-    else if (formulaInline) out.push(
-      <span key={k} className="md-formula-inline rounded bg-amber-500/10 border border-amber-500/20 px-1 py-0.5 font-mono text-[0.9em]">{formulaInline.slice(1,-1)}</span>
-    );
+    else if (formulaBlock) {
+      const latex = formulaBlock.slice(2, -2);
+      out.push(<span key={k} dangerouslySetInnerHTML={{ __html: renderLatex(latex, true) }} />);
+    } else if (formulaDisplay) {
+      const latex = formulaDisplay.slice(2, -2);
+      out.push(<span key={k} dangerouslySetInnerHTML={{ __html: renderLatex(latex, true) }} />);
+    } else if (formulaParen) {
+      const latex = formulaParen.slice(2, -2);
+      out.push(<span key={k} dangerouslySetInnerHTML={{ __html: renderLatex(latex, false) }} />);
+    }
+    else if (formulaInline) {
+      const latex = formulaInline.slice(1, -1);
+      out.push(<span key={k} dangerouslySetInnerHTML={{ __html: renderLatex(latex, false) }} />);
+    }
     else if (link) out.push(
       <a key={k} href={link} target="_blank" rel="noopener noreferrer" className="text-[var(--chat-accent)] hover:underline">
         {link}
@@ -102,10 +119,9 @@ function renderLines(chunk: string, keyPrefix: string): React.ReactNode[] {
         i++;
       }
       i++; // skip closing $$
+      const latex = buf.join("\n");
       out.push(
-        <div key={`${keyPrefix}-f-${i}`} className="my-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 font-mono text-[0.9em]">
-          {buf.join("\n")}
-        </div>
+        <div key={`${keyPrefix}-f-${i}`} className="my-2 overflow-x-auto rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5" dangerouslySetInnerHTML={{ __html: renderLatex(latex, true) }} />
       );
       continue;
     }

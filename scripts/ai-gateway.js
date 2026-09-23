@@ -17,6 +17,9 @@
  * that key and rotates; Cloudflare 1015 cools briefly and also rotates. Optional
  * req.sessionKey pins a conversation to one key via consistent hashing
  * (cache affinity, no mid-chat hopping); one-shots spread randomly.
+ * Home-egress (home tunnel) DISABLED 2026-09-22 — GH relay
+ * (agnes-relay.yml / agnes-relay-bak.yml) remains for Worker only; runner
+ * is direct egress (no proxy).
  */
 
 // ── Provider registry (mirror of TS) ─────────────────────────────────────────

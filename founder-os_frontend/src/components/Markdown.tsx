@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
+import katex from "katex";
 
 /** Tiny zero-dep markdown renderer for AI replies: headings, bold, italic,
  *  inline code, fences, bullets, numbered lists, links, paragraphs.
@@ -9,11 +10,21 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function renderLatex(latex: string, display: boolean): string {
+  try {
+    return katex.renderToString(latex, { displayMode: display, throwOnError: false, strict: false });
+  } catch {
+    return `<span class="md-formula-error">${escapeHtml(latex)}</span>`;
+  }
+}
+
 function inline(s: string): string {
   let out = escapeHtml(s);
-  // formulas: $$...$$ block and $...$ inline — keep as styled code (no KaTeX dep, safe)
-  out = out.replace(/\$\$([\s\S]+?)\$\$/g, '<span class="md-formula-block">$1</span>');
-  out = out.replace(/(^|[^$])\$([^$\n]+?)\$(?=[^$])/g, '$1<span class="md-formula-inline">$2</span>');
+  // LaTeX: $$...$$ display, $...$ inline, \[...\] display, \(...\) inline
+  out = out.replace(/\\\[(.+?)\\\]/g, (_, p1) => renderLatex(p1, true));
+  out = out.replace(/\\\((.+?)\\\)/g, (_, p1) => renderLatex(p1, false));
+  out = out.replace(/\$\$([\s\S]+?)\$\$/g, (_, p1) => renderLatex(p1, true));
+  out = out.replace(/(^|[^$])\$([^$\n]+?)\$(?=[^$])/g, (_, p1, p2) => `${p1}${renderLatex(p2, false)}`);
   // strikethrough
   out = out.replace(/~~([^~]+)~~/g, "<s>$1</s>");
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -74,7 +85,7 @@ function render(src: string): string {
         i++;
       }
       i++; // skip closing $$
-      html.push(`<div class="md-formula-block">${escapeHtml(buf.join("\n"))}</div>`);
+      html.push(`<div class="md-formula-display">${renderLatex(buf.join("\n"), true)}</div>`);
       continue;
     }
     // table: header | sep | rows

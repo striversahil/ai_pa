@@ -184,13 +184,7 @@ function kick(c: any, id: string): void {
               }
               const already = String((current as any)?.procurementSubmittedAt ?? '').trim();
               if (already) continue;
-              if (kind === 'sent') {
-                try {
-                  if (!procurementSubmittable({ items: (current as any)?.items ?? [] } as any).ok) continue;
-                } catch {
-                  continue;
-                }
-              }
+              // Zoho not draft → procurement done even if no rates (per founder 2026-09-23)
               const stamped = new Date().toISOString();
               try {
                 await (prisma as any).enquiry.updateMany({
@@ -204,6 +198,27 @@ function kick(c: any, id: string): void {
                 });
               }
               concluded.push(id);
+              // Terminal zoho (sent/declined/accepted) auto-dilutes procurement flags: text stays in thread, flag resolved
+              if (kind === 'terminal' || kind === 'sent') {
+                try {
+                  let cur: any = null;
+                  try { cur = await (prisma as any).enquiry.findUnique?.({ where: { id } }); } catch { cur = null; }
+                  const items = Array.isArray((cur as any)?.items) ? (cur as any).items : [];
+                  let changed = false;
+                  const nowIso = new Date().toISOString();
+                  const next = items.map((it: any) => {
+                    if (!it?.specIssue) return it;
+                    changed = true;
+                    const thread = Array.isArray(it.thread) ? [...it.thread] : [];
+                    thread.push({ by: 'management' as const, kind: 'fix' as const, text: 'Resolved on zoho terminal', at: nowIso });
+                    const { specIssue, specFlaggedAt, ...rest } = it;
+                    return { ...rest, thread: thread.slice(-50), threadResolved: true, threadResolvedAt: nowIso, threadResolvedBy: 'management' };
+                  });
+                  if (changed) {
+                    try { await (prisma as any).enquiry.updateMany({ where: { id } as any, data: { items: JSON.stringify(next) } as any }); } catch { await (prisma as any).enquiry.update({ where: { id } as any, data: { items: next } as any }); }
+                  }
+                } catch {}
+              }
             } catch {}
           }
           // Wake open tabs: the concluded rows moved Active → History.

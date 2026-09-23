@@ -175,15 +175,32 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     return () => clearInterval(id);
   }, [enquiries]);
 
+  // Generic staleness guard: even without a fresh-empty row, a dropped WS
+  // (30s retry + 60s ping in useLiveData) can leave the list stale. Poll
+  // every 60s as a cheap safety net, matching ZohoEstimates 15m pattern but
+  // tighter for sales.
+  useEffect(() => {
+    const id = setInterval(() => void fetchEnquiriesRef.current(), 60000);
+    return () => clearInterval(id);
+  }, []);
+
   useLiveEvent((e) => {
-    if (!e || ((e as any).type !== 'enquiries' && (e as any).type !== 'estimates')) return;
-    if ((e as any).type === 'estimates') { void fetchEnquiriesRef.current(); return; }
+    const t = (e as any)?.type;
+    if (!e || (t !== 'enquiries' && t !== 'estimates' && t !== 'data-changed')) return;
+    if (t === 'estimates') { void fetchEnquiriesRef.current(); return; }
+    if (t === 'data-changed') {
+      const p = String((e as any)?.path ?? '');
+      // Generic fallback from auto-live (context.ts) — only refetch when it
+      // is an enquiry write that had no typed event.
+      if (p.includes('/api/enquiries')) void fetchEnquiriesRef.current();
+      return;
+    }
 
     const ev = e as any;
     // Summary-only event (current backend): full view merges the one changed
     // row; redacted view refetches its list payload (debounced).
     if (!ev.enquiry && !ev.comment) {
-      if (redactedView) { scheduleRefetch(1200); return; }
+      if (redactedView) { scheduleRefetch(300); return; }
       const id = String(ev.id ?? ev.enquiryId ?? '');
       if (!id) { scheduleRefetch(300); return; }
       if (ev.action === 'deleted') {
@@ -202,11 +219,11 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     }
     // Comment-only event (no content — refetch the scoped thread).
     if (ev.action === 'comment' && ev.comment === undefined) {
-      scheduleRefetch(redactedView ? 1200 : 800);
+      scheduleRefetch(redactedView ? 300 : 300);
       return;
     }
     if (redactedView) {
-      scheduleRefetch(1200);
+      scheduleRefetch(300);
       return;
     }
     // Paged queue tables refetch the page on creates (row counts shift);

@@ -12,7 +12,7 @@ import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
-import { itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, isZohoClosedStatus, procurementSubmittable } from "@/enquiry/queue";
+import { itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, isZohoClosedStatus, procurementSubmittable, hasOpenThread, hasPendingProcurementThread, hasAnySalesThread } from "@/enquiry/queue";
 
 /** Pending = items still needing rates. Empty enquiries (no items yet) wait
  *  on sales, not procurement — they render in their own section below. */
@@ -38,6 +38,14 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
     return (
       <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
         {n} quoted
+      </span>
+    );
+  }
+  // Reactivated concluded with sales follow-up thread — highlight differently (only when procurement must answer)
+  if (isSubmitted(enquiry as any) && hasPendingProcurementThread(enquiry as any)) {
+    return (
+      <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30 animate-pulse">
+        Sales follow-up — needs answer
       </span>
     );
   }
@@ -520,6 +528,20 @@ export default function ProcurementQueue() {
               );
             }
             if (submitted && !lateQuoteEnquiry) {
+              if (hasAnySalesThread(selEnquiry as any)) {
+                const gate = procurementSubmittable(selEnquiry as any);
+                return (
+                  <div className="space-y-2">
+                    <p className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-[11px] font-bold text-sky-600 dark:text-sky-400">
+                      Sales follow-up — sales wrote in thread. Answer and re-conclude.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)]/25 px-3 py-2">
+                      <button type="button" disabled={!gate.ok} onClick={() => void handleSubmit(selEnquiry.id)} title={gate.ok ? "Mark enquiry as concluded — procurement is done" : gate.reason} className="px-3.5 py-2 bg-brand-indigo text-white font-bold text-xs rounded-xl cursor-pointer border-0 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">Enquiry Concluded</button>
+                      {!gate.ok && <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{gate.reason} — the enquiry stays in Active until you conclude.</span>}
+                    </div>
+                  </div>
+                );
+              }
               // Auto-concluded rows (Zoho declined/accepted/…) name the
               // reason — terminal client decisions need no further quoting.
               const closed = isZohoClosedStatus((selEnquiry as any)?.zohoStatus);

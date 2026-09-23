@@ -3,6 +3,7 @@ import { Agent, Enquiry } from "../types";
 import CalendarRibbon from "./CalendarRibbon";
 import FilterControls from "./FilterControls";
 import EnquiryRowItem from "./EnquiryRowItem";
+import { hasOpenThread } from "@/enquiry/queue";
 
 interface EnquiryListProps {
   enquiries: Enquiry[];
@@ -45,6 +46,7 @@ export default function EnquiryList({
     return new Date().toISOString().split("T")[0];
   });
   const [queueOnly, setQueueOnly] = useState(true);
+  const [openOnly, setOpenOnly] = useState(false);
   // Pagination: 50/100/200 per page for all filters to avoid tremendous growth
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(50);
@@ -109,15 +111,19 @@ export default function EnquiryList({
       });
   }, [enquiries, selectedDate]);
 
+  // Open threads count — bilateral until resolved
+  const openThreadCount = useMemo(() => enquiries.filter(hasOpenThread as any).length, [enquiries]);
+
   // Filtered queries pipeline — search hits EST No. (with or without EST- prefix, partial digits), daily No, source, lead fields, title/description, items
   const filteredEnquiries = useMemo(() => {
-    const inQueue = queueToggle && queueOnly ? enquiries.filter(queueToggle.isPending) : enquiries;
+    const afterOpen = openOnly ? enquiries.filter(hasOpenThread as any) : enquiries;
+    const inQueue = queueToggle && queueOnly ? afterOpen.filter(queueToggle.isPending) : afterOpen;
     const agentNameById = new Map(agents.map(a => [a.id, (a.name || "").toLowerCase()]));
     const todayStr = new Date().toISOString().split("T")[0];
     const isTodaySelected = selectedDate === todayStr;
     const rawSearch = searchQuery.trim();
-    // Scoped view: non-admin sales agents see only own enquiries unless searching (search expands to all)
-    const isScoped = !isAdmin && !!currentAgentId && !redacted && rawSearch === "";
+    // Founder decision 2026-09-22: no scoping — everyone sees everyone even without search
+    const isScoped = false;
     return inQueue.filter(e => {
       const rawQuery = rawSearch.toLowerCase();
       const query = rawQuery;
@@ -182,12 +188,12 @@ export default function EnquiryList({
 
       return matchSearch && matchAgent && matchSource && matchRates && matchDate;
     });
-  }, [enquiries, agents, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly, currentAgentId, isAdmin, redacted]);
+  }, [enquiries, agents, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly, openOnly, currentAgentId, isAdmin, redacted]);
 
   const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 
   // Reset page on any filter/search/pageSize change
-  useEffect(() => { setPage(1); }, [ratesFilter, searchQuery, agentFilter, sourceFilter, selectedDate, queueOnly, pageSize]);
+  useEffect(() => { setPage(1); }, [ratesFilter, searchQuery, agentFilter, sourceFilter, selectedDate, queueOnly, openOnly, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEnquiries.length / pageSize));
   const pageClamped = Math.min(page, totalPages);
@@ -240,10 +246,22 @@ export default function EnquiryList({
         setRatesFilter={redacted ? undefined : setRatesFilter}
       />
 
+      {/* Open threads tab — stays surfacing until resolved, either side */}
+      {openThreadCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setOpenOnly(v => !v)}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-colors cursor-pointer ${openOnly ? "bg-amber-500 text-white border-amber-500" : "bg-amber-500/10 text-amber-600 border-amber-500/30 hover:bg-amber-500/20"}`}
+        >
+          <span className={`h-2 w-2 rounded-full ${openOnly ? "bg-white" : "bg-amber-500"} animate-pulse`} />
+          Open threads · {openThreadCount} {openOnly ? "— showing only" : ""}
+        </button>
+      )}
+
       {/* Page size + pagination header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="text-xs font-semibold text-[var(--text-secondary)]">
-          {filteredEnquiries.length === 0 ? "0 enquiries" : `${filteredEnquiries.length} ${filteredEnquiries.length === 1 ? "enquiry" : "enquiries"}${sentView ? " · sent" : ""}`}
+          {filteredEnquiries.length === 0 ? "0 enquiries" : `${filteredEnquiries.length} ${filteredEnquiries.length === 1 ? "enquiry" : "enquiries"}${sentView ? " · sent" : ""}${openOnly ? " · open threads" : ""}`}
           {filteredEnquiries.length > 0 && totalPages > 1 && ` · page ${pageClamped} of ${totalPages}`}
         </div>
         <div className="flex items-center gap-2">

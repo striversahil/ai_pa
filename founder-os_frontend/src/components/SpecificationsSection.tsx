@@ -364,11 +364,13 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         rows={2}
                         className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
                       />
-                      <ToggleSwitch
-                        checked={draft.rateAvailable === true}
-                        onChange={(next) => setDraft({ ...draft, rateAvailable: next })}
-                        label="Rate available"
-                      />
+                      {(draft.rates ?? []).length === 0 && (
+                        <ToggleSwitch
+                          checked={draft.rateAvailable === true}
+                          onChange={(next) => setDraft({ ...draft, rateAvailable: next })}
+                          label="Rate available"
+                        />
+                      )}
                       <div className="flex gap-2">
                         <button type="button" onClick={saveEdit} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer">Save</button>
                         <button type="button" onClick={() => setEditingIdx(null)} className="px-3 py-1 border border-[var(--border-card)] font-bold text-[11px] rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
@@ -380,15 +382,17 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         <span className="font-extrabold text-[var(--text-primary)]">Item {idx + 1}{it.name ? ` — ${it.name}` : ""}</span>
                         {editable && (
                           <span className="flex items-center gap-2 flex-shrink-0">
-                            <ToggleSwitch
-                              checked={it.rateAvailable === true}
-                              onChange={(next) => {
-                                if (!onUpdateItems) return;
-                                onUpdateItems(items.map((x, i) => (i === idx ? { ...x, rateAvailable: next } : x)));
-                              }}
-                              label="Rate available"
-                              title="Toggle live — the procurement/management queues update instantly"
-                            />
+                            {(it.rates ?? []).length === 0 && (
+                              <ToggleSwitch
+                                checked={it.rateAvailable === true}
+                                onChange={(next) => {
+                                  if (!onUpdateItems) return;
+                                  onUpdateItems(items.map((x, i) => (i === idx ? { ...x, rateAvailable: next } : x)));
+                                }}
+                                label="Rate available"
+                                title="Toggle live — the procurement/management queues update instantly"
+                              />
+                            )}
                             <button type="button" onClick={() => startEdit(idx)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Edit</button>
                             <button type="button" onClick={() => copyItem(idx)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Duplicate</button>
                             <button type="button" onClick={() => deleteItem(idx)} className="text-[11px] font-bold text-[var(--color-danger)] hover:opacity-80 cursor-pointer bg-transparent border-0">Delete</button>

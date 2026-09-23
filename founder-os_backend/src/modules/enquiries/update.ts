@@ -351,12 +351,11 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     if (remarkFix && !String(base.spec ?? "").trim()) {
       base.spec = String(freshSalesRemark.text).slice(0, 2000);
     }
-    const fixed = specChanged || (mediaAdded && !actingProcurement) || remarkFix;
+    // Bilateral open thread: either side may flag, any spec/media/remark fix clears
+    const fixed = specChanged || mediaAdded || remarkFix;
     if (stored.finalRate !== undefined && stored.finalRate !== null) {
-      // Privileged re-flag (incorrect rates / need other vendors): reopen
-      // the item — the flag attaches and the previous decision clears, so
-      // procurement picks it back up. Otherwise finalized items are frozen.
-      if (privileged && base.specIssue && !stored.specIssue) {
+      // Re-flag finalized from either side reopens for re-quote (bilateral)
+      if (base.specIssue && !stored.specIssue) {
         base.selectedVendor = undefined;
         base.markup = undefined;
         base.finalRate = undefined;
@@ -684,6 +683,21 @@ export function applyLateQuoteReopen(
  */
 export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
   const { storedForItems, storedItems, privileged, restricted } = ctx;
+  // Sent/terminal: auto-resolve procurement flags (text stays in thread), conclude procurement
+  if ((updates as any).rateStatus === 'sent' && Array.isArray((updates as any).items)) {
+    const nowIso = new Date().toISOString();
+    (updates as any).items = (updates as any).items.map((it: any) => {
+      if (!it?.specIssue) return it;
+      const thread = Array.isArray(it.thread) ? [...it.thread] : [];
+      // keep flag text in thread (already there), resolve the hold
+      thread.push({ by: privileged ? 'management' as const : 'sales' as const, kind: 'fix' as const, text: 'Resolved on sent', at: nowIso });
+      const { specIssue, specFlaggedAt, ...rest } = it;
+      return { ...rest, thread: thread.slice(-50), threadResolved: true, threadResolvedAt: nowIso, threadResolvedBy: privileged ? 'management' : 'sales' };
+    });
+    if (!String((updates as any).procurementSubmittedAt ?? '').trim() && !String((storedForItems as any)?.procurementSubmittedAt ?? '').trim()) {
+      (updates as any).procurementSubmittedAt = nowIso;
+    }
+  }
   if ((updates as any).procurementSubmittedAt !== undefined) {
     if (!privileged && !restricted) {
       if (storedForItems) (updates as any).procurementSubmittedAt = String((storedForItems as any).procurementSubmittedAt ?? '');

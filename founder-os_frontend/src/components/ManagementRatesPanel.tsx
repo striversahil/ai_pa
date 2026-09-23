@@ -7,6 +7,7 @@ import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquir
 import { itemHasUnreviewedQuotes } from "@/enquiry/queue";
 import FlagThread from "@/components/FlagThread";
 import ItemRateForm from "@/components/ItemRateForm";
+import Lightbox from "@/components/Lightbox";
 
 // Re-exported from @/enquiry/pricing (single home for pricing math); kept
 // here so existing imports keep working.
@@ -70,6 +71,13 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [notAvailableReason, setNotAvailableReason] = useState("");
   // Decided-rates summary: collapsed "Closed" dropdown above the item cards.
   const [showClosed, setShowClosed] = useState(false);
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
+  const openLightbox = (url: string, list?: string[], idx?: number) => {
+    const images = Array.isArray(list) && list.length > 0 ? list.filter(Boolean) : [url].filter(Boolean);
+    if (!images.length) return;
+    const index = typeof idx === "number" && images[idx] ? idx : Math.max(0, images.indexOf(url));
+    setLightbox({ images, index });
+  };
 
   useEffect(() => {
     const s: Record<number, number> = {};
@@ -266,16 +274,15 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // partial "Save rates" is progress, and Finalize unlocks only at 100%.
   const actionableIdx = items
     .map((it, i) => ({ it, i }))
-    .filter(({ it }) => !it.specIssue && !it.rateAvailable && !(it as any).notAvailable)
+    .filter(({ it }) => !it.rateAvailable && !(it as any).notAvailable)
     .map(({ i }) => i);
   const decidedCount = actionableIdx.filter((i) => computeItem(i, items[i]) !== null).length;
   const allDecided = actionableIdx.length > 0 && decidedCount === actionableIdx.length;
 
   const buildItems = (finalize: boolean): EnquiryItem[] =>
     items.map((it, i) => {
-      // Held for a sales spec correction, or rate already available / not available: never
-      // touched here, never finalized.
-      if (it.specIssue || it.rateAvailable || (it as any).notAvailable) return { ...it };
+      // Rate already available / not available: never touched, never finalized — specIssue intimates only, rates stay actionable.
+      if (it.rateAvailable || (it as any).notAvailable) return { ...it };
       const ri = selRateIdx(i, it);
       const picked = ri === undefined ? undefined : (it.rates ?? [])[ri];
       const out: EnquiryItem = { ...it, selectedVendor: picked?.vendor || undefined };
@@ -564,17 +571,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         if (decided.length === 0) return null;
         return (
           <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            <button type="button" onClick={() => setShowClosed((o) => !o)}
-              className="w-full flex items-center gap-2 px-3 py-2.5 cursor-pointer bg-transparent border-0 text-left hover:bg-zinc-800/40">
-              <svg className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ${showClosed ? "rotate-90" : ""}`}
-                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-              <span className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
+            <div className="px-3 py-2.5 bg-zinc-800/20">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-300">
                 Closed — decision made ({decided.length})
               </span>
-            </button>
-            {showClosed && (
+            </div>
               <ul className="border-t border-zinc-800 divide-y divide-zinc-800/60">
                 {decided.map(({ it, i }) => {
                   const selRow = typeof (it as any).selectedRateIdx === "number"
@@ -582,26 +583,37 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     : undefined;
                   const vRate = (selRow ?? (it.rates ?? []).find((r) => r.vendor === (it.selectedVendor ?? "")))?.rate;
                   return (
-                    <li key={i} className="px-3 py-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
-                      <span className="font-extrabold text-zinc-200">
-                        Item {i + 1}{it.name ? ` — ${it.name}` : ""}
-                      </span>
-                      {it.qty && <span className="text-zinc-500 font-semibold">× {it.qty}</span>}
-                      <span className="ml-auto font-mono text-zinc-400">
-                        {it.selectedVendor ? `${it.selectedVendor} · ` : ""}{vRate !== undefined ? `₹${Number(vRate).toLocaleString("en-IN")} → ` : ""}
-                        <span className="font-extrabold text-emerald-400">₹{Number(it.finalRate).toLocaleString("en-IN")}</span>
-                      </span>
-                      {(it as any).finalDiscountPercent ? (
-                        <span className="text-zinc-500">{String((it as any).finalDiscountPercent)}% off</span>
-                      ) : null}
-                      {it.finalizedAt && (
-                        <span className="text-zinc-600">{historyDateChip(it.finalizedAt)}</span>
+                    <li key={i} className="px-3 py-2 space-y-1 text-[11px]">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="font-extrabold text-zinc-200">
+                          Item {i + 1}{it.name ? ` — ${it.name}` : ""}
+                        </span>
+                        {it.qty && <span className="text-zinc-500 font-semibold">× {it.qty}</span>}
+                        <span className="ml-auto font-mono text-zinc-400">
+                          {it.selectedVendor ? `${it.selectedVendor} · ` : ""}{vRate !== undefined ? `₹${Number(vRate).toLocaleString("en-IN")} → ` : ""}
+                          <span className="font-extrabold text-emerald-400">₹{Number(it.finalRate).toLocaleString("en-IN")}</span>
+                        </span>
+                        {(it as any).finalDiscountPercent ? (
+                          <span className="text-zinc-500">{String((it as any).finalDiscountPercent)}% off</span>
+                        ) : null}
+                        {it.finalizedAt && (
+                          <span className="text-zinc-600">{historyDateChip(it.finalizedAt)}</span>
+                        )}
+                      </div>
+                      {it.spec && <p className="text-zinc-400 whitespace-pre-wrap leading-relaxed">{it.spec}</p>}
+                      {(it.media ?? []).length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {(it.media ?? []).map((m: any, mi: number) => {
+                            const list = (it.media ?? []).filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
+                            return m.type === "video" ? <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" /> : m.type === "pdf" ? <a key={mi} href={m.url} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border border-zinc-700 bg-red-500/10 text-[10px] font-bold">PDF</a> : <img key={mi} src={m.url} alt={`Item ${i+1} media ${mi+1}`} className="w-12 h-12 rounded-lg object-cover border border-zinc-700 cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />;
+                          })}
+                        </div>
                       )}
+                      <FlagThread thread={it.thread ?? []} tone="dark" />
                     </li>
                   );
                 })}
               </ul>
-            )}
           </div>
         );
       })()}
@@ -612,7 +624,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         <div className="space-y-3">
           {items.some((it) => it.specIssue) && (
             <p className="text-[11px] font-semibold text-amber-400/90">
-              {items.filter((it) => it.specIssue).length} item{items.filter((it) => it.specIssue).length === 1 ? "" : "s"} held — spec correction with Sales, shown below read-only (no rate actions until fixed).
+              {items.filter((it) => it.specIssue).length} item{items.filter((it) => it.specIssue).length === 1 ? "" : "s"} flagged — intimating Sales, vendor rates remain actionable below.
             </p>
           )}
           {items.some((it) => it.rateAvailable) && (
@@ -743,37 +755,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 </div>
               );
             }
-            // Held for a sales spec correction: visible read-only (spec +
-            // procurement's flag reason) so Management sees what's stuck and
-            // why — no vendor, markup, or request actions until Sales fixes it.
-            if (it.specIssue && !sent) {
-              return (
-                <div key={i} className="rounded-xl border border-red-500/25 bg-red-500/5 p-3 space-y-2">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-xs font-extrabold text-white">
-                      Item {i + 1}{it.name ? ` — ${it.name}` : ""}
-                    </span>
-                    {it.qty && (
-                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
-                    )}
-                    <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-red-500/10 text-red-400 border-red-500/30">
-                      Held with sales
-                    </span>
-                  </div>
-                  {it.spec && (
-                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
-                  )}
-                  <div className="rounded-lg border border-red-500/30 bg-black/20 p-2.5 text-[11px] leading-relaxed">
-                    <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Procurement flagged incorrect spec</p>
-                    <p className="mt-0.5 text-zinc-300 whitespace-pre-wrap">{it.specIssue}</p>
-                    <p className="mt-1 text-zinc-500">
-                      Flagged {historyDateChip(it.specFlaggedAt) || "recently"} · releases automatically when Sales edits the spec.
-                    </p>
-                  </div>
-                  <FlagThread thread={it.thread ?? []} tone="dark" />
-                </div>
-              );
-            }
+            // Flagged intimates only — vendor rates stay visible and actionable (per founder: specIssue with rates shows in Management)
+            const flaggedBanner = it.specIssue && !sent ? (
+              <div className="rounded-lg border border-red-500/30 bg-black/20 p-2.5 text-[11px] leading-relaxed">
+                <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Procurement flagged incorrect spec — intimating only</p>
+                <p className="mt-0.5 text-zinc-300 whitespace-pre-wrap">{it.specIssue}</p>
+                <p className="mt-1 text-zinc-500">Flagged {historyDateChip(it.specFlaggedAt) || "recently"} · shown read-only banner, rates remain actionable.</p>
+              </div>
+            ) : null;
             // Legacy internal rows with no rate yet: enter the sourced rate
             // here, then mark up + finalize as usual. (Marking NEW items
             // internal is removed — everything flows through procurement.)
@@ -838,6 +827,22 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 </div>
                 {it.spec && (
                   <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                )}
+                {flaggedBanner}
+                {(it.media ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(it.media ?? []).map((m: any, mi: number) => {
+                      const list = (it.media ?? []).filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
+                      return m.type === "video" ? (
+                        <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" />
+                      ) : m.type === "pdf" ? (
+                        <a key={mi} href={m.url} target="_blank" rel="noreferrer" className="px-2 py-1.5 rounded-lg border border-zinc-700 bg-red-500/10 text-[10px] font-bold">PDF</a>
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img key={mi} src={m.url} alt={`Item attachment ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-zinc-700 cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />
+                      );
+                    })}
+                  </div>
                 )}
                 <FlagThread thread={it.thread ?? []} tone="dark" />
                 {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && (
@@ -925,8 +930,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           )}
                           {(r.references ?? []).length > 0 && (
                             <span className="flex flex-wrap gap-1.5 mt-1">
-                              {(r.references ?? []).map((m, mi) => (
-                                m.type === "video" ? (
+                              {(r.references ?? []).map((m, mi) => {
+                                const list = (r.references ?? []).filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
+                                return m.type === "video" ? (
                                   <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" />
                                 ) : m.type === "pdf" ? (
                                   <a key={mi} href={m.url} download={m.name || `vendor-ref-${mi + 1}.pdf`} onClick={(e) => e.stopPropagation()}
@@ -935,9 +941,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                                   </a>
                                 ) : (
                                   // eslint-disable-next-line @next/next/no-img-element
-                                  <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-zinc-700" />
-                                )
-                              ))}
+                                  <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-zinc-700 cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />
+                                );
+                              })}
                             </span>
                           )}
                         </span>
@@ -1253,6 +1259,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
           </span>
         )}
       </div>
+      {lightbox && <Lightbox images={lightbox.images} initialIndex={lightbox.index} image={null} onClose={() => setLightbox(null)} />}
     </div>
   );
 }

@@ -255,8 +255,13 @@ export function enquirySend(c: any, r: any) {
   if (r.live) broadcastLive(c, r.live.type, r.live.extra);
   // The tracker dashboard payload is KV-cached (60s) — bust it on every
   // write so dashboards never sit on a stale snapshot for the TTL.
+  // Also bust the per-enquiry redacted view (30d) so the 300ms debounced
+  // list fetch after a PATCH never races a stale redacted KV.
   try {
-    const p = cacheDel('enquiry-tracker:data');
+    const id = String((r as any)?.body?.id ?? (r as any)?.live?.extra?.id ?? (r as any)?.live?.extra?.enquiryId ?? '');
+    const ps = [cacheDel('enquiry-tracker:data')];
+    if (id) ps.push(cacheDel(`enquiry:redacted:${id}`));
+    const p = Promise.all(ps);
     if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') c.executionCtx.waitUntil(p);
   } catch { /* best-effort */ }
 }
