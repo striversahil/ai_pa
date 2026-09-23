@@ -31,6 +31,8 @@ const crypto = require('crypto');
 const { workerRequest } = require('./runner-lib');
 
 // ── Parse Zoho curl credentials (same logic as zoho-sent-runner.js) ─────────
+// MULTI-ORG: every organization_id in the export is synced (same login, shared
+// headers — see zoho-sync/orgs.js). First org is primary (BUI).
 function parseCurlFile() {
   const candidates = [
     path.join(__dirname, '..', 'zoho_sent', 'sent_estimates.txt'),
@@ -51,24 +53,32 @@ function parseCurlFile() {
   }
   if (headers['Accept-Encoding']) headers['Accept-Encoding'] = 'gzip, deflate';
 
-  const orgMatch = url.match(/organization_id=([0-9]+)/);
-  const orgId = orgMatch ? orgMatch[1] : '';
-  return { url, headers, orgId };
+  let orgIds = [];
+  try {
+    orgIds = require('./zoho-sync/orgs').parseOrgIds(content);
+  } catch { /* fallback below */ }
+  if (!orgIds.length) {
+    const orgMatch = url.match(/organization_id=([0-9]+)/);
+    if (orgMatch) orgIds = [orgMatch[1]];
+  }
+  const orgId = orgIds[0] || '';
+  if (orgIds.length > 1) console.log(`crm-runner: multi-org mode — ${orgIds.join(', ')} (primary ${orgId})`);
+  return { url, headers, orgId, orgIds };
 }
 
-const { headers, orgId } = parseCurlFile();
+const { headers, orgId, orgIds } = parseCurlFile();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function istDateString(d) {
   return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-function buildSalesOrdersUrl(page) {
-  return `https://books.zoho.com/api/v3/salesorders?page=${page}&per_page=200&filter_by=Status.All&sort_column=created_time&sort_order=D&usestate=true&organization_id=${orgId}`;
+function buildSalesOrdersUrl(page, org) {
+  return `https://books.zoho.com/api/v3/salesorders?page=${page}&per_page=200&filter_by=Status.All&sort_column=created_time&sort_order=D&usestate=true&organization_id=${org || orgId}`;
 }
 
-function buildSalesOrderDetailUrl(salesorderId) {
-  return `https://books.zoho.com/api/v3/salesorders/${salesorderId}?organization_id=${orgId}`;
+function buildSalesOrderDetailUrl(salesorderId, org) {
+  return `https://books.zoho.com/api/v3/salesorders/${salesorderId}?organization_id=${org || orgId}`;
 }
 
 // Full line items for one SO via the detail endpoint (the list endpoint never
@@ -76,10 +86,10 @@ function buildSalesOrderDetailUrl(salesorderId) {
 // OPENS the circuit — remaining rows skip items this tick (fail fast, no
 // 495×45s sleep storm) and retry on the next tick.
 let detailCircuitOpen = false;
-async function fetchOrderItems(salesorderId) {
+async function fetchOrderItems(salesorderId, org) {
   if (detailCircuitOpen) throw new Error('detail circuit open (rate-limited earlier this tick)');
   const once = async () => {
-    const json = await zohoFetch(buildSalesOrderDetailUrl(salesorderId));
+    const json = await zohoFetch(buildSalesOrderDetailUrl(salesorderId, org));
     const items = json?.salesorder?.line_items;
     return Array.isArray(items) ? items.slice(0, 200) : [];
   };
@@ -156,7 +166,7 @@ function orderDate(so) {
 }
 
 /** Compact order row for the dashboard tables (full per-stage detail). */
-function orderRow(so, today) {
+function orderRow(so, today, org) {
   const createdTime = so.created_time_formatted || so.created_time || '';
   let age = null;
   if (createdTime) {
@@ -177,6 +187,7 @@ function orderRow(so, today) {
   const items = Array.isArray(so.line_items) ? so.line_items.slice(0, 200) : [];
   return {
     so: so.salesorder_number || '',
+    org: org || orgId,
     ref: so.reference_number || '',
     customer: so.customer_name || '',
     total: Math.round((parseFloat(so.total) || 0) * 100) / 100,
@@ -281,15 +292,14 @@ async function main() {
   let withItems = 0;
   let overridden = 0;
 
-  // Page through SOs (Status.All, newest first). Stop when a page has nothing
-  // relevant: no active orders AND nothing created inside the scan window.
-  // A Zoho list failure aborts the WHOLE tick (partial pages would corrupt the
-  // fingerprint and wipe items) — instead we send a preservative heartbeat so
-  // the dashboard keeps serving its last-known snapshot with a stale badge.
+  // Page through SOs per org (Status.All, newest first). Stop per org when a
+  // page has nothing relevant: no active orders AND nothing created inside the
+  // scan window. (See function header for the abort-on-failure policy.)
   try {
+  for (const org of orgIds.length ? orgIds : [orgId]) {
   for (let page = 1; page <= 30; page++) {
     pages++;
-    const json = await zohoFetch(buildSalesOrdersUrl(page));
+    const json = await zohoFetch(buildSalesOrdersUrl(page, org));
     const salesorders = json.salesorders || [];
     if (salesorders.length === 0) break;
 
@@ -303,13 +313,14 @@ async function main() {
         step = overrides.get(soNum);
         overridden++;
       }
-      const row = orderRow(so, today);
+      const row = orderRow(so, today, org);
       const od = orderDate(so);
       const recent = od ? ((Date.now() - od.getTime()) / 86400000) <= SCAN_WINDOW_DAYS : true;
 
       // Lightweight index entry for EVERY order (uncapped diff source).
       const entry = {
         so: soNum,
+        org,
         stage: step,
         paidStatus: String(so.paid_status || '').toLowerCase(),
         status: String(so.status || '').toLowerCase(),
@@ -332,8 +343,8 @@ async function main() {
         // includes them) — fetched in phase 2, but ONLY for display-capped
         // rows (what the dashboard can actually render/click). Ancient backlog
         // beyond the cap stays item-less; points are unaffected (index-based).
-        if (so.salesorder_id && !activeBySo.has(soNum)) {
-          activeBySo.set(soNum, { id: so.salesorder_id, row, entry });
+        if (so.salesorder_id && !activeBySo.has(org + ':' + soNum)) {
+          activeBySo.set(org + ':' + soNum, { id: so.salesorder_id, row, entry });
         }
       } else if (recent) {
         // Recently closed (paid / cancelled / void) — feeds the Worker's diff so
@@ -342,6 +353,7 @@ async function main() {
         if (closed.length < CLOSED_CAP) {
           closed.push({
             so: so.salesorder_number || '',
+            org,
             customer: so.customer_name || '',
             total: row.total,
             status: String(so.status || '').toLowerCase(),
@@ -355,6 +367,7 @@ async function main() {
     }
 
     if (salesorders.length < 200 || relevant === 0) break;
+  }
   }
   } catch (e) {
     console.log(`crm-runner: Zoho list fetch failed (${e.message}) — preservative heartbeat, then fail`);
@@ -379,9 +392,11 @@ async function main() {
 
   // Phase 1 — order-level fingerprint from the list scan alone. Unchanged →
   // heartbeat and exit WITHOUT any per-SO detail calls (idle ticks stay cheap).
-  // CRM_FORCE=1 bypasses the gate.
+  // CRM_FORCE=1 bypasses the gate. Org-scoped so identical SO numbers in two
+  // orgs never collapse into one entry.
+  const orgScope = (so, org) => (org ? `${org}:` : '') + String(so ?? '');
   const orderFp = crypto.createHash('sha1')
-    .update(index.map((e) => [e.so, e.stage, e.paidStatus, e.status, e.total].join('|')).sort().join('\n'))
+    .update(index.map((e) => [orgScope(e.so, e.org), e.stage, e.paidStatus, e.status, e.total].join('|')).sort().join('\n'))
     .digest('hex');
 
   // Display-field slimming for detail items (raw Zoho items carry ~80 keys
@@ -425,9 +440,10 @@ async function main() {
         const missing = [];
         for (const s of STAGES) {
           for (const row of stages[s].orders) {
-            const hit = activeBySo.get(row.so);
+            const hit = activeBySo.get(orgScope(row.so, row.org));
             if (!hit) continue;
-            const prev = prevSigs[row.so];
+            // Fallback to the bare key for snapshots written pre-multi-org.
+            const prev = prevSigs[orgScope(row.so, row.org)] ?? prevSigs[row.so];
             if (Array.isArray(prev) && prev[0] === s && prev[1]) continue; // already has items
             missing.push(hit);
             if (missing.length >= ITEM_BUDGET) break;
@@ -438,11 +454,11 @@ async function main() {
           const merged = [];
           for (const { id, row, entry } of missing) {
             try {
-              const items = (await fetchOrderItems(id)).map(slimItem);
+              const items = (await fetchOrderItems(id, row.org)).map(slimItem);
               row.items = items;
               row.lineCount = items.length;
               entry.itemsSig = itemsSig(items);
-              merged.push({ so: row.so, items, lineCount: items.length, itemsSig: entry.itemsSig });
+              merged.push({ so: row.so, org: row.org, items, lineCount: items.length, itemsSig: entry.itemsSig });
             } catch (e) {
               if (e?.message && !String(e.message).includes('circuit open')) {
                 console.log(`crm-runner: fill fetch failed for ${row.so}: ${e.message}`);
@@ -479,9 +495,10 @@ async function main() {
   let skipped = 0;
   for (const s of STAGES) {
     for (const row of stages[s].orders) {
-      const hit = activeBySo.get(row.so);
+      const hit = activeBySo.get(orgScope(row.so, row.org));
       if (!hit) continue;
-      const prev = prevSigs[row.so];
+      // Fallback to the bare key for snapshots written pre-multi-org.
+      const prev = prevSigs[orgScope(row.so, row.org)] ?? prevSigs[row.so];
       const prevStage = Array.isArray(prev) ? prev[0] : null;
       const prevSig = Array.isArray(prev) ? prev[1] : '';
       // Priority: brand-new rows first (createdToday / unseen), then moved or
@@ -507,7 +524,7 @@ async function main() {
   let detailErrors = 0;
   for (const { id, row, entry } of due) {
     try {
-      const items = (await fetchOrderItems(id)).map(slimItem);
+      const items = (await fetchOrderItems(id, row.org)).map(slimItem);
       row.items = items;
       row.lineCount = items.length;
       entry.itemsSig = itemsSig(items);
@@ -547,8 +564,9 @@ async function main() {
 
   // Full fingerprint: order-level state + per-order item signatures, so an
   // item edit also triggers a snapshot POST (but never a heartbeat skip).
+  // Org-scoped keys throughout (see orderFp above).
   const fingerprint = `${orderFp}+${crypto.createHash('sha1')
-    .update(index.map((e) => `${e.so}=${e.itemsSig}`).sort().join('\n'))
+    .update(index.map((e) => `${orgScope(e.so, e.org)}=${e.itemsSig}`).sort().join('\n'))
     .digest('hex').slice(0, 12)}`;
 
   const snapshot = {

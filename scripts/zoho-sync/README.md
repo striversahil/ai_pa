@@ -14,9 +14,24 @@ The list query is derived from the saved curl export
 
 * `filter_by=Status.All` — **every** status, not just Sent. Drafts persist as
   metadata for visibility but never enter AI/comment processing.
-* 2 pages × 200 rows, `sort_column=last_modified_time` desc — any status move
-  bumps the row into the window, so transitions are always visible.
+* 2 pages × 200 rows **per org**, `sort_column=last_modified_time` desc — any
+  status move bumps the row into the window, so transitions are always visible.
 * `last_modified_time` is a change signal only, never a fetch cursor.
+
+## Multi-org (BUI + DPG)
+
+One export file carries the shared login (cookies/headers) plus **every**
+`organization_id` (see `orgs.js`). Rules:
+
+* All unique `organization_id=<digits>` in the file, in file order. The FIRST
+  is the primary (BUI) — keep BUI first when refreshing cookies.
+* The worker pins the primary in the `zoho:primary_org` Setting on first
+  write; a reordered file is rejected with HTTP 409 (never silently fork ids).
+* Identity is normalized at the fetch boundary: non-primary rows use
+  `<org>:<zohoId>` estimate/comment ids; `Estimate.organizationId` carries the
+  org for dashboard badges/filters. Everything downstream keys on DB ids.
+* Fingerprint is combined across orgs (one KV key); CRM snapshot/diff keys
+  are org-scoped with bare-key fallback for the deploy-transition tick.
 
 ## Modules
 

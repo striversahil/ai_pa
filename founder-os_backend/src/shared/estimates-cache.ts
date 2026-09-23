@@ -19,12 +19,15 @@ interface EstimatesPayload {
   estimates: any[];
   lastCompleteSyncAt: string | null;
   computedAt: string;
+  /** Zoho org ids present in the payload (first = primary/BUI). Drives the
+   *  dashboard org filter + badges (multi-org sync, see orgs.js). */
+  organizations: string[];
   /** Active Zoho sales orders created today (IST) — fetched by the GH runner,
    *  persisted in KV by /api/runner/zoho/salesorders-today, merged here so the
    *  dashboard gets the "Sales Orders Today" KPI + feed from the SAME endpoint
    *  it already loads (/api/estimates). The automation data() route is
    *  worker-unregistered ("no data provider"), so it must NOT be relied on. */
-  salesOrdersToday: { count: number; totalValue: number; statuses: Record<string, number>; orders: any[] };
+  salesOrdersToday: { count: number; totalValue: number; statuses: Record<string, number>; orders: any[]; byOrg?: Record<string, { count: number; totalValue: number }> };
 }
 
 /** Calendar date (YYYY-MM-DD) in IST (+05:30). */
@@ -32,16 +35,16 @@ function istDateString(d: Date): string {
   return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-const EMPTY_SO = { count: 0, totalValue: 0, statuses: {}, orders: [] as any[] };
+const EMPTY_SO = { count: 0, totalValue: 0, statuses: {}, orders: [] as any[], byOrg: {} as Record<string, { count: number; totalValue: number }> };
 
 async function getSalesOrdersToday(): Promise<typeof EMPTY_SO> {
   try {
-    const so = await cacheGet<{ date: string; count: number; totalValue: number; statuses: Record<string, number>; orders: any[] }>(
+    const so = await cacheGet<{ date: string; count: number; totalValue: number; statuses: Record<string, number>; orders: any[]; byOrg?: Record<string, { count: number; totalValue: number }> }>(
       'zoho:salesorders_today',
       45 * 60 * 1000,
     );
     if (so && so.date === istDateString(new Date()) && typeof so.count === 'number') {
-      return { count: so.count, totalValue: so.totalValue || 0, statuses: so.statuses || {}, orders: Array.isArray(so.orders) ? so.orders : [] };
+      return { count: so.count, totalValue: so.totalValue || 0, statuses: so.statuses || {}, orders: Array.isArray(so.orders) ? so.orders : [], byOrg: so.byOrg || {} };
     }
   } catch { /* KV miss → zeros */ }
   return EMPTY_SO;
@@ -58,6 +61,10 @@ async function computeEstimatesPayload(): Promise<EstimatesPayload> {
   ]);
   const nameById = new Map(telecallers.map((t: any) => [t.id, t.name]));
   const salesOrdersToday = await getSalesOrdersToday();
+  const orgSet = new Set<string>();
+  for (const e of estimates as any[]) {
+    if ((e as any)?.organizationId) orgSet.add(String((e as any).organizationId));
+  }
   return {
     estimates: estimates.map((e: any) => ({
       ...e,
@@ -68,6 +75,7 @@ async function computeEstimatesPayload(): Promise<EstimatesPayload> {
         (c: any) => !isSystemGeneratedComment(c.description, c.commentedBy),
       ),
     })),
+    organizations: [...orgSet].sort(),
     lastCompleteSyncAt: lastCompleteSync?.value ?? null,
     computedAt: new Date().toISOString(),
     salesOrdersToday,

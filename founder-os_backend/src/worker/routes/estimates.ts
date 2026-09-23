@@ -551,6 +551,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       customerName: e.customerName,
       total: e.total,
       status: e.status,
+      organizationId: (e as any).organizationId ?? '',
     }));
     const key = `zoho_baseline:${kolkataDateStr()}`;
     await prisma.setting.upsert({
@@ -732,10 +733,28 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
     const body = await c.req.json();
-    const { estimates, lastSyncAt } = body;
+    const { estimates, lastSyncAt, primaryOrg } = body;
+    // Multi-org guard: the first organization_id in sent_estimates.txt is the
+    // primary (bare DB ids). A reordered org file would fork every row into
+    // duplicates — reject it loudly instead of corrupting identities.
+    if (typeof primaryOrg === 'string' && primaryOrg) {
+      const prev = await prisma.setting.findUnique({ where: { key: 'zoho:primary_org' } }).catch(() => null);
+      if (!prev) {
+        await prisma.setting.upsert({
+          where: { key: 'zoho:primary_org' },
+          update: { value: primaryOrg },
+          create: { key: 'zoho:primary_org', value: primaryOrg },
+        });
+      } else if (prev.value !== primaryOrg) {
+        return c.json({ error: `primary org changed (${prev.value} → ${primaryOrg}) — reorder sent_estimates.txt (BUI first) or migrate identities`, primaryOrg: prev.value }, 409);
+      }
+    }
     let upserted = 0;
     if (estimates && Array.isArray(estimates)) {
       for (const est of estimates) {
+        // organizationId is write-once identity: never overwrite a set value
+        // with '' (legacy/unknown) — that would orphan namespaced rows.
+        const org = typeof est.organizationId === 'string' && est.organizationId ? est.organizationId : undefined;
         await prisma.estimate.upsert({
           where: { estimateId: est.estimateId },
           update: {
@@ -745,6 +764,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
             date: est.date,
             status: est.status,
             skipMatching: est.skipMatching || 0,
+            ...(org ? { organizationId: org } : {}),
           },
           create: {
             estimateId: est.estimateId,
@@ -754,6 +774,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
             date: est.date,
             status: est.status,
             skipMatching: est.skipMatching || 0,
+            organizationId: org || '',
             lastSyncTime: new Date(),
           },
         });

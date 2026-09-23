@@ -67,6 +67,56 @@ function latestFirst(a: SalesComment, b: SalesComment): number {
 const FP_KEY = 'zoho:analyzer:state_fingerprint';
 const FP_TTL_MS = 24 * 60 * 60 * 1000;
 
+// ── Multi-org identity (mirror of scripts/zoho-sync/orgs.js) ───────────────
+// The GH runner owns the canonical JS copy; this TS twin keeps the in-process
+// (Express/alt-runtime) path identical. Contract: one curl export carries every
+// organization_id (shared login); first org is primary (bare DB ids); all
+// other orgs use namespaced DB ids `<org>:<zohoId>`. Keep the two in sync.
+function parseOrgIds(content: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const m of String(content || '').matchAll(/organization_id=([0-9]+)/g)) {
+    if (!seen.has(m[1])) { seen.add(m[1]); ids.push(m[1]); }
+  }
+  for (const m of String(content || '').matchAll(/(?:app\/|BuildCookie_|zalb_zid=)([0-9]{6,})/g)) {
+    if (!seen.has(m[1])) { seen.add(m[1]); ids.push(m[1]); }
+  }
+  return ids;
+}
+function dbEstimateId(orgId: string, zohoId: unknown, primaryOrg: string): string {
+  const id = String(zohoId ?? '');
+  if (!orgId || orgId === primaryOrg) return id;
+  return `${orgId}:${id}`;
+}
+function splitDbEstimateId(dbId: unknown, bareIdOrg: string): { orgId: string; zohoId: string } {
+  const s = String(dbId ?? '');
+  const m = s.match(/^([0-9]+):(.+)$/);
+  if (m) return { orgId: m[1], zohoId: m[2] };
+  return { orgId: bareIdOrg || '', zohoId: s };
+}
+function normalizeEstimateRow(est: any, orgId: string, primaryOrg: string): any {
+  if (!est || typeof est !== 'object') return est;
+  est._orgId = orgId;
+  est._zohoId = est.estimate_id;
+  est.estimate_id = dbEstimateId(orgId, est.estimate_id, primaryOrg);
+  return est;
+}
+function normalizeCommentRows(comments: any[], orgId: string, primaryOrg: string): any[] {
+  if (!Array.isArray(comments)) return comments;
+  if (!orgId || orgId === primaryOrg) return comments;
+  for (const c of comments) {
+    if (c && typeof c === 'object' && c.comment_id != null) {
+      c.comment_id = `${orgId}:${String(c.comment_id)}`;
+    }
+  }
+  return comments;
+}
+function urlForOrg(savedUrl: string, orgId: string): string {
+  const u = new URL(savedUrl);
+  u.searchParams.set('organization_id', orgId);
+  return u.toString();
+}
+
 export class SalesCopilotService implements AnalysisEngine {
   public name = 'Sales Copilot Analyzer';
 
@@ -114,7 +164,7 @@ export class SalesCopilotService implements AnalysisEngine {
    */
   private async fetchZohoComments(
     estimates: any[],
-    orgId: string,
+    primaryOrg: string,
     headers: Record<string, string>,
   ): Promise<Map<string, { comments: any[]; hasNew: boolean }>> {
     const out = new Map<string, { comments: any[]; hasNew: boolean }>();
@@ -122,17 +172,20 @@ export class SalesCopilotService implements AnalysisEngine {
     for (let i = 0; i < estimates.length; i += COMMENT_FETCH_CONCURRENCY) {
       const batch = estimates.slice(i, i + COMMENT_FETCH_CONCURRENCY);
       await Promise.all(batch.map(async (est) => {
-        const estId = est.estimate_id;
+        // Normalized rows carry _orgId/_zohoId; legacy callers pass bare ids.
+        const org = est._orgId || primaryOrg;
+        const zohoId = est._zohoId || est.estimate_id;
+        const dbId = est.estimate_id;
         const estNo = est.estimate_number;
         try {
-          const commentsUrl = `https://books.zoho.com/api/v3/estimates/${estId}/comments?organization_id=${orgId}`;
+          const commentsUrl = `https://books.zoho.com/api/v3/estimates/${zohoId}/comments?organization_id=${org}`;
           const commentsRes = await fetch(commentsUrl, { headers });
           if (!commentsRes.ok) {
             logger.warn(`SalesCopilotService: Failed to fetch comments for ${estNo}: ${commentsRes.status}`);
             return;
           }
           const commentsJson = (await commentsRes.json()) as any;
-          out.set(estId, { comments: commentsJson.comments || [], hasNew: false });
+          out.set(dbId, { comments: normalizeCommentRows(commentsJson.comments || [], org, primaryOrg), hasNew: false });
         } catch (err: any) {
           logger.warn({ error: err.message }, `SalesCopilotService: Failed to fetch comments for ${estNo} due to network error`);
         }
@@ -219,10 +272,12 @@ export class SalesCopilotService implements AnalysisEngine {
   }
 
   /**
-   * Parses the raw Zoho curl-export content into a URL + headers + orgId.
+   * Parses the raw Zoho curl-export content into a URL + headers + orgIds.
    * Shared by the local fs path and the Worker secret path.
+   * Multi-org: every organization_id in the export is synced (same login);
+   * orgIds[0] is the primary (BUI) — existing bare-identity rows.
    */
-  private parseCurlContent(content: string): { url: string; headers: Record<string, string>; orgId: string } | null {
+  private parseCurlContent(content: string): { url: string; headers: Record<string, string>; orgId: string; orgIds: string[] } | null {
     try {
       // Extract URL
       const urlMatch = content.match(/curl\s+'([^']+)'/) || content.match(/curl\s+"([^"]+)"/) || content.match(/curl\s+([^\s\\]+)/);
@@ -242,12 +297,13 @@ export class SalesCopilotService implements AnalysisEngine {
         }
       }
 
-      // Extract org ID
-      let orgId = '';
-      const orgMatch = url.match(/organization_id=([0-9]+)/);
-      if (orgMatch) {
-        orgId = orgMatch[1];
+      // Extract org IDs (multi-org: every organization_id in the export)
+      let orgIds = parseOrgIds(content);
+      if (!orgIds.length) {
+        const orgMatch = url.match(/organization_id=([0-9]+)/);
+        if (orgMatch) orgIds = [orgMatch[1]];
       }
+      const orgId = orgIds[0] || '';
 
       if (headers['Accept-Encoding']) {
         headers['Accept-Encoding'] = 'gzip, deflate';
@@ -258,7 +314,7 @@ export class SalesCopilotService implements AnalysisEngine {
         return null;
       }
 
-      return { url, headers, orgId };
+      return { url, headers, orgId, orgIds };
     } catch (err: any) {
       logger.error({ error: err.message }, 'SalesCopilotService: failed to parse curl credentials');
       return null;
@@ -271,7 +327,7 @@ export class SalesCopilotService implements AnalysisEngine {
    * same logic as the local sent_estimates.txt file. Env url+token is kept as a
    * secondary fallback for an OAuth-token style auth.
    */
-  private parseCurlFile(): { url: string; headers: Record<string, string>; orgId: string } | null {
+  private parseCurlFile(): { url: string; headers: Record<string, string>; orgId: string; orgIds: string[] } | null {
     const readSecret = (key: string): string | undefined =>
       (globalThis as any)?.__WORKER_ENV__?.[key] ??
       (globalThis as any)?.process?.env?.[key] ??
@@ -289,6 +345,8 @@ export class SalesCopilotService implements AnalysisEngine {
     const envToken = readSecret('ZOHO_BOOKS_AUTH_TOKEN');
     if (envUrl && envToken) {
       const orgMatch = envUrl.match(/organization_id=([0-9]+)/);
+      const envOrgIds = parseOrgIds(envUrl);
+      const singleOrg = orgMatch ? orgMatch[1] : '';
       return {
         url: envUrl,
         headers: {
@@ -296,7 +354,8 @@ export class SalesCopilotService implements AnalysisEngine {
           'Content-Type': 'application/json',
           'Accept-Encoding': 'gzip, deflate',
         },
-        orgId: orgMatch ? orgMatch[1] : '',
+        orgId: singleOrg,
+        orgIds: envOrgIds.length ? envOrgIds : (singleOrg ? [singleOrg] : []),
       };
     }
 
@@ -348,18 +407,29 @@ export class SalesCopilotService implements AnalysisEngine {
       throw new Error('Could not parse Zoho credentials from sent_estimates.txt');
     }
 
-    const { url, headers, orgId } = creds;
+    const { url, headers, orgId, orgIds } = creds;
 
-    // 1. Fetch active estimates from Zoho Books
+    // 1. Fetch active estimates from Zoho Books — every org in the export
+    // (same login, shared headers). Rows are normalized at the boundary:
+    // non-primary ids are namespaced `<org>:<id>` (see mirror note above),
+    // so all downstream code keys on DB ids unchanged.
     logger.info('SalesCopilotService: Fetching sent estimates from Zoho Books...');
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch estimates: ${response.status} ${await response.text()}`);
+    const estimates: any[] = [];
+    const seenIds = new Set<string>();
+    for (const org of orgIds.length ? orgIds : [orgId]) {
+      const orgUrl = org ? urlForOrg(url, org) : url;
+      const response = await fetch(orgUrl, { headers });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch estimates (org ${org}): ${response.status} ${await response.text()}`);
+      }
+      const responseJson = (await response.json()) as any;
+      for (const est of responseJson.estimates || []) {
+        if (!est?.estimate_id) continue;
+        normalizeEstimateRow(est, org, orgId);
+        if (!seenIds.has(est.estimate_id)) { seenIds.add(est.estimate_id); estimates.push(est); }
+      }
     }
-
-    const responseJson = (await response.json()) as any;
-    const estimates = responseJson.estimates || [];
-    logger.info(`SalesCopilotService: Fetched ${estimates.length} active sent estimates from Zoho.`);
+    logger.info(`SalesCopilotService: Fetched ${estimates.length} active sent estimates from Zoho (${orgIds.join(', ') || orgId}).`);
 
     // 1b. Fetch Zoho comments for every active estimate (NETWORK, cheap — NOT a
     // DB scan). Comments do NOT bump last_modified_time in Zoho, so they must be
@@ -410,12 +480,16 @@ export class SalesCopilotService implements AnalysisEngine {
     for (const est of estimates) {
       activeEstIds.add(est.estimate_id);
 
+      const orgForRow = est._orgId || orgId || '';
       const metadata = {
         estimateNumber: est.estimate_number,
         customerName: est.customer_name,
         total: parseFloat(est.total),
         date: est.date,
-        status: est.status
+        status: est.status,
+        // Write-once org identity: backfills legacy '' rows once, never
+        // overwrites a set value with ''.
+        ...(orgForRow ? { organizationId: orgForRow } : {}),
       };
       const existing = existingByEstId.get(est.estimate_id);
       const unchanged = !!existing &&
@@ -423,14 +497,15 @@ export class SalesCopilotService implements AnalysisEngine {
         existing.customerName === metadata.customerName &&
         existing.total === metadata.total &&
         existing.date === metadata.date &&
-        existing.status === metadata.status;
+        existing.status === metadata.status &&
+        (!orgForRow || (existing.organizationId || '') === orgForRow);
 
       if (unchanged) continue;
 
       await prisma.estimate.upsert({
         where: { estimateId: est.estimate_id },
         update: metadata,
-        create: { estimateId: est.estimate_id, ...metadata, lastSyncTime: new Date() }
+        create: { estimateId: est.estimate_id, ...metadata, organizationId: orgForRow, lastSyncTime: new Date() }
       });
       metadataUpdated++;
     }
@@ -772,7 +847,7 @@ export class SalesCopilotService implements AnalysisEngine {
     });
   }
 
-  private async syncClosedStatuses(activeEstIds: Set<string>, orgId: string, headers: Record<string, string>): Promise<void> {
+  private async syncClosedStatuses(activeEstIds: Set<string>, primaryOrg: string, headers: Record<string, string>): Promise<void> {
     // Fetch estimates currently labeled "sent" in local DB
     const localSentEstimates = await prisma.estimate.findMany({
       where: { status: 'sent' }
@@ -781,8 +856,13 @@ export class SalesCopilotService implements AnalysisEngine {
     for (const est of localSentEstimates) {
       if (!activeEstIds.has(est.estimateId)) {
         logger.info(`SalesCopilotService: Checking closed status for estimate ${est.estimateNumber}...`);
+        // Multi-org: resolve the (org, zohoId) pair from the namespaced DB id
+        // (falling back to the row's organizationId / primary for legacy rows).
+        const split = splitDbEstimateId(est.estimateId, '');
+        const zohoId = split.zohoId;
+        const effOrg = split.orgId || (est as any).organizationId || primaryOrg;
         try {
-          const detailUrl = `https://books.zoho.com/api/v3/estimates/${est.estimateId}?organization_id=${orgId}`;
+          const detailUrl = `https://books.zoho.com/api/v3/estimates/${zohoId}?organization_id=${effOrg}`;
           const detailRes = await fetch(detailUrl, { headers });
           if (detailRes.ok) {
             const detailJson = (await detailRes.json()) as any;
@@ -797,7 +877,7 @@ export class SalesCopilotService implements AnalysisEngine {
               // Fetch comments for this now-closed estimate to analyze its final comments (e.g. why it was declined/accepted)
               let commentsJson: any = { comments: [] };
               try {
-                const commentsUrl = `https://books.zoho.com/api/v3/estimates/${est.estimateId}/comments?organization_id=${orgId}`;
+                const commentsUrl = `https://books.zoho.com/api/v3/estimates/${zohoId}/comments?organization_id=${effOrg}`;
                 const commentsRes = await fetch(commentsUrl, { headers });
                 if (commentsRes.ok) {
                   commentsJson = (await commentsRes.json()) as any;
@@ -806,7 +886,7 @@ export class SalesCopilotService implements AnalysisEngine {
                 logger.warn(`SalesCopilotService: Failed to fetch comments for closed estimate ${est.estimateNumber}`);
               }
 
-              const comments = commentsJson.comments || [];
+              const comments = normalizeCommentRows(commentsJson.comments || [], effOrg, primaryOrg);
               const salesComments: SalesComment[] = [];
 
               for (const c of comments) {

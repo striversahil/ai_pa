@@ -168,6 +168,11 @@ model Estimate {
   lastSyncTime          DateTime        @default(now())
   skipMatching          Boolean         @default(false)
   assignedTelecallerId  String?
+  // Zoho Books organization this estimate belongs to (multi-org sync:
+  // BUI + DPG share one login; see scripts/zoho-sync/orgs.js). '' = legacy
+  // rows backfilled by migration 0043. Non-primary org rows use a namespaced
+  // estimateId (`<org>:<zohoId>`) so per-org ids can never collide.
+  organizationId        String          @default("")
   // Telecaller who originated this estimate = the agent who created the
   // mapping B2B enquiry (Enquiry.estNumber = Estimate.estimateNumber).
   // Synced on enquiry save + claim button + assignment engine (always wins).
@@ -216,6 +221,8 @@ model Estimate {
   comments              Comment[]
   classification        Classification?
   assignments           EstimateAssignment[]
+
+  @@index([organizationId])
 }
 
 model Comment {

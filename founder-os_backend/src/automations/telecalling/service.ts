@@ -327,6 +327,8 @@ async function computeRiskCache(): Promise<RiskCache> {
       telecallerId: owner,
       telecallerName: nameById.get(owner) ?? null,
       total: Number(e.total ?? 0) || 0,
+      // Zoho org (multi-org sync) — drives the dashboard org badge/filter.
+      organizationId: (e as any).organizationId ?? null,
       risk,
       lastCommentDate,
       staleHours,
@@ -2794,6 +2796,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         customerName: e.customerName,
         status: e.status,
         total: e.total,
+        // Zoho org (multi-org sync) — drives the dashboard org badge/filter.
+        organizationId: (e as any).organizationId ?? null,
         day,
         assignmentStatus: 'assigned',
         satisfactory: e.classification ? !!e.classification.meaningfulUpdate : null,

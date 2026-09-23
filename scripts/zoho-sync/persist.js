@@ -23,11 +23,13 @@ async function postFingerprint(fingerprint) {
 
 // Non-status metadata convergence. Status moves NEVER go through here —
 // they use postStatusUpdates so conversion closes get ledger-credited.
-async function postMetadataUpserts(upserts) {
+// primaryOrg (first organization_id in the export) lets the worker reject a
+// reordered org file, which would otherwise corrupt DB identities.
+async function postMetadataUpserts(upserts, primaryOrg) {
   if (!upserts.length) { console.log('zoho-sync/persist: metadata unchanged'); return; }
   await workerRequest('/api/estimates/bulk-upsert', {
     method: 'POST',
-    body: { estimates: upserts },
+    body: { estimates: upserts, ...(primaryOrg ? { primaryOrg } : {}) },
   });
   console.log(`zoho-sync/persist: metadata upserted ${upserts.length}`);
 }

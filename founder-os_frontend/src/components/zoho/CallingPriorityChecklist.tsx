@@ -13,6 +13,8 @@ interface Props {
   onToggleShowClosed: () => void;
   onToggleComments: (estimateId: string) => void;
   onPageChange: (page: number) => void;
+  /** Resolve an org id to its badge label; return null to hide the badge. */
+  getOrgLabel?: (orgId: string | undefined) => string | null;
 }
 
 export default function CallingPriorityChecklist({
@@ -24,6 +26,7 @@ export default function CallingPriorityChecklist({
   onToggleShowClosed,
   onToggleComments,
   onPageChange,
+  getOrgLabel,
 }: Props) {
   const totalPages = Math.ceil(priorityList.length / 100);
   const pagedItems = showClosed
@@ -80,6 +83,7 @@ export default function CallingPriorityChecklist({
               est={e}
               expanded={!!expandedCards[e.estimateId]}
               onToggleComments={onToggleComments}
+              orgLabel={getOrgLabel ? getOrgLabel(e.organizationId) : null}
             />
           ))}
 

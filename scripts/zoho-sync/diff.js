@@ -62,13 +62,17 @@ function diffMetadata(estimates, existingByEstId) {
       total: parseFloat(est.total),
       date: est.date,
       status: est.status,
+      // Org tag from the fetch boundary ('' for legacy/unknown — the worker
+      // backfills it and never overwrites a set value with '').
+      organizationId: est._orgId || existing?.organizationId || '',
     };
     if (!existing) { upserts.push(metadata); continue; }
     const unchanged =
       existing.estimateNumber === metadata.estimateNumber &&
       existing.customerName === metadata.customerName &&
       existing.total === metadata.total &&
-      existing.date === metadata.date;
+      existing.date === metadata.date &&
+      (existing.organizationId || '') === (metadata.organizationId || '');
     if (!unchanged) upserts.push(metadata);
   }
   return upserts;

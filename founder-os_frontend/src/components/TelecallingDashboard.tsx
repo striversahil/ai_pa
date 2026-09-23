@@ -5,6 +5,7 @@ import { Trash2 } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useLiveQuery, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
+import { KNOWN_ORG_LABELS } from "./zoho/orgs";
 
 interface LeaderRow {
   id: string;
@@ -48,6 +49,8 @@ interface RiskRow {
   reasoning: string | null;
   snatchReason?: string | null;
   snatchInHours?: number | null;
+  /** Zoho Books org (multi-org sync; null/'' = primary). */
+  organizationId?: string | null;
 }
 
 interface DashData {
@@ -141,6 +144,8 @@ interface FollowUp {  estimateId: string;
   nextStepDate?: string | null;
   /** True when today's NeoDove effort on this customer shields the EOD −10. */
   effortShielded?: boolean | null;
+  /** Zoho Books org (multi-org sync; null/'' = primary). */
+  organizationId?: string | null;
 }
 
 /** Satisfactory / Unsatisfactory chip from the periodic Zoho AI analysis. */
@@ -161,6 +166,18 @@ function SatChip({ value, compact = false }: { value: boolean | null | undefined
   return (
     <span title="Awaiting the next Zoho analyzer pass" className={`${base} bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border-zinc-400/40`}>
       …{compact ? "" : " Pending"}
+    </span>
+  );
+}
+
+/** Zoho org badge (multi-org sync). Renders only when 2+ orgs are present in
+ *  the loaded data — single-org views stay exactly as before. */
+function OrgBadge({ orgId, orgs }: { orgId?: string | null; orgs: string[] }) {
+  if (!orgId || orgs.length < 2) return null;
+  const label = KNOWN_ORG_LABELS[orgId] ?? `Org •••${orgId.slice(-4)}`;
+  return (
+    <span title={`Zoho Books organization (${orgId})`} className="inline-flex items-center shrink-0 rounded border font-bold bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30 px-1.5 py-0.5 text-[10px] uppercase">
+      {label}
     </span>
   );
 }
@@ -929,6 +946,20 @@ export default function TelecallingDashboard() {
     }
     return true;
   });
+  // Distinct Zoho orgs across the loaded follow-ups + at-risk rows. The org
+  // badges render only when 2+ orgs are present (single-org = today's view).
+  const teleOrgs = useMemo(() => {
+    const set = new Set<string>();
+    for (const v of Object.values(agentViews.data ?? {})) {
+      for (const f of v?.followUps ?? []) {
+        if (f?.organizationId) set.add(String(f.organizationId));
+      }
+    }
+    for (const r of dash.data?.risk?.atRisk ?? []) {
+      if ((r as any)?.organizationId) set.add(String((r as any).organizationId));
+    }
+    return [...set].sort();
+  }, [agentViews.data, dash.data]);
 
   const refreshAll = useCallback(() => {
     dash.refresh();
@@ -1621,7 +1652,7 @@ export default function TelecallingDashboard() {
                                         <div key={f.estimateId} className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 dark:border-zinc-800 px-2.5 py-1.5">
                                           <div className="min-w-0">
                                             <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
-                                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
+                                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId} <OrgBadge orgId={f.organizationId} orgs={teleOrgs} /></div>
                         <LeadChips f={f} />
                         <CallTagControl f={f} onSaved={() => void refreshOneAgent(t.id)} onTag={applyTagOverride} />
                         <NextStepControl f={f} onSaved={() => void refreshOneAgent(t.id)} />
@@ -1682,7 +1713,7 @@ export default function TelecallingDashboard() {
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{r.customerName ?? "—"}</div>
-                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{r.estimateNumber ?? r.estimateId} · {r.telecallerName ?? "—"}</div>
+                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{r.estimateNumber ?? r.estimateId} · {r.telecallerName ?? "—"} <OrgBadge orgId={(r as any).organizationId} orgs={teleOrgs} /></div>
                           </div>
                           <div className="text-right shrink-0 space-y-0.5">
                             <div className="text-[11px] font-mono text-emerald-400">₹{fmtNum(Number(r.total ?? 0))}</div>
@@ -1881,7 +1912,7 @@ export default function TelecallingDashboard() {
                           </div>
                         </div>
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId}</div>
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId} <OrgBadge orgId={f.organizationId} orgs={teleOrgs} /></div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-xs text-zinc-700 dark:text-zinc-300">{f.status ?? "—"}</span>
                             <span className="text-xs font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</span>

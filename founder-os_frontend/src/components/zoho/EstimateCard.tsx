@@ -9,9 +9,11 @@ interface Props {
   est: Estimate;
   expanded: boolean;
   onToggleComments: (estimateId: string) => void;
+  /** Friendly org name (BUI/DPG…) — shown only when provided (multi-org). */
+  orgLabel?: string | null;
 }
 
-export default function EstimateCard({ est, expanded, onToggleComments }: Props) {
+export default function EstimateCard({ est, expanded, onToggleComments, orgLabel }: Props) {
   const c = est.classification || {};
   const accentClass = getEstimateAccentClass(est);
   const initials = getInitials(est.customerName);
@@ -33,6 +35,14 @@ export default function EstimateCard({ est, expanded, onToggleComments }: Props)
             <span className="font-extrabold text-lg text-zinc-900 dark:text-zinc-100 block tracking-tight truncate">{est.customerName}</span>
             <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 flex flex-wrap items-center gap-2">
               <span>Estimate No: <strong>{est.estimateNumber}</strong></span>
+              {orgLabel ? (
+                <span
+                  className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border bg-sky-500/10 text-sky-500 dark:text-sky-400 border-sky-500/30"
+                  title={`Zoho Books organization${est.organizationId ? ` (${est.organizationId})` : ""}`}
+                >
+                  {orgLabel}
+                </span>
+              ) : null}
               <span>•</span>
               <span>Value: <strong className="text-indigo-400">₹{est.total.toLocaleString()}</strong></span>
               <span>•</span>

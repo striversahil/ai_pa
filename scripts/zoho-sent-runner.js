@@ -70,9 +70,14 @@ async function main() {
   await syncSalesOrders();
 
   // 1. All-status estimates, newest-modified first (any mover is in-window).
-  console.log('zoho-sent-runner: fetching all-status estimates from Zoho (2 pages)');
+  // Multi-org: fetch.js loops every organization_id in sent_estimates.txt
+  // (same login) and namespaces non-primary ids (see scripts/zoho-sync/orgs.js).
+  console.log('zoho-sent-runner: fetching all-status estimates from Zoho (2 pages/org)');
   const estimates = await fetch.fetchEstimatesAll(2);
-  console.log(`zoho-sent-runner: fetched ${estimates.length} estimates`);
+  const primaryOrg = fetch.zohoContext().orgId;
+  const perOrg = {};
+  for (const e of estimates) perOrg[e._orgId || primaryOrg] = (perOrg[e._orgId || primaryOrg] || 0) + 1;
+  console.log(`zoho-sent-runner: fetched ${estimates.length} estimates (${Object.entries(perOrg).map(([o, n]) => `${o}:${n}`).join(', ')})`);
   const forced = process.env.ZOHO_FORCE === '1';
 
   // 2. DB state for diffing.
@@ -122,8 +127,9 @@ async function main() {
   if (transitions.length) await persist.postStatusUpdates(transitions);
 
   // 7. Metadata convergence (status rides only on brand-new rows; flips went
-  //    through step 6 so no win is ever applied silently).
-  await persist.postMetadataUpserts(diff.diffMetadata(estimates, existingByEstId));
+  //    through step 6 so no win is ever applied silently). primaryOrg lets the
+  //    worker reject a reordered org file (would corrupt DB identities).
+  await persist.postMetadataUpserts(diff.diffMetadata(estimates, existingByEstId), primaryOrg);
 
   // 8. Vanished-row fallback: DB-sent rows on neither list page (deleted in
   //    Zoho → last-known status kept; otherwise the live status is synced).

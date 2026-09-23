@@ -234,10 +234,12 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       ? body.orders.slice(0, 50).map((o: any) => ({
           so: String(o?.so ?? ''), ref: String(o?.ref ?? ''), customer: String(o?.customer ?? ''),
           total: Number(o?.total) || 0, status: String(o?.status ?? ''), time: String(o?.time ?? ''),
+          org: String(o?.org ?? ''),
         }))
       : [];
     const cache = require('../../shared/cache');
-    const next = { date: body.date, count: body.count, totalValue: Number(body.totalValue) || 0, statuses: body.statuses || {}, orders };
+    const byOrg = body.byOrg && typeof body.byOrg === 'object' ? body.byOrg : {};
+    const next = { date: body.date, count: body.count, totalValue: Number(body.totalValue) || 0, statuses: body.statuses || {}, orders, byOrg };
     // Only invalidate the (30-min-TTL) estimates cache when the SO data actually
     // changed — the dashboard KPI/feed rides on /api/estimates, and pointless
     // invalidations would force a ~3s cold recompute every 15 min.
@@ -277,6 +279,9 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // Stage → desk ownership: confirm=CRM, invoice=Accounts, ship=Dispatch, payment=Accounts.
   const CRM_SNAPSHOT_KEY = 'crm:salesorders_snapshot';
   const CRM_DATA_CACHE_KEY = 'crm:data';
+  // Org-scoped SO key: identical SO numbers in two Zoho orgs are distinct
+  // pipeline rows. Legacy snapshot rows without `org` keep bare keys.
+  const crmKey = (o: any) => (o?.org ? `${o.org}:` : '') + String(o?.so ?? '');
   // Freshness window (dashboard "live") vs retention window (outage survival).
   // The snapshot is always WRITTEN with the 7-day TTL so a Zoho outage serves
   // the last-known pipeline with a stale badge instead of zeroing out; reads
@@ -313,36 +318,40 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // Diff source: the runner's full lightweight `index` (UNCAPPED — every SO),
     // so per-stage display caps (400) never hide points movements. Older
     // runners that don't send `index` fall back to the truncated order rows.
+    // Keys are org-scoped (see crmKey); the `so` field is kept on every value
+    // so a pre-multi-org (bare-key) snapshot still matches via fallback — the
+    // deploy-transition tick loses no close/cancel credits.
     const toEntry = (o: any, fallbackStage: string) => ({
+      so: String(o?.so ?? ''),
       stage: String(o?.stage || fallbackStage || ''),
       paidStatus: String(o?.paidStatus || ''),
       createdToday: !!o?.createdToday,
       salesperson: String(o?.salesperson || ''),
     });
-    // Previous active orders: so → { stage, paidStatus }.
+    // Previous active orders: key → { stage, paidStatus }.
     const prevBySo = new Map<string, { stage: string; paidStatus: string }>();
     if (Array.isArray(prev?.index) && prev.index.length > 0) {
       for (const o of prev.index) {
-        if (o?.so) prevBySo.set(String(o.so), { stage: String(o.stage || ''), paidStatus: String(o.paidStatus || '') });
+        if (o?.so) prevBySo.set(crmKey(o), { stage: String(o.stage || ''), paidStatus: String(o.paidStatus || '') });
       }
     } else {
       const prevSource = prev?.stages || prev?.byProcess || {};
       for (const [stage, entry] of Object.entries(prevSource)) {
         for (const o of (entry as any)?.orders ?? []) {
-          if (o?.so) prevBySo.set(String(o.so), { stage, paidStatus: String(o.paidStatus || '') });
+          if (o?.so) prevBySo.set(crmKey(o), { stage, paidStatus: String(o.paidStatus || '') });
         }
       }
     }
-    // New active orders: so → { stage, paidStatus, createdToday, salesperson }.
-    const nextBySo = new Map<string, { stage: string; paidStatus: string; createdToday: boolean; salesperson: string }>();
+    // New active orders: key → { so, stage, paidStatus, createdToday, salesperson }.
+    const nextBySo = new Map<string, { so: string; stage: string; paidStatus: string; createdToday: boolean; salesperson: string }>();
     if (Array.isArray((body as any)?.index) && (body as any).index.length > 0) {
       for (const o of (body as any).index) {
-        if (o?.so && String(o.stage || '') !== 'complete') nextBySo.set(String(o.so), toEntry(o, ''));
+        if (o?.so && String(o.stage || '') !== 'complete') nextBySo.set(crmKey(o), toEntry(o, ''));
       }
     } else {
       for (const [stage, entry] of Object.entries(stages)) {
         for (const o of entry.orders) {
-          if (o?.so) nextBySo.set(String(o.so), toEntry(o, stage));
+          if (o?.so) nextBySo.set(crmKey(o), toEntry(o, stage));
         }
       }
     }
@@ -361,22 +370,24 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       }
     };
 
-    for (const [so, next] of nextBySo) {
-      const prevEntry = prevBySo.get(so);
+    for (const [key, next] of nextBySo) {
+      // Fallback to the bare SO number so a snapshot written before the
+      // multi-org deploy still matches (one transitional tick, no lost credits).
+      const prevEntry = prevBySo.get(key) ?? prevBySo.get(next.so);
       if (!prevEntry) {
         // First time visible in the pipeline. Only orders CREATED TODAY earn the
         // new-order credit (prevents a re-credit flood if the KV snapshot expired).
-        if (next.createdToday) credit('crm', so, 25, 'New sales order created', next.salesperson);
+        if (next.createdToday) credit('crm', key, 25, 'New sales order created', next.salesperson);
         continue;
       }
       if (prevEntry.stage !== next.stage) {
         const prevIdx = CRM_STAGES.indexOf(prevEntry.stage);
         const nextIdx = CRM_STAGES.indexOf(next.stage);
-        if (nextIdx > prevIdx) awardStageCompletions(prevIdx, nextIdx - 1, so, next.salesperson);
+        if (nextIdx > prevIdx) awardStageCompletions(prevIdx, nextIdx - 1, key, next.salesperson);
         // Regression (credit note / manual revert) scores nothing.
       }
       if (next.paidStatus === 'paid' && prevEntry.paidStatus !== 'paid') {
-        credit('accounts', so, 100, 'Payment received', null);
+        credit('accounts', key, 100, 'Payment received', null);
       }
     }
 
@@ -385,16 +396,16 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // owned the stage the order was sitting in.
     const closedList: any[] = Array.isArray(body.closed) ? body.closed.slice(0, 400) : [];
     for (const co of closedList) {
-      const so = String(co?.so || '');
-      const prevEntry = prevBySo.get(so);
+      const key = crmKey(co);
+      const prevEntry = prevBySo.get(key) ?? prevBySo.get(String(co?.so || ''));
       if (!prevEntry) continue; // wasn't active in the previous snapshot — nothing to credit
       const status = String(co?.status || '');
       const salesperson = String(co?.salesperson || '') || null;
       if (status === 'cancelled' || status === 'void') {
-        credit(STAGE_DEPT[prevEntry.stage] || 'crm', so, -20, `Order cancelled (was in ${prevEntry.stage})`, salesperson);
+        credit(STAGE_DEPT[prevEntry.stage] || 'crm', key, -20, `Order cancelled (was in ${prevEntry.stage})`, salesperson);
       } else if ((co?.paidStatus === 'paid' || co?.orderStatus === 'closed') && prevEntry.paidStatus !== 'paid') {
         const prevIdx = CRM_STAGES.indexOf(prevEntry.stage);
-        if (prevIdx >= 0) awardStageCompletions(prevIdx, CRM_STAGES.length - 1, so, salesperson);
+        if (prevIdx >= 0) awardStageCompletions(prevIdx, CRM_STAGES.length - 1, key, salesperson);
       }
     }
 
@@ -422,32 +433,33 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const prevSigBySo = new Map<string, string>();
     try {
       for (const o of (Array.isArray(prev?.index) ? prev.index : [])) {
-        if (o?.so) prevSigBySo.set(String(o.so), String(o.itemsSig || ''));
+        if (o?.so) prevSigBySo.set(crmKey(o), String(o.itemsSig || ''));
       }
       const nextSigBySo = new Map<string, string>();
       for (const o of (Array.isArray((body as any)?.index) ? (body as any).index : [])) {
-        if (o?.so) nextSigBySo.set(String(o.so), String(o.itemsSig || ''));
+        if (o?.so) nextSigBySo.set(crmKey(o), String(o.itemsSig || ''));
       }
       const prevItemsBySo = new Map<string, { items: any[]; lineCount: number }>();
       const prevSrc = prev?.stages || prev?.byProcess || {};
       for (const entry of Object.values(prevSrc)) {
         for (const o of (entry as any)?.orders ?? []) {
-          if (o?.so && Array.isArray(o?.items) && o.items.length > 0 && !prevItemsBySo.has(String(o.so))) {
-            prevItemsBySo.set(String(o.so), { items: o.items, lineCount: Number(o.lineCount) || o.items.length });
+          if (o?.so && Array.isArray(o?.items) && o.items.length > 0 && !prevItemsBySo.has(crmKey(o))) {
+            prevItemsBySo.set(crmKey(o), { items: o.items, lineCount: Number(o.lineCount) || o.items.length });
           }
         }
       }
       for (const entry of Object.values(stages)) {
         for (const o of (entry as any).orders) {
           if (o?.so && (!Array.isArray(o?.items) || o.items.length === 0)) {
-            const so = String(o.so);
-            const sig = nextSigBySo.get(so) || '';
-            const hit = prevItemsBySo.get(so);
-            if (sig && hit && prevSigBySo.get(so) === sig) {
+            const key = crmKey(o);
+            const bare = String(o.so);
+            const sig = nextSigBySo.get(key) || '';
+            const hit = prevItemsBySo.get(key) ?? prevItemsBySo.get(bare);
+            if (sig && hit && (prevSigBySo.get(key) ?? prevSigBySo.get(bare)) === sig) {
               o.items = hit.items;
               o.lineCount = hit.lineCount;
               backfilled++;
-            } else if (!sig && hit && (prevSigBySo.get(so) || '')) {
+            } else if (!sig && hit && ((prevSigBySo.get(key) ?? prevSigBySo.get(bare)) || '')) {
               // Fetch failed (or never ran) for a row we HAD detail for:
               // keep the stored items so the dropdown never goes blank.
               // The index-sig restore below keeps the old sig, so the row
@@ -471,8 +483,8 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     let storedIndex: any[] = Array.isArray((body as any)?.index) ? (body as any).index.slice(0, 10000) : [];
     if (preserved > 0) {
       storedIndex = storedIndex.map((o: any) => {
-        if (o?.so && !String(o?.itemsSig || '') && (prevSigBySo.get(String(o.so)) || '')) {
-          return { ...o, itemsSig: prevSigBySo.get(String(o.so)) };
+        if (o?.so && !String(o?.itemsSig || '') && (prevSigBySo.get(crmKey(o)) || '')) {
+          return { ...o, itemsSig: prevSigBySo.get(crmKey(o)) };
         }
         return o;
       });
@@ -532,14 +544,14 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
     const bySo = new Map<string, any>();
     for (const r of rows) {
-      if (r?.so && Array.isArray(r?.items)) bySo.set(String(r.so), r);
+      if (r?.so && Array.isArray(r?.items)) bySo.set(crmKey(r), r);
     }
     if (bySo.size === 0) return c.json({ ok: true, merged: 0 });
     let merged = 0;
     const src = snap?.stages || snap?.byProcess || {};
     for (const entry of Object.values(src)) {
       for (const o of (entry as any)?.orders ?? []) {
-        const r = o?.so ? bySo.get(String(o.so)) : null;
+        const r = o?.so ? (bySo.get(crmKey(o)) ?? bySo.get(String(o.so))) : null;
         if (!r) continue;
         o.items = r.items.slice(0, 200);
         o.lineCount = Number(r.lineCount) || r.items.length;
@@ -550,11 +562,13 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (Array.isArray(snap.index)) {
       const sigBySo = new Map<string, string>();
       for (const r of rows) {
-        if (r?.so && typeof r?.itemsSig === 'string' && r.itemsSig) sigBySo.set(String(r.so), r.itemsSig);
+        if (r?.so && typeof r?.itemsSig === 'string' && r.itemsSig) sigBySo.set(crmKey(r), r.itemsSig);
       }
-      snap.index = snap.index.map((o: any) =>
-        (o?.so && sigBySo.has(String(o.so)) ? { ...o, itemsSig: sigBySo.get(String(o.so)) } : o),
-      );
+      snap.index = snap.index.map((o: any) => {
+        if (!o?.so) return o;
+        const sig = sigBySo.get(crmKey(o)) ?? sigBySo.get(String(o.so));
+        return sig ? { ...o, itemsSig: sig } : o;
+      });
     }
     snap.materials = computeCrmMaterials(snap.stages || {}, 300);
     snap.meta = { ...(snap.meta ?? null), withLineItems: (snap.materials as any[]).length > 0 };
@@ -583,13 +597,13 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     try {
       const prevSigBySo = new Map<string, string>();
       for (const o of (Array.isArray(snap?.index) ? snap.index : [])) {
-        if (o?.so) prevSigBySo.set(String(o.so), String(o.itemsSig || ''));
+        if (o?.so) prevSigBySo.set(crmKey(o), String(o.itemsSig || ''));
       }
       const src = snap?.stages || snap?.byProcess || {};
       for (const [stage, entry] of Object.entries(src)) {
         for (const o of (entry as any)?.orders ?? []) {
-          if (o?.so && !sigs[String(o.so)]) {
-            sigs[String(o.so)] = [String(stage), prevSigBySo.get(String(o.so)) || ''];
+          if (o?.so && !sigs[crmKey(o)]) {
+            sigs[crmKey(o)] = [String(stage), prevSigBySo.get(crmKey(o)) || ''];
           }
         }
       }

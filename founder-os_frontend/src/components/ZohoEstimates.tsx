@@ -9,6 +9,7 @@ import ActiveFilters from "./zoho/ActiveFilters";
 import CallingPriorityChecklist from "./zoho/CallingPriorityChecklist";
 import type { FilterRule } from "./zoho/types";
 import { getCommentAgeHours, getTodayDateString } from "./zoho/utils";
+import { orgLabel, isMultiOrg } from "./zoho/orgs";
 
 const KPI_FILTERS: Omit<KpiCardConfig, "count">[] = [
   { field: "satisfactory", label: "Satisfactory", negLabel: "Unsatisfactory", accent: "emerald", polarity: "good" },
@@ -40,10 +41,13 @@ export default function ZohoEstimates() {
   const [salesOrdersToday, setSalesOrdersToday] = useState<number | null>(null);
   const [salesOrdersTodayValue, setSalesOrdersTodayValue] = useState<number | null>(null);
   const [salesOrdersTodayOrders, setSalesOrdersTodayOrders] = useState<any[] | null>(null);
+  // Multi-org (BUI + DPG): org ids present in the payload + the active filter.
+  const [organizations, setOrganizations] = useState<string[]>([]);
+  const [orgFilter, setOrgFilter] = useState<string>("all");
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [showClosed, filters]);
+  }, [showClosed, filters, orgFilter]);
 
   const lastSyncTimeStr = useMemo(() => {
     if (!lastCompleteSyncAt) return null;
@@ -67,6 +71,7 @@ export default function ZohoEstimates() {
       const data = await res.json();
       setEstimates(data.estimates ?? []);
       setLastCompleteSyncAt(data.lastCompleteSyncAt ?? null);
+      setOrganizations(Array.isArray(data.organizations) ? data.organizations : []);
       readSalesOrdersFrom(data);
     } catch (e) {
       console.error("Error loading Zoho estimates:", e);
@@ -336,10 +341,18 @@ export default function ZohoEstimates() {
     }));
   };
 
+  // Multi-org scope: one filtered list drives the checklist, KPI cards and
+  // counts together — 'all' keeps the merged BUI+DPG view.
+  const orgScopedEstimates = useMemo(() => (
+    orgFilter === "all"
+      ? estimates
+      : estimates.filter(e => String(e.organizationId ?? "") === orgFilter)
+  ), [estimates, orgFilter]);
+
   const priorityList = useMemo(() => {
     const filteredEstimates = showClosed
-      ? estimates
-      : estimates.filter(e => String(e.status).toLowerCase() === 'sent');
+      ? orgScopedEstimates
+      : orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent');
 
     let items = filteredEstimates.map((e) => {
       if (!e.classification) {
@@ -420,7 +433,7 @@ export default function ZohoEstimates() {
 
       return b.total - a.total;
     });
-  }, [estimates, filters, showClosed]);
+  }, [orgScopedEstimates, filters, showClosed, orgFilter]);
 
   const [customPrompt, setCustomPrompt] = useState<string>("");
   const [isPromptDirty, setIsPromptDirty] = useState<boolean>(false);
@@ -564,7 +577,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
       last_comment_older_5h: 0
     };
 
-    estimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach(est => {
+    orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach(est => {
       const c = est.classification || {};
 
       if (c.meaningfulUpdate === true) counts.satisfactory++;
@@ -583,13 +596,13 @@ Action: (single clear objective — close order / clarify doubts / send revised 
     });
 
     return counts;
-  }, [estimates]);
+  }, [orgScopedEstimates]);
 
   const stats = useMemo(() => {
     let totalValue = 0;
     let notAnsweringCount = 0;
 
-    estimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach((e) => {
+    orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach((e) => {
       totalValue += e.total;
       const c = e.classification;
       if (c) {
@@ -598,11 +611,11 @@ Action: (single clear objective — close order / clarify doubts / send revised 
     });
 
     return {
-      totalCount: estimates.filter(e => String(e.status).toLowerCase() === 'sent').length,
+      totalCount: orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').length,
       totalValue,
       notAnsweringCount
     };
-  }, [estimates]);
+  }, [orgScopedEstimates]);
 
   const applyKpiFilter = (field: string, inverted: boolean) => {
     const operator: "is" | "is_not" = inverted ? "is_not" : "is";
@@ -693,6 +706,34 @@ Action: (single clear objective — close order / clarify doubts / send revised 
         onClear={() => setFilters([])}
       />
 
+      {isMultiOrg(organizations) && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Organization</span>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setOrgFilter("all")}
+              className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${orgFilter === "all" ? "bg-indigo-500/15 text-indigo-500 dark:text-indigo-300 border-indigo-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+            >
+              All ({estimates.length})
+            </button>
+            {organizations.map((org) => {
+              const n = estimates.filter(e => String(e.organizationId ?? "") === org).length;
+              const active = orgFilter === org;
+              return (
+                <button
+                  key={org}
+                  onClick={() => setOrgFilter(active ? "all" : org)}
+                  title={org}
+                  className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${active ? "bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+                >
+                  {orgLabel(org, organizations)} ({n})
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <CallingPriorityChecklist
         isLoading={isLoading}
         priorityList={priorityList}
@@ -702,6 +743,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
         onToggleShowClosed={() => setShowClosed(prev => !prev)}
         onToggleComments={toggleCardComments}
         onPageChange={setCurrentPage}
+        getOrgLabel={(orgId) => (isMultiOrg(organizations) ? orgLabel(orgId, organizations) : null)}
       />
     </div>
   );

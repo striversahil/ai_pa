@@ -30,6 +30,8 @@ export interface Estimate {
   status: string;
   classification?: Classification;
   comments?: Comment[];
+  /** Zoho Books organization id (multi-org sync; '' = legacy/primary). */
+  organizationId?: string;
   // Lead-details block extracted from Zoho comments by the GH runner.
   enquiryNumber?: string;
   sourceLead?: string;
