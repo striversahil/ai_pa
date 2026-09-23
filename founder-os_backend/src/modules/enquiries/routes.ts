@@ -198,7 +198,15 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
   try {
     const nums = (enquiries as any[]).map((e) => String((e as any)?.estNumber ?? '').trim()).filter(Boolean);
     if (nums.length) {
-      const byNum = await estimateStatusByNumbers(nums);
+      // Org-preferring chip: on a cross-org number clash the row whose org
+      // matches the enquiry wins (untagged enquiries read first-match).
+      const orgByNum = new Map<string, string>();
+      for (const e of enquiries as any[]) {
+        const n = String((e as any)?.estNumber ?? '').trim();
+        const o = String((e as any)?.organizationId ?? '').trim();
+        if (n && o && !orgByNum.has(n)) orgByNum.set(n, o);
+      }
+      const byNum = await estimateStatusByNumbers(nums, orgByNum);
       for (const e of enquiries as any[]) {
         const hit = byNum.get(String((e as any)?.estNumber ?? '').trim());
         (e as any).zohoStatus = hit ? hit.status : null;
@@ -436,6 +444,20 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     await store.updateEnquiry(created.id, { rateStatus: 'rates_received' } as any);
     created.rateStatus = 'rates_received';
   }
+  // Org tagging (server-resolved, never client-writable): a unique Zoho match
+  // auto-tags the enquiry; ambiguous/not-yet-synced numbers stay '' and
+  // resolve at Check & Assign time (agent picks the org).
+  let createdOrg = '';
+  if (estNumber) {
+    try {
+      const { resolveEnquiryOrg } = await import('./estimate-link');
+      createdOrg = await resolveEnquiryOrg(estNumber);
+      if (createdOrg) {
+        await store.updateEnquiry(created.id, { organizationId: createdOrg } as any).catch(() => null);
+        created.organizationId = createdOrg;
+      }
+    } catch { /* fail-open */ }
+  }
   // Enquiry-linked estimate attribution: a Zoho estimate number on the row
   // assigns that estimate to this enquiry's agent when it is free (never
   // steals, never fails the save — a not-yet-synced estimate is picked up by
@@ -445,6 +467,7 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
       estimateNumber: estNumber,
       agentId: assignedAgentId,
       label: `enquiry ${String(created.enquiryNumber ?? created.id)}`,
+      organizationId: createdOrg,
     }).catch(() => undefined);
   }
   // Scope-safe broadcast: a summary only (counts + label parts) — never the

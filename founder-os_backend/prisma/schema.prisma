@@ -718,6 +718,12 @@ model ChatMember {
 model Enquiry {
   id             String  @id @default(uuid())
   estNumber      String
+  // Zoho Books organization the linked estimate belongs to (multi-org:
+  // BUI + DPG share EST number series — see scripts/zoho-sync/orgs.js).
+  // Resolved from the linked estimate on save/claim (unique match auto-tags;
+  // on a cross-org number clash the agent picks at Check & Assign time).
+  // '' = untagged/legacy, read as the primary (BUI) org.
+  organizationId String  @default("")
   // Daily enquiry number: Enquiry No {dailyNo} - {DD} {MON} {source}.
   // Auto-assigned at creation, counter resets every IST day.
   dailyNo        Int?
@@ -749,6 +755,8 @@ model Enquiry {
   // [{ name, qty, spec }] — one entry per purchasable item in the enquiry.
   items          String?
   comments       EnquiryComment[]
+
+  @@index([organizationId])
 }
 
 model EnquiryComment {

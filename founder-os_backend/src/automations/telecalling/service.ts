@@ -854,7 +854,12 @@ export async function assignEstimatesForMaxConversion(): Promise<{ assigned: num
       // is no comment-inference fallback — unmapped rows go best-fit.
       // Older unassigned estimates keep best-fit conversion routing.
       if (!wasAssigned) {
-        const enquiryCreator = enquiryCreatorByEst.get(String((est as any).estimateNumber ?? '').trim()) ?? '';
+        // Org-scoped creator first (cross-org number clashes resolve to the
+        // same-org enquiry), legacy bare-number key as fallback.
+        const estNum = String((est as any).estimateNumber ?? '').trim();
+        const estOrg = String((est as any).organizationId ?? '').trim();
+        const enquiryCreator = (estOrg && enquiryCreatorByEst.get(`${estOrg}||${estNum}`))
+          || enquiryCreatorByEst.get(estNum) || '';
         const knownCreator = enquiryCreator || String((est as any).createdBy ?? '');
         // Self-heal: enquiry mapping always wins for createdBy.
         if (enquiryCreator && String((est as any).createdBy ?? '') !== enquiryCreator) {
@@ -1367,6 +1372,8 @@ export async function linkEnquiryEstimate(opts: {
   estimateNumber: string;
   agentId: string;
   label?: string;
+  /** Pins the row on cross-org number clashes (the enquiry's org). */
+  organizationId?: string;
 }): Promise<EnquiryLinkResult> {
   const estNo = String(opts.estimateNumber ?? '').trim();
   const agentId = String(opts.agentId ?? '').trim();
@@ -1377,10 +1384,20 @@ export async function linkEnquiryEstimate(opts: {
     if (!tc || (tc as any).deleted || (tc as any).absentSince) {
       return { linked: false, reason: 'agent-invalid' };
     }
-    // Exact match first, then an uppercase fallback for typo'd entries.
-    let est: any = await prisma.estimate.findFirst({ where: { estimateNumber: estNo } });
+    // Exact match first, then an uppercase fallback for typo'd entries. On a
+    // cross-org clash the pinned org wins, else legacy first-match.
+    const org = String(opts.organizationId ?? '').trim();
+    const pickBest = (rows: any[]) => {
+      if (!rows?.length) return null;
+      if (org) {
+        const hit = rows.find((r) => String((r as any)?.organizationId ?? '') === org);
+        if (hit) return hit;
+      }
+      return rows[0];
+    };
+    let est: any = pickBest(await prisma.estimate.findMany({ where: { estimateNumber: estNo } }).catch(() => []));
     if (!est && estNo !== estNo.toUpperCase()) {
-      est = await prisma.estimate.findFirst({ where: { estimateNumber: estNo.toUpperCase() } });
+      est = pickBest(await prisma.estimate.findMany({ where: { estimateNumber: estNo.toUpperCase() } }).catch(() => []));
     }
     if (!est) return { linked: false, reason: 'not-synced' };
     if (est.status !== 'sent') return { linked: false, reason: `status-${est.status}` };
@@ -1421,7 +1438,7 @@ export async function sweepEnquiryEstimateLinks(): Promise<{ linked: number; sca
   let scanned = 0;
   try {
     const enquiries = await prisma.enquiry.findMany({
-      select: { estNumber: true, assignedAgentId: true, enquiryNumber: true },
+      select: { estNumber: true, assignedAgentId: true, enquiryNumber: true, organizationId: true },
     });
     const withEst = ((enquiries as any[]) ?? []).filter(
       (e) => String(e?.estNumber ?? '').trim() && String(e?.assignedAgentId ?? '').trim(),
@@ -1432,6 +1449,7 @@ export async function sweepEnquiryEstimateLinks(): Promise<{ linked: number; sca
         estimateNumber: String(e.estNumber).trim(),
         agentId: String(e.assignedAgentId).trim(),
         label: `enquiry ${String(e.enquiryNumber ?? '').trim() || 'row'}`,
+        organizationId: String((e as any)?.organizationId ?? ''),
       });
       if (r.linked) linked += 1;
     }

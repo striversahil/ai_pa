@@ -11,24 +11,42 @@ export function normalizeEstNumber(s: unknown): string {
   return String(s ?? '').trim();
 }
 
-async function findEstimateByNumber(estNumber: string): Promise<any | null> {
+async function findEstimatesByNumber(estNumber: string): Promise<any[]> {
   const num = normalizeEstNumber(estNumber);
-  if (!num) return null;
+  if (!num) return [];
   try {
-    // Exact first (works on Postgres + D1 shim).
-    const exact = await (prisma as any).estimate.findFirst({ where: { estimateNumber: num } });
-    if (exact) return exact;
+    // Exact matches across ALL orgs (BUI + DPG share the EST series).
+    const exact = await (prisma as any).estimate.findMany({ where: { estimateNumber: num } });
+    if (Array.isArray(exact) && exact.length > 0) return exact as any[];
   } catch { /* fall through to scan */ }
   try {
     // Case/whitespace-tolerant fallback scan (small table, rare path).
     const all = await (prisma as any).estimate.findMany({ select: { estimateId: true, estimateNumber: true } });
     const want = num.toLowerCase();
-    const hit = (all as any[]).find((e) => String(e?.estimateNumber ?? '').trim().toLowerCase() === want);
-    if (!hit) return null;
-    return (prisma as any).estimate.findUnique({ where: { estimateId: String(hit.estimateId) } });
+    const hits = (all as any[]).filter((e) => String(e?.estimateNumber ?? '').trim().toLowerCase() === want);
+    if (!hits.length) return [];
+    const rows = await (prisma as any).estimate.findMany({
+      where: { estimateId: { in: hits.map((h) => String(h.estimateId)) } },
+    });
+    return (rows as any[]) ?? [];
   } catch {
-    return null;
+    return [];
   }
+}
+
+async function findEstimateByNumber(estNumber: string, organizationId?: string): Promise<any | null> {
+  const rows = await findEstimatesByNumber(estNumber);
+  if (!rows.length) return null;
+  const org = String(organizationId ?? '').trim();
+  // An explicitly linked org always wins (the agent's Check & Assign pick).
+  if (org) {
+    const hit = rows.find((r) => String((r as any)?.organizationId ?? '') === org);
+    if (hit) return hit;
+  }
+  if (rows.length === 1) return rows[0];
+  // Ambiguous and no pinned org: legacy first-match (fail-open). Callers that
+  // need certainty (claim) handle the multi-match case explicitly.
+  return rows[0];
 }
 
 async function telecallerName(id: string | null | undefined): Promise<string | null> {
@@ -41,16 +59,18 @@ async function telecallerName(id: string | null | undefined): Promise<string | n
   }
 }
 
-/** Overwrite Estimate.createdBy from the enquiry's agent — always wins. */
+/** Overwrite Estimate.createdBy from the enquiry's agent — always wins.
+ *  organizationId pins the row on cross-org number clashes. */
 export async function syncEstimateCreatorFromEnquiry(
   estNumber: unknown,
   agentId: unknown,
+  organizationId?: unknown,
 ): Promise<{ updated: boolean; estimateId?: string }> {
   const num = normalizeEstNumber(estNumber);
   const agent = String(agentId ?? '').trim();
   if (!num || !agent) return { updated: false };
   try {
-    const est = await findEstimateByNumber(num);
+    const est = await findEstimateByNumber(num, String(organizationId ?? ''));
     if (!est) return { updated: false };
     if (String((est as any).createdBy ?? '') === agent) return { updated: false, estimateId: String(est.estimateId) };
     await (prisma as any).estimate.update({
@@ -69,11 +89,11 @@ export async function syncEstimateCreatorFromEnquiry(
  * createdBy is cleared — By shows ONLY while a B2B enquiry maps the row.
  * Fail-open, never throws.
  */
-export async function reconcileEstimateCreator(estNumber: unknown): Promise<{ updated: boolean }> {
+export async function reconcileEstimateCreator(estNumber: unknown, organizationId?: unknown): Promise<{ updated: boolean }> {
   const num = normalizeEstNumber(estNumber);
   if (!num) return { updated: false };
   try {
-    const est = await findEstimateByNumber(num);
+    const est = await findEstimateByNumber(num, String(organizationId ?? ''));
     if (!est) return { updated: false };
     let owner: string | null = null;
     try {
@@ -98,27 +118,37 @@ export async function reconcileEstimateCreator(estNumber: unknown): Promise<{ up
 
 /** Batch Zoho status lookup for the enquiry list (single query, fail-open).
  *  Attached pre-redaction in `enquiryList` so the procurement payload keeps
- *  `zohoStatus` even though `estNumber` itself is blanked below. */
-export async function estimateStatusByNumbers(nums: unknown[]): Promise<Map<string, { status: string; customerName: string }>> {
+ *  `zohoStatus` even though `estNumber` itself is blanked below. On a
+ *  cross-org number clash the row whose org matches the enquiry wins;
+ *  untagged enquiries ('' org) read the first match (legacy). */
+export async function estimateStatusByNumbers(
+  nums: unknown[],
+  orgByNum?: Map<string, string>,
+): Promise<Map<string, { status: string; customerName: string }>> {
   const out = new Map<string, { status: string; customerName: string }>();
   const uniq = [...new Set((nums as any[]).map(normalizeEstNumber).filter(Boolean))];
   if (!uniq.length) return out;
   try {
     const rows = await (prisma as any).estimate.findMany({
       where: { estimateNumber: { in: uniq } },
-      select: { estimateNumber: true, status: true, customerName: true },
+      select: { estimateNumber: true, status: true, customerName: true, organizationId: true },
     });
-    for (const r of (rows as any[]) ?? []) {
-      out.set(String((r as any)?.estimateNumber ?? ''), {
-        status: String((r as any)?.status ?? ''),
-        customerName: String((r as any)?.customerName ?? ''),
+    for (const num of uniq) {
+      const matches = ((rows as any[]) ?? []).filter((r) => String((r as any)?.estimateNumber ?? '') === num);
+      if (!matches.length) continue;
+      const wantOrg = String(orgByNum?.get(num) ?? '').trim();
+      const hit = (wantOrg && matches.find((r) => String((r as any)?.organizationId ?? '') === wantOrg)) || matches[0];
+      out.set(num, {
+        status: String((hit as any)?.status ?? ''),
+        customerName: String((hit as any)?.customerName ?? ''),
       });
     }
   } catch { /* fail-open: rows simply carry no zohoStatus */ }
   return out;
 }
 
-/** Lookup for the B2B EST-No. check button. */
+/** Lookup for the B2B EST-No. check button. On a cross-org number clash every
+ *  matching org row is returned — the agent picks one at claim time. */
 export async function lookupEstimateStatus(estNumber: unknown): Promise<{
   found: boolean;
   estimateId?: string;
@@ -126,66 +156,126 @@ export async function lookupEstimateStatus(estNumber: unknown): Promise<{
   customerName?: string;
   status?: string;
   total?: number;
+  organizationId?: string;
   assignedTelecallerId?: string | null;
   holderName?: string | null;
   createdBy?: string | null;
   creatorName?: string | null;
+  matches?: Array<{
+    estimateId: string;
+    estimateNumber: string;
+    customerName: string;
+    status: string;
+    total: number;
+    organizationId: string;
+    assignedTelecallerId: string | null;
+    holderName: string | null;
+    createdBy: string | null;
+    creatorName: string | null;
+  }>;
 }> {
   const num = normalizeEstNumber(estNumber);
   if (!num) return { found: false };
-  const est = await findEstimateByNumber(num);
-  if (!est) return { found: false };
-  const [holderName, creatorName] = await Promise.all([
-    telecallerName((est as any).assignedTelecallerId ?? null),
-    telecallerName((est as any).createdBy ?? null),
-  ]);
-  return {
-    found: true,
-    estimateId: String(est.estimateId),
-    estimateNumber: String(est.estimateNumber),
-    customerName: String(est.customerName ?? ''),
-    status: String(est.status ?? ''),
-    total: Number(est.total ?? 0),
-    assignedTelecallerId: (est as any).assignedTelecallerId ?? null,
-    holderName,
-    createdBy: (est as any).createdBy ?? null,
-    creatorName,
-  };
+  const rows = await findEstimatesByNumber(num);
+  if (!rows.length) return { found: false };
+  const matches = await Promise.all(rows.map(async (est) => {
+    const [holderName, creatorName] = await Promise.all([
+      telecallerName((est as any).assignedTelecallerId ?? null),
+      telecallerName((est as any).createdBy ?? null),
+    ]);
+    return {
+      estimateId: String(est.estimateId),
+      estimateNumber: String(est.estimateNumber),
+      customerName: String(est.customerName ?? ''),
+      status: String(est.status ?? ''),
+      total: Number(est.total ?? 0),
+      organizationId: String((est as any).organizationId ?? ''),
+      assignedTelecallerId: (est as any).assignedTelecallerId ?? null,
+      holderName,
+      createdBy: (est as any).createdBy ?? null,
+      creatorName,
+    };
+  }));
+  const first = matches[0];
+  return { found: true, ...first, matches };
 }
 
 /**
  * Claim flow for the B2B button: check exists → if held by someone else,
  * report holder only (no steal); if free, assign to the enquiry's agent
  * AND overwrite createdBy (enquiry always wins). Fail-open, never throws.
+ * estimateId pins the row when the agent picked one org of a cross-org
+ * number clash; without a pin an ambiguous number returns
+ * { ok:false, ambiguous:true, matches } instead of linking the wrong org.
  */
 export async function claimEstimateForAgent(
   estNumber: unknown,
   agentId: unknown,
   reason = 'B2B enquiry claim',
+  estimateId?: unknown,
 ): Promise<{
   ok: boolean;
   error?: string;
   alreadyAssigned?: boolean;
   alreadyMine?: boolean;
+  ambiguous?: boolean;
   estimateId?: string;
+  organizationId?: string;
   holderName?: string | null;
   holderId?: string | null;
+  matches?: Array<{
+    estimateId: string;
+    estimateNumber: string;
+    customerName: string;
+    status: string;
+    total: number;
+    organizationId: string;
+    assignedTelecallerId: string | null;
+    holderName: string | null;
+  }>;
 }> {
   const num = normalizeEstNumber(estNumber);
   const agent = String(agentId ?? '').trim();
+  const pinnedId = String(estimateId ?? '').trim();
   if (!num) return { ok: false, error: 'Enter EST No. first' };
   if (!agent) return { ok: false, error: 'Enquiry has no Lead By agent' };
-  const est = await findEstimateByNumber(num);
+  let est: any = null;
+  if (pinnedId) {
+    try {
+      est = await (prisma as any).estimate.findUnique({ where: { estimateId: pinnedId } });
+    } catch { est = null; }
+    if (!est || normalizeEstNumber((est as any)?.estimateNumber) !== num) {
+      return { ok: false, error: 'Picked estimate no longer matches — check again' };
+    }
+  } else {
+    const rows = await findEstimatesByNumber(num);
+    if (!rows.length) return { ok: false, error: 'Estimate not found in Zoho sync yet' };
+    if (rows.length > 1) {
+      const matches = await Promise.all(rows.map(async (r) => ({
+        estimateId: String(r.estimateId),
+        estimateNumber: String(r.estimateNumber),
+        customerName: String(r.customerName ?? ''),
+        status: String(r.status ?? ''),
+        total: Number(r.total ?? 0),
+        organizationId: String((r as any).organizationId ?? ''),
+        assignedTelecallerId: (r as any).assignedTelecallerId ?? null,
+        holderName: await telecallerName((r as any).assignedTelecallerId ?? null),
+      })));
+      return { ok: false, ambiguous: true, matches };
+    }
+    est = rows[0];
+  }
   if (!est) return { ok: false, error: 'Estimate not found in Zoho sync yet' };
   const estimateId = String(est.estimateId);
+  const organizationId = String((est as any).organizationId ?? '');
   const holder = (est as any).assignedTelecallerId ? String((est as any).assignedTelecallerId) : null;
   if (holder && holder !== agent) {
-    return { ok: false, alreadyAssigned: true, estimateId, holderId: holder, holderName: await telecallerName(holder) };
+    return { ok: false, alreadyAssigned: true, estimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
   }
   if (holder === agent) {
     // Already mine — still ensure creator reflects the enquiry.
-    await syncEstimateCreatorFromEnquiry(num, agent);
-    return { ok: true, alreadyMine: true, estimateId, holderId: holder, holderName: await telecallerName(holder) };
+    await syncEstimateCreatorFromEnquiry(num, agent, organizationId);
+    return { ok: true, alreadyMine: true, estimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
   }
   // Free → assign + stamp creator (enquiry always wins).
   try {
@@ -205,13 +295,28 @@ export async function claimEstimateForAgent(
       const { invalidateDerivedEstimateCaches } = await import('../../shared/estimates-cache');
       await invalidateDerivedEstimateCaches();
     } catch { /* non-fatal */ }
-    return { ok: true, estimateId, holderId: agent, holderName: await telecallerName(agent) };
+    return { ok: true, estimateId, organizationId, holderId: agent, holderName: await telecallerName(agent) };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'assign failed' };
   }
 }
 
-/** Map of estimateNumber → enquiry agent for a batch (engine creator-first). */
+/** Resolve an enquiry's org from its EST number: the org when exactly one org
+ *  holds that number, '' otherwise (ambiguous or not-yet-synced — the agent
+ *  picks at Check & Assign time). Never throws. */
+export async function resolveEnquiryOrg(estNumber: unknown): Promise<string> {
+  try {
+    const rows = await findEstimatesByNumber(estNumber);
+    const orgs = [...new Set(rows.map((r) => String((r as any)?.organizationId ?? '')))];
+    if (orgs.length === 1) return orgs[0];
+  } catch { /* '' below */ }
+  return '';
+}
+
+/** Map of estimateNumber → enquiry agent for a batch (engine creator-first).
+ *  Returns BOTH `org||number` keys (every tagged enquiry) and legacy bare
+ *  `number` keys (first enquiry wins, unchanged behavior). The engine prefers
+ *  the org-scoped key matching the estimate row it processes. */
 export async function enquiryAgentByEstNumber(estimateNumbers: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const nums = [...new Set(estimateNumbers.map(normalizeEstNumber).filter(Boolean))];
@@ -221,7 +326,12 @@ export async function enquiryAgentByEstNumber(estimateNumbers: string[]): Promis
     for (const r of rows as any[]) {
       const key = normalizeEstNumber((r as any)?.estNumber);
       const agent = String((r as any)?.assignedAgentId ?? '').trim();
-      if (key && agent && nums.includes(key) && !out.has(key)) out.set(key, agent);
+      if (!key || !agent || !nums.includes(key)) continue;
+      const org = String((r as any)?.organizationId ?? '').trim();
+      // Org-scoped key: every tagged enquiry registers; first wins per org.
+      if (org && !out.has(`${org}||${key}`)) out.set(`${org}||${key}`, agent);
+      // Legacy bare key: first enquiry wins (unchanged fallback).
+      if (!out.has(key)) out.set(key, agent);
     }
   } catch { /* fail-open: engine falls back to createdBy/comment inference */ }
   return out;

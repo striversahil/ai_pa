@@ -42,15 +42,24 @@ export async function applyStatusUpdates(
     // auto- undone — going back to draft keeps the internal `sent` sticky.
     if (nextStatus.toLowerCase() !== 'draft' && nextStatus !== '') {
       try {
-        // Resolve estimateNumber for this estimateId (the enquiry key is estNumber).
+        // Resolve estimateNumber + org for this estimateId (the enquiry key is
+        // estNumber; the org scopes it on cross-org number clashes — a DPG
+        // flip must never auto-mark a BUI enquiry sharing the number).
         const row: any = await (prisma as any).estimate.findUnique({
           where: { estimateId: String(u.estimateId) },
-          select: { estimateNumber: true },
+          select: { estimateNumber: true, organizationId: true },
         }).catch(() => null);
         const num = String(row?.estimateNumber ?? '').trim();
+        const org = String(row?.organizationId ?? '').trim();
         if (num) {
           const res: any = await (prisma as any).enquiry.updateMany({
-            where: { estNumber: num, rateStatus: { not: 'sent' } as any },
+            where: {
+              estNumber: num,
+              rateStatus: { not: 'sent' } as any,
+              // Same-org enquiries plus untagged legacy rows ('' = primary).
+              // An enquiry explicitly tagged to the OTHER org is left alone.
+              ...(org ? { OR: [{ organizationId: org }, { organizationId: '' }] } as any : {}),
+            },
             data: { rateStatus: 'sent' },
           }).catch(() => null);
           const n = Number(res?.count ?? 0);
