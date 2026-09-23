@@ -1,5 +1,5 @@
 name: Agnes Relay (primary lane)
-# On-demand/keepalive Agnes egress relay. Boots home-egress/proxy.js + joins
+# On-demand/keepalive Agnes egress relay. Boots scripts/agnes-relay-proxy.js + joins
 # the STATIC named tunnel, so the Worker URL never changes. Registers itself
 # with the Worker (runId-aware CAS) and heartbeats; the gateway routes Agnes
 # traffic via AGNES_PROXY_URL only while that flag is fresh.
@@ -35,7 +35,7 @@ jobs:
           PORT: 8787
         run: |
           test -n "$PROXY_SECRET" || { echo "AGNES_RELAY_SECRET unset"; exit 1; }
-          nohup node home-egress/proxy.js > /tmp/relay-proxy.log 2>&1 &
+          nohup node scripts/agnes-relay-proxy.js > /tmp/relay-proxy.log 2>&1 &
           sleep 3
           curl -s --max-time 10 http://127.0.0.1:8787/health || { echo "proxy failed to start"; cat /tmp/relay-proxy.log; exit 1; }
 

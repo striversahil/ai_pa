@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * home-egress/proxy.js — tiny home-egress forwarder for Agnes API calls.
+ * scripts/agnes-relay-proxy.js — tiny GH-runner egress forwarder for Agnes API calls.
  *
  * Why it exists: Cloudflare Workers share egress IPs, and Agnes's firewall
  * rate-limits (HTTP 1015) that shared range. A home broadband IP has a clean,

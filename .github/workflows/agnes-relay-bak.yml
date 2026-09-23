@@ -31,7 +31,7 @@ jobs:
           PORT: 8787
         run: |
           test -n "$PROXY_SECRET" || { echo "AGNES_RELAY_SECRET unset"; exit 1; }
-          nohup node home-egress/proxy.js > /tmp/relay-proxy.log 2>&1 &
+          nohup node scripts/agnes-relay-proxy.js > /tmp/relay-proxy.log 2>&1 &
           sleep 3
           curl -s --max-time 10 http://127.0.0.1:8787/health || { echo "proxy failed to start"; cat /tmp/relay-proxy.log; exit 1; }
 
