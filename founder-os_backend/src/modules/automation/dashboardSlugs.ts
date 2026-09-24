@@ -24,6 +24,7 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'enquiry-procurement',
   'enquiry-management',
   'crm',
+  'product-line',
   // generic sheet-analysis renderer (SheetAnalysisDashboard fallback)
   'telecalling-agent-analysis',
 ]);

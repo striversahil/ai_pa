@@ -9,6 +9,7 @@ function mapEnquiry(row: any): Enquiry | null {
   return {
     id: row.id,
     estNumber: row.estNumber ?? "",
+    organizationId: String((row as any)?.organizationId ?? ""),
     dailyNo: row.dailyNo === undefined || row.dailyNo === null ? null : Number(row.dailyNo),
     source: row.source ?? "TL",
     enquiryNumber: row.enquiryNumber ?? "",
@@ -24,6 +25,7 @@ function mapEnquiry(row: any): Enquiry | null {
     status: row.status,
     rateStatus: (row as any).rateStatus ?? "",
     procurementSubmittedAt: String((row as any).procurementSubmittedAt ?? ""),
+    sentRevisionAt: String((row as any).sentRevisionAt ?? ""),
     assignedAgentId: String(row.assignedAgentId ?? ""),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

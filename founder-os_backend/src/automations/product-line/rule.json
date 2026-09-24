@@ -1,0 +1,9 @@
+{
+  "name": "Product Line",
+  "description": "Product master (KYP sheet as data): products, guide questions, vendors and quote facts. MIS-editable.",
+  "type": "handler",
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": "product-line"
+}

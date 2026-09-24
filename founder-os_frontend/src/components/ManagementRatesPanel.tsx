@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
-import { parseMoneyInput, historyDateChip } from "@/types";
+import { parseMoneyInput, parseSignedMoneyInput, historyDateChip } from "@/types";
 import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
 import { itemHasUnreviewedQuotes } from "@/enquiry/queue";
 import FlagThread from "@/components/FlagThread";
@@ -67,6 +67,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // previous rate until a revision is saved — revise unlocks one item at a
   // time, late quotes never auto-clear.
   const [revise, setRevise] = useState<Record<number, boolean>>({});
+  const [keepBusyIdx, setKeepBusyIdx] = useState<number | null>(null);
   const [notAvailableOpen, setNotAvailableOpen] = useState<number | null>(null);
   const [notAvailableReason, setNotAvailableReason] = useState("");
   // Decided-rates summary: collapsed "Closed" dropdown above the item cards.
@@ -191,10 +192,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     const ri = selRateIdx(i, it);
     return ri !== undefined && sharedRows(i, it).some((k) => k !== ri);
   };
-  // The item's margin %: typed input, else stored-markup-derived.
+  // The item's margin %: typed input, else stored-markup-derived. Signed —
+  // net/below-cost rates carry a negative margin (final below vendor cost).
   const resolvePct = (i: number, it: EnquiryItem): number | null => {
     const raw = pctInputs[i];
-    if (raw !== undefined && raw.trim() !== "") return parseMoneyInput(raw);
+    if (raw !== undefined && raw.trim() !== "") return parseSignedMoneyInput(raw);
     const ri = selRateIdx(i, it);
     const rate = ri === undefined ? undefined : (it.rates ?? [])[ri]?.rate;
     const discount = discountFor(i, it);
@@ -262,6 +264,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       return { markup, finalRate: final, unrounded: f, discount };
     }
     const p = resolvePct(i, it);
+    // Zero-rate quote (₹0 price-list lines): any margin on zero is zero — a
+    // committed ₹0 line must keep computing, otherwise one ₹0 item bricks
+    // Finalize for the whole enquiry (allDecided never reaches 100%).
+    // Fresh undecided zero lines stay undecided (explicit choice required).
+    if ((p === null || !Number.isFinite(p)) && base === 0) {
+      if (it.finalRate === undefined || it.finalRate === null) return null;
+      return { markup: Number(it.markup ?? 0), finalRate: 0, unrounded: 0, discount };
+    }
     if (p === null || !Number.isFinite(p) || base === undefined) return null;
     const unrounded = base * (1 + p / 100);
     const final = finalRound(unrounded);
@@ -278,6 +288,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     .map(({ i }) => i);
   const decidedCount = actionableIdx.filter((i) => computeItem(i, items[i]) !== null).length;
   const allDecided = actionableIdx.length > 0 && decidedCount === actionableIdx.length;
+  // Flagged (specIssue) items stay decidable — "rates remain actionable" —
+  // so a flagged-only row with a decision must still offer Save/Finalize.
+  // Only a row with nothing actionable AND nothing decided is unsavable
+  // (all rate-available / not-available bypasses).
+  const hasSavable = actionableCount > 0 || decidedCount > 0;
 
   const buildItems = (finalize: boolean): EnquiryItem[] =>
     items.map((it, i) => {
@@ -324,6 +339,24 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         out.markup = c.markup;
         out.finalRate = c.finalRate;
         if (finalize) out.finalizedAt = new Date().toISOString();
+      }
+      // A changed management decision is a fresh decision: stamp finalizedAt
+      // so late-quote banners clear and the Closed summary follows the new
+      // rate — a revise-Save completes without needing a second Finalize
+      // press to look applied. Unchanged saves keep the original stamp.
+      if (out.finalRate !== undefined && out.finalRate !== null) {
+        // Legacy rows carry vendor-only decisions (no selectedRateIdx) —
+        // same vendor counts as unchanged so unrelated saves never clear a
+        // pending late-quote review.
+        const storedIdx = (it as any).selectedRateIdx;
+        const idxSame = storedIdx === undefined || storedIdx === null
+          ? String(out.selectedVendor ?? "") === String(it.selectedVendor ?? "")
+          : String((out as any).selectedRateIdx ?? "") === String(storedIdx);
+        const sameDecision =
+          String(out.selectedVendor ?? "") === String(it.selectedVendor ?? "") &&
+          idxSame &&
+          String(out.finalRate ?? "") === String((it as any).finalRate ?? "");
+        if (!sameDecision) out.finalizedAt = new Date().toISOString();
       }
       // Optional management remark: appended to the item thread (the
       // server keeps client remark entries, crediting the writer's role),
@@ -399,6 +432,29 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         setSaveError(e?.message || "Flag failed — please retry.");
       } finally {
         setFlagBusy(false);
+      }
+    })();
+  };
+
+  // Keep-confirmed (immediate, no separate Save needed): the committed rate
+  // stands and the late-quote review clears — the item leaves the Active
+  // queue. Only fires when there are unreviewed quotes; otherwise Keep is
+  // already the state and the button is a no-op. Stamps finalizedAt=now so
+  // quotes logged up to this instant count as reviewed.
+  const confirmKeep = (i: number) => {
+    setSaveError(null);
+    setKeepBusyIdx(i);
+    const at = new Date().toISOString();
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, finalizedAt: at } : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Keep failed — please retry.");
+      } finally {
+        setKeepBusyIdx(null);
       }
     })();
   };
@@ -481,8 +537,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     .map(({ i }) => i);
 
   const applyBulkMargin = () => {
-    const p = parseMoneyInput(bulkPct);
-    if (p === null) { setBulkError("Enter a valid margin %."); return; }
+    const p = parseSignedMoneyInput(bulkPct);
+    if (p === null) { setBulkError("Enter a valid margin % (negative allowed for net rates)."); return; }
     if (checkedIdx.length === 0) { setBulkError("Select items first."); return; }
     setBulkError(null);
     setPctInputs((prev) => {
@@ -997,19 +1053,27 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       })()}
                       <p className="text-[10px] text-zinc-500">Committed — sales sees this rate.{(it as any).finalDiscountPercent ? ` Discount ${String((it as any).finalDiscountPercent)}% applied.` : ""}</p>
                       {itemHasUnreviewedQuotes(it as any) && !revise[i] && (
-                        <p className="text-[11px] font-bold text-amber-400">↓ New vendor quotes since this decision — Revise to review &amp; share them with sales.</p>
+                        <p className="text-[11px] font-bold text-amber-400">↓ New vendor quotes since this decision — Keep holds this rate, Revise switches to another.</p>
                       )}
-                      {locked ? (
-                        <button type="button" onClick={() => setRevise((prev) => ({ ...prev, [i]: true }))}
-                          className="px-2.5 py-1.5 bg-transparent border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
-                          Revise — override with another rate
+                      {/* Keep / Revise flag: Keep confirms the committed rate
+                          (clears the review instantly when new quotes arrived),
+                          Revise unlocks the vendor list + margin to override
+                          with another quote. One Save applies + re-stamps. */}
+                      <div className="inline-flex rounded-lg border border-zinc-700 overflow-hidden text-[11px] font-bold"
+                        title="Keep confirms this rate — Revise unlocks the vendor list to override with another quote">
+                        <button type="button" disabled={keepBusyIdx === i}
+                          onClick={() => {
+                            if (itemHasUnreviewedQuotes(it as any)) { confirmKeep(i); return; }
+                            setRevise((prev) => ({ ...prev, [i]: false }));
+                          }}
+                          className={`px-2.5 py-1.5 cursor-pointer border-0 disabled:opacity-60 ${!revise[i] ? "bg-emerald-600 text-white" : "bg-transparent text-zinc-400"}`}>
+                          {keepBusyIdx === i ? "Keeping…" : `Keep ₹${Number(it.finalRate).toLocaleString("en-IN")}`}
                         </button>
-                      ) : (
                         <button type="button" onClick={() => setRevise((prev) => ({ ...prev, [i]: true }))}
-                          className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
+                          className={`px-2.5 py-1.5 cursor-pointer border-0 ${revise[i] ? "bg-indigo-600 text-white" : "bg-transparent text-zinc-400"}`}>
                           Revise
                         </button>
-                      )}
+                      </div>
                     </div>
                   ) : (
                   <>
@@ -1207,7 +1271,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => void doSave(false)}
-          disabled={busy || actionableCount === 0 || (locked && !canSaveLocked)}
+          disabled={busy || !hasSavable || (locked && !canSaveLocked)}
           className="px-4 py-2 rounded-xl text-xs font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40"
         >
           {busy ? "Saving…" : revisingLocked ? "Save revised rate" : "Save rates"}
@@ -1246,8 +1310,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
           ) : (
             <button
               onClick={() => setConfirming(true)}
-              disabled={busy || actionableCount === 0 || !allDecided}
-              title={allDecided || actionableCount === 0 ? undefined : `Decide all ${actionableIdx.length} items first (${decidedCount} of ${actionableIdx.length} decided)`}
+              disabled={busy || !hasSavable || !allDecided}
+              title={allDecided || !hasSavable ? undefined : `Decide all ${actionableIdx.length} items first (${decidedCount} of ${actionableIdx.length} decided)`}
               className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"
             >
               {revisingLocked ? "Finalize revised rate" : "Finalize rates"}

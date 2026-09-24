@@ -28,6 +28,7 @@ import pendingItemsRouter from './routes/pending-items';
 import telecallersRouter from './routes/telecallers';
 import accountsRouter from './routes/accounts';
 import digitalMarketingRouter from './routes/digital-marketing';
+import productLineRouter from './routes/product-line';
 import { automationRouter } from './modules/automation';
 import * as AuthRoutes from './modules/auth/routes';
 import { PrismaAuthStore } from './modules/auth/store-prisma';
@@ -116,6 +117,9 @@ app.use('/api/accounts', accountsRouter);
 
 // --- Digital Marketing roster + templates + taskbar logging ---
 app.use('/api/digital-marketing', digitalMarketingRouter);
+
+// --- Product Line master CRUD (MIS-gated) ---
+app.use('/api/product-line', productLineRouter);
 
 // --- Google Auth (routes + root user management) ---
 app.get('/api/auth/google', (req, res) => sendAuth(res, AuthRoutes.authLogin(config, publicOriginOf(req))));
@@ -416,12 +420,16 @@ app.post('/api/enquiries/:id/chat', async (req, res) => {
 app.post('/api/enquiries/:id/chat/execute', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const { executeProposal } = await import('./modules/enquiries/chat');
-  const { result, applied } = await executeProposal(
-    enquiryStore, me as any, req.params.id,
-    (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
-  );
-  res.status((result as any).status).json({ ...((result as any).body as any), applied });
+  try {
+    const { executeProposal } = await import('./modules/enquiries/chat');
+    const { result, applied } = await executeProposal(
+      enquiryStore, me as any, req.params.id,
+      (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
+    );
+    res.status((result as any).status).json({ ...((result as any).body as any), applied });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e?.message ?? 'apply failed').slice(0, 300), applied: 'none' });
+  }
 });
 app.post('/api/enquiries/:id/comments', async (req, res) => {
   const me = await enquiryMe(req);

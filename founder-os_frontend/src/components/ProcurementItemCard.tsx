@@ -12,7 +12,6 @@ interface ProcurementItemCardProps {
   itemIdx: number;
   onAddRate: (rate: EnquiryItemRate) => void;
   onEditRate: (rateIdx: number, rate: EnquiryItemRate) => void;
-  onRemoveRate: (rateIdx: number) => void;
   onFlag: (reason: string) => void;
   onNotAvailable?: (reason: string) => void;
   onClearNotAvailable?: () => void;
@@ -35,7 +34,7 @@ interface ProcurementItemCardProps {
 // its hold banner (held from Management) but still allows adding/editing
 // vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onRemoveRate, onFlag, onNotAvailable, onClearNotAvailable, onOpenLightbox, onAddItemMedia, onPostThread, onResolveThread, onReopenThread,
+  item, itemIdx, onAddRate, onEditRate, onFlag, onNotAvailable, onClearNotAvailable, onOpenLightbox, onAddItemMedia, onPostThread, onResolveThread, onReopenThread,
   readOnly = false,
   lateQuote = false,
 }: ProcurementItemCardProps) {
@@ -331,14 +330,9 @@ export default function ProcurementItemCard({
                     <span className="px-1 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex-shrink-0">{Number(r.discountPercent).toString()}% off</span>
                   )}
                   {!readOnly && (
-                    <>
-                      <button type="button" onClick={() => { setEditingRate(ri); setShowAdd(false); }}
-                        title="Edit rate"
-                        className="text-[var(--color-brand-indigo)] hover:opacity-80 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">✎</button>
-                      <button type="button" onClick={() => onRemoveRate(ri)}
-                        title="Remove rate"
-                        className="text-[var(--color-danger)] hover:opacity-80 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">×</button>
-                    </>
+                    <button type="button" onClick={() => { setEditingRate(ri); setShowAdd(false); }}
+                      title="Edit rate"
+                      className="text-[var(--color-brand-indigo)] hover:opacity-80 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">✎</button>
                   )}
                 </div>
               )}

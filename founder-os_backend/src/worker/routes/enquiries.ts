@@ -80,21 +80,70 @@ function kick(c: any, id: string): void {
     if (!nums.length) return;
     try {
       const { prisma } = deps();
-      const rows = await (prisma as any).estimate.findMany({
-        where: { estimateNumber: { in: nums } },
-        select: { estimateNumber: true, status: true, customerName: true },
-      });
-      const statusMap = new Map<string, string>((rows as any[]).map((r) => [String(r.estimateNumber), String(r.status)]));
-      const customerMap = new Map<string, string>((rows as any[]).map((r) => [String(r.estimateNumber), String(r.customerName ?? '')]));
+      // D1 caps bound SQL variables per statement (100) — chunk the IN query
+      // (122+ linked enquiries silently killed this lookup for the WHOLE list).
+      const rows: any[] = [];
+      for (let i = 0; i < nums.length; i += 80) {
+        const chunk = nums.slice(i, i + 80);
+        const part = await (prisma as any).estimate.findMany({
+          where: { estimateNumber: { in: chunk } },
+          select: { estimateNumber: true, status: true, customerName: true, organizationId: true, date: true, lastSyncTime: true },
+        });
+        for (const r of (part as any[]) ?? []) rows.push(r);
+      }
+      // Group by number: BUI + DPG share the EST series, so one number can
+      // have two rows with different statuses. Pick per-enquiry by org;
+      // untagged/conflict fallback = most-recent creation date wins.
+      const rowsByNum = new Map<string, any[]>();
+      for (const r of (rows as any[]) ?? []) {
+        const k = String((r as any)?.estimateNumber ?? '');
+        if (!rowsByNum.has(k)) rowsByNum.set(k, []);
+        rowsByNum.get(k)!.push(r);
+      }
+      const latestOf = (matches: any[]): any => {
+        let best = matches[0];
+        let bestT = Date.parse(String(best?.date ?? ''));
+        if (!Number.isFinite(bestT)) bestT = -Infinity;
+        let bestS = Date.parse(String(best?.lastSyncTime ?? ''));
+        if (!Number.isFinite(bestS)) bestS = -Infinity;
+        for (let i = 1; i < matches.length; i++) {
+          const r = matches[i];
+          let t = Date.parse(String(r?.date ?? ''));
+          if (!Number.isFinite(t)) t = -Infinity;
+          let s = Date.parse(String(r?.lastSyncTime ?? ''));
+          if (!Number.isFinite(s)) s = -Infinity;
+          if (t > bestT || (t === bestT && s > bestS)) { best = r; bestT = t; bestS = s; }
+        }
+        return best;
+      };
+      const pickFor = (num: string, org: string): any | undefined => {
+        const matches = rowsByNum.get(num) ?? [];
+        if (!matches.length) return undefined;
+        const want = String(org ?? '').trim();
+        if (want) {
+          const hit = matches.find((r) => String((r as any)?.organizationId ?? '') === want);
+          if (hit) return hit;
+        }
+        return latestOf(matches);
+      };
       for (const e of enquiries as any[]) {
         const key = String((e as any)?.estNumber ?? '').trim();
-        const s = key ? statusMap.get(key) : undefined;
+        // Redacted (procurement) rows carry no estNumber but may already
+        // carry a pre-attached zohoStatus from `enquiryList` — keep it.
+        if (!key) {
+          if ((e as any).zohoStatus === undefined) {
+            (e as any).zohoStatus = null;
+            (e as any).zohoCustomerName = null;
+          }
+          (e as any)._origRateStatus = String((e as any)?.rateStatus ?? '');
+          continue;
+        }
+        const hit = pickFor(key, String((e as any)?.organizationId ?? ''));
+        const s = hit ? String((hit as any)?.status ?? '') : undefined;
         if (s !== undefined) {
           (e as any).zohoStatus = s;
-          (e as any).zohoCustomerName = customerMap.get(key) ?? null;
+          (e as any).zohoCustomerName = String((hit as any)?.customerName ?? '') || null;
         } else if ((e as any).zohoStatus === undefined) {
-          // Redacted (procurement) rows carry no estNumber but may already
-          // carry a pre-attached zohoStatus from `enquiryList` — keep it.
           (e as any).zohoStatus = null;
           (e as any).zohoCustomerName = null;
         }
@@ -102,9 +151,12 @@ function kick(c: any, id: string): void {
         // already `sent` before we derived it for this response.
         (e as any)._origRateStatus = String((e as any)?.rateStatus ?? '');
         // Derive `rateStatus` for this response so the UI reads as sent even
-        // before the background DB promotion lands.
+        // before the background DB promotion lands. Skipped while a
+        // sent-revision is open — the row loops again (procurement →
+        // management → sent) and must NOT read as sent mid-revision.
+        const reopened = !!String((e as any)?.sentRevisionAt ?? '').trim();
         const zs = String(s ?? '').toLowerCase();
-        if (zs && zs !== 'draft' && String((e as any)?.rateStatus ?? '') !== 'sent') {
+        if (!reopened && zs && zs !== 'draft' && String((e as any)?.rateStatus ?? '') !== 'sent') {
           (e as any).rateStatus = 'sent';
         }
       }
@@ -137,6 +189,9 @@ function kick(c: any, id: string): void {
       for (const e of enquiries as any[]) {
         const s = String((e as any)?.zohoStatus ?? '').toLowerCase();
         if (!s || s === 'draft') continue;
+        // Open sent-revision: the row loops again — never auto-promote or
+        // auto-conclude mid-revision (management owns it until re-sent).
+        if (String((e as any)?.sentRevisionAt ?? '').trim()) continue;
         if (String((e as any)?.rateStatus ?? '') === 'sent') {
           // Already sent in this response — still eligible for auto-conclude.
         } else {
@@ -570,12 +625,17 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const body = await c.req.json().catch(() => ({}));
-    const { result, applied } = await executeProposal(
-      createEnquiryStore(c.env), me, c.req.param('id') ?? '',
-      (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
-    );
-    if (applied !== 'none' && (result as any).live) enquirySend(c, result as any);
-    return c.json({ ...(result.body as any), applied }, (result as any).status as any);
+    try {
+      const { result, applied } = await executeProposal(
+        createEnquiryStore(c.env), me, c.req.param('id') ?? '',
+        (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
+      );
+      if (applied !== 'none' && (result as any).live) enquirySend(c, result as any);
+      return c.json({ ...(result.body as any), applied }, (result as any).status as any);
+    } catch (e: any) {
+      console.error('chat/execute failed', e?.stack ?? String(e?.message ?? e));
+      return c.json({ error: String(e?.message ?? 'apply failed').slice(0, 300), applied: 'none' }, 500);
+    }
   });
   app.post('/api/enquiries/:id/comments', async (c) => {
     const me = await enquiryMe(c);

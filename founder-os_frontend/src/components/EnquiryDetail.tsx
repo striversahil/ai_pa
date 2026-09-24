@@ -20,6 +20,8 @@ interface EnquiryDetailProps {
   /** Accept a price-memory suggestion: marks the item rate-available (skips the loop). */
   onAcceptSuggestion?: (id: string, itemIndex: number) => Promise<void>;
   onMarkSent?: (id: string) => Promise<void>;
+  /** Reopen a sent enquiry for additional scope (any team member). */
+  onReviseSent?: (id: string) => Promise<void>;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
@@ -38,6 +40,7 @@ export default function EnquiryDetail({
   onUpdateItems,
   onAcceptSuggestion,
   onMarkSent,
+  onReviseSent,
   onDeleteEnquiry,
   onOpenEdit,
   onBack,
@@ -58,12 +61,18 @@ export default function EnquiryDetail({
   const addReqFileRef = useRef<HTMLInputElement>(null);
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Revise confirmation (any team member may reopen a sent enquiry — new
+  // items still need procurement + management before re-sent)
+  const [confirmRevise, setConfirmRevise] = useState(false);
+  const [reviseError, setReviseError] = useState<string | null>(null);
   // Sent is now Zoho-driven: any non-draft Zoho status (sent/accepted/declined…)
   // auto-means internal `sent` (5-min sync + list derive). No manual button.
   const sentState = String((selectedEnquiry as any).rateStatus ?? "");
   const zohoStatusLower = String((selectedEnquiry as any).zohoStatus ?? '').toLowerCase();
   const isZohoSent = !!zohoStatusLower && zohoStatusLower !== 'draft';
-  const effectiveSent = sentState === "sent" || isZohoSent;
+  // Open sent-revision loops again — not terminal even with a sent Zoho chip.
+  const revising = !!String((selectedEnquiry as any).sentRevisionAt ?? '').trim();
+  const effectiveSent = !revising && (sentState === "sent" || isZohoSent);
   // Copilot rail (per-enquiry AI sidebar) — closed by default for sales;
   // opens only on manual click, persisted per browser.
   const [copilotOpen, setCopilotOpen] = useState<boolean>(() => {
@@ -177,6 +186,12 @@ export default function EnquiryDetail({
 
         {!redacted && (
         <div className="flex items-center gap-2 flex-wrap">
+          {revising && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400"
+              title="Management reopened this sent enquiry — add items and they loop procurement → management → sent again">
+              Under revision — add items to re-quote
+            </span>
+          )}
           {effectiveSent ? (
             <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400" title={isZohoSent ? `Zoho: ${zohoStatusLower}` : 'Marked as sent'}>
               ✓ {isZohoSent ? `Sent (Zoho: ${zohoStatusLower})` : 'Marked as sent'}
@@ -186,8 +201,8 @@ export default function EnquiryDetail({
               Finalized — awaiting Zoho send (still draft)
             </span>
           ) : null}
-          <button 
-            onClick={() => onOpenEdit(selectedEnquiry)} 
+          <button
+            onClick={() => onOpenEdit(selectedEnquiry)}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
             type="button"
           >
@@ -196,6 +211,16 @@ export default function EnquiryDetail({
             </svg>
             <span>Edit Details</span>
           </button>
+          {!redacted && onReviseSent && (sentState === "sent" || isZohoSent) && !revising && (
+            <button
+              onClick={() => { setReviseError(null); setConfirmRevise(true); }}
+              title="Reopen for additional scope — new items loop procurement → management → sent again"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer border-0"
+              type="button"
+            >
+              <span>Reopen for revision</span>
+            </button>
+          )}
           <button
             onClick={() => toggleCopilot(!copilotOpen)}
             className={`inline-flex items-center gap-1.5 px-3.5 py-2 border font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer ${copilotOpen ? "bg-brand-indigo text-white border-brand-indigo hover:opacity-90" : "bg-brand-indigo/10 border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/20"}`}
@@ -290,8 +315,41 @@ export default function EnquiryDetail({
         />
       )}
 
-      {/* Delete confirmation */}
-      {confirmDelete && (
+      {/* Revise confirmation */}
+      {confirmRevise && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50" onClick={() => setConfirmRevise(false)}>
+          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-xl w-full max-w-sm animate-fade-in" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 space-y-3">
+              <h2 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Reopen for revision?</h2>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                <span className="font-mono font-bold text-[var(--text-primary)]">{selectedEnquiry.estNumber}</span>
+                {selectedEnquiry.title ? ` — ${selectedEnquiry.title}` : ""} goes back to rates-ready so new items loop
+                procurement → management → sent again. Nothing already decided is lost.
+              </p>
+              {reviseError && (
+                <p className="text-xs font-semibold text-red-500">{reviseError}</p>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setConfirmRevise(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!onReviseSent) { setConfirmRevise(false); return; }
+                    void onReviseSent(selectedEnquiry.id)
+                      .then(() => setConfirmRevise(false))
+                      .catch((e: any) => setReviseError(e?.message || "Reopen failed"));
+                  }}
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg cursor-pointer"
+                >
+                  Reopen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation */}      {confirmDelete && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50" onClick={() => setConfirmDelete(false)}>
           <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-xl w-full max-w-sm animate-fade-in" onClick={(e) => e.stopPropagation()}>
             <div className="p-5 space-y-3">

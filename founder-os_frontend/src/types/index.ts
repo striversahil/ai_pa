@@ -167,6 +167,8 @@ export {
 export interface Enquiry {
   id: string;
   estNumber: string;
+  /** Zoho Books org of the linked estimate (BUI + DPG share EST numbers). */
+  organizationId?: string;
   /** Daily sequence: Enquiry No {dailyNo} - {DD} {MON} {source}. Auto-assigned,
    *  counter resets every IST day. */
   dailyNo?: number | null;
@@ -199,6 +201,10 @@ export interface Enquiry {
   /** Procurement view only: true while the AI secure rewrite is still being
    *  prepared (pieces withheld until ready, client refetches on live event). */
   redactedPending?: boolean;
+  /** Sent-revision marker: ISO instant when management reopened a `sent`
+   *  enquiry for additional scope. While set, the row loops procurement →
+   *  management → sent again. Cleared on the next mark-as-sent. */
+  sentRevisionAt?: string;
   /** Live Zoho status for the linked estimate (from Estimate table, 5-min sync).
    *  Enriched by GET /api/enquiries list/single — no extra Zoho read, no AI. */
   zohoStatus?: string | null;
@@ -253,6 +259,17 @@ export function parseMoneyInput(v: string): number | null {
   if (!/^\d+(\.\d+)?$/.test(s)) return null;
   const n = Number(s);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Signed variant for MARGIN % only: net/below-cost rates carry a negative
+ *  margin (final below vendor cost). Same junk rejection, leading `-`
+ *  accepted. Never use for prices (vendor rate, final ₹, expected) — those
+ *  stay non-negative. Mirrors backend strictSignedNum. */
+export function parseSignedMoneyInput(v: string): number | null {
+  const s = String(v ?? "").trim().replace(/[₹\s,]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Human date chip for history sections: Today / Yesterday / 10 Sep (IST). */

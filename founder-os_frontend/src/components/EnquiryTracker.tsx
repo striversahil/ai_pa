@@ -219,6 +219,10 @@ export default function EnquiryTracker() {
     await updateEnquiry(id, { rateStatus: 'sent' });
   }, [updateEnquiry]);
 
+  const handleReviseSent = useCallback(async (id: string) => {
+    await updateEnquiry(id, { reviseSent: true } as any);
+  }, [updateEnquiry]);
+
   // Price-memory accept: item already has a known rate — skip the loop.
   const handleAcceptSuggestion = useCallback(async (id: string, itemIndex: number) => {
     const target = enquiries.find((e) => e.id === id);
@@ -259,6 +263,7 @@ export default function EnquiryTracker() {
           onUpdateItems={(id, items) => void handleUpdateItems(id, items)}
           onAcceptSuggestion={(id, idx) => handleAcceptSuggestion(id, idx)}
           onMarkSent={(id) => handleMarkSent(id)}
+          onReviseSent={(id) => handleReviseSent(id)}
           onDeleteEnquiry={(id) => void handleDeleteEnquiry(id)}
           onOpenEdit={(e) => { setEditingEnquiry(e); setIsAddModalOpen(true); }}
           onBack={() => setSelectedId(null)}

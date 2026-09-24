@@ -149,6 +149,23 @@ export default function ManagementReview() {
     await updateEnquiry(id, { items, ...(finalize ? { rateStatus: "finalized" } : {}) } as Partial<Enquiry>);
   }, [updateEnquiry]);
 
+  // Sent-revision: reopen a `sent` enquiry for additional scope (MIS only).
+  // The row drops to `finalized` with a revision marker — new items then loop
+  // procurement → management → sent again instead of stranding invisible.
+  const [reviseBusy, setReviseBusy] = useState(false);
+  const [reviseError, setReviseError] = useState<string | null>(null);
+  const handleRevise = useCallback(async (id: string) => {
+    setReviseBusy(true);
+    setReviseError(null);
+    try {
+      await updateEnquiry(id, { reviseSent: true } as any);
+    } catch (e: any) {
+      setReviseError(e?.message || "Reopen failed");
+    } finally {
+      setReviseBusy(false);
+    }
+  }, [updateEnquiry]);
+
   if (!allowed) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center text-sm font-semibold text-zinc-500 dark:text-zinc-400">
@@ -383,7 +400,23 @@ export default function ManagementReview() {
                 {sel.status}
               </span>
             )}
+            {(sel as any).sentRevisionAt && (
+              <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30"
+                title="Reopened for additional scope — new items loop procurement → management → sent again">
+                Under revision
+              </span>
+            )}
+            {sel.rateStatus === "sent" && !(sel as any).sentRevisionAt && (
+              <button type="button" disabled={reviseBusy} onClick={() => void handleRevise(sel.id)}
+                title="Reopen this sent enquiry for additional scope — drops to finalized so new items loop procurement → management → sent again"
+                className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[11px] font-bold cursor-pointer border-0">
+                {reviseBusy ? "Reopening…" : "Reopen for revision"}
+              </button>
+            )}
           </div>
+          {reviseError && (
+            <p className="text-xs font-semibold text-red-500">{reviseError}</p>
+          )}
           {sel.description && (
             <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{sel.description}</p>
           )}

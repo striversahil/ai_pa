@@ -34,6 +34,32 @@ async function findEstimatesByNumber(estNumber: string): Promise<any[]> {
   }
 }
 
+/** Cross-org conflict rule (founder 2026-09-24): BUI + DPG share the EST
+ *  series — when one number exists in both orgs, the estimate with the most
+ *  recent creation date (`Estimate.date`, Zoho estimate date) wins. Tiebreak
+ *  by `lastSyncTime`, then first-match. Pure, shared by every picker below. */
+export function pickLatestEstimate(rows: any[]): any | null {
+  if (!rows.length) return null;
+  let best: any = rows[0];
+  let bestT = Date.parse(String((best as any)?.date ?? ''));
+  if (!Number.isFinite(bestT)) bestT = -Infinity;
+  let bestSync = Date.parse(String((best as any)?.lastSyncTime ?? ''));
+  if (!Number.isFinite(bestSync)) bestSync = -Infinity;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    let t = Date.parse(String((r as any)?.date ?? ''));
+    if (!Number.isFinite(t)) t = -Infinity;
+    let s = Date.parse(String((r as any)?.lastSyncTime ?? ''));
+    if (!Number.isFinite(s)) s = -Infinity;
+    if (t > bestT || (t === bestT && s > bestSync)) {
+      best = r;
+      bestT = t;
+      bestSync = s;
+    }
+  }
+  return best;
+}
+
 async function findEstimateByNumber(estNumber: string, organizationId?: string): Promise<any | null> {
   const rows = await findEstimatesByNumber(estNumber);
   if (!rows.length) return null;
@@ -44,9 +70,10 @@ async function findEstimateByNumber(estNumber: string, organizationId?: string):
     if (hit) return hit;
   }
   if (rows.length === 1) return rows[0];
-  // Ambiguous and no pinned org: legacy first-match (fail-open). Callers that
-  // need certainty (claim) handle the multi-match case explicitly.
-  return rows[0];
+  // Ambiguous and no pinned org: most-recent creation date wins (BUI/DPG
+  // conflict rule). Callers that need certainty (claim) handle the
+  // multi-match case explicitly.
+  return pickLatestEstimate(rows);
 }
 
 async function telecallerName(id: string | null | undefined): Promise<string | null> {
@@ -120,7 +147,12 @@ export async function reconcileEstimateCreator(estNumber: unknown, organizationI
  *  Attached pre-redaction in `enquiryList` so the procurement payload keeps
  *  `zohoStatus` even though `estNumber` itself is blanked below. On a
  *  cross-org number clash the row whose org matches the enquiry wins;
- *  untagged enquiries ('' org) read the first match (legacy). */
+ *  untagged enquiries ('' org) read the most-recent creation date (BUI/DPG rule).
+ *  Returns BOTH `org||number` keys (every tagged enquiry) and legacy bare
+ *  `number` keys (first org wins, unchanged fallback) — callers must look up
+ *  the org-scoped key first so two enquiries sharing one number with
+ *  different orgs (BUI + DPG share the EST series) each get their own org's
+ *  status. */
 export async function estimateStatusByNumbers(
   nums: unknown[],
   orgByNum?: Map<string, string>,
@@ -129,15 +161,38 @@ export async function estimateStatusByNumbers(
   const uniq = [...new Set((nums as any[]).map(normalizeEstNumber).filter(Boolean))];
   if (!uniq.length) return out;
   try {
-    const rows = await (prisma as any).estimate.findMany({
-      where: { estimateNumber: { in: uniq } },
-      select: { estimateNumber: true, status: true, customerName: true, organizationId: true },
-    });
+    // D1 caps bound SQL variables per statement (100) — chunk the IN query.
+    const rows: any[] = [];
+    for (let i = 0; i < uniq.length; i += 80) {
+      const part = await (prisma as any).estimate.findMany({
+        where: { estimateNumber: { in: uniq.slice(i, i + 80) } },
+        select: { estimateNumber: true, status: true, customerName: true, organizationId: true, date: true, lastSyncTime: true },
+      });
+      for (const r of ((part as any[]) ?? [])) rows.push(r);
+    }
+    // Index rows by number → per-org, so duplicate numbers across orgs keep
+    // every org's status instead of collapsing to one.
+    const byNumOrg = new Map<string, Map<string, any>>();
+    for (const r of ((rows as any[]) ?? [])) {
+      const num = String((r as any)?.estimateNumber ?? '');
+      const org = String((r as any)?.organizationId ?? '');
+      if (!byNumOrg.has(num)) byNumOrg.set(num, new Map());
+      const m = byNumOrg.get(num)!;
+      if (!m.has(org)) m.set(org, r);
+    }
     for (const num of uniq) {
-      const matches = ((rows as any[]) ?? []).filter((r) => String((r as any)?.estimateNumber ?? '') === num);
-      if (!matches.length) continue;
+      const m = byNumOrg.get(num);
+      if (!m || !m.size) continue;
+      for (const [org, hit] of m) {
+        out.set(`${org}||${num}`, {
+          status: String((hit as any)?.status ?? ''),
+          customerName: String((hit as any)?.customerName ?? ''),
+        });
+      }
+      const matches = [...m.values()];
       const wantOrg = String(orgByNum?.get(num) ?? '').trim();
-      const hit = (wantOrg && matches.find((r) => String((r as any)?.organizationId ?? '') === wantOrg)) || matches[0];
+      // Untagged/conflict fallback: most-recent creation date wins (BUI/DPG rule).
+      const hit = (wantOrg && matches.find((r) => String((r as any)?.organizationId ?? '') === wantOrg)) || pickLatestEstimate(matches);
       out.set(num, {
         status: String((hit as any)?.status ?? ''),
         customerName: String((hit as any)?.customerName ?? ''),
@@ -266,26 +321,26 @@ export async function claimEstimateForAgent(
     est = rows[0];
   }
   if (!est) return { ok: false, error: 'Estimate not found in Zoho sync yet' };
-  const estimateId = String(est.estimateId);
+  const resolvedEstimateId = String(est.estimateId);
   const organizationId = String((est as any).organizationId ?? '');
   const holder = (est as any).assignedTelecallerId ? String((est as any).assignedTelecallerId) : null;
   if (holder && holder !== agent) {
-    return { ok: false, alreadyAssigned: true, estimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
+    return { ok: false, alreadyAssigned: true, estimateId: resolvedEstimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
   }
   if (holder === agent) {
     // Already mine — still ensure creator reflects the enquiry.
     await syncEstimateCreatorFromEnquiry(num, agent, organizationId);
-    return { ok: true, alreadyMine: true, estimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
+    return { ok: true, alreadyMine: true, estimateId: resolvedEstimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
   }
   // Free → assign + stamp creator (enquiry always wins).
   try {
     await (prisma as any).estimate.update({
-      where: { estimateId },
+      where: { estimateId: resolvedEstimateId },
       data: { assignedTelecallerId: agent, createdBy: agent },
     });
     try {
       const { recordAssignment } = await import('../../automations/telecalling/service');
-      await recordAssignment(estimateId, agent, reason);
+      await recordAssignment(resolvedEstimateId, agent, reason);
     } catch { /* ledger best-effort */ }
     try {
       const { invalidateRiskCache } = await import('../../automations/telecalling/service');
@@ -295,20 +350,26 @@ export async function claimEstimateForAgent(
       const { invalidateDerivedEstimateCaches } = await import('../../shared/estimates-cache');
       await invalidateDerivedEstimateCaches();
     } catch { /* non-fatal */ }
-    return { ok: true, estimateId, organizationId, holderId: agent, holderName: await telecallerName(agent) };
+    return { ok: true, estimateId: resolvedEstimateId, organizationId, holderId: agent, holderName: await telecallerName(agent) };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'assign failed' };
   }
 }
 
 /** Resolve an enquiry's org from its EST number: the org when exactly one org
- *  holds that number, '' otherwise (ambiguous or not-yet-synced — the agent
- *  picks at Check & Assign time). Never throws. */
+ *  holds that number; on a BUI/DPG conflict the org of the most-recently
+ *  created estimate wins (founder 2026-09-24); '' when not-yet-synced.
+ *  Never throws. */
 export async function resolveEnquiryOrg(estNumber: unknown): Promise<string> {
   try {
     const rows = await findEstimatesByNumber(estNumber);
     const orgs = [...new Set(rows.map((r) => String((r as any)?.organizationId ?? '')))];
     if (orgs.length === 1) return orgs[0];
+    if (rows.length > 1) {
+      const latest = pickLatestEstimate(rows);
+      const org = String((latest as any)?.organizationId ?? '');
+      if (org) return org;
+    }
   } catch { /* '' below */ }
   return '';
 }

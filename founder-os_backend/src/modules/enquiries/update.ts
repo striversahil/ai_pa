@@ -86,6 +86,29 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         });
       }
     }
+    if (privileged) {
+      // Decision-less privileged writes (e.g. any save from the redacted
+      // procurement view, which strips decision fields) must never wipe a
+      // stored decision by omission — deleting a vendor rate once dropped
+      // the whole management decision and threw the item back to pending.
+      // Preserve stored fields unless this write opens a fresh request
+      // round (which explicitly clears below).
+      const incomingDecision = base.selectedVendor !== undefined || base.markup !== undefined
+        || base.finalRate !== undefined || base.finalDiscountPercent !== undefined
+        || base.finalizedAt !== undefined || (base as any).selectedRateIdx !== undefined;
+      const storedDecision = stored.selectedVendor !== undefined || stored.markup !== undefined
+        || stored.finalRate !== undefined || stored.finalDiscountPercent !== undefined
+        || stored.finalizedAt !== undefined || (stored as any).selectedRateIdx !== undefined;
+      const freshRequest = !!(base as any).ratesRequested && !(stored as any).ratesRequested;
+      if (!incomingDecision && storedDecision && !freshRequest) {
+        base.selectedVendor = stored.selectedVendor;
+        (base as any).selectedRateIdx = (stored as any).selectedRateIdx;
+        base.markup = stored.markup;
+        base.finalRate = stored.finalRate;
+        base.finalDiscountPercent = stored.finalDiscountPercent;
+        base.finalizedAt = stored.finalizedAt;
+      }
+    }
     if (restricted) {
       // Procurement owns rates + spec flags only: identity (name/qty/spec/
       // media) always follows the stored row, so specs can't be edited or
@@ -622,6 +645,9 @@ export interface RateWriteCtx {
   storedItems: any[];
   privileged: boolean;
   restricted: boolean;
+  /** May stamp the conclude handoff (procurement scope or MIS). Stamp-only,
+   *  never clear — clearing stays privileged-only. */
+  canConclude?: boolean;
 }
 
 /**
@@ -673,9 +699,46 @@ export function applyLateQuoteReopen(
 }
 
 /**
+ * Sent-revision lifecycle (revise flow):
+ * - `reviseSent: true` (any authenticated writer — sales included) on a
+ *   `sent` row unlocks it for additional scope: rateStatus → `finalized`,
+ *   handoff cleared, `sentRevisionAt` stamped. While the marker is set, Zoho
+ *   non-draft does NOT auto-promote/conclude, so new items loop procurement
+ *   → management → sent again. Sales/additional-requirements on the unlocked
+ *   row reopen it further via the normal finalized paths.
+ * - Safe to open beyond management: reopening grants NO approval power —
+ *   every new item still needs procurement quoting + a management decision,
+ *   and the completeness gate blocks re-sent until 100% decided.
+ * - Any write carrying rateStatus `sent` clears the marker (new sent cycle).
+ * - `reviseSent` is a verb, never stored — always deleted from updates.
+ * Returns an error string when the request must be rejected, else null.
+ */
+export function applySentRevision(
+  updates: any,
+  ctx: { storedRateStatus: string; storedRevision?: string; privileged: boolean },
+): string | null {
+  if ((updates as any).rateStatus === 'sent') {
+    (updates as any).sentRevisionAt = '';
+  }
+  if ((updates as any).reviseSent !== true) {
+    delete (updates as any).reviseSent;
+    return null;
+  }
+  delete (updates as any).reviseSent;
+  void ctx.privileged;
+  if (String(ctx.storedRateStatus ?? '') !== 'sent') return 'Only sent enquiries can be revised';
+  const nowIso = new Date().toISOString();
+  (updates as any).rateStatus = 'finalized';
+  (updates as any).procurementSubmittedAt = '';
+  (updates as any).sentRevisionAt = nowIso;
+  return null;
+}
+
+/**
  * Submit-to-Management lifecycle (enquiry-level handoff flag):
  * - sales (plain) writers can never touch it — follows stored;
- * - procurement (restricted) may stamp it (submit) but never clear it;
+ * - procurement (restricted surface or `procurement` scope) may stamp it
+ *   (submit) but never clear it;
  * - management (privileged) may stamp or clear it.
  * Plus: a fresh management rates-request reopens the enquiry for
  * procurement, and a management item save with every loop item decided
@@ -683,6 +746,7 @@ export function applyLateQuoteReopen(
  */
 export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
   const { storedForItems, storedItems, privileged, restricted } = ctx;
+  const canStamp = privileged || restricted || ctx.canConclude === true;
   // Sent/terminal: auto-resolve procurement flags (text stays in thread), conclude procurement
   if ((updates as any).rateStatus === 'sent' && Array.isArray((updates as any).items)) {
     const nowIso = new Date().toISOString();
@@ -699,10 +763,10 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
     }
   }
   if ((updates as any).procurementSubmittedAt !== undefined) {
-    if (!privileged && !restricted) {
+    if (!canStamp) {
       if (storedForItems) (updates as any).procurementSubmittedAt = String((storedForItems as any).procurementSubmittedAt ?? '');
       else delete (updates as any).procurementSubmittedAt;
-    } else if (restricted) {
+    } else if (!privileged) {
       const v = String((updates as any).procurementSubmittedAt ?? '');
       if (!v && storedForItems) (updates as any).procurementSubmittedAt = String((storedForItems as any).procurementSubmittedAt ?? '');
     }

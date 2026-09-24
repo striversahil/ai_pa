@@ -14,11 +14,9 @@ interface ChatProposal {
 interface ChatActivity { tool: string; label: string; }
 interface ChatMsg { role: "user" | "assistant"; text: string; proposals?: ChatProposal[]; activity?: ChatActivity[]; }
 
-const SUGGESTIONS = ["What's missing on this enquiry?", "Any past prices for these items?", "Summarize the discussion so far"];
+const SUGGESTIONS = ["What's missing on this enquiry?", "Draft a note for the enquiry thread", "Help me fix an item spec"];
 const TOOL_ICON: Record<string, string> = {
   get_enquiry_summary: "📋",
-  search_price_memory: "🔎",
-  read_thread: "💬",
   propose_comment: "✍️",
   propose_spec_fix: "🛠️",
 };

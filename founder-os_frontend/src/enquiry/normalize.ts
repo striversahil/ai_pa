@@ -129,6 +129,7 @@ export function toEnquiry(raw: any): Enquiry {
   return {
     id: raw.id,
     estNumber: raw.estNumber || '',
+    organizationId: (raw as any).organizationId ? String((raw as any).organizationId) : undefined,
     dailyNo: raw.dailyNo === undefined || raw.dailyNo === null ? null : Number(raw.dailyNo),
     source: raw.source || 'TL',
     enquiryNumber: raw.enquiryNumber || '',
@@ -144,6 +145,7 @@ export function toEnquiry(raw: any): Enquiry {
     status: raw.status || 'new',
     rateStatus: raw.rateStatus || '',
     procurementSubmittedAt: raw.procurementSubmittedAt ? String(raw.procurementSubmittedAt) : undefined,
+    sentRevisionAt: (raw as any).sentRevisionAt ? String((raw as any).sentRevisionAt) : undefined,
     assignedAgentId: String(raw.assignedAgentId ?? ''),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt || raw.createdAt,

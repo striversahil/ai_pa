@@ -131,6 +131,9 @@ export interface FlagThreadEntry {
 export interface Enquiry {
   id: string;
   estNumber: string;
+  /** Zoho Books org of the linked estimate (BUI + DPG share EST numbers).
+   *  '' = untagged/legacy, read as the most-recent estimate's org. */
+  organizationId: string;
   dailyNo: number | null;
   source: string;
   enquiryNumber: string;
@@ -148,6 +151,11 @@ export interface Enquiry {
   rateStatus: string;
   /** Explicit procurement handoff: ISO instant of "Submit to Management". */
   procurementSubmittedAt: string;
+  /** Sent-revision marker: ISO instant when management reopened a `sent`
+   *  enquiry for additional scope. While set, Zoho non-draft does NOT
+   *  auto-promote/conclude — new items loop procurement → management → sent.
+   *  Cleared on the next mark-as-sent. '' = no open revision. */
+  sentRevisionAt: string;
   assignedAgentId: string;
   createdAt: string;
   updatedAt: string;

@@ -38,6 +38,7 @@ import {
   parseDiscountPercent,
   strictNum,
   numOrUndefined,
+  signedNumOrUndefined,
   parseItems,
   parseRequirements,
 } from "./parse";
@@ -86,6 +87,7 @@ export function mapEnquiry(row: any): Enquiry | null {
   return {
     id: row.id,
     estNumber: row.estNumber ?? "",
+    organizationId: String((row as any)?.organizationId ?? ""),
     dailyNo: row.dailyNo === undefined || row.dailyNo === null ? null : Number(row.dailyNo),
     source: row.source ?? "TL",
     enquiryNumber: row.enquiryNumber ?? "",
@@ -101,6 +103,7 @@ export function mapEnquiry(row: any): Enquiry | null {
     status: row.status,
     rateStatus: (row as any).rateStatus ?? "",
     procurementSubmittedAt: String((row as any).procurementSubmittedAt ?? ""),
+    sentRevisionAt: String((row as any).sentRevisionAt ?? ""),
     assignedAgentId: String(row.assignedAgentId ?? ""),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -132,6 +135,7 @@ export function sanitize(e: any): Enquiry {
   return {
     ...e,
     estNumber: str(e.estNumber),
+    organizationId: str((e as any).organizationId),
     source: normalizeEnquirySource((e as any).source),
     dailyNo: (e as any).dailyNo === undefined || (e as any).dailyNo === null ? null : Number((e as any).dailyNo),
     enquiryNumber: str(e.enquiryNumber),
@@ -147,6 +151,7 @@ export function sanitize(e: any): Enquiry {
     status: str(e.status),
     rateStatus: str((e as any).rateStatus),
     procurementSubmittedAt: isoOrUndefined((e as any).procurementSubmittedAt) ?? "",
+    sentRevisionAt: isoOrUndefined((e as any).sentRevisionAt) ?? "",
     assignedAgentId: str(e.assignedAgentId),
     imageUrls: Array.isArray(e.imageUrls) ? e.imageUrls : [],
     activities: Array.isArray(e.activities) ? e.activities : [],
@@ -165,7 +170,7 @@ export function sanitize(e: any): Enquiry {
           rates: parseItemRates(r?.rates),
           selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
           selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
-          markup: numOrUndefined(r?.markup),
+          markup: signedNumOrUndefined(r?.markup),
           finalRate: numOrUndefined(r?.finalRate),
           finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),
@@ -303,11 +308,11 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, organizationId, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, sentRevisionAt, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
-        e.id, e.estNumber, e.dailyNo, e.source, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
-        e.priority, e.status, e.rateStatus, e.procurementSubmittedAt, e.assignedAgentId, e.createdAt, e.updatedAt,
+        e.id, e.estNumber, (e as any).organizationId ?? "", e.dailyNo, e.source, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
+        e.priority, e.status, e.rateStatus, e.procurementSubmittedAt, (e as any).sentRevisionAt ?? "", e.assignedAgentId, e.createdAt, e.updatedAt,
         JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []),
       )
       .run();
@@ -319,11 +324,11 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, organizationId=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, sentRevisionAt=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
       )
       .bind(
-        merged.estNumber, merged.dailyNo, merged.source, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
-        merged.description, merged.priority, merged.status, merged.rateStatus, merged.procurementSubmittedAt, merged.assignedAgentId,
+        merged.estNumber, String((merged as any).organizationId ?? ""), merged.dailyNo, merged.source, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
+        merged.description, merged.priority, merged.status, merged.rateStatus, merged.procurementSubmittedAt, String((merged as any).sentRevisionAt ?? ""), merged.assignedAgentId,
         merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
         JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), id,
       )

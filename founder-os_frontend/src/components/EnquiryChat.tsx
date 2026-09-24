@@ -24,12 +24,10 @@ interface ChatMsg {
   activity?: ChatActivity[];
 }
 
-const SUGGESTIONS = ["What's missing on this enquiry?", "Any past prices for these items?", "Summarize the discussion so far"];
+const SUGGESTIONS = ["What's missing on this enquiry?", "Draft a note for the enquiry thread", "Help me fix an item spec"];
 
 const TOOL_ICON: Record<string, string> = {
   get_enquiry_summary: "📋",
-  search_price_memory: "🔎",
-  read_thread: "💬",
   propose_comment: "✍️",
   propose_spec_fix: "🛠️",
 };
@@ -233,7 +231,7 @@ export default function EnquiryChat({ enquiryId, open, onClose, docked = false }
       <div ref={scrollRef} className={docked ? "flex-1 min-h-0 overflow-y-auto px-3 py-2.5 space-y-2" : "flex-1 overflow-y-auto px-4 py-3 space-y-2.5"}>
         {msgs.length === 0 && !busy && (
           <div className="space-y-2">
-            <p className="text-xs text-[var(--text-secondary)]">Ask about specs, missing details, past prices, or the thread — I’ll check the enquiry and show my work.</p>
+            <p className="text-xs text-[var(--text-secondary)]">Ask about specs or missing details — I’ll check the enquiry and show my work.</p>
             <div className="flex flex-wrap gap-1.5">
               {SUGGESTIONS.map((s) => (
                 <button

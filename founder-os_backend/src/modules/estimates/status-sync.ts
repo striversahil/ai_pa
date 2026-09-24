@@ -56,6 +56,9 @@ export async function applyStatusUpdates(
             where: {
               estNumber: num,
               rateStatus: { not: 'sent' } as any,
+              // Open sent-revision: the row loops again — never auto-promote
+              // mid-revision (management owns it until re-sent).
+              sentRevisionAt: '',
               // Same-org enquiries plus untagged legacy rows ('' = primary).
               // An enquiry explicitly tagged to the OTHER org is left alone.
               ...(org ? { OR: [{ organizationId: org }, { organizationId: '' }] } as any : {}),

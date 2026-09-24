@@ -253,10 +253,6 @@ export default function ProcurementQueue() {
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, rates: (it.rates ?? []).map((r, j) => (j === rateIdx ? rate : r)) } : it)), [patchItems]);
 
-  const handleRemoveRate = useCallback((enquiryId: string, itemIdx: number, rateIdx: number) =>
-    void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...it, rates: (it.rates ?? []).filter((_, j) => j !== rateIdx) } : it)), [patchItems]);
-
   const handleFlag = useCallback((enquiryId: string, itemIdx: number, reason: string) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, specIssue: reason, specFlaggedAt: new Date().toISOString() } : it)), [patchItems]);
@@ -599,18 +595,36 @@ export default function ProcurementQueue() {
               const submitted = isSubmitted(selEnquiry);
               const lateQuoteEnquiry = selEnquiry.rateStatus === "finalized";
               const all = selEnquiry.items ?? [];
-              const hidden = all.filter((it) => it.rateAvailable || (it as any).internalRates || (it as any).notAvailable).length;
-              const visible = all.map((it, idx) => ({ it, idx })).filter(({ it }) => !it.rateAvailable && !(it as any).internalRates && !(it as any).notAvailable);
+              // Bypassed lines (rate available / not available / internal)
+              // need no quoting — but their rates AND threads stay visible
+              // read-only below, so sales conversation never vanishes.
+              const isBypass = (it: EnquiryItem) => it.rateAvailable || (it as any).internalRates || (it as any).notAvailable;
+              const hidden = all.map((it, idx) => ({ it, idx })).filter(({ it }) => isBypass(it));
+              const visible = all.map((it, idx) => ({ it, idx })).filter(({ it }) => !isBypass(it));
+              const bypassCard = ({ it: item, idx: itemIdx }: { it: EnquiryItem; idx: number }) => (
+                <ProcurementItemCard
+                  key={itemIdx}
+                  item={item}
+                  itemIdx={itemIdx}
+                  lateQuote={false}
+                  onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
+                  onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
+                  onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
+                  onNotAvailable={(reason) => handleNotAvailable(selEnquiry.id, itemIdx, reason)}
+                  onClearNotAvailable={() => handleClearNotAvailable(selEnquiry.id, itemIdx)}
+                  onOpenLightbox={handleOpenLightbox}
+                  onAddItemMedia={(media) => handleAddItemMedia(selEnquiry.id, itemIdx, media)}
+                  onPostThread={(text, media) => handlePostThread(selEnquiry.id, itemIdx, text, media)}
+                  onResolveThread={() => handleResolveThread(selEnquiry.id, itemIdx)}
+                  onReopenThread={() => handleReopenThread(selEnquiry.id, itemIdx)}
+                  readOnly
+                />
+              );
               return (
                 <>
-                  {hidden > 0 && (
-                    <p className="rounded-xl border border-zinc-700/50 bg-zinc-800/40 px-3 py-2 text-[11px] font-semibold text-zinc-400">
-                      {hidden} item{hidden === 1 ? "" : "s"} marked rate available / not available / internal — hidden from procurement (only {visible.length} needing rates shown).
-                    </p>
-                  )}
-                  {visible.length === 0 ? (
-                    <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                      All items are rate available / not available / internal — nothing to quote. Conclude when ready.
+                  {visible.length === 0 && hidden.length === 0 ? (
+                    <p className="rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)]/25 px-3 py-2 text-xs font-semibold text-[var(--text-secondary)]">
+                      No items on this enquiry yet — sales adds them from the tracker.
                     </p>
                   ) : (
                     visible.map(({ it: item, idx: itemIdx }) => (
@@ -621,7 +635,6 @@ export default function ProcurementQueue() {
                         lateQuote={lateQuoteEnquiry}
                         onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
                         onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
-                        onRemoveRate={(ri) => handleRemoveRate(selEnquiry.id, itemIdx, ri)}
                         onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
                         onNotAvailable={(reason) => handleNotAvailable(selEnquiry.id, itemIdx, reason)}
                         onClearNotAvailable={() => handleClearNotAvailable(selEnquiry.id, itemIdx)}
@@ -633,6 +646,14 @@ export default function ProcurementQueue() {
                         readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest) || !!(item as any).notAvailable || !!(item as any).notAvailableRequested}
                       />
                     ))
+                  )}
+                  {hidden.length > 0 && (
+                    <ClosedDropdown
+                      count={hidden.length}
+                      label={`Already priced — read-only (${hidden.length} rate available / not available / internal)`}
+                    >
+                      <div className="space-y-2.5">{hidden.map(bypassCard)}</div>
+                    </ClosedDropdown>
                   )}
                 </>
               );

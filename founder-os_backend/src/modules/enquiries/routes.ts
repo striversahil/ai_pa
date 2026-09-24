@@ -16,6 +16,7 @@ import {
   parseItemMedia,
   parseItemRates,
   numOrUndefined,
+  signedNumOrUndefined,
   rateIdxOrUndefined,
   normalizeQty,
   parseFlagThread,
@@ -26,6 +27,7 @@ import { normalizeEnquirySource, nextDailyNo, enquiryLabelText } from "./types";
 import {
   isRestrictedViewer,
   canManageRates,
+  canConcludeProcurement,
   redactEnquiryPII,
   stripMarginFields,
   normalizeMoneyInput,
@@ -38,6 +40,7 @@ import { asRedactedViewCache, hashItem } from "./redaction";
 export {
   isRestrictedViewer,
   canManageRates,
+  canConcludeProcurement,
   redactEnquiryPII,
   stripMarginFields,
   normalizeMoneyInput,
@@ -113,7 +116,7 @@ function pick(data: any): Partial<Enquiry> | null {
         rates: parseItemRates(r?.rates),
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
-        markup: numOrUndefined(r?.markup),
+        markup: signedNumOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
         finalDiscountPercent: parseDiscount(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),
@@ -208,7 +211,12 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
       }
       const byNum = await estimateStatusByNumbers(nums, orgByNum);
       for (const e of enquiries as any[]) {
-        const hit = byNum.get(String((e as any)?.estNumber ?? '').trim());
+        const n = String((e as any)?.estNumber ?? '').trim();
+        const o = String((e as any)?.organizationId ?? '').trim();
+        // Org-scoped key first: two enquiries sharing one EST number with
+        // different orgs (BUI + DPG share the series) each read their own
+        // org's status; fall back to the legacy bare key for untagged rows.
+        const hit = (o && byNum.get(`${o}||${n}`)) || byNum.get(n);
         (e as any).zohoStatus = hit ? hit.status : null;
       }
     } else {
@@ -295,7 +303,7 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
         media: parseItemMedia(it?.media),
         rates: parseItemRates(it?.rates),
         selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
-        markup: numOrUndefined(it?.markup),
+        markup: signedNumOrUndefined(it?.markup),
         finalRate: numOrUndefined(it?.finalRate),
         finalizedAt: isoOrUndefined(it?.finalizedAt),
         specIssue: it?.specIssue ? String(it.specIssue).slice(0, 2000) : undefined,
@@ -422,6 +430,8 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     assignedAgentId,
     rateStatus: 'rate_pending',
     procurementSubmittedAt: "",
+    sentRevisionAt: "",
+    organizationId: "",
     imageUrls: Array.isArray(body.imageUrls) ? body.imageUrls : [],
     activities: Array.isArray(body.activities) ? body.activities : [],
     additionalRequirements: (Array.isArray(body.additionalRequirements) ? body.additionalRequirements : [])
@@ -525,8 +535,12 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
 }
 
 export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: string, body: any): Promise<EnquiryResult> {
-  const updates = pick(body || {});
-  if (!updates) return json(400, { error: "no valid fields" });
+  const picked = pick(body || {});
+  const updates: any = picked ?? {};
+  // Revise verb (privileged only, enforced in applySentRevision): reopen a
+  // `sent` enquiry for additional scope. Read off `body` — never stored.
+  if ((body as any)?.reviseSent === true) updates.reviseSent = true;
+  if (!Object.keys(updates).length) return json(400, { error: "no valid fields" });
   // Reject junk quote amounts with a message instead of dropping them.
   if (Array.isArray((body as any)?.items)) {
     const rateError = validateRatesInput((body as any).items);
@@ -554,10 +568,41 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       storedItems, privileged, restricted, actingProcurement, surface: declaredSurface,
     } as any);
   }
+  // Source change retitles auto-titles: the title snapshots the label at
+  // creation (`Enquiry No 3 - 24 SEP TL`); when the source flips TL→AI an
+  // untouched auto-title follows it so the number reads AI. Custom titles
+  // (anything differing from the old auto-label) never rewrite.
+  {
+    const nextSource = (updates as any).source;
+    if (typeof nextSource === 'string' && storedForItems) {
+      const oldSource = String((storedForItems as any)?.source ?? 'TL');
+      if (nextSource !== oldSource) {
+        const storedTitle = String((storedForItems as any)?.title ?? '').trim();
+        const autoOld = enquiryLabelText(
+          (storedForItems as any)?.dailyNo ?? null,
+          String((storedForItems as any)?.createdAt ?? ''),
+          oldSource,
+        );
+        if (!storedTitle || storedTitle === autoOld) {
+          (updates as any).title = enquiryLabelText(
+            (storedForItems as any)?.dailyNo ?? null,
+            String((storedForItems as any)?.createdAt ?? ''),
+            nextSource,
+          );
+        }
+      }
+    }
+  }
   // Submit-to-Management lifecycle + reopen + auto-finalize — see update.ts.
   {
-    const { applyRateLifecycles } = await import('./update');
-    applyRateLifecycles(updates, { storedForItems, storedItems, privileged, restricted });
+    const { applyRateLifecycles, applySentRevision } = await import('./update');
+    const reviseErr = applySentRevision(updates, {
+      storedRateStatus: String((storedForItems as any)?.rateStatus ?? ''),
+      storedRevision: String((storedForItems as any)?.sentRevisionAt ?? ''),
+      privileged,
+    });
+    if (reviseErr) return json(403, { error: reviseErr });
+    applyRateLifecycles(updates, { storedForItems, storedItems, privileged, restricted, canConclude: canConcludeProcurement(me) });
   }
   // Completeness gate (all writers): 'finalized' / 'sent' are enquiry-level
   // commitments, but decisions are per-item. Refuse to close an enquiry
@@ -634,7 +679,7 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     // KEEPS the committed decision so sales keeps the previous rate (see
     // update.ts) — rateStatus stays `finalized`. Management is notified via
     // live event + thread entry and revises only if needed. Sent rows never
-    // reopen.
+    // reopen implicitly (explicit `reviseSent` by management is the only way).
     if (cur === 'finalized') {
       const { applyLateQuoteReopen } = await import('./update');
       applyLateQuoteReopen(updates, {

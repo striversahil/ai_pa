@@ -28,6 +28,7 @@ import * as accounts from '../../automations/accounts';
 import * as digitalMarketing from '../../automations/digital-marketing';
 import * as whatsappAutopilot from '../../automations/whatsapp-autopilot';
 import * as crm from '../../automations/crm';
+import * as productLine from '../../automations/product-line';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
@@ -49,6 +50,7 @@ const MODULES: Record<string, AutomationModule> = {
   'digital-marketing': digitalMarketing as AutomationModule,
   'whatsapp-autopilot': whatsappAutopilot as AutomationModule,
   'crm': crm as AutomationModule,
+  'product-line': productLine as AutomationModule,
 };
 
 const RULES: Record<string, Partial<AutomationDefinition>> = {
@@ -126,6 +128,9 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'crm': {
     id: 'crm', name: 'CRM — Active Sales Orders', description: 'Pipeline of open Zoho Books sales orders grouped by the next pending process step (Confirm → Invoice → Ship → Payment). Fetched by the GH runner, served from KV.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, scope: 'crm', enabled: true,
+  },
+  'product-line': {
+    id: 'product-line', name: 'Product Line', description: 'Product master (KYP sheet as data): products, guide questions, vendors and quote facts. MIS-editable.', type: 'handler', trigger: { type: 'manual' }, scope: 'product-line', enabled: true,
   },
 };
 

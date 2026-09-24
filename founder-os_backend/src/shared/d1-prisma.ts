@@ -51,6 +51,10 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskTemplate: ['active', 'isShared'],
   DigitalMarketingTaskLog: [],
   DigitalMarketingTaskAttachment: [],
+  ProductItem: ['active'],
+  KypGuide: ['isRequired', 'active'],
+  Vendor: ['active'],
+  VendorRate: ['active'],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -87,6 +91,10 @@ const DATE_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskAttachment: ['createdAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
+  ProductItem: ['createdAt', 'updatedAt'],
+  KypGuide: ['createdAt', 'updatedAt'],
+  Vendor: ['createdAt', 'updatedAt'],
+  VendorRate: ['quotedAt', 'createdAt', 'updatedAt'],
   SoAttachment: ['createdAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
@@ -142,6 +150,10 @@ const ID_FIELDS: Record<string, string> = {
   DigitalMarketingTaskTemplate: 'id',
   DigitalMarketingTaskLog: 'id',
   DigitalMarketingTaskAttachment: 'id',
+  ProductItem: 'id',
+  KypGuide: 'id',
+  Vendor: 'id',
+  VendorRate: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -153,11 +165,14 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   MarketingLead: ['campaignId', 'phoneNumber'],
   PriceQuote: ['messageId'],
   MessageLineage: ['waMessageId'],
+  ProductItem: ['name'],
+  Vendor: ['name'],
 };
 
 const FLOAT_FIELDS: Record<string, string[]> = {
   Estimate: ['total'],
   PriceQuote: ['unitPrice'],
+  VendorRate: ['pricePerUnit', 'discountPercent', 'baseRate', 'weightPerUnit'],
   MessageLineage: ['confidence'],
   WaTaskHistory: ['confidence'],
   OverrideLog: ['systemConfidence'],
@@ -221,6 +236,20 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   DigitalMarketingTaskAttachment: {
     log: { model: 'DigitalMarketingTaskLog', fk: 'logId', one: true },
+  },
+  ProductItem: {
+    guide: { model: 'KypGuide', fk: 'productId' },
+    rates: { model: 'VendorRate', fk: 'productId' },
+  },
+  KypGuide: {
+    product: { model: 'ProductItem', fk: 'productId', one: true },
+  },
+  Vendor: {
+    rates: { model: 'VendorRate', fk: 'vendorId' },
+  },
+  VendorRate: {
+    vendor: { model: 'Vendor', fk: 'vendorId', one: true },
+    product: { model: 'ProductItem', fk: 'productId', one: true },
   },
 };
 
@@ -749,6 +778,11 @@ export class D1PrismaClient {
   get digitalMarketingTaskTemplate() { return this.model('DigitalMarketingTaskTemplate'); }
   get digitalMarketingTaskLog() { return this.model('DigitalMarketingTaskLog'); }
   get digitalMarketingTaskAttachment() { return this.model('DigitalMarketingTaskAttachment'); }
+  // Product Line master (migration 0046).
+  get productItem() { return this.model('ProductItem'); }
+  get kypGuide() { return this.model('KypGuide'); }
+  get vendor() { return this.model('Vendor'); }
+  get vendorRate() { return this.model('VendorRate'); }
 
   $on() {}
   $disconnect() {}

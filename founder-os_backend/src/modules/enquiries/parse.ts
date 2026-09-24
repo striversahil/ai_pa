@@ -105,7 +105,22 @@ export const strictNum = (v: unknown): number | undefined => {
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 };
 
+/** Signed variant for MARKUP only: net/below-cost rates carry a negative ₹
+ *  markup (final below vendor cost). Same junk rejection as strictNum, but a
+ *  leading `-` is accepted. Never use for prices themselves (vendor rate,
+ *  final, expected) — those stay non-negative. */
+export const strictSignedNum = (v: unknown): number | undefined => {
+  if (v === undefined || v === null) return undefined;
+  const s = String(v).trim().replace(/[₹\s,]/g, '');
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return undefined;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+};
+
 export const numOrUndefined = (v: unknown): number | undefined => strictNum(v);
+
+/** Signed markup parse (see strictSignedNum). */
+export const signedNumOrUndefined = (v: unknown): number | undefined => strictSignedNum(v);
 
 export function parseItems(raw: string | null): EnquiryItem[] {
   if (!raw) return [];
@@ -126,7 +141,7 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         rates: parseItemRates(r?.rates),
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
         selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
-        markup: numOrUndefined(r?.markup),
+        markup: signedNumOrUndefined(r?.markup),
         finalRate: numOrUndefined(r?.finalRate),
         finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),

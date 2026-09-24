@@ -751,6 +751,12 @@ model Enquiry {
   rateStatus       String   @default("")
   // Explicit procurement handoff: ISO instant of "Submit to Management".
   procurementSubmittedAt String @default("")
+  // Sent-revision marker: ISO instant when management reopened a `sent`
+  // enquiry for additional scope (revise flow). While set, the Zoho
+  // non-draft status does NOT auto-promote/conclude the row, so the new
+  // items loop through procurement → management → sent again. Cleared on
+  // the next mark-as-sent. '' = no open revision.
+  sentRevisionAt   String   @default("")
   // Manual line items (JSON array text): [{ name, qty, spec, media, rates, markup... }].
   // [{ name, qty, spec }] — one entry per purchasable item in the enquiry.
   items          String?
@@ -772,6 +778,93 @@ model EnquiryComment {
   visibility String  @default("sales")
 
   @@index([enquiryId, createdAt])
+}
+
+// ── Product master (KYP catalogue as data, not JSON) ─────────────────────────
+// Source of truth for the intake category lookup + spec-check + copilot.
+// Seeded once from data/know_your_product_v2.json (migration 0046 + seed).
+// Identity only — the checklist lives in KypGuide (one question per row).
+model ProductItem {
+  id        String   @id @default(uuid())
+  category  String
+  name      String   @unique
+  aliases   String?  // JSON array text
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  guide     KypGuide[]
+  rates     VendorRate[]
+
+  @@index([category, active])
+}
+
+// Ultimate guide table: one row per checklist question per product.
+// attrKey is a stable slug — never rename it (VendorRate.attrValues keys off it).
+model KypGuide {
+  id         String      @id @default(uuid())
+  productId  String
+  product    ProductItem @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attrKey    String
+  question   String
+  guideNote  String?
+  sortOrder  Int         @default(0)
+  isRequired Boolean     @default(true)
+  condition  String?     // JSON text, nullable
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([productId, attrKey])
+  @@index([productId, sortOrder])
+}
+
+// Vendor master: one row per supplier (dropdown source, no free text).
+model Vendor {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  contactPerson   String?
+  contactPhone1   String?
+  contactPhone2   String?
+  location        String?
+  address         String?
+  yearEstablished Int?
+  vendorType      String   @default("") // Manufacturer | Distributor | Trader
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  rates           VendorRate[]
+}
+
+// Priced facts: one row per vendor quote. The rate keys off the attribute
+// snapshot (attrKey canonical string), NOT the bare item — same item with
+// different dims/brand is a different key and never falsely exact-matches.
+model VendorRate {
+  id              String       @id @default(uuid())
+  vendorId        String
+  vendor          Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  productId       String?
+  product         ProductItem? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  attrValues      String?      // JSON text {attrKey: value as quoted}
+  attrKey         String       @default("")
+  pricePerUnit    Float?
+  unit            String       @default("")
+  discountPercent Float?
+  baseRate        Float?
+  weightPerUnit   Float?
+  packageQty      String?
+  packageDims     String?
+  moq             String?
+  deliveryDays    Int?
+  imageUrl        String?  // vendor-quoted item photo (uploaded KV path or https URL)
+  videoUrl        String?  // vendor manufacturing video (https URL)
+  quotedAt        DateTime     @default(now())
+  enquiryRef      String?
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([productId, attrKey])
+  @@index([vendorId])
 }
 
 // ── Accounts (recurring compliance taskbar: senior / junior + MIS control) ──

@@ -17,7 +17,9 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   // Zoho is source of truth: sent/accepted/declined/etc. (non-draft) auto-means internal `sent`.
   const zohoStatus = String((enq as any)?.zohoStatus ?? '').toLowerCase();
   const isZohoSent = !!zohoStatus && zohoStatus !== 'draft';
-  const sent = (enq.rateStatus ?? "") === "sent" || isZohoSent;
+  // Open sent-revision: the row loops again (not terminal) — chip reads revision, not sent.
+  const revising = !!String((enq as any)?.sentRevisionAt ?? '').trim();
+  const sent = !revising && ((enq.rateStatus ?? "") === "sent" || isZohoSent);
   // Rate available / not available overrides the hold — kept hidden in D1 (update.ts:239), UI must not show Fix Spec for it; sent is terminal (even flagged rows show Marked as Sent)
   const flagged = items.some((it) => it.specIssue && !it.rateAvailable && !(it as any).notAvailable && !(it as any).internalRates);
   const notAvailable = items.some((it) => (it as any).notAvailable);
@@ -60,7 +62,9 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
           )}
           {!hideIdentity && (
             <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
-              sent
+              revising
+                ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
+                : sent
                 ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
                 : notAvailable
                 ? "bg-zinc-800 text-zinc-200 border-zinc-600"
@@ -71,8 +75,8 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
                 : hasPartialRates || hasRates
                     ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
                     : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
-              }`}>
-              {sent ? "Marked as Sent" : notAvailable ? "Not Available" : flagged ? "Fix Spec" : finalized ? "Rates Ready" : hasPartialRates ? "Partial rates" : hasRates ? "Rating…" : "Awaiting rates"}
+              }`} title={revising ? "Management reopened this sent enquiry — new items loop procurement → management again" : undefined}>
+              {revising ? "Under revision" : sent ? "Marked as Sent" : notAvailable ? "Not Available" : flagged ? "Fix Spec" : finalized ? "Rates Ready" : hasPartialRates ? "Partial rates" : hasRates ? "Rating…" : "Awaiting rates"}
             </span>
           )}
           {!hideIdentity && notAvailable && !sent && (

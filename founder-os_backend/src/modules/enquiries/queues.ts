@@ -29,6 +29,14 @@ export function itemNeedsDecision(it: ItemDecisionShape): boolean {
     && ((it as any)?.finalRate === undefined || (it as any)?.finalRate === null);
 }
 
+/** Sent-revision marker: management reopened a `sent` enquiry for additional
+ *  scope (revise flow). While set, the row loops procurement → management →
+ *  sent again — Zoho non-draft does NOT hold it terminal. Cleared on the next
+ *  mark-as-sent. Mirrors `frontend/src/enquiry/queue.ts` — keep in sync. */
+export function isSentReopened(e: { sentRevisionAt?: string }): boolean {
+  return !!String((e as any)?.sentRevisionAt ?? "").trim();
+}
+
 /** Explicit procurement handoff ("Enquiry Concluded"). */
 export function isSubmitted(e: { procurementSubmittedAt?: string }): boolean {
   return !!String(e?.procurementSubmittedAt ?? "").trim();
@@ -101,13 +109,15 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   if (items.length === 0) return false;
   // Sales ask (flag/request) reactivates even when terminal — check before terminal gate
   if (hasPendingProcurementThread(e as any)) return true;
-  const isTerminal = String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft');
+  // Open sent-revision: the row loops again — Zoho non-draft does NOT hold it terminal.
+  const reopened = isSentReopened(e as any);
+  const isTerminal = !reopened && (String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft'));
   // Zoho sent thread (any sales remark) reactivates terminal for visibility — e.g. 10-23 "sent"
   if (isTerminal && hasAnySalesThread(e as any)) return true;
   // Zoho not draft (sent/accepted/declined etc.) — procurement done even with pending rates
-  if (String((e as any).rateStatus ?? '') === 'sent') return false;
+  if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return false;
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
-  if (zs && zs !== 'draft') return false;
+  if (!reopened && zs && zs !== 'draft') return false;
   // Fresh work (new unquoted lines, pending alternate requests) reopens the
   // queue even on concluded rows — the client keeps asking.
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return true;
@@ -118,12 +128,13 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
 export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
   if (hasPendingProcurementThread(e as any)) return false;
-  const isTerminal = String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft');
+  const reopened = isSentReopened(e as any);
+  const isTerminal = !reopened && (String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft'));
   if (isTerminal && hasAnySalesThread(e as any)) return false;
   // Zoho not draft (sent/accepted/declined etc.) — always History
-  if (String((e as any).rateStatus ?? '') === 'sent') return items.length > 0;
+  if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return items.length > 0;
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
-  if (zs && zs !== 'draft') return items.length > 0;
+  if (!reopened && zs && zs !== 'draft') return items.length > 0;
   // Closed requirement: concluded automatically — visible in History even
   // before/without the explicit handoff stamp.
   if (!isSubmitted(e)) return false;
@@ -134,9 +145,11 @@ export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
 
 export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
-  if (String((e as any).rateStatus ?? '') === 'sent') return false;
+  // Open sent-revision loops again — Zoho non-draft does NOT hold it terminal.
+  const reopened = isSentReopened(e as any);
+  if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return false;
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
-  if (zs && zs !== 'draft') return false;
+  if (!reopened && zs && zs !== 'draft') return false;
   // Decided items with new unshared vendor quotes since the decision
   // (variation answers, late quotes) come back for review/share — plus
   // procurement's not-available requests awaiting approval.
@@ -157,6 +170,13 @@ export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean
   const unrated = loop.filter((it: any) => (it?.rates ?? []).length === 0).length;
   if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates (or mark rate available / not available)` };
   return { ok: true, reason: "" };
+}
+
+/** Needs action: the actionable subset of open threads — someone must move:
+ *  spec fix (sales), pending ask (procurement must answer), or not-available
+ *  request (management must approve). Mirrors frontend queue.ts. */
+export function needsActionThread(e: Pick<Enquiry, "items">): boolean {
+  return ((e as any).items ?? []).some((it: any) => !!it?.specIssue || hasPendingProcurementThread({ items: [it] } as any) || !!String((it as any)?.notAvailableRequested ?? "").trim());
 }
 
 /** Open thread from either side: survives concluded/zoho filters until resolved (bilateral). */

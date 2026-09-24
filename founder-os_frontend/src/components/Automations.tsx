@@ -22,6 +22,7 @@ const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false })
 const ProcurementQueue = dynamic(() => import("./ProcurementQueue"), { ssr: false });
 const ManagementReview = dynamic(() => import("./ManagementReview"), { ssr: false });
 const CrmDashboard = dynamic(() => import("./CrmDashboard"), { ssr: false });
+const ProductLineDashboard = dynamic(() => import("./ProductLineDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -135,6 +136,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "enquiry-procurement") return <ProcurementQueue />;
     if (selected === "enquiry-management") return <ManagementReview />;
     if (selected === "crm") return <CrmDashboard />;
+    if (selected === "product-line") return <ProductLineDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;

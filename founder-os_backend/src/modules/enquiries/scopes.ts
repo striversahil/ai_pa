@@ -14,7 +14,7 @@
 //     (counts + label parts only, never PII/free text/rates).
 //   resolveCreatorAgentId — lead inference (login email → roster row).
 import type { MeResponse } from "../auth/types";
-import { strictNum } from "./parse";
+import { strictNum, strictSignedNum } from "./parse";
 
 export function isRestrictedViewer(_me: MeResponse): boolean {
   // Founder decision 2026-09-22: don't gate enquiries — everyone sees everyone
@@ -37,6 +37,15 @@ export function canManageRates(me: MeResponse): boolean {
   if (!me) return false;
   if (me.isAdmin || (me as any).isRoot) return true;
   return ((me as any).scopes || []).includes('mis');
+}
+
+/** May stamp the procurement handoff ("Enquiry Concluded", stamp-only, never
+ *  clear): management plus anyone holding the `procurement` scope. Plain
+ *  sales writers still follow stored. Clearing stays privileged-only. */
+export function canConcludeProcurement(me: MeResponse): boolean {
+  if (!me) return false;
+  if (canManageRates(me)) return true;
+  return ((me as any).scopes || []).includes('procurement');
 }
 
 /** Margin fields are Management-only: non-privileged readers see final rates
@@ -86,14 +95,20 @@ export function normalizeMoneyInput(v: unknown): number | undefined {
   return strictNum(v);
 }
 
-/** Rate validation: vendor name + junk amount → 400 message, never silent drop. */
+/** Rate validation: vendor name + junk amount → 400 message, never silent drop.
+ *  Markup is signed (net/below-cost rates carry a negative ₹ markup); final
+ *  rate, expected price and vendor quotes stay non-negative. */
 export function validateRatesInput(items: unknown): string | null {
   if (!Array.isArray(items)) return null;
   for (let i = 0; i < items.length; i++) {
-    for (const f of ['markup', 'finalRate', 'expectedRate'] as const) {
+    const rawMarkup = (items[i] as any)?.markup;
+    if (rawMarkup !== undefined && rawMarkup !== null && rawMarkup !== '' && strictSignedNum(rawMarkup) === undefined) {
+      return `Item ${i + 1}: "${String(rawMarkup)}" is not a valid markup — use digits only (negative allowed for net rates)`;
+    }
+    for (const f of ['finalRate', 'expectedRate'] as const) {
       const raw = (items[i] as any)?.[f];
       if (raw !== undefined && raw !== null && raw !== '' && normalizeMoneyInput(raw) === undefined) {
-        return `Item ${i + 1}: "${String(raw)}" is not a valid ${f === 'markup' ? 'markup' : f === 'finalRate' ? 'final rate' : 'expected price'} — use digits only`;
+        return `Item ${i + 1}: "${String(raw)}" is not a valid ${f === 'finalRate' ? 'final rate' : 'expected price'} — use digits only`;
       }
     }
     const fd = (items[i] as any)?.finalDiscountPercent;
