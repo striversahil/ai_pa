@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { config } from './config';
 import { logger } from './shared/logger';
@@ -81,17 +82,23 @@ app.use((req, res, next) => {
 
 // ── Google auth login gate (Express = local/alt runtime) ────────────────────
 const AUTH_EXEMPT = ['/api/auth/', '/api/runner/', '/api/trigger/', '/api/health', '/health', '/api/status', '/webhook', '/dashboard', '/api/token/', '/api/estimates/bulk-upsert', '/api/neodove/report'];
-app.use((req, res, next) => {
+// NOTE: getMe is async — the gate MUST await it, else the Promise object is
+// always truthy and every request passes as authenticated.
+app.use(async (req, res, next) => {
   if (!authEnabled(config)) return next();
   const path = req.path;
   if (AUTH_EXEMPT.some((p) => path.startsWith(p))) return next();
-  const me = getMe(authStore, req.headers.cookie || null);
+  const me = await getMe(authStore, readSessionCookie(req.headers.cookie || null));
   if (!me) {
     if ((req.headers['upgrade'] || '').toLowerCase() === 'websocket') return res.sendStatus(401);
     return res.status(401).json({ error: 'Authentication required' });
   }
+  (req as any).me = me;
   next();
 });
+
+// Brute-force guard on login endpoints (alt runtime only; Worker has its own).
+app.use('/api/auth/', rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false }));
 
 // --- WhatsApp webhook endpoint (secured: IP allowlist + rate limit) ---
 app.use('/api/whatsapp/webhook', webhookRouter);
@@ -425,6 +432,59 @@ app.post('/api/enquiries/:id/chat/execute', async (req, res) => {
     const { result, applied } = await executeProposal(
       enquiryStore, me as any, req.params.id,
       (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
+    );
+    res.status((result as any).status).json({ ...((result as any).body as any), applied });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e?.message ?? 'apply failed').slice(0, 300), applied: 'none' });
+  }
+});
+// Generic department copilots (Express mirror of worker/routes/copilot.ts — non-streaming).
+app.post('/api/copilot/:id/chat', async (req, res) => {
+  const me = await enquiryMe(req);
+  const { getCopilot } = await import('./copilot/registry');
+  const { runTurn } = await import('./copilot/engine');
+  const def = getCopilot(req.params.id);
+  if (!def) return res.status(404).json({ error: 'unknown copilot' });
+  const denied = def.checkAccess(me);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
+  const message = String((req.body as any)?.message ?? '').trim().slice(0, 2000);
+  if (!message) return res.status(400).json({ error: 'message required' });
+  try {
+    const ctx = await def.buildCtx(process.env as any, me as any, {});
+    res.json(await runTurn(process.env as any, def, ctx, message));
+  } catch (e: any) {
+    res.status(500).json({ error: String(e?.message ?? 'chat failed').slice(0, 500), reply: 'Chat failed — please retry.' });
+  }
+});
+// New chat — wipes rolling history + draft state (Express mirror).
+app.post('/api/copilot/:id/chat/clear', async (req, res) => {
+  const me = await enquiryMe(req);
+  const { getCopilot } = await import('./copilot/registry');
+  const { clearState } = await import('./copilot/engine');
+  const def = getCopilot(req.params.id);
+  if (!def) return res.status(404).json({ error: 'unknown copilot' });
+  const denied = def.checkAccess(me);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
+  try {
+    const ctx = await def.buildCtx(process.env as any, me as any, {});
+    await clearState(def, ctx);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e?.message ?? 'clear failed').slice(0, 300) });
+  }
+});
+app.post('/api/copilot/:id/chat/execute', async (req, res) => {
+  const me = await enquiryMe(req);
+  const { getCopilot } = await import('./copilot/registry');
+  const def = getCopilot(req.params.id);
+  if (!def) return res.status(404).json({ error: 'unknown copilot' });
+  const denied = def.checkAccess(me);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
+  if (!def.executeProposal) return res.status(400).json({ error: 'this copilot is read-only', applied: 'none' });
+  try {
+    const ctx = await def.buildCtx(process.env as any, me as any, {});
+    const { result, applied } = await def.executeProposal(
+      ctx, (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
     );
     res.status((result as any).status).json({ ...((result as any).body as any), applied });
   } catch (e: any) {

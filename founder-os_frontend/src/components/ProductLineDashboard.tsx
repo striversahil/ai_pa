@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
+import ProductCopilot from "./ProductCopilot";
 
 // Mirror: founder-os_backend/src/automations/product-line/types.ts
 interface ProductRow { id: string; category: string; name: string; aliases: string[]; active: boolean; guideCount: number; rateCount: number; }
@@ -991,6 +992,8 @@ export default function ProductLineDashboard() {
           <ModalFoot onCancel={() => setRModal(null)} busy={busy} disabled={!rModal.vendorId || !rModal.productId || rateFormError !== null} onSave={() => void saveRateModal()} />
         </ModalShell>
       )}
+      {/* Product-line copilot: same AI interface as sales, own tool set (read-only) */}
+      <ProductCopilot />
     </div>
   );
 }

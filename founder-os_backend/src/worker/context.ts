@@ -221,7 +221,9 @@ export function requireSecret(c: any): boolean {
   const auth = c.req.header('Authorization') || '';
   const provided = auth.replace(/^Bearer\s+/i, '');
   const expected = c.env.SHARED_SECRET;
-  if (!expected) return true; // secret not set → open (dev)
+  // Fail closed: without a configured secret, runner/trigger endpoints deny.
+  // (Dev/local runs set SHARED_SECRET explicitly when they need these paths.)
+  if (!expected) return false;
   return provided === expected;
 }
 
@@ -336,9 +338,46 @@ export function validateChatId(chatId: string): string | null {
 // ── App factory (middleware + boot + auth gate) ─────────────────────────────
 export function createApp(): Hono<{ Bindings: Bindings }> {
   const app = new Hono<{ Bindings: Bindings }>();
-  app.use('*', cors());
+  // Tight CORS: reflect only known frontend origins; never `*` on an
+  // authenticated API. Same-origin (Pages proxy) needs no CORS headers.
+  // Extra origins via ALLOWED_ORIGINS env (comma-separated).
+  app.use('*', cors({
+    origin: (origin) => {
+      if (!origin) return null as any;
+      const extra = String((globalThis as any).__WORKER_ENV__?.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+      const allow = [
+        'https://founder-os-frontend.pages.dev',
+        ...extra,
+      ];
+      try {
+        const u = new URL(origin);
+        if (u.hostname.endsWith('.pages.dev') || u.hostname === 'localhost' || u.hostname === '127.0.0.1') return origin;
+      } catch { /* fall through to allowlist */ }
+      return (allow as string[]).includes(origin) ? origin : null as any;
+    },
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+    credentials: true,
+  }));
 
-  // Edge/browser response caching.
+  // Lightweight auth rate limit: 30 req/min per IP on login/callback/me/logout.
+  // In-memory per-isolate; good enough to blunt credential-stuffing/ID scans.
+  const authHits = new Map<string, { count: number; resetAt: number }>();
+  app.use('/api/auth/*', async (c, next) => {
+    const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const now = Date.now();
+    const entry = authHits.get(ip);
+    if (!entry || now > entry.resetAt) authHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    else {
+      entry.count += 1;
+      if (entry.count > 30) return c.json({ error: 'Too many requests — retry in a minute' }, 429);
+    }
+    await next();
+  });
+
+  // Edge/browser response caching. Business/customer payloads are never
+  // browser-cached (no-store) — proxies must not retain copies. Only the
+  // unauthenticated status/health snapshots get a short public cache.
   const PUBLIC_CACHE_PATHS = ['/api/status', '/api/health', '/health'];
   const PRIVATE_CACHE_PREFIXES = [
     '/api/automations',       // registry is the same for every user
@@ -360,7 +399,8 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
       if (PUBLIC_CACHE_PATHS.some((p) => path.startsWith(p))) {
         res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120');
       } else if (PRIVATE_CACHE_PREFIXES.some((p) => path.startsWith(p))) {
-        res.headers.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=30');
+        // Business/customer data: never stored by proxies/browsers.
+        res.headers.set('Cache-Control', 'no-store');
       } else {
         res.headers.set('Cache-Control', 'no-store');
       }

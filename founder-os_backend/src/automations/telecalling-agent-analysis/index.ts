@@ -319,7 +319,8 @@ export async function data(ctx: AutomationContext): Promise<any> {
     meta: {
       analysis: 'sheet',
       title: 'Telecalling Agents',
-      spreadsheetUrl: sheetUrl,
+      // NOTE: spreadsheetUrl intentionally omitted — the Sheet ID is a
+      // capability handle; the UI only needs range/row counts.
       range,
       rowsRead: rows.length,
       configured: result.configured,

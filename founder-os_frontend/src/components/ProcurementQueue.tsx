@@ -50,8 +50,13 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
     );
   }
   const pendingItems = items.filter(itemNeedsRates);
-  const flagged = pendingItems.filter((it) => it.specIssue).length;
-  const requested = pendingItems.filter((it) => it.ratesRequested && !it.specIssue).length;
+  // Spec/request blockers span the whole loop, not just itemNeedsRates: a
+  // flagged item keeps its quote (needs-rates goes false while the sales
+  // fix is pending), but the chip must still name the blocker — otherwise
+  // a quoted-but-flagged item misreads as "Needs rates".
+  const loopItems = items.filter((it) => !it.rateAvailable && !(it as any).notAvailable && !(it as any).notAvailableRequested && !it.internalRates);
+  const flagged = loopItems.filter((it) => it.specIssue).length;
+  const requested = loopItems.filter((it) => it.ratesRequested && !it.specIssue).length;
   const alternates = items.filter((it) => String((it as any)?.variationRequest ?? "").trim()).length;
   if (alternates > 0) {
     return (
@@ -89,10 +94,10 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
 }
 
 // Procurement Queue dashboard (mounted as the `enquiry-procurement`
-// automation). Pending-only, PII-redacted, TABULAR: one row per enquiry with
-// a click-to-open modal carrying the complete information (all items with
-// spec, attachments, given rates, add/edit, incorrect-spec). History below,
-// read-only and date-wise.
+// automation). PII-redacted, TABULAR with queue tabs (Active / History):
+// one row per enquiry with a click-to-open modal carrying the complete
+// information (all items with spec, attachments, given rates, add/edit,
+// incorrect-spec).
 export default function ProcurementQueue() {
   const { me } = useAuth();
   const scopes = me?.scopes ?? [];
@@ -104,6 +109,10 @@ export default function ProcurementQueue() {
   // forms, flags) together — never one modal per item.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Queue tabs: Active (needs rates) / History (quoted, read-only).
+  // Manual pick wins; otherwise land on the first non-empty queue.
+  type ProcTab = "active" | "history";
+  const [tabPick, setTabPick] = useState<ProcTab | null>(null);
 
   const { enquiries, loaded, aiConfigured, updateItems, updateEnquiry, comments, addComment, currentAgent } =
     useEnquiryData("procurement");
@@ -224,6 +233,13 @@ export default function ProcurementQueue() {
     .filter((g) => g.reqs.length > 0)
     .sort((a, b) => byNewest(a.enquiry, b.enquiry)), [enquiries]);
 
+  const tab: ProcTab = tabPick
+    ?? (pending.length > 0 ? "active" : "history");
+  const tabs: Array<{ id: ProcTab; label: string; count: number }> = [
+    { id: "active", label: "Active", count: pending.length },
+    { id: "history", label: "History", count: historyEnquiries.length },
+  ];
+
   const handleOpenLightbox = useCallback((url: string, list?: string[], idx?: number) => {
     const images = Array.isArray(list) && list.length > 0 ? list.filter(Boolean) : [url].filter(Boolean);
     if (images.length === 0) return;
@@ -311,6 +327,7 @@ export default function ProcurementQueue() {
     const items = e.items ?? [];
     const quoted = items.filter((it) => (it.rates ?? []).length > 0).length;
     const needRatesActive = items.filter(itemNeedsRates).length;
+    const flaggedActive = items.filter((it) => it.specIssue && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
     const isReady = mode === "active" && needRatesActive === 0 && procurementSubmittable(e).ok;
     const needRates = mode === "active"
       ? needRatesActive
@@ -339,7 +356,7 @@ export default function ProcurementQueue() {
         </td>
         <td className={tdClass}>
           <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
-            {mode === "active" ? (isReady ? `Ready to conclude` : `${needRates} need rates`) : `${needRates} quoted`}
+            {mode === "active" ? (isReady ? `Ready to conclude` : flaggedActive > 0 ? `Awaiting sales fix` : `${needRates} need rates`) : `${needRates} quoted`}
             <span className="text-[var(--text-tertiary)]"> · {quoted}/{items.length} with rates</span>
           </span>
         </td>
@@ -351,7 +368,7 @@ export default function ProcurementQueue() {
     );
   });
 
-  const isEmpty = pending.length === 0 && reqGroups.length === 0 && historyEnquiries.length === 0;
+  const isEmpty = pending.length === 0 && reqGroups.length === 0 && historyEnquiries.length === 0 && emptyEnquiries.length === 0;
 
   const enquiryTable = (list: Enquiry[], mode: "active" | "history") => (
     <Table stickyFirst>
@@ -414,14 +431,39 @@ export default function ProcurementQueue() {
           <p className="mt-1 text-sm text-[var(--text-secondary)]">Every item has vendor rates. New unrated items will appear here automatically.</p>
         </div>
       ) : (
-        <div className="space-y-6">
-          {pending.length > 0 && (
-            <section className="space-y-2">
-              <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-                Active — needs rates ({pending.length} enquir{pending.length === 1 ? "y" : "ies"})
-              </p>
-              {enquiryTable(pending, "active")}
-            </section>
+        <div className="space-y-4">
+          <div role="tablist" aria-label="Procurement queues"
+            className="flex flex-wrap gap-1 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-1.5">
+            {tabs.map((t) => {
+              const selected = tab === t.id;
+              return (
+                <button key={t.id} type="button" role="tab" aria-selected={selected}
+                  onClick={() => setTabPick(t.id)}
+                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-extrabold cursor-pointer border-0 transition-colors ${
+                    selected
+                      ? "bg-[var(--color-brand-indigo)] text-white shadow"
+                      : "bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-input)]"
+                  }`}>
+                  {t.label}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                    selected ? "bg-white/20 text-white" : "bg-[var(--bg-input)] text-[var(--text-secondary)]"
+                  }`}>{t.count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {tab === "active" && (
+            pending.length > 0 ? (
+              <section className="space-y-2">
+                {enquiryTable(pending, "active")}
+              </section>
+            ) : (
+              <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
+                <p className="text-sm font-bold text-[var(--text-primary)]">No active quoting</p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">Every item has vendor rates — new unrated items will land here automatically.</p>
+              </div>
+            )
           )}
 
           {emptyEnquiries.length > 0 && (
@@ -440,8 +482,9 @@ export default function ProcurementQueue() {
             </div>
           )}
 
-          {historyEnquiries.length > 0 && (
-            <ClosedDropdown count={historyEnquiries.length}>
+          {tab === "history" && (
+            historyEnquiries.length > 0 ? (
+              <section className="space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <div className="flex-1 relative">
                   <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z" /></svg>
@@ -462,7 +505,13 @@ export default function ProcurementQueue() {
                   <button type="button" disabled={historyPageClamped >= historyTotalPages} onClick={() => setHistoryPage(historyPageClamped + 1)} className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer">Next ›</button>
                 </div>
               </div>
-            </ClosedDropdown>
+              </section>
+            ) : (
+              <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
+                <p className="text-sm font-bold text-[var(--text-primary)]">No procurement history yet</p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">Quoted enquiries will appear here date-wise.</p>
+              </div>
+            )
           )}
 
           {reqGroups.length > 0 && (

@@ -173,13 +173,13 @@ function kick(c: any, id: string): void {
 
   // Fire-and-forget DB promotion: Zoho non-draft → Enquiry `sent`.
   // Plus auto-conclude (`procurementSubmittedAt`) so concluded rows drop out
-  // of the procurement Active queue into History without a manual click:
-  // - terminal client decisions (declined/void/cancelled/accepted) stamp
-  //   unconditionally — quoting is over either way;
-  // - `sent` (estimate awaiting decision) stamps only once quotable work is
-  //   done (`procurementSubmittable().ok` on the STORED row) — rows procurement
-  //   is still quoting stay Active until the last rate lands.
-  // Never clears an existing stamp. Never blocks the request.
+  // of the procurement Active queue into History without a manual click.
+  // Founder rule (2026-09-25): ANY non-draft Zoho status concludes from the
+  // procurement end, overriding open spec flags and unquoted items — the
+  // estimate already went to the client, so procurement is done. Concluding
+  // also auto-resolves open spec flags (noted in thread). Never clears an
+  // existing stamp. Never blocks the request. Open sent-revisions stay
+  // exempt (management owns the row until re-sent).
   function maybePromoteEnquiriesSent(c: any, enquiries: any[]): void {
     try {
       const ids: string[] = [];
@@ -202,9 +202,9 @@ function kick(c: any, id: string): void {
           // and DB still not sent, update. We track ids via `id`.
           if (origRateStatus !== 'sent' && e?.id) ids.push(String(e.id));
         }
-        // Auto-conclude: terminal decisions always; `sent` only when quoting
-        // is provably done (checked against the stored row below). Skip rows
-        // that already carry the handoff.
+        // Auto-conclude: any non-draft status stamps (terminal or sent) —
+        // flags and unquoted items never block it. Skip rows that already
+        // carry the handoff.
         if (e?.id && !String((e as any)?.procurementSubmittedAt ?? '').trim()) {
           conclude.set(String(e.id), isZohoClosedStatus(s) ? 'terminal' : 'sent');
         }
@@ -224,10 +224,8 @@ function kick(c: any, id: string): void {
             } catch {}
           }
           // Auto-conclude (guarded: only stamp when still empty so a manual
-          // conclude timestamp is never overwritten). Terminal decisions stamp
-          // outright; `sent` stamps only when the STORED row has nothing left
-          // to quote — evaluated on stored items (the redacted response items
-          // omit internalRates, so the in-memory row can't be trusted here).
+          // conclude timestamp is never overwritten). Non-draft stamps
+          // outright — flags and unquoted items never block it.
           const concluded: string[] = [];
           for (const [id, kind] of conclude) {
             try {
@@ -489,7 +487,11 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/debug/ai-health', async (c) => {
     try {
       const gw = getGateway(c.env as any);
-      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes') });
+      const { cacheGet } = await import('../../shared/cache');
+      // Pool-wide storm flag: when true, every copilot answers "busy" without
+      // touching any key (set on any 429, 120s TTL, refreshed by each new 429).
+      const storm = !!(await cacheGet('ai:storm:agnes', 120_000).catch(() => null));
+      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes'), storm });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 500);
     }

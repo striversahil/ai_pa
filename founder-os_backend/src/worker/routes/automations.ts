@@ -85,6 +85,11 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
 
   app.get('/api/automations/:slug', async (c) => {
     const { prisma } = deps();
+    // Full automation detail (raw triggerJson/configJson) is admin-only —
+    // configs can hold Sheet URLs / chat IDs / vendor handles. Non-admins
+    // already get the minimal list from GET /api/automations.
+    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    if (!me?.isAdmin) return c.json({ error: 'Forbidden' }, 403);
     const row = await prisma.automation.findUnique({
       where: { slug: c.req.param('slug') },
       include: { runs: { orderBy: { createdAt: 'desc' }, take: 20 } },
@@ -99,6 +104,8 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
 
   app.patch('/api/automations/:slug', async (c) => {
     const { prisma, AutomationEngine } = deps();
+    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    if (!me?.isAdmin) return c.json({ error: 'Forbidden' }, 403);
     const body = await c.req.json().catch(() => ({}));
     const data: Record<string, unknown> = {};
     if (typeof body.enabled === 'boolean') { data.enabled = body.enabled; AutomationEngine.setEnabled(c.req.param('slug'), body.enabled); }
@@ -162,7 +169,8 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
       const data = await AutomationEngine.getData(c.req.param('slug'), query);
       return c.json(data);
     } catch (e: any) {
-      return c.json({ error: e?.message ?? 'no data provider' }, 404);
+      console.log(`automation data failed for '${c.req.param('slug')}':`, e?.message);
+      return c.json({ error: 'no data provider' }, 404);
     }
   });
 }

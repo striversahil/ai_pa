@@ -26,11 +26,18 @@ function parseJson(value: string | null | undefined): unknown {
   }
 }
 
+async function reqIsAdmin(req: any): Promise<boolean> {
+  // server.ts auth gate sets req.me for authenticated users. No req.me means
+  // auth is disabled (local dev) — preserve open access there.
+  if (!('me' in req)) return true;
+  return !!(req as any)?.me?.isAdmin;
+}
+
 router.get('/', asyncHandler(async (_req, res) => {
   const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
   // Static + boot-independent so the "View Dashboard" button never flickers.
   const withDashboard = DASHBOARD_SLUGS;
-  res.json(rows.map((r) => ({
+  const full = rows.map((r) => ({
     id: r.id,
     slug: r.slug,
     name: r.name,
@@ -50,10 +57,16 @@ router.get('/', asyncHandler(async (_req, res) => {
     config: parseJson(r.configJson),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
-  })));
+  }));
+  // Full registry (configs can hold Sheet URLs / chat IDs) is admin-only —
+  // mirrors the Worker route. Non-admins get the minimal dashboard list.
+  if (await reqIsAdmin(_req)) return res.json(full);
+  return res.json(full.map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
 }));
 
 router.get('/:slug', asyncHandler(async (req, res) => {
+  // Full detail (raw triggerJson/configJson) is admin-only.
+  if (!(await reqIsAdmin(req))) return res.status(403).json({ error: 'Forbidden' });
   const row = await prisma.automation.findUnique({
     where: { slug: String(req.params.slug) },
     include: { runs: { orderBy: { createdAt: 'desc' }, take: 20 } },
@@ -71,6 +84,7 @@ router.get('/:slug', asyncHandler(async (req, res) => {
 }));
 
 router.patch('/:slug', asyncHandler(async (req, res) => {
+  if (!(await reqIsAdmin(req))) return res.status(403).json({ error: 'Forbidden' });
   const { enabled, cooldownMs } = req.body ?? {};
   const data: Record<string, unknown> = {};
   if (typeof enabled === 'boolean') {
@@ -93,7 +107,8 @@ router.get('/:slug/data', asyncHandler(async (req, res) => {
     const data = await AutomationEngine.getData(String(req.params.slug), req.query as Record<string, any>);
     res.json(data);
   } catch (e: any) {
-    res.status(404).json({ error: e?.message ?? 'no data provider' });
+    logger.warn({ slug: String(req.params.slug), error: e?.message }, 'Automation data failed');
+    res.status(404).json({ error: 'no data provider' });
   }
 }));
 
