@@ -88,14 +88,37 @@ async function main() {
   const maxCommentIdByEst = state.maxCommentIdByEstimate || {};
   const fetchedIds = new Set(estimates.map((e) => e.estimate_id));
 
-  // 3. Comments (network, before any fingerprint compare). Gated: sent rows +
-  //    rows that were sent in DB (close-out coverage for sent→draft/void).
-  //    Brand-new drafts persist as metadata only — no Zoho reads, no AI.
+  // 3. Comments (network, before any fingerprint compare). Gated two-deep:
+  //    (a) sent rows + rows that were sent in DB (close-out coverage for
+  //    sent→draft/void). Brand-new drafts persist as metadata only — no
+  //    Zoho reads, no AI.
+  //    (b) 20-minute modified window — re-read ONLY threads Zoho reports as
+  //    touched in the last 20 min. Ticks are 5 min apart so every change
+  //    falls in ~4 ticks' windows; rows with unreadable timestamps or no
+  //    recorded comments fail OPEN (fetched, never missed). Force mode
+  //    (human full-reclassify) bypasses the window. Quiet rows land in
+  //    gatedIds so selection counts them as skipped, never failed.
+  const COMMENT_WINDOW_MS = 20 * 60 * 1000;
+  const windowSince = Date.now() - COMMENT_WINDOW_MS;
+  const gatedIds = new Set();
+  let sentFamily = 0;
   const commentTargets = estimates.filter((est) => {
-    if (diff.PROCESSABLE.has(String(est.status ?? '').toLowerCase())) return true;
-    const existing = existingByEstId.get(est.estimate_id);
-    return !!existing && String(existing.status) === 'sent';
+    let statusOk = diff.PROCESSABLE.has(String(est.status ?? '').toLowerCase());
+    if (!statusOk) {
+      const existing = existingByEstId.get(est.estimate_id);
+      statusOk = !!existing && String(existing.status) === 'sent';
+    }
+    if (!statusOk) return false;
+    sentFamily++;
+    if (forced) return true;
+    const ts = est.last_modified_time ? new Date(est.last_modified_time).getTime() : NaN;
+    if (!Number.isFinite(ts)) return true;
+    if (ts >= windowSince) return true;
+    if (maxCommentIdByEst[est.estimate_id] === undefined || maxCommentIdByEst[est.estimate_id] === null) return true;
+    gatedIds.add(est.estimate_id);
+    return false;
   });
+  console.log(`zoho-sent-runner: comment fetch gated to ${commentTargets.length}/${sentFamily} sent-family rows (touched in 20 min or never-seen); ${gatedIds.size} quiet rows skipped this tick`);
   const fetchedByEst = await fetch.fetchCommentsFor(commentTargets, {
     onError: (est, err) => console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`),
   });
@@ -147,7 +170,7 @@ async function main() {
 
   // 9. AI classification (sent + just-transitioned only — see analyze.js).
   const { workItems, skipped, failed: selectFailed } = diff.selectWorkItems({
-    estimates, existingByEstId, fetchedByEst, forced,
+    estimates, existingByEstId, fetchedByEst, forced, skippedIds: gatedIds,
   });
   console.log(`zoho-sent-runner: ${workItems.length} estimates need AI processing, ${skipped} skipped, ${selectFailed} comment-fetch failures`);
   const { processed, failed: analysisFailed } = await analyze.runAnalysisPool(workItems, agentRoster);
