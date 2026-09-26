@@ -88,37 +88,22 @@ async function main() {
   const maxCommentIdByEst = state.maxCommentIdByEstimate || {};
   const fetchedIds = new Set(estimates.map((e) => e.estimate_id));
 
-  // 3. Comments (network, before any fingerprint compare). Gated two-deep:
-  //    (a) sent rows + rows that were sent in DB (close-out coverage for
-  //    sent→draft/void). Brand-new drafts persist as metadata only — no
-  //    Zoho reads, no AI.
-  //    (b) 20-minute modified window — re-read ONLY threads Zoho reports as
-  //    touched in the last 20 min. Ticks are 5 min apart so every change
-  //    falls in ~4 ticks' windows; rows with unreadable timestamps or no
-  //    recorded comments fail OPEN (fetched, never missed). Force mode
-  //    (human full-reclassify) bypasses the window. Quiet rows land in
-  //    gatedIds so selection counts them as skipped, never failed.
-  const COMMENT_WINDOW_MS = 20 * 60 * 1000;
-  const windowSince = Date.now() - COMMENT_WINDOW_MS;
-  const gatedIds = new Set();
-  let sentFamily = 0;
+  // 3. Comments (network, before any fingerprint compare). Gated: sent rows +
+  //    rows that were sent in DB (close-out coverage for sent→draft/void).
+  //    Brand-new drafts persist as metadata only — no Zoho reads, no AI.
+  //    NOTE (2026-09-26): a 20-min last_modified window gate lived here and
+  //    was REVERTED the same day — Zoho does NOT bump last_modified_time on
+  //    new comments (proven live: 11:30 comments with 10:58 modified time),
+  //    so any metadata-only gate is blind to intraday threads. Newcomer
+  //    detection requires the actual comment ids (see buildFingerprint).
+  //    Volume is controlled instead by concurrency-6 batching, the per-tick
+  //    AI cap, and the skip-gates (slow passes complete uninterrupted).
   const commentTargets = estimates.filter((est) => {
-    let statusOk = diff.PROCESSABLE.has(String(est.status ?? '').toLowerCase());
-    if (!statusOk) {
-      const existing = existingByEstId.get(est.estimate_id);
-      statusOk = !!existing && String(existing.status) === 'sent';
-    }
-    if (!statusOk) return false;
-    sentFamily++;
-    if (forced) return true;
-    const ts = est.last_modified_time ? new Date(est.last_modified_time).getTime() : NaN;
-    if (!Number.isFinite(ts)) return true;
-    if (ts >= windowSince) return true;
-    if (maxCommentIdByEst[est.estimate_id] === undefined || maxCommentIdByEst[est.estimate_id] === null) return true;
-    gatedIds.add(est.estimate_id);
-    return false;
+    if (diff.PROCESSABLE.has(String(est.status ?? '').toLowerCase())) return true;
+    const existing = existingByEstId.get(est.estimate_id);
+    return !!existing && String(existing.status) === 'sent';
   });
-  console.log(`zoho-sent-runner: comment fetch gated to ${commentTargets.length}/${sentFamily} sent-family rows (touched in 20 min or never-seen); ${gatedIds.size} quiet rows skipped this tick`);
+  console.log(`zoho-sent-runner: fetching comments for ${commentTargets.length} sent-family rows`);
   const fetchedByEst = await fetch.fetchCommentsFor(commentTargets, {
     onError: (est, err) => console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`),
   });
@@ -177,7 +162,7 @@ async function main() {
   // partial progress. Cap sized so pool + sync + capture fit in ~4 min.
   const AI_PER_TICK_CAP = 10;
   const { workItems, skipped, failed: selectFailed } = diff.selectWorkItems({
-    estimates, existingByEstId, fetchedByEst, forced, skippedIds: gatedIds,
+    estimates, existingByEstId, fetchedByEst, forced,
   });
   workItems.sort((a, b) => new Date(a.modified || 0).getTime() - new Date(b.modified || 0).getTime());
   const capped = workItems.length > AI_PER_TICK_CAP;
