@@ -222,6 +222,30 @@ async function zohoFetch(url) {
   return res.json();
 }
 
+// List-page fetch with 429 retry: the sync loop below aborts the whole tick
+// on the first 429, so transient throttling must be absorbed here (honor
+// retry-after + jitter, up to ~4 min worst case — fits the 5-min tick).
+// Detail fetches keep their own one-retry + circuit-breaker policy.
+async function zohoFetchList(url, retries = 3) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await zohoFetch(url);
+    } catch (e) {
+      lastErr = e;
+      const waitMs = Math.min(e?.retryAfterMs ?? 15000, 90000);
+      if (attempt < retries && (e?.retryAfterMs || /Zoho (429|5\d\d)/.test(e.message))) {
+        const wait = Math.round(waitMs * (0.8 + Math.random() * 0.4) * (attempt + 1));
+        console.log(`crm-runner: list throttled — backing off ${Math.round(Math.min(wait, 180000) / 1000)}s (attempt ${attempt + 1}/${retries + 1})…`);
+        await sleep(Math.min(wait, 180000));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
+
 // ── Aggregators ──────────────────────────────────────────────────────────────
 /** Aggregated material requirements across active orders (procurement view). */
 function addMaterial(map, items) {
@@ -299,7 +323,8 @@ async function main() {
   for (const org of orgIds.length ? orgIds : [orgId]) {
   for (let page = 1; page <= 30; page++) {
     pages++;
-    const json = await zohoFetch(buildSalesOrdersUrl(page, org));
+    if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
+    const json = await zohoFetchList(buildSalesOrdersUrl(page, org));
     const salesorders = json.salesorders || [];
     if (salesorders.length === 0) break;
 

@@ -54,11 +54,49 @@ function zohoContext() {
   return cached;
 }
 
-async function zohoFetch(url) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Jittered backoff: honors Zoho's retry-after, escalates mildly per attempt,
+// and desynchronizes parallel jobs (crm + zoho-sent tick together) so their
+// retries don't collide again.
+function throttleBackoffMs(attempt, retryAfterMs) {
+  const base = Math.min(Math.max(retryAfterMs || 45000, 5000), 90000);
+  return Math.round(Math.min(base * (0.8 + Math.random() * 0.4) * attempt, 180000));
+}
+
+async function zohoFetch(url, { retries = 3 } = {}) {
   const { headers } = zohoContext();
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`Zoho ${res.status} for ${url}`);
-  return res.json();
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let res;
+    try {
+      // 30s cap per call — a tarpitted connection fails fast into a retry,
+      // never hangs the tick.
+      res = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
+    } catch (e) {
+      lastErr = new Error(`Zoho fetch failed (attempt ${attempt + 1}/${retries + 1}): ${e.message}`);
+      if (attempt < retries) {
+        console.log(`zoho-sync/fetch: connection failed — retrying in ~10s (attempt ${attempt + 1}/${retries + 1})…`);
+        await sleep(10000 + Math.random() * 5000);
+        continue;
+      }
+      throw lastErr;
+    }
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get('retry-after') || '45', 10);
+      lastErr = new Error(`Zoho 429 rate-limited for ${url}`);
+      if (attempt < retries) {
+        const wait = throttleBackoffMs(attempt + 1, (isNaN(retryAfter) ? 45 : retryAfter) * 1000);
+        console.log(`zoho-sync/fetch: 429 — backing off ${Math.round(wait / 1000)}s (attempt ${attempt + 1}/${retries + 1})…`);
+        await sleep(wait);
+        continue;
+      }
+      throw lastErr;
+    }
+    if (!res.ok) throw new Error(`Zoho ${res.status} for ${url}`);
+    return res.json();
+  }
+  throw lastErr;
 }
 
 // Estimates list URL derived from the saved export: every moving status,
@@ -85,6 +123,7 @@ async function fetchEstimatesAll(pages = 2) {
   const seen = new Map();
   for (const org of orgIds.length ? orgIds : [primaryOrg]) {
     for (let page = 1; page <= pages; page++) {
+      if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
       const json = await zohoFetch(buildEstimatesUrl(page, org));
       const rows = json.estimates || [];
       for (const e of rows) {
@@ -191,6 +230,7 @@ async function fetchSalesOrdersToday() {
     let orgCount = 0;
     let orgValue = 0;
     for (let page = 1; page <= 10; page++) {
+      if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
       const json = await zohoFetch(buildSalesOrdersUrl(page, org));
       const salesorders = json.salesorders || [];
       for (const so of salesorders) {
