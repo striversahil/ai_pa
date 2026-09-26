@@ -149,6 +149,9 @@ function selectWorkItems({ estimates, existingByEstId, fetchedByEst, forced, ski
       total: parseFloat(est.total),
       dateVal: est.date,
       estStatus: est.status,
+      // Oldest-first drain order (runner caps AI items per tick so the pool
+      // always fits inside the 5-min window — see AI_PER_TICK_CAP).
+      modified: est.last_modified_time || '',
       closeOut: String(est.status ?? '').toLowerCase() !== 'sent',
       fetched,
     });

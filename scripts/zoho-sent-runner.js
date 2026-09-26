@@ -169,23 +169,33 @@ async function main() {
   }
 
   // 9. AI classification (sent + just-transitioned only — see analyze.js).
+  // Per-tick cap: the pool runs single-file (~10s/item), so an uncapped
+  // backlog can never finish inside the 5-min tick — the next tick cancels
+  // it mid-pool forever and the watermark never advances. Oldest-first
+  // drain converges tick by tick instead; each completed item persists
+  // immediately, so even a cancelled tick keeps its partial progress.
+  const AI_PER_TICK_CAP = 20;
   const { workItems, skipped, failed: selectFailed } = diff.selectWorkItems({
     estimates, existingByEstId, fetchedByEst, forced, skippedIds: gatedIds,
   });
-  console.log(`zoho-sent-runner: ${workItems.length} estimates need AI processing, ${skipped} skipped, ${selectFailed} comment-fetch failures`);
-  const { processed, failed: analysisFailed } = await analyze.runAnalysisPool(workItems, agentRoster);
+  workItems.sort((a, b) => new Date(a.modified || 0).getTime() - new Date(b.modified || 0).getTime());
+  const capped = workItems.length > AI_PER_TICK_CAP;
+  const dueItems = capped ? workItems.slice(0, AI_PER_TICK_CAP) : workItems;
+  console.log(`zoho-sent-runner: ${workItems.length} estimates need AI processing, ${skipped} skipped, ${selectFailed} comment-fetch failures${capped ? ` — taking oldest ${dueItems.length} this tick, ${workItems.length - dueItems.length} ride next ticks` : ''}`);
+  const { processed, failed: analysisFailed } = await analyze.runAnalysisPool(dueItems, agentRoster);
 
   // 10. Lead-details capture (sent rows with uncaptured blocks only).
   await analyze.captureLeadDetails({ estimates, existingByEstId, fetchedByEst });
 
   const failed = selectFailed + analysisFailed;
 
-  // 11. Watermark only on a fully-complete pass.
-  if (workItems.length > 0 && failed === 0) {
+  // 11. Watermark only on a fully-complete pass — capped ticks defer work,
+  // so they must NOT advance it (the backlog drains over following ticks).
+  if (!capped && workItems.length > 0 && failed === 0) {
     await persist.advanceWatermark();
     console.log(`zoho-sent-runner: complete pass finished, watermark advanced (needed ${workItems.length}, failed ${failed})`);
   } else {
-    console.log(`zoho-sent-runner: incomplete — needed ${workItems.length}, failed ${failed}. Watermark not advanced.`);
+    console.log(`zoho-sent-runner: incomplete — needed ${workItems.length} (${dueItems.length} attempted this tick), failed ${failed}. Watermark not advanced.`);
   }
 
   // A failure-free run means the DB matches Zoho — store the fingerprint so
