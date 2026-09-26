@@ -169,12 +169,13 @@ async function main() {
   }
 
   // 9. AI classification (sent + just-transitioned only — see analyze.js).
-  // Per-tick cap: the pool runs single-file (~10s/item), so an uncapped
-  // backlog can never finish inside the 5-min tick — the next tick cancels
-  // it mid-pool forever and the watermark never advances. Oldest-first
-  // drain converges tick by tick instead; each completed item persists
-  // immediately, so even a cancelled tick keeps its partial progress.
-  const AI_PER_TICK_CAP = 20;
+  // Per-tick cap: the pool runs single-file (~15s/item with dual LLM
+  // calls + pacing), so an uncapped backlog can never finish inside the
+  // 5-min tick — the next tick cancels it mid-pool forever and the watermark
+  // never advances. Oldest-first drain converges tick by tick instead; each
+  // completed item persists immediately, so even a cancelled tick keeps its
+  // partial progress. Cap sized so pool + sync + capture fit in ~4 min.
+  const AI_PER_TICK_CAP = 10;
   const { workItems, skipped, failed: selectFailed } = diff.selectWorkItems({
     estimates, existingByEstId, fetchedByEst, forced, skippedIds: gatedIds,
   });
