@@ -15,14 +15,10 @@ on:
         type: boolean
         default: true
 
-concurrency:
-  group: cron-every-5min
-  # Cancel stale ticks: throttled runs take LONGER (backoff waits), so letting
-  # them overlap means N concurrent runners hammering Zoho at once — a
-  # self-inflicted 429 spiral (observed: 8 straight throttles over 15 min).
-  # A fresh tick redoes the work anyway ("retry on the next tick" throughout
-  # the runners), and all worker writes are atomic snapshots / diff-convergent.
-  cancel-in-progress: true
+# NOTE: no concurrency group on purpose. Overlap is arbitrated per slow job
+# by skip-gates below (at most one crm / one analyzer ever runs; stale ticks
+# exit 0 fast instead of queueing behind a 20-min AI pass). A group would
+# either murder slow passes (cancel) or stall ticks in pending (queue).
 
 jobs:
   whatsapp-digest:
@@ -63,9 +59,30 @@ jobs:
   crm:
     if: github.event.inputs.run_zoho != 'false'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     steps:
+      - name: skip when a previous crm is still running
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mine=${{ github.run_id }}
+          skip=false
+          prev=$(gh run list --workflow cron-every-5min.yml --status in_progress --limit 5 --json databaseId --jq --argjson mine "$mine" '[.[].databaseId | select(. != $mine)] | .[0] // empty' 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            running=$(gh api "repos/${{ github.repository }}/actions/runs/$prev/jobs" --jq '[.jobs[] | select(.name == "crm" and .status == "in_progress")] | length' 2>/dev/null || echo 0)
+            if [ "${running:-0}" -gt 0 ] 2>/dev/null; then
+              skip=true
+              echo "Previous run $prev crm still active — skipping this tick (it converges on completion)."
+            fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
       - name: crm (active sales orders pipeline snapshot)
+        if: steps.gate.outputs.skip != 'true'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
@@ -74,9 +91,30 @@ jobs:
   zoho-sent-analyzer:
     if: github.event.inputs.run_zoho != 'false'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     steps:
+      - name: skip when a previous analyzer is still running
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mine=${{ github.run_id }}
+          skip=false
+          prev=$(gh run list --workflow cron-every-5min.yml --status in_progress --limit 5 --json databaseId --jq --argjson mine "$mine" '[.[].databaseId | select(. != $mine)] | .[0] // empty' 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            running=$(gh api "repos/${{ github.repository }}/actions/runs/$prev/jobs" --jq '[.jobs[] | select(.name == "zoho-sent-analyzer" and .status == "in_progress")] | length' 2>/dev/null || echo 0)
+            if [ "${running:-0}" -gt 0 ] 2>/dev/null; then
+              skip=true
+              echo "Previous run $prev analyzer still active — skipping this tick (it converges on completion)."
+            fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
       - name: zoho-sent-analyzer (full sync + AI on runner) — agnes primary (agnes-2.5-flash) → groq/requestly fallback
+        if: steps.gate.outputs.skip != 'true'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
