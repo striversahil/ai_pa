@@ -17,7 +17,12 @@ on:
 
 concurrency:
   group: cron-every-5min
-  cancel-in-progress: false
+  # Cancel stale ticks: throttled runs take LONGER (backoff waits), so letting
+  # them overlap means N concurrent runners hammering Zoho at once — a
+  # self-inflicted 429 spiral (observed: 8 straight throttles over 15 min).
+  # A fresh tick redoes the work anyway ("retry on the next tick" throughout
+  # the runners), and all worker writes are atomic snapshots / diff-convergent.
+  cancel-in-progress: true
 
 jobs:
   whatsapp-digest:
