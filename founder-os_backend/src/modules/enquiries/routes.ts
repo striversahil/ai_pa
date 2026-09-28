@@ -24,6 +24,7 @@ import {
   isoOrUndefined,
 } from "./parse";
 import { normalizeEnquirySource, nextDailyNo, enquiryLabelText } from "./types";
+import { decodeEnquiryCursor, encodeEnquiryCursor } from "./types";
 import {
   isRestrictedViewer,
   canManageRates,
@@ -50,6 +51,7 @@ export {
   asRedactedViewCache,
   hashItem,
 };
+export { getManagementQueues, invalidateManagementQueues } from "./queues-cache";
 export type { EnquiryLiveSummary };
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
@@ -172,6 +174,15 @@ export interface RedactOpts {
   /** 1-based page + page size for queue tables (10/50). Omit = full list. */
   page?: number;
   limit?: number;
+  /** Opaque keyset cursor (presence, even "" for the first page, selects
+   *  cursor mode over page/offset mode). Cap 100 — the queue dashboards take
+   *  the newest 100 and Load-more the rest, so D1 bills a flat ~100 rows no
+   *  matter how large the table grows. */
+  cursor?: string;
+  /** Server search across ALL rows (old + new): EST no., enquiry no.,
+   *  client/contact, title, description, item/vendor text. ≥2 chars;
+   *  shorter returns [] WITHOUT scanning (cost guard). Cap 50. */
+  q?: string;
   /** False when no AI keys are configured — the redacted view then withholds
    *  free text with an explicit badge instead of failing silently. */
   aiConfigured?: boolean;
@@ -183,16 +194,48 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
   let enquiries: any[];
   let comments: any[];
   let total: number | null = null;
-  if (page > 0 && (opts as any)?.limit !== undefined) {
+  let meta: Record<string, unknown> = {};
+  const qRaw = typeof (opts as any)?.q === "string" ? (opts as any).q.trim().slice(0, 40) : "";
+  if (qRaw) {
+    if (qRaw.length < 2) {
+      // Cost guard: single-char substrings match everything — refuse without
+      // touching the table.
+      enquiries = [];
+      comments = [];
+      meta = { q: qRaw, hasMore: false, limit: 0 };
+    } else {
+      // D1 caps LIKE/GLOB patterns at 50 bytes — byte-truncate (client names
+      // can be multibyte) so the query can never fail on length.
+      let fitted = qRaw;
+      const enc = new TextEncoder();
+      while (enc.encode(fitted).length > 48) fitted = fitted.slice(0, -1);
+      const found = await store.searchEnquiries(fitted, 50);
+      enquiries = found.rows;
+      meta = { q: fitted, hasMore: found.hasMore, limit: 50 };
+      comments = await store.listCommentsFor(enquiries.map((e: any) => String(e.id)));
+    }
+  } else if ((opts as any)?.cursor !== undefined) {
+    // Cursor mode: newest-first keyset page. Zoho pre-attach + promotions
+    // below run on the page only, so the Estimate lookup stays proportional
+    // to the page (targeted chunked IN), never a table scan.
+    const clim = Math.min(100, Math.max(1, Math.floor(Number(opts?.limit) || 100)));
+    const rawCursor = typeof opts?.cursor === "string" ? opts.cursor : "";
+    const decoded = rawCursor ? decodeEnquiryCursor(rawCursor) : null;
+    const paged = await store.listEnquiriesCursor(decoded, clim);
+    enquiries = paged.rows;
+    meta = { hasMore: paged.nextCursor !== null, limit: clim };
+    if (paged.nextCursor) meta.nextCursor = paged.nextCursor;
+    comments = await store.listCommentsFor(enquiries.map((e: any) => String(e.id)));
+  } else if (page > 0 && (opts as any)?.limit !== undefined) {
     const offset = (page - 1) * lim;
     const paged = await store.listEnquiriesPaged(offset, lim);
     enquiries = paged.rows;
     total = paged.total;
     comments = await store.listCommentsFor(enquiries.map((e: any) => String(e.id)));
+    meta = { total, page, limit: lim };
   } else {
     [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
   }
-  const meta = total === null ? {} : { total, page, limit: lim };
   // Live Zoho status (Estimate.status from the 5-min sync) rides the row in
   // BOTH views: attached here pre-redaction so the procurement payload keeps
   // `zohoStatus` even though `estNumber` itself is blanked below (the worker
@@ -232,155 +275,294 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     const out = privileged ? enquiries : enquiries.map(stripMarginFields);
     return json(200, { enquiries: out, comments, ...meta });
   }
-  // AI-only procurement view: each piece comes from the write-time enrichment
-  // cache (RedactedViewCache) and only when its hash still matches the source.
-  // Anything missing/stale is WITHHELD with redactedPending=true — the route
-  // layer kicks a background re-enrichment and the client refetches on the
-  // live event. Raw text is never served, and no deterministic fallback exists.
-  // Sales-scope comments never enter this payload (procurement sees only the
-  // shared ops thread).
-  const scopeComments = (comments as any[]).filter(
-    (cm) => normalizeVisibility((cm as any)?.visibility) === 'procurement',
-  );
-  const commentsByEnquiry = new Map<string, any[]>();
-  for (const cm of scopeComments) {
-    const key = String(cm.enquiryId);
-    if (!commentsByEnquiry.has(key)) commentsByEnquiry.set(key, []);
-    commentsByEnquiry.get(key)!.push(cm);
-  }
-  const redacted = await Promise.all(enquiries.map(async (e: any) => {
-    const id = String(e.id);
-    let raw: unknown = null;
-    try {
-      raw = await cacheGet<RedactedViewCache>(redactedCacheKey(id), REDACTED_CACHE_TTL_MS);
-    } catch { raw = null; }
-    const entry = asRedactedViewCache(raw);
-    let pending = false;
-    let description = '';
-    const srcDesc = String(e.description ?? '');
-    if (!srcDesc.trim()) {
-      // Nothing to secure — legitimately empty, not pending.
-      description = '';
-    } else if (entry && entry.descHash === hashText(srcDesc) && typeof entry.description === 'string') {
-      description = entry.description;
-    } else {
-      pending = true;
-    }
-    const servedComments: any[] = [];
-    for (const cm of commentsByEnquiry.get(id) ?? []) {
-      const cid = String(cm.id);
-      const cached = entry?.comments[cid];
-      if (cached && cached.hash === hashText(String(cm.content ?? '')) && typeof cached.content === 'string') {
-        servedComments.push({ ...cm, content: cached.content });
-      } else {
-        pending = true;
-      }
-    }
-    const servedRequirements: any[] = [];
-    const rawReqs = Array.isArray(e.additionalRequirements) ? e.additionalRequirements : [];
-    rawReqs.forEach((r: any, i: number) => {
-      const text = typeof r === 'string' ? r : String(r?.text ?? '');
-      const cached = entry?.requirements?.[i];
-      if (cached && cached.hash === hashText(text) && typeof cached.text === 'string') {
-        servedRequirements.push(typeof r === 'string' ? cached.text : { ...r, text: cached.text });
-      } else {
-        pending = true;
-      }
-    });
-    // Line items: manual entry is served as-is in BOTH views (specs, not
-    // PII) — EXCEPT markup decisions, which are Management-only: restricted
-    // viewers see vendor rates but never selectedVendor/markup/finalRate.
-    // A cached AI rewrite (legacy AI-split rows) still wins when its hash
-    // matches; otherwise the stored item is served with no pending flag.
-    const salesItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> =
-      Array.isArray((e as any).items) ? (e as any).items : [];
-    const servedItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> = [];
-    salesItems.forEach((it: any, i: number) => {
-      const sales = {
-        name: String(it?.name ?? ''),
-        qty: String(it?.qty ?? ''),
-        spec: String(it?.spec ?? ''),
-        media: parseItemMedia(it?.media),
-        rates: parseItemRates(it?.rates),
-        selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
-        markup: signedNumOrUndefined(it?.markup),
-        finalRate: numOrUndefined(it?.finalRate),
-        finalizedAt: isoOrUndefined(it?.finalizedAt),
-        specIssue: it?.specIssue ? String(it.specIssue).slice(0, 2000) : undefined,
-        specFlaggedAt: isoOrUndefined(it?.specFlaggedAt),
-      };
-      const cached = entry?.items?.[i];
-      let served: any;
-      if (cached && cached.hash === hashItem(sales)
-        && typeof cached.name === 'string' && typeof cached.qty === 'string' && typeof cached.spec === 'string') {
-        // Cached AI rewrite wins for name/qty/spec — but rates are LIVE
-        // workflow data (adding a quote never changes the hash above), so
-        // they must always ride along. Dropping them here made newly added
-        // vendor rates "show for a second, then disappear" on refetch.
-        served = { name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media, rates: sales.rates };
-      } else {
-        // Markup decisions AND finalize timing stay Management-only.
-        const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = sales;
-        served = rest;
-      }
-      // Spec-dispute flags are live workflow metadata (not PII, not a markup
-      // decision): always overlay the stored values so a flag change never
-      // waits on — or invalidates — the AI rewrite cache.
-      if (it?.specIssue) {
-        served.specIssue = String(it.specIssue).slice(0, 2000);
-        if (it?.specFlaggedAt) served.specFlaggedAt = String(it.specFlaggedAt);
-      }
-      // Rate-availability / not-available is live workflow metadata too: the procurement queue
-      // predicate depends on it, so it rides along regardless of cache path.
-      served.rateAvailable = (it as any)?.rateAvailable === true;
-      served.notAvailable = (it as any)?.notAvailable === true;
-      if ((it as any)?.notAvailableReason) served.notAvailableReason = String((it as any).notAvailableReason).slice(0, 500);
-      if ((it as any)?.notAvailableAt) served.notAvailableAt = String((it as any).notAvailableAt);
-      if ((it as any)?.notAvailableRequested) {
-        served.notAvailableRequested = String((it as any).notAvailableRequested).slice(0, 500);
-        if ((it as any)?.notAvailableRequestedAt) served.notAvailableRequestedAt = String((it as any).notAvailableRequestedAt);
-      }
-      // Management rate-requests are live workflow metadata as well: overlay
-      // stored values so the queue predicate never waits on the AI cache.
-      if ((it as any)?.ratesRequested) {
-        served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
-        if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
-      }
-      // Sales alternate/info requests are live workflow metadata too: procurement
-      // must see them (banner + queue) the moment sales asks — never gated
-      // on the AI rewrite cache. Common attachment travels with the text.
-      if ((it as any)?.variationRequest) {
-        served.variationRequest = String((it as any).variationRequest).slice(0, 500);
-        if ((it as any)?.variationRequestedAt) served.variationRequestedAt = String((it as any).variationRequestedAt);
-        if (Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0) {
-          served.variationRequestMedia = parseItemMedia((it as any).variationRequestMedia);
-        }
-      }
-      // Loop trail is live workflow metadata too: always the stored values.
-      served.thread = parseFlagThread((it as any)?.thread);
-      servedItems.push(served);
-    });
-    return {
-      entry: { id, pending },
-      payload: {
-        ...redactEnquiryPII(e),
-        description,
-        additionalRequirements: servedRequirements,
-        items: servedItems,
-        redactedPending: pending,
-      },
-      servedComments,
-    };
-  }));
+  const red = await redactEnquiryRows(enquiries as any[], comments as any[], opts?.aiConfigured ?? true);
   return json(200, {
-    enquiries: redacted.map((r) => r.payload),
-    comments: redacted.flatMap((r) => r.servedComments),
+    enquiries: red.enquiries,
+    comments: red.comments,
     // Route layer kicks a background re-enrichment for these (fire-and-forget).
-    redactionPendingIds: redacted.filter((r) => r.entry.pending).map((r) => r.entry.id),
+    redactionPendingIds: red.redactionPendingIds,
     // Explicit AI-down signal: when false, withheld text is an outage, not a
     // fresh enquiry — the queue shows a banner instead of silent blanks.
     aiConfigured: opts?.aiConfigured ?? true,
     ...meta,
+  });
+}
+
+// ── Procurement redaction (shared) ───────────────────────────────────────────
+// Extracted verbatim from `enquiryList` (no behavior change): redacts a row
+// list through the write-time enrichment cache (hash-verified, fail-closed).
+// Used by the list endpoint AND the cached procurement queue endpoints.
+export async function redactEnquiryRows(
+  rows: any[],
+  comments: any[],
+  aiConfigured: boolean,
+): Promise<{ enquiries: any[]; comments: any[]; redactionPendingIds: string[] }> {
+  const enquiries = rows as any[];
+// AI-only procurement view: each piece comes from the write-time enrichment
+// cache (RedactedViewCache) and only when its hash still matches the source.
+// Anything missing/stale is WITHHELD with redactedPending=true — the route
+// layer kicks a background re-enrichment and the client refetches on the
+// live event. Raw text is never served, and no deterministic fallback exists.
+// Sales-scope comments never enter this payload (procurement sees only the
+// shared ops thread).
+const scopeComments = (comments as any[]).filter(
+  (cm) => normalizeVisibility((cm as any)?.visibility) === 'procurement',
+);
+const commentsByEnquiry = new Map<string, any[]>();
+for (const cm of scopeComments) {
+  const key = String(cm.enquiryId);
+  if (!commentsByEnquiry.has(key)) commentsByEnquiry.set(key, []);
+  commentsByEnquiry.get(key)!.push(cm);
+}
+const redacted = await Promise.all(enquiries.map(async (e: any) => {
+  const id = String(e.id);
+  let raw: unknown = null;
+  try {
+    raw = await cacheGet<RedactedViewCache>(redactedCacheKey(id), REDACTED_CACHE_TTL_MS);
+  } catch { raw = null; }
+  const entry = asRedactedViewCache(raw);
+  let pending = false;
+  let description = '';
+  const srcDesc = String(e.description ?? '');
+  if (!srcDesc.trim()) {
+    // Nothing to secure — legitimately empty, not pending.
+    description = '';
+  } else if (entry && entry.descHash === hashText(srcDesc) && typeof entry.description === 'string') {
+    description = entry.description;
+  } else {
+    pending = true;
+  }
+  const servedComments: any[] = [];
+  for (const cm of commentsByEnquiry.get(id) ?? []) {
+    const cid = String(cm.id);
+    const cached = entry?.comments[cid];
+    if (cached && cached.hash === hashText(String(cm.content ?? '')) && typeof cached.content === 'string') {
+      servedComments.push({ ...cm, content: cached.content });
+    } else {
+      pending = true;
+    }
+  }
+  const servedRequirements: any[] = [];
+  const rawReqs = Array.isArray(e.additionalRequirements) ? e.additionalRequirements : [];
+  rawReqs.forEach((r: any, i: number) => {
+    const text = typeof r === 'string' ? r : String(r?.text ?? '');
+    const cached = entry?.requirements?.[i];
+    if (cached && cached.hash === hashText(text) && typeof cached.text === 'string') {
+      servedRequirements.push(typeof r === 'string' ? cached.text : { ...r, text: cached.text });
+    } else {
+      pending = true;
+    }
+  });
+  // Line items: manual entry is served as-is in BOTH views (specs, not
+  // PII) — EXCEPT markup decisions, which are Management-only: restricted
+  // viewers see vendor rates but never selectedVendor/markup/finalRate.
+  // A cached AI rewrite (legacy AI-split rows) still wins when its hash
+  // matches; otherwise the stored item is served with no pending flag.
+  const salesItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> =
+    Array.isArray((e as any).items) ? (e as any).items : [];
+  const servedItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> = [];
+  salesItems.forEach((it: any, i: number) => {
+    const sales = {
+      name: String(it?.name ?? ''),
+      qty: String(it?.qty ?? ''),
+      spec: String(it?.spec ?? ''),
+      media: parseItemMedia(it?.media),
+      rates: parseItemRates(it?.rates),
+      selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
+      markup: signedNumOrUndefined(it?.markup),
+      finalRate: numOrUndefined(it?.finalRate),
+      finalizedAt: isoOrUndefined(it?.finalizedAt),
+      specIssue: it?.specIssue ? String(it.specIssue).slice(0, 2000) : undefined,
+      specFlaggedAt: isoOrUndefined(it?.specFlaggedAt),
+    };
+    const cached = entry?.items?.[i];
+    let served: any;
+    if (cached && cached.hash === hashItem(sales)
+      && typeof cached.name === 'string' && typeof cached.qty === 'string' && typeof cached.spec === 'string') {
+      // Cached AI rewrite wins for name/qty/spec — but rates are LIVE
+      // workflow data (adding a quote never changes the hash above), so
+      // they must always ride along. Dropping them here made newly added
+      // vendor rates "show for a second, then disappear" on refetch.
+      served = { name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media, rates: sales.rates };
+    } else {
+      // Markup decisions AND finalize timing stay Management-only.
+      const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = sales;
+      served = rest;
+    }
+    // Spec-dispute flags are live workflow metadata (not PII, not a markup
+    // decision): always overlay the stored values so a flag change never
+    // waits on — or invalidates — the AI rewrite cache.
+    if (it?.specIssue) {
+      served.specIssue = String(it.specIssue).slice(0, 2000);
+      if (it?.specFlaggedAt) served.specFlaggedAt = String(it.specFlaggedAt);
+    }
+    // Rate-availability / not-available is live workflow metadata too: the procurement queue
+    // predicate depends on it, so it rides along regardless of cache path.
+    served.rateAvailable = (it as any)?.rateAvailable === true;
+    served.notAvailable = (it as any)?.notAvailable === true;
+    if ((it as any)?.notAvailableReason) served.notAvailableReason = String((it as any).notAvailableReason).slice(0, 500);
+    if ((it as any)?.notAvailableAt) served.notAvailableAt = String((it as any).notAvailableAt);
+    if ((it as any)?.notAvailableRequested) {
+      served.notAvailableRequested = String((it as any).notAvailableRequested).slice(0, 500);
+      if ((it as any)?.notAvailableRequestedAt) served.notAvailableRequestedAt = String((it as any).notAvailableRequestedAt);
+    }
+    // Management rate-requests are live workflow metadata as well: overlay
+    // stored values so the queue predicate never waits on the AI cache.
+    if ((it as any)?.ratesRequested) {
+      served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
+      if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
+    }
+    // Sales alternate/info requests are live workflow metadata too: procurement
+    // must see them (banner + queue) the moment sales asks — never gated
+    // on the AI rewrite cache. Common attachment travels with the text.
+    if ((it as any)?.variationRequest) {
+      served.variationRequest = String((it as any).variationRequest).slice(0, 500);
+      if ((it as any)?.variationRequestedAt) served.variationRequestedAt = String((it as any).variationRequestedAt);
+      if (Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0) {
+        served.variationRequestMedia = parseItemMedia((it as any).variationRequestMedia);
+      }
+    }
+      // Loop trail is live workflow metadata too: always the stored values.
+      served.thread = parseFlagThread((it as any)?.thread);
+      // Resolution is live workflow metadata as well: without it a resolved
+      // flag's lingering text would read as still awaiting sales fix (chip +
+      // conclude gate both key on openness, never on text presence).
+      served.threadResolved = (it as any)?.threadResolved === true;
+      if ((it as any)?.threadResolvedBy) served.threadResolvedBy = String((it as any).threadResolvedBy).slice(0, 40);
+      if ((it as any)?.threadResolvedAt) served.threadResolvedAt = String((it as any).threadResolvedAt);
+      servedItems.push(served);
+  });
+  return {
+    entry: { id, pending },
+    payload: {
+      ...redactEnquiryPII(e),
+      description,
+      additionalRequirements: servedRequirements,
+      items: servedItems,
+      redactedPending: pending,
+    },
+    servedComments,
+  };
+}));
+  return {
+    enquiries: redacted.map((r) => r.payload),
+    comments: redacted.flatMap((r) => r.servedComments),
+    // Route layer kicks a background re-enrichment for these (fire-and-forget).
+    redactionPendingIds: redacted.filter((r) => r.entry.pending).map((r) => r.entry.id),
+  };
+}
+
+// Queue payloads must stay small: item `media` carries embedded base64
+// photos/video (one row alone is ~2.5MB; ~84% of all item bytes), and every
+// dashboard render + 60s poll + live-event refetch hauls the full queues.
+// Strip media BYTES at every queue serve point (tables never render them —
+// counts/chips read metadata, never urls). Threads stay fully intact: the
+// write path appends remarks by media-identity dedupe, so a slimmed thread
+// echo would re-push every stored remark as a duplicate.
+// Full media returns on single-row reads (`enquiryGet` / `enquiryGetRedacted`
+// below) — dashboard modals fetch the open row on demand.
+export function stripQueueMediaUrls(rows: any[]): any[] {
+  return (rows ?? []).map((e: any) => {
+    const items = Array.isArray((e as any)?.items) ? (e as any).items : null;
+    if (!items) return e;
+    let touched = false;
+    const out = items.map((it: any) => {
+      const hasMedia = Array.isArray((it as any)?.media) && (it as any).media.length > 0;
+      const hasVarMedia = Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0;
+      if (!hasMedia && !hasVarMedia) return it;
+      touched = true;
+      const c: any = { ...(it as any) };
+      if (hasMedia) c.media = [];
+      if (hasVarMedia) c.variationRequestMedia = [];
+      return c;
+    });
+    return touched ? { ...(e as any), items: out } : e;
+  });
+}
+
+export interface ProcQueueOpts {
+  queue: 'pending' | 'history';
+  cursor?: string;
+  limit?: number;
+  aiConfigured?: boolean;
+  // all=true returns the COMPLETE history set (same cached scan — KV reads,
+  // zero D1). The dashboards render complete queues in both tabs, so this is
+  // the only history mode they use; cursor paging stays for compat.
+  all?: boolean;
+}
+
+// Procurement queues off the SAME cached scan as the management queues
+// (`queues-cache.ts` — one scan per TTL serves every tab): `pending` returns
+// the COMPLETE redacted pending set (no page boundary may hide open work),
+// `history` returns the COMPLETE redacted history set with `all=true`
+// (cursor paging stays for compat only). Every
+// row is redacted through the write-time enrichment cache exactly like the
+// list endpoint, so privileged preview and restricted viewers see the same
+// bytes. Per render: KV reads only, zero D1 within TTL.
+export async function procurementQueueList(
+  store: EnquiryStore,
+  _me: MeResponse,
+  opts: ProcQueueOpts,
+): Promise<EnquiryResult> {
+  const { getManagementQueues } = await import('./queues-cache');
+  const all = await getManagementQueues(store);
+  const rows = (opts.queue === 'pending' ? all.procPending : all.procHistory) as any[];
+  let page: any[];
+  const meta: Record<string, unknown> = {};
+  if (opts.queue === 'pending' || opts?.all) {
+    page = rows;
+  } else {
+    const lim = Math.min(100, Math.max(1, Math.floor(Number(opts?.limit) || 50)));
+    const rawCursor = typeof opts?.cursor === 'string' ? opts.cursor : '';
+    const decoded = rawCursor ? decodeEnquiryCursor(rawCursor) : null;
+    let start = 0;
+    if (decoded) {
+      const idx = rows.findIndex(
+        (e) => String(e.createdAt) < decoded.createdAt
+          || (String(e.createdAt) === decoded.createdAt && String(e.id) < decoded.id),
+      );
+      start = idx === -1 ? rows.length : idx;
+    }
+    page = rows.slice(start, start + lim);
+    const last = page[page.length - 1];
+    const more = start + lim < rows.length;
+    meta.hasMore = more;
+    meta.limit = lim;
+    if (more && last) meta.nextCursor = encodeEnquiryCursor(String(last.createdAt), String(last.id));
+  }
+  const comments = await store.listCommentsFor(page.map((e: any) => String(e.id)));
+  const red = await redactEnquiryRows(page, comments as any[], opts?.aiConfigured ?? true);
+  // Queue payloads ship without media bytes (see stripQueueMediaUrls) —
+  // the modal fetches the open row whole on demand.
+  const slim = stripQueueMediaUrls(red.enquiries);
+  return json(200, {
+    enquiries: slim,
+    comments: red.comments,
+    redactionPendingIds: red.redactionPendingIds,
+    aiConfigured: opts?.aiConfigured ?? true,
+    ...meta,
+  });
+}
+
+/** Redacted single-row read for restricted (procurement) viewers: the same
+ *  bytes as the queue payload (same redaction, same enrichment cache) but
+ *  WITH full media — dashboard modals fetch the open row on demand because
+ *  queue payloads strip media for size. Reuses the list path's redaction so
+ *  privileged preview and restricted viewers see identical bytes. */
+export async function enquiryGetRedacted(
+  store: EnquiryStore,
+  id: string,
+  aiConfigured: boolean,
+): Promise<EnquiryResult> {
+  const row: any = await (store as any).getEnquiry(String(id)).catch(() => null);
+  if (!row) return json(404, { error: 'not found' });
+  const comments = await (store as any).listCommentsFor([String(row.id)]).catch(() => []);
+  const red = await redactEnquiryRows([row], comments as any[], aiConfigured);
+  return json(200, {
+    enquiry: red.enquiries[0] ?? null,
+    comments: red.comments,
+    redactionPendingIds: red.redactionPendingIds,
+    aiConfigured,
   });
 }
 

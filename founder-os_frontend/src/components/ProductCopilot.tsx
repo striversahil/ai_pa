@@ -48,6 +48,7 @@ const INTAKE: CopilotConfig = {
     update_draft: "✍️",
     find_product: "🔍",
     required_specs: "📋",
+    ask_specs: "🗒️",
     find_vendor: "🏭",
     propose_vendor: "🏪",
     propose_product: "📦",

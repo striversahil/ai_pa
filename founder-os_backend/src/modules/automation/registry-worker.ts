@@ -29,6 +29,8 @@ import * as digitalMarketing from '../../automations/digital-marketing';
 import * as whatsappAutopilot from '../../automations/whatsapp-autopilot';
 import * as crm from '../../automations/crm';
 import * as productLine from '../../automations/product-line';
+import * as samarthOverview from '../../automations/samarth-overview';
+import * as sahilOverview from '../../automations/sahil-overview';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
@@ -51,6 +53,8 @@ const MODULES: Record<string, AutomationModule> = {
   'whatsapp-autopilot': whatsappAutopilot as AutomationModule,
   'crm': crm as AutomationModule,
   'product-line': productLine as AutomationModule,
+  'samarth-overview': samarthOverview as AutomationModule,
+  'sahil-overview': sahilOverview as AutomationModule,
 };
 
 const RULES: Record<string, Partial<AutomationDefinition>> = {
@@ -131,6 +135,12 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'product-line': {
     id: 'product-line', name: 'Product Line', description: 'Product master (KYP sheet as data): products, guide questions, vendors and quote facts. MIS-editable.', type: 'handler', trigger: { type: 'manual' }, scope: 'product-line', enabled: true,
+  },
+  'samarth-overview': {
+    id: 'samarth-overview', name: 'Samarth Overview', description: 'One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, NeoDove, enterprise ops). Read-only aggregator, KV-cached 60s.', type: 'handler', trigger: { type: 'manual' }, scope: 'samarth', enabled: true,
+  },
+  'sahil-overview': {
+    id: 'sahil-overview', name: 'Sahil Overview', description: 'One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, NeoDove, enterprise ops). Read-only aggregator, KV-cached 60s.', type: 'handler', trigger: { type: 'manual' }, scope: 'sahil', enabled: true,
   },
 };
 

@@ -4,8 +4,10 @@ import { buildGoogleAuthUrl, exchangeGoogleCode, GoogleConfig } from "./google";
 import { SESSION_COOKIE, SESSION_MAX_AGE, readSessionCookie } from "./session";
 
 /** Scope that grants user & role management (Admin panel) WITHOUT root access.
- *  Holders can assign roles and edit role scopes, but can never touch the root
- *  user nor grant anything containing the `admin` scope (enforced in routes). */
+ *  Holders can assign roles, but top-down only: never the root user, never
+ *  anything containing the `admin` scope, never anything containing
+ *  `user-admin` itself (only root onboards new managers), and never a role
+ *  holding a scope the manager themselves was not granted (enforced in routes). */
 export const USER_ADMIN_SCOPE = "user-admin";
 
 export const DEFAULT_SCOPES: AuthScope[] = [
@@ -31,6 +33,8 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
   { key: "sales", label: "Sales Agent", description: "Sales agent identity — roster entry with contact details and incentive mapping" },
   { key: "procurement", label: "Procurement", description: "Procurement view of the enquiry tracker — same pipeline, no client PII and no lead attribution" },
+  { key: "samarth", label: "Samarth Overview", description: "One-page concise highlight across all dashboards (Samarth view)" },
+  { key: "sahil", label: "Sahil Overview", description: "One-page concise highlight across all dashboards (Sahil view)" },
 ];
 
 export const DEFAULT_ROLES: AuthRole[] = [
@@ -207,6 +211,22 @@ export async function requireScope(
     throw new AuthError("FORBIDDEN", `Requires '${scope}' permission`, 403);
   }
   return me;
+}
+
+/** Top-down delegation check (pure): may a non-root manager holding
+ *  `viewerScopes` grant a role holding `scopeKeys`? Returns the blocker
+ *  reason, or null when grantable. Root-only scopes (`admin`, `user-admin`)
+ *  are never grantable by managers; every other scope must already be held
+ *  by the manager. Used by the role-assign endpoint AND by the list
+ *  endpoints to hide non-grantable roles/scopes (not just disable them). */
+export function roleGrantBlocker(viewerScopes: string[], scopeKeys: string[]): string | null {
+  const lowered = scopeKeys.map((s) => String(s).toLowerCase());
+  if (lowered.includes("admin")) return "Only root can assign admin access";
+  if (lowered.includes(USER_ADMIN_SCOPE)) return "Only root can grant user-management (user-admin) access";
+  const have = new Set(viewerScopes.map((s) => String(s).toLowerCase()));
+  const beyond = scopeKeys.filter((s) => !have.has(String(s).toLowerCase()));
+  if (beyond.length > 0) return `grants '${beyond.join(", ")}' which you don't hold — ask root to grant it to you first`;
+  return null;
 }
 
 /** Like requireUser, but also demands user-management rights: root/admin or the

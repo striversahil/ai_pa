@@ -8,12 +8,16 @@
 // Backend mirror: founder-os_backend/src/copilot/registry.ts
 import React, { useState, useRef, useEffect } from "react";
 import Markdown from "./Markdown";
+import SpecForm, { type SpecQuestion } from "./SpecForm";
 
 export interface CopilotProposal {
   kind: string;
   label: string;
   text?: string;
   spec?: string;
+  /** spec_form only: rendered questionnaire (see SpecForm). */
+  title?: string;
+  questions?: SpecQuestion[];
 }
 
 interface CopilotActivity { tool: string; label: string; }
@@ -378,6 +382,13 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                           <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1 font-medium">
                             <span>Just now</span>
                           </div>
+                          {m.proposals && m.proposals.length > 0 && (
+                            <div className="space-y-2">
+                              {m.proposals.filter((p) => p.kind === "spec_form" && Array.isArray(p.questions) && p.questions.length > 0).map((p, pi) => (
+                                <SpecForm key={`spec-${pi}`} title={p.title || p.label} questions={p.questions as SpecQuestion[]} onSubmit={(t) => void send(t)} />
+                              ))}
+                            </div>
+                          )}
                           {config.executeUrl && m.proposals && m.proposals.length > 0 && (
                             <div className="space-y-2">
                               {m.proposals.map((p, pi) => {

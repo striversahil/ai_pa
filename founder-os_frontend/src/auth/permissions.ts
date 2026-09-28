@@ -28,6 +28,8 @@ export const VIEW_SCOPE: Record<string, string> = {
   "enquiry-management": "mis",
   "telecalling-agent-analysis": "sheet-analysis",
   "crm": "crm",
+  "samarth-overview": "samarth",
+  "sahil-overview": "sahil",
 };
 
 // Scope that grants the Admin panel without root access (e.g. MIS). Holders
@@ -67,6 +69,8 @@ export const DASHBOARD_SCOPES = [
   "crm",
   "sales",
   "procurement",
+  "samarth",
+  "sahil",
 ];
 
 export interface AuthUserMe {

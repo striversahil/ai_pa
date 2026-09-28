@@ -10,6 +10,7 @@ import {
 import {
   listDigitalMarketingManagers, createDigitalMarketingManager, updateDigitalMarketingManager,
   listTemplates, createTemplate, updateTemplate, logTask, getDigitalMarketingExport,
+  getDigitalMarketingMetricsSeries,
   createAttachmentRecord, getAttachment, deleteAttachmentRecord, toAttachmentJson,
   resolveSelfDigitalMarketingManager,
 } from '../../automations/digital-marketing/service';
@@ -100,6 +101,16 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
       const origin = new URL(c.req.url).origin;
       return c.json(await getDigitalMarketingExport(c.req.query('days'), origin));
     } catch (e: any) { return c.json({ error: e?.message ?? 'export failed' }, 400); }
+  });
+
+  // ── KRA/KPI metrics series: per-day leads/volumes for the dashboard charts ──
+  // Aggregates only (no PII) — any signed-in viewer, like the taskbar PATCH.
+  // KV-cached under the dashboard prefix, so log writes bust it via the
+  // existing invalidator.
+  app.get('/api/digital-marketing/metrics-series', async (c) => {
+    try {
+      return c.json(await getDigitalMarketingMetricsSeries(c.req.query('days')));
+    } catch (e: any) { return c.json({ error: e?.message ?? 'series failed' }, 400); }
   });
 
   // ── Taskbar logging (any signed-in accounts viewer; MIS included) ──

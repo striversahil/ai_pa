@@ -156,12 +156,20 @@ export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
   return items.some((it: any) => itemNeedsDecision(it) || itemHasUnreviewedQuotes(it) || !!(it as any).notAvailableRequested);
 }
 
+/** Open spec flag: procurement flagged it AND the thread is still unresolved.
+ *  Resolved text lingers on the row (audit trail) but must never block the
+ *  queue, the chip, or conclude — the lifecycle is "always open unless
+ *  resolved" (see update.ts). Mirrors `frontend/src/enquiry/queue.ts`. */
+export function isOpenSpecFlag(it: any): boolean {
+  return !!(it as any)?.specIssue && !(it as any)?.threadResolved;
+}
+
 /** Submit readiness: every quotable loop item carries ≥1 vendor rate. */
 export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
   const items = ((e as any).items ?? []) as any[];
-  const flagged = items.filter((it: any) => it?.specIssue && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
+  const flagged = items.filter((it: any) => isOpenSpecFlag(it) && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
   if (flagged > 0) return { ok: false, reason: `${flagged} item${flagged === 1 ? "" : "s"} awaiting sales spec fix` };
-  const loop = items.filter((it: any) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates);
+  const loop = items.filter((it: any) => !isOpenSpecFlag(it) && !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates);
   if (loop.length === 0) {
     const hasBypass = items.some((it: any) => it?.rateAvailable || (it as any)?.notAvailable || (it as any)?.notAvailableRequested || it?.internalRates);
     if (hasBypass) return { ok: true, reason: "" };
@@ -170,6 +178,31 @@ export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean
   const unrated = loop.filter((it: any) => (it?.rates ?? []).length === 0).length;
   if (unrated > 0) return { ok: false, reason: `${unrated} item${unrated === 1 ? "" : "s"} still need${unrated === 1 ? "s" : ""} vendor rates (or mark rate available / not available)` };
   return { ok: true, reason: "" };
+}
+
+/** Rates coverage (Management row badge): every loop item carries ≥1 vendor
+ *  rate. True bypasses are EXCLUDED — rateAvailable, internalRates,
+ *  notAvailable(+Requested). Open spec-held items are NOT excluded: they
+ *  still have no rates, so they block green and surface as `held`.
+ *  Mirrors frontend. */
+export function ratesCoverage(e: Pick<Enquiry, "items">): { total: number; rated: number; complete: boolean; pending: string[]; held: number; heldNames: string[] } {
+  const items = (e as any).items ?? [];
+  const nameOf = (it: any): string => String(it?.name || `Item ${items.indexOf(it) + 1}`);
+  const bypassed = (it: any): boolean => !!it?.rateAvailable || !!(it as any)?.notAvailable || !!(it as any)?.notAvailableRequested || !!it?.internalRates;
+  const heldItems = items.filter((it: any) => !bypassed(it) && isOpenSpecFlag(it));
+  const loop = items.filter((it: any) => !bypassed(it) && !isOpenSpecFlag(it));
+  const pending = loop
+    .filter((it: any) => ((it?.rates ?? []).length === 0))
+    .map(nameOf);
+  const rated = loop.length - pending.length;
+  return {
+    total: loop.length,
+    rated,
+    complete: loop.length > 0 && pending.length === 0 && heldItems.length === 0,
+    pending,
+    held: heldItems.length,
+    heldNames: heldItems.map(nameOf),
+  };
 }
 
 /** Needs action: the actionable subset of open threads — someone must move:

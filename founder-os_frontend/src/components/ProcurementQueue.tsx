@@ -12,7 +12,9 @@ import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
-import { itemNeedsRates, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, isZohoClosedStatus, procurementSubmittable, hasOpenThread, hasPendingProcurementThread, hasAnySalesThread } from "@/enquiry/queue";
+import { itemNeedsRates, isOpenSpecFlag, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, isZohoClosedStatus, procurementSubmittable, hasOpenThread, hasPendingProcurementThread, hasAnySalesThread } from "@/enquiry/queue";
+import { matchesEnquiryQuery } from "@/enquiry/search";
+import { toEnquiry } from "@/enquiry/normalize";
 
 /** Pending = items still needing rates. Empty enquiries (no items yet) wait
  *  on sales, not procurement — they render in their own section below. */
@@ -55,7 +57,7 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
   // fix is pending), but the chip must still name the blocker — otherwise
   // a quoted-but-flagged item misreads as "Needs rates".
   const loopItems = items.filter((it) => !it.rateAvailable && !(it as any).notAvailable && !(it as any).notAvailableRequested && !it.internalRates);
-  const flagged = loopItems.filter((it) => it.specIssue).length;
+  const flagged = loopItems.filter((it) => isOpenSpecFlag(it)).length;
   const requested = loopItems.filter((it) => it.ratesRequested && !it.specIssue).length;
   const alternates = items.filter((it) => String((it as any)?.variationRequest ?? "").trim()).length;
   if (alternates > 0) {
@@ -114,8 +116,25 @@ export default function ProcurementQueue() {
   type ProcTab = "active" | "history";
   const [tabPick, setTabPick] = useState<ProcTab | null>(null);
 
-  const { enquiries, loaded, aiConfigured, updateItems, updateEnquiry, comments, addComment, currentAgent } =
-    useEnquiryData("procurement");
+  // Server-partitioned queues off one KV-cached scan: Active arrives COMPLETE
+  // Active pending arrives COMPLETE from the cached queue endpoint
+  // (every open row, however old). History arrives COMPLETE the same way
+  // and pages LOCALLY below — no 100-row cap anywhere. Queue predicates run
+  // over the combined store. Search is local-first: typed queries filter
+  // instantly over loaded rows (`matchesEnquiryQuery`, shared with the hook
+  // gate); the server/database search fires only on a local miss.
+  const { enquiries, loaded, aiConfigured, updateItems, updateEnquiry, comments, addComment, currentAgent, hasMore, loadMore, loadedCount, searchQuery, setSearchQuery, searchActive, searching, searchLocal, upsertEnquiry, clearSearch } =
+    useEnquiryData("procurement", { pageSize: 100 });
+  // Match-count labels below show when the hook reports server matches
+  // (`searchActive`) or instant local matches (`searchLocal` — typed query
+  // ≥2 chars with local hits, zero backend traffic).
+  const loadOlder = hasMore ? (
+    <div className="flex flex-col items-center gap-1 pt-2">
+      <button type="button" onClick={loadMore} className="px-4 py-1.5 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)] text-xs font-extrabold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer">
+        Load older enquiries · showing {loadedCount}
+      </button>
+    </div>
+  ) : null;
 
   // Live intimations: management rate-requests (act on the item) and sales
   // spec fixes (flagged item reshared with corrections/reference media).
@@ -129,7 +148,7 @@ export default function ProcurementQueue() {
     if (!loaded) return;
     for (const e of enquiries) {
       if (requestedRef.current[e.id] === undefined) requestedRef.current[e.id] = (e.items ?? []).filter((it) => it.ratesRequested).length;
-      if (flaggedRef.current[e.id] === undefined) flaggedRef.current[e.id] = (e.items ?? []).filter((it) => it.specIssue).length;
+      if (flaggedRef.current[e.id] === undefined) flaggedRef.current[e.id] = (e.items ?? []).filter((it) => isOpenSpecFlag(it)).length;
       if (threadRef.current[e.id] === undefined) threadRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
     }
   }, [loaded, enquiries]);
@@ -155,7 +174,7 @@ export default function ProcurementQueue() {
     requestedRef.current[id] = requested;
     const flagged = typeof s.flaggedCount === "number"
       ? s.flaggedCount
-      : ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
+      : ((raw.items ?? []) as any[]).filter((it) => isOpenSpecFlag(it)).length;
     if (flaggedRef.current[id] !== undefined && flagged < flaggedRef.current[id]) {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       setToast({ id, label, title, kind: "fixed" });
@@ -176,7 +195,15 @@ export default function ProcurementQueue() {
     threadRef.current[id] = threadCount;
   });
 
-  const pending = useMemo(() => enquiries.filter(isProcurementPending).sort(byNewest), [enquiries]);
+  // Active search is local-first (same product rule as History): while the
+  // store holds server matches (`searchActive`) split them; otherwise filter
+  // the complete queue instantly — the database fires only on a local miss.
+  const pending = useMemo(() => {
+    const base = [...enquiries].filter(isProcurementPending).sort(byNewest);
+    if (searchActive) return base;
+    const q = searchQuery.trim();
+    return q ? base.filter((e) => matchesEnquiryQuery(e, q)) : base;
+  }, [enquiries, searchActive, searchQuery]);
   // Total unrated-item count for the header badge (table itself stays one
   // row per enquiry — item detail lives in the modal).
   const pendingItemsCount = useMemo(
@@ -191,47 +218,50 @@ export default function ProcurementQueue() {
   const historyEnquiries: EnquiryList = useMemo(() => {
     return [...enquiries].filter(isProcurementHistoryEnquiry).sort(byActivity);
   }, [enquiries]);
-  // History search + pagination (client/EST/item/vendor)
-  const [historySearch, setHistorySearch] = useState("");
+  // History search is local-first: instant filter over the COMPLETE loaded
+  // set (every row, however old — no 100-row cap); the server/database
+  // search fires only when nothing matches locally. Server matches still
+  // pass the History predicate below, so the tab never leaks Active rows.
   const filteredHistory = useMemo(() => {
-    const q = historySearch.trim().toLowerCase();
+    if (searchActive) return historyEnquiries;
+    const q = searchQuery.trim();
     if (!q) return historyEnquiries;
-    const qDigits = q.replace(/\D/g, "");
-    return historyEnquiries.filter(e => {
-      const hay = [
-        e.clientCompany ?? "", e.title ?? "", e.estNumber ?? "", (e as any).enquiryNumber ?? "", (e as any).sourceLead ?? "", (e as any).location ?? "",
-        e.contactName ?? "", (e as any).contactEmail ?? "", e.contactPhone ?? "", e.description ?? "", e.source ?? "", String(e.dailyNo ?? ""),
-        ...((e.items ?? []) as any[]).flatMap((it:any)=> [it?.name ?? "", it?.qty ?? "", it?.spec ?? "", it?.verbatim ?? "", ...((it?.rates ?? []).map((r:any)=> r?.vendor ?? ""))]),
-      ].join(" ").toLowerCase();
-      if (hay.includes(q)) return true;
-      if (qDigits.length >= 3 && (e.estNumber ?? "").replace(/\D/g,"").includes(qDigits)) return true;
-      return false;
-    });
-  }, [historyEnquiries, historySearch]);
+    return historyEnquiries.filter((e) => matchesEnquiryQuery(e, q));
+  }, [historyEnquiries, searchActive, searchQuery]);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState<number>(50);
   const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
-  useEffect(() => { setHistoryPage(1); }, [filteredHistory.length, historyPageSize, historySearch]);
+  useEffect(() => { setHistoryPage(1); }, [filteredHistory.length, historyPageSize, searchQuery]);
   const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / historyPageSize));
   const historyPageClamped = Math.min(historyPage, historyTotalPages);
   const visibleHistory = useMemo(() => filteredHistory.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize), [filteredHistory, historyPageClamped, historyPageSize]);
   const emptyEnquiries = useMemo(
     // Closed requirements are dead/won client-side — never "waiting on sales".
-    () => [...enquiries].filter((e) => (e.items ?? []).length === 0 && !isZohoClosedStatus((e as any)?.zohoStatus)).sort(byNewest),
-    [enquiries],
+    // Local-filtered with the query like every other section (server matches
+    // already exclude item-less rows, so in server mode this simply empties).
+    () => {
+      const base = [...enquiries].filter((e) => (e.items ?? []).length === 0 && !isZohoClosedStatus((e as any)?.zohoStatus)).sort(byNewest);
+      const q = searchQuery.trim();
+      return q ? base.filter((e) => matchesEnquiryQuery(e, q)) : base;
+    },
+    [enquiries, searchQuery],
   );
   // Enquiry-level requirements grouped by enquiry (legacy rows; new adds land
   // as items). Served text is the AI-redacted copy (withheld while pending).
-  const reqGroups = useMemo(() => enquiries
-    .map((e) => ({
-      enquiry: e,
-      reqs: (e.additionalRequirements ?? []).filter((r) => {
-        const t = typeof r === "string" ? r : r?.text;
-        return t && String(t).trim().length > 0;
-      }),
-    }))
-    .filter((g) => g.reqs.length > 0)
-    .sort((a, b) => byNewest(a.enquiry, b.enquiry)), [enquiries]);
+  const reqGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return enquiries
+      .map((e) => ({
+        enquiry: e,
+        reqs: (e.additionalRequirements ?? []).filter((r) => {
+          const t = typeof r === "string" ? r : r?.text;
+          return t && String(t).trim().length > 0;
+        }),
+      }))
+      .filter((g) => g.reqs.length > 0)
+      .filter((g) => !q || matchesEnquiryQuery(g.enquiry, q) || g.reqs.some((r) => String(typeof r === "string" ? r : (r as any)?.text ?? "").toLowerCase().includes(q)))
+      .sort((a, b) => byNewest(a.enquiry, b.enquiry));
+  }, [enquiries, searchQuery]);
 
   const tab: ProcTab = tabPick
     ?? (pending.length > 0 ? "active" : "history");
@@ -307,6 +337,25 @@ export default function ProcurementQueue() {
     }
   }, [updateEnquiry]);
 
+  // Queue rows ship WITHOUT media bytes (payload size — one row alone is
+  // ~2.5MB of embedded photos/video). The modal fetches the open row whole
+  // on demand (redacted single-row read, same bytes as the queues) and
+  // merges it into the store, so reference media appears the moment it
+  // lands. Writes before it arrives are safe: the backend merges stored
+  // media on restricted-surface saves.
+  // NOTE: hooks — this must stay above the early returns below (a hook
+  // after a conditional return crashes React #310 on the loading→loaded
+  // transition).
+  useEffect(() => {
+    if (!selectedId) return;
+    let dead = false;
+    fetch(`/api/enquiries/${encodeURIComponent(selectedId)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!dead && d?.enquiry) upsertEnquiry(toEnquiry(d.enquiry)); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [selectedId, upsertEnquiry]);
+
   if (!allowed) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center text-sm font-semibold text-zinc-500 dark:text-zinc-400">
@@ -327,7 +376,7 @@ export default function ProcurementQueue() {
     const items = e.items ?? [];
     const quoted = items.filter((it) => (it.rates ?? []).length > 0).length;
     const needRatesActive = items.filter(itemNeedsRates).length;
-    const flaggedActive = items.filter((it) => it.specIssue && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
+    const flaggedActive = items.filter((it) => isOpenSpecFlag(it) && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
     const isReady = mode === "active" && needRatesActive === 0 && procurementSubmittable(e).ok;
     const needRates = mode === "active"
       ? needRatesActive
@@ -456,6 +505,15 @@ export default function ProcurementQueue() {
           {tab === "active" && (
             pending.length > 0 ? (
               <section className="space-y-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex-1 relative">
+                    <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z" /></svg>
+                    <input value={searchQuery} onChange={(e)=> setSearchQuery(e.target.value)} placeholder="Search EST No., enquiry no., client, item, vendor… (all enquiries)" className="w-full pl-8 pr-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] text-xs focus:outline-none focus:border-brand-indigo" />
+                    {searchQuery && <button type="button" onClick={clearSearch} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs">×</button>}
+                  </div>
+                  {searching ? <span className="text-xs text-[var(--text-secondary)]">Searching…</span>
+                    : (searchActive || searchLocal) ? <span className="text-xs text-[var(--text-secondary)]">{pending.length} match{pending.length === 1 ? "" : "es"} across all{hasMore ? " · top 50" : ""}</span> : null}
+                </div>
                 {enquiryTable(pending, "active")}
               </section>
             ) : (
@@ -488,10 +546,11 @@ export default function ProcurementQueue() {
               <div className="flex items-center gap-2 mb-3">
                 <div className="flex-1 relative">
                   <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z" /></svg>
-                  <input value={historySearch} onChange={(e)=> setHistorySearch(e.target.value)} placeholder="Search client, EST No., title, item, vendor…" className="w-full pl-8 pr-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] text-xs focus:outline-none focus:border-brand-indigo" />
-                  {historySearch && <button type="button" onClick={()=> setHistorySearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs">×</button>}
+                  <input value={searchQuery} onChange={(e)=> setSearchQuery(e.target.value)} placeholder="Search EST No., enquiry no., client, item, vendor… (all enquiries)" className="w-full pl-8 pr-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] text-xs focus:outline-none focus:border-brand-indigo" />
+                  {searchQuery && <button type="button" onClick={clearSearch} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs">×</button>}
                 </div>
-                {historySearch && <span className="text-xs text-[var(--text-secondary)]">{filteredHistory.length} match</span>}
+                {searching ? <span className="text-xs text-[var(--text-secondary)]">Searching…</span>
+                  : (searchActive || searchLocal) ? <span className="text-xs text-[var(--text-secondary)]">{filteredHistory.length} match{filteredHistory.length === 1 ? "" : "es"} across all{hasMore ? " · top 50" : ""}</span> : null}
               </div>
               {enquiryTable(visibleHistory, "history")}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[var(--border-card)] mt-3">
@@ -505,7 +564,8 @@ export default function ProcurementQueue() {
                   <button type="button" disabled={historyPageClamped >= historyTotalPages} onClick={() => setHistoryPage(historyPageClamped + 1)} className="px-2.5 py-1 rounded-lg border border-[var(--border-card)] text-xs font-bold disabled:opacity-40 cursor-pointer">Next ›</button>
                 </div>
               </div>
-              </section>
+              {loadOlder}
+               </section>
             ) : (
               <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
                 <p className="text-sm font-bold text-[var(--text-primary)]">No procurement history yet</p>

@@ -189,6 +189,16 @@ export interface EnquiryComment {
 export interface EnquiryStore {
   listEnquiries(): Promise<Enquiry[]>;
   listEnquiriesPaged(offset: number, limit: number): Promise<{ rows: Enquiry[]; total: number }>;
+  /** Keyset page newest-first: rows strictly older than the cursor
+   *  (createdAt, id). Null cursor = first page. nextCursor null = exhausted.
+   *  Flat cost per page — OFFSET would bill skipped rows on D1. */
+  listEnquiriesCursor(
+    cursor: { createdAt: string; id: string } | null,
+    limit: number,
+  ): Promise<{ rows: Enquiry[]; nextCursor: string | null }>;
+  /** Server search newest-first (EST no., enquiry no., client/contact,
+   *  title, description, item/vendor text). Capped — refine to narrow. */
+  searchEnquiries(query: string, limit: number): Promise<{ rows: Enquiry[]; hasMore: boolean }>;
   listCommentsFor(enquiryIds: string[]): Promise<EnquiryComment[]>;
   allocateDailyNo(now?: Date): Promise<number>;
   getEnquiry(id: string): Promise<Enquiry | null>;
@@ -198,4 +208,25 @@ export interface EnquiryStore {
   listComments(enquiryId: string): Promise<EnquiryComment[]>;
   addComment(data: Omit<EnquiryComment, "id" | "createdAt">): Promise<EnquiryComment>;
   listAllComments(): Promise<EnquiryComment[]>;
+}
+
+// ── Cursor codec: opaque keyset token for queue pagination ───────────────
+// Worker-safe (btoa/atob, no Buffer). Fail-open: malformed → null → first page.
+export function encodeEnquiryCursor(createdAt: string, id: string): string {
+  return btoa(`${createdAt}|${id}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function decodeEnquiryCursor(cursor: string): { createdAt: string; id: string } | null {
+  try {
+    const b64 = String(cursor || "").replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(b64);
+    const i = raw.indexOf("|");
+    if (i <= 0) return null;
+    const createdAt = raw.slice(0, i);
+    const id = raw.slice(i + 1);
+    if (!createdAt || !id) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
 }

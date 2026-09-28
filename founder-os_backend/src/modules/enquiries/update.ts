@@ -93,6 +93,18 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       // the whole management decision and threw the item back to pending.
       // Preserve stored fields unless this write opens a fresh request
       // round (which explicitly clears below).
+      //
+      // Same rule for reference media: queue payloads strip media BYTES for
+      // size (modals fetch the open row whole), so a management-surface save
+      // racing the modal's full-row fetch echoes items with empty media —
+      // that omission must never wipe stored photos/drawings. Intentional
+      // media removal lives only on the sales surface (ItemBoxList), which
+      // always echoes full rows, so this branch can't break it. (Restricted
+      // procurement writes already merge stored+incoming media above.)
+      if ((!Array.isArray((base as any).media) || (base as any).media.length === 0)
+        && Array.isArray((stored as any).media) && (stored as any).media.length > 0) {
+        base.media = stored.media;
+      }
       const incomingDecision = base.selectedVendor !== undefined || base.markup !== undefined
         || base.finalRate !== undefined || base.finalDiscountPercent !== undefined
         || base.finalizedAt !== undefined || (base as any).selectedRateIdx !== undefined;

@@ -27,6 +27,7 @@ import type {
   FlagThreadBy,
   FlagThreadEntry,
 } from "./types";
+import { encodeEnquiryCursor } from "./types";
 import {
   parseFlagThread,
   normalizeVisibility,
@@ -222,9 +223,49 @@ class MemoryEnquiryStore implements EnquiryStore {
     const all = [...this.enquiries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return { rows: all.slice(offset, offset + limit), total: all.length };
   }
+  async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const all = [...this.enquiries].sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+    );
+    let start = 0;
+    if (cursor) {
+      const i = all.findIndex(
+        (e) => e.createdAt < cursor.createdAt || (e.createdAt === cursor.createdAt && e.id < cursor.id),
+      );
+      start = i === -1 ? all.length : i;
+    }
+    const slice = all.slice(start, start + lim + 1);
+    const rows = slice.slice(0, lim);
+    const last = rows[rows.length - 1];
+    return {
+      rows,
+      nextCursor: slice.length > lim && last ? encodeEnquiryCursor(last.createdAt, last.id) : null,
+    };
+  }
   async listCommentsFor(enquiryIds: string[]) {
     const set = new Set(enquiryIds);
     return this.comments.filter((c) => set.has(c.enquiryId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  async searchEnquiries(query: string, limit: number) {
+    const lim = Math.min(50, Math.max(1, Math.floor(limit)));
+    const q = String(query ?? "").trim().toLowerCase();
+    const num = /^\d{1,9}$/.test(q) ? Number(q) : null;
+    const hit = (e: Enquiry) => {
+      if (num !== null && Number((e as any)?.dailyNo) === num) return true;
+      const hay = [
+        (e as any)?.estNumber ?? "", (e as any)?.enquiryNumber ?? "", e.title ?? "",
+        (e as any)?.clientCompany ?? "", (e as any)?.contactName ?? "", (e as any)?.contactPhone ?? "",
+        (e as any)?.sourceLead ?? "", e.source ?? "", e.description ?? "",
+        JSON.stringify((e as any)?.items ?? []), JSON.stringify((e as any)?.additionalRequirements ?? []),
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    };
+    const all = [...this.enquiries]
+      .filter(hit)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+    const slice = all.slice(0, lim + 1);
+    return { rows: slice.slice(0, lim), hasMore: slice.length > lim };
   }
   async getEnquiry(id: string) {
     return this.enquiries.find((e) => e.id === id) ?? null;
@@ -278,13 +319,71 @@ class D1EnquiryStore implements EnquiryStore {
       total: Number((count as any)?.total ?? 0),
     };
   }
+  async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const take = lim + 1; // one extra row proves hasMore without a COUNT(*) scan
+    const res = cursor
+      ? await this.db
+          .prepare(
+            "SELECT * FROM Enquiry WHERE (createdAt < ? OR (createdAt = ? AND id < ?)) ORDER BY createdAt DESC, id DESC LIMIT ?",
+          )
+          .bind(cursor.createdAt, cursor.createdAt, cursor.id, take)
+          .all()
+      : await this.db
+          .prepare("SELECT * FROM Enquiry ORDER BY createdAt DESC, id DESC LIMIT ?")
+          .bind(take)
+          .all();
+    const slice = (((res as any).results || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[];
+    const rows = slice.slice(0, lim);
+    const last = rows[rows.length - 1];
+    return {
+      rows,
+      nextCursor: slice.length > lim && last ? encodeEnquiryCursor(last.createdAt, last.id) : null,
+    };
+  }
+  async searchEnquiries(query: string, limit: number) {
+    // Substring sweep newest-first, capped. LIKE '%q%' can't ride a b-tree
+    // (accepted: searches are debounced + user-initiated, not per-refresh),
+    // but the numeric fast path (dailyNo =) and the matched-row comment
+    // lookup stay indexed. Wildcards escaped; pattern byte-capped upstream
+    // (D1 allows 50 bytes per LIKE pattern).
+    const lim = Math.min(50, Math.max(1, Math.floor(limit)));
+    const q = String(query ?? "");
+    const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const cols = [
+      "estNumber", "enquiryNumber", "title", "clientCompany", "contactName",
+      "contactPhone", "sourceLead", "source", "description", "items", "additionalRequirements",
+    ];
+    const conds = cols.map((c) => `${c} LIKE ? ESCAPE '\\'`);
+    const binds: any[] = cols.map(() => pattern);
+    if (/^\d{1,9}$/.test(q.trim())) {
+      conds.push("dailyNo = ?");
+      binds.push(Number(q.trim()));
+    }
+    const take = lim + 1;
+    const { results } = await this.db
+      .prepare(
+        `SELECT * FROM Enquiry WHERE (${conds.join(" OR ")}) ORDER BY createdAt DESC, id DESC LIMIT ?`,
+      )
+      .bind(...binds, take)
+      .all();
+    const found = (((results as any) || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[];
+    return { rows: found.slice(0, lim), hasMore: found.length > lim };
+  }
   async listCommentsFor(enquiryIds: string[]) {
     if (!enquiryIds.length) return [];
-    const placeholders = enquiryIds.map(() => "?").join(",");
-    const { results } = await this.db.prepare(
-      `SELECT * FROM EnquiryComment WHERE enquiryId IN (${placeholders}) ORDER BY createdAt ASC`,
-    ).bind(...enquiryIds).all();
-    return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
+    // D1 caps bound parameters at 100 per statement — chunk large sets
+    // (complete-queue fetches pass 100+ ids) so the query can never blow up.
+    const out: EnquiryComment[] = [];
+    for (let i = 0; i < enquiryIds.length; i += 90) {
+      const chunk = enquiryIds.slice(i, i + 90);
+      const placeholders = chunk.map(() => "?").join(",");
+      const { results } = await this.db.prepare(
+        `SELECT * FROM EnquiryComment WHERE enquiryId IN (${placeholders}) ORDER BY createdAt ASC`,
+      ).bind(...chunk).all();
+      for (const c of (((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[])) out.push(c);
+    }
+    return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
   async allocateDailyNo(now: Date = new Date()): Promise<number> {
     const key = `enquiry:daily:${istDayKey(now)}`;

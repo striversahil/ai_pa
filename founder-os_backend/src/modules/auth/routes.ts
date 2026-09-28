@@ -19,6 +19,7 @@ import {
   setUserScopes as svcSetUserScopes,
   requireManager,
   requireUser,
+  roleGrantBlocker,
   startLogin,
 } from "./service";
 import { clearSessionCookieHeader, readSessionCookie, sessionCookieHeader } from "./session";
@@ -88,8 +89,11 @@ async function asRoot(store: AuthStore, cookieHeader: string | null) {
 
 // ── User-manager gate ─────────────────────────────────────────────────────────
 // Root/admin or anyone holding the `user-admin` scope (e.g. MIS). Managers may
-// assign roles and edit role scopes, but NEVER the root user nor anything
-// granting the `admin` scope — enforced per endpoint below.
+// assign roles, but top-down only: NEVER the root user, NEVER anything
+// granting the `admin` scope, NEVER anything granting `user-admin` itself
+// (only root onboards new managers), and NEVER a role holding a scope the
+// manager themselves was not granted (root decides what a manager may pass
+// on — enforced per endpoint below).
 async function asUserManager(store: AuthStore, cookieHeader: string | null) {
   const me = await requireManager(store, cookieHeader);
   return { me, root: isRoot(me) };
@@ -101,8 +105,22 @@ function isTargetRoot(target: { isRoot: boolean; email: string }): boolean {
 
 export async function authListUsers(store: AuthStore, cookieHeader: string | null): Promise<AuthResult> {
   try {
-    await asUserManager(store, cookieHeader);
-    return json(200, await listUsers(store));
+    const { me, root } = await asUserManager(store, cookieHeader);
+    const users = await listUsers(store);
+    if (root || me.isAdmin) return json(200, users);
+    // Non-root managers see everyone (their job) but role keys outside their
+    // own power are masked to a count — names stay hidden, not just disabled.
+    // (Role saves force-keep these masked assignments; see authSetUserRoles.)
+    const roles = await listRoles(store);
+    const byKey = new Map(roles.map((r) => [r.key, r]));
+    const visible = (k: string) => {
+      const r = byKey.get(k);
+      return !!r && roleGrantBlocker(me.scopes, r.scopeKeys ?? []) === null;
+    };
+    return json(200, users.map((u: any) => {
+      const hidden = (u.roles ?? []).filter((k: string) => !visible(k)).length;
+      return { ...u, roles: (u.roles ?? []).filter(visible), ...(hidden > 0 ? { hiddenRoles: hidden } : {}) };
+    }));
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
     return json(err.status, { error: err.message });
@@ -111,9 +129,14 @@ export async function authListUsers(store: AuthStore, cookieHeader: string | nul
 
 export async function authListScopes(store: AuthStore, cookieHeader: string | null): Promise<AuthResult> {
   try {
-    await requireUser(store, cookieHeader);
+    const me = await requireUser(store, cookieHeader);
     await ensureScopesSeeded(store);
-    return json(200, await listScopes(store));
+    const all = await listScopes(store);
+    if (me.isAdmin) return json(200, all);
+    // Non-admin viewers only see their own scopes — the rest of the catalog
+    // (other dashboards' names) stays hidden, not just ungrantable.
+    const have = new Set(me.scopes.map((s) => String(s).toLowerCase()));
+    return json(200, all.filter((s: any) => have.has(String(s.key).toLowerCase())));
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
     return json(err.status, { error: err.message });
@@ -172,8 +195,12 @@ export async function authSetUserScopes(
 
 export async function authListRoles(store: AuthStore, cookieHeader: string | null): Promise<AuthResult> {
   try {
-    await requireUser(store, cookieHeader);
-    return json(200, await listRoles(store));
+    const me = await requireUser(store, cookieHeader);
+    const all = await listRoles(store);
+    if (me.isAdmin) return json(200, all);
+    // Non-admin viewers only see roles they could grant — anything holding a
+    // scope outside their own stays hidden, not just disabled.
+    return json(200, all.filter((r: any) => roleGrantBlocker(me.scopes, r.scopeKeys ?? []) === null));
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
     return json(err.status, { error: err.message });
@@ -220,7 +247,7 @@ export async function authSetUserRoles(
   keys: string[],
 ): Promise<AuthResult> {
   try {
-    const { root } = await asUserManager(store, cookieHeader);
+    const { me, root } = await asUserManager(store, cookieHeader);
     if (!Array.isArray(keys)) return json(400, { error: "keys must be an array" });
     if (!root) {
       const target = await store.getUserById(userId);
@@ -229,12 +256,25 @@ export async function authSetUserRoles(
       const roles = await listRoles(store);
       const byKey = new Map(roles.map((r) => [r.key, r]));
       for (const k of keys) {
-        const role = byKey.get(k);
-        if (!role) return json(400, { error: `Unknown role: ${k}` });
-        if (role.scopeKeys.map((s) => String(s).toLowerCase()).includes("admin")) {
-          return json(403, { error: "Only root can assign admin access" });
+        if (!byKey.get(k)) return json(400, { error: `Unknown role: ${k}` });
+      }
+      // Top-down delegation, delta-checked: ADDING a role the manager couldn't
+      // grant is rejected loud. REMOVING is allowed only within their power —
+      // currently-held root-managed roles are force-kept (the masked UI omits
+      // them from the payload, and a curl strip must silently no-op, never
+      // revoke root-granted access).
+      const current = await store.getUserRoleKeys(userId);
+      const locked = (k: string) => {
+        const r = byKey.get(k);
+        return !!r && roleGrantBlocker(me.scopes, r.scopeKeys ?? []) !== null;
+      };
+      for (const k of keys) {
+        if (!current.includes(k) && locked(k)) {
+          const reason = roleGrantBlocker(me.scopes, byKey.get(k)!.scopeKeys ?? []);
+          return json(403, { error: `Role '${k}': ${reason}` });
         }
       }
+      keys = [...new Set([...keys, ...current.filter((k) => locked(k))])];
     }
     await svcSetUserRoles(store, userId, keys);
     invalidateAllSessionCaches();

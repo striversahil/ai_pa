@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 
 export interface ScopeRow { key: string; label: string; description: string | null; }
 export interface RoleRow { key: string; label: string; description: string | null; scopeKeys: string[]; }
-export interface UserRow { id: string; email: string; name: string; picture: string | null; isRoot: boolean; createdAt: string; scopes: string[]; roles: string[]; }
+export interface UserRow { id: string; email: string; name: string; picture: string | null; isRoot: boolean; createdAt: string; scopes: string[]; roles: string[]; hiddenRoles?: number; }
 export interface DashboardRow { slug: string; name: string; scope: string | null; }
 
 /** Slide-over shell for manage/edit flows (keeps tables mounted behind). */
@@ -63,8 +63,12 @@ export function ScopeCheckGrid({ scopeGroups, checked, onToggle, disabled }: {
   );
 }
 
-/** Manage-roles drawer for one user, with live effective-access preview. */
-export function UserDrawer({ user, roles, scopeGroups, scopeLabel, draft, onToggleRole, onSave, busy, isRoot, locked }: {
+/** Manage-roles drawer for one user, with live effective-access preview.
+ *  The role list is pre-filtered server-side to what the signed-in manager
+ *  may grant — anything else is hidden, not just disabled. `hiddenCount` is
+ *  the number of root-managed roles the user holds (names masked); they ride
+ *  along untouched on save (the backend force-keeps them). */
+export function UserDrawer({ user, roles, scopeGroups, scopeLabel, draft, onToggleRole, onSave, busy, isRoot, locked, grantableScopes, hiddenCount }: {
   user: UserRow;
   roles: RoleRow[];
   scopeGroups: [string, DashboardRow[]][];
@@ -75,8 +79,18 @@ export function UserDrawer({ user, roles, scopeGroups, scopeLabel, draft, onTogg
   busy: boolean;
   isRoot: boolean;
   locked: boolean;
+  grantableScopes?: string[] | null;
+  hiddenCount?: number;
 }) {
   const isAdminRole = (scopeKeys: string[]) => scopeKeys.map((s) => s.toLowerCase()).includes("admin");
+  // Only root onboards new managers: roles granting `user-admin` are locked
+  // for non-root managers exactly like `admin` roles (backend rejects them).
+  const isManagerRole = (scopeKeys: string[]) => scopeKeys.map((s) => s.toLowerCase()).includes("user-admin");
+  const beyondGrant = (scopeKeys: string[]): string[] => {
+    if (isRoot || grantableScopes == null) return [];
+    const have = new Set(grantableScopes.map((s) => s.toLowerCase()));
+    return scopeKeys.filter((s) => !have.has(String(s).toLowerCase()));
+  };
   const granted = [...new Set(draft.flatMap((rk) => roles.find((r) => r.key === rk)?.scopeKeys || []))];
   const dirty = [...draft].sort().join(",") !== [...user.roles].sort().join(",");
   return (
@@ -102,9 +116,11 @@ export function UserDrawer({ user, roles, scopeGroups, scopeLabel, draft, onTogg
             <div className="space-y-1.5">
               {roles.map((r) => {
                 const on = draft.includes(r.key);
-                const disabled = locked || (!isRoot && isAdminRole(r.scopeKeys));
+                const beyond = beyondGrant(r.scopeKeys);
+                const rootOnlyRole = !isRoot && (isAdminRole(r.scopeKeys) || isManagerRole(r.scopeKeys));
+                const disabled = locked || rootOnlyRole || (!isRoot && beyond.length > 0);
                 return (
-                  <label key={r.key}
+                  <label key={r.key} title={beyond.length > 0 ? `Needs root grant: ${beyond.join(", ")}` : undefined}
                     className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"} ${
                       on ? "bg-emerald-600/10 border-emerald-500" : "border-zinc-300 dark:border-zinc-700"}`}>
                     <input type="checkbox" checked={on} disabled={disabled} onChange={() => onToggleRole(r.key)} className="accent-emerald-500 shrink-0" />
@@ -112,12 +128,19 @@ export function UserDrawer({ user, roles, scopeGroups, scopeLabel, draft, onTogg
                       <span className="block font-semibold">{r.label} <span className="font-mono text-[11px] text-zinc-500">{r.key}</span></span>
                       <span className="block text-[11px] text-zinc-500 truncate">{r.scopeKeys.length} dashboards</span>
                     </span>
-                    {!isRoot && isAdminRole(r.scopeKeys) && <span className="text-[10px] font-bold text-amber-500">ROOT ONLY</span>}
+                    {rootOnlyRole && <span className="text-[10px] font-bold text-amber-500">ROOT ONLY</span>}
+                    {!isRoot && !rootOnlyRole && beyond.length > 0 && <span className="text-[10px] font-bold text-amber-500">NOT YOURS</span>}
                   </label>
                 );
               })}
             </div>
           )}
+
+      {!locked && (hiddenCount ?? 0) > 0 && (
+        <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+          🔒 {hiddenCount} root-managed role{(hiddenCount ?? 0) === 1 ? "" : "s"} — assigned by root, kept as-is on save.
+        </p>
+      )}
 
       <h4 className="mt-5 mb-2 text-xs font-extrabold uppercase tracking-wider text-zinc-500">
         Effective access ({granted.length})

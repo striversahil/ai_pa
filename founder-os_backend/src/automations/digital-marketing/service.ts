@@ -688,6 +688,66 @@ export async function getDigitalMarketingDashboardData(query: Record<string, any
   return cached(`${DATA_CACHE_PREFIX}${date}:${scopeKey}`, DATA_TTL_MS, () => computeDashboard(date, scope));
 }
 
+// ── KRA/KPI metrics series: per-day lead/volume numbers ─────────────────────
+// Day-wise aggregates for the dashboard charts: Meta Ads (spend/inquiries/
+// leads), B2B per-portal leads, WhatsApp (sent/leads/spend), Email (sent/
+// leads). Keyed by stable template ids (dmm-06..09), latest log wins per
+// (templateId, dueDate). Form inputs save as strings, so every number is
+// coerced (negatives clamp to 0 — leads/spend can't be negative).
+// Served from the same DATA_CACHE_PREFIX, so log writes + rollover bust it
+// via the existing invalidateDigitalMarketingCache() — no new invalidator.
+const SERIES_TTL_MS = 5 * 60 * 1000;
+const SERIES_TEMPLATE_IDS = ['dmm-06', 'dmm-07', 'dmm-08', 'dmm-09'];
+export async function getDigitalMarketingMetricsSeries(days: unknown): Promise<{
+  days: Array<{
+    date: string;
+    meta: { spend: number; inquiries: number; leads: number };
+    b2b: { alibaba: number; eexporter: number; indiamart: number; tradeindia: number };
+    whatsapp: { sent: number; leads: number; spend: number };
+    email: { sent: number; leads: number };
+  }>;
+  from: string;
+  to: string;
+  computedAt: string;
+}> {
+  const n = Math.min(93, Math.max(7, Math.floor(Number(days) || 30)));
+  const to = istDateStr();
+  const from = addDays(to, -(n - 1));
+  return cached(`${DATA_CACHE_PREFIX}series:${n}`, SERIES_TTL_MS, async () => {
+    const logs = await (prisma as any).digitalMarketingTaskLog.findMany({
+      where: { templateId: { in: SERIES_TEMPLATE_IDS }, dueDate: { gte: from, lte: to } },
+      select: { templateId: true, dueDate: true, metricsJson: true, updatedAt: true },
+      orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }],
+      take: n * SERIES_TEMPLATE_IDS.length + 50,
+    }).catch(() => []);
+    // updatedAt desc → first row per key is the latest.
+    const latest = new Map<string, any>();
+    for (const l of logs as any[]) {
+      const k = `${String((l as any).dueDate).slice(0, 10)}||${String((l as any).templateId)}`;
+      if (!latest.has(k)) latest.set(k, l);
+    }
+    const num = (v: unknown): number => {
+      const x = Number(v);
+      return Number.isFinite(x) ? Math.max(0, x) : 0;
+    };
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const d = addDays(from, i);
+      const m06 = parseMetricsJson(latest.get(`${d}||dmm-06`)?.metricsJson);
+      const m07 = parseMetricsJson(latest.get(`${d}||dmm-07`)?.metricsJson);
+      const m08 = parseMetricsJson(latest.get(`${d}||dmm-08`)?.metricsJson);
+      const m09 = parseMetricsJson(latest.get(`${d}||dmm-09`)?.metricsJson);
+      out.push({
+        date: d,
+        meta: { spend: num(m06.amountSpent), inquiries: num(m06.inquiries), leads: num(m06.leads) },
+        b2b: { alibaba: num(m07.aliBaba), eexporter: num(m07.eExporter), indiamart: num(m07.indiaMart), tradeindia: num(m07.tradeIndia) },
+        whatsapp: { sent: num(m08.whatsappCount), leads: num(m08.whatsappLeads), spend: num(m08.amountSpent) },
+        email: { sent: num(m09.emailCount), leads: num(m09.emailLeads) },
+      });
+    }
+    return { days: out, from, to, computedAt: new Date().toISOString() };
+  });
+}
 // ── MIS export: past-N-days full ledger ─────────────────────────────────────
 // One row per (date × due task): status, who, remark, attachment links.
 // Read-only (never creates instances) — a complete view of what was

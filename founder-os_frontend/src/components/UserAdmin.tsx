@@ -55,6 +55,13 @@ export default function UserAdmin() {
   const isRoot = !!me?.isRoot;
   const canManage = isRoot || !!me?.scopes.includes(USER_ADMIN_SCOPE);
   const isAdminRole = (scopeKeys: string[]) => scopeKeys.map((s) => s.toLowerCase()).includes("admin");
+  // Top-down delegation: a non-root manager may only pass on scopes root
+  // granted THEM. Null = root (everything grantable). The backend enforces
+  // the same rule in PUT /api/auth/users/:id/roles — this just greys out
+  // what the server would reject.
+  const grantableScopes: string[] | null = isRoot
+    ? null
+    : [...new Set((me?.scopes ?? []).map((s) => s.toLowerCase()))];
 
   // One entry per distinct scope (from rule.json via /api/automations).
   const scopeGroups = useMemo(() => {
@@ -154,7 +161,7 @@ export default function UserAdmin() {
         <h1 className="text-3xl font-bold font-heading">User & Permission Management</h1>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           {isRoot ? `Root: ${me.user.email}.` : `Signed in as ${me.user.email} (user manager).`} Assign roles to users; a role grants the automation dashboards you define for it.
-          {!isRoot && " The root user and admin-level roles are root-only."}
+          {!isRoot && " You can only grant dashboards root gave you — the root user, admin/user-manager roles, and anything outside your own access are root-only."}
         </p>
       </div>
 
@@ -221,17 +228,22 @@ export default function UserAdmin() {
                 key: "roles", header: "Roles",
                 sortValue: (u) => (userDrafts[u.id] ?? u.roles).length,
                 render: (u) => {
-                  const rk = userDrafts[u.id] ?? u.roles;
-                  if (rk.length === 0) return <span className="text-[11px] text-zinc-500">— no access</span>;
+                  // Non-root managers receive masked rows: unknown keys are
+                  // root-managed roles whose names stay hidden (backend masks
+                  // them to `hiddenRoles`). Never fall back to rendering the key.
+                  const rk = (userDrafts[u.id] ?? u.roles).filter((k) => roles.some((r) => r.key === k));
+                  const hidden = u.hiddenRoles ?? 0;
+                  if (rk.length === 0 && hidden === 0) return <span className="text-[11px] text-zinc-500">— no access</span>;
                   const show = rk.slice(0, 3);
                   return (
                     <span className="flex flex-wrap gap-1">
                       {show.map((k) => (
                         <span key={k} className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-500 dark:text-emerald-400">
-                          {roles.find((r) => r.key === k)?.label ?? k}
+                          {roles.find((r) => r.key === k)?.label ?? "Role"}
                         </span>
                       ))}
                       {rk.length > 3 && <span className="text-[11px] text-zinc-500">+{rk.length - 3}</span>}
+                      {hidden > 0 && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-500" title="Root-managed roles — names hidden">🔒 +{hidden}</span>}
                     </span>
                   );
                 },
@@ -387,6 +399,8 @@ export default function UserAdmin() {
             busy={busy}
             isRoot={isRoot}
             locked={!isRoot && managingUser.isRoot}
+            grantableScopes={grantableScopes}
+            hiddenCount={managingUser.hiddenRoles ?? 0}
           />
         </Drawer>
       )}

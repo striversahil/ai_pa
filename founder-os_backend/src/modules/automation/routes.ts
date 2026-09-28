@@ -59,9 +59,14 @@ router.get('/', asyncHandler(async (_req, res) => {
     updatedAt: r.updatedAt,
   }));
   // Full registry (configs can hold Sheet URLs / chat IDs) is admin-only —
-  // mirrors the Worker route. Non-admins get the minimal dashboard list.
+  // mirrors the Worker route. Non-admins get the minimal dashboard list,
+  // trimmed to scopes they hold so other dashboards' names stay hidden.
   if (await reqIsAdmin(_req)) return res.json(full);
-  return res.json(full.map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
+  const grantedScopes = (((_req as any)?.me?.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
+  const granted = new Set(grantedScopes);
+  return res.json(full
+    .filter((r: any) => granted.has(String(r.scope ?? r.slug).toLowerCase()))
+    .map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
 }));
 
 router.get('/:slug', asyncHandler(async (req, res) => {

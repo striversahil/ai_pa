@@ -1,0 +1,7 @@
+{
+  "name": "Samarth Overview",
+  "description": "One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, NeoDove, enterprise ops). Read-only aggregator, KV-cached 60s.",
+  "type": "handler",
+  "trigger": { "type": "manual" },
+  "scope": "samarth"
+}

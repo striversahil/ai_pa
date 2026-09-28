@@ -8,6 +8,18 @@ import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
 import { isZohoClosedStatus, procurementSubmittable } from '../../modules/enquiries/queues';
+import { getManagementQueues, invalidateManagementQueues } from '../../modules/enquiries/queues-cache';
+import { canManageRates } from '../../modules/enquiries/scopes';
+
+// Fire-and-forget queue-cache bust (never blocks the response): the next
+// queues read recomputes once, coalesced across isolates.
+function bustQueues(c: any): void {
+  try {
+    const p = invalidateManagementQueues();
+    if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(p);
+    else void p;
+  } catch { /* best-effort */ }
+}
 
 // Agnes vision intake — Worker-native, no GH Actions (fast edge, <5s).
 // Replaces the GH runner `enquiry-intake-runner.js` (OpenRouter vision).
@@ -280,6 +292,8 @@ function kick(c: any, id: string): void {
               const { LiveEvent, broadcastLive } = await import('../../live');
               broadcastLive(c, LiveEvent.Enquiries, { action: 'auto-concluded', ids: concluded, reason: 'zoho-cancelled' });
             } catch {}
+            // Concluded rows change queue membership — bust the cached queues.
+            try { await invalidateManagementQueues(); } catch {}
           }
         } catch {}
       })();
@@ -295,15 +309,22 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // ?view=procurement lets privileged users (root/MIS) preview exactly what
     // procurement sees — the AI-redacted payload, not their full data.
     // ?page=&limit= (10/50) pages newest-first for the queue tables.
+    // ?cursor=&limit= (≤100) keyset-pages newest-first — the queue
+    // dashboards take the newest 100 and Load-more the rest, so D1 bills a
+    // flat ~100 rows per page no matter how large the table grows.
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
     const pageQ = c.req.query('page');
     const limitQ = c.req.query('limit');
-    const opts: { redact?: boolean; page?: number; limit?: number; aiConfigured?: boolean } | undefined =
-      restricted || pageQ !== undefined || limitQ !== undefined
+    const cursorQ = c.req.query('cursor');
+    const qQ = c.req.query('q');
+    const opts: { redact?: boolean; page?: number; limit?: number; cursor?: string; q?: string; aiConfigured?: boolean } | undefined =
+      restricted || pageQ !== undefined || limitQ !== undefined || cursorQ !== undefined || qQ !== undefined
         ? {
             ...(restricted ? { redact: true, aiConfigured: aiConfigured(c) } : {}),
             ...(pageQ !== undefined ? { page: Number(pageQ) } : {}),
             ...(limitQ !== undefined ? { limit: Number(limitQ) } : {}),
+            ...(cursorQ !== undefined ? { cursor: cursorQ } : {}),
+            ...(qQ !== undefined ? { q: qQ } : {}),
           }
         : undefined;
     const r = await EnquiryRoutes.enquiryList(createEnquiryStore(c.env), me, opts);
@@ -319,6 +340,59 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
     }
     return c.json(r.body, r.status as any);
+  });
+  // ── Management Review queues (KV-cached, MIS-only) ─────────────────────
+  // Active + Unprocessed arrive COMPLETE (every open row, however old — no
+  // page boundary may ever hide a pending estimate); History arrives COMPLETE
+  // too (`?queue=history&all=1` — same cached scan, still zero D1). Per render
+  // this costs ONE KV read: the full scan runs at most once per TTL
+  // (single-flight coalesced) and is busted on every write below. Must stay
+  // above `/api/enquiries/:id`.
+  app.get('/api/enquiries/queues', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    // Procurement queues: any signed-in viewer (payload is redacted by
+    // design, same bytes as `?view=procurement`). Pending and history both
+    // arrive COMPLETE (`all=1` on history) — KV reads, zero D1.
+    const qq = c.req.query('queue');
+    if (qq === 'proc-pending' || qq === 'proc-history') {
+      try {
+        const r = await EnquiryRoutes.procurementQueueList(createEnquiryStore(c.env), me, {
+          queue: qq === 'proc-pending' ? 'pending' : 'history',
+          cursor: c.req.query('cursor'),
+          limit: Number(c.req.query('limit')),
+          aiConfigured: aiConfigured(c),
+          all: c.req.query('all') === '1',
+        });
+        for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
+        return c.json(r.body, r.status as any);
+      } catch (e: any) {
+        return c.json({ error: e?.message ?? 'queues failed' }, 500);
+      }
+    }
+    if (!canManageRates(me as any)) return c.json({ error: 'Management access only' }, 403);
+    try {
+      const all = await getManagementQueues(createEnquiryStore(c.env));
+      if (c.req.query('queue') === 'history') {
+        if (c.req.query('all') === '1') {
+          return c.json({ rows: EnquiryRoutes.stripQueueMediaUrls(all.history), total: all.history.length, computedAt: all.computedAt });
+        }
+        const page = Math.max(1, Math.floor(Number(c.req.query('page')) || 1));
+        const limit = Math.min(100, Math.max(1, Math.floor(Number(c.req.query('limit')) || 50)));
+        const total = all.history.length;
+        const rows = EnquiryRoutes.stripQueueMediaUrls(all.history.slice((page - 1) * limit, page * limit));
+        return c.json({ rows, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)), computedAt: all.computedAt });
+      }
+      return c.json({
+        active: EnquiryRoutes.stripQueueMediaUrls(all.active),
+        unprocessed: EnquiryRoutes.stripQueueMediaUrls(all.unprocessed),
+        empty: all.empty,
+        historyTotal: all.historyTotal,
+        computedAt: all.computedAt,
+      });
+    } catch (e: any) {
+      return c.json({ error: e?.message ?? 'queues failed' }, 500);
+    }
   });
   app.get('/api/enquiries/agents', async (c) => {
     const me = await enquiryMe(c);
@@ -393,6 +467,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if ((r as any).status === 201 && (r.body as any)?.id) {
       kick(c, String((r.body as any).id));
       kickAgnesIntake(c, String((r.body as any).id));
+      bustQueues(c);
     }
     return c.json(r.body, r.status as any);
   });
@@ -404,6 +479,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     enquirySend(c, r);
     if ((r as any).status === 200 && (r.body as any)?.id) {
       kick(c, String((r.body as any).id));
+      bustQueues(c);
       const hasAiBulk = Array.isArray((patchBody as any)?.items)
         && (patchBody as any).items.some((it: any) => it?.aiPending === true);
       if ((patchBody as any)?.description !== undefined || hasAiBulk) kickAgnesIntake(c, String((r.body as any)?.id ?? c.req.param('id') ?? ''));
@@ -417,6 +493,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     enquirySend(c, r);
     if ((r as any).status === 201) {
       kick(c, String(c.req.param('id') ?? ''));
+      bustQueues(c);
       // Requirement arrives as an aiPending raw item — split it in-Worker via
       // the relay lanes (no GH container), same as Add-via-AI.
       kickAgnesIntake(c, String(c.req.param('id') ?? ''));
@@ -432,6 +509,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       try {
         await cacheDel(`enquiry:redacted:${c.req.param('id') ?? ''}`);
       } catch { /* best-effort */ }
+      bustQueues(c);
     }
     return c.json(r.body, r.status as any);
   });
@@ -441,6 +519,18 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/enquiries/:id', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
+    // Restricted (procurement) viewers get the redacted single row WITH full
+    // media — queue payloads strip media bytes for size, so the modal fetches
+    // the open row whole here on demand (same redaction as the queues).
+    if (c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me)) {
+      try {
+        const r = await EnquiryRoutes.enquiryGetRedacted(createEnquiryStore(c.env), c.req.param('id') ?? '', aiConfigured(c));
+        for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
+        return c.json(r.body, r.status as any);
+      } catch (e: any) {
+        return c.json({ error: e?.message ?? 'not found' }, 404);
+      }
+    }
     const r = await EnquiryRoutes.enquiryGet(createEnquiryStore(c.env), me, c.req.param('id') ?? '');
     try {
       const enq = (r.body as any)?.enquiry;
@@ -668,6 +758,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       if (out.ok) {
         const { LiveEvent } = await import('../../live');
         enquirySend(c, { status: 200, body: { ok: true }, live: { type: LiveEvent.Enquiries, extra: { action: 'estimate-claimed', id } } } as any);
+        bustQueues(c);
         try {
           const { notifyLive, LiveEvent: LE } = await import('../context');
           notifyLive(c, { type: (LE as any).Telecalling });

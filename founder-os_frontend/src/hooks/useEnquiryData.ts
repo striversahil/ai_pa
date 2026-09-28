@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Enquiry, Comment, Agent, Activity, EnquiryItem } from '../types';
 import { toEnquiry, toComment, initialsOf } from '@/enquiry/normalize';
+import { matchesEnquiryQuery } from '@/enquiry/search';
 import { useLiveEvent } from './useLiveData';
 
 // Live enquiry tracker: reads/writes go to the backend (/api/enquiries), which
@@ -13,15 +14,52 @@ import { useLiveEvent } from './useLiveData';
 export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?: { pageSize?: number }) {
   const AGENT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16'];
   const redactedView = view === "procurement";
-  // Optional server-side pagination for the queue tables (10/50 newest at a
-  // time). 0/absent = full list (sales tracker behaviour, unchanged).
+  // Cursor-capped queue mode: pageSize > 0 loads the newest pageSize rows and
+  // Load-mores the rest by keyset cursor (flat D1 cost per page — ~100 rows
+  // read no matter how large the table grows). 0/absent = full list (sales
+  // tracker behaviour, unchanged).
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeState] = useState(paging?.pageSize ?? 0);
   const [total, setTotal] = useState<number | null>(null);
+  const cursorMode = (paging?.pageSize ?? 0) > 0;
+  const [hasMore, setHasMore] = useState(false);
+  const nextCursorRef = useRef<string | null>(null);
+  const loadingMoreRef = useRef(false);
+  // Server search (EST no., enquiry no., client/contact, title, item/vendor
+  // text) across ALL rows — old + new, past the 100-cap. Debounced 300ms,
+  // min 2 chars, in-flight requests aborted. While active the list IS the
+  // match set: background merges and new-row prepends stay out so results
+  // never get polluted; clearing restores the queue page.
+  //
+  // Queue-split (procurement) views are local-first: the gate above serves
+  // local matches instantly and this server path runs only on a local miss.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchActive, setSearchActive] = useState(false);
+  const [searching, setSearching] = useState(false);
+  // Local-first search (queue-split procurement view only — the sales tracker
+  // below keeps server-first): the store already holds EVERY row, so a query
+  // that matches locally filters instantly with zero backend traffic.
+  // `searchLocal` = showing local matches; the database search fires only on
+  // a local miss. Sales behaviour is untouched (queueSplit false → skipped).
+  const [searchLocal, setSearchLocal] = useState(false);
+  const searchActiveRef = useRef(false);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  // Latest query text (mirrored): lets a late search response check whether
+  // the box still holds the query it was dispatched for before overwriting
+  // the list — otherwise clearing mid-flight freezes the match set on screen
+  // with an empty box and no way back (stuck `searchActive`).
+  const searchQueryRef = useRef("");
+  const clearSearch = useCallback(() => { setSearchQuery(""); }, []);
   const setPageSize = useCallback((n: number) => { setPageSizeState(n); setPage(1); }, []);  // Procurement tab always reads the server-redacted payload (?view=procurement)
   // so privileged users preview exactly what procurement sees — never raw PII.
   const qs = redactedView ? "?view=procurement" : "";
-  const pageQs = pageSize > 0 ? `${qs ? "&" : "?"}page=${page}&limit=${pageSize}` : "";
+  // Cursor mode must send `cursor=` (even empty) on the FIRST load: without
+  // it the backend falls into page/offset mode capped at 50 rows with no
+  // nextCursor, so "Load older" dead-ends and rows past #50 (e.g. Geetu,
+  // 21 SEP) never load. Empty cursor = first keyset page (100 rows).
+  const baseQs = cursorMode
+    ? `${qs ? "&" : "?"}limit=${pageSize}&cursor=`
+    : (pageSize > 0 ? `${qs ? "&" : "?"}page=${page}&limit=${pageSize}` : "");
 
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -89,28 +127,187 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     }
   }, [qs]);
 
-  const fetchEnquiries = useCallback(async () => {
+  // Procurement queue view reads server-partitioned queues off ONE cached
+  // scan (`GET /api/enquiries/queues`): `proc-pending` AND `proc-history`
+  // both arrive COMPLETE (every row, however old — no page boundary hides
+  // anything), combined into the one store the memos split. Same redacted
+  // bytes as `?view=procurement`; mutations, optimistic writes, search and
+  // toasts below keep working untouched. Per render: KV reads only, zero D1
+  // within the 60s TTL.
+  const queueSplit = redactedView && cursorMode;
+
+  // mode: 'reset' replaces the list (mount). 'more' appends the next cursor
+  // page (Load more — deduped by id, so rows shifting between pages never
+  // duplicate). 'merge' upserts page 1 into the accumulated list (polls,
+  // estimates events, redacted debounced refetches) so background refreshes
+  // never yank away already-loaded older pages. In queue-split mode 'merge'
+  // replaces instead (pending membership flips rows between queues).
+  const fetchEnquiries = useCallback(async (mode: 'reset' | 'more' | 'merge' = 'reset') => {
+    // Search results are frozen: background merges stay out while a search
+    // is active (explicit clear restores the queue).
+    if (mode === 'merge' && searchActiveRef.current) return;
+    if (mode === 'more') {
+      if (!cursorMode || !nextCursorRef.current || loadingMoreRef.current) return;
+      loadingMoreRef.current = true;
+    }
     try {
-      const enqRes = await fetch(`/api/enquiries${qs}${pageQs}`);
-      if (!enqRes.ok) throw new Error('load failed');
-      const data = await enqRes.json();
+      // Queue-split fetch (procurement view only): pending-complete plus
+      // history-complete, combined into the one store the memos split.
+      // Everything arrives complete so 'more' is a no-op in this mode.
+      if (mode === 'more' && queueSplit) return;
+      const url = mode === 'more'
+        ? `/api/enquiries${qs}${qs ? "&" : "?"}limit=${pageSize}&cursor=${encodeURIComponent(nextCursorRef.current ?? '')}`
+        : `/api/enquiries${qs}${baseQs}`;
+      const parts = queueSplit && mode !== 'more'
+        // allSettled: one leg failing (network/5xx) must never blank the
+        // other queue — each leg degrades to empty independently.
+        ? await Promise.allSettled([
+            fetch('/api/enquiries/queues?queue=proc-pending').then(async (r) => {
+              if (!r.ok) throw new Error('load failed');
+              return r.json();
+            }),
+            fetch('/api/enquiries/queues?queue=proc-history&all=1').then(async (r) => {
+              if (!r.ok) throw new Error('load failed');
+              return r.json();
+            }),
+          ]).then((settled) => {
+            const ok = settled.map((s) => (s.status === "fulfilled" ? (s.value as any) : null));
+            if (!ok[0] && !ok[1]) throw new Error('load failed');
+            return [{ enquiries: [], comments: [], ...ok[0] }, { enquiries: [], comments: [], ...ok[1] }];
+          })
+        : null;
+      const enqRes = parts ? null : await fetch(url);
+      if (enqRes && !enqRes.ok) throw new Error('load failed');
+      const data = parts
+        ? {
+            enquiries: [...(parts[0].enquiries ?? []), ...(parts[1].enquiries ?? [])],
+            comments: [...(parts[0].comments ?? []), ...(parts[1].comments ?? [])],
+            nextCursor: undefined,
+            hasMore: false,
+            aiConfigured: parts[0].aiConfigured ?? parts[1].aiConfigured,
+          }
+        : await (enqRes as Response).json();
       const list = Array.isArray(data.enquiries) ? data.enquiries : [];
       const coms = Array.isArray(data.comments) ? data.comments : [];
-      setEnquiriesSynced(list.map(toEnquiry));
-      setComments(coms.map(toComment));
-      setTotal(typeof data.total === 'number' ? data.total : null);
+      if (cursorMode && mode === 'more') {
+        const freshRows = list.map(toEnquiry);
+        const freshComs = coms.map(toComment);
+        setEnquiriesSynced((prev) => {
+          const ids = new Set(prev.map((x) => x.id));
+          return [...prev, ...freshRows.filter((x: Enquiry) => !ids.has(x.id))];
+        });
+        setComments((prev) => {
+          const ids = new Set(prev.map((x) => x.id));
+          return [...prev, ...freshComs.filter((x: Comment) => !ids.has(x.id))];
+        });
+      } else if (cursorMode && mode === 'merge' && !queueSplit) {
+        const freshRows = list.map(toEnquiry);
+        const freshComs = coms.map(toComment);
+        const pageIds = new Set(freshRows.map((x: Enquiry) => x.id));
+        setEnquiriesSynced((prev) => [...freshRows, ...prev.filter((x) => !pageIds.has(x.id))]);
+        setComments((prev) => [...prev.filter((c) => !pageIds.has(c.enquiryId)), ...freshComs]);
+      } else {
+        setEnquiriesSynced(list.map(toEnquiry));
+        setComments(coms.map(toComment));
+      }
+      if (cursorMode) {
+        // Merge keeps the existing cursor/hasMore — page 1 tells us nothing
+        // about the tail.
+        if (mode !== 'merge') {
+          const nc = typeof data.nextCursor === 'string' && data.nextCursor ? data.nextCursor : null;
+          nextCursorRef.current = nc;
+          setHasMore(data.hasMore === true && !!nc);
+        }
+        setTotal(null);
+      } else {
+        setTotal(typeof data.total === 'number' ? data.total : null);
+      }
       if (typeof data.aiConfigured === 'boolean') setAiConfigured(data.aiConfigured);
     } catch (e) {
       console.error('Failed to load enquiries:', e);
     } finally {
+      if (mode === 'more') loadingMoreRef.current = false;
       setLoaded(true);
     }
-  }, [qs, pageQs]);
+  }, [qs, baseQs, cursorMode, queueSplit]);
 
   useEffect(() => {
     void fetchStatic();
-    void fetchEnquiries();
+    void fetchEnquiries('reset');
   }, [fetchStatic, fetchEnquiries]);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    searchQueryRef.current = searchQuery;
+    if (q.length < 2) {
+      // Clearing the box must also kill an in-flight search: without the
+      // abort its late response would overwrite the restored queue with a
+      // stale match set and wedge `searchActive` on (empty box, no ×).
+      searchAbortRef.current?.abort();
+      searchAbortRef.current = null;
+      setSearching(false);
+      setSearchLocal(false);
+      if (searchActiveRef.current) {
+        searchActiveRef.current = false;
+        setSearchActive(false);
+        setSearching(false);
+        void fetchEnquiries('reset');
+      }
+      return;
+    }
+    // Local-first gate (queue-split only): the gate and the tab memos share
+    // `matchesEnquiryQuery`, so a gate "hit" always renders and a "miss"
+    // always falls through to the database below. Synchronous — no debounce,
+    // results paint on the same keystroke.
+    if (queueSplit && enquiriesRef.current.some((e) => matchesEnquiryQuery(e, q))) {
+      searchAbortRef.current?.abort();
+      searchAbortRef.current = null;
+      setSearching(false);
+      if (searchActiveRef.current) {
+        // Coming back from a server match set: restore the complete store so
+        // the local filter has everything to work on.
+        searchActiveRef.current = false;
+        setSearchActive(false);
+        setSearchLocal(true);
+        void fetchEnquiries('reset');
+      } else {
+        setSearchLocal(true);
+      }
+      return;
+    }
+    setSearchLocal(false);
+    setSearching(true);
+    const t = setTimeout(async () => {
+      searchAbortRef.current?.abort();
+      const ac = new AbortController();
+      searchAbortRef.current = ac;
+      try {
+        const res = await fetch(
+          `/api/enquiries${qs}${qs ? "&" : "?"}q=${encodeURIComponent(q.slice(0, 40))}&limit=50`,
+          { signal: ac.signal },
+        );
+        if (!res.ok) throw new Error('search failed');
+        const data = await res.json();
+        if (searchAbortRef.current !== ac) return; // superseded
+        // Box moved on while we were in flight (cleared / retyped and the
+        // abort landed too late): never paint a stale match set over it.
+        if (searchQueryRef.current.trim() !== q) return;
+        setEnquiriesSynced((data.enquiries ?? []).map(toEnquiry));
+        setComments(((data.comments ?? []) as any[]).map(toComment));
+        searchActiveRef.current = true;
+        setSearchActive(true);
+        setSearchLocal(false);
+        if (cursorMode) setHasMore(data.hasMore === true);
+        else setTotal(typeof data.total === 'number' ? data.total : ((data.enquiries ?? []).length));
+        if (typeof data.aiConfigured === 'boolean') setAiConfigured(data.aiConfigured);
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') console.error('Search failed:', e);
+      } finally {
+        if (searchAbortRef.current === ac) { searchAbortRef.current = null; setSearching(false); }
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery, qs, cursorMode, fetchEnquiries]);
 
   // Live updates: the backend broadcasts scope-safe SUMMARIES only (counts +
   // label parts — never PII, free text, or vendor rates). The full view then
@@ -121,8 +318,11 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   // (single-row returns 403 for restricted viewers by design).
   // Legacy full-row events (ev.enquiry) still merge directly for
   // backwards compatibility.
-  const fetchEnquiriesRef = useRef(fetchEnquiries);
-  fetchEnquiriesRef.current = fetchEnquiries;
+  // Background refreshes merge page 1 in cursor mode (never wipe loaded
+  // older pages); full-list mode keeps the legacy replace.
+  const fetchEnquiriesRef = useRef<() => void>(() => {});
+  fetchEnquiriesRef.current = () => { void fetchEnquiries(cursorMode ? 'merge' : 'reset'); };
+  const loadMore = useCallback(() => { void fetchEnquiries('more'); }, [fetchEnquiries]);
   const pageSizeRef = useRef(pageSize);
   pageSizeRef.current = pageSize;
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -134,6 +334,9 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   // this viewer and splice it in, replacing that row's thread. Falls back to
   // a list refetch when the row is gone (deleted) or unreadable (403).
   const mergeSingle = useCallback(async (id: string) => {
+    // While searching, updates to visible rows still merge but brand-new
+    // rows never intrude into the match set.
+    if (searchActiveRef.current && !enquiriesRef.current.some((x) => x.id === id)) return;
     try {
       const res = await fetch(`/api/enquiries/${encodeURIComponent(id)}`);
       if (res.status === 404) {
@@ -387,6 +590,17 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     type, text, timestamp: new Date().toISOString(), agentId,
   }), []);
 
+  // Single-row merge: dashboard modals fetch the open row whole on demand
+  // (queue payloads strip media bytes for size). Merges by id so the modal
+  // re-renders with full media the moment it lands; queue memos re-split it
+  // like any other store update.
+  const upsertEnquiry = useCallback((row: Enquiry) => {
+    setEnquiriesSynced((prev) => {
+      if (!prev.some((x) => x.id === row.id)) return [...prev, row];
+      return prev.map((x) => (x.id === row.id ? row : x));
+    });
+  }, [setEnquiriesSynced]);
+
   return {
     enquiries,
     comments, setComments,
@@ -396,12 +610,15 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     loaded,
     aiConfigured,
     total, page, pageSize, setPage, setPageSize,
+    hasMore, loadMore, loadedCount: enquiries.length,
+    searchQuery, setSearchQuery, searchActive, searching, searchLocal, clearSearch,
     addEnquiry,
     updateEnquiry,
     deleteEnquiry,
     addComment,
     addRequirement,
     updateItems,
+    upsertEnquiry,
     makeActivity,
     refresh: fetchEnquiries,
   };

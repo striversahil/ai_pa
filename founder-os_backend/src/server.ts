@@ -237,12 +237,16 @@ app.get('/api/enquiries', async (req, res) => {
   const restricted = req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any);
   const pageQ = req.query.page as string | undefined;
   const limitQ = req.query.limit as string | undefined;
-  const opts: { redact?: boolean; page?: number; limit?: number; aiConfigured?: boolean } | undefined =
-    restricted || pageQ !== undefined || limitQ !== undefined
+  const cursorQ = req.query.cursor as string | undefined;
+  const qQ = req.query.q as string | undefined;
+  const opts: { redact?: boolean; page?: number; limit?: number; cursor?: string; q?: string; aiConfigured?: boolean } | undefined =
+    restricted || pageQ !== undefined || limitQ !== undefined || cursorQ !== undefined || qQ !== undefined
       ? {
           ...(restricted ? { redact: true, aiConfigured: aiConfigured() } : {}),
           ...(pageQ !== undefined ? { page: Number(pageQ) } : {}),
           ...(limitQ !== undefined ? { limit: Number(limitQ) } : {}),
+          ...(cursorQ !== undefined ? { cursor: cursorQ } : {}),
+          ...(qQ !== undefined ? { q: qQ } : {}),
         }
       : undefined;
   const r = await EnquiryRoutes.enquiryList(enquiryStore, me, opts);
@@ -345,6 +349,7 @@ app.post('/api/enquiries', async (req, res) => {
     void runEnquiryExtractionLocal(r.body.id);
     void runAgnesVisionIntakeLocal(r.body.id);
     void kickIntakeNowLocal();
+    try { await EnquiryRoutes.invalidateManagementQueues(); } catch { /* best-effort */ }
   }
   res.status(r.status).json(r.body);
 });
@@ -354,6 +359,7 @@ app.patch('/api/enquiries/:id', async (req, res) => {
   const r = await EnquiryRoutes.enquiryUpdate(enquiryStore, me, req.params.id, req.body || {});
   if (r.body?.id) {
     void runEnquiryExtractionLocal(r.body.id);
+    try { await EnquiryRoutes.invalidateManagementQueues(); } catch { /* best-effort */ }
     const hasAiBulk = Array.isArray((req.body as any)?.items)
       && (req.body as any).items.some((it: any) => it?.aiPending === true);
     if ((req.body as any)?.description !== undefined || hasAiBulk) {
@@ -370,6 +376,7 @@ app.post('/api/enquiries/:id/additional-requirements', async (req, res) => {
   if ((r as any).status === 201) {
     void runEnquiryExtractionLocal(req.params.id);
     void runAgnesVisionIntakeLocal(req.params.id);
+    try { await EnquiryRoutes.invalidateManagementQueues(); } catch { /* best-effort */ }
   }
   res.status(r.status).json(r.body);
   // New free text needs its procurement-safe rewrite now — otherwise the
@@ -385,8 +392,51 @@ app.delete('/api/enquiries/:id', async (req, res) => {
   if (r.status === 200) {
     try { await cacheDel(`enquiry:redacted:${req.params.id}`); } catch { /* best-effort */ }
     try { await cacheDel('enquiry-tracker:data'); } catch { /* best-effort */ }
+    try { await EnquiryRoutes.invalidateManagementQueues(); } catch { /* best-effort */ }
   }
   res.status(r.status).json(r.body);
+});
+// Management Review queues (KV-cached, MIS-only) — mirror of the Worker
+// GET /api/enquiries/queues. Must stay above `/api/enquiries/:id`.
+app.get('/api/enquiries/queues', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  // Procurement queues: any signed-in viewer (redacted by design). Pending
+  // and history both complete — KV reads, zero D1 within TTL.
+  if (req.query.queue === 'proc-pending' || req.query.queue === 'proc-history') {
+    try {
+      const r = await EnquiryRoutes.procurementQueueList(enquiryStore, me, {
+        queue: req.query.queue === 'proc-pending' ? 'pending' : 'history',
+        cursor: req.query.cursor as string | undefined,
+        limit: Number(req.query.limit),
+        aiConfigured: aiConfigured(),
+        all: req.query.all === '1',
+      });
+      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
+        try { void runEnquiryExtractionLocal(String(id)); } catch { /* ignore */ }
+      }
+      return res.status(r.status).json(r.body);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message ?? 'queues failed' });
+    }
+  }
+  if (!EnquiryRoutes.canManageRates(me as any)) return res.status(403).json({ error: 'Management access only' });
+  try {
+    const all = await EnquiryRoutes.getManagementQueues(enquiryStore);
+    if (req.query.queue === 'history') {
+      if (req.query.all === '1') {
+        return res.status(200).json({ rows: EnquiryRoutes.stripQueueMediaUrls(all.history), total: all.history.length, computedAt: all.computedAt });
+      }
+      const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
+      const limit = Math.min(100, Math.max(1, Math.floor(Number(req.query.limit) || 50)));
+      const total = all.history.length;
+      const rows = EnquiryRoutes.stripQueueMediaUrls(all.history.slice((page - 1) * limit, page * limit));
+      return res.status(200).json({ rows, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)), computedAt: all.computedAt });
+    }
+    return res.status(200).json({ active: EnquiryRoutes.stripQueueMediaUrls(all.active), unprocessed: EnquiryRoutes.stripQueueMediaUrls(all.unprocessed), empty: all.empty, historyTotal: all.historyTotal, computedAt: all.computedAt });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message ?? 'queues failed' });
+  }
 });
 // Scoped single-row read for live merge (see enquiryGet): the broadcast
 // carries ids only, so views fetch the one changed row. Restricted
@@ -394,6 +444,20 @@ app.delete('/api/enquiries/:id', async (req, res) => {
 app.get('/api/enquiries/:id', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
+  // Restricted (procurement) viewers get the redacted single row WITH full
+  // media — queue payloads strip media bytes for size, so the modal fetches
+  // the open row whole here on demand (same redaction as the queues).
+  if (req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any)) {
+    try {
+      const r = await EnquiryRoutes.enquiryGetRedacted(enquiryStore, String(req.params.id), aiConfigured());
+      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
+        try { void runEnquiryExtractionLocal(String(id)); } catch { /* ignore */ }
+      }
+      return res.status(r.status).json(r.body);
+    } catch (e: any) {
+      return res.status(404).json({ error: e?.message ?? 'not found' });
+    }
+  }
   const r = await EnquiryRoutes.enquiryGet(enquiryStore, me as any, req.params.id);
   res.status(r.status).json(r.body);
 });

@@ -7,6 +7,7 @@ import { PrismaAuthStore } from '../modules/auth/store-prisma';
 import {
   listDigitalMarketingManagers, createDigitalMarketingManager, updateDigitalMarketingManager,
   listTemplates, createTemplate, updateTemplate, logTask, getDigitalMarketingExport,
+  getDigitalMarketingMetricsSeries,
   resolveSelfDigitalMarketingManager,
 } from '../automations/digital-marketing/service';
 
@@ -60,6 +61,11 @@ router.get('/export', misGuard, asyncHandler(async (req, res) => {
   const origin = `${req.protocol}://${req.get('host')}`;
   try { res.json(await getDigitalMarketingExport(req.query.days, origin)); }
   catch (e: any) { res.status(400).json({ error: e?.message ?? 'export failed' }); }
+}));
+
+router.get('/metrics-series', asyncHandler(async (req, res) => {
+  try { res.json(await getDigitalMarketingMetricsSeries((req.query as any)?.days)); }
+  catch (e: any) { res.status(400).json({ error: e?.message ?? 'series failed' }); }
 }));
 
 router.patch('/logs/:id', asyncHandler(async (req, res) => {

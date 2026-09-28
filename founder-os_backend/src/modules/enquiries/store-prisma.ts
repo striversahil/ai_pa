@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseItems, parseRequirements, istDayKey, normalizeVisibility } from "./store";
+import { encodeEnquiryCursor } from "./types";
 
 // Prisma-backed EnquiryStore for the Express / Postgres runtime. Kept in a
 // separate file so the Prisma client never enters the Cloudflare Worker bundle.
@@ -65,6 +66,48 @@ export class PrismaEnquiryStore implements EnquiryStore {
       this.prisma.enquiry.count(),
     ]);
     return { rows: rows.map(mapEnquiry).filter(Boolean) as Enquiry[], total };
+  }
+  async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const rows = await this.prisma.enquiry.findMany({
+      ...(cursor
+        ? {
+            where: {
+              OR: [
+                { createdAt: { lt: cursor.createdAt } },
+                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+              ],
+            },
+          }
+        : {}),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: lim + 1,
+    });
+    const slice = rows.map(mapEnquiry).filter(Boolean) as Enquiry[];
+    const kept = slice.slice(0, lim);
+    const last = kept[kept.length - 1];
+    return {
+      rows: kept,
+      nextCursor: slice.length > lim && last ? encodeEnquiryCursor(last.createdAt, last.id) : null,
+    };
+  }
+  async searchEnquiries(query: string, limit: number) {
+    const lim = Math.min(50, Math.max(1, Math.floor(limit)));
+    const q = String(query ?? "");
+    const ci = { contains: q, mode: "insensitive" as const };
+    const ors: any[] = [
+      { estNumber: ci }, { enquiryNumber: ci }, { title: ci }, { clientCompany: ci },
+      { contactName: ci }, { contactPhone: ci }, { sourceLead: ci }, { source: ci },
+      { description: ci },
+    ];
+    if (/^\d{1,9}$/.test(q.trim())) ors.push({ dailyNo: Number(q.trim()) });
+    const rows = await this.prisma.enquiry.findMany({
+      where: { OR: ors },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: lim + 1,
+    });
+    const slice = rows.map(mapEnquiry).filter(Boolean) as Enquiry[];
+    return { rows: slice.slice(0, lim), hasMore: slice.length > lim };
   }
   async listCommentsFor(enquiryIds: string[]) {
     if (!enquiryIds.length) return [];

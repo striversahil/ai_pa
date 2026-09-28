@@ -80,7 +80,12 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     // Non-admin clients get the minimal dashboard list PLUS the permission
     // scope per dashboard, so the sidebar/page guard can resolve access
     // dynamically (new dashboard automations work with zero frontend edits).
-    return c.json(full.map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
+    // Trimmed to scopes the viewer holds — other dashboards' names stay
+    // hidden at the API level, not just unlinked in the UI.
+    const granted = new Set(((me?.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
+    return c.json(full
+      .filter((r: any) => granted.has(String(r.scope ?? r.slug).toLowerCase()))
+      .map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
   });
 
   app.get('/api/automations/:slug', async (c) => {
