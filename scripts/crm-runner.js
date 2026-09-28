@@ -319,8 +319,12 @@ async function main() {
   // Page through SOs per org (Status.All, newest first). Stop per org when a
   // page has nothing relevant: no active orders AND nothing created inside the
   // scan window. (See function header for the abort-on-failure policy.)
+  // Per-org fault isolation: a dead org (bad id, no Books, wrong DC → 400)
+  // is SKIPPED with a warning — one bad org must never kill the whole sync.
+  const skippedOrgs = [];
   try {
   for (const org of orgIds.length ? orgIds : [orgId]) {
+  try {
   for (let page = 1; page <= 30; page++) {
     pages++;
     if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
@@ -393,7 +397,13 @@ async function main() {
 
     if (salesorders.length < 200 || relevant === 0) break;
   }
+  } catch (e) {
+    skippedOrgs.push(org);
+    console.log(`crm-runner: skipping org ${org} (${e.message}) — continuing with remaining orgs`);
+    continue;
   }
+  }
+  if (skippedOrgs.length) console.log(`crm-runner: skipped orgs this tick: ${skippedOrgs.join(', ')}`);
   } catch (e) {
     console.log(`crm-runner: Zoho list fetch failed (${e.message}) — preservative heartbeat, then fail`);
     try {
