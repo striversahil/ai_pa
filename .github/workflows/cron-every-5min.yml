@@ -5,20 +5,13 @@ on:
   # workflow_dispatch). Native schedule removed: GitHub's own scheduler is
   # unreliable and would double-fire alongside the Worker.
   workflow_dispatch:
-    inputs:
-      force:
-        description: "Force reclassify ALL active estimates with the current model"
-        type: boolean
-        default: false
-      run_zoho:
-        description: "Run Zoho-backed jobs (crm + zoho-sent-analyzer). Worker sets false 9PM-9AM IST."
-        type: boolean
-        default: true
 
-# NOTE: no concurrency group on purpose. Overlap is arbitrated per slow job
-# by skip-gates below (at most one crm / one analyzer ever runs; stale ticks
-# exit 0 fast instead of queueing behind a 20-min AI pass). A group would
-# either murder slow passes (cancel) or stall ticks in pending (queue).
+# WhatsApp + light triggers only — NO Zoho pingers here. crm +
+# zoho-sent-analyzer moved to cron-every-15min.yml (2026-09-28): the 5-min
+# cadence throttled Zoho Books into 429s, and overlapping ticks piled more
+# 429s on top (death spiral). Zoho syncs run serially, one at a time, every
+# 15 min. This workflow keeps no concurrency group: whatsapp jobs are
+# independent and idempotent.
 
 jobs:
   whatsapp-digest:
@@ -53,83 +46,8 @@ jobs:
           AI_KEYS: ${{ secrets.AI_KEYS }}
         run: node scripts/whatsapp-autopilot-runner.js
 
-  # New-SO latency: 5 min. The 15-min ticks coincide with 5-min ticks
-  # (min%15==0 implies min%5==0), so this fully covers the old 15-min CRM run.
-  # Zoho-backed jobs pause 9PM-9AM IST via the run_zoho input (worker-gated).
-  crm:
-    if: github.event.inputs.run_zoho != 'false'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: skip when a previous crm is still running
-        id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mine=${{ github.run_id }}
-          skip=false
-          prev=$(gh run list --workflow cron-every-5min.yml --status in_progress --limit 5 --json databaseId --jq --argjson mine "$mine" '[.[].databaseId | select(. != $mine)] | .[0] // empty' 2>/dev/null || true)
-          if [ -n "$prev" ]; then
-            running=$(gh api "repos/${{ github.repository }}/actions/runs/$prev/jobs" --jq '[.jobs[] | select(.name == "crm" and .status == "in_progress")] | length' 2>/dev/null || echo 0)
-            if [ "${running:-0}" -gt 0 ] 2>/dev/null; then
-              skip=true
-              echo "Previous run $prev crm still active — skipping this tick (it converges on completion)."
-            fi
-          fi
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.gate.outputs.skip != 'true'
-      - name: crm (active sales orders pipeline snapshot)
-        if: steps.gate.outputs.skip != 'true'
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-        run: node scripts/crm-runner.js
-
-  zoho-sent-analyzer:
-    if: github.event.inputs.run_zoho != 'false'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: skip when a previous analyzer is still running
-        id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mine=${{ github.run_id }}
-          skip=false
-          prev=$(gh run list --workflow cron-every-5min.yml --status in_progress --limit 5 --json databaseId --jq --argjson mine "$mine" '[.[].databaseId | select(. != $mine)] | .[0] // empty' 2>/dev/null || true)
-          if [ -n "$prev" ]; then
-            running=$(gh api "repos/${{ github.repository }}/actions/runs/$prev/jobs" --jq '[.jobs[] | select(.name == "zoho-sent-analyzer" and .status == "in_progress")] | length' 2>/dev/null || echo 0)
-            if [ "${running:-0}" -gt 0 ] 2>/dev/null; then
-              skip=true
-              echo "Previous run $prev analyzer still active — skipping this tick (it converges on completion)."
-            fi
-          fi
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.gate.outputs.skip != 'true'
-      - name: zoho-sent-analyzer (full sync + AI on runner) — agnes primary (agnes-2.5-flash) → groq/requestly fallback
-        if: steps.gate.outputs.skip != 'true'
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
-          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
-          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-          REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
-          REQUESTLY_API_KEYS: ${{ secrets.REQUESTLY_API_KEYS }}
-          AI_KEYS: ${{ secrets.AI_KEYS }}
-          NEODOVE_AGENT_NAMES: Muskan
-          ZOHO_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
-        run: node scripts/zoho-sent-runner.js
-  # NOTE: the full sync above refreshes sales-orders-today first thing every
-  # tick, so no separate SO_ONLY job is needed (SO_ONLY=1 remains available
-  # for manual lightweight runs).
+  # Zoho-backed jobs (crm + zoho-sent-analyzer) live in cron-every-15min.yml —
+  # see the header note. This workflow never pings Zoho.
 
   light-triggers:
     runs-on: ubuntu-latest

@@ -420,9 +420,9 @@ EventHub `telecalling` events).
 
 | Workflow | Cadence (UTC) | Jobs |
 |----------|---------------|------|
-| `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI), `crm-runner.js` (sales-orders snapshot — 5-min new-SO latency), `zoho-sent-runner.js` (full sync + AI: All-status 2-page fetch, transitions, gated AI — see `scripts/zoho-sync/README.md`; `force` dispatch reprocesses all eligible) |
+| `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI), `whatsapp-autopilot-runner.js` (shadow), light-trigger curls (wa-engine-monitor, morning-queue-drain, orphaned-message-recovery, outbound-intent-recovery, sla-monitor, whatsapp-marketing, notification-batcher) — never pings Zoho |
 | `cron-every-10min.yml` | `*/10` | `neodove-report-runner.js` (today, intraday overwrite — GH egress fallback; primary population is the native in-worker refresh every 5 min) |
-| `cron-every-15min.yml` | `*/15` | `effort-sync-runner.js` (NeoDove call-log snapshots for the telecalling snatch shield) |
+| `cron-every-15min.yml` | `*/15` | `effort-sync-runner.js` (NeoDove call-log snapshots for the telecalling snatch shield), `crm-runner.js` (sales-orders snapshot), `zoho-sent-runner.js` (full sync + AI: All-status 2-page fetch, transitions, gated AI — see `scripts/zoho-sync/README.md`; `force` dispatch reprocesses all eligible) — serial group, one Zoho pinger at a time |
 | `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |
 | `cron-daily-ist.yml` | `30 19` (baseline-freeze 01:00 IST), `30 21` (data-retention 03:00 IST) | baseline-freeze (curl), data-retention (curl), `morning-brief-runner.js`, `eod-summary-runner.js`, `neodove-report-runner.js` (yesterday + N-day backfill) |
 
@@ -449,8 +449,8 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
         │                     job family; workflow gates each job on inputs.slot)
        │     neodove-refresh → minute % 5 == 0 (native D1 write, ops hours only)
        │     quiet-hours gate → 21:00–09:00 IST pauses Zoho/NeoDove analysis
-       │       (10/15-min skipped; 5-min fires with run_zoho=false;
-       │        daily fires with run_neodove=false)
+       │       (10/15-min skipped; 5-min fires WhatsApp + light triggers only,
+       │        never pings Zoho; daily fires with run_neodove=false)
        └─ ctx.waitUntil(Promise.all(...)) fires all due workflow_dispatches
             └─ GitHub Actions runs the workflow on demand
 ```
@@ -462,9 +462,9 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
 - Cadence gates use `event.scheduledTime` (the slot Cloudflare intended), NOT wall-clock execution
   time — cron events are delivered 1–2 min late and time-based gates would drift/skip otherwise.
 - **Quiet hours 21:00–09:00 IST** (no shop-floor operation): Zoho/NeoDove-backed analysis pauses via
-  `isOpsWindow()` in `src/worker/cron.ts` — every-10min (neodove-today) and every-15min (effort-sync)
-  dispatches are skipped, every-5min dispatches with `run_zoho=false` (skips `crm` + `zoho-sent-analyzer`;
-  WhatsApp jobs + light triggers run), daily dispatches with `run_neodove=false` (skips `neodove-report`;
+  `isOpsWindow()` in `src/worker/cron.ts` — every-10min (neodove-today) and every-15min (effort-sync +
+  crm + zoho-sent-analyzer, serial group) dispatches are skipped, every-5min keeps firing (WhatsApp
+  jobs + light triggers only — it never pings Zoho), daily dispatches with `run_neodove=false` (skips `neodove-report`;
   brief / telecalling / retention / baseline read D1 and run), and the native neodove-refresh (+ warmer)
   is skipped in-worker. Manual dispatch defaults both inputs to true, so overnight manual runs work.
 - Auth: `GITHUB_ACCESS_TOKEN` is a Worker secret (the `ghp_` PAT from `.env`; set via

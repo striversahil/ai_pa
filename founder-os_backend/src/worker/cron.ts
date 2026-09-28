@@ -16,9 +16,10 @@
 //
 // Quiet hours: Zoho/NeoDove-backed analysis pauses 21:00–09:00 IST (no shop-floor
 // operation then). isOpsWindow() gates, all from the *scheduled* slot time:
-//   - every-10min / every-15min dispatches are skipped (pure NeoDove/Zoho jobs)
-//   - every-5min dispatches with run_zoho=false (skips crm + zoho-sent-analyzer;
-//     WhatsApp jobs + light triggers keep running)
+//   - every-10min / every-15min dispatches are skipped (pure NeoDove/Zoho jobs:
+//     effort-sync + crm + zoho-sent-analyzer)
+//   - every-5min keeps firing (WhatsApp jobs + light triggers — it never
+//     pings Zoho; the Zoho jobs moved to every-15min)
 //   - daily dispatches with run_neodove=false (skips the neodove-report job;
 //     brief / telecalling / retention / baseline keep running — they read D1)
 //   - the native neodove-refresh (+ dashboard warmer) is skipped in-worker
@@ -150,11 +151,12 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   }
   const due = dueWorkflows(now);
   // Quiet-hours gate (21:00–09:00 IST): pause Zoho/NeoDove-backed analysis.
-  // every-10min (neodove-today) and every-15min (effort-sync) are pure
-  // NeoDove/Zoho jobs → skipped whole. every-5min still fires for WhatsApp,
-  // but with run_zoho=false so crm + zoho-sent-analyzer are skipped. daily
-  // still fires (brief / telecalling / retention read D1), but with
-  // run_neodove=false so the neodove-report job is skipped.
+  // every-10min (neodove-today) and every-15min (effort-sync + crm +
+  // zoho-sent-analyzer) are pure NeoDove/Zoho jobs → skipped whole.
+  // every-5min still fires for WhatsApp + light triggers (it never pings
+  // Zoho — the Zoho jobs moved to every-15min). daily still fires
+  // (brief / telecalling / retention read D1), but with run_neodove=false
+  // so the neodove-report job is skipped.
   const ops = isOpsWindow(now);
   const runs: Promise<void>[] = [];
   for (const key of due) {
@@ -163,7 +165,6 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
       continue;
     }
     const inputs: Record<string, string> = {};
-    if (key === 'every-5min') inputs.run_zoho = ops ? 'true' : 'false';
     if (key === 'daily') {
       inputs.run_neodove = ops ? 'true' : 'false';
       // Tell the workflow which slot fired so each job runs once/day.
