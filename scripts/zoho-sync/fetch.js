@@ -118,22 +118,31 @@ function buildEstimatesUrl(page, orgId) {
 // Rows are normalized at the boundary (see orgs.js): non-primary org rows get
 // namespaced estimate_id + _orgId/_zohoId tags so downstream code is unchanged.
 // PAGES=2 covers 400 rows/org; any mover bumps last_modified_time into the window.
+// Per-org fault isolation: a dead org (bad id, no Books, wrong DC → 400/401)
+// is SKIPPED with a loud warning — one bad org must never kill the whole sync.
 async function fetchEstimatesAll(pages = 2) {
   const { orgIds, orgId: primaryOrg } = zohoContext();
   const seen = new Map();
+  const skippedOrgs = [];
   for (const org of orgIds.length ? orgIds : [primaryOrg]) {
-    for (let page = 1; page <= pages; page++) {
-      if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
-      const json = await zohoFetch(buildEstimatesUrl(page, org));
-      const rows = json.estimates || [];
-      for (const e of rows) {
-        if (!e?.estimate_id) continue;
-        orgs.normalizeEstimateRow(e, org, primaryOrg);
-        if (!seen.has(e.estimate_id)) seen.set(e.estimate_id, e);
+    try {
+      for (let page = 1; page <= pages; page++) {
+        if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
+        const json = await zohoFetch(buildEstimatesUrl(page, org));
+        const rows = json.estimates || [];
+        for (const e of rows) {
+          if (!e?.estimate_id) continue;
+          orgs.normalizeEstimateRow(e, org, primaryOrg);
+          if (!seen.has(e.estimate_id)) seen.set(e.estimate_id, e);
+        }
+        if (rows.length < 200) break;
       }
-      if (rows.length < 200) break;
+    } catch (err) {
+      skippedOrgs.push(org);
+      console.warn(`zoho-sync/fetch: skipping org ${org} for estimates (${err.message}) — continuing with remaining orgs`);
     }
   }
+  if (skippedOrgs.length) console.warn(`zoho-sync/fetch: estimates skipped orgs: ${skippedOrgs.join(', ')}`);
   return [...seen.values()];
 }
 
@@ -218,51 +227,60 @@ function buildSalesOrdersUrl(page, orgId) {
 // Newest first per org; stops when a page is short or its oldest order predates
 // today. Multi-org: loops every org, merges counts; each order tagged with its
 // org so the dashboard can split per-org (combined totals stay backward-compat).
+// Per-org fault isolation (see fetchEstimatesAll): a dead org is skipped with
+// a warning, never fatal. skippedOrgs rides the return for runner logging.
 async function fetchSalesOrdersToday() {
   const { orgIds, orgId: primaryOrg } = zohoContext();
   const today = istDateString(new Date());
   const statuses = {};
   const orders = [];
   const byOrg = {};
+  const skippedOrgs = [];
   let count = 0;
   let totalValue = 0;
   for (const org of orgIds.length ? orgIds : [primaryOrg]) {
     let orgCount = 0;
     let orgValue = 0;
-    for (let page = 1; page <= 10; page++) {
-      if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
-      const json = await zohoFetch(buildSalesOrdersUrl(page, org));
-      const salesorders = json.salesorders || [];
-      for (const so of salesorders) {
-        const st = String(so.status || '').toLowerCase();
-        statuses[st] = (statuses[st] || 0) + 1;
-        if (SO_TODAY_EXCLUDED.has(st)) continue;
-        if (istDateString(new Date(so.created_time)) === today) {
-          count++;
-          orgCount++;
-          const total = parseFloat(so.total) || 0;
-          totalValue += total;
-          orgValue += total;
-          if (orders.length < 50) {
-            orders.push({
-              so: so.salesorder_number || '',
-              ref: so.reference_number || '',
-              customer: so.customer_name || '',
-              total,
-              status: st,
-              time: so.created_time_formatted || so.created_time || '',
-              org,
-            });
+    try {
+      for (let page = 1; page <= 10; page++) {
+        if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
+        const json = await zohoFetch(buildSalesOrdersUrl(page, org));
+        const salesorders = json.salesorders || [];
+        for (const so of salesorders) {
+          const st = String(so.status || '').toLowerCase();
+          statuses[st] = (statuses[st] || 0) + 1;
+          if (SO_TODAY_EXCLUDED.has(st)) continue;
+          if (istDateString(new Date(so.created_time)) === today) {
+            count++;
+            orgCount++;
+            const total = parseFloat(so.total) || 0;
+            totalValue += total;
+            orgValue += total;
+            if (orders.length < 50) {
+              orders.push({
+                so: so.salesorder_number || '',
+                ref: so.reference_number || '',
+                customer: so.customer_name || '',
+                total,
+                status: st,
+                time: so.created_time_formatted || so.created_time || '',
+                org,
+              });
+            }
           }
         }
+        if (salesorders.length < 200) break;
+        const oldest = salesorders[salesorders.length - 1];
+        if (istDateString(new Date(oldest.created_time)) < today) break;
       }
-      if (salesorders.length < 200) break;
-      const oldest = salesorders[salesorders.length - 1];
-      if (istDateString(new Date(oldest.created_time)) < today) break;
+    } catch (err) {
+      skippedOrgs.push(org);
+      console.warn(`zoho-sync/fetch: skipping org ${org} for sales orders (${err.message}) — continuing with remaining orgs`);
     }
     byOrg[org] = { count: orgCount, totalValue: Math.round(orgValue * 100) / 100 };
   }
-  return { date: today, count, totalValue: Math.round(totalValue * 100) / 100, statuses, orders, byOrg };
+  if (skippedOrgs.length) console.warn(`zoho-sync/fetch: sales orders skipped orgs: ${skippedOrgs.join(', ')}`);
+  return { date: today, count, totalValue: Math.round(totalValue * 100) / 100, statuses, orders, byOrg, skippedOrgs };
 }
 
 module.exports = {
