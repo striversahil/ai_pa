@@ -71,6 +71,11 @@ jobs:
         run: node scripts/crm-runner.js
 
   zoho-sent-analyzer:
+    # Serial behind crm: both ping Zoho Books, so they must never run in the
+    # same minute (parallel Zoho calls are what earned the 429 spiral).
+    # always(): a crm failure still lets the estimates sync run after it.
+    needs: [crm]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
