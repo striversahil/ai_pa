@@ -9,9 +9,15 @@ const { cleanHtml, isRealSalesComment } = require('./comments');
 const PROCESSABLE = new Set(['sent', 'accepted', 'declined', 'confirmed']);
 
 // ── Fingerprint ────────────────────────────────────────────────────────────
-// Id-order-proof: {v:2, byEst:{estimateId:{m, ids}}} with sorted keys, so any
+// Id-order-proof: {v:3, byEst:{estimateId:{m, ids}}} with sorted keys, so any
 // added comment (whatever its id) or metadata change breaks the string.
 // byEst doubles as the per-estimate baseline for exact newcomer detection.
+// v3 (2026-09-29): v2 fingerprints were stored by CAPPED ticks that deferred
+// work items without persisting them — the deferred comment ids got baked
+// into the fp, so every later tick read "no change" and skipped them forever
+// (proven live: 49 real 28/09 sales comments invisible to the analyzer).
+// Bumping the version invalidates all v2 values → one transitional full pass
+// via the max-id fallback, then v3 values (stored only on complete passes).
 function buildFingerprint(estimates, fetchedByEst) {
   const byEst = {};
   for (const est of [...estimates].sort((a, b) => String(a.estimate_id).localeCompare(String(b.estimate_id)))) {
@@ -28,18 +34,20 @@ function buildFingerprint(estimates, fetchedByEst) {
       ids: [...new Set(ids)].sort(),
     };
   }
-  const fp = JSON.stringify({ v: 2, byEst });
+  const fp = JSON.stringify({ v: 3, byEst });
   const map = new Map(Object.entries(byEst).map(([k, v]) => [k, new Set(v.ids)]));
   return { fp, byEst: map };
 }
 
 // Stored fingerprint → per-estimate id sets. Null on legacy/corrupt values →
-// caller falls back to max-id compare (one transitional full pass).
+// caller falls back to max-id compare (one transitional full pass). Only v3
+// is accepted — v2 values predate the complete-pass-only store rule and may
+// contain ids that were never persisted (see buildFingerprint).
 function parseFingerprint(raw) {
   try {
     if (typeof raw !== 'string' || !raw.startsWith('{')) return null;
     const obj = JSON.parse(raw);
-    if (!obj || obj.v !== 2 || !obj.byEst || typeof obj.byEst !== 'object') return null;
+    if (!obj || obj.v !== 3 || !obj.byEst || typeof obj.byEst !== 'object') return null;
     return new Map(Object.entries(obj.byEst).map(([k, v]) => [k, new Set((v?.ids || []).map(String))]));
   } catch {
     return null;

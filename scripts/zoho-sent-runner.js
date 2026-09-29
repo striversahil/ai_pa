@@ -12,8 +12,9 @@
  *
  * Flow:
  *  1. Sales-orders-today snapshot (every tick — independent of estimates).
- *  2. Fetch all-status estimates (2 pages, newest-modified first) from Zoho.
- *  3. Fetch DB state; fingerprint fast path (zero DB writes when unchanged).
+ *  2. Fetch DB state, then all-status estimates (2 pages/org, newest-modified
+ *     first, extended until every locally-sent row is covered) from Zoho.
+ *  3. Fingerprint fast path (zero DB writes when unchanged).
  *  4. Comments for sent/transitioned rows only (drafts never burn Zoho reads).
  *  5. Status transitions → /api/runner/zoho/status (credits conversion closes).
  *  6. Metadata convergence → /api/estimates/bulk-upsert (status excluded —
@@ -69,20 +70,26 @@ async function main() {
   // 0. Sales orders (independent of estimates — runs before the fast path).
   await syncSalesOrders();
 
-  // 1. All-status estimates, newest-modified first (any mover is in-window).
+  // 1. DB state first — the local sent ids drive list coverage below.
+  console.log('zoho-sent-runner: fetching current DB state from worker');
+  const state = await persist.getDbState();
+  const sentCoverIds = new Set(
+    (state.estimates || []).filter((r) => String(r.status) === 'sent').map((r) => r.estimateId),
+  );
+
+  // 2. All-status estimates, newest-modified first (any mover is in-window).
   // Multi-org: fetch.js loops every organization_id in sent_estimates.txt
   // (same login) and namespaces non-primary ids (see scripts/zoho-sync/orgs.js).
-  console.log('zoho-sent-runner: fetching all-status estimates from Zoho (2 pages/org)');
-  const estimates = await fetch.fetchEstimatesAll(2);
+  // coverIds extends paging per org until every locally-sent row is seen:
+  // comments don't bump last_modified_time, so comment-only sent rows sink
+  // past page 2 and would otherwise never sync (2026-09-28 incident).
+  console.log('zoho-sent-runner: fetching all-status estimates from Zoho (2 pages/org + sent coverage)');
+  const estimates = await fetch.fetchEstimatesAll(2, { coverIds: sentCoverIds });
   const primaryOrg = fetch.zohoContext().orgId;
   const perOrg = {};
   for (const e of estimates) perOrg[e._orgId || primaryOrg] = (perOrg[e._orgId || primaryOrg] || 0) + 1;
   console.log(`zoho-sent-runner: fetched ${estimates.length} estimates (${Object.entries(perOrg).map(([o, n]) => `${o}:${n}`).join(', ')})`);
   const forced = process.env.ZOHO_FORCE === '1';
-
-  // 2. DB state for diffing.
-  console.log('zoho-sent-runner: fetching current DB state from worker');
-  const state = await persist.getDbState();
   const existingByEstId = new Map();
   for (const row of state.estimates || []) existingByEstId.set(row.estimateId, row);
   const maxCommentIdByEst = state.maxCommentIdByEstimate || {};
@@ -104,13 +111,16 @@ async function main() {
     return !!existing && String(existing.status) === 'sent';
   });
   console.log(`zoho-sent-runner: fetching comments for ${commentTargets.length} sent-family rows`);
+  let commentFetchErrors = 0;
   const fetchedByEst = await fetch.fetchCommentsFor(commentTargets, {
-    onError: (est, err) => console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`),
+    onError: (est, err) => { commentFetchErrors++; console.warn(`zoho-sent-runner: comment fetch failed for ${est.estimate_number}: ${err.message}`); },
   });
 
   // 4. No-change fast path — identical payload → zero DB reads/writes.
+  // Requires ZERO comment-fetch failures: a partial fetch builds a partial
+  // fingerprint that could equal a stored partial one and skip with stale data.
   let prevByEst = null;
-  if (!forced && estimates.length > 0) {
+  if (!forced && estimates.length > 0 && commentFetchErrors === 0) {
     const current = diff.buildFingerprint(estimates, fetchedByEst);
     const fpRes = await persist.getFingerprint();
     prevByEst = diff.parseFingerprint(fpRes?.fingerprint);
@@ -184,11 +194,16 @@ async function main() {
     console.log(`zoho-sent-runner: incomplete — needed ${workItems.length} (${dueItems.length} attempted this tick), failed ${failed}. Watermark not advanced.`);
   }
 
-  // A failure-free run means the DB matches Zoho — store the fingerprint so
-  // the next tick can skip every DB read when unchanged.
-  if (failed === 0) {
+  // Store the fingerprint ONLY on a fully-complete pass: capped ticks defer
+  // work items WITHOUT persisting them, so their comment ids must NOT be
+  // baked into the fp — otherwise every later tick reads "no change" and the
+  // deferred comments stay invisible forever (2026-09-28 incident: 49 real
+  // sales comments skipped permanently by a capped run's fingerprint).
+  if (!capped && failed === 0 && commentFetchErrors === 0) {
     const { fp } = diff.buildFingerprint(estimates, fetchedByEst);
     await persist.postFingerprint(fp);
+  } else if (capped) {
+    console.log('zoho-sent-runner: capped tick — fingerprint NOT stored so deferred items stay visible next tick.');
   }
 
   console.log(`zoho-sent-runner: done — processed ${processed}, skipped ${skipped}, failed ${failed}`);

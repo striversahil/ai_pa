@@ -118,24 +118,58 @@ function buildEstimatesUrl(page, orgId) {
 // Rows are normalized at the boundary (see orgs.js): non-primary org rows get
 // namespaced estimate_id + _orgId/_zohoId tags so downstream code is unchanged.
 // PAGES=2 covers 400 rows/org; any mover bumps last_modified_time into the window.
+// coverIds (DB estimate ids still marked sent locally) extends paging per org
+// until every covered id is seen (or maxPages): comments do NOT bump
+// last_modified_time, so sent rows with comment-only activity sink past page 2
+// and would otherwise never get comment fetches (proven live: 6 real 28/09
+// sales comments on page-3 sent rows). Extension costs list calls only when
+// needed — comment fetches stay bounded to sent-family rows. A deleted-in-Zoho
+// row never resolves, so maxPages caps the hunt (vanished check keeps it sent).
 // Per-org fault isolation: a dead org (bad id, no Books, wrong DC → 400/401)
 // is SKIPPED with a loud warning — one bad org must never kill the whole sync.
-async function fetchEstimatesAll(pages = 2) {
+async function fetchEstimatesAll(pages = 2, { coverIds = null, maxPages = 6 } = {}) {
   const { orgIds, orgId: primaryOrg } = zohoContext();
   const seen = new Map();
   const skippedOrgs = [];
   for (const org of orgIds.length ? orgIds : [primaryOrg]) {
+    const seenZoho = new Set();
     try {
-      for (let page = 1; page <= pages; page++) {
-        if (page > 1) await sleep(2000); // pace list calls — never burst Zoho
-        const json = await zohoFetch(buildEstimatesUrl(page, org));
+      let pageNo = 0;
+      let shortPage = false;
+      for (; pageNo < pages; pageNo++) {
+        if (pageNo > 0) await sleep(2000); // pace list calls — never burst Zoho
+        const json = await zohoFetch(buildEstimatesUrl(pageNo + 1, org));
         const rows = json.estimates || [];
         for (const e of rows) {
           if (!e?.estimate_id) continue;
           orgs.normalizeEstimateRow(e, org, primaryOrg);
+          seenZoho.add(String(e._zohoId));
           if (!seen.has(e.estimate_id)) seen.set(e.estimate_id, e);
         }
-        if (rows.length < 200) break;
+        if (rows.length < 200) { shortPage = true; break; }
+      }
+      if (!shortPage && coverIds && coverIds.size) {
+        const want = new Set();
+        for (const dbId of coverIds) {
+          const { orgId: o, zohoId: z } = orgs.splitDbEstimateId(dbId, primaryOrg);
+          if ((o || primaryOrg) === org && !seenZoho.has(String(z))) want.add(String(z));
+        }
+        while (want.size && pageNo < maxPages) {
+          await sleep(2000);
+          const json = await zohoFetch(buildEstimatesUrl(pageNo + 1, org));
+          pageNo++;
+          const rows = json.estimates || [];
+          for (const e of rows) {
+            if (!e?.estimate_id) continue;
+            orgs.normalizeEstimateRow(e, org, primaryOrg);
+            seenZoho.add(String(e._zohoId));
+            want.delete(String(e._zohoId));
+            if (!seen.has(e.estimate_id)) seen.set(e.estimate_id, e);
+          }
+          if (want.size) console.log(`zoho-sync/fetch: org ${org} page ${pageNo} — still seeking ${want.size} sent rows`);
+          if (rows.length < 200) break;
+        }
+        if (want.size) console.warn(`zoho-sync/fetch: org ${org} — ${want.size} sent rows beyond page ${pageNo} (deleted in Zoho?) — vanished check owns them`);
       }
     } catch (err) {
       skippedOrgs.push(org);
