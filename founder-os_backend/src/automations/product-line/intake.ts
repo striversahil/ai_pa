@@ -12,6 +12,7 @@ import type { ToolDefinition } from '../../shared/ai-gateway';
 import { cacheDel, cacheGet, cacheSet } from '../../shared/cache';
 import type { CopilotDef, CopilotExecResult } from '../../copilot/types';
 import { getProductDetail, getProductIndex, getRatesForProduct, getVendorIndex } from './service';
+import { matchTokens, tokenOverlap, TOKEN_MIN_SCORE, TOKEN_MIN_SHARED } from './match';
 import { createProduct, createRate, createVendor } from './update';
 import { invalidateProductLineCache } from './service';
 
@@ -162,23 +163,36 @@ function norm(s: unknown): string {
   return String(s ?? '').trim().toLowerCase();
 }
 
-/** Scored catalogue match: exact name/alias (2) beats partial (1). Reads the
- *  slim product index — never the full-table payload. */
+/** Scored catalogue match: exact name/alias first, then substring/token
+ *  score desc. Token tier catches reordered/noisy lines ("belt black
+ *  rubber", "6in 4ply 100m nylon belt"); typos still need the LLM pick. */
 function matchProducts(products: any[], q: string): { row: any; exact: boolean }[] {
   const needle = norm(q);
   if (!needle) return [];
-  const out: { row: any; exact: boolean }[] = [];
+  const needleToks = matchTokens(needle);
+  const out: { row: any; exact: boolean; score: number }[] = [];
   for (const p of (products ?? []) as any[]) {
     const name = norm(p.name);
     const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
     const cat = norm(p.category);
     if (p.id === q.trim() || name === needle || aliases.includes(needle)) {
-      out.push({ row: p, exact: true });
-    } else if (name.includes(needle) || needle.includes(name) || aliases.some((a) => a && (a.includes(needle) || needle.includes(a))) || cat.includes(needle)) {
-      out.push({ row: p, exact: false });
+      out.push({ row: p, exact: true, score: 2 });
+    } else {
+      const sub =
+        (name.includes(needle) || needle.includes(name) ||
+          aliases.some((a) => a && (a.includes(needle) || needle.includes(a))) ||
+          cat.includes(needle)) ? 1 : 0;
+      let score = sub;
+      if (!sub && needleToks.length > 0) {
+        const hayToks = matchTokens([name, ...aliases].join(' '));
+        const shared = needleToks.filter((t) => hayToks.includes(t)).length;
+        const ov = tokenOverlap(needleToks, hayToks);
+        if (shared >= TOKEN_MIN_SHARED && ov >= TOKEN_MIN_SCORE) score = ov;
+      }
+      if (score > 0) out.push({ row: p, exact: false, score });
     }
   }
-  out.sort((a, b) => Number(b.exact) - Number(a.exact));
+  out.sort((a, b) => (Number(b.exact) - Number(a.exact)) || (b.score - a.score));
   return out.slice(0, 5);
 }
 

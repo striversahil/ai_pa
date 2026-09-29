@@ -68,6 +68,53 @@ function norm(s: unknown): string {
   return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// ── Token-overlap scorer (deterministic fuzzy tier) ─────────────────────
+// Catches what substring matching cannot: word reordering ("belt black
+// rubber"), noisy concatenations ("6\" 4ply 100mtr nylon belt"), unit/dim
+// clutter, plurals. Deliberately NOT edit-distance: typos ("Nytal") still
+// need the LLM fallback — this tier stays free, instant, and explainable.
+
+/** Units/dims/filler stripped before scoring (never product identity). */
+const TOKEN_STOP = new Set([
+  'mm', 'cm', 'm', 'mtr', 'mtrs', 'meter', 'meters', 'metre', 'inch', 'inches',
+  'ft', 'feet', 'pcs', 'pc', 'nos', 'qty', 'quantity', 'kg', 'gms', 'gm',
+  'x', 'size', 'rate', 'required', 'new', 'length', 'width', 'thick', 'thickness',
+  'the', 'a', 'an', 'of', 'for', 'with', 'and', 'per', 'uncategorized', 'unknown',
+]);
+
+/** Significant tokens: lowercase alnum; pure numbers and NxM dims dropped
+ *  (quantities aren't identity), alphanumeric mixes kept (a70, 4ply, 58gg). */
+export function matchTokens(s: unknown): string[] {
+  const raw = String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean);
+  const out: string[] = [];
+  for (let t of raw) {
+    if (/^\d+$/.test(t)) continue; // pure quantity
+    if (/^\d+\s*[x×]\s*\d+$/.test(t)) continue; // dimension pair
+    if (TOKEN_STOP.has(t)) continue;
+    // plural normalize: buckets→bucket (skip ss-endings: glass, press)
+    if (t.length > 4 && t.endsWith('s') && !t.endsWith('ss')) t = t.slice(0, -1);
+    if (t) out.push(t);
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * Containment score 0–1: shared tokens ÷ smaller side. Containment (not
+ * Jaccard) because enquiry lines are noisy supersets ("…70 nos") of short
+ * catalogue names. Returns 0 when either side is token-empty.
+ */
+export function tokenOverlap(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return 0;
+  const setB = new Set(b);
+  let shared = 0;
+  for (const t of a) if (setB.has(t)) shared++;
+  return shared / Math.min(a.length, b.length);
+}
+
+/** Min shared tokens + min containment for a credible token-tier hit. */
+export const TOKEN_MIN_SHARED = 2;
+export const TOKEN_MIN_SCORE = 0.5;
+
 /** Round UP to the next multiple of 5 (mirrors frontend pricing.ts). */
 export function ceil5(x: number): number {
   return Math.ceil((x - 1e-6) / 5) * 5;
@@ -92,8 +139,11 @@ export function applyMarkup(eff: number): number {
 
 /**
  * Resolve an intake-written kypItem (+ category hint) to a live catalogue
- * product. Exact name/alias hit wins; partial matches need category
- * agreement to count. Returns null when nothing credible matches.
+ * product. Tiers: exact name/alias (id, name, alias equality) → substring
+ * either-way → token-overlap (reorder/noise tolerant). Partial/token tiers
+ * need category agreement (skipped when the item is Uncategorized).
+ * Returns null when nothing credible matches — callers fall through to the
+ * LLM/candidate fallback, never guess.
  */
 export function resolveProduct(
   products: MatchProduct[],
@@ -103,7 +153,12 @@ export function resolveProduct(
   const needle = norm(kypItem);
   if (!needle) return null;
   const cat = norm(category);
-  let partial: MatchProduct | null = null;
+  const gated = (p: MatchProduct): boolean => {
+    // Partial/token tiers only count with category agreement (avoids
+    // cross-category junk). Uncategorized items skip the gate.
+    if (!cat || cat === 'uncategorized') return true;
+    return norm(p.category) === cat;
+  };
   for (const p of products ?? []) {
     if (!p || p.active === false) continue;
     if (String((p as any).id ?? '') === kypItem.trim()) return { product: p, exact: true };
@@ -111,20 +166,72 @@ export function resolveProduct(
     const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
     if (name === needle || aliases.includes(needle)) return { product: p, exact: true };
   }
+  const needleToks = matchTokens(needle);
+  let best: MatchProduct | null = null;
+  let bestScore = 0;
   for (const p of products ?? []) {
     if (!p || p.active === false) continue;
     const name = norm(p.name);
     const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
-    const hit =
+    const subHit =
       (name && (name.includes(needle) || needle.includes(name))) ||
       aliases.some((a) => a && (a.includes(needle) || needle.includes(a)));
-    if (!hit) continue;
-    // Partial matches only count with category agreement (avoids cross-category junk).
-    if (cat && cat !== 'uncategorized' && norm(p.category) !== cat) continue;
-    partial = p;
-    break;
+    let score = subHit ? 1 : 0;
+    if (!subHit && needleToks.length > 0) {
+      const hayToks = matchTokens([name, ...aliases].join(' '));
+      const shared = needleToks.filter((t) => hayToks.includes(t)).length;
+      const ov = tokenOverlap(needleToks, hayToks);
+      if (shared >= TOKEN_MIN_SHARED && ov >= TOKEN_MIN_SCORE) score = ov;
+    }
+    if (score <= 0 || score <= bestScore) continue;
+    if (!gated(p)) continue;
+    best = p;
+    bestScore = score;
   }
-  return partial ? { product: partial, exact: false } : null;
+  return best ? { product: best, exact: false } : null;
+}
+
+/**
+ * Ranked candidate list for model/user pick (intake + sales fallback):
+ * exact tier first, then token/substring score desc. Never the full
+ * catalogue — top-N only, safe at 20K rows. Thresholds are tunable per
+ * caller: strict (auto-resolve quality) vs loose (pick-list suggestions
+ * the user confirms — safe because quoting still needs pick + specs +
+ * the confidence gate).
+ */
+export function rankProducts(
+  products: MatchProduct[],
+  q: string,
+  limit = 5,
+  minShared = TOKEN_MIN_SHARED,
+  minScore = TOKEN_MIN_SCORE,
+): { product: MatchProduct; exact: boolean; score: number }[] {
+  const needle = norm(q);
+  if (!needle) return [];
+  const needleToks = matchTokens(needle);
+  const out: { product: MatchProduct; exact: boolean; score: number }[] = [];
+  for (const p of products ?? []) {
+    if (!p || p.active === false) continue;
+    const name = norm(p.name);
+    const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
+    if (String((p as any).id ?? '') === q.trim() || name === needle || aliases.includes(needle)) {
+      out.push({ product: p, exact: true, score: 2 });
+      continue;
+    }
+    const subHit =
+      (name && (name.includes(needle) || needle.includes(name))) ||
+      aliases.some((a) => a && (a.includes(needle) || needle.includes(a)));
+    let score = subHit ? 1 : 0;
+    if (!subHit && needleToks.length > 0) {
+      const hayToks = matchTokens([name, ...aliases].join(' '));
+      const shared = needleToks.filter((t) => hayToks.includes(t)).length;
+      const ov = tokenOverlap(needleToks, hayToks);
+      if (shared >= minShared && ov >= minScore) score = ov;
+    }
+    if (score > 0) out.push({ product: p, exact: false, score });
+  }
+  out.sort((a, b) => (Number(b.exact) - Number(a.exact)) || (b.score - a.score));
+  return out.slice(0, Math.max(1, Math.min(10, limit)));
 }
 
 /** Active required checklist for one product, sortOrder ascending. */

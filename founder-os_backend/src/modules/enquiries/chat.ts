@@ -7,8 +7,8 @@
 // confirms and POSTs them to /chat/execute, which re-validates through
 // EnquiryRoutes before touching storage.
 import type { ToolDefinition } from '../../shared/ai-gateway';
-import { cacheGet } from '../../shared/cache';
-import { runTurn, streamTurn } from '../../copilot/engine';
+import { cacheDel, cacheGet, cacheSet } from '../../shared/cache';
+import { clearState, runTurn, streamTurn } from '../../copilot/engine';
 import type { CopilotDef, CopilotExecResult, CopilotReply } from '../../copilot/types';
 import {
   enquiryAddComment, enquiryUpdate, canManageRates, isRestrictedViewer, stripMarginFields, canSeeProcurementRequests,
@@ -18,7 +18,7 @@ import type { EnquiryStore } from './store';
 import type { MeResponse } from '../auth/types';
 import { getProductDetail, getProductIndex, getRatesForProduct } from '../../automations/product-line/service';
 import {
-  MIN_QUOTE_CONFIDENCE, requiredChecklist, resolveProduct,
+  MIN_QUOTE_CONFIDENCE, rankProducts, requiredChecklist, resolveProduct,
   salesSafeQuote, scoreRates,
   type MatchGuideRow, type MatchProduct, type MatchRate, type SalesQuote,
 } from '../../automations/product-line/match';
@@ -88,6 +88,88 @@ interface SalesCtx {
   privileged: boolean;
 }
 
+// ── Price session (mirrors the intake draft method) ─────────────────────
+// Structured per-item pricing state (resolved product + collected specs) in
+// KV, 30-min TTL — the same method as product-line intake's draft. Chat
+// history prose is lossy for structured data (which specs were answered,
+// which product was resolved); without this the model drops specs between
+// turns and re-asks. find_price writes it, ask_specs/quote_price merge it.
+const PRICE_SESSION_TTL_MS = 30 * 60 * 1000;
+
+interface PriceSession {
+  itemIndex?: number;
+  productId?: string;
+  productName?: string;
+  specs: Record<string, string>;
+}
+
+function priceWho(me: any): string {
+  return String(me?.user?.email ?? me?.user?.id ?? 'anon').toLowerCase();
+}
+
+function priceSessionKey(enquiryId: string, who: string): string {
+  return `enquiry:price:${enquiryId}:${who}`;
+}
+
+async function loadPriceSession(enquiryId: string, who: string): Promise<PriceSession> {
+  try {
+    const s = await cacheGet<PriceSession>(priceSessionKey(enquiryId, who), PRICE_SESSION_TTL_MS);
+    if (s && typeof s === 'object') return { ...s, specs: { ...((s as any).specs ?? {}) } };
+  } catch { /* ignore */ }
+  return { specs: {} };
+}
+
+async function savePriceSession(enquiryId: string, who: string, s: PriceSession): Promise<void> {
+  try { await cacheSet(priceSessionKey(enquiryId, who), s, PRICE_SESSION_TTL_MS); } catch { /* ignore */ }
+}
+
+async function clearPriceSession(enquiryId: string, who: string): Promise<void> {
+  try { await cacheDel(priceSessionKey(enquiryId, who)); } catch { /* ignore */ }
+}
+
+/** SpecForm answers arrive labeled by raw question text, not attrKey —
+//  resolve either form to the storage key against the live checklist. */
+function normSpecKey(s: unknown): string {
+  return String(s ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function resolveSpecKeys(
+  specs: Record<string, string>,
+  required: { attrKey: string; question: string }[],
+): Record<string, string> {
+  const byKey = new Map(required.map((g) => [normSpecKey(g.attrKey), g.attrKey]));
+  const byQ = new Map(required.map((g) => [normSpecKey(g.question), g.attrKey]));
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(specs ?? {})) {
+    const val = String(v ?? '').trim().slice(0, 200);
+    if (!val) continue;
+    const nk = normSpecKey(k);
+    if (!nk) continue;
+    let hit = byKey.get(nk) ?? byQ.get(nk);
+    if (!hit) {
+      // loose fallback: key contained in (or containing) a question
+      for (const g of required) {
+        const nq = normSpecKey(g.question);
+        if (nq && (nq.includes(nk) || nk.includes(nq))) { hit = g.attrKey; break; }
+      }
+    }
+    out[hit ?? String(k)] = val;
+  }
+  return out;
+}
+
+/** Model-facing item numbers are 1-based (Item 1, Item 2 — exactly as the
+ *  dashboard shows them). There is no Item 0. Convert to the internal 0-based
+ *  array index here, in ONE place — proposals/actions keep 0-based indexes
+ *  internally, but every number the MODEL sees or sends is 1-based. */
+function itemIdx(args: Record<string, any>, count: number): { idx: number; num: number } | { error: string } {
+  const num = Math.floor(Number(args.itemIndex) || 0);
+  if (!(num >= 1) || num > count) {
+    return { error: `no Item ${Math.floor(Number(args.itemIndex) || 0)} — this enquiry has ${count} item${count === 1 ? '' : 's'} (use Item 1–${count})` };
+  }
+  return { idx: num - 1, num };
+}
+
 function toolDefs(ctx: SalesCtx): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     {
@@ -124,7 +206,7 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
           parameters: {
             type: 'object',
             properties: {
-              itemIndex: { type: 'number' },
+              itemIndex: { type: 'number', description: '1-based item number as shown in the chat (Item 1, Item 2, …)' },
               spec: { type: 'string', description: 'Full corrected spec text' },
             },
             required: ['itemIndex', 'spec'],
@@ -135,10 +217,13 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         type: 'function',
         function: {
           name: 'find_price',
-          description: 'Start a price lookup for one enquiry item: resolves the item (via its kypItem/category mapping) to a live catalogue product and returns its required spec checklist + the item spec on file. Call this first whenever the user asks for a price/rate.',
+          description: 'Start a price lookup for one enquiry item: resolves the item (via its kypItem/category mapping) to a live catalogue product and returns its required spec checklist + the item spec on file. Call this first whenever the user asks for a price/rate. If a previous call returned candidates, pass the user-picked productId to lock it in.',
           parameters: {
             type: 'object',
-            properties: { itemIndex: { type: 'number', description: '0-based item index' } },
+            properties: {
+              itemIndex: { type: 'number', description: '1-based item number as shown in the chat (Item 1, Item 2, …)' },
+              productId: { type: 'string', description: 'Catalogue product id picked by the user from a previous candidates list (skips matching)' },
+            },
             required: ['itemIndex'],
           },
         },
@@ -167,7 +252,7 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
             type: 'object',
             properties: {
               productId: { type: 'string' },
-              itemIndex: { type: 'number' },
+              itemIndex: { type: 'number', description: '1-based item number as shown in the chat (Item 1, Item 2, …)' },
               specs: { type: 'object', description: 'attrKey → collected spec value', additionalProperties: { type: 'string' } },
             },
             required: ['productId', 'itemIndex', 'specs'],
@@ -191,8 +276,10 @@ function activityLabel(name: string, args: Record<string, any>, out: { result: u
       return r.error ? 'Comment draft failed' : 'Drafted a comment for confirm';
     case 'propose_spec_fix':
       return r.error ? 'Spec draft failed' : 'Drafted a spec fix for confirm';
-    case 'find_price':
+    case 'find_price': {
+      if (r.error && Array.isArray((r as any).candidates)) return `Offered ${(r as any).candidates.length} picks`;
       return r.error ? 'Price lookup failed' : r.product ? `Matched ${r.product.name}` : 'No catalogue match';
+    }
     case 'ask_specs':
       return r.error ? 'Spec form failed' : 'Asked missing specs';
     case 'quote_price': {
@@ -261,7 +348,8 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
   };
 
   if (name === 'get_enquiry_summary') {    const items = (Array.isArray(view.items) ? view.items : []).map((it: any, i: number) => ({
-      index: i,
+      // 1-based: the model only ever sees/sends Item 1, Item 2, … (no Item 0).
+      index: i + 1,
       name: String(it?.name ?? '') || `Item ${i + 1}`,
       qty: String(it?.qty ?? ''),
       spec: String(it?.spec ?? '').slice(0, 500),
@@ -278,7 +366,7 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     let missing: string[] = [];
     try {
       // Prefer per-item kypMissing (the live completeness), fall back to legacy intake cache
-      const kypMissingAll = items.flatMap((it: any) => Array.isArray(it.kypMissing) ? it.kypMissing.map((m: string) => `Item ${it.index + 1} — ${m}`) : []);
+      const kypMissingAll = items.flatMap((it: any) => Array.isArray(it.kypMissing) ? it.kypMissing.map((m: string) => `Item ${it.index} — ${m}`) : []);
       if (kypMissingAll.length > 0) missing = kypMissingAll.slice(0, 25);
       else {
         const intake = await cacheGet<Record<string, any>>(`enquiry:intake:${ctx.enquiryId}`, THREAD_TTL_MS);
@@ -321,33 +409,68 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
 
   if (name === 'propose_spec_fix') {
     if (ctx.restricted) return { result: { error: 'not permitted' } };
-    const idx = Math.max(0, Math.floor(Number(args.itemIndex) || 0));
+    const items0 = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const parsed0 = itemIdx(args, items0.length);
+    if ('error' in parsed0) return { result: { error: parsed0.error } };
+    const idx = parsed0.idx;
     const spec = String(args.spec ?? '').trim().slice(0, 2000);
     if (!spec) return { result: { error: 'empty spec' } };
-    const proposal: ChatProposal = { kind: 'spec_fix', itemIndex: idx, spec, label: `Fix Item ${idx + 1} spec` };
+    const proposal: ChatProposal = { kind: 'spec_fix', itemIndex: idx, spec, label: `Fix Item ${parsed0.num} spec` };
     return { result: { proposed: true }, proposals: [proposal] };
   }
 
   if (name === 'find_price') {
     if (ctx.restricted) return { result: { error: 'not permitted' } };
-    const idx = Math.max(0, Math.floor(Number(args.itemIndex) || 0));
     const items = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const parsed = itemIdx(args, items.length);
+    if ('error' in parsed) return { result: { error: parsed.error } };
+    const idx = parsed.idx;
     const it = items[idx];
-    if (!it) return { result: { error: `no item at index ${idx}` } };
+    if (!it) return { result: { error: `no Item ${parsed.num}` } };
     const kypItem = String((it as any)?.kypItem ?? '').slice(0, 120);
     const category = String((it as any)?.category ?? 'Uncategorized').slice(0, 120);
-    const resolved = resolveProduct(await liveProducts(), kypItem || String((it as any)?.name ?? ''), category);
+    const products = await liveProducts();
+    // User-picked productId (from a previous candidates list) skips matching.
+    const pickedId = String(args.productId ?? '').trim();
+    const picked = pickedId ? products.find((p) => p.id === pickedId && p.active !== false) : null;
+    if (pickedId && !picked) return { result: { error: 'unknown productId — ask the user to pick from the candidates list again' } };
+    const resolved = picked
+      ? { product: picked, exact: true }
+      : resolveProduct(products, kypItem || String((it as any)?.name ?? ''), category);
     if (!resolved) {
+      // Candidate fallback (mirrors intake): loose-bar top hits for the model
+      // to offer the user — full catalogue never enters the prompt (20K-safe).
+      // Loose here is safe: quoting still needs user pick + specs + the
+      // confidence gate. Deterministic tiers miss typos/spec-only lines;
+      // those still route out.
+      const cands = rankProducts(products, `${kypItem} ${String((it as any)?.name ?? '')} ${category}`, 5, 1, 0.2)
+        .map((c) => ({ id: c.product.id, name: c.product.name, category: c.product.category }));
+      if (cands.length > 0) {
+        return {
+          result: {
+            error: 'no confident catalogue match', kypItem, category,
+            candidates: cands,
+            hint: 'offer these candidates to the user to pick one, then call find_price again with the picked productId — or route to procurement if none fit',
+          },
+        };
+      }
       return { result: { error: 'no catalogue match', kypItem, category, hint: 'tell the user this item is routed to procurement' } };
     }
     const required = requiredChecklist(await liveGuide(resolved.product.id));
+    // Price session: same item+product → keep collected specs; else reset.
+    const who = priceWho(ctx.me);
+    const prev = await loadPriceSession(ctx.enquiryId, who);
+    const kept = prev.productId === resolved.product.id && prev.itemIndex === idx ? prev.specs : {};
+    const session: PriceSession = { itemIndex: idx, productId: resolved.product.id, productName: resolved.product.name, specs: kept };
+    await savePriceSession(ctx.enquiryId, who, session);
     return {
       result: {
-        itemIndex: idx,
+        itemIndex: parsed.num,
         product: { id: resolved.product.id, name: resolved.product.name, category: resolved.product.category, exact: resolved.exact },
         required: required.map((g) => ({ key: g.attrKey, question: g.question, note: g.guideNote ?? '' })),
         itemSpec: String((it as any)?.spec ?? '').slice(0, 800),
         intakeMissing: Array.isArray((it as any)?.kypMissing) ? (it as any).kypMissing.slice(0, 10) : [],
+        sessionSpecs: kept,
       },
     };
   }
@@ -359,7 +482,13 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     const product = (await liveProducts()).find((p) => p.id === pid);
     if (!product) return { result: { error: 'unknown product' } };
     const required = requiredChecklist(await liveGuide(pid));
-    const known = (args.knownSpecs && typeof args.knownSpecs === 'object' ? args.knownSpecs : {}) as Record<string, unknown>;
+    // Merge session specs (prior turns) with freshly passed knownSpecs.
+    const who = priceWho(ctx.me);
+    const prev = await loadPriceSession(ctx.enquiryId, who);
+    const sessionSpecs = (prev.productId === pid ? prev.specs : {}) as Record<string, unknown>;
+    const knownRaw = { ...sessionSpecs, ...((args.knownSpecs && typeof args.knownSpecs === 'object' ? args.knownSpecs : {}) as Record<string, unknown>) };
+    const known = resolveSpecKeys(knownRaw as Record<string, string>, required.map((g) => ({ attrKey: g.attrKey, question: g.question })));
+    await savePriceSession(ctx.enquiryId, who, { ...prev, productId: pid, productName: product.name, specs: { ...(prev.productId === pid ? prev.specs : {}), ...known } });
     const rates = await liveRates(pid);
     const questions: SpecQuestion[] = [];
     for (const g of required) {
@@ -385,17 +514,28 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
   if (name === 'quote_price') {
     if (ctx.restricted) return { result: { error: 'not permitted' } };
     const pid = String(args.productId ?? '').trim();
-    const idx = Math.max(0, Math.floor(Number(args.itemIndex) || 0));
-    const specsIn = (args.specs && typeof args.specs === 'object' ? args.specs : {}) as Record<string, unknown>;
-    const specs: Record<string, string> = {};
-    for (const [k, v] of Object.entries(specsIn)) {
-      const s = String(v ?? '').trim().slice(0, 200);
-      if (s) specs[String(k)] = s;
-    }
-    if (!pid) return { result: { error: 'missing productId' } };
+    const itemsQ = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const parsedQ = itemIdx(args, itemsQ.length);
+    if ('error' in parsedQ) return { result: { error: parsedQ.error } };
+    const idx = parsedQ.idx;
     const product = (await liveProducts()).find((p) => p.id === pid);
     if (!product) return { result: { error: 'unknown product' } };
     const required = requiredChecklist(await liveGuide(pid));
+    // Merge order: session (prior turns) < explicit args (this turn wins).
+    // Question-labeled answers (from the spec form) resolve to attrKeys.
+    const who = priceWho(ctx.me);
+    const prev = await loadPriceSession(ctx.enquiryId, who);
+    const specsIn = (args.specs && typeof args.specs === 'object' ? args.specs : {}) as Record<string, unknown>;
+    const merged = resolveSpecKeys(
+      { ...((prev.productId === pid ? prev.specs : {}) as Record<string, string>), ...(specsIn as Record<string, string>) },
+      required.map((g) => ({ attrKey: g.attrKey, question: g.question })),
+    );
+    const specs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(merged)) {
+      const s = String(v ?? '').trim().slice(0, 200);
+      if (s) specs[String(k)] = s;
+    }
+    await savePriceSession(ctx.enquiryId, who, { itemIndex: idx, productId: pid, productName: product.name, specs });
     const scored = scoreRates(await liveRates(pid), pid, specs, required);
     if (scored.length === 0) return { result: { error: 'no past rates for this product', routed: 'procurement' } };
     const best = scored[0];
@@ -468,7 +608,7 @@ function systemPrompt(ctx: SalesCtx): string {
   const langNote = !ctx.restricted && !ctx.privileged
     ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — sales-floor style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
     : '';
-  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. ${langNote} When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it resolves the item's kypItem mapping against the live catalogue), then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. When a lookup routes to procurement, say so plainly and stop — do not quote.`;
+  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. Items are numbered from 1 exactly as shown (Item 1, Item 2, …) — always speak and accept item numbers 1-based; there is no Item 0, never say "index". ${langNote} Prior turns AND the price session are recalled automatically every turn — never claim to be a new session or to lack earlier context. When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it recalls the saved product + collected specs for the item) — never re-ask specs that are already collected. If find_price returns candidates, offer them to the user to pick one, then call find_price again with the picked productId. Then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price. The user's spec-form answers arrive as the next message labeled by question text — file them via quote_price and continue. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. When a lookup routes to procurement, say so plainly and stop — do not quote.`;
 }
 
 /** Sales department definition for the shared engine. */
@@ -492,6 +632,8 @@ export const salesCopilotDef: CopilotDef<SalesCtx> = {
   },
   historyTtlMs: THREAD_TTL_MS,
   historyMaxMsgs: 100,
+  // Wipes the price session on new-chat (mirrors intake's clearExtra/draft).
+  clearExtra: async (ctx) => { await clearPriceSession(ctx.enquiryId, priceWho(ctx.me)); },
   countKey: (ctx) => `enquiry:chat:count:${ctx.enquiryId}`,
   systemPrompt,
   toolDefs,
@@ -597,6 +739,21 @@ export async function executeProposal(
     }
   }
   return { result: { status: 400, body: { error: 'unknown action' } }, applied: 'none' };
+}
+
+/** New-chat: wipe rolling history + price session (mirrors the copilot clear route). */
+export async function clearSalesChat(
+  env: Record<string, unknown>,
+  store: EnquiryStore,
+  me: MeResponse,
+  enquiryId: string,
+): Promise<void> {
+  const ctx: SalesCtx = {
+    env, store, me, enquiryId,
+    restricted: isRestrictedViewer(me),
+    privileged: canManageRates(me),
+  };
+  await clearState(salesCopilotDef, ctx);
 }
 
 /** Engine-backed confirm path (lets the generic /execute route serve sales). */

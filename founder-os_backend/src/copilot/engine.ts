@@ -6,6 +6,8 @@
 // Chat history is deliberately NOT stored — only a best-effort turn counter.
 import { getGateway, type ChatMessage } from '../shared/ai-gateway';
 import { cacheDel, cacheGet, cacheSet } from '../shared/cache';
+import { CALCULATE_TOOL, calculateActivity, calculateToolDef, execCalculate } from '../shared/calculator';
+import { WEB_SEARCH_TOOL, execWebSearch, webSearchActivity, webSearchToolDef } from '../shared/web-search';
 import type { CopilotActivity, CopilotDef, CopilotProposal, CopilotReply } from './types';
 
 const MAX_STEPS = 6;
@@ -43,12 +45,59 @@ async function bumpCount(key: string | null): Promise<void> {
   } catch { /* best-effort */ }
 }
 
+/** Engine-default tools: every copilot gets web_search + calculate unless it
+ *  opts out via disableBuiltInTools. Dispatched by the engine itself (below),
+ *  so departments never touch them. */
+function defaultToolDefs<T>(def: CopilotDef<T>, ctx: T) {
+  const tools = def.toolDefs(ctx);
+  if ((def as any).disableBuiltInTools === true) return tools;
+  const names = new Set(tools.map((t) => t?.function?.name));
+  if (!names.has(WEB_SEARCH_TOOL)) tools.push(webSearchToolDef());
+  if (!names.has(CALCULATE_TOOL)) tools.push(calculateToolDef());
+  return tools;
+}
+
+async function runTool<T>(
+  env: Record<string, unknown>,
+  def: CopilotDef<T>,
+  ctx: T,
+  name: string,
+  args: Record<string, any>,
+): Promise<{ out: { result: unknown; proposals?: CopilotProposal[] }; label: string }> {
+  if (name === WEB_SEARCH_TOOL) {
+    try {
+      const r = await execWebSearch(env, String(args.query ?? ''), (args as any).count);
+      const out = { result: r };
+      return { out, label: webSearchActivity(args, out) };
+    } catch (e: any) {
+      const out = { result: { results: [], provider: 'none', note: 'web search failed' } };
+      return { out, label: webSearchActivity(args, out) };
+    }
+  }
+  if (name === CALCULATE_TOOL) {
+    const out = { result: execCalculate(String(args.expression ?? '')) };
+    return { out, label: calculateActivity(args, out) };
+  }
+  try {
+    const out = await def.execTool(ctx, name, args);
+    return { out, label: def.activityLabel(name, args, out) };
+  } catch (e: any) {
+    const out = { result: { error: String(e?.message ?? e).slice(0, 200) } };
+    return { out, label: def.activityLabel(name, args, out) };
+  }
+}
+
 function is429Like(e: any): boolean {
   const msg = String(e?.message ?? '');
   return /429|rate-limit|1015/i.test(msg) || (e as any)?.status === 429;
 }
 
 interface HistMsg { role: 'user' | 'assistant'; text: string; }
+
+/** Max HUMAN turns per chat session (across tool steps). The 26th user
+ *  message is refused with the limit reply — new chat (clear) resets it. */
+export const MAX_HUMAN_TURNS = 25;
+export const LIMIT_REPLY = 'Limit reached (25 chats) — open a new chat to continue.';
 
 /** Load rolling history (user/assistant texts only — tool payloads stay out).
  *  Storage keeps the full window (e.g. 50 requests); each turn SENDS only a
@@ -57,22 +106,26 @@ interface HistMsg { role: 'user' | 'assistant'; text: string; }
 const SEND_RECENT = 12;
 const RECENT_CAP = 1200;
 const GIST_CAP = 120;
-async function loadHistory<T>(def: CopilotDef<T>, ctx: T): Promise<ChatMessage[]> {
+async function loadHistory<T>(def: CopilotDef<T>, ctx: T): Promise<{ messages: ChatMessage[]; userTurns: number }> {
   try {
     const key = def.historyKey?.(ctx);
-    if (!key) return [];
+    if (!key) return { messages: [], userTurns: 0 };
     const ttl = def.historyTtlMs ?? SESSION_TTL_MS;
     const past = ((await cacheGet<HistMsg[]>(key, ttl)) ?? []).filter(
       (m) => (m?.role === 'user' || m?.role === 'assistant') && String(m?.text ?? '').trim(),
     );
+    const userTurns = past.filter((m) => m.role === 'user').length;
     const recent = past.slice(-SEND_RECENT);
     const older = past.slice(0, Math.max(0, past.length - SEND_RECENT));
-    return [
-      ...older.map((m) => ({ role: m.role, content: String(m.text).slice(0, GIST_CAP) })),
-      ...recent.map((m) => ({ role: m.role, content: String(m.text).slice(0, RECENT_CAP) })),
-    ];
+    return {
+      messages: [
+        ...older.map((m) => ({ role: m.role, content: String(m.text).slice(0, GIST_CAP) })),
+        ...recent.map((m) => ({ role: m.role, content: String(m.text).slice(0, RECENT_CAP) })),
+      ],
+      userTurns,
+    };
   } catch {
-    return [];
+    return { messages: [], userTurns: 0 };
   }
 }
 
@@ -121,11 +174,17 @@ export async function runTurn<T>(
   const gateway = getGateway(env);
   const key = def.sessionKey(ctx);
   void bumpCount(def.countKey(ctx));
-  const tools = def.toolDefs(ctx);
+  const tools = defaultToolDefs(def, ctx);
   const model = String((env as any)?.[def.modelEnvVar] ?? '').trim() || def.defaultModel;
+  const hist = await loadHistory(def, ctx);
+  // 25-human-turn cap: the refused message is NOT stored, so the cap holds
+  // until the user opens a new chat (clear wipes history).
+  if (hist.userTurns >= MAX_HUMAN_TURNS) {
+    return { reply: LIMIT_REPLY, proposals: [], activity: [] };
+  }
   const messages: ChatMessage[] = [
     { role: 'system', content: def.systemPrompt(ctx) },
-    ...(await loadHistory(def, ctx)),
+    ...hist.messages,
     { role: 'user', content: String(message ?? '').slice(0, 2000) },
   ];
   const proposals: CopilotProposal[] = [];
@@ -159,14 +218,9 @@ export async function runTurn<T>(
       });
       for (const tc of res.toolCalls.slice(0, 3)) {
         const args = parseArgs(tc.arguments);
-        let out: { result: unknown; proposals?: CopilotProposal[] };
-        try {
-          out = await def.execTool(ctx, tc.name, args);
-        } catch (e: any) {
-          out = { result: { error: String(e?.message ?? e).slice(0, 200) } };
-        }
+        const { out, label } = await runTool(env, def, ctx, tc.name, args);
         if (out.proposals) proposals.push(...out.proposals);
-        activity.push({ tool: tc.name, label: def.activityLabel(tc.name, args, out) });
+        activity.push({ tool: tc.name, label });
         messages.push({
           role: 'tool',
           content: JSON.stringify(out.result).slice(0, 3000),
@@ -205,11 +259,17 @@ export async function* streamTurn<T>(
   const gateway = getGateway(env);
   const key = def.sessionKey(ctx);
   void bumpCount(def.countKey(ctx));
-  const tools = def.toolDefs(ctx);
+  const tools = defaultToolDefs(def, ctx);
   const model = String((env as any)?.[def.modelEnvVar] ?? '').trim() || def.defaultModel;
+  const hist = await loadHistory(def, ctx);
+  if (hist.userTurns >= MAX_HUMAN_TURNS) {
+    const r: CopilotReply = { reply: LIMIT_REPLY, proposals: [], activity: [] };
+    yield { type: 'done', data: r };
+    return r;
+  }
   const messages: ChatMessage[] = [
     { role: 'system', content: def.systemPrompt(ctx) },
-    ...(await loadHistory(def, ctx)),
+    ...hist.messages,
     { role: 'user', content: String(message ?? '').slice(0, 2000) },
   ];
   const proposals: CopilotProposal[] = [];
@@ -274,10 +334,9 @@ export async function* streamTurn<T>(
       });
       for (const tc of toolCalls.slice(0, 3)) {
         const args = parseArgs(tc.args);
-        let out: { result: unknown; proposals?: CopilotProposal[] };
-        try { out = await def.execTool(ctx, tc.name, args); } catch (e: any) { out = { result: { error: String(e?.message ?? e).slice(0, 200) } }; }
+        const { out, label } = await runTool(env, def, ctx, tc.name, args);
         if (out.proposals) proposals.push(...out.proposals);
-        const act = { tool: tc.name, label: def.activityLabel(tc.name, args, out) };
+        const act = { tool: tc.name, label };
         activity.push(act);
         yield { type: 'activity', data: act };
         messages.push({ role: 'tool', content: JSON.stringify(out.result).slice(0, 3000), tool_call_id: tc.id });

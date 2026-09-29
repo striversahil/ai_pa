@@ -33,6 +33,8 @@ const TOOL_ICON: Record<string, string> = {
   find_price: "🔍",
   ask_specs: "📝",
   quote_price: "💰",
+  web_search: "🌐",
+  calculate: "🧮",
 };
 
 export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, userInitial = "S" }: {
@@ -247,7 +249,13 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
     } catch { setListening(false); }
   };
 
-  const handleRefresh = () => { setMsgs([]); setConfirmed(new Set()); };
+  const handleRefresh = () => {
+    // Server-side wipe (history + price session) — fire-and-forget is fine:
+    // the route awaits the KV deletes before responding.
+    void fetch(`/api/enquiries/${enquiryId}/chat/clear`, { method: "POST" }).catch(() => {});
+    setMsgs([]);
+    setConfirmed(new Set());
+  };
 
   return (
     <>

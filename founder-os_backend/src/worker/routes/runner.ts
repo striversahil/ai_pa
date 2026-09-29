@@ -957,38 +957,6 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(result);
   });
 
-  // ── enquiry price-memory backfill (GH runner, paged) ─────────────────────────
-  // Returns finalized line items (finalRate set, spec undisputed) for Pinecone
-  // indexing. Paged over enquiries newest-first: ?offset=&limit= (max 100).
-  app.get('/api/runner/enquiry-memory/finalized', async (c) => {    if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const offset = Math.max(0, Math.floor(Number(c.req.query('offset')) || 0));
-    const limit = Math.min(100, Math.max(1, Math.floor(Number(c.req.query('limit')) || 50)));
-    const store = createEnquiryStore(c.env);
-    const page = await store.listEnquiriesPaged(offset, limit);
-    const rows: any[] = [];
-    for (const e of (page.rows as any[]) ?? []) {
-      const items = Array.isArray((e as any).items) ? (e as any).items : [];
-      items.forEach((it: any, idx: number) => {
-        const rate = it?.finalRate;
-        if (rate === undefined || rate === null || !Number.isFinite(Number(rate))) return;
-        if (it?.specIssue) return;
-        rows.push({
-          enquiryId: String((e as any).id),
-          itemIndex: idx,
-          name: String(it?.name ?? ''),
-          qty: String(it?.qty ?? ''),
-          spec: String(it?.spec ?? ''),
-          rates: Array.isArray(it?.rates) ? it.rates.map((r: any) => ({ vendor: String(r?.vendor ?? ''), rate: Number(r?.rate) })) : [],
-          finalRate: Number(rate),
-          markup: it?.markup !== undefined && it?.markup !== null ? Number(it.markup) : undefined,
-          selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
-          finalizedAt: it?.finalizedAt ? String(it.finalizedAt) : String((e as any).updatedAt ?? (e as any).createdAt ?? ''),
-        });
-      });
-    }
-    return c.json({ rows, nextOffset: offset + page.rows.length, total: page.total });
-  });
-
   // ── enquiry intake queue (GH intake runner, parallel-safe) ──────────────────
   // Per-enquiry done/claim markers in Setting (NOT a time watermark — parallel
   // runners completing out of order can never strand an enquiry):

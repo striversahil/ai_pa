@@ -7,6 +7,7 @@ import type { ToolDefinition } from '../../shared/ai-gateway';
 import type { CopilotDef } from '../../copilot/types';
 import { prisma } from '../../shared/prisma';
 import { countRatesForVendor, getProductDetail, getProductIndex, getRatesForProduct, getVendorIndex } from './service';
+import { rankProducts } from './match';
 import type { ProductIndexRow } from './service';
 import type { RateRow } from './types';
 
@@ -40,15 +41,26 @@ function rateView(r: RateRow) {
   };
 }
 
+/** Shared tiered matcher (exact → substring → token-overlap) — the same
+ *  method as sales + intake, so all three chats identify products alike.
+ *  Category-includes hits are appended after ranked rows (legacy behavior:
+ *  "belts" still lists the category). */
 function matchProduct(products: ProductIndexRow[], q: string) {
   const needle = q.trim().toLowerCase();
-  if (!needle) return [];
-  return (products ?? []).filter((p) =>
-    p.id === q.trim() ||
-    p.name.toLowerCase().includes(needle) ||
-    p.category.toLowerCase().includes(needle) ||
-    (p.aliases ?? []).some((a) => String(a).toLowerCase().includes(needle)),
-  );
+  const ranked = rankProducts(
+    products.map((p) => ({ id: p.id, category: p.category, name: p.name, aliases: p.aliases ?? [], active: p.active })),
+    q,
+    50,
+  ).map((r) => ({ ...r.product, _exact: r.exact }));
+  if (!needle) return ranked;
+  const seen = new Set(ranked.map((p: any) => p.id));
+  for (const p of products ?? []) {
+    if (seen.has(p.id)) continue;
+    if (String(p.category ?? '').toLowerCase().includes(needle)) {
+      ranked.push({ ...p, _exact: false });
+    }
+  }
+  return ranked;
 }
 
 async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>): Promise<{ result: unknown }> {

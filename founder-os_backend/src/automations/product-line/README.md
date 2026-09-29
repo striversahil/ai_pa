@@ -49,3 +49,11 @@ Consumers: sales enquiry chat (`find_price`/`ask_specs`/`quote_price` in
 `modules/enquiries/chat.ts`), intake options mining (`intake.ts`
 `ask_specs`), knowledge copilot (`copilot.ts`). Reads live tables ONLY —
 never the `kyp-lookup.ts` codegen artifact (intake-time lookup only).
+
+Identification tiers (deterministic first, LLM only for misses): exact
+id/name/alias → substring either-way → token-overlap (`matchTokens` strips
+dims/units/filler + plural-normalizes; containment ≥0.5 with ≥2 shared
+tokens; typos and spec-only lines deliberately stay unresolved). Auto-resolve
+is strict; `rankProducts()` offers a loose bar for user pick-lists (sales
+`find_price` candidates → user picks → `productId` lock-in) — safe because
+quoting still needs pick + specs + the confidence gate.

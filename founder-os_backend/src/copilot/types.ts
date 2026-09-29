@@ -55,6 +55,8 @@ export interface CopilotDef<T> {
   activityLabel(name: string, args: Record<string, any>, out: { result: unknown }): string;
   /** Confirm path for proposals. Absent = read-only copilot (no execute). */
   executeProposal?(ctx: T, action: Record<string, any>): Promise<CopilotExecResult>;
+  /** Opt out of engine-default tools (web_search, calculate). Default false = enabled for every copilot. */
+  disableBuiltInTools?: boolean;
   /** Env var overriding the model, e.g. 'ENQUIRY_CHAT_MODEL'. */
   modelEnvVar: string;
   defaultModel: string;

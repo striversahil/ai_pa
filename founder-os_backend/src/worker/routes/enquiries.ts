@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, type Bindings } from '../context';
-import { chatTurn, executeProposal } from '../../modules/enquiries/chat';
+import { chatTurn, clearSalesChat, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
@@ -711,6 +711,17 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       },
     });
     return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' } });
+  });
+  // New chat — wipes rolling history + price session (mirrors /api/copilot/:id/chat/clear).
+  app.post('/api/enquiries/:id/chat/clear', async (c) => {
+    const me = await enquiryMe(c);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    try {
+      await clearSalesChat(c.env as any, createEnquiryStore(c.env), me, c.req.param('id') ?? '');
+      return c.json({ ok: true });
+    } catch (e: any) {
+      return c.json({ error: String(e?.message ?? 'clear failed').slice(0, 300) }, 500);
+    }
   });
   // Execute a chat proposal the user confirmed (re-validated server-side).
   app.post('/api/enquiries/:id/chat/execute', async (c) => {

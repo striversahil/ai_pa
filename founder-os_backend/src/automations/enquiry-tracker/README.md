@@ -83,17 +83,21 @@ A FRESH request starts a new quoting round: previous vendor rates + old
 decision linkage are removed server-side (trailed in the item thread), so
 procurement re-quotes the requested variation clean.
 
-## Price memory (Pinecone)
-Finalized items (`finalRate` set, spec undisputed) are embedded (HF
-MiniLM 384-dim, spec text only — never PII) into the `enquiry-items` index,
-one namespace per KYP category (`uncategorized` for pre-KYP backfill rows;
-see `modules/enquiries/similarity.ts`). New items route exact (≥0.97 +
-dims-equal → auto-quote, `rateAvailable: true`, skips both queues) /
-suggest (≥0.85 → 1-click card in sales) / miss (today's loop unchanged).
-Backfill: `scripts/enquiry-memory-backfill-runner.js --dry-run` reports first,
-then indexes. Runner endpoints: `GET /api/runner/enquiry-memory/finalized`,
-`GET /api/runner/enquiry-intake/pending`, `POST /api/runner/enquiry-intake/result`
-(all `SHARED_SECRET`-gated).
+## Price memory (Pinecone — RETIRED)
+
+Removed. Pricing comes exclusively from live product-line `VendorRate`s via
+the sales price copilot (`match.ts` scorer + `find_price`/`quote_price` in
+`modules/enquiries/chat.ts`). Rationale: the Pinecone path never had worker
+secrets in production, so it returned zero suggestions while the code, a
+runner endpoint, and a backfill workflow lingered. Deleted:
+`modules/enquiries/similarity.ts`, `GET /api/runner/enquiry-memory/finalized`,
+`.github/workflows/ops-enquiry-backfill.yml`, and the vision-intake embedding
+block. The intake KV payload keeps `suggestions: []` / `candidates: []` so
+the sales UI contract (`useIntake`, `IntakeItemMeta`) is unchanged.
+
+Legacy GH intake-runner queue endpoints (`GET /api/runner/enquiry-intake/pending`,
+`POST /api/runner/enquiry-intake/claim|result`, all `SHARED_SECRET`-gated) stay
+as the intake fallback path.
 
 ## Scoped threads
 `EnquiryComment.visibility` (`sales` default via migration 0029): sales sees
@@ -113,7 +117,9 @@ is written to dashboards automatically:
   `find_price` (resolves the item's `kypItem` against the live catalogue via
   the slim product index) → `ask_specs` (stepped `spec_form` card, options
   mined from past rates) → `quote_price` (scores ALL past rates per product,
-  no 300-cap).
+  no 300-cap). Item numbers are 1-based everywhere the model sees (Item 1,
+  Item 2 — never "index", never Item 0); out-of-range numbers get a guided
+  error naming the valid range.
 - Proposals: `price_table` (up to 5 vendor-blind variations with match % —
   view-only) + `price_quote` (best match, Confirm writes `expectedRate`) +
   companion `spec_fix` (Confirm writes collected specs onto the item).
@@ -123,9 +129,13 @@ is written to dashboards automatically:
   rates, Management rounding). The model is instructed to NEVER mention,
   hint at, or discuss markup, margin, or vendor cost; vendor identity is
   stripped before the LLM ever sees rate data (`salesSafeQuote`).
-- Rolling conversation memory per enquiry per user (100 msgs, 7d TTL), so
-  multi-turn pricing flows keep context; the chat Refresh button wipes it.
-- Persona: "the sales agent's assistant" — never framed as helping telecallers.
+- Memory is the product-line intake method, not bare chat history: a KV price
+  session per enquiry per user (`enquiry:price:<id>:<who>`, 30-min TTL) holds
+  the resolved product + collected specs across turns (`find_price` writes,
+  `ask_specs`/`quote_price` merge), and question-labeled form answers resolve
+  to storage keys automatically. Rolling conversation history (100 msgs, 7d
+  TTL) covers the prose recall. `POST /api/enquiries/:id/chat/clear` (chat
+  Refresh button) wipes both — same contract as `/api/copilot/:id/chat/clear`.
 
 ## Dashboard
 - Slug: `enquiry-tracker`

@@ -14,9 +14,12 @@
  *
  * This path is fast (<4s typical, edge), handles the same `aiBulkText` vs
  * description branching as the legacy GH runner, and applies fill-empty-only
- * semantics via the shared `applyIntakeBulkResult` helper. Price-memory
- * (HF/Pinecone) is best-effort and skipped when keys are absent — items
- * still land.
+ * semantics via the shared `applyIntakeBulkResult` helper.
+ *
+ * RETIRED: Pinecone price-memory (embeddings + per-category namespaces) was
+ * removed — pricing now comes exclusively from live product-line VendorRates
+ * via the sales chat matcher (match.ts). The intake KV payload keeps
+ * `suggestions: []` / `candidates: []` so the sales UI contract is unchanged.
  */
 import { getGateway, buildVisionUserContent } from '../../shared/ai-gateway';
 import { cacheSet } from '../../shared/cache';
@@ -27,49 +30,6 @@ const ROUTER_SYSTEM_AGNES = `You are a B2B industrial-spare intake for flour-mil
 For EACH item return: {"verbatim": "client wording for the product, copied exactly as written/seen — NEVER rename", "qty": "quantity with unit or empty", "dims": "dimensions as written", "spec": "material/variant/spec detail as written", "name": "short product name derived from verbatim"}.
 Also extract the lead block: {"lead": {"clientCompany": "customer company, or empty", "contactName": "contact person, or empty", "contactEmail": "or empty", "contactPhone": "mobile/phone, or empty", "location": "city/state, or empty", "sourceLead": "lead source like IndiaMART/reference, or empty"}} — NEVER invent; empty when not stated. The sales agent's own name ("Lead of ...") is NOT the customer — ignore it.
 Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
-
-/** Best-effort HF/Pinecone helpers (mirrored from runner, optional). */
-async function embed(texts: string[], env: Record<string, unknown>): Promise<number[][] | null> {
-  const key = String((env as any)?.HF_API_KEY ?? '').trim();
-  if (!key || texts.length === 0) return null;
-  try {
-    const res = await fetch('https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inputs: texts }),
-    });
-    if (!res.ok) return null;
-    const data: any = await res.json();
-    if (Array.isArray(data) && Array.isArray(data[0])) return data as number[][];
-    if (Array.isArray(data) && typeof data[0] === 'number') return [data as number[]];
-    return null;
-  } catch { return null; }
-}
-async function pineconeQuery(env: Record<string, unknown>, namespace: string, vector: number[], topK = 5): Promise<any[] | null> {
-  const host = String((env as any)?.PINECONE_HOST ?? '').trim().replace(/\/+$/, '');
-  const key = String((env as any)?.PINECONE_API_KEY ?? '').trim();
-  if (!host || !key) return null;
-  try {
-    const res = await fetch(`${host}/query`, {
-      method: 'POST',
-      headers: { 'Api-Key': key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ namespace, vector, topK, includeMetadata: true }),
-    });
-    if (!res.ok) return null;
-    const data: any = await res.json();
-    return Array.isArray(data.matches) ? data.matches : [];
-  } catch { return null; }
-}
-function namespaceFor(category: string): string {
-  const c = String(category || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return c || 'uncategorized';
-}
-function routeMatch(score: number, dimsEqual: boolean): string {
-  if (dimsEqual && score >= 0.97) return 'exact';
-  if (score >= 0.85) return 'suggest';
-  return 'miss';
-}
-const canon = (s: string) => String(s || '').toLowerCase().replace(/["″]/g, ' in ').replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 /** ── Call-2 lookup: verbatim line → KYP category (verbatim never touched). ── */
 const normTok = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
@@ -457,41 +417,11 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     kypComplete: kypComplete[i],
   }));
 
-  // Price-memory (best-effort) — gated: only kypComplete items get looked up.
-  // Uncategorized or incomplete items still land but with no price signal until specs are filled.
-  const priceEligible = new Set<number>();
-  outItems.forEach((it: any, i: number) => { if (it.kypComplete === true) priceEligible.add(i); });
-  // Legacy/uncategorized fallback: if we have no eligible items but Pinecone is configured,
-  // keep the old behavior for one run so existing flows don't go dark (remove after GA).
-  const legacyPriceFallback = priceEligible.size === 0 && outItems.length > 0;
+  // RETIRED: Pinecone price-memory removed — pricing comes exclusively from
+  // live product-line VendorRates via the sales chat matcher. Suggestions and
+  // candidates stay empty; the KV shape is unchanged for the sales UI.
   const suggestions: any[] = [];
   const candidates: any[] = [];
-  try {
-    const specTexts = outItems.map((it) => [it.name, (it as any).kypItem, it.qty, it.spec].filter(Boolean).join(' | ').slice(0, 1000));
-    const eligibleIdx = outItems.map((_, i) => i).filter((i) => legacyPriceFallback || priceEligible.has(i));
-    const vecs = eligibleIdx.length ? await embed(eligibleIdx.map((i) => specTexts[i]), env as any) : null;
-    // Map eligible index → vec position
-    const vecByIdx = new Map<number, number[]>();
-    if (vecs) eligibleIdx.forEach((idx, vi) => { if (vecs[vi]) vecByIdx.set(idx, vecs[vi]); });
-    for (let i = 0; i < outItems.length; i++) {
-      const vec = vecByIdx.get(i);
-      if (!vec) continue;
-      const ns = namespaceFor(outItems[i].category);
-      const matches = [
-        ...((await pineconeQuery(env as any, ns, vec)) || []),
-        ...(ns !== 'uncategorized' ? (await pineconeQuery(env as any, 'uncategorized', vec)) || [] : []),
-      ].sort((a, b) => b.score - a.score).slice(0, 5);
-      for (const m of matches) {
-        const md: any = m.metadata || {};
-        const dimsEq = canon(`${md.name} ${md.qty} ${md.spec}`) === canon(specTexts[i]) && canon(specTexts[i]).length > 0;
-        candidates.push({ itemIndex: i, memoryId: m.id, score: m.score, finalRate: md.finalRate, name: md.name, route: routeMatch(m.score, dimsEq) });
-      }
-      const best = candidates.filter((c) => c.itemIndex === i).sort((a, b) => b.score - a.score)[0];
-      if (best && (best.route === 'exact' || best.route === 'suggest')) {
-        suggestions.push({ itemIndex: i, memoryId: best.memoryId, score: best.score, finalRate: best.finalRate, name: best.name, route: best.route });
-      }
-    }
-  } catch { /* best-effort */ }
 
   // Apply via the same result path the runner used, but directly via store + KV
   // (fill-empty-only for fields, bulk-merge for items, KV intake for UI).
