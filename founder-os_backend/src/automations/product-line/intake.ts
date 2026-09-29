@@ -11,7 +11,7 @@
 import type { ToolDefinition } from '../../shared/ai-gateway';
 import { cacheDel, cacheGet, cacheSet } from '../../shared/cache';
 import type { CopilotDef, CopilotExecResult } from '../../copilot/types';
-import { getProductLineData } from './service';
+import { getProductDetail, getProductIndex, getRatesForProduct, getVendorIndex } from './service';
 import { createProduct, createRate, createVendor } from './update';
 import { invalidateProductLineCache } from './service';
 
@@ -99,9 +99,10 @@ function missing(d: IntakeDraft, required: { key: string; question: string }[]):
 
 /** Live catalogue categories (canonical spelling) — new products may ONLY use one of these. */
 async function liveCategories(): Promise<string[]> {
-  const data = await getProductLineData();
+  const products = await getProductIndex().catch(() => []);
   const seen = new Map<string, string>();
-  for (const p of (data?.products ?? []) as any[]) {
+  for (const p of (products ?? []) as any[]) {
+    if (p?.active === false) continue;
     const c = String(p?.category ?? '').trim();
     if (c && !seen.has(c.toLowerCase())) seen.set(c.toLowerCase(), c);
   }
@@ -116,8 +117,8 @@ function validDate(v: unknown): string | undefined {
 }
 
 async function requiredSpecs(productId: string): Promise<{ key: string; question: string }[]> {
-  const data = await getProductLineData();
-  return ((data.guide as any)?.[productId] ?? [])
+  const detail = await getProductDetail(String(productId)).catch(() => null);
+  return (((detail as any)?.guide ?? []) as any[])
     .filter((g: any) => g?.active && g?.isRequired)
     .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     .map((g: any) => ({ key: String(g.attrKey), question: String(g.question) }));
@@ -126,8 +127,8 @@ async function requiredSpecs(productId: string): Promise<{ key: string; question
 /** FULL checklist for the matched product (required + optional) — the model
  *  gets complete raw questions, never bare keys. */
 async function fullChecklist(productId: string): Promise<{ key: string; question: string; note: string; required: boolean }[]> {
-  const data = await getProductLineData();
-  return (((data.guide as any)?.[productId] ?? []) as any[])
+  const detail = await getProductDetail(String(productId)).catch(() => null);
+  return ((((detail as any)?.guide ?? []) as any[]) as any[])
     .filter((g: any) => g?.active)
     .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     .map((g: any) => ({
@@ -149,9 +150,9 @@ async function specDetails(productId: string | undefined, specs: Record<string, 
 
 /** attrKey → raw question text for DISPLAY (storage keeps keying off attrKey). */
 async function specLabels(productId: string): Promise<Map<string, string>> {
-  const data = await getProductLineData();
+  const detail = await getProductDetail(String(productId)).catch(() => null);
   const m = new Map<string, string>();
-  for (const g of (((data.guide as any)?.[productId] ?? []) as any[])) {
+  for (const g of ((((detail as any)?.guide ?? []) as any[]))) {
     if (g?.active) m.set(String(g.attrKey), String(g.question));
   }
   return m;
@@ -161,12 +162,13 @@ function norm(s: unknown): string {
   return String(s ?? '').trim().toLowerCase();
 }
 
-/** Scored catalogue match: exact name/alias (2) beats partial (1). */
-function matchProducts(data: any, q: string): { row: any; exact: boolean }[] {
+/** Scored catalogue match: exact name/alias (2) beats partial (1). Reads the
+ *  slim product index — never the full-table payload. */
+function matchProducts(products: any[], q: string): { row: any; exact: boolean }[] {
   const needle = norm(q);
   if (!needle) return [];
   const out: { row: any; exact: boolean }[] = [];
-  for (const p of (data.products ?? []) as any[]) {
+  for (const p of (products ?? []) as any[]) {
     const name = norm(p.name);
     const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
     const cat = norm(p.category);
@@ -221,8 +223,8 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
   }
 
   if (name === 'find_product') {
-    const data = await getProductLineData();
-    const found = matchProducts(data, String(args.query ?? ''));
+    const products = await getProductIndex().catch(() => []);
+    const found = matchProducts(products, String(args.query ?? ''));
     const exact = found.filter((f) => f.exact);
     return {
       result: {
@@ -249,14 +251,14 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
     // invented. The frontend renders them one question at a time and posts
     // the answers back into chat; file them with update_draft as usual.
     if (!d.productId) return { result: { error: 'no product resolved yet — match or draft it first' } };
-    const data = await getProductLineData();
-    const guide = (((data.guide as any)?.[d.productId] ?? []) as any[])
+    const detail = await getProductDetail(d.productId).catch(() => null);
+    const guide = ((((detail as any)?.guide ?? []) as any[]))
       .filter((g: any) => g?.active && g?.isRequired)
       .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     // Distinct past values per spec key (most-used first) → option lists.
+    // Reads ALL rates for this product (no take-cap) via the per-product cache.
     const past: Record<string, Map<string, number>> = {};
-    for (const r of ((data.rates ?? []) as any[])) {
-      if (String((r as any)?.productId ?? '') !== String(d.productId)) continue;
+    for (const r of await getRatesForProduct(d.productId).catch(() => [])) {
       const vals = (r as any)?.attrValues;
       if (!vals || typeof vals !== 'object') continue;
       for (const [k, v] of Object.entries(vals as Record<string, unknown>)) {
@@ -304,8 +306,8 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
 
   if (name === 'find_vendor') {
     const needle = String(args.query ?? '').trim().toLowerCase();
-    const data = await getProductLineData();
-    const found = (data.vendors ?? [])
+    const vendors = await getVendorIndex().catch(() => []);
+    const found = vendors
       .filter((v: any) => !needle || String(v.name ?? '').toLowerCase().includes(needle))
       .slice(0, 5);
     return {
@@ -350,8 +352,8 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
       return { result: { error: 'product category needed — ask the user to pick one', validCategories: cats } };
     }
     // Safety: never draft-new when the catalogue already has it (name/alias).
-    const data = await getProductLineData();
-    const clash = matchProducts(data, nameArg)[0];
+    const products = await getProductIndex().catch(() => []);
+    const clash = matchProducts(products, nameArg)[0];
     if (clash) return { result: { error: `already exists as "${clash.row.name}" — set productId via update_draft instead`, productId: clash.row.id } };
     d.productName = nameArg;
     d.productCategory = catHit;
@@ -479,13 +481,13 @@ async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Pro
       // Resolve ids (execute may follow vendor/product confirms in any order).
       let productId = d.productId;
       if (!productId && d.productName) {
-        const data = await getProductLineData();
-        productId = matchProducts(data, d.productName)[0]?.row.id;
+        const products = await getProductIndex().catch(() => []);
+        productId = matchProducts(products, d.productName)[0]?.row.id;
       }
       let vendorId = d.vendorId;
       if (!vendorId && d.vendorName) {
-        const data = await getProductLineData();
-        vendorId = (data.vendors ?? []).find((v: any) => String(v.name ?? '').toLowerCase() === d.vendorName!.toLowerCase())?.id;
+        const vendors = await getVendorIndex().catch(() => []);
+        vendorId = vendors.find((v: any) => String(v.name ?? '').toLowerCase() === d.vendorName!.toLowerCase())?.id;
       }
       const price = d.price ?? num(action?.price);
       const unit = d.unit ?? str(action?.unit, 120);

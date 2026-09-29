@@ -2,23 +2,37 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import Markdown from "./Markdown";
+import SpecForm, { type SpecQuestion } from "./SpecForm";
 
 interface ChatProposal {
-  kind: "comment" | "spec_fix";
+  kind: "comment" | "spec_fix" | "price_quote" | "spec_form" | "price_table";
   text?: string;
   scope?: string;
   itemIndex?: number;
   spec?: string;
   label: string;
+  productId?: string;
+  productName?: string;
+  markedPrice?: number;
+  unit?: string;
+  confidence?: number;
+  quoteAgeDays?: number | null;
+  moq?: string | null;
+  deliveryDays?: number | null;
+  questions?: { key: string; label: string; note?: string; required?: boolean; type?: "options" | "text"; options?: string[] }[];
+  rows?: { variation: string; markedPrice: number; unit: string; confidence: number; quoteAgeDays?: number | null; moq?: string | null; deliveryDays?: number | null; best?: boolean }[];
 }
 interface ChatActivity { tool: string; label: string; }
 interface ChatMsg { role: "user" | "assistant"; text: string; proposals?: ChatProposal[]; activity?: ChatActivity[]; }
 
-const SUGGESTIONS = ["What's missing on this enquiry?", "Draft a note for the enquiry thread", "Help me fix an item spec"];
+const SUGGESTIONS = ["What's missing on this enquiry?", "Get AI price for an item", "Draft a note for the enquiry thread", "Help me fix an item spec"];
 const TOOL_ICON: Record<string, string> = {
   get_enquiry_summary: "📋",
   propose_comment: "✍️",
   propose_spec_fix: "🛠️",
+  find_price: "🔍",
+  ask_specs: "📝",
+  quote_price: "💰",
 };
 
 export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, userInitial = "S" }: {
@@ -337,9 +351,75 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                               {m.proposals.map((p, pi) => {
                                 const key = mi * 100 + pi;
                                 const done = confirmed.has(key);
+                                if (p.kind === "price_table" && Array.isArray(p.rows) && p.rows.length > 0) {
+                                  return (
+                                    <div key={pi} className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
+                                      <p className="px-4 pt-3 pb-2 font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
+                                      <table className="w-full text-[12px] leading-snug">
+                                        <thead>
+                                          <tr className="text-left text-[10px] uppercase tracking-wider text-[var(--text-tertiary)] border-y border-white/[0.06]">
+                                            <th className="px-4 py-1.5 font-bold">Variation</th>
+                                            <th className="px-2 py-1.5 font-bold text-right">Price</th>
+                                            <th className="px-2 py-1.5 font-bold text-right">Match</th>
+                                            <th className="px-4 py-1.5 font-bold text-right">Age</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {p.rows.map((r, ri) => (
+                                            <tr key={ri} className={`border-b border-white/[0.04] last:border-0 ${r.best ? "bg-emerald-500/[0.07]" : ""}`}>
+                                              <td className="px-4 py-2 text-[var(--text-secondary)]">
+                                                {r.best && <span className="mr-1.5 inline-block text-[10px] font-extrabold px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 align-middle">BEST</span>}
+                                                {r.variation}
+                                                {(r.moq || r.deliveryDays != null) && (
+                                                  <span className="block text-[11px] text-[var(--text-tertiary)]">
+                                                    {[r.moq ? `MOQ ${r.moq}` : null, r.deliveryDays != null ? `${r.deliveryDays}d delivery` : null].filter(Boolean).join(" · ")}
+                                                  </span>
+                                                )}
+                                              </td>
+                                              <td className="px-2 py-2 text-right font-extrabold text-white whitespace-nowrap">
+                                                ₹{Number(r.markedPrice).toLocaleString("en-IN")}{r.unit ? <span className="font-bold text-[var(--text-tertiary)]">/{r.unit}</span> : null}
+                                              </td>
+                                              <td className="px-2 py-2 text-right font-bold text-[var(--text-secondary)] whitespace-nowrap">{(Number(r.confidence) * 100).toFixed(0)}%</td>
+                                              <td className="px-4 py-2 text-right text-[var(--text-tertiary)] whitespace-nowrap">{r.quoteAgeDays != null ? `${r.quoteAgeDays}d` : "—"}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  );
+                                }
+                                if (p.kind === "spec_form" && Array.isArray(p.questions) && p.questions.length > 0) {
+                                  const qs: SpecQuestion[] = p.questions.map((q) => ({
+                                    key: q.key,
+                                    label: q.label,
+                                    type: q.type === "options" ? "options" : "text",
+                                    options: Array.isArray(q.options) ? q.options : [],
+                                    hint: q.note,
+                                    required: q.required !== false,
+                                    section: "spec",
+                                  }));
+                                  return (
+                                    <SpecForm
+                                      key={pi}
+                                      title={p.productName ?? p.label}
+                                      questions={qs}
+                                      onSubmit={(text) => void send(text)}
+                                    />
+                                  );
+                                }
                                 return (
                                   <div key={pi} className="rounded-xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/[0.07] to-violet-500/[0.07] backdrop-blur-sm px-4 py-3 hover:border-indigo-500/30 hover:shadow-[0_4px_16px_rgba(99,102,241,0.12)] hover:scale-[1.01] transition-all duration-300">
                                     <p className="font-bold text-[13px] text-indigo-300">{p.label}</p>
+                                    {p.kind === "price_quote" && typeof p.markedPrice === "number" && (
+                                      <p className="mt-1 text-[22px] font-extrabold text-white tracking-tight">
+                                        ₹{p.markedPrice.toLocaleString("en-IN")}{p.unit ? <span className="text-[13px] font-bold text-[var(--text-secondary)]">/{p.unit}</span> : null}
+                                        {typeof p.confidence === "number" && (
+                                          <span className="ml-2 align-middle text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                            {(p.confidence * 100).toFixed(0)}% match
+                                          </span>
+                                        )}
+                                      </p>
+                                    )}
                                     {(p.text || p.spec) && <p className="mt-1.5 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
                                     <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-500 hover:to-violet-500 hover:shadow-[0_4px_12px_rgba(99,102,241,0.4)] hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer border-0 transition-all duration-300">
                                       {done ? "✓ Applied" : "Confirm & apply →"}

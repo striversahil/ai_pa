@@ -121,10 +121,28 @@ Rules: "category" is the category NUMBER as a bare number; "item" is the item_na
 const SPEC_CHECK_SYSTEM = `You are a spec-completeness checker for flour-mill spare parts. For EACH item you receive its collected spec text and its checklist (required_attributes). Return which checklist entries are STILL MISSING.
 Rules: an entry is satisfied if the spec text contains a concrete value for it — e.g. "A70" satisfies V-belt number, "Fenner"/"Gates"/any brand token satisfies brand preference, "6 GG" satisfies grade, "115 cm" satisfies width, "2 pcs"/"10 meters"/"3m" satisfies quantity. A brand token anywhere (verbatim, spec, qty) counts; "as per sample" alone does NOT satisfy; return STRICT JSON {"checks":[{"missing":[0,2]}, ...]} where missing lists the 0-based indices of STILL-MISSING entries, one entry per input item, in order. Never invent checklist text — only return indices.`;
 
+/** Rate-limit detector (shared by the attempt loop + the terminal branch):
+ *  the gateway reports a drained pool as "All AI keys exhausted after 5
+ *  attempts" with no 429/status attached — without the `exhausted` arm that
+ *  verdict misclassifies as terminal failure and clears the flags, killing
+ *  the sweeper's automatic retry during a storm. */
+function isRateLimited(e: any): boolean {
+  const msg = String(e?.message ?? e ?? '');
+  return /429|rate-limit|1015|exhausted/i.test(msg) || (e as any)?.status === 429;
+}
+
 export async function runAgnesVisionIntake(env: Record<string, unknown>, store: EnquiryStore, id: string): Promise<void> {
   let enquiry: any;
-  try { enquiry = await store.getEnquiry(id); } catch { return; }
-  if (!enquiry) return;
+  try { enquiry = await store.getEnquiry(id); } catch (e: any) {
+    // Never die silently here — a dropped initial read used to masquerade as
+    // "kick never fired" with zero log output. Surface it for `wrangler tail`.
+    console.error(`[vision-intake] ${id}: initial read failed (${String(e?.message ?? e).slice(0, 160)}) — intake aborted`);
+    return;
+  }
+  if (!enquiry) {
+    console.error(`[vision-intake] ${id}: row not found — intake aborted`);
+    return;
+  }
 
   const gateway = getGateway(env as any);
   const health = gateway.health();
@@ -198,7 +216,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       } catch (e: any) {
         lastErr = e;
         const msg = String(e?.message ?? e);
-        const is429 = /429|rate-limit|1015/i.test(msg) || (e as any)?.status === 429;
+        const is429 = isRateLimited(e);
         const is1015 = /1015/i.test(msg);
         console.log(`[vision-intake] ${id}: provider=${prov} attempt ${attempt + 1}/2 failed (${msg.slice(0, 120)})${is1015 ? ' [1015 WAF]' : ''}`);
         if (is429) {
@@ -210,9 +228,9 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     }
   }
   if (lastErr && !routed) {
-    const is429 = /429|rate-limit|1015/i.test(String(lastErr?.message ?? '')) || (lastErr as any)?.status === 429;
+    const is429 = isRateLimited(lastErr);
     if (is429) {
-      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.join('→')}) — writing empty intake so UI unsticks, will retry on next edit`);
+      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.join('→')}) — writing empty intake so UI unsticks; flags stay set so the next edit or the 15-min sweeper retries`);
       try {
         await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000);
         try {
@@ -233,6 +251,33 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     }
     if (is429) return;
     try { await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000); } catch {}
+    // Terminal failure (non-429): NEVER leave aiPending set with no retry.
+    // Clear the flags (raw items stay, same as the zero-lines path) and mark
+    // done so the UI stops spinning. Re-read fresh first — the row may have
+    // been edited during the vision call and a stale write must not clobber it.
+    try {
+      let fresh: any = null;
+      try { fresh = await store.getEnquiry(id); } catch { fresh = null; }
+      const exItems = Array.isArray(fresh?.items) ? fresh.items : [];
+      const { applyIntakeBulkResult } = await import('./update');
+      const cleared = (applyIntakeBulkResult as any)(exItems, []);
+      if (cleared) {
+        try { await store.updateEnquiry(id, { items: cleared }).catch(() => null); } catch {}
+      }
+    } catch {}
+    try {
+      const db: any = (env as any)?.DB;
+      if (db) {
+        const nowIso = new Date().toISOString();
+        let doneAt = nowIso;
+        try { const cur: any = await store.getEnquiry(id).catch(() => null); doneAt = String((cur as any)?.updatedAt ?? nowIso); } catch {}
+        const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
+        await db.batch([
+          db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:done:' + id, doneAt, nowIso),
+          db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + id, expired, nowIso),
+        ]);
+      }
+    } catch {}
     return;
   }
   if (!routed || !Array.isArray(routed.lines) || routed.lines.length === 0) {
@@ -464,7 +509,10 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       name: it.name, qty: it.qty, spec: it.spec, media: [], category: it.category, verbatim: it.verbatim,
       kypItem: it.kypItem, kypMissing: it.kypMissing, kypComplete: it.kypComplete,
     }));
-  } else if (outItems.length > 0 && existingItems.length > 0) {
+  } else if (existingItems.length > 0) {
+    // NOTE: no `outItems.length > 0` guard — on zero router lines the helper
+    // clears the aiPending flags (raw items stay) so a spent job can never
+    // wedge the row, per its contract. Null = no pending block, keep as-is.
     const { applyIntakeBulkResult } = await import('./update');
     const merged: any = (applyIntakeBulkResult as any)(existingItems, outItems);
     if (merged) (updates as any).items = merged;
@@ -505,4 +553,73 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     }
   } catch {}
   console.log(`[vision-intake] ${id}: provider=${successProvider} items=${outItems.length} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
+}
+
+/**
+ * sweepStaleAiPending — self-healing backstop for intake jobs that died with
+ * zero output (kicked but the waitUntil task never wrote KV or markers, or
+ * pre-fix fossils still carrying `aiPending`).
+ *
+ * Finds rows still carrying `"aiPending":true` that haven't been touched for
+ * `olderThanMin` (default 10 — a fresh save has its own in-flight intake, so
+ * never double-kick) and re-runs the intake for up to `maxRows` (default 3,
+ * oldest first, sequential to bound edge CPU). A per-row sweep-claim backs
+ * off repeats to one attempt/hour so a permanently-failing row can't burn
+ * LLM calls every sweep. Pure D1 + store — no Zoho/NeoDove traffic.
+ */
+export async function sweepStaleAiPending(
+  env: Record<string, unknown>,
+  store: EnquiryStore,
+  opts?: { olderThanMin?: number; maxRows?: number },
+): Promise<{ checked: number; rekicked: string[] }> {
+  const olderThanMs = (opts?.olderThanMin ?? 10) * 60_000;
+  const maxRows = opts?.maxRows ?? 3;
+  const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+  const backoffCutoff = new Date(Date.now() - 60 * 60_000).toISOString();
+  const out = { checked: 0, rekicked: [] as string[] };
+  const db: any = (env as any)?.DB;
+  if (!db) return out;
+  let ids: string[] = [];
+  try {
+    const res: any = await db
+      .prepare(`SELECT id FROM Enquiry WHERE items LIKE ? AND updatedAt < ? ORDER BY updatedAt ASC LIMIT ?`)
+      .bind('%"aiPending":true%', cutoff, maxRows)
+      .all();
+    const rows = Array.isArray(res?.results) ? res.results : [];
+    ids = rows.map((r: any) => String(r?.id ?? '')).filter(Boolean);
+  } catch (e: any) {
+    console.log(`[intake-sweep] candidate scan failed (${String(e?.message ?? e).slice(0, 120)})`);
+    return out;
+  }
+  out.checked = ids.length;
+  if (!ids.length) return out;
+  for (const id of ids) {
+    try {
+      // Backoff: skip rows swept within the hour.
+      let claimedAt = '';
+      try {
+        const c: any = await db.prepare(`SELECT value FROM Setting WHERE key = ?`).bind('enquiry:intake:sweep:' + id).first();
+        claimedAt = String((c as any)?.value ?? '');
+      } catch {}
+      if (claimedAt && claimedAt > backoffCutoff) {
+        console.log(`[intake-sweep] ${id}: swept recently (${claimedAt}) — backing off`);
+        continue;
+      }
+      // Re-verify the flag is still set (row may have healed since the scan).
+      let cur: any = null;
+      try { cur = await store.getEnquiry(id); } catch { cur = null; }
+      const stillPending = Array.isArray((cur as any)?.items) && (cur as any).items.some((it: any) => it?.aiPending === true);
+      if (!cur || !stillPending) continue;
+      const nowIso = new Date().toISOString();
+      try {
+        await db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:sweep:' + id, nowIso, nowIso).run();
+      } catch {}
+      console.log(`[intake-sweep] ${id}: re-kicking stale intake`);
+      await runAgnesVisionIntake(env, store, id);
+      out.rekicked.push(id);
+    } catch (e: any) {
+      console.log(`[intake-sweep] ${id} failed (${String(e?.message ?? e).slice(0, 160)})`);
+    }
+  }
+  return out;
 }

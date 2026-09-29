@@ -5,8 +5,10 @@
 // writes — the catalogue is edited through the dashboard modals (MIS-gated).
 import type { ToolDefinition } from '../../shared/ai-gateway';
 import type { CopilotDef } from '../../copilot/types';
-import { getProductDetail, getProductLineData } from './service';
-import type { ProductLineData, RateRow } from './types';
+import { prisma } from '../../shared/prisma';
+import { countRatesForVendor, getProductDetail, getProductIndex, getRatesForProduct, getVendorIndex } from './service';
+import type { ProductIndexRow } from './service';
+import type { RateRow } from './types';
 
 interface ProductCtx {
   env: Record<string, unknown>;
@@ -38,10 +40,10 @@ function rateView(r: RateRow) {
   };
 }
 
-function matchProduct(data: ProductLineData, q: string) {
+function matchProduct(products: ProductIndexRow[], q: string) {
   const needle = q.trim().toLowerCase();
   if (!needle) return [];
-  return (data.products ?? []).filter((p) =>
+  return (products ?? []).filter((p) =>
     p.id === q.trim() ||
     p.name.toLowerCase().includes(needle) ||
     p.category.toLowerCase().includes(needle) ||
@@ -51,28 +53,32 @@ function matchProduct(data: ProductLineData, q: string) {
 
 async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>): Promise<{ result: unknown }> {
   if (name === 'search_products') {
-    const data = await getProductLineData();
-    const found = matchProduct(data, String(args.query ?? '')).slice(0, 8);
+    const products = await getProductIndex().catch(() => []);
+    const found = matchProduct(products, String(args.query ?? '')).slice(0, 8);
     return {
       result: {
-        products: found.map((p) => {
-          const rates = (data.rates ?? []).filter((r) => r.productId === p.id && r.active && r.pricePerUnit != null);
+        products: await Promise.all(found.map(async (p) => {
+          // ALL rates for the product (no take-cap) — accurate at any scale.
+          const rates = (await getRatesForProduct(p.id).catch(() => []))
+            .filter((r) => r.active && r.pricePerUnit != null);
           const best = rates.length ? Math.min(...rates.map((r) => effectivePrice(r) ?? Infinity)) : null;
+          const guideQuestions = await (prisma as any).kypGuide
+            .count({ where: { productId: p.id } }).catch(() => null);
           return {
             id: p.id, name: p.name, category: p.category,
             aliases: p.aliases ?? [], active: p.active,
-            guideQuestions: p.guideCount, quotes: p.rateCount,
+            guideQuestions, quotes: rates.length,
             bestEffectivePrice: best == null || !isFinite(best) ? null : Math.round(best * 100) / 100,
           };
-        }),
+        })),
       },
     };
   }
 
   if (name === 'get_product_detail') {
     const q = String(args.product ?? '');
-    const data = await getProductLineData();
-    const hit = matchProduct(data, q)[0];
+    const products = await getProductIndex().catch(() => []);
+    const hit = matchProduct(products, q)[0];
     if (!hit) return { result: { error: `no product matches "${q.slice(0, 80)}"` } };
     const detail = await getProductDetail(hit.id);
     return {
@@ -88,11 +94,11 @@ async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>
 
   if (name === 'compare_quotes') {
     const q = String(args.product ?? '');
-    const data = await getProductLineData();
-    const hit = matchProduct(data, q)[0];
+    const products = await getProductIndex().catch(() => []);
+    const hit = matchProduct(products, q)[0];
     if (!hit) return { result: { error: `no product matches "${q.slice(0, 80)}"` } };
-    const rows = (data.rates ?? [])
-      .filter((r) => r.productId === hit.id && r.active && r.pricePerUnit != null)
+    const rows = (await getRatesForProduct(hit.id).catch(() => []))
+      .filter((r) => r.active && r.pricePerUnit != null)
       .map((r) => ({ ...rateView(r), _eff: effectivePrice(r) ?? Infinity }))
       .sort((a, b) => a._eff - b._eff)
       .slice(0, 10)
@@ -102,17 +108,30 @@ async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>
 
   if (name === 'vendor_lookup') {
     const needle = String(args.query ?? '').trim().toLowerCase();
-    const data = await getProductLineData();
-    const found = (data.vendors ?? [])
+    const vendors = await getVendorIndex().catch(() => []);
+    const found = vendors
       .filter((v) => !needle || v.name.toLowerCase().includes(needle) || String(v.location ?? '').toLowerCase().includes(needle))
       .slice(0, 8);
+    // Full contact rows for the ≤8 hits only (slim index carries no contacts).
+    const ids = found.map((v) => v.id);
+    const full = new Map<string, any>();
+    if (ids.length > 0) {
+      const rows = await (prisma as any).vendor.findMany({ where: { id: { in: ids } } }).catch(() => []);
+      for (const r of (rows as any[]) ?? []) full.set(String(r.id), r);
+    }
     return {
       result: {
-        vendors: found.map((v) => ({
-          name: v.name, type: v.vendorType || '', active: v.active,
-          contactPerson: v.contactPerson, phone1: v.contactPhone1, phone2: v.contactPhone2,
-          location: v.location, yearEstablished: v.yearEstablished,
-          quotes: v.rateCount,
+        vendors: await Promise.all(found.map(async (v) => {
+          const f = full.get(v.id) ?? {};
+          return {
+            name: v.name, type: v.vendorType || '', active: v.active,
+            contactPerson: f.contactPerson != null ? String(f.contactPerson) : null,
+            phone1: f.contactPhone1 != null ? String(f.contactPhone1) : null,
+            phone2: f.contactPhone2 != null ? String(f.contactPhone2) : null,
+            location: v.location,
+            yearEstablished: f.yearEstablished != null ? Number(f.yearEstablished) : null,
+            quotes: await countRatesForVendor(v.id),
+          };
         })),
       },
     };

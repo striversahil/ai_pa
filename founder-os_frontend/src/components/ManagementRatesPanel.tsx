@@ -414,7 +414,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // PATCHed straight away so it can never be lost by closing the panel —
   // the old staged-then-save flow silently dropped flags on locked
   // (finalized/sent) enquiries where Save is disabled, so procurement was
-  // never flagged. Reopens a finalized decision server-side.
+  // never flagged. The flag is a pure signal: existing quotes and decisions
+  // stay intact, and the handoff reopens server-side.
   const sendFlagNow = (i: number) => {
     const note = reqNote.trim();
     setSaveError(null);
@@ -1186,7 +1187,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           Cancel
                         </button>
                       </div>
-                      <p className="text-[10px] text-zinc-500">Sends immediately — procurement is flagged live, no Save needed.</p>
+                      <p className="text-[10px] text-zinc-500">Sends immediately — procurement is flagged live, no Save needed. Existing quotes are kept.</p>
                     </div>
                   ) : (
                     <button type="button" onClick={() => { setReqOpen(i); setReqNote(""); }}

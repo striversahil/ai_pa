@@ -51,6 +51,12 @@ Items arriving from the unstructured intake may carry an AI `category`
 and never reach this queue. Price-memory suggestions served to this view carry
 names/routes only (no final rates — same margin policy as `stripMarginFields`).
 
+## AI price fallback
+The sales chat prices items from past catalogue rates when confident; items
+it cannot match (no catalogue hit, or match confidence below 0.6) arrive here
+through the unchanged manual flow. Price tools are withheld from this
+restricted view entirely (`modules/enquiries/chat.ts`).
+
 ## Sales alternate requests
 Sales can request an alternate make/option directly (`variationRequest` on
 the item — no management approval). It renders as a sky-blue banner on the

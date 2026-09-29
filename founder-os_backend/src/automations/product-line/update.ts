@@ -1,5 +1,5 @@
 import { prisma } from '../../shared/prisma';
-import { invalidateProductLineCache, invalidateProductDetailCache } from './service';
+import { invalidateProductLineCache, invalidateProductDetailCache, invalidateProductIndex, invalidateProductRatesCache, invalidateVendorIndex } from './service';
 
 function fail(msg: string): never {
   throw new Error(msg);
@@ -42,7 +42,14 @@ function parseAliasesInput(v: unknown): string | null {
 
 async function touched(productId?: string): Promise<void> {
   await invalidateProductLineCache();
-  if (productId) await invalidateProductDetailCache(productId);
+  // Scale-path caches: index rebuilds on next read (one slim query); rates
+  // cache is per-product. Unconditional — correctness over micro-opt.
+  await invalidateProductIndex().catch(() => {});
+  await invalidateVendorIndex().catch(() => {});
+  if (productId) {
+    await invalidateProductDetailCache(productId);
+    await invalidateProductRatesCache(productId).catch(() => {});
+  }
 }
 
 async function touchedGuide(guideId?: string, productId?: string): Promise<void> {

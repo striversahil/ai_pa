@@ -511,14 +511,14 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">Complete the spec above to see price — lookup is gated on completeness.</p>
                       )}
                       {!redacted && !it.specIssue && (it.thread ?? []).length > 0 && (
-                        <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
+                        <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                       )}
                        {it.specIssue && !redacted && !it.rateAvailable && !(it as any).notAvailable && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
                           <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
-                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
+                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                           {editable && (
                             remarkIdx === idx ? (
                               <div className="mt-2 space-y-1.5">
@@ -552,7 +552,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
                           )}
                           <p className="mt-1 text-[var(--text-tertiary)]">Sales sees this item as not available.</p>
-                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted"] : []} />
+                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                         </div>
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}

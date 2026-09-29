@@ -48,6 +48,17 @@ export function canConcludeProcurement(me: MeResponse): boolean {
   return ((me as any).scopes || []).includes('procurement');
 }
 
+/** May see the management↔procurement request signal (`ratesRequested` +
+ *  `request` thread entries): management plus anyone holding the
+ *  `procurement` scope. Plain sales readers must never see it — internal
+ *  negotiation (which vendor, what was wrong with a quote) stays between
+ *  the two desks. */
+export function canSeeProcurementRequests(me: MeResponse): boolean {
+  if (!me) return false;
+  if (canManageRates(me)) return true;
+  return ((me as any).scopes || []).includes('procurement');
+}
+
 /** Margin fields are Management-only: non-privileged readers see final rates
  *  but never the chosen vendor NAME or the markup. Vendor-level discounts
  *  stay hidden; per-quote `selected` flag locates the decided row.
@@ -56,14 +67,24 @@ export function canConcludeProcurement(me: MeResponse): boolean {
  *  option + green final rate + forwarded salesNote only.
  *  Item thread is the common sales↔procurement channel (per-item, always open,
  *  even after sent — negotiation stays separate). Sales sees thread but
- *  quoted entries with vendor names are stripped (internal). */
-export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T {
+ *  quoted entries with vendor names are stripped (internal).
+ *  With `opts.hideRequests` (sales readers — see canSeeProcurementRequests),
+ *  the management↔procurement request signal is additionally removed:
+ *  `ratesRequested`/`ratesRequestedAt` fields and `request` thread entries
+ *  never reach sales. Flag/fix/remark entries stay (sales fixes specs and
+ *  reads forwarded management remarks by design). */
+export function stripMarginFields<T extends Record<string, any>>(enquiry: T, opts?: { hideRequests?: boolean }): T {
   if (!enquiry || !Array.isArray((enquiry as any).items)) return enquiry;
   return {
     ...(enquiry as any),
     items: (enquiry as any).items.map((it: any) => {
       if (!it || typeof it !== 'object') return it;
       const { selectedVendor, markup, ...rest } = it;
+      // Sales must never see the management↔procurement request signal.
+      if (opts?.hideRequests) {
+        delete (rest as any).ratesRequested;
+        delete (rest as any).ratesRequestedAt;
+      }
       if (Array.isArray((rest as any).rates)) {
         (rest as any).rates = (rest as any).rates.map((r: any) => {
           if (!r || typeof r !== 'object') return r;
@@ -79,9 +100,11 @@ export function stripMarginFields<T extends Record<string, any>>(enquiry: T): T 
         });
       }
       // Thread is common channel — keep for sales but strip internal quoted vendor leaks.
+      // `request` entries are the management→procurement ask (internal) — hidden from sales.
       if (Array.isArray((rest as any).thread)) {
         (rest as any).thread = (rest as any).thread.filter((e: any) => {
           if (e?.kind === 'quoted' && String(e?.by ?? '') !== 'sales') return false;
+          if (opts?.hideRequests && e?.kind === 'request') return false;
           return true;
         });
       }

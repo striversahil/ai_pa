@@ -1,0 +1,44 @@
+"""Shared Agnes API client + prompts for the content-agent experiment."""
+import base64, json, os, sys, urllib.request
+BASE = os.environ.get("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").rstrip("/")
+TEXT_MODEL = os.environ.get("AGNES_TEXT_MODEL", "agnes-3.0-flash")
+IMAGE_MODEL = os.environ.get("AGNES_IMAGE_MODEL", "agnes-image-2.5-flash")
+def api_post(path, payload, timeout=180):
+    key = os.environ.get("AGNES_API_KEY", "")
+    if not key:
+        sys.exit("AGNES_API_KEY is not set. export AGNES_API_KEY first.")
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(BASE + path, data=body,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+def chat(messages, max_tokens=1000, temperature=0.5):
+    d = api_post("/chat/completions", {"model": TEXT_MODEL, "messages": messages,
+        "max_tokens": max_tokens, "temperature": temperature})
+    return d["choices"][0]["message"]["content"], d.get("usage", {})
+def gen_image(prompt, out_path, size="1024x1024"):
+    d = api_post("/images/generations", {"model": IMAGE_MODEL, "prompt": prompt, "n": 1, "size": size}, timeout=300)
+    item = d["data"][0]
+    raw = base64.b64decode(item["b64_json"]) if item.get("b64_json") else None
+    if raw is None and item.get("url"):
+        with urllib.request.urlopen(item["url"], timeout=120) as r:
+            raw = r.read()
+    if raw is None:
+        raise RuntimeError("No image payload: " + str(d)[:300])
+    with open(out_path, "wb") as f:
+        f.write(raw)
+    return d.get("task_id", "")
+RESEARCH_SYS = ("You are the RESEARCH skill of the Ampfield Energy LinkedIn Content Agent. "
+    "Tone: technical-credible, plain-English, engineer-founder. Audience: utility planners, "
+    "renewable developers, policy analysts. Output a structured research_brief with Context "
+    "(1-2 sentences), Key facts (3-5 bullets with specific numbers), Audience angles "
+    "(utility planner, renewable developer, policy analyst), Risks (claims to avoid). "
+    "No buzzwords like game-changing, clean energy future, transition.")
+WRITING_SYS = ("You are the WRITING skill of the Ampfield Energy LinkedIn Content Agent. "
+    "Brand voice: technical-credible, plain-English, engineer-founder. Short paragraphs, one idea "
+    "each. Open with concrete detail, never buzzwords (no game-changing, next-gen, "
+    "clean energy future, no exclamation points, no em dashes). 200-400 words. "
+    "Structure: Hook (1-2 sentences), Body (2-4 paragraphs), Close (takeaway/question).")
+EDITING_SYS = ("You are the EDITING skill of the Ampfield Energy LinkedIn Content Agent. Refine, do "
+    "not rewrite. Remove vague adjectives, no exclamation points, no em dashes, short paragraphs, "
+    "engineer-founder voice. Output ONLY the edited post, no commentary.")

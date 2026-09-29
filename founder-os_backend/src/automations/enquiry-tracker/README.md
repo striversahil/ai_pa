@@ -102,6 +102,31 @@ posts only `procurement` (its queue modal mounts `ProcurementThread`); the
 redacted API + redaction cache exclude `sales` rows entirely. Live broadcasts
 stay summary-only (+ `visibility` in the event extra).
 
+## Sales price copilot (chat-only AI pricing)
+
+The per-enquiry `ChatbaseCopilot` (on `EnquiryDetail`, backend
+`modules/enquiries/chat.ts` on the shared copilot engine) prices items from
+the live product-line catalogue — everything happens inside the chat, nothing
+is written to dashboards automatically:
+
+- Tools (sales/management only; blocked in the procurement view):
+  `find_price` (resolves the item's `kypItem` against the live catalogue via
+  the slim product index) → `ask_specs` (stepped `spec_form` card, options
+  mined from past rates) → `quote_price` (scores ALL past rates per product,
+  no 300-cap).
+- Proposals: `price_table` (up to 5 vendor-blind variations with match % —
+  view-only) + `price_quote` (best match, Confirm writes `expectedRate`) +
+  companion `spec_fix` (Confirm writes collected specs onto the item).
+- Below 0.6 confidence there is no apply card — the item routes to the manual
+  procurement queue instead.
+- Shown prices are final customer prices (flat +25% over effective vendor
+  rates, Management rounding). The model is instructed to NEVER mention,
+  hint at, or discuss markup, margin, or vendor cost; vendor identity is
+  stripped before the LLM ever sees rate data (`salesSafeQuote`).
+- Rolling conversation memory per enquiry per user (100 msgs, 7d TTL), so
+  multi-turn pricing flows keep context; the chat Refresh button wipes it.
+- Persona: "the sales agent's assistant" — never framed as helping telecallers.
+
 ## Dashboard
 - Slug: `enquiry-tracker`
 - Frontend renderer: `EnquiryTracker` (mounted via `Automations.tsx`), scope `enquiries`.
@@ -119,6 +144,9 @@ Backend (`founder-os_backend/src/modules/enquiries/` — one concern per file):
   `applyLateQuoteReopen`, `applyIntakeBulkResult`)
 - `routes.ts` — CRUD orchestrator only (imports the above; re-exports for compat)
 - `store.ts` — persistence (D1/Memory; Prisma in `store-prisma.ts`)
+- `chat.ts` — per-enquiry sales copilot tools (`find_price`/`ask_specs`/
+  `quote_price`), vendor-blind proposals, two-confirm execute
+  (`price_quote` → `expectedRate`, `spec_fix` → item spec)
 
 Frontend (`founder-os_frontend/src/enquiry/` + components):
 - `enquiry/queue.ts` — queue predicates (single frontend truth; `types/index.ts`

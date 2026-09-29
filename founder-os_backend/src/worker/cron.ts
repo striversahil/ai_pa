@@ -143,6 +143,28 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     );
   }
 
+  // Stale intake sweeper every 15 min (native, token-independent — runs before
+  // the dispatcher early-return below): re-kicks Add-via-AI jobs whose
+  // waitUntil task died with zero output (no KV, no markers — the flag would
+  // otherwise sit forever with no retry). Untouched ≥10 min only, so fresh
+  // saves with in-flight intakes are never double-kicked; per-row hourly
+  // backoff bounds LLM spend. Sales-side LLM work (not Zoho/NeoDove) — runs
+  // in quiet hours too.
+  if (min % 15 === 0) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const { createEnquiryStore } = await import('./context');
+          const { sweepStaleAiPending } = await import('../modules/enquiries/vision-intake');
+          const r = await sweepStaleAiPending(env as any, createEnquiryStore(env), { olderThanMin: 10, maxRows: 3 });
+          if (r.checked > 0) console.log(`[cron] intake-sweep checked=${r.checked} rekicked=${r.rekicked.join(',') || 'none'}`);
+        } catch (e: any) {
+          console.error('[cron] intake-sweep failed:', e?.message);
+        }
+      })(),
+    );
+  }
+
   // GitHub Actions dispatcher — fire workflow_dispatch for every due workflow.
   const token = env.GITHUB_ACCESS_TOKEN;
   if (!token) {

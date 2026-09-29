@@ -10,26 +10,61 @@ import type { ToolDefinition } from '../../shared/ai-gateway';
 import { cacheGet } from '../../shared/cache';
 import { runTurn, streamTurn } from '../../copilot/engine';
 import type { CopilotDef, CopilotExecResult, CopilotReply } from '../../copilot/types';
-// NOTE: price-memory lookup is parked for now (search_price_memory commented
-// out below). When re-enabling, restore the similarity import:
-//   import { buildItemSpecText, canonicalSpec, dimsEqual, embedTexts,
-//     namespaceFor, pineconeQuery, routeByScore } from './similarity';
 import {
-  enquiryAddComment, enquiryUpdate, canManageRates, isRestrictedViewer, stripMarginFields,
+  enquiryAddComment, enquiryUpdate, canManageRates, isRestrictedViewer, stripMarginFields, canSeeProcurementRequests,
   type EnquiryResult,
 } from './routes';
 import type { EnquiryStore } from './store';
 import type { MeResponse } from '../auth/types';
+import { getProductDetail, getProductIndex, getRatesForProduct } from '../../automations/product-line/service';
+import {
+  MIN_QUOTE_CONFIDENCE, requiredChecklist, resolveProduct,
+  salesSafeQuote, scoreRates,
+  type MatchGuideRow, type MatchProduct, type MatchRate, type SalesQuote,
+} from '../../automations/product-line/match';
 
 const THREAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+export interface SpecQuestion {
+  key: string;
+  label: string;
+  note: string;
+  required: boolean;
+  type: 'options' | 'text';
+  options: string[];
+}
+
+export interface PriceTableRow {
+  variation: string;
+  markedPrice: number;
+  unit: string;
+  confidence: number;
+  quoteAgeDays: number | null;
+  moq: string | null;
+  deliveryDays: number | null;
+  best: boolean;
+}
+
 export interface ChatProposal {
-  kind: 'comment' | 'spec_fix';
+  kind: 'comment' | 'spec_fix' | 'price_quote' | 'spec_form' | 'price_table';
   text?: string;
   scope?: 'sales' | 'procurement';
   itemIndex?: number;
   spec?: string;
   label: string;
+  // price_quote only (vendor-blind by construction — see match.ts):
+  productId?: string;
+  productName?: string;
+  markedPrice?: number;
+  unit?: string;
+  confidence?: number;
+  quoteAgeDays?: number | null;
+  moq?: string | null;
+  deliveryDays?: number | null;
+  // spec_form only:
+  questions?: SpecQuestion[];
+  // price_table only:
+  rows?: PriceTableRow[];
 }
 
 /** Audible-visible step for the UI chime: which tool ran + one-line outcome. */
@@ -63,32 +98,6 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         parameters: { type: 'object', properties: {} },
       },
     },
-    // PARKED: price-memory lookup disabled for now (re-enable with the
-    // similarity import at the top + the execTool branch below).
-    // {
-    //   type: 'function',
-    //   function: {
-    //     name: 'search_price_memory',
-    //     description: 'Top past prices for one line item from price memory.',
-    //     parameters: {
-    //       type: 'object',
-    //       properties: { itemIndex: { type: 'number', description: '0-based item index' } },
-    //       required: ['itemIndex'],
-    //     },
-    //   },
-    // },
-    // REMOVED: thread reads disabled — history is not stored anymore.
-    // {
-    //   type: 'function',
-    //   function: {
-    //     name: 'read_thread',
-    //     description: 'Read the discussion thread (comments + item back-and-forth trail).',
-    //     parameters: {
-    //       type: 'object',
-    //       properties: { scope: { type: 'string', description: "'sales' or 'procurement' (defaults to both visible to you)" } },
-    //     },
-    //   },
-    // },
     {
       type: 'function',
       function: {
@@ -106,21 +115,66 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
     },
   ];
   if (!ctx.restricted) {
-    tools.push({
-      type: 'function',
-      function: {
-        name: 'propose_spec_fix',
-        description: 'Draft a corrected item spec for the user to confirm (does NOT save).',
-        parameters: {
-          type: 'object',
-          properties: {
-            itemIndex: { type: 'number' },
-            spec: { type: 'string', description: 'Full corrected spec text' },
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'propose_spec_fix',
+          description: 'Draft a corrected item spec for the user to confirm (does NOT save).',
+          parameters: {
+            type: 'object',
+            properties: {
+              itemIndex: { type: 'number' },
+              spec: { type: 'string', description: 'Full corrected spec text' },
+            },
+            required: ['itemIndex', 'spec'],
           },
-          required: ['itemIndex', 'spec'],
         },
       },
-    });
+      {
+        type: 'function',
+        function: {
+          name: 'find_price',
+          description: 'Start a price lookup for one enquiry item: resolves the item (via its kypItem/category mapping) to a live catalogue product and returns its required spec checklist + the item spec on file. Call this first whenever the user asks for a price/rate.',
+          parameters: {
+            type: 'object',
+            properties: { itemIndex: { type: 'number', description: '0-based item index' } },
+            required: ['itemIndex'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ask_specs',
+          description: 'Show the sales agent a stepped spec questionnaire (spec_form card) for the still-missing required specs of a catalogue product. Prefer this over asking spec questions in prose.',
+          parameters: {
+            type: 'object',
+            properties: {
+              productId: { type: 'string' },
+              knownSpecs: { type: 'object', description: 'attrKey → value already collected (these are skipped)', additionalProperties: { type: 'string' } },
+            },
+            required: ['productId'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'quote_price',
+          description: 'Look up past vendor rates for a catalogue product, score them against the collected specs, and draft a customer price (final price; cost basis and vendor hidden) for confirm. Below-confidence lookups route to procurement instead of quoting.',
+          parameters: {
+            type: 'object',
+            properties: {
+              productId: { type: 'string' },
+              itemIndex: { type: 'number' },
+              specs: { type: 'object', description: 'attrKey → collected spec value', additionalProperties: { type: 'string' } },
+            },
+            required: ['productId', 'itemIndex', 'specs'],
+          },
+        },
+      },
+    );
   }
   return tools;
 }
@@ -133,21 +187,19 @@ function activityLabel(name: string, args: Record<string, any>, out: { result: u
       const n = Array.isArray(r.items) ? r.items.length : 0;
       return `Read enquiry · ${n} item${n === 1 ? '' : 's'}`;
     }
-    // PARKED with search_price_memory (see toolDefs).
-    // case 'search_price_memory': {
-    //   const n = Array.isArray(r.matches) ? r.matches.length : 0;
-    //   const best = n > 0 ? r.matches[0]?.route : null;
-    //   return `Searched price memory · ${n} match${n === 1 ? '' : 'es'}${best ? ` (best: ${best})` : ''}`;
-    // };
-    // REMOVED with read_thread (see toolDefs).
-    // case 'read_thread': {
-    //   const n = Array.isArray(r.comments) ? r.comments.length : 0;
-    //   return `Read ${args.scope || 'full'} thread · ${n} note${n === 1 ? '' : 's'}`;
-    // };
     case 'propose_comment':
       return r.error ? 'Comment draft failed' : 'Drafted a comment for confirm';
     case 'propose_spec_fix':
       return r.error ? 'Spec draft failed' : 'Drafted a spec fix for confirm';
+    case 'find_price':
+      return r.error ? 'Price lookup failed' : r.product ? `Matched ${r.product.name}` : 'No catalogue match';
+    case 'ask_specs':
+      return r.error ? 'Spec form failed' : 'Asked missing specs';
+    case 'quote_price': {
+      if ((r as any).error) return 'Price lookup failed';
+      if ((r as any).routed === 'procurement') return 'Low confidence · routed to procurement';
+      return typeof (r as any).markedPrice === 'number' ? `Quoted ₹${(r as any).markedPrice}` : 'Drafted a price for confirm';
+    }
     default:
       return `Ran ${name}`;
   }
@@ -156,7 +208,57 @@ function activityLabel(name: string, args: Record<string, any>, out: { result: u
 async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>): Promise<{ result: unknown; proposals?: ChatProposal[] }> {
   const enquiry: any = await ctx.store.getEnquiry(ctx.enquiryId).catch(() => null);
   if (!enquiry) return { result: { error: 'enquiry not found' } };
-  const view = ctx.privileged ? enquiry : stripMarginFields(enquiry);
+  const view = ctx.privileged ? enquiry : stripMarginFields(enquiry, { hideRequests: !canSeeProcurementRequests(ctx.me) });
+
+  /** Live catalogue rows adapted for match.ts (slim cached index — no full-table load). */
+  const liveProducts = async (): Promise<MatchProduct[]> => {
+    const rows = await getProductIndex().catch(() => []);
+    return rows.map((p) => ({
+      id: String(p.id),
+      category: String(p.category ?? ''),
+      name: String(p.name ?? ''),
+      aliases: Array.isArray(p.aliases) ? p.aliases.map((s: any) => String(s)) : [],
+      active: p.active !== false,
+    }));
+  };
+  const liveGuide = async (productId: string): Promise<MatchGuideRow[]> => {
+    const detail = await getProductDetail(String(productId)).catch(() => null);
+    const rows = (((detail as any)?.guide ?? []) as any[]);
+    return rows
+      .filter((g: any) => g && g.active !== false && g.active !== 0)
+      .map((g: any) => ({
+        attrKey: String(g.attrKey ?? ''),
+        question: String(g.question ?? ''),
+        guideNote: g.guideNote != null ? String(g.guideNote) : null,
+        sortOrder: Number(g.sortOrder ?? 0),
+        isRequired: g.isRequired === true || g.isRequired === 1,
+        active: true,
+      }));
+  };
+  const liveRates = async (productId: string): Promise<MatchRate[]> => {
+    const rows = await getRatesForProduct(String(productId)).catch(() => []);
+    return rows.map((r: any) => ({
+      id: String(r.id),
+      productId: String(r.productId ?? ''),
+      attrValues: (r.attrValues && typeof r.attrValues === 'object' ? r.attrValues : {}) as Record<string, string>,
+      pricePerUnit: r.pricePerUnit != null ? Number(r.pricePerUnit) : null,
+      unit: String(r.unit ?? ''),
+      discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
+      moq: r.moq != null ? String(r.moq) : null,
+      deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
+      quotedAt: String(r.quotedAt ?? ''),
+      active: r.active !== false,
+    }));
+  };
+  /** Answer options mined from distinct past rate values (most-used first). */
+  const specOptions = (rates: MatchRate[], key: string): string[] => {
+    const counts = new Map<string, number>();
+    for (const r of rates) {
+      const v = String((r.attrValues ?? {})[key] ?? '').trim().slice(0, 120);
+      if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v]) => v);
+  };
 
   if (name === 'get_enquiry_summary') {    const items = (Array.isArray(view.items) ? view.items : []).map((it: any, i: number) => ({
       index: i,
@@ -209,67 +311,6 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     };
   }
 
-  // PARKED: price-memory lookup disabled for now. Restore with the
-  // similarity import at the top when re-enabling.
-  // if (name === 'search_price_memory') {
-  //   const idx = Math.max(0, Math.floor(Number(args.itemIndex) || 0));
-  //   const items = Array.isArray(enquiry.items) ? enquiry.items : [];
-  //   const it = items[idx];
-  //   if (!it) return { result: { error: `no item at index ${idx}` } };
-  //   const text = buildItemSpecText({ name: String(it?.name ?? ''), qty: String(it?.qty ?? ''), spec: String(it?.spec ?? '') });
-  //   const vecs = await embedTexts(ctx.env, [text]);
-  //   if (!vecs || !vecs[0]) return { result: { matches: [], note: 'embeddings unavailable' } };
-  //   const category = String((it as any)?.category ?? '');
-  //   const namespaces = [namespaceFor(category)];
-  //   if (namespaces[0] !== 'uncategorized') namespaces.push('uncategorized');
-  //   const matches: any[] = [];
-  //   for (const ns of namespaces) {
-  //     const found = (await pineconeQuery(ctx.env, ns, vecs[0], 5)) ?? [];
-  //     for (const m of found) {
-  //       const md = (m.metadata ?? {}) as Record<string, any>;
-  //       const specText = [md.name, md.qty, md.spec].filter(Boolean).join(' | ');
-  //       const route = routeByScore(m.score, dimsEqual(specText, text));
-  //       matches.push({
-  //         memoryId: m.id,
-  //         score: Math.round(m.score * 100) / 100,
-  //         route,
-  //         name: md.name,
-  //         ...(ctx.restricted ? {} : { finalRate: md.finalRate }),
-  //       });
-  //     }
-  //   }
-  //   matches.sort((a, b) => b.score - a.score);
-  //   return { result: { matches: matches.slice(0, 5) } };
-  // }
-
-  // REMOVED: thread reads disabled — history is not stored anymore.
-  // if (name === 'read_thread') {
-  //   const want = String(args.scope ?? '').toLowerCase() === 'procurement' ? 'procurement' : 'all';
-  //   const all = await ctx.store.listComments(ctx.enquiryId).catch(() => []);
-  //   const visible = (all as any[]).filter((cm) => {
-  //     const v = String((cm as any)?.visibility ?? 'sales');
-  //     if (ctx.restricted) return v === 'procurement';
-  //     return want === 'all' ? true : v === want;
-  //   });
-  //   const items = Array.isArray(enquiry.items) ? enquiry.items : [];
-  //   const trail: any[] = [];
-  //   items.forEach((it: any, i: number) => {
-  //     for (const e of (Array.isArray(it?.thread) ? it.thread : []).slice(-6)) {
-  //       trail.push({ item: i, by: e?.by, kind: e?.kind, text: String(e?.text ?? '').slice(0, 300) });
-  //     }
-  //   });
-  //   return {
-  //     result: {
-  //       comments: visible.slice(-20).map((cm: any) => ({
-  //         content: String(cm?.content ?? '').slice(0, 600),
-  //         scope: String((cm as any)?.visibility ?? 'sales'),
-  //         at: String(cm?.createdAt ?? ''),
-  //       })),
-  //       itemTrail: trail.slice(-20),
-  //     },
-  //   };
-  // }
-
   if (name === 'propose_comment') {
     const text = String(args.text ?? '').trim().slice(0, 2000);
     if (!text) return { result: { error: 'empty text' } };
@@ -287,6 +328,134 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     return { result: { proposed: true }, proposals: [proposal] };
   }
 
+  if (name === 'find_price') {
+    if (ctx.restricted) return { result: { error: 'not permitted' } };
+    const idx = Math.max(0, Math.floor(Number(args.itemIndex) || 0));
+    const items = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const it = items[idx];
+    if (!it) return { result: { error: `no item at index ${idx}` } };
+    const kypItem = String((it as any)?.kypItem ?? '').slice(0, 120);
+    const category = String((it as any)?.category ?? 'Uncategorized').slice(0, 120);
+    const resolved = resolveProduct(await liveProducts(), kypItem || String((it as any)?.name ?? ''), category);
+    if (!resolved) {
+      return { result: { error: 'no catalogue match', kypItem, category, hint: 'tell the user this item is routed to procurement' } };
+    }
+    const required = requiredChecklist(await liveGuide(resolved.product.id));
+    return {
+      result: {
+        itemIndex: idx,
+        product: { id: resolved.product.id, name: resolved.product.name, category: resolved.product.category, exact: resolved.exact },
+        required: required.map((g) => ({ key: g.attrKey, question: g.question, note: g.guideNote ?? '' })),
+        itemSpec: String((it as any)?.spec ?? '').slice(0, 800),
+        intakeMissing: Array.isArray((it as any)?.kypMissing) ? (it as any).kypMissing.slice(0, 10) : [],
+      },
+    };
+  }
+
+  if (name === 'ask_specs') {
+    if (ctx.restricted) return { result: { error: 'not permitted' } };
+    const pid = String(args.productId ?? '').trim();
+    if (!pid) return { result: { error: 'missing productId' } };
+    const product = (await liveProducts()).find((p) => p.id === pid);
+    if (!product) return { result: { error: 'unknown product' } };
+    const required = requiredChecklist(await liveGuide(pid));
+    const known = (args.knownSpecs && typeof args.knownSpecs === 'object' ? args.knownSpecs : {}) as Record<string, unknown>;
+    const rates = await liveRates(pid);
+    const questions: SpecQuestion[] = [];
+    for (const g of required) {
+      if (String((known as any)[g.attrKey] ?? '').trim()) continue;
+      const options = specOptions(rates, g.attrKey);
+      questions.push({
+        key: g.attrKey,
+        label: g.question,
+        note: g.guideNote ?? '',
+        required: true,
+        type: options.length >= 2 ? 'options' : 'text',
+        options,
+      });
+    }
+    if (questions.length === 0) return { result: { proposed: false, note: 'all required specs already known — call quote_price' } };
+    const proposal: ChatProposal = {
+      kind: 'spec_form', productId: pid, productName: product.name,
+      questions, label: `Specs needed · ${product.name} (${questions.length})`,
+    };
+    return { result: { proposed: true, questions: questions.length }, proposals: [proposal] };
+  }
+
+  if (name === 'quote_price') {
+    if (ctx.restricted) return { result: { error: 'not permitted' } };
+    const pid = String(args.productId ?? '').trim();
+    const idx = Math.max(0, Math.floor(Number(args.itemIndex) || 0));
+    const specsIn = (args.specs && typeof args.specs === 'object' ? args.specs : {}) as Record<string, unknown>;
+    const specs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(specsIn)) {
+      const s = String(v ?? '').trim().slice(0, 200);
+      if (s) specs[String(k)] = s;
+    }
+    if (!pid) return { result: { error: 'missing productId' } };
+    const product = (await liveProducts()).find((p) => p.id === pid);
+    if (!product) return { result: { error: 'unknown product' } };
+    const required = requiredChecklist(await liveGuide(pid));
+    const scored = scoreRates(await liveRates(pid), pid, specs, required);
+    if (scored.length === 0) return { result: { error: 'no past rates for this product', routed: 'procurement' } };
+    const best = scored[0];
+    // Variation table: every scored past rate as a vendor-blind row so sales
+    // can SEE all matching variations, not just the single best. The table is
+    // view-only — one-tap apply stays gated on best-confidence below.
+    const rows: PriceTableRow[] = scored.slice(0, 5).map((s, i) => {
+      const q = salesSafeQuote(product, s, specs, required);
+      const bits = Object.entries(s.rate.attrValues ?? {})
+        .map(([, v]) => String(v ?? '').trim())
+        .filter(Boolean)
+        .filter((v, vi, arr) => arr.indexOf(v) === vi)
+        .slice(0, 4);
+      return {
+        variation: bits.length > 0 ? bits.join(' · ').slice(0, 140) : `Quote ${i + 1}`,
+        markedPrice: q.markedPrice,
+        unit: q.unit,
+        confidence: q.confidence,
+        quoteAgeDays: q.quoteAgeDays,
+        moq: q.moq,
+        deliveryDays: q.deliveryDays,
+        best: i === 0,
+      };
+    });
+    const proposals: ChatProposal[] = [{
+      kind: 'price_table', itemIndex: idx,
+      productId: product.id, productName: product.name,
+      rows, label: `Past prices · ${product.name} (${rows.length})`,
+    }];
+    if (best.confidence < MIN_QUOTE_CONFIDENCE) {
+      return {
+        result: { routed: 'procurement', confidence: best.confidence, variations: rows.length, note: 'below apply-confidence — table shown for reference only; tell the user this item is routed to procurement' },
+        proposals,
+      };
+    }
+    const quote: SalesQuote = salesSafeQuote(product, best, specs, required);
+    const items = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const existing = String((items[idx] as any)?.spec ?? '');
+    // Companion spec update: append only genuinely new "Question: value" lines.
+    const fresh = quote.matchedSpecs
+      .map((m) => `${m.question}: ${m.value}`)
+      .filter((line) => line && !existing.toLowerCase().includes(line.toLowerCase().slice(0, 60)));
+    proposals.push({
+      kind: 'price_quote', itemIndex: idx,
+      productId: product.id, productName: product.name,
+      markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
+      quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
+      text: `${product.name} @ ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} — confidence ${quote.confidence}, quote ~${quote.quoteAgeDays ?? '?'}d old${quote.moq ? `, MOQ ${quote.moq}` : ''}${quote.deliveryDays != null ? `, ${quote.deliveryDays}d delivery` : ''}`,
+      label: `Apply AI price · ${product.name}`,
+    });
+    if (fresh.length > 0) {
+      proposals.push({
+        kind: 'spec_fix', itemIndex: idx,
+        spec: `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}${fresh.join('\n')}`.slice(0, 2000),
+        label: `Update Item ${idx + 1} spec with confirmed details`,
+      });
+    }
+    return { result: { proposed: true, ...quote }, proposals };
+  }
+
   return { result: { error: `unknown tool ${name}` } };
 }
 
@@ -297,9 +466,9 @@ function systemPrompt(ctx: SalesCtx): string {
       ? 'The viewer is management: full detail allowed.'
       : 'The viewer is sales: full pipeline detail, but margin internals (selected vendor, markup) stay hidden.';
   const langNote = !ctx.restricted && !ctx.privileged
-    ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — telecaller style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
+    ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — sales-floor style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
     : '';
-  return `You are the sales staff helper — you work ON BEHALF of the BUI telecaller for ONE sales enquiry (ID ${ctx.enquiryId}). Act like their personal assistant: fill gaps, draft notes, fix specs, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. ${langNote} When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the telecaller can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table.`;
+  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. ${langNote} When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it resolves the item's kypItem mapping against the live catalogue), then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. When a lookup routes to procurement, say so plainly and stop — do not quote.`;
 }
 
 /** Sales department definition for the shared engine. */
@@ -313,6 +482,16 @@ export const salesCopilotDef: CopilotDef<SalesCtx> = {
     const who = String((ctx.me as any)?.user?.email ?? (ctx.me as any)?.user?.id ?? 'anon').toLowerCase();
     return `enquiry:chat:${ctx.enquiryId}:${who}`;
   },
+  // Rolling conversation memory (was missing — every turn started blank).
+  // Distinct namespace from sessionKey (gateway sticky-pin, not chat text).
+  // hist2: rotated after the markup-secrecy fix so pre-secrecy wording held
+  // in older windows can never resurface in context.
+  historyKey: (ctx) => {
+    const who = String((ctx.me as any)?.user?.email ?? (ctx.me as any)?.user?.id ?? 'anon').toLowerCase();
+    return `enquiry:chat:hist2:${ctx.enquiryId}:${who}`;
+  },
+  historyTtlMs: THREAD_TTL_MS,
+  historyMaxMsgs: 100,
   countKey: (ctx) => `enquiry:chat:count:${ctx.enquiryId}`,
   systemPrompt,
   toolDefs,
@@ -320,7 +499,7 @@ export const salesCopilotDef: CopilotDef<SalesCtx> = {
   activityLabel,
   modelEnvVar: 'ENQUIRY_CHAT_MODEL',
   defaultModel: 'agnes-3.0-flash',
-  emptyHint: 'I can’t help with that — try asking about items, specs, or missing details.',
+  emptyHint: 'I can’t help with that — try asking about items, specs, missing details, or an AI price.',
 };
 
 /** Run one chat turn. Agnes-primary; returns a config notice without keys. */
@@ -393,6 +572,28 @@ export async function executeProposal(
       return { result: r, applied: r.status === 200 ? 'spec_fix' : 'none' };
     } catch (e: any) {
       return { result: { status: 500, body: { error: String(e?.message ?? 'spec fix failed').slice(0, 300) } }, applied: 'none' };
+    }
+  }
+  if (kind === 'price_quote') {
+    const idx = Math.max(0, Math.floor(Number(action?.itemIndex) || 0));
+    const price = Number(action?.markedPrice);
+    if (!Number.isFinite(price) || price <= 0) return { result: { status: 400, body: { error: 'bad price' } }, applied: 'none' };
+    try {
+      const existing: any = await store.getEnquiry(enquiryId).catch(() => null);
+      if (!existing) return { result: { status: 404, body: { error: 'not found' } }, applied: 'none' };
+      const items = Array.isArray(existing.items) ? [...existing.items] : [];
+      if (!items[idx]) return { result: { status: 400, body: { error: 'bad item index' } }, applied: 'none' };
+      const conf = action?.confidence != null ? ` · conf ${action.confidence}` : '';
+      const age = action?.quoteAgeDays != null ? ` · ~${action.quoteAgeDays}d old quote` : '';
+      items[idx] = {
+        ...items[idx],
+        expectedRate: Math.round(price * 100) / 100,
+        expectedNote: `AI price · ${String(action?.productName ?? 'catalogue').slice(0, 120)}${conf}${age}`.slice(0, 500),
+      };
+      const r = await enquiryUpdate(store, me, enquiryId, { items });
+      return { result: r, applied: r.status === 200 ? 'price_quote' : 'none' };
+    } catch (e: any) {
+      return { result: { status: 500, body: { error: String(e?.message ?? 'price apply failed').slice(0, 300) } }, applied: 'none' };
     }
   }
   return { result: { status: 400, body: { error: 'unknown action' } }, applied: 'none' };

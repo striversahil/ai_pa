@@ -26,7 +26,8 @@ export interface ItemWriteCtx {
  *   (selectedVendor/markup/finalRate/finalizedAt follow stored).
  * - Restricted (procurement) writers own rates + spec flags only: identity
  *   follows stored, media appends, availability pinned.
- * - Privileged rate requests reopen finalized decisions; loop trail is
+ * - Privileged rate requests reopen the procurement handoff without
+ *   touching quotes or decisions (flagging never deletes); loop trail is
  *   server-authored (client remarks kept once each), capped at 50.
  */
 export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
@@ -91,8 +92,9 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       // procurement view, which strips decision fields) must never wipe a
       // stored decision by omission — deleting a vendor rate once dropped
       // the whole management decision and threw the item back to pending.
-      // Preserve stored fields unless this write opens a fresh request
-      // round (which explicitly clears below).
+      // Stored fields are always preserved on omission: flagging procurement
+      // (ratesRequested) is a pure signal and never clears quotes or
+      // decisions, so a flag can never delete prior work.
       //
       // Same rule for reference media: queue payloads strip media BYTES for
       // size (modals fetch the open row whole), so a management-surface save
@@ -111,8 +113,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       const storedDecision = stored.selectedVendor !== undefined || stored.markup !== undefined
         || stored.finalRate !== undefined || stored.finalDiscountPercent !== undefined
         || stored.finalizedAt !== undefined || (stored as any).selectedRateIdx !== undefined;
-      const freshRequest = !!(base as any).ratesRequested && !(stored as any).ratesRequested;
-      if (!incomingDecision && storedDecision && !freshRequest) {
+      if (!incomingDecision && storedDecision) {
         base.selectedVendor = stored.selectedVendor;
         (base as any).selectedRateIdx = (stored as any).selectedRateIdx;
         base.markup = stored.markup;
@@ -183,30 +184,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // changing rates (handled in the restricted branch above).
     // withdrewRequest tracks an explicit privileged withdraw ("") so the
     // loop trail below stamps it correctly (declared here — used below).
-    // clearedRound tracks a fresh request round that wiped the previous
-    // vendor quotes for a clean re-quote (declared here — trailed below).
     let withdrewRequest = false;
-    let clearedRound = false;
-    // Drop the previous quoting round for a clean re-quote: old vendor rates
-    // go, and the old decision linkage with them (unlink). Trailed below.
-    // Only fires when something actually exists to clear (no-op saves stay
-    // silent) — and only on FRESH requests, so unrelated edits echoing the
-    // stored text can never wipe quotes.
-    const clearQuotingRound = () => {
-      const hadRates = Array.isArray(base.rates) && base.rates.length > 0;
-      const hadDecision = base.selectedVendor !== undefined || base.markup !== undefined
-        || base.finalRate !== undefined || base.finalDiscountPercent !== undefined
-        || base.finalizedAt !== undefined || (base as any).selectedRateIdx !== undefined;
-      if (!hadRates && !hadDecision) return;
-      base.rates = [];
-      base.selectedVendor = undefined;
-      (base as any).selectedRateIdx = undefined;
-      base.markup = undefined;
-      base.finalRate = undefined;
-      base.finalDiscountPercent = undefined;
-      base.finalizedAt = undefined;
-      clearedRound = true;
-    };
     if (!privileged && !restricted) {
       base.ratesRequested = stored.ratesRequested;
       base.ratesRequestedAt = stored.ratesRequestedAt;
@@ -230,22 +208,13 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.ratesRequested = undefined;
         base.ratesRequestedAt = undefined;
       }
-      // A fresh management request starts a new quoting round on top of the
-      // reopen: previous vendor rates are removed so procurement re-quotes
-      // clean (the request text says what is wrong / which vendor is needed).
-      if (privileged && base.ratesRequested && !stored.ratesRequested) {
-        clearQuotingRound();
-      }
-      // A fresh management request on a finalized item reopens it — the
-      // previous decision clears so the new quotes flow back to review.
-      if (privileged && base.ratesRequested && !stored.ratesRequested
-        && stored.finalRate !== undefined && stored.finalRate !== null) {
-        base.selectedVendor = undefined;
-        base.markup = undefined;
-        base.finalRate = undefined;
-        base.finalDiscountPercent = undefined;
-        base.finalizedAt = undefined;
-      }
+      // A fresh management request is a pure signal: quotes AND decisions
+      // stay intact — flagging procurement never deletes prior work (a flag
+      // once wiped the item's rates + decision, destroying quoted work).
+      // Procurement's next rate edit answers the request (ratesChanged
+      // above clears it); new quotes after a decision resurface in the
+      // management queue via itemHasUnreviewedQuotes.
+      // The handoff reopen lives in applyRateLifecycles below.
     }
     // Not available: procurement requests (notAvailableRequested), management approves (notAvailable + shared text) → sales sees notAvailable
     if (privileged) {
@@ -452,11 +421,6 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         ? { by: role, kind: 'remark', text: 'Rate request withdrawn', at: nowIso }
         : { by: role, kind: 'quoted', text: 'New vendor rates added', at: nowIso });
     }
-    // Fresh request round wiped the previous quotes above — say so plainly
-    // in the trail so every desk sees why the old rates are gone.
-    if (clearedRound) {
-      trail.push({ by: role, kind: 'remark', text: 'Previous vendor quotes cleared — fresh round for the new request', at: nowIso });
-    }
     // Sales merged variation/reference requests (non-blocking, per-item):
     // sales sets text + optional common attachment (example picture); procurement
     // fulfills with a new rate (alternate make) OR new item media (reference
@@ -464,8 +428,8 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // both "alternate make" and "need reference picture". Procurement reopen only
     // (hasPendingVariationWork), never management — not a price enquiry.
     // Unlike the old alternate path, we keep previous vendor rates/finalRate
-    // intact so a reference request on a finalized item doesn't wipe the sales
-    // price — procurement just attaches the reference.
+    // intact so a reference request on a finalized item doesn't reset pricing.
+    // (Same guarantee as rate requests above: no request flow ever wipes.)
     if (!privileged && !restricted) {
       const inVar = (it as any)?.variationRequest;
       const inVarMedia = parseItemMedia((it as any)?.variationRequestMedia ?? []);

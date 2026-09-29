@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""End-to-end LinkedIn Content Agent runner on Agnes AI. See README.md."""
+import argparse, datetime, json, os
+from agnes_client import chat, gen_image, RESEARCH_SYS, WRITING_SYS, EDITING_SYS, TEXT_MODEL, IMAGE_MODEL
+HERE = os.path.dirname(os.path.abspath(__file__))
+BOLD_T = ("Create an image for a LinkedIn post about {t}. {scene} Surrounding elements: {el} "
+    "Optimistic forward-looking mood. Bold playful modern illustration overlaid on urban photography. "
+    "Bright pink, lime green, sky blue, yellow. Hand-drawn warmth, white outlines, no muted tones.")
+ED_T = ("Create a polished portrait 4:5 social image about {t}, expressed as {m}. Show {s} within {g}, "
+    "viewed from {a}. Believable architecture plus hand-drawn illustration: dark ink contours, lively "
+    "shapes, print texture, purposeful {d}. Vivid palette of {p} against natural city photography, open "
+    "daylight sky. Clear focal point at phone size. Editorial collage, playful but polished. No text.")
+VIS = {
+ "demand-response": dict(scene="Modern city at evening peak, operator in navy and hot pink jacket conducting flow.",
+    el="electric-blue ribbons, load-curve waves, lime capacity blocks, hot pink star bursts",
+    m="a conductor balancing evening load curves", s="an oversized hand-drawn operator conducting glowing load ribbons",
+    g="a photographic evening skyline at peak demand", a="a low dynamic angle", d="wave lines, motion marks, stars", p="cobalt blue, lime green and hot pink"),
+ "revenue-stacking": dict(scene="City rooftop, bright sky. Figure in yellow outfit, arm raised expansively.",
+    el="sun with rays, sky-blue and magenta ribbons, lime leaves, battery-like blocks, sparkles",
+    m="stacked revenue blocks building upward", s="an oversized developer stacking glowing revenue blocks",
+    g="a photographic downtown rooftop district", a="a slightly low angle", d="stacked bars, arrows, sparkles", p="yellow, sky blue and fuchsia"),
+ "default": dict(scene="Modern skyline, bright sky. Professional in lime-green jacket, arms outstretched in balance.",
+    el="electric-blue ribbons, star bursts, white and green wave lines, balance-scale shape",
+    m="balance and forward momentum", s="an oversized professional guiding energy ribbons",
+    g="a photographic skyline at dawn", a="eye level, strong silhouette", d="stars, motion lines, waves", p="sky blue, lime green and hot pink"),
+}
+def vkey(slug):
+    s = slug.lower()
+    if "demand-response" in s: return "demand-response"
+    if "revenue-stacking" in s: return "revenue-stacking"
+    return "default"
+def run_topic(topic_file, skip_image=False):
+    slug = topic_file.replace(".md", "")
+    idea = open(os.path.join(HERE, "content", "ideas", topic_file)).read().strip()
+    title = idea.splitlines()[0].lstrip("# ").strip()
+    out = os.path.join(HERE, "output", slug)
+    os.makedirs(out, exist_ok=True)
+    log = {"topic": topic_file, "title": title, "text_model": TEXT_MODEL, "image_model": IMAGE_MODEL,
+           "started": datetime.datetime.utcnow().isoformat() + "Z"}
+    brief, u1 = chat([{"role": "system", "content": RESEARCH_SYS},
+        {"role": "user", "content": "Topic: %s. Pillar: Sustainability (storage, balancing, economics). Note: %s. Produce the research_brief." % (title, idea)}], max_tokens=900, temperature=0.5)
+    log["research_usage"] = u1
+    open(os.path.join(out, "research_brief.md"), "w").write(brief + "\n")
+    draft, u2 = chat([{"role": "system", "content": WRITING_SYS},
+        {"role": "user", "content": "Research brief:\n%s\n\nWrite the LinkedIn post_draft for: %s." % (brief, title)}], max_tokens=1000, temperature=0.7)
+    log["writing_usage"] = u2
+    open(os.path.join(out, "post_draft.md"), "w").write(draft + "\n")
+    final, u3 = chat([{"role": "system", "content": EDITING_SYS},
+        {"role": "user", "content": "Edit this draft:\n\n" + draft}], max_tokens=1000, temperature=0.3)
+    log["editing_usage"] = u3
+    open(os.path.join(out, "post_final.md"), "w").write(final + "\n")
+    v = VIS[vkey(slug)]
+    bold = BOLD_T.format(t=title, scene=v["scene"], el=v["el"])
+    ed = ED_T.format(t=title, m=v["m"], s=v["s"], g=v["g"], a=v["a"], d=v["d"], p=v["p"])
+    open(os.path.join(out, "image_prompt_bold.txt"), "w").write(bold + "\n")
+    open(os.path.join(out, "image_prompt_editorial.txt"), "w").write(ed + "\n")
+    if not skip_image:
+        log["bold_task"] = gen_image(bold, os.path.join(out, "image_bold.png"))
+        log["editorial_task"] = gen_image(ed, os.path.join(out, "image_editorial.png"))
+    log["finished"] = datetime.datetime.utcnow().isoformat() + "Z"
+    json.dump(log, open(os.path.join(out, "run_log.json"), "w"), indent=2)
+    print("[OK] %s: final=%dw images=%s -> %s" % (slug, len(final.split()), "skipped" if skip_image else "bold+editorial", out))
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--topic", default="006-what-demand-response-actually-pays.md")
+    ap.add_argument("--all-new", action="store_true")
+    ap.add_argument("--skip-image", action="store_true")
+    a = ap.parse_args()
+    topics = (["006-what-demand-response-actually-pays.md", "007-revenue-stacking-for-storage-projects.md",
+        "008-storage-safety-what-changed-since-early-fires.md", "009-why-peaker-plants-are-getting-replaced.md",
+        "010-interconnection-queues-the-real-bottleneck.md"] if a.all_new else [a.topic])
+    for t in topics:
+        run_topic(t, skip_image=a.skip_image)

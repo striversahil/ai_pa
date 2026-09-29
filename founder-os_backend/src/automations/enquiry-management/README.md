@@ -34,11 +34,11 @@ disjoint: an enquiry is either awaiting a decision or decided, never both.
 **Flag procurement sends IMMEDIATELY** — the request PATCHes straight away,
 so it works on locked (finalized/sent) enquiries too and can never be lost
 by closing the panel (the old staged-then-save flow dropped flags where Save
-was disabled). A fresh request on a finalized item reopens the decision
-server-side; procurement answering with a new rate clears it. Unanswered
+was disabled). A fresh request reopens the procurement handoff server-side;
+procurement answering with a new rate clears it. Unanswered
 requests can be withdrawn (explicit `""` clears + trails `withdrawn`).
-A FRESH flag also clears the item's previous vendor rates + old decision, so
-procurement re-quotes clean instead of appending to a wrong quote.
+Flagging NEVER deletes: previous vendor rates and decisions stay intact —
+procurement edits or replaces quotes against the visible context.
 
 ## Handle internally — removed
 Marking NEW items internal is removed from all UI (management panel +
@@ -51,8 +51,8 @@ the backend still honors stored flags so old rows never brick.
   (+ `finalizedAt` stamp); other writers' values are ignored AND preserved
   (never wiped).
 - `finalize`/`sent` require 100% of loop items decided (completeness gate).
-- Fresh `ratesRequested` reopens a finalized item (decision clears, handoff
-  clears); late quotes on `finalized` keep the committed rate + `quoted`
+- Fresh `ratesRequested` reopens the procurement handoff (never wipes quotes
+  or decisions); late quotes on `finalized` keep the committed rate + `quoted`
   thread note.
 - Pricing math: `final = ceil5(rate × (1−discount%) × (1+markup%))` — see
   frontend `src/enquiry/pricing.ts` (`finalFromMargin`, `splitBulkTotal`).

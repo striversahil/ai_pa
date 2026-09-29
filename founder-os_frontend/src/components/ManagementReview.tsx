@@ -337,22 +337,94 @@ export default function ManagementReview() {
     { id: "history", label: "History", count: historyTotal },
   ];
 
-  // Writes go straight to the API (queues cache is busted server-side, live
-  // events + the dashboard hooks refetch within a beat). No local list to
-  // patch — the tabs render server-partitioned sets.
-  const updateEnquiry = useCallback(async (id: string, updates: Partial<Enquiry>) => {
-    const res = await fetch(`/api/enquiries/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
+  // Writes use the sales-enquiry optimistic standard (the pre-paging
+  // mechanism): paint instantly into the local queue sets, PATCH in the
+  // background (serialized per enquiry, like the old write chains), then
+  // reconcile with the ONE saved row — never a full queue refetch on the
+  // save path. The paging-era raw-PATCH + refreshAll pushed every micro-save
+  // through two full queue downloads (post-write KV recompute = full D1 scan
+  // + Zoho attach), which was the sluggishness. Live events still converge
+  // other writers, and refresh stays the failure fallback.
+  const queuesRef = useRef(queues);
+  queuesRef.current = queues;
+  const histRef = useRef(hist);
+  histRef.current = hist;
+  const chainsRef = useRef<Record<string, Promise<unknown>>>({});
+  // Splice one row into the local sets, re-splitting membership with the
+  // same predicates the server compute uses (active = pending, unprocessed =
+  // non-history + items, empty = item-less, history = decided) — so a
+  // finalize jumps tabs the same beat it is tapped, like the old memos.
+  const spliceRow = useCallback((row: Enquiry) => {
+    const r = row as Enquiry;
+    const inHist = isManagementHistoryEnquiry(r as any);
+    const hasItems = (((r as any).items ?? []) as any[]).length > 0;
+    const inActive = !inHist && hasItems && isManagementPendingEnquiry(r as any);
+    queuesRef.current.setData((prev) => {
+      if (!prev) return prev;
+      const drop = (l: Enquiry[]) => (Array.isArray(l) ? l.filter((x) => x.id !== r.id) : l);
+      return {
+        ...prev,
+        active: inActive ? [r, ...drop(prev.active)] : drop(prev.active),
+        unprocessed: !inHist && hasItems && !inActive ? [r, ...drop(prev.unprocessed)] : drop(prev.unprocessed),
+        empty: !inHist && !hasItems ? [r, ...drop(prev.empty ?? [])] : drop(prev.empty ?? []),
+      };
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      throw new Error((data && (data.error || data.message)) || "request failed");
-    }
-    refreshAllRef.current();
-    return res.json().catch(() => null);
+    histRef.current.setData((prev) => {
+      if (!prev) return prev;
+      const wasIn = (prev.rows ?? []).some((x) => x.id === r.id);
+      const rows = (prev.rows ?? []).filter((x) => x.id !== r.id);
+      return {
+        ...prev,
+        rows: inHist ? [r, ...rows] : rows,
+        total: (prev.total ?? rows.length + (wasIn ? 1 : 0)) + (inHist && !wasIn ? 1 : 0) - (!inHist && wasIn ? 1 : 0),
+      };
+    });
+    setSelFull((prev) => (prev && prev.id === r.id ? r : prev));
   }, []);
+  const findRow = useCallback((id: string): Enquiry | null => {
+    const q = queuesRef.current.data;
+    const h = histRef.current.data;
+    return (
+      (q?.active ?? []).find((x) => x.id === id) ??
+      (q?.unprocessed ?? []).find((x) => x.id === id) ??
+      (q?.empty ?? []).find((x) => x.id === id) ??
+      (h?.rows ?? []).find((x) => x.id === id) ??
+      null
+    );
+  }, []);
+  const updateEnquiry = useCallback(async (id: string, updates: Partial<Enquiry>) => {
+    const run = async () => {
+      // 1. Paint instantly from the latest local row (never a stale snapshot).
+      const cur = findRow(id);
+      if (cur) spliceRow({ ...cur, ...updates, updatedAt: new Date().toISOString() } as Enquiry);
+      try {
+        // 2. Single-row PATCH in the background.
+        const res = await fetch(`/api/enquiries/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          throw new Error((data && (data.error || data.message)) || "request failed");
+        }
+        const saved = await res.json().catch(() => null);
+        // 3. Reconcile with server truth (single row — no queue refetch).
+        const body = saved && !saved.id && saved.enquiry ? saved.enquiry : saved;
+        if (body && body.id) spliceRow(toEnquiry(body));
+        return saved;
+      } catch (err) {
+        // Never sit on a lie — resync, then surface the error.
+        queuesRef.current.refresh();
+        histRef.current.refresh();
+        throw err;
+      }
+    };
+    const prev = chainsRef.current[id] ?? Promise.resolve();
+    const next = prev.then(run, run);
+    chainsRef.current[id] = next.catch(() => {});
+    return next;
+  }, [findRow, spliceRow]);
 
   const leadName = useCallback((agentId: string) => {
     if (!agentId) return "";

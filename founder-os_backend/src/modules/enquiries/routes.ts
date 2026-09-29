@@ -29,6 +29,7 @@ import {
   isRestrictedViewer,
   canManageRates,
   canConcludeProcurement,
+  canSeeProcurementRequests,
   redactEnquiryPII,
   stripMarginFields,
   normalizeMoneyInput,
@@ -42,6 +43,7 @@ export {
   isRestrictedViewer,
   canManageRates,
   canConcludeProcurement,
+  canSeeProcurementRequests,
   redactEnquiryPII,
   stripMarginFields,
   normalizeMoneyInput,
@@ -272,7 +274,8 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     // Sales sees final rates but never margin internals (selectedVendor /
     // markup stay Management-only). Management (MIS) gets the full row.
     const privileged = canManageRates(me);
-    const out = privileged ? enquiries : enquiries.map(stripMarginFields);
+    const hideRequests = !canSeeProcurementRequests(me);
+    const out = privileged ? enquiries : enquiries.map((e) => stripMarginFields(e, { hideRequests }));
     return json(200, { enquiries: out, comments, ...meta });
   }
   const red = await redactEnquiryRows(enquiries as any[], comments as any[], opts?.aiConfigured ?? true);
@@ -674,7 +677,7 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
       await syncEstimateCreatorFromEnquiry(estNumber, assignedAgentId);
     } catch { /* fail-open */ }
   }
-  const body_ = canManageRates(me) ? enquiry : stripMarginFields(enquiry as any);
+  const body_ = canManageRates(me) ? enquiry : stripMarginFields(enquiry as any, { hideRequests: !canSeeProcurementRequests(me) });
   return {
     status: 201,
     body: body_,
@@ -889,7 +892,7 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
   const canSeeMargins = canManageRates(me);
   return {
     status: 200,
-    body: canSeeMargins ? enquiry : stripMarginFields(enquiry as any),
+    body: canSeeMargins ? enquiry : stripMarginFields(enquiry as any, { hideRequests: !canSeeProcurementRequests(me) }),
     live: { type: LiveEvent.Enquiries, extra: { action: "updated", id, summary: summarizeEnquiry(enquiry) } },
   };
 }
@@ -920,7 +923,7 @@ export async function enquiryGet(store: EnquiryStore, me: MeResponse, id: string
   const enquiry = await store.getEnquiry(id).catch(() => null);
   if (!enquiry) return json(404, { error: "not found" });
   const comments = await store.listComments(id).catch(() => []);
-  const body = canManageRates(me) ? enquiry : stripMarginFields(enquiry as any);
+  const body = canManageRates(me) ? enquiry : stripMarginFields(enquiry as any, { hideRequests: !canSeeProcurementRequests(me) });
   return json(200, { enquiry: body, comments });
 }
 

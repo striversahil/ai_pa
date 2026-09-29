@@ -137,6 +137,132 @@ export async function invalidateProductLineCache(): Promise<void> {
   try { await cacheDel(DATA_KEY); } catch { /* best-effort */ }
 }
 
+// ── Scale path: per-product accessors (no full-table load) ──────────────
+// getProductLineData() above caps rates at 300 and loads every table — it
+// silently drops older rates past ~300 rows and breaches KV/CPU limits past
+// ~10K. Hot paths (sales chat, intake, knowledge copilot) MUST use these
+// targeted, per-product cached queries instead. The monolith stays ONLY for
+// the dashboard payload until it is paginated.
+
+export interface ProductIndexRow {
+  id: string;
+  category: string;
+  name: string;
+  aliases: string[];
+  active: boolean;
+}
+
+const INDEX_KEY = 'product-line:index:v1';
+const INDEX_TTL_MS = 10 * 60 * 1000;
+
+/** Slim catalogue index: id/category/name/aliases for matching (no rates). */
+export async function getProductIndex(): Promise<ProductIndexRow[]> {
+  return cached(INDEX_KEY, INDEX_TTL_MS, async () => {
+    const rows = await (prisma as any).productItem.findMany({ orderBy: [{ category: 'asc' }, { name: 'asc' }] });
+    return ((rows as any[]) ?? []).map((p) => ({
+      id: String(p.id),
+      category: String(p.category ?? ''),
+      name: String(p.name ?? ''),
+      aliases: parseAliases(p.aliases),
+      active: p.active !== false && p.active !== 0,
+    }));
+  });
+}
+
+export async function invalidateProductIndex(): Promise<void> {
+  try { await cacheDel(INDEX_KEY); } catch { /* best-effort */ }
+}
+
+const RATES_TTL_MS = 10 * 60 * 1000;
+
+/** ALL rates for one product (no take-cap), with vendor names joined. */
+export async function getRatesForProduct(productId: string): Promise<RateRow[]> {
+  const pid = String(productId);
+  return cached(`product-line:rates:v1:${pid}`, RATES_TTL_MS, async () => {
+    const rates = await (prisma as any).vendorRate.findMany({ where: { productId: pid }, orderBy: [{ quotedAt: 'desc' }] });
+    const list = ((rates as any[]) ?? []);
+    const vendorIds = [...new Set(list.map((r) => String(r.vendorId ?? '')).filter(Boolean))];
+    const vendorName = new Map<string, string>();
+    const vendorType = new Map<string, string>();
+    if (vendorIds.length > 0) {
+      const vendors = await (prisma as any).vendor.findMany({ where: { id: { in: vendorIds } } }).catch(() => []);
+      for (const v of ((vendors as any[]) ?? [])) {
+        vendorName.set(String(v.id), String(v.name ?? ''));
+        vendorType.set(String(v.id), String((v as any).vendorType ?? ''));
+      }
+    }
+    const productName = await (prisma as any).productItem.findUnique({ where: { id: pid } })
+      .then((p: any) => (p ? String(p.name ?? '') : '')).catch(() => '');
+    return list.map((r) => ({
+      id: String(r.id),
+      vendorId: String(r.vendorId),
+      vendorName: vendorName.get(String(r.vendorId)) ?? null,
+      vendorType: vendorType.get(String(r.vendorId)) ?? null,
+      productId: pid,
+      productName,
+      attrKey: String(r.attrKey ?? ''),
+      attrValues: parseAttrValues(r.attrValues),
+      pricePerUnit: r.pricePerUnit != null ? Number(r.pricePerUnit) : null,
+      unit: String(r.unit ?? ''),
+      discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
+      baseRate: r.baseRate != null ? Number(r.baseRate) : null,
+      weightPerUnit: r.weightPerUnit != null ? Number(r.weightPerUnit) : null,
+      packageQty: r.packageQty != null ? String(r.packageQty) : null,
+      packageDims: r.packageDims != null ? String(r.packageDims) : null,
+      moq: r.moq != null ? String(r.moq) : null,
+      deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
+      imageUrl: r.imageUrl ? String(r.imageUrl) : null,
+      videoUrl: r.videoUrl ? String(r.videoUrl) : null,
+      quotedAt: String(r.quotedAt ?? ''),
+      enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+      active: r.active !== false && r.active !== 0,
+    }));
+  });
+}
+
+export async function invalidateProductRatesCache(productId: string): Promise<void> {
+  try { await cacheDel(`product-line:rates:v1:${String(productId)}`); } catch { /* best-effort */ }
+}
+
+export interface VendorIndexRow {
+  id: string;
+  name: string;
+  vendorType: string;
+  location: string | null;
+  active: boolean;
+}
+
+const VENDORS_KEY = 'product-line:vendors:v1';
+const VENDORS_TTL_MS = 10 * 60 * 1000;
+
+/** Slim vendor list for name/location matching (counts resolved per hit). */
+export async function getVendorIndex(): Promise<VendorIndexRow[]> {
+  return cached(VENDORS_KEY, VENDORS_TTL_MS, async () => {
+    const rows = await (prisma as any).vendor.findMany({ orderBy: [{ name: 'asc' }] });
+    return ((rows as any[]) ?? []).map((v) => ({
+      id: String(v.id),
+      name: String(v.name ?? ''),
+      vendorType: String(v.vendorType ?? ''),
+      location: v.location != null ? String(v.location) : null,
+      active: v.active !== false && v.active !== 0,
+    }));
+  });
+}
+
+export async function invalidateVendorIndex(): Promise<void> {
+  try { await cacheDel(VENDORS_KEY); } catch { /* best-effort */ }
+}
+
+/** Targeted rate count for one vendor (keeps vendor_lookup accurate at scale). */
+export async function countRatesForVendor(vendorId: string): Promise<number> {
+  try {
+    const n = await (prisma as any).vendorRate.count({ where: { vendorId: String(vendorId) } });
+    return Number(n) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 const DETAIL_TTL_MS = 10 * 60 * 1000;
 
 /** Full product detail: identity + guide + every vendor rate with specs. */
