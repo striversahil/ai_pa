@@ -117,7 +117,7 @@ Worker + GitHub Actions.
 │   └── set-ai-keys.sh                  # push GROQ_API_KEYS to GH + Worker secrets (keys never touch disk/git)
 ├── founder-os_frontend/               # Next.js 16 static dashboard (Cloudflare Pages)
 ├── .github/workflows/                 # cron-every-{5,10,15,30}min.yml + cron-daily-ist.yml
-├── zoho_sent/                         # Zoho Books cURL export (sent_estimates.txt)
+├── founder-os_backend/zoho_sent/        # Zoho Books cURL export (sent_estimates.txt)
 ├── random_dump/                       # design docs, n8n workflows
 └── WA_Engine_Pro_API_Documentation.md / WHATSAPP_FLOW.md / whatsapp_plan.md / whatsapp-business-autopilot-architecture.md / whatsapp_context.md   # reference docs
 ```
@@ -429,7 +429,7 @@ EventHub `telecalling` events).
 Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `AI_KEYS` (unified gateway keys;
 legacy `GROQ_API_KEYS`/`OPENROUTER_API_KEYS` + `OMNIROUTE_*` still merged as fallback).
 Zoho creds are inferred at runtime from
-`zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets.
+`founder-os_backend/zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets.
 
 ### 5.1 External dispatch (Cloudflare Worker Cron Triggers → workflow_dispatch)
 GitHub's native `schedule:` is unreliable (observed 1–6 h drift), so all workflows are triggered
@@ -498,7 +498,7 @@ Operational notes:
   request is expected, not an error.
 - Secrets used by the cron dispatcher and runners: `GITHUB_ACCESS_TOKEN`, `WORKER_URL`,
   `SHARED_SECRET`, `AI_KEYS` (unified gateway; legacy per-provider `*_API_KEYS` + `OMNIROUTE_*` still merged).
-  Zoho creds are inferred at runtime from `zoho_sent/sent_estimates.txt`.
+   Zoho creds are inferred at runtime from `founder-os_backend/zoho_sent/sent_estimates.txt`.
 
 
 ## 6. Data Models (PostgreSQL via Prisma — 22+ models)

@@ -363,10 +363,8 @@ export class SalesCopilotService implements AnalysisEngine {
     try {
       let curlFile = path.join('/app', 'zoho_sent', 'sent_estimates.txt');
       if (!fs.existsSync(curlFile)) {
+        // __dirname = src/automations/zoho-sent-analyzer → up 3 = backend root.
         curlFile = path.join(__dirname, '..', '..', '..', 'zoho_sent', 'sent_estimates.txt');
-      }
-      if (!fs.existsSync(curlFile)) {
-        curlFile = path.join(__dirname, '..', '..', '..', '..', 'zoho_sent', 'sent_estimates.txt');
       }
       if (!fs.existsSync(curlFile)) {
         logger.error(`SalesCopilotService: credentials file not found at: ${curlFile}`);

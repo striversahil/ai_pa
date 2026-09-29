@@ -10,7 +10,7 @@ Worker's `/api/runner/*` endpoints.
 ## Fetch scope (read this first)
 
 The list query is derived from the saved curl export
-(`zoho_sent/sent_estimates.txt`) in `fetch.js:buildEstimatesUrl`:
+(`founder-os_backend/zoho_sent/sent_estimates.txt`) in `fetch.js:buildEstimatesUrl`:
 
 * `filter_by=Status.All` — **every** status, not just Sent. Drafts persist as
   metadata for visibility but never enter AI/comment processing.

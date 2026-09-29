@@ -1,7 +1,7 @@
 // orgs.js — multi-organization helpers for the Zoho Books sync.
 //
 // Credential contract (chosen by founder 2026-09-23): ONE curl-export file
-// (zoho_sent/sent_estimates.txt) carries the shared login (cookies/headers)
+// (founder-os_backend/zoho_sent/sent_estimates.txt) carries the shared login (cookies/headers)
 // plus EVERY organization_id. All unique organization_id=<digits> occurrences
 // in the file (list URL, Referer app/<org>, BuildCookie_<org>, ...) in file
 // order form the org list; the FIRST is the primary org (BUI — all existing

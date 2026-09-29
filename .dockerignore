@@ -21,7 +21,7 @@ founder-os_backend/public
 prospect_research
 whatsapp_receiver
 packages
-zoho_sent
+founder-os_backend/zoho_sent
 
 # Docker files (no need to send back into the build context)
 Dockerfile

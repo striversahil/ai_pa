@@ -35,8 +35,8 @@ const { workerRequest } = require('./runner-lib');
 // headers — see zoho-sync/orgs.js). First org is primary (BUI).
 function parseCurlFile() {
   const candidates = [
-    path.join(__dirname, '..', 'zoho_sent', 'sent_estimates.txt'),
-    path.join(process.cwd(), 'zoho_sent', 'sent_estimates.txt'),
+    path.join(__dirname, '..', 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
+    path.join(process.cwd(), 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
     '/app/zoho_sent/sent_estimates.txt',
   ];
   const curlFile = candidates.find((p) => fs.existsSync(p));

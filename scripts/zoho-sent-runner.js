@@ -26,7 +26,7 @@
  *
  * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (comma-separated, rotated).
  * Zoho credentials are inferred from the curl export at
- * zoho_sent/sent_estimates.txt (list scope derived programmatically).
+ * founder-os_backend/zoho_sent/sent_estimates.txt (list scope derived programmatically).
  * SO_ONLY=1: manual lightweight tick — sales-orders-today only, then exit.
  * (The scheduled cron-every-5min.yml job runs the FULL sync; no separate
  * SO_ONLY job is needed since the full sync refreshes sales-orders first.)

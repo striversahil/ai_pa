@@ -13,7 +13,7 @@ prospects_verified.json
 *.zip
 .next/
 out/
-zoho_sent/google-service-account.json
+founder-os_backend/zoho_sent/google-service-account.json
 waha_sessions/
 google-service-account.json
 .runtime/

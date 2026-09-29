@@ -32,9 +32,10 @@ active estimates.
 
 1. **Auth**: parse Zoho creds from `ZOHO_CURL_CONTENT` secret (cookie-based
    curl export, primary) → `ZOHO_BOOKS_SENT_URL` + `ZOHO_BOOKS_AUTH_TOKEN`
-   OAuth fallback → local `zoho_sent/sent_estimates.txt` (dev). Same parser
-   (`parseCurlContent`: URL + `-H` headers + `organization_id`). Runner
-   reads only the `zoho_sent/sent_estimates.txt` file.
+   OAuth fallback → local `founder-os_backend/zoho_sent/sent_estimates.txt`
+   (dev). Same parser (`parseCurlContent`: URL + `-H` headers +
+   `organization_id`). Runner reads only the
+   `founder-os_backend/zoho_sent/sent_estimates.txt` file.
 2. **Fetch estimates** (network): all-status list (`Status.All`, 2 pages ×
    200, newest-`last_modified_time` first — any status move lands in-window).
    Drafts persist as metadata for visibility but never enter AI/comment work.

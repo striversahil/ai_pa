@@ -1,5 +1,5 @@
 // fetch.js — all Zoho Books reads (pure I/O, no DB, no AI).
-// URL + auth come from the saved curl export (zoho_sent/sent_estimates.txt);
+// URL + auth come from the saved curl export (founder-os_backend/zoho_sent/sent_estimates.txt);
 // list URLs are derived from it (status / sort / page swapped), so no new
 // export file is needed when the sync scope changes.
 //
@@ -15,8 +15,8 @@ const orgs = require('./orgs');
 
 function parseCurlFile() {
   const candidates = [
-    path.join(__dirname, '..', '..', 'zoho_sent', 'sent_estimates.txt'),
-    path.join(process.cwd(), 'zoho_sent', 'sent_estimates.txt'),
+    path.join(__dirname, '..', '..', 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
+    path.join(process.cwd(), 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
     '/app/zoho_sent/sent_estimates.txt',
   ];
   const curlFile = candidates.find((p) => fs.existsSync(p));

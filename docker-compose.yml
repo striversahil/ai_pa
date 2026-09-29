@@ -30,7 +30,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ./zoho_sent:/app/zoho_sent:ro
+      - ./founder-os_backend/zoho_sent:/app/zoho_sent:ro
       # ⚠️  DO NOT mount ./founder-os_backend/public here!
       # The frontend is built INSIDE Docker and baked into the image.
       # Mounting the local public/ dir would override it with stale files.

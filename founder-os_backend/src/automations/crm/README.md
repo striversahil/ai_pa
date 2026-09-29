@@ -69,7 +69,7 @@ the previous KV snapshot (so→stage map) and writes ledger rows via
   `per_page=200`, newest first, up to 30 pages, early stop when a page has no
   active orders AND nothing created within 120 days), fetched by GH runner
   `scripts/crm-runner.js` using the same curl credentials as the estimates
-  sync (`zoho_sent/sent_estimates.txt`).
+   sync (`founder-os_backend/zoho_sent/sent_estimates.txt`).
 - The runner works in **two phases**. Phase 1 pages the SO list (which never
   includes `line_items`), computes `pendingStep()` per order (after applying
   manual `CrmOrderAction` overrides), and checks the order-level fingerprint —
@@ -115,7 +115,7 @@ None (read-only dashboard + append-only points ledger).
   with `fresh:true` (check the payload, not just the numbers).
 - If empty/zeros with `fresh:false, stale:false`: the runner hasn't posted in
   7+ days — check the `cron-every-5min.yml` run for `crm-runner` errors;
-  verify `zoho_sent/sent_estimates.txt` cookies are fresh; confirm
+   verify `founder-os_backend/zoho_sent/sent_estimates.txt` cookies are fresh; confirm
   `WORKER_URL`/`SHARED_SECRET` GH secrets. (The Zoho "Sales Orders Today"
   tile refreshes on the same 5-min workflow via `SO_ONLY=1`; the full
   estimates sync still runs every 15 min.) `fresh:false, stale:true` is the
