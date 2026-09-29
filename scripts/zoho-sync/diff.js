@@ -129,7 +129,11 @@ function computeHasNew(fetchedByEst, prevByEst, maxCommentIdByEst) {
 // close-out classification (movingSlow 'No') instead of the active one.
 // ZOHO_FORCE is a human-triggered migration — even then, only `sent` should
 // be reclassified (the analyzer is zoho-SENT-analyzer, not all-status).
-function selectWorkItems({ estimates, existingByEstId, fetchedByEst, forced }) {
+// targetedIds: the runner's narrowed comment-target set. Rows outside it were
+// deliberately NOT fetched (steady closed rows) — they skip, they must NOT
+// count as fetch failures (or every tick would fail the run). A targeted row
+// with no bucket is a genuine fetch failure.
+function selectWorkItems({ estimates, existingByEstId, fetchedByEst, forced, targetedIds = null }) {
   const workItems = [];
   let skipped = 0;
   let failed = 0;
@@ -145,7 +149,10 @@ function selectWorkItems({ estimates, existingByEstId, fetchedByEst, forced }) {
     const modifiedSinceLastSync = !!lastModified && !!existingEstimate &&
       new Date(lastModified).getTime() > new Date(existingEstimate.lastSyncTime).getTime();
     const fetched = fetchedByEst.get(estId);
-    if (!fetched) { failed++; continue; }
+    if (!fetched) {
+      if (targetedIds && !targetedIds.has(estId)) { skipped++; continue; }
+      failed++; continue;
+    }
     const needsProcessing = forced || statusChanged || neverAnalyzed || modifiedSinceLastSync || fetched.hasNew;
     if (!needsProcessing) { skipped++; continue; }
     workItems.push({

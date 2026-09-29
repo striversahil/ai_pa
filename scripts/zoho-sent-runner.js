@@ -95,9 +95,15 @@ async function main() {
   const maxCommentIdByEst = state.maxCommentIdByEstimate || {};
   const fetchedIds = new Set(estimates.map((e) => e.estimate_id));
 
-  // 3. Comments (network, before any fingerprint compare). Gated: sent rows +
-  //    rows that were sent in DB (close-out coverage for sent→draft/void).
-  //    Brand-new drafts persist as metadata only — no Zoho reads, no AI.
+  // 3. Comments (network, before any fingerprint compare). NARROWED target
+  //    set (2026-09-29): steady closed rows (accepted/declined/draft, status
+  //    unchanged since DB) carry no new signal — their comments were analyzed
+  //    at transition time. Fetching 1300+ threads every tick to rebuild the
+  //    fingerprint throttles Zoho into 429s (seen live: transitional pass
+  //    burned 14 min + 429s on comment reads). Targets = sent now, DB-sent
+  //    (close-out coverage incl. sent→draft/void), or status-changed
+  //    (transitions need their final comments). Post-close chatter on steady
+  //    closed rows is out of scope for the SENT analyzer.
   //    NOTE (2026-09-26): a 20-min last_modified window gate lived here and
   //    was REVERTED the same day — Zoho does NOT bump last_modified_time on
   //    new comments (proven live: 11:30 comments with 10:58 modified time),
@@ -106,10 +112,13 @@ async function main() {
   //    Volume is controlled instead by concurrency-6 batching, the per-tick
   //    AI cap, and the skip-gates (slow passes complete uninterrupted).
   const commentTargets = estimates.filter((est) => {
-    if (diff.PROCESSABLE.has(String(est.status ?? '').toLowerCase())) return true;
+    if (String(est.status ?? '').toLowerCase() === 'sent') return true;
     const existing = existingByEstId.get(est.estimate_id);
-    return !!existing && String(existing.status) === 'sent';
+    if (!existing) return false;
+    if (String(existing.status) === 'sent') return true;
+    return String(existing.status ?? '') !== String(est.status ?? '');
   });
+  const targetedIds = new Set(commentTargets.map((e) => e.estimate_id));
   console.log(`zoho-sent-runner: fetching comments for ${commentTargets.length} sent-family rows`);
   let commentFetchErrors = 0;
   const fetchedByEst = await fetch.fetchCommentsFor(commentTargets, {
@@ -172,7 +181,7 @@ async function main() {
   // partial progress. Cap sized so pool + sync + capture fit in ~4 min.
   const AI_PER_TICK_CAP = 10;
   const { workItems, skipped, failed: selectFailed } = diff.selectWorkItems({
-    estimates, existingByEstId, fetchedByEst, forced,
+    estimates, existingByEstId, fetchedByEst, forced, targetedIds,
   });
   workItems.sort((a, b) => new Date(a.modified || 0).getTime() - new Date(b.modified || 0).getTime());
   const capped = workItems.length > AI_PER_TICK_CAP;

@@ -25,13 +25,20 @@ async function postFingerprint(fingerprint) {
 // they use postStatusUpdates so conversion closes get ledger-credited.
 // primaryOrg (first organization_id in the export) lets the worker reject a
 // reordered org file, which would otherwise corrupt DB identities.
+// Chunked (100/call): the worker applies upserts sequentially (~100-300ms
+// each through the D1 shim), so a backlog-sized batch in one POST outruns the
+// 90s runner timeout and aborts the whole tick (seen live 2026-09-29: ~600
+// first-seen page-3+ rows killed the transitional pass mid-tick).
 async function postMetadataUpserts(upserts, primaryOrg) {
   if (!upserts.length) { console.log('zoho-sync/persist: metadata unchanged'); return; }
-  await workerRequest('/api/estimates/bulk-upsert', {
-    method: 'POST',
-    body: { estimates: upserts, ...(primaryOrg ? { primaryOrg } : {}) },
-  });
-  console.log(`zoho-sync/persist: metadata upserted ${upserts.length}`);
+  const CHUNK = 100;
+  for (let i = 0; i < upserts.length; i += CHUNK) {
+    await workerRequest('/api/estimates/bulk-upsert', {
+      method: 'POST',
+      body: { estimates: upserts.slice(i, i + CHUNK), ...(primaryOrg ? { primaryOrg } : {}) },
+    });
+  }
+  console.log(`zoho-sync/persist: metadata upserted ${upserts.length} (${Math.ceil(upserts.length / CHUNK)} calls)`);
 }
 
 // Status transitions (any direction). The worker route writes the status,
