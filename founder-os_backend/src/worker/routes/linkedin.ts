@@ -9,6 +9,15 @@ import { requireSecret, notifyLive, type Bindings } from '../context';
 import { prisma } from '../../shared/prisma';
 import { cacheGet, cacheDel } from '../../shared/cache';
 
+// atob-based base64 → bytes (no Buffer dependency — edge Buffer support for
+// binary builtins proved unreliable live; atob is universal in workers).
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(String(b64).replace(/\s+/g, ''));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export const LINKEDIN_IMG_KEY = (id: string) => `linkedin/${id}.png`;
 
 // Visuals are PUBLIC-BY-DESIGN (marketing diagrams destined for LinkedIn
@@ -64,7 +73,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
     // Legacy fallback: 30/09 batch stored envelopes in the shared cache KV.
     const b64 = await cacheGet<string>(`linkedin:img:${id}`, 90 * 24 * 60 * 60 * 1000).catch(() => null);
     if (b64) {
-      const bin = Uint8Array.from(Buffer.from(String(b64), 'base64'));
+      const bin = b64ToBytes(b64);
       return new Response(bin as any, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' } });
     }
     return c.json({ error: 'File not found' }, 404);
@@ -138,7 +147,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
         : await (prisma as any).linkedinPost.create({ data: { batchDate, topic, ...text, status: 'draft' } });
       if (p.imageB64 && typeof p.imageB64 === 'string' && p.imageB64.length > 1000 && c.env.CHAT_FILES) {
         try {
-          const bin = Uint8Array.from(Buffer.from(p.imageB64, 'base64'));
+          const bin = b64ToBytes(p.imageB64);
           await c.env.CHAT_FILES.put(LINKEDIN_IMG_KEY(String(row.id)), bin as any, {
             metadata: { name: `${topic}.png`, type: 'image/png' },
           });
