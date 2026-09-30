@@ -69,11 +69,43 @@ export default function LinkedinDashboard() {
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [tab, setTab] = useState<"final" | "research" | "visual">("final");
+  const [regenMsg, setRegenMsg] = useState<string | null>(null);
 
   const posts = batch.data?.posts ?? [];
   const post = posts[Math.min(active, Math.max(0, posts.length - 1))];
 
   const act = async (path: string, body: any, label: string) => {
+    setBusy(label);
+    try {
+      await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(body),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const regen = async () => {
+    setBusy("regen");
+    setRegenMsg(null);
+    try {
+      const r = await fetch("/api/linkedin/regenerate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({}),
+      });
+      const j = await r.json().catch(() => ({}));
+      setRegenMsg(j.ok ? "⚡ Batch running — fresh drafts land here live on completion." : `⏳ ${j.error ?? "busy, try again in a few minutes."}`);
+    } catch {
+      setRegenMsg("⏳ Trigger failed — try again in a minute.");
+    } finally {
+      setBusy(null);
+    }
+  };
     setBusy(label);
     try {
       await fetch(path, {
@@ -102,6 +134,18 @@ export default function LinkedinDashboard() {
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm text-zinc-400">Batch {batch.data.date} — pick one to post:</span>
+        <button
+          onClick={regen}
+          disabled={busy === "regen"}
+          title="Trigger a fresh 5-draft batch now (06:00 run on demand)"
+          className="ml-auto px-3 py-1 text-xs rounded-full border border-amber-600 text-amber-300 hover:bg-amber-500/10 cursor-pointer disabled:opacity-50"
+        >
+          <RefreshCw className={`inline mr-1 ${busy === "regen" ? "animate-spin" : ""}`} size={12} />
+          {busy === "regen" ? "Triggering…" : "↻ Regenerate now"}
+        </button>
+      </div>
+      {regenMsg && <div className="text-xs text-amber-300/90">{regenMsg}</div>}
+      <div className="flex items-center gap-2 flex-wrap">
         {posts.map((p, i) => (
           <button
             key={p.id}

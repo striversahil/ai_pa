@@ -79,6 +79,28 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
     return c.json({ error: 'File not found' }, 404);
   });
 
+  // Live regenerate (dashboard trigger button): dispatches ONLY the
+  // linkedin-daily job (slot gate) with an optional single-topic refill.
+  // Busy guard (GH in-flight run) + 10-min KV cooldown prevent double-tap
+  // spend. Completion lands via batch ingest → live event → auto-refetch.
+  app.post('/api/linkedin/regenerate', async (c) => {
+    const token = String(c.env.GITHUB_ACCESS_TOKEN ?? '');
+    if (!token) return c.json({ ok: false, error: 'GitHub dispatch not configured' }, 500);
+    const body = await c.req.json().catch(() => ({}));
+    const topic = String(body?.topic ?? '').trim().slice(0, 80);
+    const { linkedinRegenBusy, dispatchLinkedinRegen } = await import('../cron');
+    if (await linkedinRegenBusy(token)) {
+      return c.json({ ok: false, busy: true, error: 'A LinkedIn run is already in flight — it lands live on completion.' }, 409);
+    }
+    const { cacheGet: get, cacheSet: set } = await import('../../shared/cache');
+    const last = await get<number>('linkedin:regen:at', 10 * 60 * 1000);
+    if (last) {
+      return c.json({ ok: false, busy: true, error: 'Regenerate was just triggered — give the run a few minutes.' }, 409);
+    }
+    await dispatchLinkedinRegen(token, topic);
+    await set('linkedin:regen:at', Date.now(), 10 * 60 * 1000);
+    return c.json({ ok: true, topic: topic || 'batch' });
+  });
   // Founder picks 1 of 5 (others stay draft for reuse; picked → approved).
   app.post('/api/linkedin/pick', async (c) => {
     const body = await c.req.json().catch(() => ({}));

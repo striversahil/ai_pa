@@ -108,6 +108,41 @@ export function slotLabel(hhmm: number): string {
   return `${String(Math.floor(hhmm / 60)).padStart(2, '0')}:${String(hhmm % 60).padStart(2, '0')}`;
 }
 
+// ── LinkedIn live regenerate (dashboard button) ────────────────────────────
+// Dispatches ONLY the linkedin-daily job (slot gate) with an optional single
+// topic refill. Busy check reads the workflow's recent runs so double-taps
+// don't stack expensive batches.
+const LINKEDIN_WORKFLOW = 'cron-daily-ist.yml';
+
+export async function linkedinRegenBusy(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${LINKEDIN_WORKFLOW}/runs?per_page=5`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'founder-os-worker',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    if (!res.ok) return false; // fail-open: a status-read error never blocks regen
+    const data = await res.json().catch(() => null);
+    const runs = (data?.workflow_runs ?? []) as Array<{ status?: string }>;
+    return runs.some((r) => r.status === 'queued' || r.status === 'in_progress');
+  } catch {
+    return false;
+  }
+}
+
+export async function dispatchLinkedinRegen(token: string, topic = ''): Promise<void> {
+  const inputs: Record<string, string> = { slot: '00:30' };
+  if (topic) inputs.topic = topic;
+  await dispatchGitHubWorkflow(LINKEDIN_WORKFLOW, token, inputs);
+}
+
 async function runScheduled(event: { cron?: string; scheduledTime?: number }, env: Bindings, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
   bootstrapEnv(env);
   // Gate cadence on the *scheduled* slot time, not execution time — Cloudflare
