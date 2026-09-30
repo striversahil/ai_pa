@@ -84,6 +84,24 @@ async function groq(system, user, { temperature = 0.5, maxTokens, reasoningEffor
   return res.content;
 }
 
+// Agnes-only text completion (agnes-3.0-flash default) — same gateway, explicit
+// provider so no Groq fallback is ever in the path. Prefer this in new runners.
+async function agnesText(system, user, { temperature = 0.5, maxTokens, reasoningEffort, model = 'agnes-3.0-flash', sessionKey } = {}) {
+  const res = await gateway.complete({
+    provider: 'agnes',
+    model,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    temperature,
+    ...(maxTokens ? { maxTokens } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
+  });
+  return res.content;
+}
+
 async function groqJson(system, user, { temperature = 0, maxTokens, reasoningEffort } = {}) {
   return gateway.completeJson({
     messages: [
@@ -158,6 +176,7 @@ module.exports = {
   workerRequest,
   groq,
   groqJson,
+  agnesText,
   extractJson,
   gateway,
   agnesImage,

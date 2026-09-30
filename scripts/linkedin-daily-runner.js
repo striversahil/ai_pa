@@ -19,7 +19,7 @@
  * Manual: TOPIC=<slug> runs a single topic (testing / regenerate refill).
  */
 
-const { workerRequest, groq, agnesImage } = require('./runner-lib');
+const { workerRequest, agnesText, agnesImage } = require('./runner-lib');
 const { TOPICS } = require('./linkedin-topics');
 const { webResearch } = require('./linkedin-research');
 const { imagePromptFor } = require('./linkedin-visual');
@@ -28,7 +28,7 @@ const { API } = require('../founder-os_backend/src/shared/sync-core/contract');
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-const hasLLM = (process.env.AI_KEYS || process.env.AGNES_API_KEY || process.env.AGNES_API_KEYS || process.env.GROQ_API_KEYS);
+const hasLLM = (process.env.AI_KEYS || process.env.AGNES_API_KEY || process.env.AGNES_API_KEYS);
 if (!hasLLM) missing.push('AI_KEYS or AGNES_API_KEY(S)');
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
@@ -74,22 +74,22 @@ async function runTopic(topic) {
     : '(no web sources — rely on general milling knowledge, flag everything uncertain as [NEED DATA])';
   await sleep(AI_PACING_MS);
 
-  // Prose stages use plain text completion (groq) — matching the experiment:
-  // research/write/edit output markdown, not JSON. groqJson would force JSON
-  // mode and intermittently fail parsing (seen live: 1/5 batch loss).
-  const briefText = await groq(RESEARCH_SYS,
+  // Prose stages use plain Agnes text completion — matching the experiment:
+  // research/write/edit output markdown, not JSON (a JSON-forcing call dropped
+  // 1/5 live). Sticky sessionKey per topic keeps one keyway per draft.
+  const briefText = await agnesText(RESEARCH_SYS,
     `Topic: ${topic.title}. Pillar ${topic.pillar}, format ${topic.format}.\n\nWeb findings:\n${srcBlock}\n\nProduce the research_brief (Context, Key facts, PROBLEM, SOLUTION direction, Audience angles, Visual idea, Risks).`,
-    { temperature: 0.5, maxTokens: 900 });
+    { temperature: 0.5, maxTokens: 900, sessionKey: `linkedin:${topic.slug}` });
   await sleep(AI_PACING_MS);
 
   console.log(`linkedin: [${topic.slug}] write…`);
-  const draftText = await groq(WRITING_SYS,
+  const draftText = await agnesText(WRITING_SYS,
     `Research brief:\n${briefText}\n\nWrite the LinkedIn post_draft for: ${topic.title}.`,
-    { temperature: 0.7, maxTokens: 1000 });
+    { temperature: 0.7, maxTokens: 1000, sessionKey: `linkedin:${topic.slug}` });
   await sleep(AI_PACING_MS);
 
   console.log(`linkedin: [${topic.slug}] edit…`);
-  const finalText = await groq(EDITING_SYS, `Edit this draft:\n\n${draftText}`, { temperature: 0.3, maxTokens: 1000 });
+  const finalText = await agnesText(EDITING_SYS, `Edit this draft:\n\n${draftText}`, { temperature: 0.3, maxTokens: 1000, sessionKey: `linkedin:${topic.slug}` });
 
   const hashtags = (finalText.match(/#[\p{L}\p{N}_]+/gu) || []).slice(0, 5).join(' ');
   const concept = `${topic.title} — problem-to-solution flow in 3 steps`;
