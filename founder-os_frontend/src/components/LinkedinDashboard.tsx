@@ -26,6 +26,28 @@ async function fetchBatch(): Promise<{ date: string; ready: boolean; posts: Link
   return r.json();
 }
 
+// The model sometimes returns the Hook/Post/Hashtags shape as a JSON object
+// instead of markdown (30/09 batch). Compose either shape into a finished
+// post — mirrors scripts/linkedin-format.js in the runner.
+function displayFinal(text: string): string {
+  const t = String(text ?? "").trim();
+  if (!t.startsWith("{")) return t;
+  try {
+    const o = JSON.parse(t);
+    const post = String(o.Post ?? o.post ?? "");
+    if (!post) return t;
+    const hookA = String(o["Hook A"] ?? o.hookA ?? "").trim();
+    const rawTags = Array.isArray(o.Hashtags ?? o.hashtags)
+      ? (o.Hashtags ?? o.hashtags).join(" ")
+      : String(o.Hashtags ?? o.hashtags ?? "");
+    let out = hookA ? `${hookA}\n\n${post}` : post;
+    if (rawTags.trim()) out += `\n\n${rawTags.trim()}`;
+    return out;
+  } catch {
+    return t;
+  }
+}
+
 function copyText(t: string) {
   navigator.clipboard?.writeText(t).catch(() => {});
 }
@@ -97,13 +119,13 @@ export default function LinkedinDashboard() {
               ))}
               <span className="ml-auto text-zinc-500">Pillar {post.pillar} · {post.format} · {post.status}</span>
             </div>
-            {tab === "final" && <pre className="whitespace-pre-wrap text-sm text-zinc-200 font-sans">{post.postFinal}</pre>}
-            {tab === "research" && <pre className="whitespace-pre-wrap text-xs text-zinc-400 font-sans">{post.researchBrief}</pre>}
+            {tab === "final" && <pre className="whitespace-pre-wrap text-sm text-zinc-200 font-sans">{displayFinal(post.postFinal)}</pre>}
+            {tab === "research" && <pre className="whitespace-pre-wrap text-xs text-zinc-400 font-sans">{displayFinal(post.researchBrief)}</pre>}
             {tab === "visual" && <pre className="whitespace-pre-wrap text-xs text-zinc-400 font-sans">{post.visualBrief}</pre>}
             {post.hashtags && <div className="text-xs text-sky-300">{post.hashtags}</div>}
             <div className="flex gap-2 flex-wrap pt-1">
               <button
-                onClick={() => { copyText(`${post.postFinal}\n\n${post.hashtags}`); }}
+                onClick={() => { copyText(`${displayFinal(post.postFinal)}\n\n${post.hashtags}`); }}
                 className="px-3 py-1 text-xs rounded-full border border-zinc-700 text-zinc-300 hover:border-zinc-400 cursor-pointer"
               >
                 <Copy className="inline mr-1" size={12} /> Copy post

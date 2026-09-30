@@ -23,6 +23,7 @@ const { workerRequest, agnesText, agnesImage } = require('./runner-lib');
 const { TOPICS } = require('./linkedin-topics');
 const { webResearch } = require('./linkedin-research');
 const { imagePromptFor } = require('./linkedin-visual');
+const { composeFinal } = require('./linkedin-format');
 const { API } = require('../founder-os_backend/src/shared/sync-core/contract');
 
 const missing = [];
@@ -91,7 +92,15 @@ async function runTopic(topic) {
   console.log(`linkedin: [${topic.slug}] edit…`);
   const finalText = await agnesText(EDITING_SYS, `Edit this draft:\n\n${draftText}`, { temperature: 0.3, maxTokens: 1000, sessionKey: `linkedin:${topic.slug}` });
 
-  const hashtags = (finalText.match(/#[\p{L}\p{N}_]+/gu) || []).slice(0, 5).join(' ');
+  // The model sometimes returns the Hook/Post/Hashtags shape as JSON instead
+  // of markdown — compose it into a finished post (Hook B + data-needed stay
+  // in the draft, never dropped).
+  const { final: finished, hookB, dataNeeded } = composeFinal(finalText);
+  const draftExtras = [
+    hookB ? `Alt hook (Hook B): ${hookB}` : '',
+    dataNeeded.length ? `Data still needed:\n${dataNeeded.map((d) => `- ${d}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
+  const hashtags = (finished.match(/#[\p{L}\p{N}_]+/gu) || []).slice(0, 5).join(' ');
   const concept = `${topic.title} — problem-to-solution flow in 3 steps`;
   const imgPrompt = imagePromptFor(topic.title, concept);
 
@@ -105,7 +114,9 @@ async function runTopic(topic) {
   }
   return {
     topic: topic.slug, pillar: topic.pillar, format: topic.format,
-    researchBrief: briefText, postDraft: draftText, postFinal: finalText,
+    researchBrief: briefText,
+    postDraft: draftExtras ? `${draftText}\n\n---\n${draftExtras}` : draftText,
+    postFinal: finished,
     hashtags, visualBrief: `Explainer diagram: ${concept}. Posting slot Tue/Thu/Sat 8-10 AM IST + one engagement action (reply to every comment in the first hour).`,
     imagePrompt: imgPrompt, ...(imageB64 ? { imageB64 } : {}),
   };

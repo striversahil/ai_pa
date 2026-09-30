@@ -5,12 +5,11 @@
 // Images live in KV (linkedin:img:<postId>, 90-day TTL); text in D1.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, notifyLive, type Bindings } from '../context';
+import { deps, requireSecret, notifyLive, authStore, getMe, isApproved, type Bindings } from '../context';
 import { prisma } from '../../shared/prisma';
-import { cacheGet, cacheSet, cacheDel } from '../../shared/cache';
+import { cacheDel } from '../../shared/cache';
 
-export const LINKEDIN_IMG_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-export const linkedinImgKey = (id: string) => `linkedin:img:${id}`;
+export const LINKEDIN_IMG_KEY = (id: string) => `linkedin/${id}.png`;
 
 function istDateString(d: Date): string {
   return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -38,12 +37,33 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
     });
   });
 
-  // Serve a generated visual (KV base64 → PNG bytes).
+  // Serve the visual — same proven pattern as /api/crm/files/:id (raw bytes
+  // in CHAT_FILES, explicit session check, immutable caching). Falls back to
+  // the first-day cache-envelope keys so the 30/09 batch keeps working.
   app.get('/api/linkedin/image/:id', async (c) => {
-    const b64 = await cacheGet<string>(linkedinImgKey(c.req.param('id')), LINKEDIN_IMG_TTL_MS);
-    if (!b64) return c.text('Not found', 404);
-    const bytes = Buffer.from(String(b64), 'base64');
-    return new Response(bytes as any, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' } });
+    const me = await getMe(authStore(c), c.req.header('cookie') ?? null);
+    if (!me) return c.json({ error: 'Authentication required' }, 401);
+    if (!isApproved(me)) return c.json({ error: 'Approval required' }, 403);
+    const id = c.req.param('id') ?? '';
+    if (c.env.CHAT_FILES) {
+      const obj = await c.env.CHAT_FILES.getWithMetadata(LINKEDIN_IMG_KEY(id), 'arrayBuffer').catch(() => null);
+      if (obj?.value) {
+        const headers = new Headers();
+        headers.set('Content-Type', 'image/png');
+        headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+        return new Response(obj.value, { headers });
+      }
+    }
+    // Legacy fallback: 30/09 batch stored envelopes in the shared cache KV.
+    try {
+      const { cacheGet } = await import('../../shared/cache');
+      const b64 = await cacheGet<string>(`linkedin:img:${id}`, 90 * 24 * 60 * 60 * 1000);
+      if (b64) {
+        const bin = Uint8Array.from(Buffer.from(String(b64), 'base64'));
+        return new Response(bin as any, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' } });
+      }
+    } catch { /* fall through to 404 */ }
+    return c.json({ error: 'File not found' }, 404);
   });
 
   // Founder picks 1 of 5 (others stay draft for reuse; picked → approved).
@@ -94,7 +114,6 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
     const batchDate = String(body?.batchDate ?? istDateString(new Date()));
     const posts = Array.isArray(body?.posts) ? body.posts : [];
     if (!posts.length) return c.json({ ok: false, error: 'posts required' }, 400);
-    const { cacheSet: set } = { cacheSet };
     let stored = 0;
     for (const p of posts.slice(0, 8)) {
       if (!p?.topic || !p?.postFinal) continue;
@@ -113,9 +132,16 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const row = existing
         ? await (prisma as any).linkedinPost.update({ where: { id: String(existing.id) }, data: text })
         : await (prisma as any).linkedinPost.create({ data: { batchDate, topic, ...text, status: 'draft' } });
-      if (p.imageB64 && typeof p.imageB64 === 'string' && p.imageB64.length > 1000) {
-        await set(linkedinImgKey(String(row.id)), p.imageB64, LINKEDIN_IMG_TTL_MS);
-        await (prisma as any).linkedinPost.update({ where: { id: String(row.id) }, data: { hasImage: true } });
+      if (p.imageB64 && typeof p.imageB64 === 'string' && p.imageB64.length > 1000 && c.env.CHAT_FILES) {
+        try {
+          const bin = Uint8Array.from(Buffer.from(p.imageB64, 'base64'));
+          await c.env.CHAT_FILES.put(LINKEDIN_IMG_KEY(String(row.id)), bin as any, {
+            metadata: { name: `${topic}.png`, type: 'image/png' },
+          });
+          await (prisma as any).linkedinPost.update({ where: { id: String(row.id) }, data: { hasImage: true } });
+        } catch (e: any) {
+          console.warn(`linkedin: image store failed for ${topic}: ${e?.message}`);
+        }
       }
       stored++;
     }
