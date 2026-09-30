@@ -32,21 +32,31 @@ async function fetchBatch(): Promise<{ date: string; ready: boolean; posts: Link
 // instead of markdown (30/09 batch). Compose either shape into a finished
 // post — mirrors scripts/linkedin-format.js in the runner.
 function displayFinal(text: string): string {
-  const t = String(text ?? "").trim();
-  if (!t.startsWith("{")) return t;
+  const raw = String(text ?? "").trim();
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start === -1 || end <= start) return raw;
   try {
-    const o = JSON.parse(t);
-    const post = String(o.Post ?? o.post ?? "");
-    if (!post) return t;
-    const hookA = String(o["Hook A"] ?? o.hookA ?? "").trim();
-    const rawTags = Array.isArray(o.Hashtags ?? o.hashtags)
-      ? (o.Hashtags ?? o.hashtags).join(" ")
-      : String(o.Hashtags ?? o.hashtags ?? "");
+    const o = JSON.parse(raw.slice(start, end + 1));
+    if (!o || typeof o !== "object") return raw;
+    const pick = (...keys: string[]) => {
+      for (const k of keys) {
+        const v = (o as any)[k];
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+      return "";
+    };
+    // Key names drift run to run — accept every variant seen live.
+    const post = pick("Post", "post", "body", "post_draft", "postDraft", "body_draft", "bodyDraft", "post_body", "postBody");
+    if (!post) return raw;
+    const hookA = pick("Hook A", "hookA", "hook_a");
+    const tagRaw = (o as any).Hashtags ?? (o as any).hashtags ?? (o as any).tags;
+    const rawTags = Array.isArray(tagRaw) ? tagRaw.join(" ") : String(tagRaw ?? "");
     let out = hookA ? `${hookA}\n\n${post}` : post;
     if (rawTags.trim()) out += `\n\n${rawTags.trim()}`;
     return out;
   } catch {
-    return t;
+    return raw;
   }
 }
 
