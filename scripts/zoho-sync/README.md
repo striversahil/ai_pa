@@ -42,11 +42,11 @@ The files below own only zoho-sent endpoint shapes and orchestration; the old
 
 | File | Owns | Never touches |
 |---|---|---|
-| `fetch.js` | Zoho reads: All-status 2-page list, comment batches, vanished-row detail check, NeoDove roster, sales-orders snapshot | D1, AI |
-| `diff.js` | Pure change detection (no I/O — unit-testable): fingerprint build/parse, metadata diff (status excluded), `detectTransitions`, comment newcomer sets, `selectWorkItems` with the `PROCESSABLE` gate (`sent/accepted/declined/confirmed`) | network, DB, AI |
-| `persist.js` | Worker writes: `getDbState`, `postMetadataUpserts`, `postStatusUpdates`, `postComments` (HTML-cleaned, batched), `postClassification`, `postLeadDetails`, watermark, fingerprint, sales-orders tile | Zoho, AI |
-| `analyze.js` | The only AI spender: badge + journey classification, pooled with retry (`AI_CONCURRENCY=2`, 2s pacing), lead-details capture loop | Zoho reads, D1 (writes via `persist.js`) |
-| `comments.js` | Shared pure helpers: HTML cleaning, system-comment detection, IST timestamp ordering (Zoho ids are NOT chronological), sales-comment extraction | everything else |
+| `fetch.js` | Zoho endpoint shapes: All-status 2-page list, comment batches, vanished-row detail check, NeoDove roster, sales-orders snapshot (auth/net/dates/orgs from the core) | D1, AI |
+| `estimate-changes.js` *(core)* | Pure change detection (no I/O — unit-testable): fingerprint build/parse/capped-tick merge, metadata diff (status excluded), `detectTransitions`, comment newcomer sets, `selectWorkItems` with the `PROCESSABLE` gate (`sent/accepted/declined/confirmed`) | network, DB, AI |
+| `persist.js` | Worker writes via core `contract.js` endpoint paths: `getDbState`, `postMetadataUpserts`, `postStatusUpdates`, `postComments` (HTML-cleaned, batched), `postClassification`, `postLeadDetails`, watermark, fingerprint, sales-orders tile | Zoho, AI |
+| `analyze.js` | The only AI spender: badge + journey classification, pooled with retry (`AI_CONCURRENCY=1`, 3s pacing), lead-details capture loop | Zoho reads, D1 (writes via `persist.js`) |
+| `zoho-comments.js` *(core)* | Shared pure helpers: HTML cleaning, system-comment detection, IST timestamp ordering (Zoho ids are NOT chronological), sales-comment extraction | everything else |
 
 ## Flow (orchestrator order matters)
 
@@ -71,9 +71,11 @@ The files below own only zoho-sent endpoint shapes and orchestration; the old
 
 ## Rules for editors
 
-* New Zoho reads → `fetch.js`. New comparisons → `diff.js` (keep it pure —
-  add a `node -e` assertion when you change it). New worker writes →
-  `persist.js`. New AI spend → `analyze.js`, gated by `PROCESSABLE`.
+* New Zoho reads → `fetch.js`. New comparisons/filters/identity logic → the
+  sync core (`estimate-changes.js` / `zoho-comments.js` / `zoho-orgs.js` — keep
+  it pure, add a `node -e` assertion when you change it). New worker writes →
+  `persist.js` (endpoint paths from core `contract.js` — never a literal).
+  New AI spend → `analyze.js`, gated by `PROCESSABLE`.
 * `node --check` every file before commit. No test suite — verification is
   `node --check` + targeted `node -e` asserts + worker smoke + live curl.
 * `ZOHO_FORCE=1` reprocesses every eligible row (manual full pass).

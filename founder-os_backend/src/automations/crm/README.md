@@ -68,8 +68,10 @@ the previous KV snapshot (so→stage map) and writes ledger rows via
 - **Zoho Books** `/api/v3/salesorders` (`filter_by=Status.All`,
   `per_page=200`, newest first, up to 30 pages, early stop when a page has no
   active orders AND nothing created within 120 days), fetched by GH runner
-  `scripts/crm-runner.js` using the same curl credentials as the estimates
-   sync (`founder-os_backend/zoho_sent/sent_estimates.txt`).
+   `scripts/crm-runner.js` using the shared sync core
+   (`founder-os_backend/src/shared/sync-core/` — same curl credentials, HTTP
+   policies, org identities, and endpoint contracts as the estimates
+   sync) to read `founder-os_backend/zoho_sent/sent_estimates.txt`.
 - The runner works in **two phases**. Phase 1 pages the SO list (which never
   includes `line_items`), computes `pendingStep()` per order (after applying
   manual `CrmOrderAction` overrides), and checks the order-level fingerprint —
