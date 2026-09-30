@@ -106,18 +106,6 @@ export default function LinkedinDashboard() {
       setBusy(null);
     }
   };
-    setBusy(label);
-    try {
-      await fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(body),
-      });
-    } finally {
-      setBusy(null);
-    }
-  };
 
   if (batch.loading) return <div className="p-6 text-zinc-400">Loading today's drafts…</div>;
   if (batch.error) return <div className="p-6 text-red-400">LinkedIn batch unavailable ({String((batch.error as Error)?.message ?? batch.error)}).</div>;
