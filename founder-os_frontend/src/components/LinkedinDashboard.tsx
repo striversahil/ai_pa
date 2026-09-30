@@ -21,7 +21,9 @@ interface LinkedinPost {
 }
 
 async function fetchBatch(): Promise<{ date: string; ready: boolean; posts: LinkedinPost[] }> {
-  const r = await fetch("/api/automations/linkedin/data", { credentials: "same-origin" });
+  // /api/linkedin/today (not the automations data endpoint): image URLs here
+  // carry a signed ?sig so <img> subrequests authenticate without cookies.
+  const r = await fetch("/api/linkedin/today", { credentials: "same-origin" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

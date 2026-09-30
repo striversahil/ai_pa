@@ -11,6 +11,39 @@ import { cacheGet, cacheDel } from '../../shared/cache';
 
 export const LINKEDIN_IMG_KEY = (id: string) => `linkedin/${id}.png`;
 
+// Signed image URLs: <img> subresource requests don't reliably carry the
+// session cookie through the Pages-Function proxy (seen live: identical fetch
+// passes, <img> 401s), so visuals carry their own unguessable credential.
+// HMAC-SHA256 over the post id with SHARED_SECRET (server-side only — just
+// the MAC is exposed); subtle.verify is timing-safe. The session check stays
+// as a fallback path.
+async function signImageId(c: any, id: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(String(c.env.SHARED_SECRET ?? '')),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`linkedin-img:${id}`));
+  return Buffer.from(sig).toString('base64url');
+}
+
+async function verifyImageSig(c: any, id: string, sig: string | null | undefined): Promise<boolean> {
+  try {
+    if (!sig || !c.env.SHARED_SECRET) return false;
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(String(c.env.SHARED_SECRET ?? '')),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
+    );
+    const raw = Uint8Array.from(Buffer.from(sig, 'base64url'));
+    return await crypto.subtle.verify('HMAC', key, raw as any, new TextEncoder().encode(`linkedin-img:${id}`));
+  } catch {
+    return false;
+  }
+}
+
+async function imageUrlFor(c: any, id: string): Promise<string> {
+  return `/api/linkedin/image/${encodeURIComponent(id)}?sig=${encodeURIComponent(await signImageId(c, id))}`;
+}
+
 function istDateString(d: Date): string {
   return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
@@ -23,28 +56,32 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
       where: { batchDate: today },
       orderBy: { createdAt: 'asc' },
     });
-    return c.json({
-      date: today,
-      ready: rows.length > 0,
-      posts: (rows as any[]).map((r: any) => ({
+    const posts: any[] = [];
+    for (const r of (rows as any[])) {
+      posts.push({
         id: String(r.id), topic: r.topic, pillar: r.pillar, format: r.format,
         researchBrief: r.researchBrief, postDraft: r.postDraft, postFinal: r.postFinal,
         hashtags: r.hashtags, visualBrief: r.visualBrief,
         hasImage: !!r.hasImage,
-        imageUrl: r.hasImage ? `/api/linkedin/image/${encodeURIComponent(String(r.id))}` : null,
+        imageUrl: r.hasImage ? await imageUrlFor(c, String(r.id)) : null,
         status: r.status, picked: !!r.picked,
-      })),
-    });
+      });
+    }
+    return c.json({ date: today, ready: posts.length > 0, posts });
   });
 
   // Serve the visual — same proven pattern as /api/crm/files/:id (raw bytes
   // in CHAT_FILES, explicit session check, immutable caching). Falls back to
   // the first-day cache-envelope keys so the 30/09 batch keeps working.
   app.get('/api/linkedin/image/:id', async (c) => {
-    const me = await getMe(authStore(c), c.req.header('cookie') ?? null);
-    if (!me) return c.json({ error: 'Authentication required' }, 401);
-    if (!isApproved(me)) return c.json({ error: 'Approval required' }, 403);
     const id = c.req.param('id') ?? '';
+    // Signed URL first (no session needed); session check as fallback.
+    let authed = await verifyImageSig(c, id, c.req.query('sig'));
+    if (!authed) {
+      const me = await getMe(authStore(c), c.req.header('cookie') ?? null);
+      authed = !!me && isApproved(me);
+    }
+    if (!authed) return c.json({ error: 'Authentication required' }, 401);
     if (c.env.CHAT_FILES) {
       const obj = await c.env.CHAT_FILES.getWithMetadata(LINKEDIN_IMG_KEY(id), 'arrayBuffer').catch(() => null);
       if (obj?.value) {
