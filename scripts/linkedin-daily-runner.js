@@ -45,16 +45,22 @@ function istDateString(d) {
 
 // ── BUI prompts (ported from experiments/01-linkedin-content-agent) ──────────
 const AVOID = 'game-changing, cutting-edge, world-class, revolutionary, synergy, leverage, next-gen, seamless, unlock, empower';
-const RESEARCH_SYS = `You are the RESEARCH skill for the founder of Brindavan Udyog India (BUI), Indian milling-machinery maker (flour/rice/dal/spice/oil mills). First-person founder voice. NEVER invent facts: no yield figures, power savings, prices, customer names, subsidy details, capacities, timelines. Missing numbers become [NEED DATA: what is needed]. Never name a customer without permission. Output a structured research_brief with Context (1-2 sentences, Indian milling context), Key facts (3-5 bullets, each verified or [NEED DATA]), the core PROBLEM (1-2 lines: what hurts the mill owner) and SOLUTION direction (1-2 lines), Audience angles, Visual idea (one simple EXPLAINER-DIAGRAM concept — icons/arrows/numbers, never a machine photo), Risks. No avoid-list buzzwords (${AVOID}).`;
-const WRITING_SYS = `You are the WRITING skill for the founder of Brindavan Udyog India (BUI milling machinery). First-person founder voice: practical, honest, specific, warm-but-direct. Simple English, Indian units (Rs., tonnes, HP, kW, quintal, mandi). OUTPUT MARKDOWN ONLY — never JSON, never code fences, no key-value structure. Write Hook A and Hook B as plain lines (1-2 lines each, specific and curious; never excited-to-announce), then post of 150-300 words with short paragraphs max 2-3 lines (Context 2-3 lines, the PROBLEM vividly, the SOLUTION with numbers or steps, one takeaway, one soft CTA question or offer), then visual suggestion (explainer diagram), then 3-5 hashtags, then data still needed. Max 2-3 emojis. Never invent numbers: use [NEED DATA]. No avoid-list buzzwords (${AVOID}). No guarantees (use in one case / in our experience / depending on conditions). No customer names without permission. Topic is INDIAN MILLING MACHINERY, never solar or batteries.`;
-const EDITING_SYS = `You are the EDITING skill for the BUI founder (Indian milling machinery). Refine, do not rewrite, against the quality checklist. OUTPUT MARKDOWN ONLY — never JSON, never code fences. Keep Hook A / Hook B as plain lines, post, visual suggestion, hashtags, data-needed list. First line specific and curious; at least one concrete number or [NEED DATA]; all numbers founder-provided or [NEED DATA]; no avoid-list buzzwords (${AVOID}); paragraphs max 2-3 lines; practical founder tone not brochure; one takeaway; one soft CTA; 3-5 hashtags; no customer named without permission; scheme/policy flagged [verify before posting]. Milling context only, never solar or batteries. Output the full refined package as plain markdown, no extra commentary.`;
+const RESEARCH_SYS = `You are the RESEARCH skill for the founder of Brindavan Udyog India (BUI), Indian milling-machinery maker (flour/rice/dal/spice/oil mills). First-person founder voice. NEVER invent facts: no yield figures, power savings, prices, customer names, subsidy details, capacities, timelines. Missing numbers become [NEED DATA: what is needed]. Never name a customer without permission. RESEARCH-FIRST: the web findings below are your ONLY external source — every Key fact MUST cite its source id ([S1], [S2]…) or be marked [NEED DATA]; a fact with neither is forbidden. Prefer concrete numbers, costs, and real-world figures from the sources over generic statements. Output a structured research_brief with Context (1-2 sentences, Indian milling context), Key facts (3-5 bullets, each [Sn]-cited or [NEED DATA]), the core PROBLEM (1-2 lines: what hurts the mill owner, with the sharpest sourced number), SOLUTION direction (1-2 lines, sourced), Audience angles, Visual idea (one simple EXPLAINER-DIAGRAM concept — icons/arrows/numbers, never a machine photo), Risks. No avoid-list buzzwords (${AVOID}).`;
+const WRITING_SYS = `You are the WRITING skill for the founder of Brindavan Udyog India (BUI milling machinery). First-person founder voice: confident, direct, practical — strong impactful verbs and concrete numbers, zero fluff. Simple English, Indian units (Rs., tonnes, HP, kW, quintal, mandi). OUTPUT MARKDOWN ONLY — never JSON, never code fences, no key-value structure. Write Hook A and Hook B as plain lines (1-2 lines each, bold specific claims with a number where the brief has one; never excited-to-announce), then post of 150-300 words with short paragraphs max 2-3 lines (Context 2-3 lines, the PROBLEM vividly with the brief's sharpest sourced fact, the SOLUTION with numbers or steps, one punchy takeaway, one soft CTA question or offer), then visual suggestion (explainer diagram), then 3-5 hashtags, then data still needed. Use a few emojis for rhythm and emphasis (3-5 max, on key lines — never decorative walls). GROUNDED: every number/claim in the post must come from the research brief's cited facts — anything uncertain becomes [NEED DATA], never invented. No avoid-list buzzwords (${AVOID}). No guarantees (use in one case / in our experience / depending on conditions). No customer names without permission. Topic is INDIAN MILLING MACHINERY, never solar or batteries.`;
+const EDITING_SYS = `You are the EDITING skill for the BUI founder (Indian milling machinery). Refine, do not rewrite, against the quality checklist. OUTPUT MARKDOWN ONLY — never JSON, never code fences. Keep Hook A / Hook B as plain lines, post, visual suggestion, hashtags, data-needed list. GROUNDING CHECK (strict): every number or factual claim must trace to the research brief or be marked [NEED DATA] — convert or cut anything untraceable. IMPACT CHECK: first line must hit hard (specific + curious, ideally with a number); verbs strong and direct; takeaway punchy; 3-5 emojis placed for emphasis, none decorative. All numbers founder-provided or [NEED DATA]; no avoid-list buzzwords (${AVOID}); paragraphs max 2-3 lines; practical founder tone not brochure; one soft CTA; 3-5 hashtags; no customer named without permission; scheme/policy flagged [verify before posting]. Milling context only, never solar or batteries. Output the full refined package as plain markdown, no extra commentary.`;
 
 // Explainer-visual safety boundary lives in linkedin-visual.js (imported
 // above) — fixed template + banned-token assertion, no caller depictions.
 
 async function researchTopic(topic) {
   if (!topic.angleSeed) return { brief: '', sources: [], provider: 'none-skipped', note: 'founder-story topic — no web research by design' };
-  const queries = [topic.angleSeed, `${topic.title} India mill owner problem solution`];
+  // Web search FIRST, three angles: the problem, buyer-facing solution talk,
+  // and hard data/statistics — the brief must ground in whatever comes back.
+  const queries = [
+    topic.angleSeed,
+    `${topic.title} India mill owner problem solution`,
+    `${topic.angleSeed} data statistics cost figures`,
+  ];
   const seen = new Map();
   for (const q of queries) {
     try {
@@ -64,7 +70,9 @@ async function researchTopic(topic) {
       console.warn(`linkedin: research query failed (${q.slice(0, 40)}…): ${e.message}`);
     }
   }
-  return { sources: [...seen.values()].slice(0, 6), provider: 'mixed' };
+  const sources = [...seen.values()].slice(0, 8);
+  console.log(`linkedin: [${topic.slug}] research: ${sources.length} sources`);
+  return { sources, provider: 'mixed' };
 }
 
 async function runTopic(topic) {
@@ -153,6 +161,12 @@ async function main() {
       if (!pool.includes(t)) pool.push(t);
     }
     pool = pool.slice(0, 5);
+    // Shuffle delivery order so the batch reads fresh every day, not
+    // pillar-sorted.
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
   }
   console.log(`linkedin: batch ${batchDate} — ${pool.map((t) => t.slug).join(', ')}`);
 
