@@ -20,57 +20,32 @@
  * nothing relevant (no active orders AND nothing created within the scan
  * window) the scan stops instead of paging through years of closed history.
  *
- * Reuses runner-lib.js (workerRequest) and the same curl-credential parsing as
- * zoho-sent-runner.js.
+ * Reuses runner-lib.js (workerRequest) and the shared sync core
+ * (founder-os_backend/src/shared/sync-core/) for Zoho credentials, HTTP retry
+ * policies, dates, org keys, and endpoint paths.
  *
  * Env: WORKER_URL, SHARED_SECRET (both from GH secrets).
  */
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const { workerRequest } = require('./runner-lib');
+const CORE = '../founder-os_backend/src/shared/sync-core/';
+const { API, ZOHO_STATUSES, CRM } = require(CORE + 'contract');
+const { parseCurlFile } = require(CORE + 'zoho-auth');
+const { sleep, zohoFetchOnce, zohoFetchListJson } = require(CORE + 'zoho-net');
+const { istDateString } = require(CORE + 'zoho-dates');
+const { crmOrgScope: orgScope } = require(CORE + 'zoho-orgs');
 
-// ── Parse Zoho curl credentials (same logic as zoho-sent-runner.js) ─────────
-// MULTI-ORG: every organization_id in the export is synced (same login, shared
-// headers — see zoho-sync/orgs.js). First org is primary (BUI).
-function parseCurlFile() {
-  const candidates = [
-    path.join(__dirname, '..', 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
-    path.join(process.cwd(), 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
-    '/app/zoho_sent/sent_estimates.txt',
-  ];
-  const curlFile = candidates.find((p) => fs.existsSync(p));
-  if (!curlFile) throw new Error(`Zoho credentials file not found (tried: ${candidates.join(', ')})`);
-
-  const content = fs.readFileSync(curlFile, 'utf-8');
-  const urlMatch = content.match(/curl\s+'([^']+)'/);
-  if (!urlMatch) throw new Error('Could not extract URL from sent_estimates.txt');
-  const url = urlMatch[1];
-
-  const headers = {};
-  for (const m of content.matchAll(/-H\s+'([^:]+):\s*(.*?)'(?=\s|\\|$)/g)) {
-    headers[m[1].trim()] = m[2].trim().replace(/\\$/, '').trim();
-  }
-  if (headers['Accept-Encoding']) headers['Accept-Encoding'] = 'gzip, deflate';
-
-  let orgIds = [];
-  try {
-    orgIds = require('./zoho-sync/orgs').parseOrgIds(content);
-  } catch { /* fallback below */ }
-  if (!orgIds.length) {
-    const orgMatch = url.match(/organization_id=([0-9]+)/);
-    if (orgMatch) orgIds = [orgMatch[1]];
-  }
-  const orgId = orgIds[0] || '';
-  if (orgIds.length > 1) console.log(`crm-runner: multi-org mode — ${orgIds.join(', ')} (primary ${orgId})`);
-  return { url, headers, orgId, orgIds };
-}
-
+// Module-level Zoho context (parsed once at load — a missing credentials file
+// fails the tick fast here, same as before the core move).
 const { headers, orgId, orgIds } = parseCurlFile();
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function istDateString(d) {
-  return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+// Runner-scoped fetch wrappers (same signatures as the old locals): single
+// attempt for detail calls, CRM list policy (429 + 5xx) for scans.
+async function zohoFetch(url) {
+  return zohoFetchOnce(url, headers);
+}
+async function zohoFetchList(url, retries = 3) {
+  return zohoFetchListJson(url, headers, { retries });
 }
 
 function buildSalesOrdersUrl(page, org) {
@@ -117,8 +92,8 @@ function itemsSig(items) {
   return `${count}:${Math.round(sum * 100) / 100}`;
 }
 
-const EXCLUDED_STATUSES = new Set(['cancelled', 'void']);
-const STAGES = ['confirm', 'invoice', 'ship', 'payment'];
+const EXCLUDED_STATUSES = new Set(ZOHO_STATUSES.SO_EXCLUDED);
+const STAGES = CRM.STAGES;
 // Orders older than this (created) are irrelevant history — scan stops.
 const SCAN_WINDOW_DAYS = 120;
 // Per-stage order detail cap (full rows); counts always reflect all orders.
@@ -207,45 +182,6 @@ function orderRow(so, today, org) {
   };
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function zohoFetch(url) {
-  // 30s cap per call — a tarpitted connection must fail fast, never hang the tick.
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
-  if (res.status === 429) {
-    const retryAfter = parseInt(res.headers.get('retry-after') || '45', 10);
-    const err = new Error(`Zoho 429 rate-limited for ${url}`);
-    err.retryAfterMs = (isNaN(retryAfter) ? 45 : retryAfter) * 1000;
-    throw err;
-  }
-  if (!res.ok) throw new Error(`Zoho ${res.status} for ${url}`);
-  return res.json();
-}
-
-// List-page fetch with 429 retry: the sync loop below aborts the whole tick
-// on the first 429, so transient throttling must be absorbed here (honor
-// retry-after + jitter, up to ~4 min worst case — fits the 5-min tick).
-// Detail fetches keep their own one-retry + circuit-breaker policy.
-async function zohoFetchList(url, retries = 3) {
-  let lastErr = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await zohoFetch(url);
-    } catch (e) {
-      lastErr = e;
-      const waitMs = Math.min(e?.retryAfterMs ?? 15000, 90000);
-      if (attempt < retries && (e?.retryAfterMs || /Zoho (429|5\d\d)/.test(e.message))) {
-        const wait = Math.round(waitMs * (0.8 + Math.random() * 0.4) * (attempt + 1));
-        console.log(`crm-runner: list throttled — backing off ${Math.round(Math.min(wait, 180000) / 1000)}s (attempt ${attempt + 1}/${retries + 1})…`);
-        await sleep(Math.min(wait, 180000));
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw lastErr;
-}
-
 // ── Aggregators ──────────────────────────────────────────────────────────────
 /** Aggregated material requirements across active orders (procurement view). */
 function addMaterial(map, items) {
@@ -279,7 +215,7 @@ const VALID_OVERRIDE_STAGES = new Set(['confirm', 'invoice', 'ship', 'payment', 
 async function fetchOverrides() {
   const since = istDateString(new Date(Date.now() - OVERRIDE_LOOKBACK_DAYS * 86400000));
   try {
-    const res = await workerRequest(`/api/runner/crm/actions?since=${since}`);
+    const res = await workerRequest(`${API.crmActions}?since=${since}`);
     const map = new Map();
     for (const a of res.actions || []) {
       if (!a?.soNumber || !VALID_OVERRIDE_STAGES.has(String(a.toStage))) continue;
@@ -407,10 +343,10 @@ async function main() {
   } catch (e) {
     console.log(`crm-runner: Zoho list fetch failed (${e.message}) — preservative heartbeat, then fail`);
     try {
-      const fp = await workerRequest('/api/runner/crm/fingerprint');
-      if (fp?.fingerprint) {
-        // No fetchedAt: the stored last-pull time stays honest for the badge.
-        await workerRequest('/api/runner/crm/heartbeat', { method: 'POST', body: { date: fp.date, fingerprint: fp.fingerprint } });
+        const fp = await workerRequest(API.crmFingerprint);
+        if (fp?.fingerprint) {
+          // No fetchedAt: the stored last-pull time stays honest for the badge.
+          await workerRequest(API.crmHeartbeat, { method: 'POST', body: { date: fp.date, fingerprint: fp.fingerprint } });
         console.log('crm-runner: preservative heartbeat sent — last-known snapshot retained');
       }
     } catch (e2) {
@@ -427,9 +363,8 @@ async function main() {
 
   // Phase 1 — order-level fingerprint from the list scan alone. Unchanged →
   // heartbeat and exit WITHOUT any per-SO detail calls (idle ticks stay cheap).
-  // CRM_FORCE=1 bypasses the gate. Org-scoped so identical SO numbers in two
-  // orgs never collapse into one entry.
-  const orgScope = (so, org) => (org ? `${org}:` : '') + String(so ?? '');
+  // CRM_FORCE=1 bypasses the gate. Keys org-scoped (sync-core crmOrgScope) so
+  // identical SO numbers in two orgs never collapse into one entry.
   const orderFp = crypto.createHash('sha1')
     .update(index.map((e) => [orgScope(e.so, e.org), e.stage, e.paidStatus, e.status, e.total].join('|')).sort().join('\n'))
     .digest('hex');
@@ -458,14 +393,14 @@ async function main() {
   let prevSigs = {};
   if (!process.env.CRM_FORCE) {
     try {
-      const fp = await workerRequest('/api/runner/crm/fingerprint');
+      const fp = await workerRequest(API.crmFingerprint);
       // Stored fingerprints include the items signature suffix after the first
       // detail run — compare against the order-level prefix for the shortcut.
       const storedOrderFp = String(fp?.fingerprint || '').split('+')[0];
       if (storedOrderFp === orderFp && fp?.date === today) {
         // No change — refresh the snapshot TTL + fetchedAt so the dashboard
         // stays fresh without a full POST, ledger diff, or live broadcast.
-        await workerRequest('/api/runner/crm/heartbeat', { method: 'POST', body: { date: today, fingerprint: fp.fingerprint, fetchedAt, totalActive, totalValue } });
+        await workerRequest(API.crmHeartbeat, { method: 'POST', body: { date: today, fingerprint: fp.fingerprint, fetchedAt, totalActive, totalValue } });
         console.log(`crm-runner: no change (fp ${orderFp.slice(0, 8)}), heartbeat sent — ${totalActive} active SOs`);
         // Background fill: the pipeline is quiet, so spend the idle tick
         // fetching line items for display rows that still lack them (up to
@@ -503,7 +438,7 @@ async function main() {
           }
           if (merged.length > 0) {
             try {
-              const res = await workerRequest('/api/runner/crm/items', { method: 'POST', body: { date: today, items: merged } });
+              const res = await workerRequest(API.crmItems, { method: 'POST', body: { date: today, items: merged } });
               console.log(`crm-runner: background fill merged items for ${res?.merged ?? merged.length} SO(s)`);
             } catch (e) {
               console.log(`crm-runner: items merge failed (retry next tick): ${e.message}`);
@@ -618,7 +553,7 @@ async function main() {
     meta: { pages, scanned, withLineItems: withItems, overridden },
   };
 
-  await workerRequest('/api/runner/crm/snapshot', { method: 'POST', body: snapshot });
+  await workerRequest(API.crmSnapshot, { method: 'POST', body: snapshot });
 
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)

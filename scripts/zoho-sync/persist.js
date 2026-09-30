@@ -3,19 +3,20 @@
 // orchestrator reads as a pipeline: diff → persist → analyze.
 
 const { workerRequest } = require('../runner-lib');
-const { cleanHtml } = require('./comments');
+const { API } = require('../../founder-os_backend/src/shared/sync-core/contract');
+const { cleanHtml } = require('../../founder-os_backend/src/shared/sync-core/zoho-comments');
 
 // Estimates + max comment id per estimate + classifications (one call).
 async function getDbState() {
-  return workerRequest('/api/runner/zoho/state');
+  return workerRequest(API.zohoState);
 }
 
 async function getFingerprint() {
-  return workerRequest('/api/runner/zoho/fingerprint').catch(() => ({ fingerprint: null }));
+  return workerRequest(API.zohoFingerprint).catch(() => ({ fingerprint: null }));
 }
 
 async function postFingerprint(fingerprint) {
-  return workerRequest('/api/runner/zoho/fingerprint', {
+  return workerRequest(API.zohoFingerprint, {
     method: 'POST',
     body: { fingerprint },
   }).catch((err) => console.warn(`zoho-sync/persist: fingerprint store failed: ${err.message}`));
@@ -33,7 +34,7 @@ async function postMetadataUpserts(upserts, primaryOrg) {
   if (!upserts.length) { console.log('zoho-sync/persist: metadata unchanged'); return; }
   const CHUNK = 100;
   for (let i = 0; i < upserts.length; i += CHUNK) {
-    await workerRequest('/api/estimates/bulk-upsert', {
+    await workerRequest(API.estimatesBulkUpsert, {
       method: 'POST',
       body: { estimates: upserts.slice(i, i + CHUNK), ...(primaryOrg ? { primaryOrg } : {}) },
     });
@@ -46,7 +47,7 @@ async function postMetadataUpserts(upserts, primaryOrg) {
 // and broadcasts estimates + telecalling live events.
 async function postStatusUpdates(transitions) {
   if (!transitions.length) return 0;
-  await workerRequest('/api/runner/zoho/status', {
+  await workerRequest(API.zohoStatus, {
     method: 'POST',
     body: { updates: transitions.map((t) => ({ estimateId: t.estimateId, status: t.to })) },
   });
@@ -66,7 +67,7 @@ async function postComments(estimateId, comments) {
     dateFormatted: c.date_formatted || null,
   }));
   for (let i = 0; i < toUpsert.length; i += 50) {
-    await workerRequest('/api/runner/zoho/comments', {
+    await workerRequest(API.zohoComments, {
       method: 'POST',
       body: { comments: toUpsert.slice(i, i + 50) },
     });
@@ -74,7 +75,7 @@ async function postComments(estimateId, comments) {
 }
 
 async function postClassification(estimateId, classification) {
-  await workerRequest('/api/runner/zoho/classification', {
+  await workerRequest(API.zohoClassification, {
     method: 'POST',
     body: { estimateId, classification },
   });
@@ -82,7 +83,7 @@ async function postClassification(estimateId, classification) {
 
 async function postLeadDetails(rows) {
   if (!rows.length) return null;
-  return workerRequest('/api/runner/estimates/lead-details', {
+  return workerRequest(API.leadDetails, {
     method: 'POST',
     body: { rows },
   });
@@ -90,14 +91,14 @@ async function postLeadDetails(rows) {
 
 // Watermark: advances last-complete-sync only on a fully-complete pass.
 async function advanceWatermark() {
-  await workerRequest('/api/estimates/bulk-upsert', {
+  await workerRequest(API.estimatesBulkUpsert, {
     method: 'POST',
     body: { estimates: [], lastSyncAt: new Date().toISOString() },
   });
 }
 
 async function postSalesOrdersToday(snapshot) {
-  await workerRequest('/api/runner/zoho/salesorders-today', {
+  await workerRequest(API.salesOrdersToday, {
     method: 'POST',
     body: snapshot,
   });

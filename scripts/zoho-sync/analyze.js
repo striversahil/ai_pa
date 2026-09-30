@@ -3,7 +3,7 @@
 // drafts never reach here. Writes go through persist.js.
 
 const { groqJson } = require('../runner-lib');
-const { latestFirst, oldestFirst, extractSalesComments, cleanHtml, isRealSalesComment } = require('./comments');
+const { latestFirst, oldestFirst, extractSalesComments, cleanHtml, isRealSalesComment } = require('../../founder-os_backend/src/shared/sync-core/zoho-comments');
 const persist = require('./persist');
 
 void cleanHtml;

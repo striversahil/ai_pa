@@ -1,102 +1,28 @@
 // fetch.js — all Zoho Books reads (pure I/O, no DB, no AI).
+// Credential parsing, HTTP retry policies, dates, and org normalization live
+// in the shared core (founder-os_backend/src/shared/sync-core/) — this file
+// owns only the Zoho endpoint shapes (list/comment/detail/sales-orders).
 // URL + auth come from the saved curl export (founder-os_backend/zoho_sent/sent_estimates.txt);
 // list URLs are derived from it (status / sort / page swapped), so no new
 // export file is needed when the sync scope changes.
 //
 // MULTI-ORG: the export carries every organization_id (same login, shared
-// headers — see orgs.js). Every fetch loops all orgs; rows are normalized at
-// the boundary (non-primary ids namespaced `<org>:<id>`, see orgs.js) so all
+// headers — see sync-core/zoho-orgs.js). Every fetch loops all orgs; rows are normalized at
+// the boundary (non-primary ids namespaced `<org>:<id>`, see zoho-orgs.js) so all
 // downstream code keys on DB ids unchanged.
 
-const fs = require('fs');
-const path = require('path');
 const { workerRequest } = require('../runner-lib');
-const orgs = require('./orgs');
+const { API } = require('../../founder-os_backend/src/shared/sync-core/contract');
+const { zohoContext } = require('../../founder-os_backend/src/shared/sync-core/zoho-auth');
+const { sleep, zohoFetchJson } = require('../../founder-os_backend/src/shared/sync-core/zoho-net');
+const { istDateString } = require('../../founder-os_backend/src/shared/sync-core/zoho-dates');
+const orgs = require('../../founder-os_backend/src/shared/sync-core/zoho-orgs');
+const { ZOHO_STATUSES } = require('../../founder-os_backend/src/shared/sync-core/contract');
 
-function parseCurlFile() {
-  const candidates = [
-    path.join(__dirname, '..', '..', 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
-    path.join(process.cwd(), 'founder-os_backend', 'zoho_sent', 'sent_estimates.txt'),
-    '/app/zoho_sent/sent_estimates.txt',
-  ];
-  const curlFile = candidates.find((p) => fs.existsSync(p));
-  if (!curlFile) throw new Error(`Zoho credentials file not found (tried: ${candidates.join(', ')})`);
-
-  const content = fs.readFileSync(curlFile, 'utf-8');
-  const urlMatch = content.match(/curl\s+'([^']+)'/) || content.match(/curl\s+"([^"]+)"/) || content.match(/curl\s+([^\s\\]+)/);
-  if (!urlMatch) throw new Error('Could not extract URL from sent_estimates.txt');
-  const url = urlMatch[1];
-
-  const headers = {};
-  const headerMatches = content.matchAll(/-H\s+'([^:]+):\s*(.*?)'(?=\s|\\|$)/g);
-  for (const m of headerMatches) headers[m[1].trim()] = m[2].trim().replace(/\\$/, '').trim();
-  if (Object.keys(headers).length === 0) {
-    const double = content.matchAll(/-H\s+"([^:]+):\s*(.*?)"(?=\s|\\|$)/g);
-    for (const m of double) headers[m[1].trim()] = m[2].trim().replace(/\\$/, '').trim();
-  }
-
-  let orgIds = orgs.parseOrgIds(content);
-  // Fallback: single org from the list URL (legacy exports).
-  if (!orgIds.length) {
-    const orgMatch = url.match(/organization_id=([0-9]+)/);
-    if (orgMatch) orgIds = [orgMatch[1]];
-  }
-  const orgId = orgIds[0] || '';
-
-  if (headers['Accept-Encoding']) headers['Accept-Encoding'] = 'gzip, deflate';
-  if (orgIds.length > 1) console.log(`zoho-sync/fetch: multi-org mode — ${orgIds.join(', ')} (primary ${orgId})`);
-  return { url, headers, orgId, orgIds };
-}
-
-let cached = null;
-function zohoContext() {
-  if (!cached) cached = parseCurlFile();
-  return cached;
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Jittered backoff: honors Zoho's retry-after, escalates mildly per attempt,
-// and desynchronizes parallel jobs (crm + zoho-sent tick together) so their
-// retries don't collide again.
-function throttleBackoffMs(attempt, retryAfterMs) {
-  const base = Math.min(Math.max(retryAfterMs || 45000, 5000), 90000);
-  return Math.round(Math.min(base * (0.8 + Math.random() * 0.4) * attempt, 180000));
-}
-
+// Estimates-list retry policy (was the local zohoFetch): connection drops +
+// 429s absorbed, anything else throws. Same signature as before.
 async function zohoFetch(url, { retries = 3 } = {}) {
-  const { headers } = zohoContext();
-  let lastErr = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    let res;
-    try {
-      // 30s cap per call — a tarpitted connection fails fast into a retry,
-      // never hangs the tick.
-      res = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
-    } catch (e) {
-      lastErr = new Error(`Zoho fetch failed (attempt ${attempt + 1}/${retries + 1}): ${e.message}`);
-      if (attempt < retries) {
-        console.log(`zoho-sync/fetch: connection failed — retrying in ~10s (attempt ${attempt + 1}/${retries + 1})…`);
-        await sleep(10000 + Math.random() * 5000);
-        continue;
-      }
-      throw lastErr;
-    }
-    if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get('retry-after') || '45', 10);
-      lastErr = new Error(`Zoho 429 rate-limited for ${url}`);
-      if (attempt < retries) {
-        const wait = throttleBackoffMs(attempt + 1, (isNaN(retryAfter) ? 45 : retryAfter) * 1000);
-        console.log(`zoho-sync/fetch: 429 — backing off ${Math.round(wait / 1000)}s (attempt ${attempt + 1}/${retries + 1})…`);
-        await sleep(wait);
-        continue;
-      }
-      throw lastErr;
-    }
-    if (!res.ok) throw new Error(`Zoho ${res.status} for ${url}`);
-    return res.json();
-  }
-  throw lastErr;
+  return zohoFetchJson(url, zohoContext().headers, { retries });
 }
 
 // Estimates list URL derived from the saved export: every moving status,
@@ -233,12 +159,12 @@ async function fetchAgentRoster() {
     .filter(Boolean))];
   const dynamicNames = [];
   try {
-    const data = await workerRequest('/api/automations/neodove-telecaller-report/data');
+    const data = await workerRequest(API.neodoveReportLive);
     dynamicNames.push(...fromReport(data?.agents ?? data?.data));
   } catch (err) { console.warn(`zoho-sync/fetch: neodove roster fetch failed: ${err.message}`); }
   if (!dynamicNames.length) {
     try {
-      const data = await workerRequest(`/api/neodove/report`);
+      const data = await workerRequest(API.neodoveReportLatest);
       dynamicNames.push(...fromReport(data?.rows));
     } catch (err) { console.warn(`zoho-sync/fetch: neodove roster fetch (latest) failed: ${err.message}`); }
   }
@@ -246,11 +172,7 @@ async function fetchAgentRoster() {
 }
 
 // ── Sales orders snapshot (dashboard "Sales Orders Today" tile) ────────────
-const SO_TODAY_EXCLUDED = new Set(['cancelled', 'void']);
-
-function istDateString(d) {
-  return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
+const SO_TODAY_EXCLUDED = new Set(ZOHO_STATUSES.SO_EXCLUDED);
 
 function buildSalesOrdersUrl(page, orgId) {
   const { orgId: primary } = zohoContext();

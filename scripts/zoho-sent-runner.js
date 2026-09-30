@@ -2,7 +2,11 @@
 
 /**
  * zoho-sent-runner.js — Zoho estimate sync + AI analysis on the GH Actions
- * runner (unlimited CPU). Thin orchestrator over scripts/zoho-sync/*:
+ * runner (unlimited CPU). Thin orchestrator over scripts/zoho-sync/*, which in
+ * turn delegate pure/shared logic to the sync core
+ * (founder-os_backend/src/shared/sync-core/ — ONE copy of Zoho auth, HTTP
+ * retry policies, dates, org identities, change detection, and endpoint/key
+ * contracts, also used by crm-runner.js):
  *
  *   fetch.js   — Zoho reads (All-status 2-page list + comments + roster + sales orders)
  *   diff.js    — pure change detection (fingerprint, metadata, transitions, work items)

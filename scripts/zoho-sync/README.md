@@ -35,6 +35,11 @@ One export file carries the shared login (cookies/headers) plus **every**
 
 ## Modules
 
+Shared/pure logic lives ONE level down, in the sync core
+(`founder-os_backend/src/shared/sync-core/` — also used by `crm-runner.js`).
+The files below own only zoho-sent endpoint shapes and orchestration; the old
+`comments.js` / `orgs.js` / `diff.js` paths are re-export shims.
+
 | File | Owns | Never touches |
 |---|---|---|
 | `fetch.js` | Zoho reads: All-status 2-page list, comment batches, vanished-row detail check, NeoDove roster, sales-orders snapshot | D1, AI |
