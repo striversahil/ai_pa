@@ -17,13 +17,24 @@ export const LINKEDIN_IMG_KEY = (id: string) => `linkedin/${id}.png`;
 // HMAC-SHA256 over the post id with SHARED_SECRET (server-side only — just
 // the MAC is exposed); subtle.verify is timing-safe. The session check stays
 // as a fallback path.
+function b64urlEncode(buf: ArrayBuffer): string {
+  // Manual base64url (not Buffer 'base64url' — encoding support varies across
+  // edge runtimes; plain 'base64' + char-swap is universal).
+  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '=='.slice(0, (4 - (s.length % 4)) % 4);
+  return Uint8Array.from(Buffer.from(b64, 'base64'));
+}
+
 async function signImageId(c: any, id: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(String(c.env.SHARED_SECRET ?? '')),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
   );
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`linkedin-img:${id}`));
-  return Buffer.from(sig).toString('base64url');
+  return b64urlEncode(sig);
 }
 
 async function verifyImageSig(c: any, id: string, sig: string | null | undefined): Promise<boolean> {
@@ -33,8 +44,7 @@ async function verifyImageSig(c: any, id: string, sig: string | null | undefined
       'raw', new TextEncoder().encode(String(c.env.SHARED_SECRET ?? '')),
       { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
     );
-    const raw = Uint8Array.from(Buffer.from(sig, 'base64url'));
-    return await crypto.subtle.verify('HMAC', key, raw as any, new TextEncoder().encode(`linkedin-img:${id}`));
+    return await crypto.subtle.verify('HMAC', key, b64urlDecode(sig) as any, new TextEncoder().encode(`linkedin-img:${id}`));
   } catch {
     return false;
   }
@@ -58,12 +68,21 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
     });
     const posts: any[] = [];
     for (const r of (rows as any[])) {
+      // A signing failure must never nuke the batch — fall back to the
+      // unsigned URL (session check) for that row.
+      let imageUrl: string | null = null;
+      if (r.hasImage) {
+        try {
+          imageUrl = await imageUrlFor(c, String(r.id));
+        } catch {
+          imageUrl = `/api/linkedin/image/${encodeURIComponent(String(r.id))}`;
+        }
+      }
       posts.push({
         id: String(r.id), topic: r.topic, pillar: r.pillar, format: r.format,
         researchBrief: r.researchBrief, postDraft: r.postDraft, postFinal: r.postFinal,
         hashtags: r.hashtags, visualBrief: r.visualBrief,
-        hasImage: !!r.hasImage,
-        imageUrl: r.hasImage ? await imageUrlFor(c, String(r.id)) : null,
+        hasImage: !!r.hasImage, imageUrl,
         status: r.status, picked: !!r.picked,
       });
     }
