@@ -198,6 +198,10 @@ export const AUTH_EXEMPT = [
   // cookie is host-scoped, so preview subdomains would otherwise see 401).
   '/api/automations/telecalling/data',
   '/api/automations/neodove-telecaller-report/data',
+  // LinkedIn explainer visuals: public-by-design marketing diagrams (UUID ids
+  // unguessable). <img> subrequests can't carry auth reliably — see
+  // routes/linkedin.ts header. Draft text + actions stay gated.
+  '/api/linkedin/image/',
   // GH Actions runners authenticate with SHARED_SECRET, not a session cookie.
   // These endpoints already enforce requireSecret() in their handlers.
   '/api/token/',
