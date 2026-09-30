@@ -26,6 +26,10 @@ const API = Object.freeze({
   crmActions: '/api/runner/crm/actions',
   neodoveReportLive: '/api/automations/neodove-telecaller-report/data',
   neodoveReportLatest: '/api/neodove/report',
+  linkedinToday: '/api/linkedin/today',
+  linkedinPick: '/api/linkedin/pick',
+  linkedinPosted: '/api/linkedin/posted',
+  linkedinBatch: '/api/runner/linkedin/batch',
 });
 
 // KV keys as the Worker routes address them — the cache layer (src/shared/cache.ts)

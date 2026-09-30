@@ -1158,3 +1158,26 @@ model DigitalMarketingTaskAttachment {
 
   @@index([logId])
 }
+
+model LinkedinPost {
+  id            String   @id @default(uuid())
+  batchDate     String
+  topic         String
+  pillar        String   @default("")
+  format        String   @default("")
+  researchBrief String   @default("")
+  postDraft     String   @default("")
+  postFinal     String   @default("")
+  hashtags      String   @default("")
+  visualBrief   String   @default("")
+  imagePrompt   String   @default("")
+  hasImage      Boolean  @default(false)
+  status        String   @default("draft")
+  picked        Boolean  @default(false)
+  postedAt      DateTime?
+  createdAt     DateTime @default(now())
+
+  @@unique([batchDate, topic])
+  @@index([batchDate])
+  @@index([status])
+}

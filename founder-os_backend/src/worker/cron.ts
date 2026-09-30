@@ -7,7 +7,7 @@
 //   every-10min → minute % 10 == 0
 //   every-15min → minute % 15 == 0
 //   every-30min → minute % 30 == 0
-//   daily       → 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC (one slot per job
+//   daily       → 00:30 / 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC (one slot per job
 //                  family; the `slot` input tells the workflow which jobs run)
 //   neodove-refresh → minute % 5 == 0 (native D1 write; GH egress is blocked by NeoDove)
 //
@@ -77,6 +77,7 @@ function isOpsWindow(now: Date): boolean {
 }
 
 // Slot map (UTC → IST job family):
+//   00:30 (06:00 IST) → linkedin-daily (5 founder-content drafts for review)
 //   02:30 (08:00 IST) → telecalling-distribution + morning-brief
 //   13:30 (19:00 IST) → eod-summary
 //   15:30 (21:00 IST) → telecalling-eod-deduction
@@ -87,7 +88,7 @@ function isOpsWindow(now: Date): boolean {
 // for native `schedule:` events, which these workflows don't have, so such a
 // guard silently matches nothing on workflow_dispatch.
 
-export const DAILY_SLOTS = [2 * 60 + 30, 13 * 60 + 30, 15 * 60 + 30, 19 * 60 + 30, 21 * 60 + 30];
+export const DAILY_SLOTS = [30, 2 * 60 + 30, 13 * 60 + 30, 15 * 60 + 30, 19 * 60 + 30, 21 * 60 + 30];
 
 /** Which workflows to fire at the current UTC minute. */
 function dueWorkflows(now: Date): string[] {

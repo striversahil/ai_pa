@@ -97,6 +97,22 @@ async function groqJson(system, user, { temperature = 0, maxTokens, reasoningEff
   });
 }
 
+/**
+ * agnesImage(prompt) → base64 PNG (no data-URI prefix). Explainer-diagram /
+ * carousel style only — the CALLER owns the must-never-depict rules (no
+ * machines, sites, people). Downloads the provider URL when no b64 ships.
+ */
+async function agnesImage(prompt, { size = '1024x1024' } = {}) {
+  const res = await gateway.generateImage({ prompt, size });
+  if (res.b64) return String(res.b64);
+  if (res.url) {
+    const r = await fetch(res.url, { signal: AbortSignal.timeout(120000) });
+    if (!r.ok) throw new Error(`image download HTTP ${r.status}`);
+    return Buffer.from(await r.arrayBuffer()).toString('base64');
+  }
+  throw new Error('image provider returned neither b64 nor url');
+}
+
 function extractJson(raw) {
   const str = String(raw || '').trim();
   if (!str) return null;
@@ -144,6 +160,7 @@ module.exports = {
   groqJson,
   extractJson,
   gateway,
+  agnesImage,
   WORKER_URL,
   GROQ_API_KEYS,
 };

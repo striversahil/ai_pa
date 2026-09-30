@@ -532,6 +532,55 @@ class AiGateway {
     const secs = Number(v);
     return Number.isFinite(secs) ? secs * 1000 : undefined;
   }
+
+  // ── Image generation (Agnes images endpoint, same key pool) ──────────────
+  // Text models can't paint — agnes-3.0-flash writes the words; the EXPLAINER
+  // visual comes from the images endpoint with the SAME agnes keys (rotation
+  // + cooldown semantics mirror complete(): 429 cools the key and rotates).
+  // Returns { b64, url } (whichever the provider supplies first).
+  async generateImage({ prompt, size = '1024x1024', model = 'agnes-image-2.5-flash', sessionKey = '' } = {}) {
+    const maxAttempts = Math.max(2, Math.min(this.pool.size || 2, 4));
+    let lastErr = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const key = this.pool.select('agnes', sessionKey);
+      if (!key) throw new Error('All AI keys exhausted (no healthy agnes key for image generation)');
+      const endpoint = 'https://apihub.agnes-ai.com/v1/images/generations';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key.key}`,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+          body: JSON.stringify({ model, prompt, n: 1, size }),
+          signal: AbortSignal.timeout(180000),
+        });
+        if (res.status === 429) {
+          key.failures++;
+          key.lastFailureAt = Date.now();
+          key.cooldownUntil = Date.now() + 60000;
+          key.lastError = '429 image rate-limited';
+          console.warn(`[AiGateway] 429 on ${key.id} (image) — cooling 60s, rotating (attempt ${attempt + 1}/${maxAttempts})`);
+          continue;
+        }
+        if (!res.ok) {
+          const t = await res.text().catch(() => '');
+          throw new Error(`HTTP ${res.status}: ${t.slice(0, 200)}`);
+        }
+        const data = await res.json();
+        const item = (data && data.data && data.data[0]) || {};
+        this.pool.reportSuccess(key);
+        return { b64: item.b64_json || null, url: item.url || null };
+      } catch (err) {
+        lastErr = err;
+        if (/429/.test(String((err && err.message) || ''))) continue;
+        this.pool.reportFailure(key, err, 0);
+        console.warn(`[AiGateway] image attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err && err.message ? err.message : err}`);
+      }
+    }
+    throw new Error(`Image generation failed after ${maxAttempts} attempts: ${lastErr?.message || lastErr}`);
+  }
 }
 
 let _gateway = null;

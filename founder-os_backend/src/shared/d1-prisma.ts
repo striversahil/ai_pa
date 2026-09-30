@@ -55,6 +55,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   KypGuide: ['isRequired', 'active'],
   Vendor: ['active'],
   VendorRate: ['active'],
+  LinkedinPost: ['hasImage', 'picked'],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -96,6 +97,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   Vendor: ['createdAt', 'updatedAt'],
   VendorRate: ['quotedAt', 'createdAt', 'updatedAt'],
   SoAttachment: ['createdAt'],
+  LinkedinPost: ['postedAt', 'createdAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -154,6 +156,7 @@ const ID_FIELDS: Record<string, string> = {
   KypGuide: 'id',
   Vendor: 'id',
   VendorRate: 'id',
+  LinkedinPost: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -783,6 +786,8 @@ export class D1PrismaClient {
   get kypGuide() { return this.model('KypGuide'); }
   get vendor() { return this.model('Vendor'); }
   get vendorRate() { return this.model('VendorRate'); }
+  // LinkedIn daily drafts (migration 0051).
+  get linkedinPost() { return this.model('LinkedinPost'); }
 
   $on() {}
   $disconnect() {}

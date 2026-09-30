@@ -2,7 +2,7 @@ name: Cron - Daily IST
 
 on:
   # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
-  # workflow_dispatch) at 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC — one slot
+  # workflow_dispatch) at 00:30 / 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC — one slot
   # per job family. Native schedule removed — GitHub's own scheduler is
   # unreliable and would double-fire.
   # The Worker passes `inputs.slot` (HH:MM of the slot); each job runs ONLY on
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       slot:
-        description: "Daily slot HH:MM (02:30, 13:30, 15:30, 19:30, 21:30). 'all' runs every job."
+        description: "Daily slot HH:MM (00:30, 02:30, 13:30, 15:30, 19:30, 21:30). 'all' runs every job."
         required: false
         default: "all"
       neodove_backfill_days:
@@ -22,7 +22,7 @@ on:
         type: boolean
         default: true
 
-# Each job only runs on its own slot — the Worker fires this workflow 5×/day,
+# Each job only runs on its own slot — the Worker fires this workflow 6×/day,
 # so without these guards every job would run 5×/day.
 concurrency:
   group: cron-daily-ist
@@ -121,3 +121,22 @@ jobs:
           else
             node scripts/neodove-report-runner.js
           fi
+  linkedin-daily:
+    # 00:30 UTC = 06:00 IST — 5 web-researched founder drafts + AI explainer
+    # visuals for dashboard review (founder picks 1). Not Zoho-backed, so no
+    # ops-window gate — runs every day including quiet hours.
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '00:30'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: linkedin-daily (5 drafts + visuals via AI gateway)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          AI_KEYS: ${{ secrets.AI_KEYS }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+        run: node scripts/linkedin-daily-runner.js
