@@ -129,10 +129,12 @@ async function main() {
   // Requires ZERO comment-fetch failures: a partial fetch builds a partial
   // fingerprint that could equal a stored partial one and skip with stale data.
   let prevByEst = null;
+  let prevRawFp = null;
   if (!forced && estimates.length > 0 && commentFetchErrors === 0) {
     const current = diff.buildFingerprint(estimates, fetchedByEst);
     const fpRes = await persist.getFingerprint();
-    prevByEst = diff.parseFingerprint(fpRes?.fingerprint);
+    prevRawFp = fpRes?.fingerprint ?? null;
+    prevByEst = diff.parseFingerprint(prevRawFp);
     // needsBackfill is true while ANY estimate still needs lead-details
     // capture — keep re-entering so uncaptured rows stay in the loop.
     if (fpRes?.fingerprint && fpRes.fingerprint === current.fp && !fpRes.needsBackfill) {
@@ -187,7 +189,7 @@ async function main() {
   const capped = workItems.length > AI_PER_TICK_CAP;
   const dueItems = capped ? workItems.slice(0, AI_PER_TICK_CAP) : workItems;
   console.log(`zoho-sent-runner: ${workItems.length} estimates need AI processing, ${skipped} skipped, ${selectFailed} comment-fetch failures${capped ? ` — taking oldest ${dueItems.length} this tick, ${workItems.length - dueItems.length} ride next ticks` : ''}`);
-  const { processed, failed: analysisFailed } = await analyze.runAnalysisPool(dueItems, agentRoster);
+  const { processed, failed: analysisFailed, succeeded } = await analyze.runAnalysisPool(dueItems, agentRoster);
 
   // 10. Lead-details capture (sent rows with uncaptured blocks only).
   await analyze.captureLeadDetails({ estimates, existingByEstId, fetchedByEst });
@@ -213,6 +215,16 @@ async function main() {
     await persist.postFingerprint(fp);
   } else if (capped) {
     console.log('zoho-sent-runner: capped tick — fingerprint NOT stored so deferred items stay visible next tick.');
+    // 2026-09-30 starvation fix: merge ONLY the rows persisted this tick into
+    // the stored fingerprint. Processed rows stop re-flagging hasNew (their
+    // ids are in D1 now); deferred rows keep the old baseline and stay
+    // visible. Requires a failure-free tick — a failed item's comments may be
+    // only half-persisted, so its ids must NOT be baked in.
+    if (failed === 0 && commentFetchErrors === 0 && succeeded.length > 0) {
+      const merged = diff.mergeFingerprintForProcessed(prevRawFp, estimates, fetchedByEst, succeeded);
+      await persist.postFingerprint(merged);
+      console.log(`zoho-sent-runner: merged ${succeeded.length} processed rows into the fingerprint — they leave the work set next tick.`);
+    }
   }
 
   console.log(`zoho-sent-runner: done — processed ${processed}, skipped ${skipped}, failed ${failed}`);

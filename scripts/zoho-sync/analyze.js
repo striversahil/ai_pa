@@ -275,8 +275,12 @@ async function processEstimate(job, agentRoster) {
 }
 
 // Pooled AI pass over work items with one retry round for failures.
+// Returns succeeded estIds too — the runner merges exactly those rows into
+// the no-change fingerprint on capped ticks (their comments are in D1 now),
+// so processed rows stop re-entering the work set (2026-09-30 starvation fix).
 async function runAnalysisPool(workItems, agentRoster) {
   let processed = 0;
+  const succeeded = [];
   let workerIndex = 0;
   const runPool = async (items) => {
     const innerFailed = [];
@@ -286,6 +290,7 @@ async function runAnalysisPool(workItems, agentRoster) {
         try {
           await processEstimate(job, agentRoster);
           processed++;
+          succeeded.push(job.estId);
         } catch (err) {
           console.error(`zoho-sync/analyze: AI processing error for ${job.estId}: ${err.message}`);
           innerFailed.push(job);
@@ -304,7 +309,7 @@ async function runAnalysisPool(workItems, agentRoster) {
     workerIndex = 0;
     stillFailed = await runPool(stillFailed);
   }
-  return { processed, failed: stillFailed.length };
+  return { processed, failed: stillFailed.length, succeeded: [...new Set(succeeded)] };
 }
 
 // Lead-details capture loop: every fetched estimate whose detailsCaptured flag

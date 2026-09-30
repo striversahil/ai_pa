@@ -171,6 +171,42 @@ function selectWorkItems({ estimates, existingByEstId, fetchedByEst, forced, tar
   return { workItems, skipped, failed };
 }
 
+// ── Capped-tick fingerprint merge ──────────────────────────────────────────
+// 2026-09-30 starvation incident: the fingerprint was stored ONLY on complete
+// (uncapped) passes, so during a perpetual backlog every tick compared against
+// a frozen baseline — each processed item re-flagged hasNew=true next tick
+// (its ids were never baked in) and, sorted by ancient last_modified_time,
+// the same oldest rows burned all 10 AI slots every tick while newer rows
+// (e.g. EST-023571) starved for hours. Fix: on a capped-but-clean tick, store
+// a MERGED fingerprint — current ids for the estIds actually persisted this
+// tick, old baseline kept for everything deferred. Invariant (the 28/09
+// lesson): the fp may only ever contain ids already in D1, so deferred rows
+// keep their old baseline and stay visible. Pure: no I/O.
+function mergeFingerprintForProcessed(storedRaw, estimates, fetchedByEst, succeededIds) {
+  let base = null;
+  try {
+    const obj = typeof storedRaw === 'string' && storedRaw.startsWith('{') ? JSON.parse(storedRaw) : null;
+    if (obj && obj.v === 3 && obj.byEst && typeof obj.byEst === 'object') base = obj;
+  } catch { base = null; }
+  const byEst = { ...(base?.byEst || {}) };
+  const byId = new Map((estimates || []).map((e) => [String(e.estimate_id), e]));
+  for (const estId of succeededIds || []) {
+    const est = byId.get(String(estId));
+    const bucket = fetchedByEst?.get?.(String(estId)) || fetchedByEst?.get?.(estId);
+    if (!est || !bucket) continue;
+    const ids = [];
+    for (const c of bucket.comments || []) {
+      if (!isRealSalesComment(cleanHtml(c.description || ''), c.commented_by, c.comment_type)) continue;
+      ids.push(String(c.comment_id));
+    }
+    byEst[String(estId)] = {
+      m: [est.status, est.total, est.last_modified_time].join('|'),
+      ids: [...new Set(ids)].sort(),
+    };
+  }
+  return JSON.stringify({ v: 3, byEst });
+}
+
 module.exports = {
   PROCESSABLE,
   buildFingerprint,
@@ -179,4 +215,5 @@ module.exports = {
   detectTransitions,
   computeHasNew,
   selectWorkItems,
+  mergeFingerprintForProcessed,
 };
