@@ -7,7 +7,7 @@
 import type { Hono } from 'hono';
 import { deps, requireSecret, notifyLive, authStore, getMe, isApproved, type Bindings } from '../context';
 import { prisma } from '../../shared/prisma';
-import { cacheDel } from '../../shared/cache';
+import { cacheGet, cacheDel } from '../../shared/cache';
 
 export const LINKEDIN_IMG_KEY = (id: string) => `linkedin/${id}.png`;
 
@@ -55,14 +55,11 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
       }
     }
     // Legacy fallback: 30/09 batch stored envelopes in the shared cache KV.
-    try {
-      const { cacheGet } = await import('../../shared/cache');
-      const b64 = await cacheGet<string>(`linkedin:img:${id}`, 90 * 24 * 60 * 60 * 1000);
-      if (b64) {
-        const bin = Uint8Array.from(Buffer.from(String(b64), 'base64'));
-        return new Response(bin as any, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' } });
-      }
-    } catch { /* fall through to 404 */ }
+    const b64 = await cacheGet<string>(`linkedin:img:${id}`, 90 * 24 * 60 * 60 * 1000).catch(() => null);
+    if (b64) {
+      const bin = Uint8Array.from(Buffer.from(String(b64), 'base64'));
+      return new Response(bin as any, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' } });
+    }
     return c.json({ error: 'File not found' }, 404);
   });
 
