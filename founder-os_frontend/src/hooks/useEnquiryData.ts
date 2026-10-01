@@ -546,8 +546,8 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     }
   }, []);
 
-  const addRequirement = useCallback(async (enquiryId: string, text: string, imageUrl?: string) => {
-    const saved = await persist('POST', `/api/enquiries/${enquiryId}/additional-requirements`, { text, imageUrl });
+  const addRequirement = useCallback(async (enquiryId: string, text: string, imageUrl?: string, imageUrls?: string[]) => {
+    const saved = await persist('POST', `/api/enquiries/${enquiryId}/additional-requirements`, { text, imageUrl, imageUrls });
     if (saved.enquiry) setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? toEnquiry(saved.enquiry) : x)));
     return saved.requirement;
   }, []);

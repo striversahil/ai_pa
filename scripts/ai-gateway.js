@@ -23,7 +23,8 @@
  */
 
 // ── Provider registry (mirror of TS) ─────────────────────────────────────────
-const OPENROUTER_VISION_MODEL = 'inclusionai/ling-3.0-flash-vl:free';
+const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
+const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
 const PROVIDERS = {
   agnes: {
     id: 'agnes',
@@ -46,9 +47,10 @@ const PROVIDERS = {
     baseURL: 'https://openrouter.ai/api/v1/chat/completions',
     supportsReasoning: false,
     reasoningObject: true,
-    // NOTE: ling-3.0-flash-vl rejects response_format (no structured-outputs)
-    // → jsonMode intentionally absent; JSON enforced via prompt + extractJson.
-    defaultModel: OPENROUTER_VISION_MODEL,
+    // NOTE: free-tier OpenRouter models reject response_format (no
+    // structured-outputs) → jsonMode intentionally absent; JSON enforced via prompt + extractJson.
+    // Text + vision SPLIT (2026-10-01): old unified slug lost its free tier (404).
+    defaultModel: OPENROUTER_TEXT_MODEL,
     visionModel: OPENROUTER_VISION_MODEL,
   },
   requestly: {

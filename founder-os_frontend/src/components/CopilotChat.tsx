@@ -56,6 +56,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   const [msgs, setMsgs] = useState<CopilotMsg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [thinking, setThinking] = useState("");
   const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
   const [listening, setListening] = useState(false);
   const [visible, setVisible] = useState(open);
@@ -83,6 +84,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
     if (!q || busy) return;
     if (!open) onOpen();
     setBusy(true);
+    setThinking("");
     setMsgs((p) => [...p, { role: "user", text: q }]);
     setInput("");
     const tryStream = async (): Promise<boolean> => {
@@ -142,7 +144,11 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                     if (last?.role === "assistant") last.activity = [...accActivity];
                     return [...cp];
                   });
+                } else if (evt.type === "thinking" && typeof evt.data?.text === "string") {
+                  const t = String(evt.data.text).trim().slice(-140);
+                  if (t) setThinking(t);
                 } else if (evt.type === "done" && evt.data) {
+                  setThinking("");
                   accText = String(evt.data.reply ?? accText);
                   accActivity = Array.isArray(evt.data.activity) ? evt.data.activity : accActivity;
                   accProposals = Array.isArray(evt.data.proposals) ? evt.data.proposals : [];
@@ -265,7 +271,13 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
       fetch(config.clearUrl, { method: "POST" }).catch(() => {});
     }
     setMsgs([]); setConfirmed(new Set());
+    setThinking("");
   };
+
+  // Thinking status shows only while the answer hasn't started streaming —
+  // once text arrives the bubble itself is the progress.
+  const lastMsg = msgs[msgs.length - 1];
+  const showThinking = busy && (!lastMsg || (lastMsg.role === "assistant" && !lastMsg.text));
 
   return (
     <>
@@ -277,58 +289,69 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
       {/* Floating chat window — slide-down on outside click */}
       {visible && (
         <div
-          className={`fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[min(560px,calc(100vw-24px))] h-[min(560px,calc(100vh-140px))] bg-[var(--bg-card)]/95 backdrop-blur-xl border border-white/[0.08] rounded-[20px] shadow-[0_20px_60px_rgba(0,0,0,0.5),0_1px_3px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.04)] flex flex-col overflow-hidden ${exiting ? "animate-scale-down" : "animate-scale-up"}`}
+          className={`fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[clamp(340px,94vw,600px)] md:w-[clamp(520px,62vw,780px)] xl:w-[clamp(640px,48vw,920px)] h-[clamp(440px,74dvh,620px)] md:h-[clamp(520px,78dvh,800px)] xl:h-[clamp(560px,82dvh,920px)] rounded-2xl bg-[var(--bg-card)] border border-white/10 shadow-[0_24px_64px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden ${exiting ? "animate-scale-down" : "animate-scale-up"}`}
           role="dialog"
           aria-label={config.title}
           style={{ fontFamily: "'Geist', 'Outfit', Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
         >
-          {/* subtle top gradient line */}
-          <div className="h-[1px] w-full bg-gradient-to-r from-transparent via-violet-500/20 to-transparent" />
-          {/* Header with hover-rotate */}
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.07] bg-[var(--bg-card)]">
             <div className="flex items-center gap-2.5">
-              <div className="h-7 w-7 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center shadow-sm shadow-violet-600/20">
+              <div className="h-8 w-8 rounded-full bg-violet-600 flex items-center justify-center shadow-sm flex-shrink-0">
                 <span className="text-[10px] font-extrabold text-white tracking-wider">AI</span>
               </div>
               <div>
-                <p className="text-[15px] font-bold text-[var(--text-primary)] tracking-tight leading-none">{config.title}</p>
-                <p className="text-[11px] text-[var(--text-tertiary)] font-medium">{config.subtitle}</p>
+                <p className="text-[14px] font-bold text-[var(--text-primary)] tracking-tight leading-tight">{config.title}</p>
+                <p className="text-[11px] text-[var(--text-tertiary)] font-medium leading-tight">{config.subtitle}</p>
               </div>
               <span className="ml-2 h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" />
             </div>
+            <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={handleRefresh}
               aria-label="New chat"
               title="New chat"
-              className="group p-2 rounded-full hover:bg-white/[0.06] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer border-0 bg-transparent transition-all duration-300 hover:scale-110 active:scale-95"
+              className="group p-2 rounded-full hover:bg-white/[0.06] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer border-0 bg-transparent transition-colors duration-200"
             >
               <svg className="w-[16px] h-[16px] transition-transform duration-500 group-hover:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              title="Close"
+              className="p-2 rounded-full hover:bg-white/[0.06] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer border-0 bg-transparent transition-all duration-300 hover:rotate-90"
+            >
+              <svg className="w-[16px] h-[16px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            </div>
           </div>
 
           {/* Mode tabs — shown once the popup is open */}
           {modes && modes.length > 1 && (
-            <div className="flex gap-1 px-5 pt-3">
-              {modes.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => { if (m.id !== mode) onModeChange?.(m.id); }}
-                  className={`flex-1 px-3 py-1.5 text-[12px] font-bold rounded-full border-0 cursor-pointer transition-all duration-200 ${m.id === mode
-                    ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-[0_2px_10px_rgba(124,58,237,0.35)]"
-                    : "bg-white/[0.04] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08]"}`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+                <div className="flex gap-1 px-5 pt-3">
+                  {modes.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => { if (m.id !== mode) onModeChange?.(m.id); }}
+                      className={`flex-1 px-3 py-1.5 text-[12px] font-bold rounded-full border-0 cursor-pointer transition-colors duration-200 ${m.id === mode
+                        ? "bg-violet-600 text-white"
+                        : "bg-white/[0.04] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08]"}`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
           )}
 
           {/* Messages with staggered entrance */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-5 bg-transparent scrollbar-thin scroll-smooth">
+          <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-5 py-5 space-y-5 bg-transparent scrollbar-thin scroll-smooth">
             {msgs.length === 0 && !busy ? (
               <div className="space-y-4 py-2 animate-fade-in">
                 <p className="text-[15px] font-medium leading-relaxed text-[var(--text-secondary)]">{config.emptyText}</p>
@@ -339,7 +362,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                       type="button"
                       onClick={() => void send(s)}
                       style={{ animationDelay: `${i * 60}ms` }}
-                      className="animate-chat-in px-4 py-2 text-[13px] font-medium rounded-full border border-white/[0.08] bg-white/[0.03] text-[var(--text-secondary)] hover:bg-white/[0.08] hover:border-violet-500/30 hover:text-[var(--text-primary)] hover:shadow-[0_4px_12px_rgba(124,58,237,0.15)] hover:scale-[1.02] active:scale-[0.98] cursor-pointer text-left transition-all duration-300"
+                      className="animate-chat-in px-4 py-2 text-[13px] font-medium rounded-full border border-white/[0.08] bg-white/[0.03] text-[var(--text-secondary)] hover:bg-white/[0.08] hover:border-violet-500/30 hover:text-[var(--text-primary)] cursor-pointer text-left transition-colors duration-200"
                     >
                       {s}
                     </button>
@@ -355,29 +378,29 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                     style={{ animationDelay: `${Math.min(mi * 40, 200)}ms` }}
                   >
                     {m.role === "user" ? (
-                      <div className="flex justify-end group">
+                      <div className="flex justify-end">
                         <div className="flex items-start gap-2.5 max-w-[85%]">
-                          <div className="rounded-2xl rounded-br-md bg-gradient-to-br from-[#3b82f6] to-[#2563eb] text-white px-4 py-3.5 text-[16px] leading-relaxed whitespace-pre-wrap font-medium shadow-[0_4px_16px_rgba(59,130,246,0.25)] group-hover:shadow-[0_6px_20px_rgba(59,130,246,0.3)] group-hover:scale-[1.01] transition-all duration-300">
+                          <div className="rounded-2xl rounded-br-md bg-blue-600 text-white px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap font-medium">
                             {m.text}
                           </div>
-                          <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#3b82f6] to-[#1d4ed8] flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0 mt-0.5 shadow-md ring-2 ring-white/10 group-hover:ring-white/20 group-hover:scale-105 transition-all duration-300">{String(userInitial).charAt(0).toUpperCase()}</div>
+                          <div className="h-8 w-8 rounded-full bg-blue-700 flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0 mt-0.5">{String(userInitial).charAt(0).toUpperCase()}</div>
                         </div>
                       </div>
                     ) : (
-                      <div className="flex gap-2.5 items-start group">
-                        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white text-[11px] font-extrabold flex-shrink-0 mt-1 shadow-md shadow-violet-600/20 ring-1 ring-white/10 group-hover:shadow-violet-600/30 group-hover:scale-105 transition-all duration-300">AI</div>
+                      <div className="flex gap-2.5 items-start">
+                        <div className="h-8 w-8 rounded-full bg-violet-600 flex items-center justify-center text-white text-[11px] font-extrabold flex-shrink-0 mt-1">AI</div>
                         <div className="flex-1 space-y-1.5 min-w-0">
                           {m.activity && m.activity.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
                               {m.activity.map((a, ai) => (
-                                <span key={ai} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-white/[0.06] shadow-sm hover:border-violet-500/20 hover:bg-white/[0.05] transition-all duration-300">
-                                  <span className="transition-transform duration-300 group-hover:scale-110">{config.toolIcons[a.tool] ?? "⚙️"}</span>{a.label}
+                                <span key={ai} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-white/[0.06]">
+                                  <span>{config.toolIcons[a.tool] ?? "⚙️"}</span>{a.label}
                                 </span>
                               ))}
                             </div>
                           )}
-                          <div className="bg-[var(--bg-input)]/90 backdrop-blur-sm border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3.5 text-[16px] leading-[1.7] text-[var(--text-primary)] font-[450] shadow-sm hover:shadow-md hover:border-white/[0.08] hover:bg-[var(--bg-input)] transition-all duration-300 chat-markdown">
-                            <Markdown text={m.text} className="md-text !text-[16px] !leading-[1.7]" />
+                          <div className="bg-[var(--bg-input)] border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-[1.7] text-[var(--text-primary)] chat-markdown">
+                            <Markdown text={m.text} className="md-text !text-[15px] !leading-[1.7]" />
                           </div>
                           <div className="flex items-center gap-2 text-[12px] text-[var(--text-tertiary)] px-1 font-medium">
                             <span>Just now</span>
@@ -395,10 +418,10 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                                 const key = mi * 100 + pi;
                                 const done = confirmed.has(key);
                                 return (
-                                  <div key={pi} className="rounded-xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/[0.07] to-violet-500/[0.07] backdrop-blur-sm px-4 py-3 hover:border-indigo-500/30 hover:shadow-[0_4px_16px_rgba(99,102,241,0.12)] hover:scale-[1.01] transition-all duration-300">
-                                    <p className="font-bold text-[13px] text-indigo-300">{p.label}</p>
+                                  <div key={pi} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                                    <p className="font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
                                     {(p.text || p.spec) && <p className="mt-1.5 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
-                                    <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-500 hover:to-violet-500 hover:shadow-[0_4px_12px_rgba(99,102,241,0.4)] hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer border-0 transition-all duration-300">
+                                    <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200">
                                       {done ? "✓ Applied" : "Confirm & apply →"}
                                     </button>
                                   </div>
@@ -411,14 +434,14 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                     )}
                   </div>
                 ))}
-                {busy && (
+                {showThinking && (
                   <div className="flex gap-2.5 items-center animate-fade-in">
-                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white text-[11px] font-extrabold flex-shrink-0 shadow-sm">AI</div>
-                    <div className="bg-[var(--bg-input)]/80 border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3 flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce" style={{ animationDelay: "0ms", animationDuration: "1.4s" }} />
-                      <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce" style={{ animationDelay: "150ms", animationDuration: "1.4s" }} />
-                      <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce" style={{ animationDelay: "300ms", animationDuration: "1.4s" }} />
-                      <span className="ml-2 text-[13px] text-[var(--text-tertiary)] font-medium">Thinking…</span>
+                    <div className="h-8 w-8 rounded-full bg-violet-600 flex items-center justify-center text-white text-[11px] font-extrabold flex-shrink-0">AI</div>
+                    <div className="bg-[var(--bg-input)] border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3 flex items-center gap-1.5 max-w-[85%]">
+                      <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce flex-shrink-0" style={{ animationDelay: "0ms", animationDuration: "1.4s" }} />
+                      <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce flex-shrink-0" style={{ animationDelay: "150ms", animationDuration: "1.4s" }} />
+                      <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce flex-shrink-0" style={{ animationDelay: "300ms", animationDuration: "1.4s" }} />
+                      <span className="ml-2 text-[13px] font-medium text-[var(--text-secondary)] truncate">{thinking || "Thinking…"}</span>
                     </div>
                   </div>
                 )}
@@ -430,9 +453,9 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
 
       {/* Bottom pill — glass, hover lift, focus glow (skipped when caller owns the launcher) */}
       {chrome === "full" && (
-      <div className="fixed z-50 left-1/2 -translate-x-1/2 bottom-4 w-[min(560px,calc(100vw-24px))] animate-fade-in">
+      <div className="fixed z-50 left-1/2 -translate-x-1/2 bottom-4 w-[clamp(340px,94vw,600px)] md:w-[clamp(520px,62vw,780px)] xl:w-[clamp(640px,48vw,920px)] animate-fade-in">
         <div
-          className="group flex items-center gap-2 bg-[var(--bg-card)]/90 backdrop-blur-xl border border-white/[0.08] rounded-full px-2 py-2 shadow-[0_8px_32px_rgba(0,0,0,0.35),0_1px_3px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.04)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.45),0_1px_3px_rgba(0,0,0,0.2)] hover:border-white/[0.12] hover:scale-[1.01] focus-within:border-violet-500/30 focus-within:shadow-[0_0_0_4px_rgba(124,58,237,0.15),0_8px_32px_rgba(0,0,0,0.35)] transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+          className="group flex items-center gap-2 bg-[var(--bg-card)] backdrop-blur-xl border border-white/[0.08] rounded-full px-2 py-2 shadow-[0_8px_32px_rgba(0,0,0,0.35)] hover:border-white/[0.12] focus-within:border-violet-500/40 transition-colors duration-200"
           style={{ fontFamily: "'Geist', 'Outfit', Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
           onClick={() => { if (!open) onOpen(); inputRef.current?.focus(); }}
         >
@@ -449,10 +472,10 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
             type="button"
             onClick={(e) => { e.stopPropagation(); toggleMic(); }}
             aria-label={listening ? "Stop listening" : "Voice input"}
-            className={`p-2.5 rounded-full cursor-pointer border-0 flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-90 ${listening ? "bg-red-500 text-white shadow-[0_0_16px_rgba(239,68,68,0.5)] animate-pulse" : "hover:bg-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-transparent"}`}
+            className={`p-2.5 rounded-full cursor-pointer border-0 flex items-center justify-center transition-colors duration-200 ${listening ? "bg-red-500 text-white" : "hover:bg-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-transparent"}`}
             title={listening ? "Listening…" : "Voice input"}
           >
-            <svg className={`w-[16px] h-[16px] transition-transform duration-300 ${listening ? "scale-110" : "group-hover:scale-105"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+            <svg className="w-[16px] h-[16px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 14a3 3 0 003-3V5a3 3 0 10-6 0v6a3 3 0 003 3z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 10a7 7 0 01-14 0M12 18v3M8 21h8" />
             </svg>
@@ -462,9 +485,9 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
             onClick={(e) => { e.stopPropagation(); void send(input); }}
             disabled={!input.trim() || busy}
             aria-label="Send"
-            className="h-9 w-9 rounded-full bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-[#2a2a2e] dark:to-[#1f1f23] border border-black/10 dark:border-white/10 flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:from-white hover:to-zinc-100 dark:hover:from-[#3a3a3e] dark:hover:to-[#2a2a2e] hover:shadow-md hover:scale-110 active:scale-90 disabled:opacity-40 disabled:hover:scale-100 disabled:hover:shadow-none cursor-pointer transition-all duration-300"
+            className={`h-9 w-9 rounded-full border-0 flex items-center justify-center cursor-pointer transition-colors duration-200 disabled:opacity-40 ${input.trim() ? "bg-violet-600 text-white hover:bg-violet-500" : "bg-white/[0.06] text-[var(--text-tertiary)]"}`}
           >
-            <svg className="w-[14px] h-[14px] transition-transform duration-300 group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <svg className="w-[14px] h-[14px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h12M12 5l7 7-7 7" />
             </svg>
           </button>

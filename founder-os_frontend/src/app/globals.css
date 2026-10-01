@@ -549,6 +549,24 @@ label:has(input[type="radio"]) {
   0%, 100% { box-shadow: 0 8px 32px rgba(91,94,240,0.12), 0 1px 3px rgba(0,0,0,0.3); }
   50% { box-shadow: 0 12px 40px rgba(91,94,240,0.18), 0 1px 3px rgba(0,0,0,0.3); }
 }
+/* Supreme AI-panel visuals: drifting aurora blobs, slow conic ring, shimmer text */
+@keyframes aurora-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(28px, -22px) scale(1.15); }
+  66% { transform: translate(-24px, 16px) scale(0.92); }
+}
+.animate-aurora { animation: aurora-drift 14s ease-in-out infinite; }
+.animate-aurora-slow { animation: aurora-drift 24s ease-in-out infinite reverse; }
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+.animate-spin-slow { animation: spin-slow 7s linear infinite; }
+.text-shimmer {
+  background: linear-gradient(110deg, var(--text-tertiary) 30%, #ffffff 50%, var(--text-tertiary) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-slow 2.2s linear infinite;
+}
 
 /* Markdown (AI replies) */
 .md-text {

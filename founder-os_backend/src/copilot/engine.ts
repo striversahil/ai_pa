@@ -277,6 +277,12 @@ export async function* streamTurn<T>(
   let reply = '';
   for (let step = 0; step < MAX_STEPS; step++) {
     let stepContent = '';
+    // Buffer this step's text: intermediate steps (ones that end in tool
+    // calls) are working notes, not the answer — emitting them as reply
+    // deltas makes text appear mid-turn only to be replaced by the final
+    // reply. They go out as thinking events (status UI) instead; only the
+    // final step streams as reply text.
+    const stepDeltas: string[] = [];
     const toolMap = new Map<number, { id: string; name: string; args: string }>();
     let finishReason: string | undefined;
     try {
@@ -288,7 +294,10 @@ export async function* streamTurn<T>(
       })) {
         if (chunk.contentDelta) {
           stepContent += chunk.contentDelta;
-          yield { type: 'delta', data: { text: chunk.contentDelta } };
+          stepDeltas.push(chunk.contentDelta);
+        }
+        if (chunk.reasoningDelta) {
+          yield { type: 'thinking', data: { text: String(chunk.reasoningDelta).slice(0, 500) } };
         }
         if (chunk.toolCallDelta) {
           for (const tc of chunk.toolCallDelta as any[]) {
@@ -322,12 +331,13 @@ export async function* streamTurn<T>(
         finishReason = 'tool_calls';
       } else {
         stepContent = res.content ?? '';
-        if (stepContent) yield { type: 'delta', data: { text: stepContent } };
+        if (stepContent) stepDeltas.push(stepContent);
         finishReason = res.toolCalls ? 'tool_calls' : 'stop';
       }
     }
     const toolCalls = [...toolMap.values()].filter((t) => t.name);
     if (toolCalls.length > 0) {
+      if (stepContent.trim()) yield { type: 'thinking', data: { text: stepContent.trim().slice(0, 500) } };
       messages.push({
         role: 'assistant', content: stepContent,
         tool_calls: toolCalls.map((tc) => ({ id: tc.id || `call_${Math.random().toString(36).slice(2)}`, type: 'function' as const, function: { name: tc.name, arguments: tc.args || '{}' } })),
@@ -344,6 +354,8 @@ export async function* streamTurn<T>(
       continue;
     }
     reply = stepContent.trim() || def.emptyHint;
+    // Final step: now (and only now) stream its text as the reply.
+    for (const d of stepDeltas) yield { type: 'delta', data: { text: d } };
     break;
   }
   if (!reply) reply = 'I ran out of steps — try a narrower question.';

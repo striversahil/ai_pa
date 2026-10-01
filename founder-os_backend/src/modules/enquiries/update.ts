@@ -682,6 +682,12 @@ export function applyLateQuoteReopen(
  *   non-draft does NOT auto-promote/conclude, so new items loop procurement
  *   → management → sent again. Sales/additional-requirements on the unlocked
  *   row reopen it further via the normal finalized paths.
+ * - Revisable means effectively-sent: stored `sent` OR Zoho non-draft with
+ *   stored `finalized`. The worker derives `sent` for display from Zoho and
+ *   promotes the DB fire-and-forget — the promotion can lag, so a Zoho-sent
+ *   row may still store `finalized` while the UI (correctly) offers Reopen.
+ *   Gating on stored `sent` alone rejects those rows ("Only sent enquiries
+ *   can be revised"). The Zoho leg covers them.
  * - Safe to open beyond management: reopening grants NO approval power —
  *   every new item still needs procurement quoting + a management decision,
  *   and the completeness gate blocks re-sent until 100% decided.
@@ -691,7 +697,7 @@ export function applyLateQuoteReopen(
  */
 export function applySentRevision(
   updates: any,
-  ctx: { storedRateStatus: string; storedRevision?: string; privileged: boolean },
+  ctx: { storedRateStatus: string; storedRevision?: string; storedZohoStatus?: string; privileged: boolean },
 ): string | null {
   if ((updates as any).rateStatus === 'sent') {
     (updates as any).sentRevisionAt = '';
@@ -702,7 +708,9 @@ export function applySentRevision(
   }
   delete (updates as any).reviseSent;
   void ctx.privileged;
-  if (String(ctx.storedRateStatus ?? '') !== 'sent') return 'Only sent enquiries can be revised';
+  const storedSent = String(ctx.storedRateStatus ?? '') === 'sent';
+  const zohoSent = !!String(ctx.storedZohoStatus ?? '').trim() && String(ctx.storedZohoStatus ?? '').trim().toLowerCase() !== 'draft';
+  if (!storedSent && !zohoSent) return 'Only sent enquiries can be revised';
   const nowIso = new Date().toISOString();
   (updates as any).rateStatus = 'finalized';
   (updates as any).procurementSubmittedAt = '';

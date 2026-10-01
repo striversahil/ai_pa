@@ -50,7 +50,7 @@ export default function EnquiryTracker() {
   const {
     enquiries, comments, agents, currentAgent, loaded,
     addEnquiry, updateEnquiry, deleteEnquiry,
-    addComment, updateItems, makeActivity, clients,
+    addComment, updateItems, addRequirement, makeActivity, clients,
   } = useEnquiryData("sales");
   // Fallback telecaller roster for root/MIS: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
   const [telecallers, setTelecallers] = useState<any[]>([]);
@@ -215,6 +215,13 @@ export default function EnquiryTracker() {
     await updateItems(id, items, "sales");
   }, [updateItems]);
 
+  // "Add via AI" — server-side append to FRESH stored items (never a
+  // full-array echo of possibly-stale client state, which once wiped an
+  // enquiry's AI-split lines — Enquiry No 3 - 30 SEP TL, 2026-09-30).
+  const handleAddRequirement = useCallback(async (id: string, text: string, imageUrls?: string[]) => {
+    await addRequirement(id, text, undefined, imageUrls);
+  }, [addRequirement]);
+
   const handleMarkSent = useCallback(async (id: string) => {
     await updateEnquiry(id, { rateStatus: 'sent' });
   }, [updateEnquiry]);
@@ -261,6 +268,7 @@ export default function EnquiryTracker() {
           onUpdateAgent={(id, a) => void handleUpdateAgent(id, a)}
           onAddComment={(c) => void handleAddComment(c)}
           onUpdateItems={(id, items) => void handleUpdateItems(id, items)}
+          onAddRequirement={(id, text, imageUrls) => void handleAddRequirement(id, text, imageUrls)}
           onAcceptSuggestion={(id, idx) => handleAcceptSuggestion(id, idx)}
           onMarkSent={(id) => handleMarkSent(id)}
           onReviseSent={(id) => handleReviseSent(id)}

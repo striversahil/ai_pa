@@ -53,16 +53,17 @@ The dashboard payload (`data()`) is KV-cached 60s and busted on every write.
 The unstructured enquiry (`description` + enquiry-level photos) is AI-split
  into `items: [{ name, qty, spec, media, category }]` worker-natively by
  `modules/enquiries/vision-intake.ts` (`kickAgnesIntake` on create/update via
- `waitUntil`, Agnes vision, edge <5s; legacy GH `scripts/enquiry-intake-runner.js`
- follows the same design as fallback): segment → lookup on
- `data/know_your_product_v2.json` ONLY (136 items, 10 categories — slim
- codegen twin `src/modules/enquiries/kyp-lookup.ts` for the edge bundle, no
- derived taxonomy/slot files): Call 1 segments each line (vision, NO catalogue
- — pure splitter, client wording kept verbatim, so the model cannot
- hallucinate catalogue names or drop lines to fit them); Call 2 looks each
- verbatim line up (deterministic alias-index first, one batched LLM fallback
- with the item+alias list only for misses, <0.5 confidence stays
- Uncategorized). Then a price-memory lookup. Results land
+  `waitUntil`, Agnes vision, edge <5s; legacy GH `scripts/enquiry-intake-runner.js`
+  follows the same design as fallback): segment → lookup against the LIVE
+  `ProductItem` table (KV-cached slim index — catalogue edits apply to the
+  next intake, no codegen step): Call 1 segments each line (vision, NO
+  catalogue — pure splitter, client wording kept verbatim, so the model
+  cannot hallucinate catalogue names or drop lines to fit them); Call 2
+  looks each line up (deterministic alias-index over the full
+  verbatim+spec+name+dims+qty, then the shared `match.ts` token tier, then
+  one batched LLM fallback with the live item+alias list only for misses,
+  <0.65 confidence stays Uncategorized; alias/near-name answers resolve back
+  instead of being discarded). Then a price-memory lookup. Results land
 fill-empty-only (manual edits always win) plus KV suggestions at
 `enquiry:intake:<id>` (7d TTL) for the sales `IntakePanel`. Stored on the row;
 sales can edit/delete/add manually. Each item carries `media:
@@ -120,9 +121,15 @@ is written to dashboards automatically:
   no 300-cap). Item numbers are 1-based everywhere the model sees (Item 1,
   Item 2 — never "index", never Item 0); out-of-range numbers get a guided
   error naming the valid range.
+- Batch rule (token optimization for multi-item quotes): `find_price_batch`
+  resolves up to 20 items in ONE call → one `ask_specs` per distinct product
+  → `quote_price_batch` quotes up to 20 items in ONE call with a single
+  combined table. Single-item tools in a loop are banned by the prompt.
 - Proposals: `price_table` (up to 5 vendor-blind variations with match % —
-  view-only) + `price_quote` (best match, Confirm writes `expectedRate`) +
-  companion `spec_fix` (Confirm writes collected specs onto the item).
+  view-only; batch tables group rows per item with a per-row Apply →
+  posts a synthetic `price_quote`) + `price_quote` (best match, Confirm
+  writes `expectedRate`) + companion `spec_fix` (Confirm writes collected
+  specs onto the item).
 - Below 0.6 confidence there is no apply card — the item routes to the manual
   procurement queue instead.
 - Shown prices are final customer prices (flat +25% over effective vendor
@@ -131,9 +138,10 @@ is written to dashboards automatically:
   stripped before the LLM ever sees rate data (`salesSafeQuote`).
 - Memory is the product-line intake method, not bare chat history: a KV price
   session per enquiry per user (`enquiry:price:<id>:<who>`, 30-min TTL) holds
-  the resolved product + collected specs across turns (`find_price` writes,
-  `ask_specs`/`quote_price` merge), and question-labeled form answers resolve
-  to storage keys automatically. Rolling conversation history (100 msgs, 7d
+  per-item state (`items: {0-based idx: {productId, productName, specs}}`,
+  v1 shapes auto-migrated) across turns (`find_price`/`find_price_batch`
+  write, `ask_specs`/`quote_price`/`quote_price_batch` merge), and
+  question-labeled form answers resolve to storage keys automatically. Rolling conversation history (100 msgs, 7d
   TTL) covers the prose recall. `POST /api/enquiries/:id/chat/clear` (chat
   Refresh button) wipes both — same contract as `/api/copilot/:id/chat/clear`.
 
@@ -155,8 +163,12 @@ Backend (`founder-os_backend/src/modules/enquiries/` — one concern per file):
 - `routes.ts` — CRUD orchestrator only (imports the above; re-exports for compat)
 - `store.ts` — persistence (D1/Memory; Prisma in `store-prisma.ts`)
 - `chat.ts` — per-enquiry sales copilot tools (`find_price`/`ask_specs`/
-  `quote_price`), vendor-blind proposals, two-confirm execute
+  `quote_price` + `_batch` variants), vendor-blind proposals, two-confirm execute
   (`price_quote` → `expectedRate`, `spec_fix` → item spec)
+- `scripts/batch-e2e.mjs` — offline harness driving the real `execTool`
+  batch branches with stubbed catalogue (13 checks: batch resolve, session
+  recall, stepped form, batch quote math, procurement routing, combined
+  table, spec reuse, range errors)
 
 Frontend (`founder-os_frontend/src/enquiry/` + components):
 - `enquiry/queue.ts` — queue predicates (single frontend truth; `types/index.ts`

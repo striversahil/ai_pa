@@ -7,10 +7,17 @@
  *   Call 1 SEGMENT (vision+text, NO catalogue): splits unstructured text +
  *   enquiry/item images into verbatim line items. The model never sees KYP
  *   so it cannot hallucinate catalogue names or drop lines to fit them.
- *   Call 2 LOOKUP (text-only, per verbatim line): deterministic alias-index
- *   match first (zero tokens, data/kyp-lookup.ts codegen), one batched LLM
- *   fallback for misses only (<0.5 confidence stays Uncategorized). Lookup
- *   fills the category side-field only — verbatim wording is untouched.
+ *   Imageless enquiries already ride text-only here (buildVisionUserContent
+ *   returns plain text with no image parts — same model, zero image tokens).
+ *   Call 2 LOOKUP (text-only, per line): deterministic alias-index match
+ *   first (exact → key → substring over verbatim+spec+name+dims+qty), the
+ *   shared token-overlap tier from match.ts second (one implementation for
+ *   intake + sales chat), one batched LLM fallback for the misses only
+ *   (<0.65 confidence stays Uncategorized; alias/near-name answers are
+ *   resolved back instead of discarded). All tiers read the LIVE ProductItem
+ *   table (KV-cached slim index) — catalogue edits apply to the next intake
+ *   with no codegen step. Lookup fills the category side-field only —
+ *   verbatim wording is untouched.
  *
  * This path is fast (<4s typical, edge), handles the same `aiBulkText` vs
  * description branching as the legacy GH runner, and applies fill-empty-only
@@ -23,7 +30,11 @@
  */
 import { getGateway, buildVisionUserContent } from '../../shared/ai-gateway';
 import { cacheSet } from '../../shared/cache';
-import { KYP_LOOKUP } from './kyp-lookup';
+import { getProductDetail, getProductIndex } from '../../automations/product-line/service';
+import {
+  rankProducts, TOKEN_MIN_SHARED, TOKEN_MIN_SCORE,
+  type MatchProduct,
+} from '../../automations/product-line/match';
 import type { EnquiryStore } from './store';
 
 const ROUTER_SYSTEM_AGNES = `You are a B2B industrial-spare intake for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
@@ -31,24 +42,53 @@ For EACH item return: {"verbatim": "client wording for the product, copied exact
 Also extract the lead block: {"lead": {"clientCompany": "customer company, or empty", "contactName": "contact person, or empty", "contactEmail": "or empty", "contactPhone": "mobile/phone, or empty", "location": "city/state, or empty", "sourceLead": "lead source like IndiaMART/reference, or empty"}} — NEVER invent; empty when not stated. The sales agent's own name ("Lead of ...") is NOT the customer — ignore it.
 Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
 
-/** ── Call-2 lookup: verbatim line → KYP category (verbatim never touched). ── */
+/** ── Call-2 lookup: line → live catalogue product (verbatim never touched). ──
+ *  Reads the LIVE ProductItem table via the KV-cached slim index — the same
+ *  rows the sales chat matches against. No static artifact: catalogue edits
+ *  (products, aliases) apply to the next intake automatically.
+ */
 const normTok = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
-const KYP_CATS = [...new Set(KYP_LOOKUP.map((e) => e.category))];
-const KYP_ITEMS_BY_CAT = new Map<string, Set<string>>(
-  KYP_CATS.map((c) => [c, new Set(KYP_LOOKUP.filter((e) => e.category === c).map((e) => normTok(e.item)))]),
-);
-interface KypKey { category: string; item: string; keys: Set<string> }
-const KYP_INDEX: KypKey[] = KYP_LOOKUP.map((e) => ({
-  category: e.category,
-  item: e.item,
-  keys: new Set([normTok(e.item), ...(e.aliases || []).map(normTok)]),
-}));
-function lookupDeterministic(verbatim: string, spec: string): KypKey | null {
-  const q = normTok(`${verbatim} ${spec}`);
-  for (const t of KYP_INDEX) {
+interface KypKey { productId: string; category: string; item: string; keys: Set<string> }
+interface LiveCatalog {
+  products: MatchProduct[];
+  cats: string[];
+  itemsByCat: Map<string, Set<string>>;
+  index: KypKey[];
+}
+async function loadLiveCatalog(): Promise<LiveCatalog> {
+  const rows = await getProductIndex().catch(() => []);
+  const products: MatchProduct[] = rows.map((p) => ({
+    id: String(p.id),
+    category: String(p.category ?? ''),
+    name: String(p.name ?? ''),
+    aliases: [...(p.aliases ?? [])],
+    active: p.active !== false,
+  }));
+  const cats = [...new Set(products.map((p) => p.category).filter(Boolean))].sort();
+  const itemsByCat = new Map<string, Set<string>>(
+    cats.map((c) => [c, new Set(products.filter((p) => p.category === c).map((p) => normTok(p.name)))]),
+  );
+  const index: KypKey[] = products.map((p) => ({
+    productId: p.id,
+    category: p.category,
+    item: p.name,
+    keys: new Set([normTok(p.name), ...p.aliases.map(normTok)]),
+  }));
+  return { products, cats, itemsByCat, index };
+}
+/**
+ * Deterministic tiers 1–3 (exact item → exact key → substring). `extra`
+ * carries the router's name/dims/qty fields — matchers used to see only
+ * verbatim+spec, so any line whose product noun landed in name/dims was
+ * unmatchable and fell to Uncategorized. Tier 4 (token-overlap) lives in
+ * lookupToken below so call sites can count it separately.
+ */
+function lookupDeterministic(verbatim: string, spec: string, extra: string, index: KypKey[]): KypKey | null {
+  const q = normTok(`${verbatim} ${spec} ${extra}`);
+  for (const t of index) {
     if (normTok(t.item) === normTok(verbatim)) return t;
   }
-  for (const t of KYP_INDEX) {
+  for (const t of index) {
     for (const key of t.keys) {
       if (!key) continue;
       if (q === key || normTok(verbatim) === key) return t;
@@ -56,7 +96,7 @@ function lookupDeterministic(verbatim: string, spec: string): KypKey | null {
   }
   let best: KypKey | null = null;
   let bestScore = 0;
-  for (const t of KYP_INDEX) {
+  for (const t of index) {
     for (const key of t.keys) {
       if (!key || key.length < 4) continue;
       if (q.includes(key) && key.length > bestScore) {
@@ -67,12 +107,24 @@ function lookupDeterministic(verbatim: string, spec: string): KypKey | null {
   }
   return best;
 }
-// Alias-inclusive fallback list, built at runtime from the slim artifact:
-// `1. Category: Item[alias,alias]; Item; ...` (~1.9k tokens).
-function buildLookupList(): string {
-  return KYP_CATS.map((c, i) => `${i + 1}. ${c}: ${KYP_LOOKUP.filter((e) => e.category === c).map((e) => {
-    const al = (e.aliases || []).filter(Boolean);
-    return al.length ? `${e.item}[${al.join(',')}]` : e.item;
+/**
+ * Tier 4 — token-overlap via the shared sales matcher (match.ts), same
+ * strict bar the sales chat auto-resolves on (≥2 shared tokens, ≥0.5
+ * containment). Catches reordering/noise the substring tier cannot
+ * ("Elevator Bucket Plastic 8/5 Jindal" vs "Elevator Bucket - AA Type").
+ * Single best only — null when nothing credible matches.
+ */
+function lookupToken(q: string, products: MatchProduct[], index: KypKey[]): KypKey | null {
+  const top = rankProducts(products, q, 1, TOKEN_MIN_SHARED, TOKEN_MIN_SCORE)[0];
+  if (!top) return null;
+  return index.find((t) => t.productId === top.product.id) ?? null;
+}
+// Fallback list for the LLM, built from the live catalogue:
+// `1. Category: Item[alias,alias]; Item; ...`.
+function buildLookupList(cats: string[], products: MatchProduct[]): string {
+  return cats.map((c, i) => `${i + 1}. ${c}: ${products.filter((p) => p.category === c).map((p) => {
+    const al = (p.aliases || []).filter(Boolean);
+    return al.length ? `${p.name}[${al.join(',')}]` : p.name;
   }).join('; ')}`).join('\n');
 }
 const LOOKUP_FALLBACK_SYSTEM = `You are a product matcher for flour-mill spare parts. For EACH input line, pick the single best catalogue entry.
@@ -167,7 +219,10 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
         try {
           routed = await gateway.completeJson<any>({
             messages: [{ role: 'system', content: ROUTER_SYSTEM_AGNES }, { role: 'user', content }],
-            temperature: 0, json: true, maxTokens: 4000, provider: prov, signal: ac.signal as any,
+            temperature: 0, json: true, maxTokens: 24000, provider: prov, signal: ac.signal as any,
+            // Never burn 100s on doomed direct-Agnes attempts: relay lane if
+            // warm, else fail fast to the next provider (OpenRouter).
+            agnesRelayOnly: true,
           });
         } finally { clearTimeout(t); }
         lastErr = null;
@@ -261,14 +316,26 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   }
 
   // Verbatim items + Call-2 lookup (category side-field only — the client's
-  // exact wording is never renamed). Deterministic alias-index first; one
-  // batched LLM fallback for the misses on the provider that won Call 1.
+  // exact wording is never renamed). Live catalogue first: deterministic
+  // alias-index (fed the FULL line: verbatim + spec + name + dims + qty),
+  // then the shared token tier, then one batched LLM fallback for the misses
+  // on the provider that won Call 1.
+  const catalog = await loadLiveCatalog().catch(() => null);
+  const liveProducts: MatchProduct[] = catalog?.products ?? [];
+  const liveCats: string[] = catalog?.cats ?? [];
+  const liveItemsByCat: Map<string, Set<string>> = catalog?.itemsByCat ?? new Map();
+  const liveIndex: KypKey[] = catalog?.index ?? [];
+  if (liveProducts.length === 0) console.warn(`[vision-intake] ${id}: live catalogue empty — all lines Uncategorized this run`);
   let nAlias = 0;
+  let nToken = 0;
   let nLlm = 0;
   let nMisses = 0;
   const kypHits: (KypKey | null)[] = lines.map((l: any) => {
-    const hit = lookupDeterministic(String(l.verbatim || ''), String(l.spec || ''));
+    const extra = `${String(l.name || '')} ${String(l.dims || '')} ${String(l.qty || '')}`;
+    const hit = lookupDeterministic(String(l.verbatim || ''), String(l.spec || ''), extra, liveIndex);
     if (hit) { nAlias++; return hit; }
+    const tok = lookupToken(normTok(`${String(l.verbatim || '')} ${String(l.spec || '')} ${extra}`), liveProducts, liveIndex);
+    if (tok) { nToken++; return tok; }
     nMisses++;
     return null;
   });
@@ -276,17 +343,18 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     try {
       const idx: number[] = [];
       kypHits.forEach((h, i) => { if (!h) idx.push(i); });
-      const input = idx.map((i, k) => `${k}. ${String(lines[i].verbatim || '')}${lines[i].spec ? ` | ${lines[i].spec}` : ''}${lines[i].qty ? ` | ${lines[i].qty}` : ''}`.slice(0, 600)).join('\n');
+      const input = idx.map((i, k) => `${k}. ${[lines[i].verbatim, lines[i].name, lines[i].dims, lines[i].spec, lines[i].qty].filter(Boolean).join(' | ')}`.slice(0, 600)).join('\n');
       const ac2 = new AbortController();
       const t2 = setTimeout(() => ac2.abort(), 20_000);
       let out: any;
       try {
         out = await gateway.completeJson<any>({
           messages: [
-            { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList()}` },
+            { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
             { role: 'user', content: `Match each line:\n${input}` },
           ],
-          temperature: 0, json: true, maxTokens: 4000, provider: successProvider, signal: ac2.signal as any,
+          temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac2.signal as any,
+          agnesRelayOnly: true,
         });
       } finally { clearTimeout(t2); }
       const matches = Array.isArray(out?.matches) ? out.matches : [];
@@ -296,14 +364,23 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
         const n = /^\d{1,2}$/.test(raw) ? parseInt(raw, 10) : NaN;
         const conf = Number((m as any).confidence);
         const itemName = String((m as any).item || '');
-        if (Number.isFinite(n) && n >= 1 && n <= KYP_CATS.length && Number.isFinite(conf) && conf >= 0.65 && itemName
-          && (KYP_ITEMS_BY_CAT.get(KYP_CATS[n - 1]) || new Set()).has(normTok(itemName))) {
-          const cat = KYP_CATS[n - 1];
-          const hit = KYP_INDEX.find((e) => e.category === cat && normTok(e.item) === normTok(itemName)) ?? null;
+        if (!itemName || !Number.isFinite(conf) || conf < 0.65) {
+          kypHits[lineIdx] = null;
+          return;
+        }
+        if (Number.isFinite(n) && n >= 1 && n <= liveCats.length
+          && (liveItemsByCat.get(liveCats[n - 1]) || new Set()).has(normTok(itemName))) {
+          const cat = liveCats[n - 1];
+          const hit = liveIndex.find((e) => e.category === cat && normTok(e.item) === normTok(itemName)) ?? null;
           kypHits[lineIdx] = hit;
           if (hit) nLlm++;
         } else {
-          kypHits[lineIdx] = null;
+          // Forgiving resolve: the model returned an alias or near-name
+          // instead of the exact item_name — map it back through the same
+          // deterministic tiers rather than discarding to Uncategorized.
+          const back = lookupDeterministic(itemName, '', '', liveIndex) ?? lookupToken(itemName, liveProducts, liveIndex);
+          kypHits[lineIdx] = back;
+          if (back) nLlm++;
         }
       });
     } catch (e: any) {
@@ -314,17 +391,30 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   const cats: string[] = kypHits.map((h) => h?.category ?? 'Uncategorized');
   const kypItems: (string | undefined)[] = kypHits.map((h) => h?.item ?? undefined);
   const nUncat = cats.filter((c) => c === 'Uncategorized').length;
-  console.log(`[vision-intake] ${id}: lookup alias=${nAlias} llm=${nLlm} uncategorized=${nUncat}/${lines.length}`);
+  console.log(`[vision-intake] ${id}: lookup alias=${nAlias} token=${nToken} llm=${nLlm} uncategorized=${nUncat}/${lines.length}`);
 
   // Call-2.5 — spec completeness per matched item (one batched LLM call).
-  // Uses the per-item required_attributes from the slim artifact; falls back
+  // Required checklist comes from the LIVE KypGuide rows for each matched
+  // product (same source the sales chat's stepped form uses); falls back
   // to "all missing" if the call fails. Uncategorized → no checklist.
-  const KYP_ATTRS_BY_KEY = new Map<string, string[]>(
-    KYP_LOOKUP.map((e) => [`${e.category}::${normTok(e.item)}`, e.required_attributes ?? []]),
-  );
-  const perItemAttrs: string[][] = kypHits.map((h) => {
+  const guideCache = new Map<string, string[]>();
+  async function liveAttrs(productId: string): Promise<string[]> {
+    if (guideCache.has(productId)) return guideCache.get(productId)!;
+    let qs: string[] = [];
+    try {
+      const detail = await getProductDetail(productId).catch(() => null);
+      qs = (((detail as any)?.guide ?? []) as any[])
+        .filter((g: any) => g && g.active !== false && g.active !== 0 && (g.isRequired === true || g.isRequired === 1))
+        .sort((a: any, b: any) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0))
+        .map((g: any) => String(g.question ?? '').trim())
+        .filter(Boolean);
+    } catch { /* treat as no checklist */ }
+    guideCache.set(productId, qs);
+    return qs;
+  }
+  const perItemAttrs: string[][] = await Promise.all(kypHits.map(async (h) => {
     if (!h) return [];
-    const raw = KYP_ATTRS_BY_KEY.get(`${h.category}::${normTok(h.item)}`) ?? [];
+    const raw = await liveAttrs(h.productId);
     // Conditional fallbacks like "If the client is unsure of the grade, request a picture..." are
     // not hard requirements when the primary spec is already given. Filter them from the
     // completeness gate so a fully-specified item can actually reach complete.
@@ -336,7 +426,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       if (low.startsWith('if the client is unsure') && low.includes('request a picture')) return false;
       return true;
     });
-  });
+  }));
   // kypMissing per line (subset of required_attributes that are still missing)
   let kypMissing: (string[] | undefined)[] = kypHits.map(() => undefined);
   let kypComplete: (boolean | undefined)[] = kypHits.map(() => undefined);
@@ -358,7 +448,8 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
             { role: 'system', content: SPEC_CHECK_SYSTEM },
             { role: 'user', content: checksInput },
           ],
-          temperature: 0, json: true, maxTokens: 4000, provider: successProvider, signal: ac3.signal as any,
+          temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac3.signal as any,
+          agnesRelayOnly: true,
         });
       } finally { clearTimeout(t3); }
       const checks = Array.isArray(raw?.checks) ? raw.checks : [];

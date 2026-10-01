@@ -17,6 +17,8 @@ interface EnquiryDetailProps {
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
   onUpdateItems?: (id: string, items: EnquiryItem[]) => void;
+  /** Server-side append of an "Add via AI" raw requirement (preferred — never echoes stale items). */
+  onAddRequirement?: (id: string, text: string, imageUrls?: string[]) => void;
   /** Accept a price-memory suggestion: marks the item rate-available (skips the loop). */
   onAcceptSuggestion?: (id: string, itemIndex: number) => Promise<void>;
   onMarkSent?: (id: string) => Promise<void>;
@@ -38,6 +40,7 @@ export default function EnquiryDetail({
   onUpdateStatus,
   onUpdateAgent,
   onUpdateItems,
+  onAddRequirement,
   onAcceptSuggestion,
   onMarkSent,
   onReviseSent,
@@ -114,18 +117,26 @@ export default function EnquiryDetail({
   // "Add via AI": appends ONE raw item flagged aiPending — the save kicks
   // the GH intake action (same as new-enquiry intake), which replaces it
   // with vision-split items. Sales sees an "AI splitting…" chip meanwhile.
+  // "Add via AI": prefers the server-side append endpoint (reads FRESH stored
+  // items, appends ONE raw aiPending row, kicks intake). The old full-array
+  // echo via onUpdateItems is fallback only — echoing stale client items once
+  // wiped an enquiry's AI-split lines (No 3 - 30 SEP TL).
   const handleSaveAdditionalRequirement = () => {
     const text = addReqText.trim();
     if (!text && addReqImages.length === 0) return;
-    if (!onUpdateItems) return;
-    const newItem: EnquiryItem = {
-      name: "",
-      qty: "",
-      spec: text.slice(0, 2000),
-      media: addReqImages.map((url) => ({ type: "image" as const, url })),
-      aiPending: true,
-    };
-    onUpdateItems(selectedEnquiry.id, [...(selectedEnquiry.items ?? []), newItem]);
+    if (onAddRequirement) {
+      onAddRequirement(selectedEnquiry.id, text, addReqImages.length > 0 ? addReqImages : undefined);
+    } else {
+      if (!onUpdateItems) return;
+      const newItem: EnquiryItem = {
+        name: "",
+        qty: "",
+        spec: text.slice(0, 2000),
+        media: addReqImages.map((url) => ({ type: "image" as const, url })),
+        aiPending: true,
+      };
+      onUpdateItems(selectedEnquiry.id, [...(selectedEnquiry.items ?? []), newItem]);
+    }
     setAddReqText("");
     setAddReqImages([]);
     setItemsOpen(false);

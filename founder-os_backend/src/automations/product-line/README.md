@@ -47,8 +47,10 @@ frontend `src/enquiry/pricing.ts` — change both together).
 
 Consumers: sales enquiry chat (`find_price`/`ask_specs`/`quote_price` in
 `modules/enquiries/chat.ts`), intake options mining (`intake.ts`
-`ask_specs`), knowledge copilot (`copilot.ts`). Reads live tables ONLY —
-never the `kyp-lookup.ts` codegen artifact (intake-time lookup only).
+`ask_specs`), knowledge copilot (`copilot.ts`), and vision-intake Call-2
+(`modules/enquiries/vision-intake.ts` — deterministic tiers + token tier +
+LLM-answer resolve-back, all over the live index). Reads live tables ONLY —
+single source of truth, no static catalogue copy anywhere.
 
 Identification tiers (deterministic first, LLM only for misses): exact
 id/name/alias → substring either-way → token-overlap (`matchTokens` strips

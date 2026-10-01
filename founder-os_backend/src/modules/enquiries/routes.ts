@@ -688,18 +688,23 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
 export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse, id: string, body: any): Promise<EnquiryResult> {
   const text = String(body?.text || "").trim();
   const imageUrl = body?.imageUrl ? String(body.imageUrl) : undefined;
-  if (!text && !imageUrl) return json(400, { error: "text required" });
+  // Multi-photo detail flow sends `imageUrls[]`; single-photo callers send `imageUrl`.
+  const imageUrls = Array.isArray(body?.imageUrls)
+    ? body.imageUrls.map((u: any) => String(u ?? '')).filter(Boolean).slice(0, 8)
+    : [];
+  if (!text && !imageUrl && imageUrls.length === 0) return json(400, { error: "text required" });
   const existing = await store.getEnquiry(id);
   if (!existing) return json(404, { error: "not found" });
   // An additional requirement is simply a NEW LINE ITEM: appended to the
   // previous items with no vendor rates, so it shows up as rate-pending in
   // Procurement and then flows to Management Review like any other item.
   // (Legacy `additionalRequirements` rows stay readable; new adds go to items.)
+  const mediaSrc = imageUrl ? [{ type: "image", url: imageUrl }] : imageUrls.map((url: string) => ({ type: "image", url }));
   const newItem = {
     name: "",
     qty: "",
     spec: text.slice(0, 2000),
-    media: parseItemMedia(imageUrl ? [{ type: "image", url: imageUrl }] : []),
+    media: parseItemMedia(mediaSrc),
     rates: [],
     // Flagged aiPending so the Worker-native vision intake (kickAgnesIntake,
     // relay lanes) splits this text into catalogue lines exactly like the
@@ -784,6 +789,7 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     const reviseErr = applySentRevision(updates, {
       storedRateStatus: String((storedForItems as any)?.rateStatus ?? ''),
       storedRevision: String((storedForItems as any)?.sentRevisionAt ?? ''),
+      storedZohoStatus: String((storedForItems as any)?.zohoStatus ?? ''),
       privileged,
     });
     if (reviseErr) return json(403, { error: reviseErr });

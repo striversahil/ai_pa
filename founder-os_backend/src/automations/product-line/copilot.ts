@@ -1,8 +1,9 @@
 // automations/product-line/copilot.ts — product-line department copilot.
 //
 // Read-only Q&A over the Product Line master (products, guide checklists,
-// vendors, quotes) on the shared engine (src/copilot). No proposals, no
-// writes — the catalogue is edited through the dashboard modals (MIS-gated).
+// vendors, quotes) on the shared engine (src/copilot). No writes — the catalogue
+// is edited through the dashboard modals (MIS-gated). The only proposal it
+// emits is ask_question (answerable question cards); everything else is prose.
 import type { ToolDefinition } from '../../shared/ai-gateway';
 import type { CopilotDef } from '../../copilot/types';
 import { prisma } from '../../shared/prisma';
@@ -63,7 +64,7 @@ function matchProduct(products: ProductIndexRow[], q: string) {
   return ranked;
 }
 
-async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>): Promise<{ result: unknown }> {
+async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>): Promise<{ result: unknown; proposals?: Array<{ kind: string; label: string; [k: string]: any }> }> {
   if (name === 'search_products') {
     const products = await getProductIndex().catch(() => []);
     const found = matchProduct(products, String(args.query ?? '')).slice(0, 8);
@@ -149,6 +150,36 @@ async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>
     };
   }
 
+  if (name === 'ask_question') {
+    const title = String(args.title ?? 'Quick question').slice(0, 120) || 'Quick question';
+    const rawQ = Array.isArray(args.questions) ? args.questions : [];
+    const questions: Array<{ key: string; label: string; note: string; required: boolean; type: 'options' | 'multiselect' | 'text' | 'number' | 'date'; options: string[] }> = [];
+    for (const q of rawQ.slice(0, 6)) {
+      const label = String((q as any)?.label ?? '').trim().slice(0, 300);
+      if (!label) continue;
+      const opts = Array.isArray((q as any)?.options) ? (q as any).options.map((o: any) => String(o ?? '').trim()).filter(Boolean).slice(0, 8) : [];
+      const want = String((q as any)?.type ?? 'text');
+      const type = (want === 'options' || want === 'multiselect') && opts.length >= 2
+        ? (want as 'options' | 'multiselect')
+        : want === 'number' ? 'number'
+        : want === 'date' ? 'date'
+        : 'text';
+      questions.push({
+        key: String((q as any)?.key ?? label).slice(0, 80),
+        label,
+        note: '',
+        required: (q as any)?.required !== false,
+        type,
+        options: opts,
+      });
+    }
+    if (questions.length === 0) return { result: { error: 'no valid questions given' } };
+    return {
+      result: { asked: true, questions: questions.length },
+      proposals: [{ kind: 'spec_form', questions, productName: title, label: `${title} (${questions.length})` }],
+    };
+  }
+
   return { result: { error: `unknown tool ${name}` } };
 }
 
@@ -178,7 +209,8 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
   systemPrompt: () => (
     'You are the product-line staff helper for the BUI catalogue team. Answer questions about the product master, requirement checklists, vendors, and vendor quotes using the tools — never invent products, prices, specs, or vendor details. ' +
     'When comparing vendor quotes, use a markdown table (vendor, effective price, MOQ, delivery). ' +
-    'Effective price already accounts for discount. Keep replies short; quote prices exactly as stored (₹, per unit).'
+    'Effective price already accounts for discount. Keep replies short; quote prices exactly as stored (₹, per unit). ' +
+    'Whenever you need an answer, decision, or confirmation from the user, ask it through ask_question (renders as an answerable card) — never leave a question buried in prose, which has no answer box.'
   ),
   toolDefs: () => [
     {
@@ -213,6 +245,34 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
         parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'ask_question',
+        description: 'Ask the user ANY question (choice, confirmation, free-text detail) as an answerable card. ALWAYS use this instead of asking in prose: prose questions have no answer box. Answers arrive as the next message; read them from history.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Short card heading' },
+            questions: {
+              type: 'array',
+              description: 'Max 6 questions',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  label: { type: 'string' },
+                  type: { type: 'string', description: "'options' (MCQ one-pick) or 'multiselect' (MSQ multi-pick, needs 2+ options) or 'number' or 'date' or 'text'" },
+                  options: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['key', 'label'],
+              },
+            },
+          },
+          required: ['title', 'questions'],
+        },
+      },
+    },
   ],
   execTool,
   activityLabel: (name, args, out) => {
@@ -234,6 +294,8 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
         const n = Array.isArray(r.vendors) ? r.vendors.length : 0;
         return `Vendor lookup · ${n} match${n === 1 ? '' : 'es'}`;
       }
+      case 'ask_question':
+        return r.error ? 'Question failed' : 'Asked a question';
       default:
         return `Ran ${name}`;
     }

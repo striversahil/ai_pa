@@ -30,7 +30,8 @@ export interface SpecQuestion {
   label: string;
   note: string;
   required: boolean;
-  type: 'options' | 'text';
+  /** options = MCQ single-pick · multiselect = MSQ multi-pick · number/date/text */
+  type: 'options' | 'multiselect' | 'text' | 'number' | 'date';
   options: string[];
 }
 
@@ -43,6 +44,9 @@ export interface PriceTableRow {
   moq: string | null;
   deliveryDays: number | null;
   best: boolean;
+  /** 1-based item number + name (set for batch tables spanning items). */
+  itemIndex?: number;
+  itemName?: string;
 }
 
 export interface ChatProposal {
@@ -96,11 +100,25 @@ interface SalesCtx {
 // turns and re-asks. find_price writes it, ask_specs/quote_price merge it.
 const PRICE_SESSION_TTL_MS = 30 * 60 * 1000;
 
-interface PriceSession {
-  itemIndex?: number;
+interface PriceItemState {
   productId?: string;
   productName?: string;
   specs: Record<string, string>;
+}
+
+interface PriceSession {
+  /** Per-item state, keyed by INTERNAL 0-based index. */
+  items: Record<string, PriceItemState>;
+  activeItem?: number;
+}
+
+function blankItemState(): PriceItemState {
+  return { specs: {} };
+}
+
+function getItemState(s: PriceSession, idx: number): PriceItemState {
+  const st = (s.items ?? {})[String(idx)];
+  return st && typeof st === 'object' ? { productId: st.productId, productName: st.productName, specs: { ...(st.specs ?? {}) } } : blankItemState();
 }
 
 function priceWho(me: any): string {
@@ -114,9 +132,19 @@ function priceSessionKey(enquiryId: string, who: string): string {
 async function loadPriceSession(enquiryId: string, who: string): Promise<PriceSession> {
   try {
     const s = await cacheGet<PriceSession>(priceSessionKey(enquiryId, who), PRICE_SESSION_TTL_MS);
-    if (s && typeof s === 'object') return { ...s, specs: { ...((s as any).specs ?? {}) } };
+    if (s && typeof s === 'object') {
+      // Migrate v1 shape ({itemIndex, productId, productName, specs}) → v2 map.
+      if (!(s as any).items && ((s as any).productId !== undefined || (s as any).itemIndex !== undefined)) {
+        const idx = Number((s as any).itemIndex ?? 0);
+        return {
+          items: { [String(idx)]: { productId: (s as any).productId, productName: (s as any).productName, specs: { ...(((s as any).specs ?? {}) as Record<string, string>) } } },
+          activeItem: idx,
+        };
+      }
+      return { items: { ...((s as any).items ?? {}) }, activeItem: (s as any).activeItem };
+    }
   } catch { /* ignore */ }
-  return { specs: {} };
+  return { items: {} };
 }
 
 async function savePriceSession(enquiryId: string, who: string, s: PriceSession): Promise<void> {
@@ -131,6 +159,22 @@ async function clearPriceSession(enquiryId: string, who: string): Promise<void> 
 //  resolve either form to the storage key against the live checklist. */
 function normSpecKey(s: unknown): string {
   return String(s ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/** Price sessions hold ONLY catalogue checklist specs (attrKeys). Generic
+ *  ask_question answers share the same reply channel — drop anything that
+ *  is not a known checklist key so conversational answers can never pollute
+ *  pricing, spec_fix writes, or future scoring. */
+function filterChecklistSpecs(
+  specs: Record<string, string>,
+  required: { attrKey: string }[],
+): Record<string, string> {
+  const keep = new Set(required.map((g) => g.attrKey));
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(specs ?? {})) {
+    if (keep.has(String(k))) out[String(k)] = v;
+  }
+  return out;
 }
 
 function resolveSpecKeys(
@@ -192,6 +236,34 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
             scope: { type: 'string', description: "'sales' or 'procurement'" },
           },
           required: ['text'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ask_question',
+        description: 'Ask the user ANY question (choice, confirmation, free-text detail — anything that is not a catalogue spec checklist) as an answerable card. ALWAYS use this instead of asking in prose: prose questions have no answer box. Answers arrive as the next message; read them from history.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Short card heading (not "Specs needed" — that title is reserved for spec checklists)' },
+            questions: {
+              type: 'array',
+              description: 'Max 6 questions',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  label: { type: 'string' },
+                  type: { type: 'string', description: "'options' (MCQ one-pick) or 'multiselect' (MSQ multi-pick, needs 2+ options) or 'number' or 'date' or 'text'" },
+                  options: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['key', 'label'],
+              },
+            },
+          },
+          required: ['title', 'questions'],
         },
       },
     },
@@ -259,6 +331,45 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
           },
         },
       },
+      {
+        type: 'function',
+        function: {
+          name: 'find_price_batch',
+          description: 'BATCH price-lookup starter for MULTIPLE items in ONE call — use this (never find_price in a loop) whenever the user asks prices for several items. Resolves each item to a catalogue product, saves the price session, and returns per-item product + spec counts. Follow with one ask_specs per distinct product, then a single quote_price_batch.',
+          parameters: {
+            type: 'object',
+            properties: {
+              itemIndexes: { type: 'array', description: '1-based item numbers as shown in the chat (max 20)', items: { type: 'number' } },
+            },
+            required: ['itemIndexes'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'quote_price_batch',
+          description: 'BATCH quoting for MULTIPLE items in ONE call — use this (never quote_price in a loop) after the specs are collected. Scores every item against its resolved product and returns per-item prices plus ONE combined price table (per-row Apply in the UI). Items without a resolved product or past rates route to procurement individually.',
+          parameters: {
+            type: 'object',
+            properties: {
+              items: {
+                type: 'array',
+                description: 'Max 20. specs may be omitted when already collected (session).',
+                items: {
+                  type: 'object',
+                  properties: {
+                    itemIndex: { type: 'number', description: '1-based item number' },
+                    specs: { type: 'object', description: 'attrKey → collected spec value', additionalProperties: { type: 'string' } },
+                  },
+                  required: ['itemIndex'],
+                },
+              },
+            },
+            required: ['items'],
+          },
+        },
+      },
     );
   }
   return tools;
@@ -276,6 +387,8 @@ function activityLabel(name: string, args: Record<string, any>, out: { result: u
       return r.error ? 'Comment draft failed' : 'Drafted a comment for confirm';
     case 'propose_spec_fix':
       return r.error ? 'Spec draft failed' : 'Drafted a spec fix for confirm';
+    case 'ask_question':
+      return r.error ? 'Question failed' : `Asked ${typeof (r as any).questions === 'number' ? (r as any).questions : 'a'} question${(r as any).questions === 1 ? '' : 's'}`;
     case 'find_price': {
       if (r.error && Array.isArray((r as any).candidates)) return `Offered ${(r as any).candidates.length} picks`;
       return r.error ? 'Price lookup failed' : r.product ? `Matched ${r.product.name}` : 'No catalogue match';
@@ -286,6 +399,16 @@ function activityLabel(name: string, args: Record<string, any>, out: { result: u
       if ((r as any).error) return 'Price lookup failed';
       if ((r as any).routed === 'procurement') return 'Low confidence · routed to procurement';
       return typeof (r as any).markedPrice === 'number' ? `Quoted ₹${(r as any).markedPrice}` : 'Drafted a price for confirm';
+    }
+    case 'find_price_batch': {
+      const items = Array.isArray((r as any).items) ? (r as any).items : [];
+      const matched = items.filter((it: any) => it && it.product).length;
+      return (r as any).error ? 'Batch lookup failed' : `Batch matched ${matched}/${items.length} items`;
+    }
+    case 'quote_price_batch': {
+      const items = Array.isArray((r as any).items) ? (r as any).items : [];
+      const priced = items.filter((it: any) => it && typeof it.markedPrice === 'number').length;
+      return (r as any).error ? 'Batch quote failed' : `Batch priced ${priced}/${items.length} items`;
     }
     default:
       return `Ran ${name}`;
@@ -457,11 +580,15 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       return { result: { error: 'no catalogue match', kypItem, category, hint: 'tell the user this item is routed to procurement' } };
     }
     const required = requiredChecklist(await liveGuide(resolved.product.id));
-    // Price session: same item+product → keep collected specs; else reset.
+    // Price session (per-item map): same item+product → keep collected specs; else reset.
     const who = priceWho(ctx.me);
     const prev = await loadPriceSession(ctx.enquiryId, who);
-    const kept = prev.productId === resolved.product.id && prev.itemIndex === idx ? prev.specs : {};
-    const session: PriceSession = { itemIndex: idx, productId: resolved.product.id, productName: resolved.product.name, specs: kept };
+    const prevSt = getItemState(prev, idx);
+    const kept = prevSt.productId === resolved.product.id ? prevSt.specs : {};
+    const session: PriceSession = {
+      items: { ...(prev.items ?? {}), [String(idx)]: { productId: resolved.product.id, productName: resolved.product.name, specs: kept } },
+      activeItem: idx,
+    };
     await savePriceSession(ctx.enquiryId, who, session);
     return {
       result: {
@@ -483,12 +610,29 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     if (!product) return { result: { error: 'unknown product' } };
     const required = requiredChecklist(await liveGuide(pid));
     // Merge session specs (prior turns) with freshly passed knownSpecs.
+    // ask_specs is per-product: merge across every session item on this product.
     const who = priceWho(ctx.me);
     const prev = await loadPriceSession(ctx.enquiryId, who);
-    const sessionSpecs = (prev.productId === pid ? prev.specs : {}) as Record<string, unknown>;
+    const sessionSpecs: Record<string, unknown> = {};
+    for (const st of Object.values(prev.items ?? {})) {
+      if ((st as PriceItemState)?.productId === pid) Object.assign(sessionSpecs, (st as PriceItemState).specs ?? {});
+    }
     const knownRaw = { ...sessionSpecs, ...((args.knownSpecs && typeof args.knownSpecs === 'object' ? args.knownSpecs : {}) as Record<string, unknown>) };
-    const known = resolveSpecKeys(knownRaw as Record<string, string>, required.map((g) => ({ attrKey: g.attrKey, question: g.question })));
-    await savePriceSession(ctx.enquiryId, who, { ...prev, productId: pid, productName: product.name, specs: { ...(prev.productId === pid ? prev.specs : {}), ...known } });
+    const known = filterChecklistSpecs(resolveSpecKeys(knownRaw as Record<string, string>, required.map((g) => ({ attrKey: g.attrKey, question: g.question }))), required);
+    // Write merged known-specs back to every session item on this product.
+    const nextItems: Record<string, PriceItemState> = { ...(prev.items ?? {}) };
+    let touchedItem = false;
+    for (const [k, st] of Object.entries(nextItems)) {
+      if ((st as PriceItemState)?.productId === pid) {
+        nextItems[k] = { ...(st as PriceItemState), specs: { ...((st as PriceItemState).specs ?? {}), ...known } };
+        touchedItem = true;
+      }
+    }
+    if (!touchedItem && prev.activeItem !== undefined) {
+      const cur = getItemState(prev, prev.activeItem);
+      nextItems[String(prev.activeItem)] = { productId: pid, productName: product.name, specs: { ...cur.specs, ...known } };
+    }
+    await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem });
     const rates = await liveRates(pid);
     const questions: SpecQuestion[] = [];
     for (const g of required) {
@@ -511,6 +655,36 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     return { result: { proposed: true, questions: questions.length }, proposals: [proposal] };
   }
 
+  if (name === 'ask_question') {
+    const title = String(args.title ?? 'Quick question').slice(0, 120) || 'Quick question';
+    const rawQ = Array.isArray(args.questions) ? args.questions : [];
+    const questions: SpecQuestion[] = [];
+    for (const q of rawQ.slice(0, 6)) {
+      const label = String((q as any)?.label ?? '').trim().slice(0, 300);
+      if (!label) continue;
+      const opts = Array.isArray((q as any)?.options) ? (q as any).options.map((o: any) => String(o ?? '').trim()).filter(Boolean).slice(0, 8) : [];
+      const want = String((q as any)?.type ?? 'text');
+      // MCQ needs 2+ options, MSQ needs 2+ options — anything else degrades
+      // to a text answer box rather than erroring.
+      const type = (want === 'options' || want === 'multiselect') && opts.length >= 2
+        ? (want as 'options' | 'multiselect')
+        : want === 'number' ? 'number'
+        : want === 'date' ? 'date'
+        : 'text';
+      questions.push({
+        key: String((q as any)?.key ?? label).slice(0, 80),
+        label,
+        note: '',
+        required: (q as any)?.required !== false,
+        type,
+        options: opts,
+      });
+    }
+    if (questions.length === 0) return { result: { error: 'no valid questions given' } };
+    const proposal: ChatProposal = { kind: 'spec_form', questions, productName: title, label: `${title} (${questions.length})` };
+    return { result: { asked: true, questions: questions.length }, proposals: [proposal] };
+  }
+
   if (name === 'quote_price') {
     if (ctx.restricted) return { result: { error: 'not permitted' } };
     const pid = String(args.productId ?? '').trim();
@@ -525,17 +699,21 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     // Question-labeled answers (from the spec form) resolve to attrKeys.
     const who = priceWho(ctx.me);
     const prev = await loadPriceSession(ctx.enquiryId, who);
+    const prevSt = getItemState(prev, idx);
     const specsIn = (args.specs && typeof args.specs === 'object' ? args.specs : {}) as Record<string, unknown>;
-    const merged = resolveSpecKeys(
-      { ...((prev.productId === pid ? prev.specs : {}) as Record<string, string>), ...(specsIn as Record<string, string>) },
+    const merged = filterChecklistSpecs(resolveSpecKeys(
+      { ...((prevSt.productId === pid ? prevSt.specs : {}) as Record<string, string>), ...(specsIn as Record<string, string>) },
       required.map((g) => ({ attrKey: g.attrKey, question: g.question })),
-    );
+    ), required);
     const specs: Record<string, string> = {};
     for (const [k, v] of Object.entries(merged)) {
       const s = String(v ?? '').trim().slice(0, 200);
       if (s) specs[String(k)] = s;
     }
-    await savePriceSession(ctx.enquiryId, who, { itemIndex: idx, productId: pid, productName: product.name, specs });
+    await savePriceSession(ctx.enquiryId, who, {
+      items: { ...(prev.items ?? {}), [String(idx)]: { productId: pid, productName: product.name, specs } },
+      activeItem: idx,
+    });
     const scored = scoreRates(await liveRates(pid), pid, specs, required);
     if (scored.length === 0) return { result: { error: 'no past rates for this product', routed: 'procurement' } };
     const best = scored[0];
@@ -558,6 +736,7 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
         moq: q.moq,
         deliveryDays: q.deliveryDays,
         best: i === 0,
+        itemIndex: parsedQ.num,
       };
     });
     const proposals: ChatProposal[] = [{
@@ -596,6 +775,126 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     return { result: { proposed: true, ...quote }, proposals };
   }
 
+  if (name === 'find_price_batch') {
+    if (ctx.restricted) return { result: { error: 'not permitted' } };
+    const rawList = Array.isArray(args.itemIndexes) ? args.itemIndexes : [];
+    const nums = [...new Set(rawList.map((n: any) => Math.floor(Number(n) || 0)).filter((n: number) => n >= 1))].slice(0, 20);
+    if (nums.length === 0) return { result: { error: 'no valid item numbers — use Item 1–N as shown in the chat' } };
+    const allItems = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const products = await liveProducts();
+    const who = priceWho(ctx.me);
+    const prev = await loadPriceSession(ctx.enquiryId, who);
+    const nextItems: Record<string, PriceItemState> = { ...(prev.items ?? {}) };
+    const out: any[] = [];
+    for (const num of nums) {
+      if (num > allItems.length) {
+        out.push({ itemIndex: num, error: `no Item ${num} — this enquiry has ${allItems.length} item${allItems.length === 1 ? '' : 's'}` });
+        continue;
+      }
+      const idx = num - 1;
+      const it = allItems[idx];
+      const kypItem = String((it as any)?.kypItem ?? '').slice(0, 120);
+      const category = String((it as any)?.category ?? 'Uncategorized').slice(0, 120);
+      const resolved = resolveProduct(products, kypItem || String((it as any)?.name ?? ''), category);
+      if (!resolved) {
+        const cands = rankProducts(products, `${kypItem} ${String((it as any)?.name ?? '')} ${category}`, 3, 1, 0.2)
+          .map((c) => ({ id: c.product.id, name: c.product.name }));
+        out.push({ itemIndex: num, error: 'no confident catalogue match', candidates: cands });
+        continue;
+      }
+      const required = requiredChecklist(await liveGuide(resolved.product.id));
+      const prevSt = getItemState(prev, idx);
+      const kept = prevSt.productId === resolved.product.id ? prevSt.specs : {};
+      nextItems[String(idx)] = { productId: resolved.product.id, productName: resolved.product.name, specs: kept };
+      const knownCount = Object.keys(kept).length;
+      out.push({
+        itemIndex: num,
+        product: { id: resolved.product.id, name: resolved.product.name, category: resolved.product.category, exact: resolved.exact },
+        requiredSpecs: required.length,
+        knownSpecs: knownCount,
+      });
+    }
+    await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: nums.length ? nums[nums.length - 1] - 1 : prev.activeItem });
+    return { result: { items: out } };
+  }
+
+  if (name === 'quote_price_batch') {
+    if (ctx.restricted) return { result: { error: 'not permitted' } };
+    const rawList = Array.isArray(args.items) ? args.items : [];
+    if (rawList.length === 0) return { result: { error: 'no items given' } };
+    const allItems = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const products = await liveProducts();
+    const who = priceWho(ctx.me);
+    const prev = await loadPriceSession(ctx.enquiryId, who);
+    const nextItems: Record<string, PriceItemState> = { ...(prev.items ?? {}) };
+    const out: any[] = [];
+    const rows: PriceTableRow[] = [];
+    for (const entry of rawList.slice(0, 20)) {
+      const num = Math.floor(Number((entry as any)?.itemIndex) || 0);
+      if (!(num >= 1) || num > allItems.length) {
+        out.push({ itemIndex: num || 0, error: `no Item ${num} — use Item 1–${allItems.length}` });
+        continue;
+      }
+      const idx = num - 1;
+      const st = getItemState({ items: nextItems, activeItem: prev.activeItem }, idx);
+      const product = products.find((p) => p.id === st.productId && p.active !== false);
+      if (!product) {
+        out.push({ itemIndex: num, routed: 'procurement', note: 'no resolved product — run find_price_batch first' });
+        continue;
+      }
+      const required = requiredChecklist(await liveGuide(product.id));
+      const entrySpecs = ((entry as any)?.specs && typeof (entry as any).specs === 'object' ? (entry as any).specs : {}) as Record<string, unknown>;
+      const merged = filterChecklistSpecs(resolveSpecKeys(
+        { ...(st.specs ?? {}), ...(entrySpecs as Record<string, string>) },
+        required.map((g) => ({ attrKey: g.attrKey, question: g.question })),
+      ), required);
+      const specs: Record<string, string> = {};
+      for (const [k, v] of Object.entries(merged)) {
+        const s = String(v ?? '').trim().slice(0, 200);
+        if (s) specs[String(k)] = s;
+      }
+      nextItems[String(idx)] = { productId: product.id, productName: product.name, specs };
+      const scored = scoreRates(await liveRates(product.id), product.id, specs, required);
+      const itemName = String((allItems[idx] as any)?.name ?? `Item ${num}`).slice(0, 80);
+      if (scored.length === 0) {
+        out.push({ itemIndex: num, product: product.name, routed: 'procurement', note: 'no past rates for this product' });
+        continue;
+      }
+      const best = scored[0];
+      if (best.confidence < MIN_QUOTE_CONFIDENCE) {
+        out.push({ itemIndex: num, product: product.name, routed: 'procurement', confidence: best.confidence, note: 'below confidence — manual procurement owns this item' });
+        continue;
+      }
+      const quote = salesSafeQuote(product, best, specs, required);
+      out.push({
+        itemIndex: num, productId: product.id, productName: product.name,
+        markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
+        quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
+      });
+      // Top variation per item lands in the combined table (per-row Apply).
+      const top = scored[0];
+      const tq = salesSafeQuote(product, top, specs, required);
+      const bits = Object.entries(top.rate.attrValues ?? {})
+        .map(([, v]) => String(v ?? '').trim())
+        .filter(Boolean)
+        .filter((v, vi, arr) => arr.indexOf(v) === vi)
+        .slice(0, 3);
+      rows.push({
+        variation: bits.length > 0 ? bits.join(' · ').slice(0, 120) : product.name,
+        markedPrice: tq.markedPrice, unit: tq.unit, confidence: tq.confidence,
+        quoteAgeDays: tq.quoteAgeDays, moq: tq.moq, deliveryDays: tq.deliveryDays,
+        best: true, itemIndex: num, itemName,
+      });
+    }
+    await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem });
+    const proposals: ChatProposal[] = rows.length > 0 ? [{
+      kind: 'price_table',
+      productName: 'Batch prices',
+      rows, label: `Batch prices · ${out.filter((o) => typeof o.markedPrice === 'number').length}/${out.length} items priced`,
+    }] : [];
+    return { result: { items: out, proposed: rows.length > 0 }, proposals };
+  }
+
   return { result: { error: `unknown tool ${name}` } };
 }
 
@@ -608,7 +907,7 @@ function systemPrompt(ctx: SalesCtx): string {
   const langNote = !ctx.restricted && !ctx.privileged
     ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — sales-floor style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
     : '';
-  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. Items are numbered from 1 exactly as shown (Item 1, Item 2, …) — always speak and accept item numbers 1-based; there is no Item 0, never say "index". ${langNote} Prior turns AND the price session are recalled automatically every turn — never claim to be a new session or to lack earlier context. When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it recalls the saved product + collected specs for the item) — never re-ask specs that are already collected. If find_price returns candidates, offer them to the user to pick one, then call find_price again with the picked productId. Then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price. The user's spec-form answers arrive as the next message labeled by question text — file them via quote_price and continue. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. When a lookup routes to procurement, say so plainly and stop — do not quote.`;
+  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. Items are numbered from 1 exactly as shown (Item 1, Item 2, …) — always speak and accept item numbers 1-based; there is no Item 0, never say "index". ${langNote} Prior turns AND the price session are recalled automatically every turn — never claim to be a new session or to lack earlier context. When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it recalls the saved product + collected specs for the item) — never re-ask specs that are already collected. BATCH RULE: when prices are asked for MULTIPLE items, use find_price_batch ONCE for all of them (never find_price in a loop), then one ask_specs per distinct product, then quote_price_batch ONCE for all of them (never quote_price in a loop). If find_price returns candidates, offer them to the user to pick one, then call find_price again with the picked productId. Then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price. QUESTIONS: whenever you need ANY answer, decision, or confirmation from the user — specs, choice between options, go-ahead, free-text detail — ask it through ask_specs (catalogue spec checklists) or ask_question (everything else), which render as answerable cards. NEVER leave a question buried in prose: prose questions have no answer box. Answers to ask_question cards are conversational — read them from history, never file them as specs. The user's spec-form answers arrive as the next message labeled by question text — file them via quote_price and continue. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. When a lookup routes to procurement, say so plainly and stop — do not quote.`;
 }
 
 /** Sales department definition for the shared engine. */

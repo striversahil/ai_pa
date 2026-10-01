@@ -79,7 +79,8 @@ export interface ProviderConfig {
   visionModel?: string;
 }
 
-const OPENROUTER_VISION_MODEL = 'inclusionai/ling-3.0-flash-vl:free';
+const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
+const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
   agnes: {
@@ -103,11 +104,15 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     baseURL: 'https://openrouter.ai/api/v1/chat/completions',
     supportsReasoning: false,
     reasoningObject: true,
-    // NOTE: ling-3.0-flash-vl rejects response_format (no structured-outputs)
-    // → jsonMode intentionally absent; JSON is enforced via prompt + the
-    // extractJson fallback in completeJson instead.
-    // Text + vision in one model — the enquiry pipeline default.
-    defaultModel: OPENROUTER_VISION_MODEL,
+    // NOTE: free-tier OpenRouter models reject response_format (no
+    // structured-outputs) → jsonMode intentionally absent; JSON is enforced
+    // via prompt + the extractJson fallback in completeJson instead.
+    // Text + vision are SPLIT (2026-10-01): no single free model does both —
+    // the old unified slug lost its free tier (404). Text → sante (lean,
+    // proven 25/25 intake), vision (photos attached) → dots preview.
+    // Reasoning models burn ~25KB chain-of-thought — callers must budget
+    // maxTokens ≥24000, not 4000 (else finish=length truncation).
+    defaultModel: OPENROUTER_TEXT_MODEL,
     visionModel: OPENROUTER_VISION_MODEL,
   },
   requestly: {
@@ -223,6 +228,13 @@ export interface CompletionRequest {
   /** OpenAI-style function tools (passed through verbatim). */
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+  /** Agnes relay-only (intake): use the existing GH-runner relay lane when
+   *  warm, but NEVER attempt direct Cloudflare egress for Agnes — it is
+   *  1015-throttled to ~100% failure (5 aborts × 20s per call). With no lane
+   *  up, fail fast so the caller's provider chain falls through to OpenRouter
+   *  instead of burning two minutes on doomed direct attempts. No new infra —
+   *  this only gates the already-built lane vs direct choice per request. */
+  agnesRelayOnly?: boolean;
 }
 
 export interface CompletionResult {
@@ -462,7 +474,7 @@ export class AiGateway {
   private visionModelOverride = '';
   /** Rotating OpenRouter free-model list (OPENROUTER_FREE_MODELS). Text
    *  requests cycle through these as 429s persist; vision stays pinned. */
-  private openrouterModels: string[] = [OPENROUTER_VISION_MODEL];
+  private openrouterModels: string[] = [OPENROUTER_TEXT_MODEL];
   private modelIdx = 0;
   // Cloudflare AI Gateway (standardized): when CLOUDFLARE_ACCOUNT_ID + CF_AIG_GATEWAY_ID are set,
   // all providers route via https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/...
@@ -801,6 +813,11 @@ export class AiGateway {
         return result;
       } catch (err) {
         lastErr = err;
+        // Relay-only fast-fail (no lane warm): NOT a key failure — the key is
+        // innocent, the lane is just down. Skip pool penalty AND remaining
+        // key attempts; the caller's provider chain (vision-intake) falls
+        // through to OpenRouter immediately.
+        if ((err as any)?.skipProvider) throw err;
         // Hung model channel (timeout, no HTTP status — proxy faults and
         // caller cancels excluded): record the outage, switch to the
         // fallback model, retry immediately. Keys are never rotated for a
@@ -1137,8 +1154,20 @@ export class AiGateway {
     };
     // Direct-first: try Cloudflare egress first (fast path 0.6s), relay only
     // on 1015 IP-throttle or direct fetch throw. Saves ~1s tunnel tax when WAF quiet.
+    // Relay-only callers (agnesRelayOnly — intake): direct Agnes egress is
+    // ~100% 1015-throttled, so skip it entirely — lanes if warm, else fail
+    // fast and let the caller's provider chain fall through to OpenRouter.
     let res: Response | null = null;
     let directThrew: unknown = null;
+    if (provider.id === 'agnes' && (req as any)?.agnesRelayOnly) {
+      const proxied = await tryProxy();
+      if (!proxied) {
+        const e: any = new Error('Agnes relay lane unavailable — direct skipped (relayOnly)');
+        e.skipProvider = true;
+        throw e;
+      }
+      res = proxied;
+    } else
     try {
       res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, req.timeoutMs) });
       if (res.status === 429 && (await this.isIpThrottle(res))) {
