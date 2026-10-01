@@ -11,9 +11,10 @@
  * The old research→draft→edit pipeline (linkedin-research.js,
  * linkedin-visual.js, linkedin-format.js, linkedin-topics.js) is
  * DISCARDED as a generation path — those files are dormant on disk,
- * nothing imports them now. Text and images both go through the
- * unified AI gateway (agnes-3.0-flash default). No auto-posting:
- * the batch lands as status=draft for dashboard review.
+ * nothing imports them now. Text via the unified AI gateway
+ * (agnes-3.0-flash default); images via kie.ai GPT-Image-2.5 Flare
+ * (scripts/kie-image.js, KIE_API_KEY), Agnes image lane as fallback.
+ * No auto-posting: the batch lands as status=draft for dashboard review.
  *
  * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (or AGNES_API_KEY(S)).
  * Manual: IDEA=<P001..P200> (or TOPIC=<same>) runs a single idea
@@ -23,6 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 const { workerRequest, agnesText, agnesImage } = require('./runner-lib');
+const { kieImage } = require('./kie-image');
 const { API } = require('../founder-os_backend/src/shared/sync-core/contract');
 
 const missing = [];
@@ -164,12 +166,14 @@ async function main() {
   if (!posts.length) throw new Error('linkedin: zero posts generated — failing the run');
 
   // Images IN PARALLEL across the whole batch (settled individually so one
-  // failure never sinks the text batch).
-  console.log(`linkedin: images ×${posts.length} (parallel)…`);
+  // failure never sinks the text batch). kie.ai GPT-Image-2.5 when keyed,
+  // Agnes image lane as fallback.
+  const imageGen = process.env.KIE_API_KEY ? kieImage : agnesImage;
+  console.log(`linkedin: images ×${posts.length} (parallel, via ${process.env.KIE_API_KEY ? 'kie.ai gpt-image-2.5' : 'agnes fallback'})…`);
   await Promise.allSettled(posts.map(async (p) => {
     if (!p.imagePrompt) return;
     try {
-      p.imageB64 = await agnesImage(p.imagePrompt);
+      p.imageB64 = await imageGen(p.imagePrompt);
       console.log(`linkedin: [${p.topic}] image ok (${Math.round(p.imageB64.length / 1024)}KB b64)`);
     } catch (e) {
       console.warn(`linkedin: [${p.topic}] image failed (text batch continues): ${e.message}`);

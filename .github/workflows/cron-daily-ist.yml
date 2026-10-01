@@ -126,22 +126,21 @@ jobs:
             node scripts/neodove-report-runner.js
           fi
   linkedin-daily:
-    # 00:30 UTC = 06:00 IST — 5 web-researched founder drafts + AI explainer
-    # visuals for dashboard review (founder picks 1). Not Zoho-backed, so no
-    # ops-window gate — runs every day including quiet hours.
+    # 00:30 UTC = 06:00 IST — 5 idea-driven founder drafts (prompt.txt +
+    # post_ideas.json) + GPT-Image-2.5 explainer visuals for dashboard
+    # review (founder picks 1). Not Zoho-backed, so no ops-window
+    # gate — runs every day including quiet hours.
     if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '00:30'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: linkedin-daily (5 drafts + visuals via AI gateway)
+      - name: linkedin-daily (5 drafts + GPT-Image-2.5 visuals)
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
           AI_KEYS: ${{ secrets.AI_KEYS }}
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
           AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
-          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          KIE_API_KEY: ${{ secrets.KIE_API_KEY }}
           TOPIC: ${{ github.event.inputs.topic }}
         run: node scripts/linkedin-daily-runner.js
