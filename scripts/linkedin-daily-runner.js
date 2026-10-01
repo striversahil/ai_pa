@@ -2,28 +2,27 @@
 /**
  * linkedin-daily-runner.js — daily BUI founder LinkedIn batch (5 drafts, founder picks 1).
  *
- * Flow per topic: pick (pillar spread, skip recently used) → web research the
- * PROBLEM first (Tavily→Brave→Serper→DDG-lite, zero-config fallback) → research
- * brief → draft → edit (Section-12 gate) → AI explainer visual → POST batch.
- * ALL text via the unified AI gateway (agnes-3.0-flash default); images via
- * the gateway's agnes image lane (same key pool). Founder-story topics (pillar
- * E) skip web research by design — no external facts to verify.
+ * NEW STYLE (prompt.txt + post_ideas.json, single call per draft):
+ * pick idea (HIGH-weighted, skip recently used) → feed the whole idea
+ * object through prompt.txt (system) → strict-JSON post (Draft→Edit
+ * collapsed into the prompt's punch rules + self-check) → images for
+ * all 5 generated IN PARALLEL → POST batch to the worker.
  *
- * Rules (from the BUI brief): never invent facts ([NEED DATA]); AI visuals are
- * explainer-diagram style ONLY — no machines, sites, people, or photographs
- * (enforced by fixed prompt template + banned-token assertion). No
- * auto-posting: the batch lands as status=draft for dashboard review.
+ * The old research→draft→edit pipeline (linkedin-research.js,
+ * linkedin-visual.js, linkedin-format.js, linkedin-topics.js) is
+ * DISCARDED as a generation path — those files are dormant on disk,
+ * nothing imports them now. Text and images both go through the
+ * unified AI gateway (agnes-3.0-flash default). No auto-posting:
+ * the batch lands as status=draft for dashboard review.
  *
  * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (or AGNES_API_KEY(S)).
- * Optional: TAVILY_API_KEY (else Brave/Serper/DDG-lite chain).
- * Manual: TOPIC=<slug> runs a single topic (testing / regenerate refill).
+ * Manual: IDEA=<P001..P200> (or TOPIC=<same>) runs a single idea
+ * (testing / regenerate refill).
  */
 
+const fs = require('fs');
+const path = require('path');
 const { workerRequest, agnesText, agnesImage } = require('./runner-lib');
-const { TOPICS } = require('./linkedin-topics');
-const { webResearch } = require('./linkedin-research');
-const { imagePromptFor } = require('./linkedin-visual');
-const { composeFinal } = require('./linkedin-format');
 const { API } = require('../founder-os_backend/src/shared/sync-core/contract');
 
 const missing = [];
@@ -43,142 +42,139 @@ function istDateString(d) {
   return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-// ── BUI prompts (ported from experiments/01-linkedin-content-agent) ──────────
-const AVOID = 'game-changing, cutting-edge, world-class, revolutionary, synergy, leverage, next-gen, seamless, unlock, empower';
-const RESEARCH_SYS = `You are the RESEARCH skill for the founder of Brindavan Udyog India (BUI), Indian milling-machinery maker (flour/rice/dal/spice/oil mills). First-person founder voice. NEVER invent facts: no yield figures, power savings, prices, customer names, subsidy details, capacities, timelines. Missing numbers become [NEED DATA: what is needed]. Never name a customer without permission. RESEARCH-FIRST: the web findings below are your ONLY external source — every Key fact MUST cite its source id ([S1], [S2]…) or be marked [NEED DATA]; a fact with neither is forbidden. Prefer concrete numbers, costs, and real-world figures from the sources over generic statements. Output a structured research_brief with Context (1-2 sentences, Indian milling context), Key facts (3-5 bullets, each [Sn]-cited or [NEED DATA]), the core PROBLEM (1-2 lines: what hurts the mill owner, with the sharpest sourced number), SOLUTION direction (1-2 lines, sourced), Audience angles, Visual idea (one simple EXPLAINER-DIAGRAM concept — icons/arrows/numbers, never a machine photo), Risks. No avoid-list buzzwords (${AVOID}).`;
-const WRITING_SYS = `You are the WRITING skill for the founder of Brindavan Udyog India (BUI milling machinery). First-person founder voice: confident, direct, practical — strong impactful verbs and concrete numbers, zero fluff. Simple English, Indian units (Rs., tonnes, HP, kW, quintal, mandi). OUTPUT MARKDOWN ONLY — never JSON, never code fences, no key-value structure. Write Hook A and Hook B as plain lines (1-2 lines each, bold specific claims with a number where the brief has one; never excited-to-announce), then post of 150-300 words with short paragraphs max 2-3 lines (Context 2-3 lines, the PROBLEM vividly with the brief's sharpest sourced fact, the SOLUTION with numbers or steps, one punchy takeaway, one soft CTA question or offer), then visual suggestion (explainer diagram), then 3-5 hashtags, then data still needed. Use a few emojis for rhythm and emphasis (3-5 max, on key lines — never decorative walls). GROUNDED: every number/claim in the post must come from the research brief's cited facts — anything uncertain becomes [NEED DATA], never invented. No avoid-list buzzwords (${AVOID}). No guarantees (use in one case / in our experience / depending on conditions). No customer names without permission. Topic is INDIAN MILLING MACHINERY, never solar or batteries.`;
-const EDITING_SYS = `You are the EDITING skill for the BUI founder (Indian milling machinery). Refine, do not rewrite, against the quality checklist. OUTPUT MARKDOWN ONLY — never JSON, never code fences. Keep Hook A / Hook B as plain lines, post, visual suggestion, hashtags, data-needed list. GROUNDING CHECK (strict): every number or factual claim must trace to the research brief or be marked [NEED DATA] — convert or cut anything untraceable. IMPACT CHECK: first line must hit hard (specific + curious, ideally with a number); verbs strong and direct; takeaway punchy; 3-5 emojis placed for emphasis, none decorative. All numbers founder-provided or [NEED DATA]; no avoid-list buzzwords (${AVOID}); paragraphs max 2-3 lines; practical founder tone not brochure; one soft CTA; 3-5 hashtags; no customer named without permission; scheme/policy flagged [verify before posting]. Milling context only, never solar or batteries. Output the full refined package as plain markdown, no extra commentary.`;
+// ── New-style inputs (prompt.txt is the system prompt) ──────────────────────
+const LDIR = path.join(__dirname, '..', 'founder-os_backend', 'src', 'automations', 'linkedin');
+const SYS = fs.readFileSync(path.join(LDIR, 'prompt.txt'), 'utf8');
+const IDEAS = JSON.parse(fs.readFileSync(path.join(LDIR, 'post_ideas.json'), 'utf8'));
 
-// Explainer-visual safety boundary lives in linkedin-visual.js (imported
-// above) — fixed template + banned-token assertion, no caller depictions.
-
-async function researchTopic(topic) {
-  if (!topic.angleSeed) return { brief: '', sources: [], provider: 'none-skipped', note: 'founder-story topic — no web research by design' };
-  // Web search FIRST, three angles: the problem, buyer-facing solution talk,
-  // and hard data/statistics — the brief must ground in whatever comes back.
-  const queries = [
-    topic.angleSeed,
-    `${topic.title} India mill owner problem solution`,
-    `${topic.angleSeed} data statistics cost figures`,
-  ];
-  const seen = new Map();
-  for (const q of queries) {
-    try {
-      const { results, provider } = await webResearch(q, 4);
-      for (const r of results) if (r.url && !seen.has(r.url)) seen.set(r.url, { ...r, provider });
-    } catch (e) {
-      console.warn(`linkedin: research query failed (${q.slice(0, 40)}…): ${e.message}`);
-    }
-  }
-  const sources = [...seen.values()].slice(0, 8);
-  console.log(`linkedin: [${topic.slug}] research: ${sources.length} sources`);
-  return { sources, provider: 'mixed' };
+function topicLabel(idea) {
+  return `${idea.id} ${idea.related_machine || idea.category || ''}`.slice(0, 60).trim();
 }
 
-async function runTopic(topic) {
-  console.log(`linkedin: [${topic.slug}] research…`);
-  const { sources } = await researchTopic(topic);
-  const srcBlock = sources.length
-    ? sources.map((s, i) => `[${i + 1}] ${s.title} — ${s.snippet || '(no snippet)'} (${s.url})`).join('\n')
-    : '(no web sources — rely on general milling knowledge, flag everything uncertain as [NEED DATA])';
-  await sleep(AI_PACING_MS);
+function ideaInput(idea) {
+  return [
+    'IDEA (from post_ideas.json — use every field per the system prompt):',
+    `ID: ${idea.id}`,
+    'POST TYPE: PROBLEM-SOLUTION',
+    `CATEGORY: ${idea.category}`,
+    `PROBLEM: ${idea.problem}`,
+    `AGITATION: ${idea.agitation}`,
+    `SOLUTION STEPS: ${(idea.solution_steps || []).map((s, i) => `${i + 1}. ${s}`).join(' | ')}`,
+    `RELATED MACHINE: ${idea.related_machine}`,
+    `HOOK IDEAS: ${(idea.hook_ideas || []).join(' / ')}`,
+    `RECOMMENDED PRODUCT: ${idea.recommended_product}`,
+    `PRODUCT ANGLE: ${idea.product_angle}`,
+    `PORTFOLIO FIT: ${idea.portfolio_fit}`,
+    `NEEDS VERIFICATION: ${idea.needs_verification}`,
+    'CTA PREFERENCE: invitation to contact (use the contact details in the system prompt; Mon-Sat, 10 AM-6 PM)',
+  ].join('\n');
+}
 
-  // Prose stages use plain Agnes text completion — matching the experiment:
-  // research/write/edit output markdown, not JSON (a JSON-forcing call dropped
-  // 1/5 live). Sticky sessionKey per topic keeps one keyway per draft.
-  const briefText = await agnesText(RESEARCH_SYS,
-    `Topic: ${topic.title}. Pillar ${topic.pillar}, format ${topic.format}.\n\nWeb findings:\n${srcBlock}\n\nProduce the research_brief (Context, Key facts, PROBLEM, SOLUTION direction, Audience angles, Visual idea, Risks).`,
-    { temperature: 0.5, maxTokens: 900, sessionKey: `linkedin:${topic.slug}` });
-  await sleep(AI_PACING_MS);
+function parsePostJson(text) {
+  const t = String(text ?? '').replace(/```json|```/g, '').trim();
+  const start = t.indexOf('{');
+  const end = t.lastIndexOf('}');
+  if (start === -1 || end <= start) throw new Error('no JSON object in model output');
+  return JSON.parse(t.slice(start, end + 1));
+}
 
-  console.log(`linkedin: [${topic.slug}] write…`);
-  const draftText = await agnesText(WRITING_SYS,
-    `Research brief:\n${briefText}\n\nWrite the LinkedIn post_draft for: ${topic.title}.`,
-    { temperature: 0.7, maxTokens: 1000, sessionKey: `linkedin:${topic.slug}` });
-  await sleep(AI_PACING_MS);
-
-  console.log(`linkedin: [${topic.slug}] edit…`);
-  const finalText = await agnesText(EDITING_SYS, `Edit this draft:\n\n${draftText}`, { temperature: 0.3, maxTokens: 1000, sessionKey: `linkedin:${topic.slug}` });
-
-  // The model sometimes returns the Hook/Post/Hashtags shape as JSON instead
-  // of markdown — compose it into a finished post (Hook B + data-needed stay
-  // in the draft, never dropped).
-  const { final: finished, hookB, dataNeeded } = composeFinal(finalText);
-  const draftExtras = [
-    hookB ? `Alt hook (Hook B): ${hookB}` : '',
-    dataNeeded.length ? `Data still needed:\n${dataNeeded.map((d) => `- ${d}`).join('\n')}` : '',
-  ].filter(Boolean).join('\n\n');
-  const hashtags = (finished.match(/#[\p{L}\p{N}_]+/gu) || []).slice(0, 5).join(' ');
-  const concept = `${topic.title} — problem-to-solution flow in 3 steps`;
-  const imgPrompt = imagePromptFor(topic.title, concept);
-
-  console.log(`linkedin: [${topic.slug}] image…`);
-  let imageB64 = null;
-  try {
-    imageB64 = await agnesImage(imgPrompt);
-    console.log(`linkedin: [${topic.slug}] image ok (${Math.round(imageB64.length / 1024)}KB b64)`);
-  } catch (e) {
-    console.warn(`linkedin: [${topic.slug}] image failed (text batch continues): ${e.message}`);
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
   }
+  return a;
+}
+
+async function runIdea(idea) {
+  console.log(`linkedin: [${idea.id}] write…`);
+  let out;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const text = await agnesText(SYS,
+      ideaInput(idea) + (attempt > 1 ? '\n\nReply with ONE valid JSON object and NOTHING else.' : ''),
+      { temperature: 0.7, maxTokens: 1500, sessionKey: `linkedin:${idea.id}` });
+    try {
+      out = parsePostJson(text);
+      break;
+    } catch (e) {
+      console.warn(`linkedin: [${idea.id}] parse failed (attempt ${attempt}): ${e.message}`);
+      await sleep(AI_PACING_MS);
+    }
+  }
+  if (!out) throw new Error(`[${idea.id}] unparseable model output after 2 attempts`);
+  if (out.status === 'REJECTED') {
+    console.log(`linkedin: [${idea.id}] model rejected (${out.reject_reason || 'no reason'}) — skipping`);
+    return null;
+  }
+  if (!out.post_text) throw new Error(`[${idea.id}] empty post_text`);
+  const finished = String(out.post_text).trim();
+  const hashtags = (finished.match(/#[\p{L}\p{N}_]+/gu) || []).slice(0, 5).join(' ');
+  const imageIdea = String(out.image_idea || '').trim();
   return {
-    topic: topic.slug, pillar: topic.pillar, format: topic.format,
-    researchBrief: briefText,
-    postDraft: draftExtras ? `${draftText}\n\n---\n${draftExtras}` : draftText,
+    topic: topicLabel(idea),
+    pillar: String(idea.category || ''),
+    format: 'PROBLEM-SOLUTION',
+    researchBrief: `Problem: ${idea.problem}\nAgitation: ${idea.agitation}\nSteps: ${(idea.solution_steps || []).join(' | ')}`,
+    postDraft: JSON.stringify(out).slice(0, 4000),
     postFinal: finished,
-    hashtags, visualBrief: `Explainer diagram: ${concept}. Posting slot Tue/Thu/Sat 8-10 AM IST + one engagement action (reply to every comment in the first hour).`,
-    imagePrompt: imgPrompt, ...(imageB64 ? { imageB64 } : {}),
+    hashtags,
+    visualBrief: imageIdea,
+    // Diagram part only — the ALT PHOTO line is for the human, not the model.
+    imagePrompt: imageIdea.split('ALT PHOTO:')[0].trim(),
+    firstComment: String(out.first_comment || ''),
   };
 }
 
 async function main() {
   const batchDate = istDateString(new Date());
-  const single = String(process.env.TOPIC || '').trim();
+  const single = String(process.env.IDEA || process.env.TOPIC || '').trim().toUpperCase();
 
-  let pool = TOPICS;
+  let pool;
   if (single) {
-    pool = TOPICS.filter((t) => t.slug === single);
-    if (!pool.length) throw new Error(`TOPIC slug not in bank: ${single}`);
+    const hit = IDEAS.find((i) => String(i.id).toUpperCase() === single);
+    if (!hit) throw new Error(`IDEA id not in bank: ${single} (want P001–P200)`);
+    pool = [hit];
   } else {
-    let used = [];
+    let used = new Set();
     try {
-      const r = await workerRequest('/api/runner/linkedin/used-topics?days=14');
+      const r = await workerRequest('/api/runner/linkedin/used-topics?days=120');
       used = new Set(r.topics || []);
     } catch (e) {
       console.warn(`linkedin: used-topics fetch failed (rotation without history): ${e.message}`);
-      used = new Set();
     }
-    const fresh = TOPICS.filter((t) => !used.has(t.slug));
-    const base = fresh.length >= 5 ? fresh : TOPICS;
-    // Pillar spread: A, B, C/D, E, F.
-    const want = ['A', 'B', 'C', 'E', 'F'];
-    pool = [];
-    for (const p of want) {
-      const cand = base.filter((t) => !pool.includes(t) && (t.pillar === p || (p === 'C' && t.pillar === 'D')));
-      if (cand.length) pool.push(cand[Math.floor(Math.random() * cand.length)]);
-    }
-    for (const t of base) {
-      if (pool.length >= 5) break;
-      if (!pool.includes(t)) pool.push(t);
-    }
-    pool = pool.slice(0, 5);
-    // Shuffle delivery order so the batch reads fresh every day, not
-    // pillar-sorted.
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
+    const fresh = IDEAS.filter((i) => !used.has(i.id) && !used.has(topicLabel(i)));
+    const base = fresh.length >= 5 ? fresh : IDEAS;
+    const high = shuffle(base.filter((i) => i.portfolio_fit === 'HIGH'));
+    const med = shuffle(base.filter((i) => i.portfolio_fit !== 'HIGH'));
+    pool = [...high, ...med].slice(0, 5);
   }
-  console.log(`linkedin: batch ${batchDate} — ${pool.map((t) => t.slug).join(', ')}`);
+  console.log(`linkedin: batch ${batchDate} — ${pool.map((t) => t.id).join(', ')}`);
 
+  // Text first (serial, paced — one idea per call, sticky session per idea).
   const posts = [];
-  for (const topic of pool) {
+  for (const idea of pool) {
     try {
-      posts.push(await runTopic(topic));
+      const p = await runIdea(idea);
+      if (p) posts.push(p);
     } catch (e) {
-      console.error(`linkedin: [${topic.slug}] FAILED: ${e.message}`);
+      console.error(`linkedin: [${idea.id}] FAILED: ${e.message}`);
     }
+    await sleep(AI_PACING_MS);
   }
   if (!posts.length) throw new Error('linkedin: zero posts generated — failing the run');
+
+  // Images IN PARALLEL across the whole batch (settled individually so one
+  // failure never sinks the text batch).
+  console.log(`linkedin: images ×${posts.length} (parallel)…`);
+  await Promise.allSettled(posts.map(async (p) => {
+    if (!p.imagePrompt) return;
+    try {
+      p.imageB64 = await agnesImage(p.imagePrompt);
+      console.log(`linkedin: [${p.topic}] image ok (${Math.round(p.imageB64.length / 1024)}KB b64)`);
+    } catch (e) {
+      console.warn(`linkedin: [${p.topic}] image failed (text batch continues): ${e.message}`);
+    }
+  }));
 
   const res = await workerRequest(API.linkedinBatch, { method: 'POST', body: { batchDate, posts } });
   console.log(`linkedin: done — generated ${posts.length} (${posts.filter((p) => p.imageB64).length} with images), stored ${res?.stored ?? '?'}`);
