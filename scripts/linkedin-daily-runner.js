@@ -166,16 +166,26 @@ async function main() {
   if (!posts.length) throw new Error('linkedin: zero posts generated — failing the run');
 
   // Images IN PARALLEL across the whole batch (settled individually so one
-  // failure never sinks the text batch). kie.ai GPT-Image-2.5 when keyed,
-  // Agnes image lane as fallback.
-  const imageGen = process.env.KIE_API_KEY ? kieImage : agnesImage;
-  console.log(`linkedin: images ×${posts.length} (parallel, via ${process.env.KIE_API_KEY ? 'kie.ai gpt-image-2.5' : 'agnes fallback'})…`);
+  // failure never sinks the text batch). kie.ai GPT-Image-2.5 when keyed;
+  // kie 401/402 (bad key / out of credits) falls back to Agnes per post.
+  const useKie = !!process.env.KIE_API_KEY;
+  console.log(`linkedin: images ×${posts.length} (parallel, via ${useKie ? 'kie.ai gpt-image-2.5' : 'agnes fallback'})…`);
   await Promise.allSettled(posts.map(async (p) => {
     if (!p.imagePrompt) return;
     try {
-      p.imageB64 = await imageGen(p.imagePrompt);
+      p.imageB64 = await (useKie ? kieImage(p.imagePrompt) : agnesImage(p.imagePrompt));
       console.log(`linkedin: [${p.topic}] image ok (${Math.round(p.imageB64.length / 1024)}KB b64)`);
     } catch (e) {
+      if (useKie && /401|402/.test(String(e?.message))) {
+        try {
+          p.imageB64 = await agnesImage(p.imagePrompt);
+          console.log(`linkedin: [${p.topic}] image ok via agnes fallback (${Math.round(p.imageB64.length / 1024)}KB b64)`);
+          return;
+        } catch (e2) {
+          console.warn(`linkedin: [${p.topic}] image failed incl. fallback: ${e2.message}`);
+          return;
+        }
+      }
       console.warn(`linkedin: [${p.topic}] image failed (text batch continues): ${e.message}`);
     }
   }));
