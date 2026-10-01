@@ -17,8 +17,9 @@
  * No auto-posting: the batch lands as status=draft for dashboard review.
  *
  * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (or AGNES_API_KEY(S)).
- * Manual: IDEA=<P001..P200> (or TOPIC=<same>) runs a single idea
- * (testing / regenerate refill).
+ * Manual: IDEA=<P001..P200> (or TOPIC=<same>) runs a single idea;
+ * IDEA=AUTO (or TOPIC=AUTO) runs ONE rotation-aware HIGH-priority idea
+ * (dashboard "new draft on the fly").
  */
 
 const fs = require('fs');
@@ -132,9 +133,9 @@ async function main() {
   const single = String(process.env.IDEA || process.env.TOPIC || '').trim().toUpperCase();
 
   let pool;
-  if (single) {
+  if (single && single !== 'AUTO') {
     const hit = IDEAS.find((i) => String(i.id).toUpperCase() === single);
-    if (!hit) throw new Error(`IDEA id not in bank: ${single} (want P001–P200)`);
+    if (!hit) throw new Error(`IDEA id not in bank: ${single} (want P001–P200 or AUTO)`);
     pool = [hit];
   } else {
     let used = new Set();
@@ -145,10 +146,18 @@ async function main() {
       console.warn(`linkedin: used-topics fetch failed (rotation without history): ${e.message}`);
     }
     const fresh = IDEAS.filter((i) => !used.has(i.id) && !used.has(topicLabel(i)));
-    const base = fresh.length >= 5 ? fresh : IDEAS;
-    const high = shuffle(base.filter((i) => i.portfolio_fit === 'HIGH'));
-    const med = shuffle(base.filter((i) => i.portfolio_fit !== 'HIGH'));
-    pool = [...high, ...med].slice(0, 5);
+    if (single === 'AUTO') {
+      // On-the-fly single: one fresh HIGH, else any fresh, else any idea.
+      const high = shuffle(fresh.filter((i) => i.portfolio_fit === 'HIGH'));
+      const any = shuffle(fresh.length ? fresh : [...IDEAS]);
+      pool = [...high, ...any].slice(0, 1);
+      console.log(`linkedin: AUTO picked ${pool[0].id}`);
+    } else {
+      const base = fresh.length >= 5 ? fresh : IDEAS;
+      const high5 = shuffle(base.filter((i) => i.portfolio_fit === 'HIGH'));
+      const med = shuffle(base.filter((i) => i.portfolio_fit !== 'HIGH'));
+      pool = [...high5, ...med].slice(0, 5);
+    }
   }
   console.log(`linkedin: batch ${batchDate} — ${pool.map((t) => t.id).join(', ')}`);
 

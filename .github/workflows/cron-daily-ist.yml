@@ -2,7 +2,7 @@ name: Cron - Daily IST
 
 on:
   # Dispatched ONLY by the Cloudflare Worker cron router (src/worker/cron.ts →
-  # workflow_dispatch) at 00:30 / 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC — one slot
+  # workflow_dispatch) at 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC — one slot
   # per job family. Native schedule removed — GitHub's own scheduler is
   # unreliable and would double-fire.
   # The Worker passes `inputs.slot` (HH:MM of the slot); each job runs ONLY on
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       slot:
-        description: "Daily slot HH:MM (00:30, 02:30, 13:30, 15:30, 19:30, 21:30). 'all' runs every job."
+        description: "Daily slot HH:MM (02:30, 13:30, 15:30, 19:30, 21:30). 'all' runs every job."
         required: false
         default: "all"
       neodove_backfill_days:
@@ -26,7 +26,7 @@ on:
         required: false
         default: ""
 
-# Each job only runs on its own slot — the Worker fires this workflow 6×/day,
+# Each job only runs on its own slot — the Worker fires this workflow 5×/day,
 # so without these guards every job would run 5×/day.
 concurrency:
   group: cron-daily-ist
@@ -126,11 +126,11 @@ jobs:
             node scripts/neodove-report-runner.js
           fi
   linkedin-daily:
-    # 00:30 UTC = 06:00 IST — 5 idea-driven founder drafts (prompt.txt +
-    # post_ideas.json) + GPT-Image-2.5 explainer visuals for dashboard
-    # review (founder picks 1). Not Zoho-backed, so no ops-window
-    # gate — runs every day including quiet hours.
-    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '00:30'
+    # 21:30 UTC = 03:00 IST — 5 idea-driven founder drafts (prompt.txt +
+    # post_ideas.json) + explainer visuals for dashboard review (founder
+    # picks 1, organizes, or generates more on the fly). Not Zoho-backed,
+    # so no ops-window gate — runs every day including quiet hours.
+    if: github.event.inputs.slot == 'all' || github.event.inputs.slot == '21:30'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

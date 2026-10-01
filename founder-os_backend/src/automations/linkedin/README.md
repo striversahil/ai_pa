@@ -7,7 +7,7 @@ Link used :
 
 | Path | Where | Does what |
 |---|---|---|
-| `scripts/linkedin-daily-runner.js` (+ `linkedin-topics.js`, `linkedin-research.js`) | GH Actions, 00:30 UTC daily | Topic rotation → web research → research brief → draft → edit → AI explainer visual (all via AI gateway, agnes-3.0-flash) → POST batch to worker |
+| `scripts/linkedin-daily-runner.js` | GH Actions, 21:30 UTC (03:00 IST) daily | Idea → single-call draft via prompt.txt → parallel visuals → POST batch to worker |
 | `src/automations/linkedin/index.ts` | Worker | `handler()` heartbeat; `data()` serves today's batch + history (KV-cached 60s) |
 | `src/worker/routes/linkedin.ts` | Worker | `GET /api/linkedin/today`, `GET /api/linkedin/image/:id`, `POST /api/linkedin/pick`, `POST /api/linkedin/regenerate`, `POST /api/runner/linkedin/batch` (secret) |
 | `LinkedinPost` (migration 0051) | D1 | Text + status per draft; images as raw bytes in CHAT_FILES KV (`linkedin/<id>.png`, same pattern as CRM attachments) |

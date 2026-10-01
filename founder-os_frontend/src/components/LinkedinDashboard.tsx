@@ -30,10 +30,9 @@ interface LinkedinBatch {
   linkedin?: { connected: boolean; expiresAt: number | null };
 }
 
-async function fetchBatch(): Promise<LinkedinBatch> {
-  // /api/linkedin/today (not the automations data endpoint): image URLs here
-  // carry a signed ?sig so <img> subrequests authenticate without cookies.
-  const r = await fetch("/api/linkedin/today", { credentials: "same-origin" });
+async function fetchBatch(date?: string): Promise<LinkedinBatch> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+  const r = await fetch(`/api/linkedin/today${q}`, { credentials: "same-origin" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -75,12 +74,17 @@ function copyText(t: string) {
 }
 
 export default function LinkedinDashboard() {
-  const batch = useLiveDashboard(fetchBatch);
+  const [day, setDay] = useState<string | null>(null); // null = today
+  const batch = useLiveDashboard(() => fetchBatch(day ?? undefined), { deps: [day] });
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [tab, setTab] = useState<"final" | "research" | "visual">("final");
   const [regenMsg, setRegenMsg] = useState<string | null>(null);
   const [postMsg, setPostMsg] = useState<string | null>(null);
+  const [genMsg, setGenMsg] = useState<string | null>(null);
+  const [ideaId, setIdeaId] = useState("");
+
+  const dates = batch.data?.recentBatches ?? [];
 
   const connected = !!batch.data?.linkedin?.connected;
 
@@ -140,13 +144,71 @@ export default function LinkedinDashboard() {
     }
   };
 
+  const deleteDraft = async (id: string) => {
+    if (!window.confirm("Delete this draft permanently?")) return;
+    setBusy("del");
+    try {
+      await fetch("/api/linkedin/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ id }),
+      });
+      batch.refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const generateOne = async () => {
+    setBusy("genone");
+    setGenMsg(null);
+    try {
+      const r = await fetch("/api/linkedin/generate-one", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ ideaId: ideaId.trim() }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (j.ok) {
+        setGenMsg(`⚡ Draft ${j.ideaId} generating — lands in today's batch live.`);
+        setDay(null);
+        setIdeaId("");
+      } else {
+        setGenMsg(`⏳ ${j.error ?? "busy, try again in a few minutes."}`);
+      }
+    } catch {
+      setGenMsg("⏳ Trigger failed — try again in a minute.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (batch.loading) return <div className="p-6 text-zinc-400">Loading today's drafts…</div>;
   if (batch.error) return <div className="p-6 text-red-400">LinkedIn batch unavailable ({String((batch.error as Error)?.message ?? batch.error)}).</div>;
   if (!batch.data?.ready) {
     return (
-      <div className="p-6 text-zinc-400">
-        <CalendarDays className="inline mr-2" size={16} />
-        No batch yet today — the 06:00 IST runner generates 5 drafts. Check back after the morning run.
+      <div className="p-6 text-zinc-400 space-y-3">
+        <div>
+          <CalendarDays className="inline mr-2" size={16} />
+          No batch on {day ?? "today yet"} — the 03:00 IST runner generates 5 drafts daily.
+        </div>
+        {dates.length > 0 && (
+          <div className="flex items-center gap-2 text-sm">
+            <span>Browse:</span>
+            <select
+              value={day ?? ""}
+              onChange={(e) => setDay(e.target.value || null)}
+              className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200"
+            >
+              <option value="">Today</option>
+              {dates.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
     );
   }
@@ -155,6 +217,19 @@ export default function LinkedinDashboard() {
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm text-zinc-400">Batch {batch.data.date} — pick one to post:</span>
+        {dates.length > 0 && (
+          <select
+            value={day ?? ""}
+            onChange={(e) => { setDay(e.target.value || null); setActive(0); }}
+            title="Browse every day's batch"
+            className="bg-zinc-900 border border-zinc-700 rounded-full px-2 py-1 text-xs text-zinc-200 cursor-pointer"
+          >
+            <option value="">📅 Today</option>
+            {dates.map((d) => (
+              <option key={d} value={d}>📅 {d}</option>
+            ))}
+          </select>
+        )}
         {connected ? (
           <span className="px-2 py-0.5 text-xs rounded-full border border-emerald-600 text-emerald-300">● LinkedIn connected</span>
         ) : (
@@ -168,7 +243,7 @@ export default function LinkedinDashboard() {
         <button
           onClick={regen}
           disabled={busy === "regen"}
-          title="Trigger a fresh 5-draft batch now (06:00 run on demand)"
+          title="Trigger a fresh 5-draft batch now (03:00 run on demand)"
           className="ml-auto px-3 py-1 text-xs rounded-full border border-amber-600 text-amber-300 hover:bg-amber-500/10 cursor-pointer disabled:opacity-50"
         >
           <RefreshCw className={`inline mr-1 ${busy === "regen" ? "animate-spin" : ""}`} size={12} />
@@ -176,6 +251,24 @@ export default function LinkedinDashboard() {
         </button>
       </div>
       {regenMsg && <div className="text-xs text-amber-300/90">{regenMsg}</div>}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <span className="text-zinc-400">＋ New draft on the fly:</span>
+        <input
+          value={ideaId}
+          onChange={(e) => setIdeaId(e.target.value.toUpperCase().replace(/[^P0-9]/g, "").slice(0, 4))}
+          placeholder="P042 or blank = auto"
+          className="w-36 bg-zinc-900 border border-zinc-700 rounded-full px-3 py-1 text-zinc-200 placeholder:text-zinc-600"
+        />
+        <button
+          onClick={generateOne}
+          disabled={busy === "genone"}
+          title="Generate one fresh draft into today's batch (specific idea or auto-pick)"
+          className="px-3 py-1 rounded-full border border-emerald-600 text-emerald-300 hover:bg-emerald-500/10 cursor-pointer disabled:opacity-50"
+        >
+          {busy === "genone" ? "Starting…" : "⚡ Generate"}
+        </button>
+        {genMsg && <span className="text-emerald-300/90">{genMsg}</span>}
+      </div>
       <div className="flex items-center gap-2 flex-wrap">
         {posts.map((p, i) => (
           <button
@@ -249,6 +342,16 @@ export default function LinkedinDashboard() {
                 )
               )}
               {postMsg && <div className="text-xs text-zinc-300 w-full">{postMsg}</div>}
+              {post.status !== "posted" && (
+                <button
+                  onClick={() => deleteDraft(post.id)}
+                  disabled={busy === "del"}
+                  title="Delete this draft permanently"
+                  className="px-3 py-1 text-xs rounded-full border border-red-900 text-red-400 hover:bg-red-500/10 cursor-pointer disabled:opacity-50"
+                >
+                  🗑 {busy === "del" ? "Deleting…" : "Delete"}
+                </button>
+              )}
             </div>
           </div>
 

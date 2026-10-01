@@ -5,14 +5,12 @@ import { cached } from '../../shared/cache';
 /**
  * LinkedIn — Daily Founder Content (BUI).
  *
- * Generation runs in scripts/linkedin-daily-runner.js (GH Actions, 00:30 UTC
- * = 06:00 IST): topic rotation → web research (Tavily→Brave→Serper→DDG-lite)
- * → research brief → draft → edit → AI explainer visual, 5 drafts/batch, all
- * via the unified AI gateway (agnes-3.0-flash). The runner POSTs the batch to
- * /api/runner/linkedin/batch; text lands in D1 (LinkedinPost), images in KV
- * (linkedin:img:<id>, 90-day TTL). This data() serves today's batch + history
- * for the dashboard review card. Posting stays manual — the Worker never
- * touches the LinkedIn API.
+ * Generation runs in scripts/linkedin-daily-runner.js (GH Actions, 21:30 UTC
+ * = 03:00 IST): idea → single-call draft via prompt.txt, visuals in parallel.
+ * The runner POSTs the batch to /api/runner/linkedin/batch; text lands in
+ * D1 (LinkedinPost), images in KV (linkedin/<id>.png). This data() serves
+ * today's batch + history for the dashboard review card. Posting is
+ * manual-tap only via POST /api/linkedin/post-now (personal OAuth).
  */
 
 export async function handler() {

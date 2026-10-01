@@ -35,11 +35,13 @@ function istDateString(d: Date): string {
 }
 
 export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // Today's batch for the review card (also served via /api/automations/linkedin/data).
+  // Batch for the review card — ?date=YYYY-MM-DD (IST batch date) browses any
+  // day; defaults to today. Includes recent batch dates for the day picker.
   app.get('/api/linkedin/today', async (c) => {
-    const today = istDateString(new Date());
+    const q = String(c.req.query('date') ?? '');
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : istDateString(new Date());
     const rows = await (prisma as any).linkedinPost.findMany({
-      where: { batchDate: today },
+      where: { batchDate: day },
       orderBy: { createdAt: 'asc' },
     });
     const posts: any[] = [];
@@ -57,7 +59,10 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
       });
     }
     const conn = await connectionStatus(c.env as any).catch(() => ({ connected: false, expiresAt: null }));
-    return c.json({ date: today, ready: posts.length > 0, posts, linkedin: conn });
+    const recentBatches: string[] = await (prisma as any).$queryRawUnsafe(
+      `SELECT DISTINCT batchDate AS d FROM LinkedinPost ORDER BY batchDate DESC LIMIT 14`,
+    ).then((rs: any[]) => (rs || []).map((r: any) => String(r.d))).catch(() => []);
+    return c.json({ date: day, ready: posts.length > 0, posts, recentBatches, linkedin: conn });
   });
 
   // Serve the visual — NO auth gate (public-by-design, see header note;
@@ -198,6 +203,49 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
     } catch (e: any) {
       return c.json({ ok: false, error: e?.message || 'publish failed' }, 502);
     }
+  });
+
+  // Organize: delete a draft (row + KV visual). Posted rows are protected —
+  // history stays intact; only drafts die.
+  app.post('/api/linkedin/delete', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const id = String(body?.id ?? '');
+    if (!id) return c.json({ ok: false, error: 'id required' }, 400);
+    const row = await (prisma as any).linkedinPost.findUnique({ where: { id } });
+    if (!row) return c.json({ ok: false, error: 'not found' }, 404);
+    if (row.status === 'posted') return c.json({ ok: false, error: 'posted rows are kept as history' }, 409);
+    await (prisma as any).linkedinPost.delete({ where: { id } });
+    if (c.env.CHAT_FILES) {
+      await (c.env.CHAT_FILES as any).delete(LINKEDIN_IMG_KEY(id)).catch(() => null);
+    }
+    await cacheDel('linkedin:data');
+    notifyLive(c, { type: 'linkedin' });
+    return c.json({ ok: true });
+  });
+
+  // On-the-fly single: dispatch ONE fresh draft into today's batch.
+  // Body { ideaId? } — P001..P200, or empty = runner auto-picks one HIGH,
+  // rotation-aware idea. Lands via normal batch ingest → live event.
+  app.post('/api/linkedin/generate-one', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const ideaId = String(body?.ideaId ?? '').trim().toUpperCase();
+    if (ideaId && !/^P\d{1,3}$/.test(ideaId)) {
+      return c.json({ ok: false, error: 'ideaId looks like P001–P200' }, 400);
+    }
+    const secret = String(c.env.GITHUB_ACCESS_TOKEN ?? '');
+    if (!secret) return c.json({ ok: false, error: 'GitHub dispatch not configured' }, 500);
+    const { linkedinRegenBusy, dispatchLinkedinRegen } = await import('../cron');
+    if (await linkedinRegenBusy(secret)) {
+      return c.json({ ok: false, busy: true, error: 'A run is already in flight — wait for it to finish.' }, 409);
+    }
+    const { cacheGet: get, cacheSet: set } = await import('../../shared/cache');
+    const last = await get<number>('linkedin:genone:at', 5 * 60 * 1000);
+    if (last) {
+      return c.json({ ok: false, busy: true, error: 'One at a time — give the last single a few minutes.' }, 409);
+    }
+    await dispatchLinkedinRegen(secret, ideaId || 'AUTO');
+    await set('linkedin:genone:at', Date.now(), 5 * 60 * 1000);
+    return c.json({ ok: true, ideaId: ideaId || 'auto' });
   });
 
   // Runner ingest: full 5-post batch (idempotent per batchDate+topic).

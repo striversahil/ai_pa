@@ -77,18 +77,17 @@ function isOpsWindow(now: Date): boolean {
 }
 
 // Slot map (UTC → IST job family):
-//   00:30 (06:00 IST) → linkedin-daily (5 founder-content drafts for review)
 //   02:30 (08:00 IST) → telecalling-distribution + morning-brief
 //   13:30 (19:00 IST) → eod-summary
 //   15:30 (21:00 IST) → telecalling-eod-deduction
 //   19:30 (01:00 IST) → baseline-freeze (+ neodove backfill via 02:30 slot)
-//   21:30 (03:00 IST) → data-retention
+//   21:30 (03:00 IST) → data-retention + linkedin-daily (5 founder drafts)
 // The workflow gates each job on `inputs.slot` (default 'all' = manual runs
 // execute everything). Never gate on `github.event.schedule` — it is only set
 // for native `schedule:` events, which these workflows don't have, so such a
 // guard silently matches nothing on workflow_dispatch.
 
-export const DAILY_SLOTS = [30, 2 * 60 + 30, 13 * 60 + 30, 15 * 60 + 30, 19 * 60 + 30, 21 * 60 + 30];
+export const DAILY_SLOTS = [2 * 60 + 30, 13 * 60 + 30, 15 * 60 + 30, 19 * 60 + 30, 21 * 60 + 30];
 
 /** Which workflows to fire at the current UTC minute. */
 function dueWorkflows(now: Date): string[] {
@@ -138,7 +137,7 @@ export async function linkedinRegenBusy(token: string): Promise<boolean> {
 }
 
 export async function dispatchLinkedinRegen(token: string, topic = ''): Promise<void> {
-  const inputs: Record<string, string> = { slot: '00:30' };
+  const inputs: Record<string, string> = { slot: '21:30' };
   if (topic) inputs.topic = topic;
   await dispatchGitHubWorkflow(LINKEDIN_WORKFLOW, token, inputs);
 }
