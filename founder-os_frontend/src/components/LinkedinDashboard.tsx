@@ -18,9 +18,19 @@ interface LinkedinPost {
   imageUrl: string | null;
   status: string;
   picked: boolean;
+  postedAt: string | null;
+  linkedinUrn: string | null;
+  linkedinUrl: string | null;
 }
 
-async function fetchBatch(): Promise<{ date: string; ready: boolean; posts: LinkedinPost[] }> {
+interface LinkedinBatch {
+  date: string;
+  ready: boolean;
+  posts: LinkedinPost[];
+  linkedin?: { connected: boolean; expiresAt: number | null };
+}
+
+async function fetchBatch(): Promise<LinkedinBatch> {
   // /api/linkedin/today (not the automations data endpoint): image URLs here
   // carry a signed ?sig so <img> subrequests authenticate without cookies.
   const r = await fetch("/api/linkedin/today", { credentials: "same-origin" });
@@ -70,6 +80,29 @@ export default function LinkedinDashboard() {
   const [busy, setBusy] = useState<string | null>(null);
   const [tab, setTab] = useState<"final" | "research" | "visual">("final");
   const [regenMsg, setRegenMsg] = useState<string | null>(null);
+  const [postMsg, setPostMsg] = useState<string | null>(null);
+
+  const connected = !!batch.data?.linkedin?.connected;
+
+  const postNow = async (id: string) => {
+    if (!window.confirm("Post this draft to your LinkedIn profile now?")) return;
+    setBusy("postnow");
+    setPostMsg(null);
+    try {
+      const r = await fetch("/api/linkedin/post-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      setPostMsg(j.ok ? `📮 Posted — view it here: ${j.url}` : `❌ Post failed: ${j.error ?? "unknown error"}`);
+    } catch {
+      setPostMsg("❌ Post failed — try again in a minute.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const posts = batch.data?.posts ?? [];
   const post = posts[Math.min(active, Math.max(0, posts.length - 1))];
@@ -122,6 +155,16 @@ export default function LinkedinDashboard() {
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm text-zinc-400">Batch {batch.data.date} — pick one to post:</span>
+        {connected ? (
+          <span className="px-2 py-0.5 text-xs rounded-full border border-emerald-600 text-emerald-300">● LinkedIn connected</span>
+        ) : (
+          <a
+            href="/api/linkedin/oauth/start"
+            className="px-3 py-1 text-xs rounded-full border border-sky-500 text-sky-200 hover:bg-sky-500/10"
+          >
+            🔗 Connect LinkedIn
+          </a>
+        )}
         <button
           onClick={regen}
           disabled={busy === "regen"}
@@ -184,15 +227,28 @@ export default function LinkedinDashboard() {
                 </button>
               ) : post.status !== "posted" ? (
                 <button
-                  onClick={() => act("/api/linkedin/posted", { id: post.id }, "posted")}
-                  disabled={busy === "posted"}
+                  onClick={() => postNow(post.id)}
+                  disabled={busy === "postnow" || !connected}
+                  title={connected ? "Publish to your LinkedIn profile now" : "Connect LinkedIn first"}
                   className="px-3 py-1 text-xs rounded-full border border-indigo-500 text-indigo-200 hover:bg-indigo-500/10 cursor-pointer disabled:opacity-50"
                 >
-                  📮 {busy === "posted" ? "Marking…" : "Mark posted"}
+                  📮 {busy === "postnow" ? "Posting…" : "Post now"}
                 </button>
               ) : (
-                <span className="px-3 py-1 text-xs rounded-full border border-zinc-700 text-zinc-500">📮 Posted</span>
+                post.linkedinUrl ? (
+                  <a
+                    href={post.linkedinUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1 text-xs rounded-full border border-zinc-700 text-emerald-300 hover:border-emerald-500"
+                  >
+                    📮 Posted — view on LinkedIn ↗
+                  </a>
+                ) : (
+                  <span className="px-3 py-1 text-xs rounded-full border border-zinc-700 text-zinc-500">📮 Posted</span>
+                )
               )}
+              {postMsg && <div className="text-xs text-zinc-300 w-full">{postMsg}</div>}
             </div>
           </div>
 

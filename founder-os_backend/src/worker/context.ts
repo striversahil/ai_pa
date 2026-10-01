@@ -33,6 +33,9 @@ export type Bindings = {
   ASYNC_RUNNER?: DurableObjectNamespace;
   CHAT_ROOM?: DurableObjectNamespace;
   SHARED_SECRET?: string;
+  LINKEDIN_CLIENT_ID?: string;
+  LINKEDIN_CLIENT_SECRET?: string;
+  PUBLIC_ORIGIN?: string;
   WA_ENGINE_API_KEY?: string;
   LLM_API_KEY?: string;
   LLM_BASE_URL?: string;

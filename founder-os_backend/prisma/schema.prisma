@@ -1175,6 +1175,7 @@ model LinkedinPost {
   status        String   @default("draft")
   picked        Boolean  @default(false)
   postedAt      DateTime?
+  linkedinUrn   String   @default("")
   createdAt     DateTime @default(now())
 
   @@unique([batchDate, topic])

@@ -8,6 +8,7 @@ import type { Hono } from 'hono';
 import { requireSecret, notifyLive, type Bindings } from '../context';
 import { prisma } from '../../shared/prisma';
 import { cacheGet, cacheDel } from '../../shared/cache';
+import { oauthStartUrl, oauthCallback, publishPost, connectionStatus } from '../../automations/linkedin/post';
 
 // atob-based base64 → bytes (no Buffer dependency — edge Buffer support for
 // binary builtins proved unreliable live; atob is universal in workers).
@@ -50,9 +51,13 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
         hasImage: !!r.hasImage,
         imageUrl: r.hasImage ? `/api/linkedin/image/${encodeURIComponent(String(r.id))}` : null,
         status: r.status, picked: !!r.picked,
+        postedAt: r.postedAt ? String(r.postedAt) : null,
+        linkedinUrn: r.linkedinUrn ? String(r.linkedinUrn) : null,
+        linkedinUrl: r.linkedinUrn ? `https://www.linkedin.com/feed/update/${encodeURIComponent(String(r.linkedinUrn))}` : null,
       });
     }
-    return c.json({ date: today, ready: posts.length > 0, posts });
+    const conn = await connectionStatus(c.env as any).catch(() => ({ connected: false, expiresAt: null }));
+    return c.json({ date: today, ready: posts.length > 0, posts, linkedin: conn });
   });
 
   // Serve the visual — NO auth gate (public-by-design, see header note;
@@ -140,6 +145,59 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
       select: { topic: true },
     });
     return c.json({ topics: [...new Set((rows as any[]).map((r: any) => String(r.topic)))] });
+  });
+
+  // LinkedIn account connection (personal profile, session-gated).
+  // Step 1: redirect to LinkedIn authorize. Step 2 (callback) exchanges
+  // the code for tokens stored in KV only.
+  app.get('/api/linkedin/oauth/start', async (c) => {
+    try {
+      const url = await oauthStartUrl(c.env as any);
+      return c.redirect(url, 302);
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message || 'oauth unavailable' }, 500);
+    }
+  });
+  app.get('/api/linkedin/oauth/callback', async (c) => {
+    const code = String(c.req.query('code') ?? '');
+    const state = String(c.req.query('state') ?? '');
+    const err = c.req.query('error');
+    if (err || !code) return c.text(`LinkedIn declined: ${err || 'no code'} — close and retry Connect.`, 400);
+    try {
+      await oauthCallback(c.env as any, code, state);
+    } catch (e: any) {
+      return c.text(`LinkedIn connect failed: ${e?.message} — close and retry Connect.`, 400);
+    }
+    return c.text('LinkedIn connected ✓ — return to the Founder OS dashboard; the status pill turns green within a minute.', 200);
+  });
+  app.get('/api/linkedin/status', async (c) => {
+    return c.json(await connectionStatus(c.env as any));
+  });
+
+  // Post NOW — publish a draft to the connected personal profile.
+  app.post('/api/linkedin/post-now', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const id = String(body?.id ?? '');
+    if (!id) return c.json({ ok: false, error: 'id required' }, 400);
+    const row = await (prisma as any).linkedinPost.findUnique({ where: { id } });
+    if (!row) return c.json({ ok: false, error: 'not found' }, 404);
+    let imageBytes: Uint8Array | null = null;
+    if (row.hasImage && c.env.CHAT_FILES) {
+      const obj = await (c.env.CHAT_FILES as any).getWithMetadata(LINKEDIN_IMG_KEY(id), 'arrayBuffer').catch(() => null);
+      if (obj?.value) imageBytes = new Uint8Array(obj.value as ArrayBuffer);
+    }
+    try {
+      const pub = await publishPost(c.env as any, String(row.postFinal || ''), imageBytes);
+      await (prisma as any).linkedinPost.update({
+        where: { id },
+        data: { status: 'posted', postedAt: new Date().toISOString(), linkedinUrn: pub.urn },
+      });
+      await cacheDel('linkedin:data');
+      notifyLive(c, { type: 'linkedin' });
+      return c.json({ ok: true, urn: pub.urn, url: pub.url });
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message || 'publish failed' }, 502);
+    }
   });
 
   // Runner ingest: full 5-post batch (idempotent per batchDate+topic).

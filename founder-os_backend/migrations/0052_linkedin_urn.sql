@@ -1,0 +1,1 @@
+ALTER TABLE LinkedinPost ADD COLUMN linkedinUrn TEXT DEFAULT '';
