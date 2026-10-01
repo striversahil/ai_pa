@@ -176,7 +176,8 @@ async function main() {
       p.imageB64 = await (useKie ? kieImage(p.imagePrompt) : agnesImage(p.imagePrompt));
       console.log(`linkedin: [${p.topic}] image ok (${Math.round(p.imageB64.length / 1024)}KB b64)`);
     } catch (e) {
-      if (useKie && /401|402/.test(String(e?.message))) {
+      if (useKie) {
+        // Any kie failure (401/402/network) → Agnes fallback per post.
         try {
           p.imageB64 = await agnesImage(p.imagePrompt);
           console.log(`linkedin: [${p.topic}] image ok via agnes fallback (${Math.round(p.imageB64.length / 1024)}KB b64)`);
