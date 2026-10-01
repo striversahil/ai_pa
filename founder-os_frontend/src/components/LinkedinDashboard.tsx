@@ -27,6 +27,7 @@ interface LinkedinBatch {
   date: string;
   ready: boolean;
   posts: LinkedinPost[];
+  recentBatches?: string[];
   linkedin?: { connected: boolean; expiresAt: number | null };
 }
 
