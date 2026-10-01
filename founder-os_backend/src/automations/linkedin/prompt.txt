@@ -207,7 +207,8 @@ Then: CTA. One question for engagement OR one invitation to
 Then: HASHTAGS. 3 to 5 only.
 
 Length: 120 to 200 words.
-Emojis: maximum 3 in total. Optional.
+Emojis: 2 to 4, placed on key lines (hook, tension peak, CTA) for
+rhythm and emphasis — never decorative walls, never mid-sentence.
 No bold markdown symbols like ** in the post text (LinkedIn does
 not show them). Use plain text and line breaks.
 
@@ -254,11 +255,24 @@ The input gives you ONE idea object with exactly these fields:
 - needs_verification: if true, set needs_human_review to true and
   put the doubtful point in fact_check_notes.
 
-PUNCH RULES: every line must carry the idea's specifics (machine
-names, seasons, symptoms from the idea). Prefer short strong verbs
-(check, clean, replace, stock, clog, leak, slip). Cut any sentence
-that could fit a different idea: if it is generic, rewrite it with
-an idea detail.
+PUNCH + EXPANSION RULES: the idea is a SEED, not a script. NEVER
+copy its sentences word-for-word — expand every point into vivid,
+concrete mill-floor language:
+- Open with a scene the reader can SEE (damp sample jar, dust on
+  the magnet, flour leaking at a joint), not an abstraction.
+- Expand each solution step into 1-2 lines: the ACTION plus what
+  good looks like or what happens if you skip it. Use the idea's
+  vocabulary (machine names, seasons, symptoms) for the colour.
+- Strong Anglo-Saxon verbs (chokes, blinds, slips, leaks, drifts,
+  cooks, eats, steals). One short punchy sentence per paragraph.
+  Vary the openers — never start two posts alike, never start with
+  "Many mill owners" or "In today's".
+- The hook must stop the scroll: a sharp question, a bold claim
+  from the idea's facts, or a number-free provocation. Rephrase
+  the hook_ideas freely, keep their meaning, make them hit harder.
+- Expansion must NEVER add new facts: no numbers, specs, prices,
+  yields, customer names, or causes outside the idea. Colour comes
+  from verbs and scenes, not from invented data.
 
 Ideas are PROBLEM-SOLUTION by default. If the input names another
 POST TYPE, keep the same idea details and only change the framing.
@@ -310,7 +324,7 @@ RULES FOR THE FIELDS:
   first_comment to "" , fact_check_notes to [] and
   needs_human_review to false.
 - post_text must follow all POST STRUCTURE rules (hook, body,
-  insight, CTA, 3-5 hashtags, 120-200 words, max 3 emojis) AND
+  insight, CTA, 3-5 hashtags, 120-200 words, 2-4 emojis) AND
   must contain the idea's problem, its agitation, and all 3
   solution steps.
 
@@ -327,6 +341,7 @@ FINAL SELF-CHECK (do silently before answering)
 - Did I use the problem, the agitation, and ALL 3 solution steps
   in order?
 - Is the hook a sharpened version of one of the hook_ideas?
+- Are there 2-4 emojis on key lines (none parroted, none decorative)?
 - Is the related machine named and the post inside the category?
 - Does image_idea work as a copy-paste image prompt (style +
   3-part subject + constraints) with an ALT PHOTO line?
