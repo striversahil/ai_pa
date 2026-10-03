@@ -25,6 +25,11 @@ departments never declare or handle them. Opt out per copilot with
   zero secrets today; for production-grade results set ONE worker secret:
   `printf '%s' "$KEY" | npx wrangler secret put TAVILY_API_KEY`.
   10s per-provider timeout; empty → `{results: [], note}` (never throws).
+- `fetch_page {url, maxChars?}` (`src/shared/fetch-page.ts`) — fetch a URL
+  as markdown text the LLM can read (the result-fetcher for web_search
+  hits). Chain: official Firecrawl API when `FIRECRAWL_API_KEY` is set →
+  keyless Jina AI reader (free, no secret) → `{text: '', note}` fallback.
+  http(s) only, 10s timeout, 500–6000 chars (default 3000). Never throws.
 - `calculate {expression}` (`src/shared/calculator.ts`) — deterministic
   multi-step arithmetic via a hand-written parser (NEVER eval): assignments
   + chained steps (`"qty = 220; rate = 145; total = qty * rate * 1.25"`,
@@ -33,6 +38,7 @@ departments never declare or handle them. Opt out per copilot with
   and injection attempts (`process`, `require`, …) are hard errors. Agents
   must use this for ALL numeric work instead of mental math.
 
-activity chimes (`Searched web · N results`, `Calculated = X`) are engine-built;
-frontend icon keys are `web_search` / `calculate` (already mapped in
-`ChatbaseCopilot`, `CopilotChat` via `ProductCopilot` configs).
+activity chimes (`Searched web · N results`, `Fetched page · host · Xk chars`,
+`Calculated = X`) are engine-built; frontend icon keys are `web_search` /
+`fetch_page` / `calculate` (already mapped in `ChatbaseCopilot`, `CopilotChat`
+via `ProductCopilot` configs).

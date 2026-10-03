@@ -34,6 +34,7 @@ const TOOL_ICON: Record<string, string> = {
   ask_specs: "📝",
   quote_price: "💰",
   web_search: "🌐",
+  fetch_page: "📄",
   calculate: "🧮",
 };
 
@@ -48,6 +49,15 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState("");
+  const [thinkSecs, setThinkSecs] = useState(0);
+  // Liveness clock: ticks while a turn is in flight so even a long silent
+  // wait (cold worker, model queue) shows elapsed time, not a dead screen.
+  useEffect(() => {
+    if (!busy) { setThinkSecs(0); return; }
+    const started = Date.now();
+    const id = setInterval(() => setThinkSecs(Math.floor((Date.now() - started) / 1000)), 500);
+    return () => clearInterval(id);
+  }, [busy]);
   const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
   const [listening, setListening] = useState(false);
   const [visible, setVisible] = useState(open);
@@ -76,7 +86,10 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
     if (!open) onOpen();
     setBusy(true);
     setThinking("");
-    setMsgs((p) => [...p, { role: "user", text: q }]);
+    // Assistant placeholder goes up INSTANTLY (before any network), so the
+    // thinking chip is visible through the whole dead window: connect +
+    // worker boot + model queue, not just after the first token.
+    setMsgs((p) => [...p, { role: "user", text: q }, { role: "assistant", text: "", activity: [], proposals: [] }]);
     setInput("");
     const tryStream = async (): Promise<boolean> => {
       try {
@@ -105,7 +118,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
         let accActivity: ChatActivity[] = [];
         let accProposals: ChatProposal[] = [];
         let sawDone = false;
-        setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
+        // Placeholder was already appended in send() — don't add a second one.
         const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 55000);
         try {
           while (true) {
@@ -140,7 +153,9 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                   if (t) setThinking(t);
                 } else if (evt.type === "done" && evt.data) {
                   setThinking("");
-                  accText = String(evt.data.reply ?? accText);
+                  // Keep the live-streamed text — replacing it with the final
+                  // reply is what made streamed output vanish mid-turn.
+                  if (!accText) accText = String(evt.data.reply ?? "");
                   accActivity = Array.isArray(evt.data.activity) ? evt.data.activity : accActivity;
                   accProposals = Array.isArray(evt.data.proposals) ? evt.data.proposals : [];
                   setMsgs((p) => {
@@ -528,7 +543,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                       <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce flex-shrink-0" style={{ animationDelay: "0ms", animationDuration: "1.4s" }} />
                       <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce flex-shrink-0" style={{ animationDelay: "150ms", animationDuration: "1.4s" }} />
                       <span className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] animate-bounce flex-shrink-0" style={{ animationDelay: "300ms", animationDuration: "1.4s" }} />
-                      <span className="ml-2 text-[13px] font-medium text-[var(--text-secondary)] truncate">{thinking || "Thinking…"}</span>
+                      <span className="ml-2 text-[13px] font-medium text-[var(--text-secondary)] truncate">{thinking || (thinkSecs > 2 ? `Thinking… ${thinkSecs}s` : "Thinking…")}</span>
                     </div>
                   </div>
                 )}

@@ -7,6 +7,7 @@
 import { getGateway, type ChatMessage } from '../shared/ai-gateway';
 import { cacheDel, cacheGet, cacheSet } from '../shared/cache';
 import { CALCULATE_TOOL, calculateActivity, calculateToolDef, execCalculate } from '../shared/calculator';
+import { FETCH_PAGE_TOOL, execFetchPage, fetchPageActivity, fetchPageToolDef } from '../shared/fetch-page';
 import { WEB_SEARCH_TOOL, execWebSearch, webSearchActivity, webSearchToolDef } from '../shared/web-search';
 import type { CopilotActivity, CopilotDef, CopilotProposal, CopilotReply } from './types';
 
@@ -45,14 +46,15 @@ async function bumpCount(key: string | null): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-/** Engine-default tools: every copilot gets web_search + calculate unless it
- *  opts out via disableBuiltInTools. Dispatched by the engine itself (below),
- *  so departments never touch them. */
+/** Engine-default tools: every copilot gets web_search + fetch_page + calculate
+ *  unless it opts out via disableBuiltInTools. Dispatched by the engine
+ *  itself (below), so departments never touch them. */
 function defaultToolDefs<T>(def: CopilotDef<T>, ctx: T) {
   const tools = def.toolDefs(ctx);
   if ((def as any).disableBuiltInTools === true) return tools;
   const names = new Set(tools.map((t) => t?.function?.name));
   if (!names.has(WEB_SEARCH_TOOL)) tools.push(webSearchToolDef());
+  if (!names.has(FETCH_PAGE_TOOL)) tools.push(fetchPageToolDef());
   if (!names.has(CALCULATE_TOOL)) tools.push(calculateToolDef());
   return tools;
 }
@@ -73,6 +75,10 @@ async function runTool<T>(
       const out = { result: { results: [], provider: 'none', note: 'web search failed' } };
       return { out, label: webSearchActivity(args, out) };
     }
+  }
+  if (name === FETCH_PAGE_TOOL) {
+    const out = { result: await execFetchPage(env, String(args.url ?? ''), (args as any).maxChars) };
+    return { out, label: fetchPageActivity(args, out) };
   }
   if (name === CALCULATE_TOOL) {
     const out = { result: execCalculate(String(args.expression ?? '')) };
@@ -277,12 +283,10 @@ export async function* streamTurn<T>(
   let reply = '';
   for (let step = 0; step < MAX_STEPS; step++) {
     let stepContent = '';
-    // Buffer this step's text: intermediate steps (ones that end in tool
-    // calls) are working notes, not the answer — emitting them as reply
-    // deltas makes text appear mid-turn only to be replaced by the final
-    // reply. They go out as thinking events (status UI) instead; only the
-    // final step streams as reply text.
-    const stepDeltas: string[] = [];
+    // Live streaming: every content token goes out as a delta immediately
+    // (token-by-token typing). Steps that end in tool calls are working
+    // notes — their streamed text stays visible in the bubble (never
+    // replaced), and a thinking summary is also emitted for status UI.
     const toolMap = new Map<number, { id: string; name: string; args: string }>();
     let finishReason: string | undefined;
     try {
@@ -294,7 +298,7 @@ export async function* streamTurn<T>(
       })) {
         if (chunk.contentDelta) {
           stepContent += chunk.contentDelta;
-          stepDeltas.push(chunk.contentDelta);
+          yield { type: 'delta', data: { text: chunk.contentDelta } };
         }
         if (chunk.reasoningDelta) {
           yield { type: 'thinking', data: { text: String(chunk.reasoningDelta).slice(0, 500) } };
@@ -331,7 +335,7 @@ export async function* streamTurn<T>(
         finishReason = 'tool_calls';
       } else {
         stepContent = res.content ?? '';
-        if (stepContent) stepDeltas.push(stepContent);
+        if (stepContent) yield { type: 'delta', data: { text: stepContent } };
         finishReason = res.toolCalls ? 'tool_calls' : 'stop';
       }
     }
@@ -354,8 +358,7 @@ export async function* streamTurn<T>(
       continue;
     }
     reply = stepContent.trim() || def.emptyHint;
-    // Final step: now (and only now) stream its text as the reply.
-    for (const d of stepDeltas) yield { type: 'delta', data: { text: d } };
+    // Already streamed live above — nothing more to emit for the final step.
     break;
   }
   if (!reply) reply = 'I ran out of steps — try a narrower question.';
