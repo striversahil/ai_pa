@@ -2,9 +2,11 @@
 // (send, drafts create/list/delete). Pure fetch, no Node deps, so the Worker
 // bundle and plain Node (Express mirror, scripts) can both import it.
 //
-// Scopes: gmail.compose (create drafts + send) + gmail.readonly (list
-// drafts, read profile). Tokens live in the caller's TokenStore under
-// email:oauth:<accountId> — never in D1, never in responses.
+// Scope: https://mail.google.com/ (gmail.full) — view, compose, send, delete,
+// labels, settings: every Gmail permission in one grant, so future operations
+// (read inbox, labels, filters, delegation) need no re-consent. Tokens live
+// in the caller's TokenStore under email:oauth:<accountId> — never in D1,
+// never in responses.
 
 import type { DraftSummary, EmailProvider } from './types';
 
@@ -12,10 +14,7 @@ const GOOGLE_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
-export const GMAIL_SCOPES = [
-  'https://www.googleapis.com/auth/gmail.compose',
-  'https://www.googleapis.com/auth/gmail.readonly',
-].join(' ');
+export const GMAIL_SCOPES = ['https://mail.google.com/'].join(' ');
 
 export const oauthKey = (accountId: string) => `email:oauth:${accountId}`;
 export const OAUTH_STATE_PREFIX = 'email:oauth:state:';
@@ -62,7 +61,11 @@ export const gmailProvider: EmailProvider = {
   async getProfile(accessToken) {
     const res = await fetch(`${GMAIL_API}/profile`, { headers: { Authorization: `Bearer ${accessToken}` } });
     const j = await res.json().catch(() => ({}));
-    if (!res.ok || !j.emailAddress) throw new Error(`gmail profile failed: HTTP ${res.status}`);
+    if (!res.ok || !j.emailAddress) {
+      // Surface Google's reason (e.g. accessNotConfigured = Gmail API not
+      // enabled on the project; insufficient scopes = re-consent needed).
+      throw new Error(`gmail profile failed: HTTP ${res.status} ${j?.error?.message ?? j?.error?.status ?? ''}`.trim());
+    }
     return { email: String(j.emailAddress) };
   },
 

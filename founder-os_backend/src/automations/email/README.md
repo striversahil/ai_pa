@@ -20,7 +20,7 @@ anyone, save drafts, or schedule one-shot / daily-repeat mails.
    Open `/api/email/oauth/start?email=<you@gmail.com>&label=<name>`
    (signed in as root) → Google consent → done. Tokens auto-refresh.
 2. **Paste refresh token** — mint at the OAuth 2.0 Playground
-   (scope `gmail.compose gmail.readonly`, your client id/secret), then:
+   (scope `https://mail.google.com/` — full Gmail access, your client id/secret), then:
    `POST /api/email/connect {label, email, refreshToken}`.
    The token is verified (profile read) before anything is stored.
 
