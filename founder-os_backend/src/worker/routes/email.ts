@@ -100,7 +100,10 @@ export function registerEmailRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const r = await svc.oauthCallback(
         emailEnv(c.env as any), String(c.req.query('code') ?? ''), String(c.req.query('state') ?? ''));
       notifyLive(c, { type: 'email' });
-      return c.text(`Email connected ✓ (${r.email}) — return to the Founder OS dashboard; send, drafts and scheduling are live for this account.`, 200);
+      // Back to the dashboard Email view (frontend origin, not the worker —
+      // the user started here). The view shows a Connected ✓ banner.
+      const frontend = String((c.env as any).AUTH_PUBLIC_ORIGIN ?? 'https://founder-os-frontend.pages.dev').replace(/\/$/, '');
+      return c.redirect(`${frontend}/email?connected=${encodeURIComponent(r.email)}`, 302);
     } catch (e: any) {
       return c.text(`Email connect failed: ${e?.message} — close and retry Connect.`, 400);
     }

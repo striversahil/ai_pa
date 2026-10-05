@@ -44,8 +44,7 @@ export default function EmailDashboard() {
   const [sendAt, setSendAt] = useState("");
   const [dailyAt, setDailyAt] = useState("");
 
-  const refresh = useCallback(async () => {
-    try {
+  const refresh = useCallback(async () => {    try {
       const s = await api("/api/email/status");
       setAccounts(s.accounts ?? []);
       setOutbox((s.outbox ?? []).filter((o: OutboxItem) => o.status === "queued" || o.status === "failed"));
@@ -57,6 +56,17 @@ export default function EmailDashboard() {
   }, [acct, draftAcct]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Post-OAuth landing: /email?connected=<addr> after Google consent.
+  useEffect(() => {
+    try {
+      const addr = new URLSearchParams(window.location.search).get("connected");
+      if (addr) {
+        setMsg(`Email connected ✓ (${addr}) — send, drafts and scheduling are live.`);
+        window.history.replaceState(null, "", "/email");
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   if (!me?.isRoot) {
     return (

@@ -90,7 +90,10 @@ export function buildRawMessage(from: string, m: ComposeInput): string {
     `Content-Type: ${m.html ? 'text/html' : 'text/plain'}; charset=UTF-8`,
     'Content-Transfer-Encoding: base64',
     '',
+    '',
   ];
+  // The trailing '' pair is the mandatory blank line between the header
+  // block and the body — without it Gmail swallows the body (shows empty).
   const ascii = headers.join('\r\n') + b64Encode(m.body).replace(/.{76}/g, '$&\r\n');
   return b64UrlEncode(ascii);
 }
