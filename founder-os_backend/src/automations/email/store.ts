@@ -41,6 +41,15 @@ export async function getAccount(db: D1, id: string): Promise<EmailAccount | nul
   return r ? rowToAccount(r) : null;
 }
 
+/** Find by address (case-insensitive) or create a pending row for OAuth. */
+export async function findOrCreateAccountByEmail(db: D1, email: string, label: string): Promise<EmailAccount> {
+  const addr = email.trim().toLowerCase();
+  if (!addr) throw new Error('email is required to start OAuth');
+  const r = await db.prepare('SELECT * FROM EmailAccount WHERE lower(email) = ?').bind(addr).first().catch(() => null);
+  if (r) return rowToAccount(r);
+  return createAccount(db, label || addr, addr);
+}
+
 export async function createAccount(db: D1, label: string, email: string): Promise<EmailAccount> {
   const id = rid();
   await db.prepare(

@@ -62,22 +62,29 @@ export function registerEmailRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
 
   // OAuth dance. Start is MIS (redirects to Google); callback is exempt.
+  // Start takes ?account=<id> or ?email=<addr>&label=<name> (find-or-create).
   app.get('/api/email/oauth/start', async (c) => {
     if (!(await mis(c))) return;
     try {
-      const url = await svc.oauthStart(emailEnv(c.env as any), String(c.req.query('account') ?? ''));
+      const url = await svc.oauthStart(emailEnv(c.env as any), {
+        accountId: String(c.req.query('account') ?? '') || undefined,
+        email: String(c.req.query('email') ?? '') || undefined,
+        label: String(c.req.query('label') ?? '') || undefined,
+      });
       return c.redirect(url, 302);
     } catch (e: any) { return c.json({ ok: false, error: e?.message ?? 'oauth start failed' }, 400); }
   });
 
   app.get('/api/email/oauth/callback', async (c) => {
+    const err = c.req.query('error');
+    if (err || !c.req.query('code')) return c.text(`Google declined: ${err || 'no code'} — close and retry Connect.`, 400);
     try {
       const r = await svc.oauthCallback(
         emailEnv(c.env as any), String(c.req.query('code') ?? ''), String(c.req.query('state') ?? ''));
       notifyLive(c, { type: 'email' });
-      return c.redirect(`/automations?email=connected&account=${encodeURIComponent(r.accountId)}`, 302);
+      return c.text(`Email connected ✓ (${r.email}) — return to the Founder OS dashboard; send, drafts and scheduling are live for this account.`, 200);
     } catch (e: any) {
-      return c.json({ ok: false, error: e?.message ?? 'oauth callback failed' }, 400);
+      return c.text(`Email connect failed: ${e?.message} — close and retry Connect.`, 400);
     }
   });
 

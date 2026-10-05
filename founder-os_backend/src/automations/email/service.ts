@@ -48,13 +48,16 @@ export async function connectWithToken(env: EmailEnv, label: string, refreshToke
   return account;
 }
 
-/** OAuth dance: start URL (state in token store, 10-min TTL handled by KV). */
-export async function oauthStart(env: EmailEnv, accountId: string): Promise<string> {
+/** OAuth dance: start URL (state in token store, 10-min TTL handled by KV).
+ * Pass accountId for an existing row, or email (+label) to find-or-create. */
+export async function oauthStart(env: EmailEnv, args: { accountId?: string; email?: string; label?: string }): Promise<string> {
   const { id } = appCreds(env);
-  const acc = await store.getAccount(env.DB, accountId);
+  const acc = args.accountId
+    ? (await store.getAccount(env.DB, args.accountId))
+    : (await store.findOrCreateAccountByEmail(env.DB, String(args.email ?? ''), String(args.label ?? '')));
   if (!acc) throw new Error('unknown email account');
   const state = rid();
-  await env.tokens.put(OAUTH_STATE_PREFIX + state, accountId);
+  await env.tokens.put(OAUTH_STATE_PREFIX + state, acc.id);
   return gmailProvider.oauthStartUrl({ clientId: id, redirectUri: redirectUri(env.publicOrigin), state });
 }
 

@@ -17,10 +17,8 @@ anyone, save drafts, or schedule one-shot / daily-repeat mails.
 1. **OAuth dance** — needs worker secrets `GOOGLE_CLIENT_ID` /
    `GOOGLE_CLIENT_SECRET` (one Google Cloud project, Gmail API enabled) and
    redirect URI `<PUBLIC_ORIGIN>/api/email/oauth/callback` registered.
-   `POST /api/email/connect` is not needed; open
-   `/api/email/oauth/start?account=<id>` after creating the account row…
-   actually simpler: create-then-start is one step — `POST /api/email/connect`
-   with `{label, email, refreshToken}` does everything when you paste a token.
+   Open `/api/email/oauth/start?email=<you@gmail.com>&label=<name>`
+   (signed in, MIS) → Google consent → done. Tokens auto-refresh.
 2. **Paste refresh token** — mint at the OAuth 2.0 Playground
    (scope `gmail.compose gmail.readonly`, your client id/secret), then:
    `POST /api/email/connect {label, email, refreshToken}`.
