@@ -200,6 +200,32 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     );
   }
 
+  // Email outbox tick every minute (native, token-independent — runs before
+  // the dispatcher early-return below): sends due one-shot + daily-repeat
+  // mails via the Gmail API. CAS-claimed, max 10/tick, 5 attempts then dead.
+  // Sales/ops mail (not Zoho/NeoDove) — runs in quiet hours too.
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const { processDueEmails } = await import('../automations/email/service');
+        const KV = (env as any).CACHE_KV as any;
+        const tokens = {
+          get: async (k: string) => (KV ? (await KV.get(k).catch(() => null)) as string | null : null),
+          put: async (k: string, v: string) => { await KV?.put(k, v); },
+          delete: async (k: string) => { await KV?.delete(k); },
+        };
+        await processDueEmails({
+          DB: (env as any).DB, tokens,
+          googleClientId: (env as any).GOOGLE_CLIENT_ID,
+          googleClientSecret: (env as any).GOOGLE_CLIENT_SECRET,
+          publicOrigin: String((env as any).PUBLIC_ORIGIN ?? 'https://founder-os-worker.connect-bui2.workers.dev'),
+        });
+      } catch (e: any) {
+        console.error('[cron] email-outbox tick failed:', e?.message);
+      }
+    })(),
+  );
+
   // GitHub Actions dispatcher — fire workflow_dispatch for every due workflow.
   const token = env.GITHUB_ACCESS_TOKEN;
   if (!token) {

@@ -11,6 +11,7 @@ import triggersRouter from './triggers';
 import whatsappProxyRouter from './whatsapp-proxy';
 import whatsappWebhookRouter from './whatsapp-webhook';
 import whatsappMarketingRouter from './whatsapp-marketing';
+import emailRouter from './email';
 import pendingItemsRouter from './pending-items';
 import healthRouter from './health';
 import { BrainService } from '../modules/brain/service';
@@ -30,6 +31,7 @@ router.use('/estimates', estimatesRouter);
 router.use('/trigger', triggersRouter);
 router.use('/whatsapp', whatsappProxyRouter);
 router.use('/whatsapp-marketing', whatsappMarketingRouter);
+router.use('/email', emailRouter);
 router.use('/pending-items', pendingItemsRouter);
 router.use('/health', healthRouter);
 

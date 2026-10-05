@@ -30,6 +30,7 @@ import { registerCopilotRoutes } from './worker/routes/copilot';
 import { registerProductLineRoutes } from './worker/routes/product-line';
 import { registerDigitalMarketingRoutes } from './worker/routes/digital-marketing';
 import { registerLinkedinRoutes } from './worker/routes/linkedin';
+import { registerEmailRoutes } from './worker/routes/email';
 import { registerEventsRoute } from './worker/routes/events';
 import { scheduled } from './worker/cron';
 
@@ -53,6 +54,7 @@ registerCopilotRoutes(app);
 registerProductLineRoutes(app);
 registerDigitalMarketingRoutes(app);
 registerLinkedinRoutes(app);
+registerEmailRoutes(app);
 registerMarketingRoutes(app);
 registerEventsRoute(app);
 
