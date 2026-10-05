@@ -18,7 +18,7 @@ anyone, save drafts, or schedule one-shot / daily-repeat mails.
    `GOOGLE_CLIENT_SECRET` (one Google Cloud project, Gmail API enabled) and
    redirect URI `<PUBLIC_ORIGIN>/api/email/oauth/callback` registered.
    Open `/api/email/oauth/start?email=<you@gmail.com>&label=<name>`
-   (signed in, MIS) → Google consent → done. Tokens auto-refresh.
+   (signed in as root) → Google consent → done. Tokens auto-refresh.
 2. **Paste refresh token** — mint at the OAuth 2.0 Playground
    (scope `gmail.compose gmail.readonly`, your client id/secret), then:
    `POST /api/email/connect {label, email, refreshToken}`.
@@ -37,7 +37,7 @@ Tokens live ONLY in `CACHE_KV` (`email:oauth:<accountId>`).
 - Inspect: `GET /api/email/outbox` · `DELETE /api/email/outbox/:id` (cancel) ·
   `GET /api/email/log`
 
-Writes (connect/send/draft/schedule/cancel/disconnect) are MIS-gated; reads
+Writes (connect/send/draft/schedule/cancel/disconnect) are ROOT-only; reads
 ride the dashboard session. No attachments in v1 (MIME builder is single-part;
 extend `buildRawMessage` for multipart when needed). Next providers
 (SMTP/Graph) implement `EmailProvider` in a new file — no route changes.

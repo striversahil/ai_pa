@@ -30,7 +30,7 @@ function appCreds(env: EmailEnv): { id: string; secret: string } {
   return { id, secret };
 }
 
-/** Connect with a pasted refresh token (OAuth Playground path) — MIS only. */
+/** Connect with a pasted refresh token (OAuth Playground path) — root only. */
 export async function connectWithToken(env: EmailEnv, label: string, refreshToken: string) {
   const { id, secret } = appCreds(env);
   const t = String(refreshToken).trim();

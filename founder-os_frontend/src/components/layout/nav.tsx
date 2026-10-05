@@ -1,12 +1,13 @@
 import type { LucideIcon } from "lucide-react";
-import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare } from "lucide-react";
+import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail } from "lucide-react";
 
 export type ViewType =
   | "briefing"
   | "whatsapp"
   | "automations"
   | "chat"
-  | "admin";
+  | "admin"
+  | "email";
 
 export interface NavItem {
   view: ViewType;
@@ -21,6 +22,8 @@ export const NAV_ITEMS: NavItem[] = [
   { view: "chat", label: "Chat", icon: MessagesSquare, mobile: true },
   { view: "briefing", label: "Founder AI", icon: Sparkles, mobile: true },
   { view: "whatsapp", label: "WhatsApp", icon: MessageCircle, mobile: true },
+  // Founder email service — root-only (canView hides it from everyone else).
+  { view: "email", label: "Email", icon: Mail },
   { view: "admin", label: "Admin", icon: ShieldCheck },
 ];
 
@@ -39,6 +42,7 @@ export function navTargetPath(t: NavTarget): string {
     automations: "/automations",
     chat: "/chat",
     admin: "/admin",
+    email: "/email",
   };
   return paths[t.view];
 }
