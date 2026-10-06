@@ -9,12 +9,10 @@
 import type { CopilotDef } from './types';
 import { productLineCopilotDef } from '../automations/product-line/copilot';
 import { productLineIntakeDef } from '../automations/product-line/intake';
-import { productLineBulkDef } from '../automations/bulk-import/chat';
 
 const COPILOTS: Record<string, CopilotDef<any>> = {
   [productLineCopilotDef.id]: productLineCopilotDef,
   [productLineIntakeDef.id]: productLineIntakeDef,
-  [productLineBulkDef.id]: productLineBulkDef,
 };
 
 export function getCopilot(id: string): CopilotDef<any> | null {

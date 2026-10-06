@@ -300,6 +300,10 @@ function rateData(body: any, isCreate: boolean): { data: Record<string, unknown>
     data.quotedAt = new Date().toISOString();
   }
   if (body?.enquiryRef !== undefined) data.enquiryRef = str(body.enquiryRef, 300) || null;
+  if (body?.missingSpecs !== undefined) {
+    const ms = Array.isArray(body.missingSpecs) ? body.missingSpecs.map(String).filter(Boolean).slice(0, 50) : [];
+    data.missingSpecs = JSON.stringify(ms);
+  }
   if (body?.active !== undefined) data.active = body.active !== false;
   return { data, productId };
 }

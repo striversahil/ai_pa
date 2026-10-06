@@ -23,6 +23,8 @@ interface IntakeCtx {
 }
 
 interface IntakeDraft {
+  /** First ~300 chars of the source quote (multi-blob orientation only). */
+  source?: string;
   productId?: string;
   productName?: string;
   productCategory?: string;
@@ -50,20 +52,61 @@ function sessionKey(who: string): string {
   return `copilot:intake:pl:${who}`;
 }
 
-async function loadDraft(who: string): Promise<IntakeDraft> {
+interface DraftSession {
+  active: number;
+  drafts: IntakeDraft[];
+}
+
+function blankSession(): DraftSession {
+  return { active: 0, drafts: [{ specs: {} }] };
+}
+
+function toSession(raw: unknown): DraftSession {
+  if (raw && typeof raw === 'object' && Array.isArray((raw as any).drafts)) {
+    const s = raw as DraftSession;
+    const drafts = s.drafts.map((d) => ({ ...d, specs: { ...((d as any)?.specs ?? {}) } }));
+    if (!drafts.length) drafts.push({ specs: {} });
+    return { active: Math.max(0, Math.min(s.active ?? 0, drafts.length - 1)), drafts };
+  }
+  // Legacy single-draft shape → wrap.
+  if (raw && typeof raw === 'object') {
+    return { active: 0, drafts: [{ ...(raw as IntakeDraft), specs: { ...(((raw as any).specs ?? {}) as Record<string, string>) } }] };
+  }
+  return blankSession();
+}
+
+async function loadSession(who: string): Promise<DraftSession> {
   try {
-    const d = await cacheGet<IntakeDraft>(sessionKey(who), SESSION_TTL_MS);
-    if (d && typeof d === 'object') return { ...d, specs: { ...(d.specs ?? {}) } };
+    const d = await cacheGet<DraftSession>(sessionKey(who), SESSION_TTL_MS);
+    if (d && typeof d === 'object') return toSession(d);
   } catch { /* ignore */ }
-  return { specs: {} };
+  return blankSession();
+}
+
+async function saveSession(who: string, s: DraftSession): Promise<void> {
+  try { await cacheSet(sessionKey(who), s, SESSION_TTL_MS); } catch { /* ignore */ }
+}
+
+async function loadDraft(who: string): Promise<IntakeDraft> {
+  const s = await loadSession(who);
+  return s.drafts[s.active] ?? { specs: {} };
 }
 
 async function saveDraft(who: string, d: IntakeDraft): Promise<void> {
-  try { await cacheSet(sessionKey(who), d, SESSION_TTL_MS); } catch { /* ignore */ }
+  const s = await loadSession(who);
+  s.drafts[s.active] = d;
+  await saveSession(who, s);
 }
 
 async function clearDraft(who: string): Promise<void> {
   try { await cacheDel(sessionKey(who)); } catch { /* ignore */ }
+}
+
+/** Draft index from tool args (1-based `draft`, defaults to active). */
+function draftIdx(args: Record<string, any>, s: DraftSession): number {
+  const n = Math.floor(Number(args?.draft));
+  if (Number.isFinite(n) && n >= 1 && n <= s.drafts.length) return n - 1;
+  return s.active;
 }
 
 function num(v: unknown): number | undefined {
@@ -197,24 +240,65 @@ function matchProducts(products: any[], q: string): { row: any; exact: boolean }
 }
 
 async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>): Promise<{ result: unknown; proposals?: any[] }> {
-  const d = await loadDraft(ctx.who);
+  const sess = await loadSession(ctx.who);
+  const di = draftIdx(args, sess);
+  const d = sess.drafts[di] ?? { specs: {} };
+  const persist = async (nd: IntakeDraft, makeActive = false): Promise<void> => {
+    sess.drafts[di] = nd;
+    if (makeActive) sess.active = di;
+    await saveSession(ctx.who, sess);
+  };
 
   if (name === 'get_draft') {
     const req = d.productId ? await requiredSpecs(d.productId).catch(() => []) : [];
     const details = await specDetails(d.productId, d.specs);
-    return { result: { draft: d, specDetails: details, requiredSpecs: req, missing: missing(d, req) } };
+    return {
+      result: {
+        draft: d, draftIndex: di + 1, draftCount: sess.drafts.length,
+        drafts: sess.drafts.map((x, i) => ({
+          index: i + 1, active: i === sess.active,
+          product: x.productName ?? x.productId ?? null, vendor: x.vendorName ?? x.vendorId ?? null,
+          price: x.price ?? null, unit: x.unit ?? null,
+          missingCount: missing(x, []).length,
+        })),
+        specDetails: details, requiredSpecs: req, missing: missing(d, req),
+      },
+    };
   }
 
   if (name === 'clear_draft') {
+    const only = Math.floor(Number(args?.draft));
+    if (Number.isFinite(only) && only >= 1 && only <= sess.drafts.length && sess.drafts.length > 1) {
+      sess.drafts.splice(only - 1, 1);
+      sess.active = Math.max(0, Math.min(sess.active, sess.drafts.length - 1));
+      await saveSession(ctx.who, sess);
+      return { result: { cleared: true, draft: only, remaining: sess.drafts.length } };
+    }
     await clearDraft(ctx.who);
     return { result: { cleared: true } };
   }
 
+  if (name === 'split_quotes') {
+    const quotes = Array.isArray(args?.quotes) ? args.quotes.map((q: any) => String(q?.text ?? q ?? '').trim()).filter(Boolean).slice(0, 20) : [];
+    if (!quotes.length) return { result: { error: 'quotes array needed (each item one vendor quote)' } };
+    sess.drafts = quotes.map((q) => ({ specs: {}, source: q.slice(0, 300) }) as IntakeDraft);
+    sess.active = 0;
+    await saveSession(ctx.who, sess);
+    return { result: { drafts: sess.drafts.length, active: 1 } };
+  }
+
   if (name === 'update_draft') {
+    const { normalizeSpecValue, normalizeUnit } = await import('./normalize');
     const nd: IntakeDraft = { ...d, specs: { ...d.specs } };
-    for (const f of ['productId', 'productName', 'productCategory', 'vendorId', 'vendorName', 'vendorType', 'vendorPhone', 'vendorLocation', 'unit', 'moq', 'packQty', 'packDims'] as const) {
+    for (const f of ['productId', 'productName', 'productCategory', 'vendorId', 'vendorName', 'vendorType', 'vendorPhone', 'vendorLocation', 'moq', 'packQty', 'packDims'] as const) {
       const v = str((args as any)[f]);
       if (v !== undefined) (nd as any)[f] = v;
+    }
+    // Unit + spec values pass the normalizer (4" → 4 inch, mtr → meter…).
+    const unitRaw = str((args as any).unit, 120);
+    if (unitRaw !== undefined) {
+      const u = normalizeUnit(unitRaw);
+      if (u !== undefined) nd.unit = u;
     }
     for (const f of ['price', 'discount', 'delivery', 'weight'] as const) {
       const v = num((args as any)[f]);
@@ -226,14 +310,14 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
     if (specs && typeof specs === 'object') {
       for (const [k, v] of Object.entries(specs as Record<string, unknown>)) {
         const key = String(k).trim().slice(0, 120);
-        const val = String(v ?? '').trim().slice(0, 500);
+        const val = normalizeSpecValue(v);
         if (key && val) nd.specs[key] = val;
       }
     }
-    await saveDraft(ctx.who, nd);
+    await persist(nd);
     const req = nd.productId ? await requiredSpecs(nd.productId).catch(() => []) : [];
     const details = await specDetails(nd.productId, nd.specs);
-    return { result: { draft: nd, specDetails: details, requiredSpecs: req, missing: missing(nd, req) } };
+    return { result: { draft: nd, draftIndex: di + 1, specDetails: details, requiredSpecs: req, missing: missing(nd, req) } };
   }
 
   if (name === 'find_product') {
@@ -308,11 +392,12 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
     ].filter(Boolean).map((q: any) => ({ ...q, hint: '', required: true, section: 'commercial' }));
     questions.push(...commercials);
     if (!questions.length) return { result: { questions: [], complete: true } };
-    const title = `Details needed — ${d.productName ?? 'new product'}`;
+    const title = `Details needed — ${sess.drafts.length > 1 ? `#${di + 1} ` : ''}${d.productName ?? 'new product'}`;
     return {
       result: { questions, complete: false },
       proposals: [{
         kind: 'spec_form', label: title, text: `${questions.length} question${questions.length === 1 ? '' : 's'} to file this rate.`,
+        draft: di + 1,
         title, product: d.productName ?? d.productId, questions,
       }],
     };
@@ -339,7 +424,7 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
     const tp = str(args.vendorType); if (tp) d.vendorType = tp;
     const ph = str(args.phone); if (ph) d.vendorPhone = ph;
     const lc = str(args.location); if (lc) d.vendorLocation = lc;
-    await saveDraft(ctx.who, d);
+    await persist(d);
     const lines = [nameArg];
     if (d.vendorType) lines.push(d.vendorType);
     if (d.vendorPhone) lines.push(`ph: ${d.vendorPhone}`);
@@ -348,6 +433,7 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
       result: { proposed: true },
       proposals: [{
         kind: 'vendor_draft', label: `New vendor: ${nameArg}`,
+        draft: di + 1,
         text: lines.join(' · '),
         name: nameArg, vendorType: d.vendorType ?? '', phone: d.vendorPhone ?? '', location: d.vendorLocation ?? '',
       }],
@@ -371,11 +457,12 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
     if (clash) return { result: { error: `already exists as "${clash.row.name}" — set productId via update_draft instead`, productId: clash.row.id } };
     d.productName = nameArg;
     d.productCategory = catHit;
-    await saveDraft(ctx.who, d);
+    await persist(d);
     return {
       result: { proposed: true },
       proposals: [{
         kind: 'product_draft', label: `New product: ${nameArg}`,
+        draft: di + 1,
         text: `${catHit} · ${nameArg}`,
         name: nameArg, category: catHit,
       }],
@@ -401,17 +488,14 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
     if (d.delivery === undefined || d.delivery < 0) missingFields.push('delivery days');
     if (!validDate(d.quotedAt)) missingFields.push('quote date');
     const req = d.productId ? await requiredSpecs(d.productId).catch(() => []) : [];
-    // KYP gate: EVERY required spec must be answered by the vendor quote
-    // before the rate is draftable.
-    const missingSpecs = req.filter((q) => !String(d.specs[q.key] ?? '').trim());
-    if (missingSpecs.length > 0) {
-      return { result: { error: 'required specs missing from the quote', missingSpecs: missingSpecs.map((q) => q.question) } };
-    }
+    // Specs are OPTIONAL at filing: unanswered required questions ride along
+    // as missingSpecs on the rate (flagged, never silently complete).
+    const missingSpecQs = req.filter((q) => !String(d.specs[q.key] ?? '').trim());
     if (missingFields.length > 0) {
       return { result: { error: 'commercial details missing from the quote', missingFields } };
     }
     const gaps = missing(d, req);
-    const title = `${d.productName ?? d.productId} @ ₹${d.price}/${d.unit} — ${d.vendorName ?? d.vendorId}`;
+    const title = `${sess.drafts.length > 1 ? `#${di + 1} ` : ''}${d.productName ?? d.productId} @ ₹${d.price}/${d.unit} — ${d.vendorName ?? d.vendorId}`;
     // Display raw questions, never attrKey slugs (keys stay storage-only).
     const labels = d.productId ? await specLabels(d.productId).catch(() => new Map<string, string>()) : new Map<string, string>();
     const specLines = Object.entries(d.specs ?? {}).map(([k, v]) => `${labels.get(k) ?? k}: ${v}`);
@@ -423,18 +507,21 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
       `delivery ${d.delivery}d`,
       `quoted ${String(d.quotedAt).slice(0, 10)}`,
     ];
-    const text = [title, ...specLines, ...extraLines,
-      gaps.length ? `Gaps: ${gaps.join('; ')}` : 'No gaps — all required details captured.',
-    ].join('\n');
+    const specNote = missingSpecQs.length
+      ? `Specs missing (${missingSpecQs.length}) — filed anyway, flagged: ${missingSpecQs.map((q) => q.question.slice(0, 60)).join('; ')}`
+      : 'No gaps — all required details captured.';
+    const text = [title, ...specLines, ...extraLines, specNote].join('\n');
     return {
-      result: { proposed: true, gaps },
+      result: { proposed: true, gaps, missingSpecs: missingSpecQs.map((q) => q.question) },
       proposals: [{
         kind: 'rate_draft', label: `Add rate: ${title}`,
         text,
+        draft: di + 1,
         product: d.productName ?? d.productId, vendor: d.vendorName ?? d.vendorId,
         price: d.price, unit: d.unit, discount: d.discount ?? null,
         moq: d.moq ?? null, delivery: d.delivery ?? null,
         specs: { ...d.specs }, gaps,
+        missingSpecs: missingSpecQs.map((q) => q.question),
       }],
     };
   }
@@ -445,6 +532,21 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>)
 async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Promise<CopilotExecResult> {
   const kind = String(action?.kind ?? '');
   const fail = (error: string, status = 400): CopilotExecResult => ({ result: { status, body: { error } }, applied: 'none' });
+  // Proposals carry their 1-based draft; execute applies to THAT draft.
+  const sess = await loadSession(ctx.who);
+  const ai = Math.floor(Number(action?.draft));
+  const di = Number.isFinite(ai) && ai >= 1 && ai <= sess.drafts.length ? ai - 1 : sess.active;
+  const d = sess.drafts[di] ?? { specs: {} };
+  const persistExec = async (nd: IntakeDraft): Promise<void> => {
+    sess.drafts[di] = nd;
+    await saveSession(ctx.who, sess);
+  };
+  const dropExecDraft = async (): Promise<void> => {
+    sess.drafts.splice(di, 1);
+    if (!sess.drafts.length) { await clearDraft(ctx.who); return; }
+    sess.active = Math.max(0, Math.min(sess.active, sess.drafts.length - 1));
+    await saveSession(ctx.who, sess);
+  };
 
   if (kind === 'vendor_draft') {
     const nameV = str(action?.name);
@@ -456,10 +558,9 @@ async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Pro
         contactPhone1: str(action?.phone, 120) ?? null,
         location: str(action?.location) ?? null,
       });
-      const d = await loadDraft(ctx.who);
       d.vendorId = String(row.id);
       d.vendorName = String(row.name ?? nameV);
-      await saveDraft(ctx.who, d);
+      await persistExec(d);
       await invalidateProductLineCache().catch(() => {});
       return { result: { status: 201, body: { ok: true, id: row.id, live: 'product-line' } }, applied: 'vendor_draft' };
     } catch (e: any) {
@@ -477,11 +578,10 @@ async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Pro
     if (!cat) return fail(`unknown category "${catRaw}"`);
     try {
       const row: any = await createProduct({ name: nameV, category: cat });
-      const d = await loadDraft(ctx.who);
       d.productId = String(row.id);
       d.productName = String(row.name ?? nameV);
       d.productCategory = String(row.category ?? cat);
-      await saveDraft(ctx.who, d);
+      await persistExec(d);
       await invalidateProductLineCache().catch(() => {});
       return { result: { status: 201, body: { ok: true, id: row.id, live: 'product-line' } }, applied: 'product_draft' };
     } catch (e: any) {
@@ -491,7 +591,6 @@ async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Pro
 
   if (kind === 'rate_draft') {
     try {
-      const d = await loadDraft(ctx.who);
       // Resolve ids (execute may follow vendor/product confirms in any order).
       let productId = d.productId;
       if (!productId && d.productName) {
@@ -518,6 +617,7 @@ async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Pro
       if (d.delivery === undefined || d.delivery < 0) return fail('delivery days missing');
       const quoted = validDate(d.quotedAt);
       if (!quoted) return fail('quote date missing');
+      const missingSpecs = Array.isArray(action?.missingSpecs) ? action.missingSpecs.map(String).filter(Boolean).slice(0, 50) : [];
       const row: any = await createRate({
         vendorId, productId,
         attrValues: { ...(d.specs ?? {}) },
@@ -525,9 +625,9 @@ async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Pro
         discountPercent: d.discount,
         moq: d.moq, deliveryDays: d.delivery,
         weightPerUnit: d.weight, packageQty: d.packQty, packageDims: d.packDims,
-        quotedAt: quoted,
+        quotedAt: quoted, missingSpecs,
       });
-      await clearDraft(ctx.who);
+      await dropExecDraft();
       await invalidateProductLineCache().catch(() => {});
       return { result: { status: 201, body: { ok: true, id: row.id, live: 'product-line' } }, applied: 'rate_draft' };
     } catch (e: any) {
@@ -550,6 +650,18 @@ const TOOL_DEFS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'split_quotes',
+      description: 'The pasted blob holds SEVERAL vendor quotes: split into one draft per quote (up to 20). Call FIRST on a multi-quote paste, then work each draft by its 1-based number. Values the vendor did not state are left empty — never invented.',
+      parameters: {
+        type: 'object',
+        properties: { quotes: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' } } } } },
+        required: ['quotes'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'update_draft',
       description: 'Save extracted quote fields into the draft (product/vendor/price/unit/commercials/specs object).',
       parameters: {
@@ -563,6 +675,7 @@ const TOOL_DEFS: ToolDefinition[] = [
           weight: { type: 'number' }, packQty: { type: 'string' }, packDims: { type: 'string' },
           quotedAt: { type: 'string', description: 'Quote date (any parseable date; ask the user, "today" is fine)' },
           specs: { type: 'object', description: 'Spec key/value pairs quoted by the vendor' },
+          draft: { type: 'number', description: '1-based draft when several quotes are staged' },
         },
       },
     },
@@ -587,8 +700,8 @@ const TOOL_DEFS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'ask_specs',
-      description: 'Render the missing-details form (unanswered required specs + missing commercials) as an interactive questionnaire — call this instead of asking for specs in prose. Options come from past quote values. The user fills it and the answers arrive as their next message; file them with update_draft.',
-      parameters: { type: 'object', properties: {} },
+      description: 'Render the missing-details form (unanswered required specs + missing commercials) as an interactive questionnaire — call this instead of asking for specs in prose. Options come from past quote values. The user fills it and the answers arrive as their next message — file them with update_draft.',
+      parameters: { type: 'object', properties: { draft: { type: 'number' } } },
     },
   },
   {
@@ -629,17 +742,17 @@ const TOOL_DEFS: ToolDefinition[] = [
     {
       type: 'function',
       function: {
-        name: 'propose_rate',
-        description: 'Draft the rate for user confirm. BLOCKED until product + vendor + EVERY required spec + ALL commercials (price, unit, discount, MOQ, weight per unit, pack qty, pack dims, delivery days, quote date) are captured — anything missing is returned as an error naming the fields, so ask the user for them. Nothing on the quote card is optional.',
-        parameters: { type: 'object', properties: {} },
+      name: 'propose_rate',
+      description: 'Draft the rate for user confirm. Needs product + vendor + ALL commercials (price, unit, discount, MOQ, weight per unit, pack qty, pack dims, delivery days, quote date) — missing ones are returned as errors, so ask the user. Unknown SPECS do NOT block: they file with the rate, flagged as missing. Propose one draft at a time (draft number).',
+      parameters: { type: 'object', properties: { draft: { type: 'number' } } },
       },
     },
   {
     type: 'function',
     function: {
       name: 'clear_draft',
-      description: 'Throw away the current draft and start over.',
-      parameters: { type: 'object', properties: {} },
+      description: 'Throw away a draft (draft number) or everything, and start over.',
+      parameters: { type: 'object', properties: { draft: { type: 'number' } } },
     },
   },
 ];
@@ -666,13 +779,14 @@ export const productLineIntakeDef: CopilotDef<IntakeCtx> = {
   clearExtra: async (ctx) => { await clearDraft(ctx.who); },
   countKey: () => 'copilot:count:product-line-intake',
   systemPrompt: () => (
-    'You are the procurement intake assistant for the BUI product-line catalogue. The user pastes an unstructured vendor quote (usually a forwarded message). Turn it into a confirmed vendor rate in passes — NEVER pull the catalogue or the full KYP sheet into context; fetch only what you need, when you need it. ' +
-    'Prior turns AND the draft are recalled automatically every turn — never claim to be a new session or to lack earlier context; call get_draft and continue. ' +
-    'Every turn: 1) call get_draft FIRST to recall what is captured. 2) Extract new facts from the user message into update_draft (vendor name, product hints, price, unit, discount, MOQ, weight, pack qty/dims, delivery days, quote date, spec values like brand/material/size). ' +
+    'You are the procurement intake assistant for the BUI product-line catalogue. The user pastes unstructured vendor quotes (usually forwarded messages) — ONE quote or a whole blob with SEVERAL. Turn each into a confirmed vendor rate — NEVER pull the catalogue or the full KYP sheet into context; fetch only what you need, when you need it. ' +
+    'Prior turns AND all drafts are recalled automatically every turn — never claim to be a new session or to lack earlier context; call get_draft and continue. ' +
+    'Multi-quote blobs: the paste may hold several rates (a price table, several forwarded lines). Call split_quotes FIRST to stage one draft per quote, then work drafts by number — confirm each draft reports back before moving on, and always say which draft (#N) you mean. One quote at a time for vendor/product confirms; never merge two quotes into one rate. ' +
+    'Every turn: 1) call get_draft FIRST to recall what is captured. 2) Extract new facts from the user message into update_draft (vendor name, product hints, price, unit, discount, MOQ, weight, pack qty/dims, delivery days, quote date, spec values like brand/material/size — write values AS the vendor wrote them; inch marks (4"), unit spellings (mtr/nos) and case are normalized automatically, so Nylon 4" lands on the width question as "4 inch" without you converting anything). ' +
     '3) Resolve the product with find_product — like the sales enquiry splitter, loosely infer the item and its category, then verify against the master: a single exact name/alias hit (resolvedProductId) means the product EXISTS — set productId via update_draft, never create. Several candidates: ask the user to pick one, never guess, never create. Zero candidates: ask the user for the product name AND ask them to pick the category, then propose_product — never invent a category; a made-up category is rejected. ' +
     '4) Once productId is known, call required_specs ONCE to see the FULL checklist (required + optional, with guide notes) — then call ask_specs to render the missing required details as an interactive form INSTEAD of asking spec/commercial questions in chat text. The user fills the form; their answers arrive as the next message — file them with update_draft (specs object for spec keys, plain fields for commercials). ' +
-    '5) Resolve the vendor with find_vendor — exact match: set vendorId; none: propose_vendor (ask only for missing name/phone/type). 6) When product + vendor + EVERY required spec + ALL commercials are known, call propose_vendor/propose_product first for anything new, then propose_rate. ' +
-    'Gates: a rate is draftable ONLY when the vendor quote answers every required spec AND every commercial (price, unit, discount — ask and record 0 when none, MOQ, weight per unit, pack qty, pack dims, delivery days, quote date) is filed — missing items block the draft (ask the user for them). Nothing on the quote card is optional. When listing captured specs to the user in replies or summaries, always use the raw question text from required_specs — never show attrKey slugs (e.g. ask_width_required, spec_sss); slugs are storage-only. Keep replies short; confirm each created draft reports back before the next step. ' +
+    '5) Resolve the vendor with find_vendor — exact match: set vendorId; none: propose_vendor (ask only for missing name/phone/type). 6) When product + vendor + ALL commercials are known, call propose_vendor/propose_product first for anything new, then propose_rate — one draft per proposal. ' +
+    'Gates: a rate is draftable when product + vendor + every commercial (price, unit, discount — ask and record 0 when none, MOQ, weight per unit, pack qty, pack dims, delivery days, quote date) is filed — missing commercials block the draft (ask the user for them). Unknown SPECS do NOT block: the rate files with the unanswered required questions flagged as missing on the card, and you must SAY which specs are missing when presenting it. When listing captured specs to the user in replies or summaries, always use the raw question text from required_specs — never show attrKey slugs (e.g. ask_width_required, spec_sss); slugs are storage-only. Keep replies short; confirm each created draft reports back before the next step. ' +
     'Deletes are NEVER done here: if the user asks to delete a rate or vendor, point them to the Product Line dashboard (Rates/Vendors tabs → Delete button). There are no delete tools — do not propose, stage, or execute any deletion.'
   ),
   toolDefs: () => TOOL_DEFS,
@@ -680,7 +794,11 @@ export const productLineIntakeDef: CopilotDef<IntakeCtx> = {
   activityLabel: (name, args, out) => {
     const r = (out.result ?? {}) as Record<string, any>;
     switch (name) {
-      case 'get_draft': return 'Recalled intake draft';
+      case 'get_draft': {
+        const n = Number((r as any)?.draftCount ?? 1);
+        return n > 1 ? `Recalled ${(r as any)?.draftIndex ?? 1}/${n} drafts` : 'Recalled intake draft';
+      }
+      case 'split_quotes': return `Split ${(r as any)?.drafts ?? 0} quotes`;
       case 'update_draft': {
         const n = Array.isArray(r.missing) ? r.missing.length : 0;
         return `Captured quote details · ${n} gap${n === 1 ? '' : 's'} left`;

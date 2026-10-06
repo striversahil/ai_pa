@@ -9,10 +9,9 @@
 //     product + vendor, pulls only that product's required checklist, drafts
 //     the rate (flagging gaps), and Confirm creates vendor/product/rate.
 // Backend mirror: founder-os_backend/src/automations/product-line/copilot.ts
-// (knowledge) + intake.ts (rates) + bulk-import/chat.ts (bulk).
+// (knowledge) + intake.ts (rates).
 import React, { useState } from "react";
 import CopilotChat, { type CopilotConfig } from "./CopilotChat";
-import BulkChatContext from "./BulkChatContext";
 import { useAuth } from "@/auth/AuthContext";
 
 const KNOWLEDGE: CopilotConfig = {
@@ -49,6 +48,7 @@ const INTAKE: CopilotConfig = {
   ],
   toolIcons: {
     get_draft: "📝",
+    split_quotes: "✂️",
     update_draft: "✍️",
     find_product: "🔍",
     required_specs: "📋",
@@ -72,54 +72,15 @@ const INTAKE: CopilotConfig = {
 const MODES = [
   { id: "knowledge", label: "Knowledge" },
   { id: "intake", label: "Add Rates" },
-  { id: "bulk", label: "Bulk" },
 ];
 
 export default function ProductCopilot() {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState("knowledge");
-  const [bulkBatchId, setBulkBatchId] = useState("");
-  // Dashboard "Open in AI chat" bridge: jump straight into the Bulk tab.
-  React.useEffect(() => {
-    const onBridge = (e: Event) => {
-      const id = String((e as CustomEvent).detail?.batchId ?? "");
-      if (!id) return;
-      setBulkBatchId(id);
-      setMode("bulk");
-      setOpen(true);
-    };
-    window.addEventListener("open-bulk-chat", onBridge);
-    return () => window.removeEventListener("open-bulk-chat", onBridge);
-  }, []);
   const { me } = useAuth();
   const initial = String((me as any)?.user?.email ?? (me as any)?.email ?? "S").trim().charAt(0).toUpperCase() || "S";
-  const BULK: CopilotConfig = {
-    title: "AI Agent",
-    subtitle: "Bulk price lists",
-    emptyText: "Pick a batch above, then command it — “set all units to mtr”, “is this ready to commit?”",
-    suggestions: [
-      "Summarize this batch",
-      "Is this batch ready to commit?",
-      "Set all missing units to mtr",
-    ],
-    toolIcons: {
-      bulk_status: "📊",
-      bulk_change: "✍️",
-      bulk_link: "🔗",
-      bulk_verify: "✅",
-      bulk_propose_block: "📦",
-      web_search: "🌐",
-      fetch_page: "📄",
-      calculate: "🧮",
-    },
-    streamUrl: "/api/copilot/product-line-bulk/chat/stream",
-    chatUrl: "/api/copilot/product-line-bulk/chat",
-    executeUrl: "/api/copilot/product-line-bulk/chat/execute",
-    clearUrl: "/api/copilot/product-line-bulk/chat/clear",
-    resetKey: `product-line-bulk:${bulkBatchId}`,
-    context: bulkBatchId ? { batchId: bulkBatchId } : {},
-  };
-  const config = mode === "intake" ? INTAKE : mode === "bulk" ? BULK : KNOWLEDGE;
+  const config = mode === "intake" ? INTAKE : KNOWLEDGE;
+
   return (
     <CopilotChat
       config={{ ...config, userInitial: initial }}
@@ -129,7 +90,6 @@ export default function ProductCopilot() {
       modes={MODES}
       mode={mode}
       onModeChange={setMode}
-      headerExtra={mode === "bulk" ? <BulkChatContext openBatchId={bulkBatchId} onOpenBatch={setBulkBatchId} /> : undefined}
     />
   );
 }

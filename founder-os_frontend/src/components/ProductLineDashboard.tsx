@@ -9,7 +9,6 @@ import {
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ProductCopilot from "./ProductCopilot";
-import BulkImportDashboard from "./BulkImportDashboard";
 
 // Mirror: founder-os_backend/src/automations/product-line/types.ts
 interface ProductRow { id: string; category: string; name: string; aliases: string[]; active: boolean; guideCount: number; rateCount: number; }
@@ -20,8 +19,7 @@ interface RateRow {
   productId: string | null; productName: string | null; attrKey: string; attrValues: Record<string, string>;
   pricePerUnit: number | null; unit: string; discountPercent: number | null; baseRate: number | null;
   weightPerUnit: number | null; packageQty: string | null; packageDims: string | null;
-  moq: string | null; deliveryDays: number | null; quotedAt: string; enquiryRef: string | null; active: boolean;
-  batchId: string | null; sourceRef: string | null;
+  moq: string | null; deliveryDays: number | null; quotedAt: string; enquiryRef: string | null; missingSpecs: string[] | null; active: boolean;
   imageUrl: string | null; videoUrl: string | null;
 }
 interface Payload { products: ProductRow[]; guide: Record<string, GuideRow[]>; vendors: VendorRow[]; rates: RateRow[]; }
@@ -100,7 +98,7 @@ export default function ProductLineDashboard() {
     return res.json();
   });
 
-  const [tab, setTab] = useState<"products" | "vendors" | "rates" | "bulk">("products");
+  const [tab, setTab] = useState<"products" | "vendors" | "rates">("products");
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [busy, setBusy] = useState(false);
@@ -347,10 +345,10 @@ export default function ProductLineDashboard() {
         ) : (
           <>
             <div className="flex gap-5 border-b border-[var(--border-card)]">
-              {(["products", "vendors", "rates", ...(canEdit ? ["bulk"] as const : [])] as const).map((t) => (
+              {(["products", "vendors", "rates"] as const).map((t) => (
                 <button key={t} type="button" onClick={() => setTab(t)}
                   className={`pb-2 -mb-px text-xs font-bold cursor-pointer bg-transparent border-0 border-b-2 ${tab === t ? "border-brand-indigo text-[var(--text-primary)]" : "border-transparent text-[var(--text-tertiary)]"}`}>
-                  {t === "bulk" ? "Bulk import" : t[0].toUpperCase() + t.slice(1)}
+                  {t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
@@ -493,7 +491,6 @@ export default function ProductLineDashboard() {
                             className={`flex-shrink-0 rounded-xl border-2 px-3.5 py-2.5 text-left cursor-pointer bg-transparent ${active ? "border-brand-indigo" : "border-[var(--border-card)]"}`}>
                             <p className={`text-[13px] font-extrabold ${active ? "text-brand-indigo" : "text-[var(--text-primary)]"}`}>
                               {r.vendorName ?? "Unknown"}{r.active ? "" : " · off"}
-                              {r.batchId && <span title={`Bulk import ${r.sourceRef ?? r.batchId}`} className="ml-1.5 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-600">bulk</span>}
                             </p>
                             <p className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">{specSummary(r)}</p>
                             <p className="mt-0.5 text-[13px] font-extrabold tabular-nums text-[var(--text-primary)]">
@@ -527,6 +524,9 @@ export default function ProductLineDashboard() {
                         <div className="lg:col-span-3 rounded-xl border border-[var(--border-card)]/80 overflow-hidden">
                           <p className="px-4 py-2.5 text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)] border-b border-[var(--border-card)]/70">
                             Spec as quoted · {selRate.vendorName}{selRate.vendorType ? ` — ${selRate.vendorType}` : ""}
+                            {(selRate.missingSpecs ?? []).length > 0 && (
+                              <span title={`Specs unknown at filing:\n${(selRate.missingSpecs ?? []).join("\n")}`} className="ml-2 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-600">specs missing ({(selRate.missingSpecs ?? []).length})</span>
+                            )}
                           </p>
                           {Object.keys(selRate.attrValues ?? {}).length === 0 && <p className="px-4 py-3 text-sm text-[var(--text-tertiary)]">No spec breakup recorded on this quote.</p>}
                           <dl>
@@ -743,9 +743,6 @@ export default function ProductLineDashboard() {
           </div>
         </div>
       )}
-
-      {/* ══ LIST: bulk import (root-only staging → commit-as-block) ══ */}
-      {!detailId && tab === "bulk" && <BulkImportDashboard />}
 
       {/* ── Product modal ── */}
       {pModal && (

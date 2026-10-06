@@ -57,8 +57,7 @@ export interface RateRow {
   videoUrl: string | null;
   quotedAt: string;
   enquiryRef: string | null;
-  batchId: string | null;
-  sourceRef: string | null;
+  missingSpecs: string[] | null;
   active: boolean;
 }
 

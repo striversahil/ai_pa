@@ -41,6 +41,18 @@ function parseCondition(raw: unknown): Record<string, unknown> | null {
   return null;
 }
 
+function parseMissingSpecs(raw: unknown): string[] | null {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const v = JSON.parse(raw);
+      if (Array.isArray(v)) return v.map(String).filter(Boolean);
+    } catch { /* fall through */ }
+  }
+  return null;
+}
+
 /** Dashboard payload — full catalogue + guide + vendors + latest rates. */
 export async function getProductLineData(): Promise<ProductLineData> {
   return cached(DATA_KEY, DATA_TTL_MS, async () => {
@@ -112,8 +124,7 @@ export async function getProductLineData(): Promise<ProductLineData> {
         videoUrl: r.videoUrl ? String(r.videoUrl) : null,
         quotedAt: String(r.quotedAt ?? ''),
         enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
-        batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
-        sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
+        missingSpecs: parseMissingSpecs((r as any).missingSpecs),
         active: r.active !== false && r.active !== 0,
       };
     });
@@ -217,8 +228,7 @@ export async function getRatesForProduct(productId: string): Promise<RateRow[]> 
       videoUrl: r.videoUrl ? String(r.videoUrl) : null,
       quotedAt: String(r.quotedAt ?? ''),
       enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
-        batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
-        sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
+      missingSpecs: parseMissingSpecs((r as any).missingSpecs),
       active: r.active !== false && r.active !== 0,
     }));
   });
@@ -262,8 +272,7 @@ export async function getRateById(id: string): Promise<RateRow | null> {
     videoUrl: (r as any).videoUrl ? String((r as any).videoUrl) : null,
     quotedAt: String((r as any).quotedAt ?? ''),
     enquiryRef: (r as any).enquiryRef != null ? String((r as any).enquiryRef) : null,
-    batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
-    sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
+    missingSpecs: parseMissingSpecs((r as any).missingSpecs),
     active: (r as any).active !== false && (r as any).active !== 0,
   };
 }
@@ -369,8 +378,7 @@ export async function getProductDetail(id: string): Promise<ProductDetail> {
       videoUrl: r.videoUrl ? String(r.videoUrl) : null,
       quotedAt: String(r.quotedAt ?? ''),
       enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
-        batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
-        sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
+      missingSpecs: parseMissingSpecs((r as any).missingSpecs),
       active: r.active !== false && r.active !== 0,
     }));
     return {

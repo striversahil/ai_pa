@@ -148,6 +148,33 @@ async function loadHistory<T>(def: CopilotDef<T>, ctx: T): Promise<{ messages: C
   }
 }
 
+/** Tool-output carry-forward (keepToolOutputs defs only): last turn's tool
+ *  results, appended to the next turn's system prompt so "continue" truly
+ *  continues. Bounded (12k chars) — big reads fit, history stays cheap. */
+const TRACE_CAP = 12_000;
+export async function loadToolTrace<T>(def: CopilotDef<T>, ctx: T): Promise<string> {
+  try {
+    if (!def.keepToolOutputs) return '';
+    const key = def.historyKey?.(ctx);
+    if (!key) return '';
+    const t = await cacheGet<string>(`${key}:trace`, def.historyTtlMs ?? SESSION_TTL_MS);
+    return typeof t === 'string' ? t : '';
+  } catch {
+    return '';
+  }
+}
+export async function saveToolTrace<T>(def: CopilotDef<T>, ctx: T, parts: string[]): Promise<void> {
+  try {
+    if (!def.keepToolOutputs || !parts.length) return;
+    const key = def.historyKey?.(ctx);
+    if (!key) return;
+    const ttl = def.historyTtlMs ?? SESSION_TTL_MS;
+    const prev = (await cacheGet<string>(`${key}:trace`, ttl)) ?? '';
+    const combined = [...parts, ...(prev ? [prev] : [])].join('\n').slice(0, TRACE_CAP);
+    await cacheSet(`${key}:trace`, combined, ttl);
+  } catch { /* best-effort */ }
+}
+
 /** Append this exchange, keeping the window bounded. Skipped when stateless. */
 async function saveHistory<T>(def: CopilotDef<T>, ctx: T, userText: string, replyText: string): Promise<void> {
   try {
@@ -296,22 +323,17 @@ export async function runTurn<T>(
   if (hist.userTurns >= MAX_HUMAN_TURNS) {
     return { reply: LIMIT_REPLY, proposals: [], activity: [] };
   }
+  const toolTrace = await loadToolTrace(def, ctx);
   const messages: ChatMessage[] = [
-    { role: 'system', content: def.systemPrompt(ctx) },
+    { role: 'system', content: def.systemPrompt(ctx) + (toolTrace ? `\n\n[Tool outputs from your earlier turns here \u2014 already known, do NOT re-run these tools, continue from them:\n${toolTrace}]` : '') },
     ...hist.messages,
-    { role: 'user', content: truncateForModel(String(message ?? '')) },
+    { role: 'user', content: String(message ?? '') },
   ];
-/** Cap user messages for the model AND say so: silent truncation makes the
- *  model confidently miscount ("7 quotes") what it only partially saw. */
-function truncateForModel(s: string, cap = 2000): string {
-  if (s.length <= cap) return s;
-  return s.slice(0, cap) + `\n\n[message truncated here — you only see the first ${cap} of ${s.length} characters; say what you received before acting on counts]`;
-}
-
   const proposals: CopilotProposal[] = [];
+  const traceParts: string[] = [];
   const activity: CopilotActivity[] = [];
   let reply = '';
-  for (let step = 0; step < MAX_STEPS; step++) {
+  for (let step = 0; step < (def.maxSteps ?? MAX_STEPS); step++) {
     let res: any;
     try {
       res = await gateway.complete({
@@ -343,7 +365,7 @@ function truncateForModel(s: string, cap = 2000): string {
         activity.push({ tool: tc.name, label });
         messages.push({
           role: 'tool',
-          content: JSON.stringify(out.result).slice(0, 3000),
+          content: (() => { const c = JSON.stringify(out.result).slice(0, def.toolResultCap ?? 3000); traceParts.push(`${tc.name}: ${c}`.slice(0, def.toolResultCap ?? 3000)); return c; })(),
           tool_call_id: tc.id,
         });
       }
@@ -357,6 +379,7 @@ function truncateForModel(s: string, cap = 2000): string {
   // response returns, killing any pending KV put — the next turn would land
   // on a fresh isolate with no recall ("new session" symptom).
   await saveHistory(def, ctx, String(message ?? ''), reply);
+  await saveToolTrace(def, ctx, traceParts);
   return { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
 }
 
@@ -397,22 +420,17 @@ export async function* streamTurn<T>(
     yield { type: 'done', data: r };
     return r;
   }
+  const toolTrace = await loadToolTrace(def, ctx);
   const messages: ChatMessage[] = [
-    { role: 'system', content: def.systemPrompt(ctx) },
+    { role: 'system', content: def.systemPrompt(ctx) + (toolTrace ? `\n\n[Tool outputs from your earlier turns here \u2014 already known, do NOT re-run these tools, continue from them:\n${toolTrace}]` : '') },
     ...hist.messages,
-    { role: 'user', content: truncateForModel(String(message ?? '')) },
+    { role: 'user', content: String(message ?? '') },
   ];
-/** Cap user messages for the model AND say so: silent truncation makes the
- *  model confidently miscount ("7 quotes") what it only partially saw. */
-function truncateForModel(s: string, cap = 2000): string {
-  if (s.length <= cap) return s;
-  return s.slice(0, cap) + `\n\n[message truncated here — you only see the first ${cap} of ${s.length} characters; say what you received before acting on counts]`;
-}
-
   const proposals: CopilotProposal[] = [];
+  const traceParts: string[] = [];
   const activity: CopilotActivity[] = [];
   let reply = '';
-  for (let step = 0; step < MAX_STEPS; step++) {
+  for (let step = 0; step < (def.maxSteps ?? MAX_STEPS); step++) {
     let stepContent = '';
     // Live streaming: every content token goes out as a delta immediately
     // (token-by-token typing). Steps that end in tool calls are working
@@ -487,7 +505,7 @@ function truncateForModel(s: string, cap = 2000): string {
         const act = { tool: tc.name, label };
         activity.push(act);
         yield { type: 'activity', data: act };
-        messages.push({ role: 'tool', content: JSON.stringify(out.result).slice(0, 3000), tool_call_id: tc.id });
+        (() => { const c2 = JSON.stringify(out.result).slice(0, def.toolResultCap ?? 3000); traceParts.push(`${tc.name}: ${c2}`.slice(0, def.toolResultCap ?? 3000)); messages.push({ role: 'tool', content: c2, tool_call_id: tc.id }); })();
       }
       continue;
     }
@@ -500,5 +518,6 @@ function truncateForModel(s: string, cap = 2000): string {
   yield { type: 'done', data: final };
   // AWAIT (see runTurn): a fire-and-forget KV put dies with the isolate.
   await saveHistory(def, ctx, String(message ?? ''), reply);
+  await saveToolTrace(def, ctx, traceParts);
   return final;
 }

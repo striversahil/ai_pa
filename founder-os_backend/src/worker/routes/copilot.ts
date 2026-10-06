@@ -48,10 +48,11 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = def.checkAccess(me);
     if (denied) return c.json({ error: denied.error }, denied.status as any);
     const body = await c.req.json().catch(() => ({}));
-    const message = String(body?.message ?? '').trim().slice(0, 2000);
+    // No input cap (founder decision): full pastes ride to the model.
+    const message = String(body?.message ?? '').trim();
     if (!message) return c.json({ error: 'message required' }, 400);
     try {
-      const ctx = await def.buildCtx(c.env as any, me, { batchId: String(body?.batchId ?? body?.action?.batchId ?? '') });
+      const ctx = await def.buildCtx(c.env as any, me, {});
       return c.json(await runTurn(c.env as any, def, ctx, message));
     } catch (e: any) {
       return chatError(c, e);
@@ -64,10 +65,11 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = def.checkAccess(me);
     if (denied) return c.json({ error: denied.error }, denied.status as any);
     const body = await c.req.json().catch(() => ({}));
-    const message = String(body?.message ?? '').trim().slice(0, 2000);
+    // No input cap (founder decision): full pastes ride to the model.
+    const message = String(body?.message ?? '').trim();
     if (!message) return c.json({ error: 'message required' }, 400);
     try {
-      const ctx = await def.buildCtx(c.env as any, me, { batchId: String(body?.batchId ?? body?.action?.batchId ?? '') });
+      const ctx = await def.buildCtx(c.env as any, me, {});
       return sseResponse(streamTurn(c.env as any, def, ctx, message));
     } catch (e: any) {
       return chatError(c, e);
@@ -99,7 +101,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!def.executeProposal) return c.json({ error: 'this copilot is read-only', applied: 'none' }, 400);
     const body = await c.req.json().catch(() => ({}));
     try {
-      const ctx = await def.buildCtx(c.env as any, me, { batchId: String(body?.batchId ?? body?.action?.batchId ?? '') });
+      const ctx = await def.buildCtx(c.env as any, me, {});
       const { result, applied } = await def.executeProposal(
         ctx, (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
       );

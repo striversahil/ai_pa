@@ -55,8 +55,6 @@ const BOOL_FIELDS: Record<string, string[]> = {
   KypGuide: ['isRequired', 'active'],
   Vendor: ['active'],
   VendorRate: ['active'],
-  BulkBatch: ['disabled'],
-  BulkRow: ['isNewProduct'],
   LinkedinPost: ['hasImage', 'picked'],
 };
 
@@ -98,8 +96,6 @@ const DATE_FIELDS: Record<string, string[]> = {
   KypGuide: ['createdAt', 'updatedAt'],
   Vendor: ['createdAt', 'updatedAt'],
   VendorRate: ['quotedAt', 'createdAt', 'updatedAt'],
-  BulkBatch: ['quotedAt', 'createdAt', 'updatedAt'],
-  BulkRow: ['quotedAt', 'createdAt', 'updatedAt'],
   SoAttachment: ['createdAt'],
   LinkedinPost: ['postedAt', 'createdAt'],
   TelecallerScoreEvent: ['createdAt'],
@@ -160,8 +156,6 @@ const ID_FIELDS: Record<string, string> = {
   KypGuide: 'id',
   Vendor: 'id',
   VendorRate: 'id',
-  BulkBatch: 'id',
-  BulkRow: 'id',
   LinkedinPost: 'id',
 };
 
@@ -182,7 +176,6 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   Estimate: ['total'],
   PriceQuote: ['unitPrice'],
   VendorRate: ['pricePerUnit', 'discountPercent', 'baseRate', 'weightPerUnit'],
-  BulkRow: ['price', 'discount', 'weightPerUnit', 'matchConfidence'],
   MessageLineage: ['confidence'],
   WaTaskHistory: ['confidence'],
   OverrideLog: ['systemConfidence'],
@@ -260,12 +253,6 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   VendorRate: {
     vendor: { model: 'Vendor', fk: 'vendorId', one: true },
     product: { model: 'ProductItem', fk: 'productId', one: true },
-  },
-  BulkBatch: {
-    rows: { model: 'BulkRow', fk: 'batchId' },
-  },
-  BulkRow: {
-    batch: { model: 'BulkBatch', fk: 'batchId', one: true },
   },
 };
 
@@ -799,8 +786,6 @@ export class D1PrismaClient {
   get kypGuide() { return this.model('KypGuide'); }
   get vendor() { return this.model('Vendor'); }
   get vendorRate() { return this.model('VendorRate'); }
-  get bulkBatch() { return this.model('BulkBatch'); }
-  get bulkRow() { return this.model('BulkRow'); }
   // LinkedIn daily drafts (migration 0051).
   get linkedinPost() { return this.model('LinkedinPost'); }
 

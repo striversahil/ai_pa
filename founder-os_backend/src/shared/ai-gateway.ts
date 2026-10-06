@@ -85,10 +85,12 @@ export interface ProviderConfig {
 const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
 const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
 /** Default OpenRouter routing for the paid chat lane (founder-pinned):
- *  prefer streamlake/fp8, allow OpenRouter reroute on outage. Lives on the
- *  provider entry so EVERY caller (chat, intake, extraction) inherits it;
- *  per-request `extraParams` still overrides. */
-export const PAID_CHAT_ROUTING = { provider: { only: ['streamlake/fp8'], allow_fallbacks: true } };
+ *  streamlake/fp8 first, deepinfra/fp8 second, OpenRouter reroute after that.
+ *  `order` (not `only`) so a throttled/outed first choice spills forward
+ *  instead of failing the turn. Lives on the provider entry so EVERY caller
+ *  (chat, intake, extraction) inherits it; per-request `extraParams` still
+ *  overrides. */
+export const PAID_CHAT_ROUTING = { provider: { order: ['streamlake/fp8', 'deepinfra/fp8'], allow_fallbacks: true } };
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
   agnes: {
@@ -845,6 +847,9 @@ export class AiGateway {
         if (probing) callReq.timeoutMs = req.probeTimeoutMs;
         const result = await this.callProvider(provider, key, callReq);
         this.pool.reportSuccess(key);
+        // Proof-of-use audit: which key fingerprint served the call (no
+        // secret material — id is provider + first6/last4 only).
+        logger.info?.(`[AiGateway] served by ${key.id} (${provider.id})`);
         if (aiCacheKey) {
           try { await cacheSet(aiCacheKey, result, 5 * 60 * 1000); } catch {}
         }
@@ -910,8 +915,10 @@ export class AiGateway {
             logger.warn?.(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s, rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
             continue;
           }
-          // Immediate retry path: burst limits wave off — short sleep, reuse
-          // the key at once (no long cooldown), keep counting attempts.
+          // Burst 429s (RPM limits) on a sticky-pinned key: retrying the SAME
+          // key burns all attempts while sibling keys sit idle ("exhausted
+          // after 5"). Brief cooldown forces select() to fail the pin over to
+          // the next healthy key; short enough (≤60s) to rejoin fast.
           streak429++;
           if (
             !req.model && !wantsVision && provider.id === 'openrouter' &&
@@ -924,8 +931,8 @@ export class AiGateway {
           const retryAfter = this.extractRetryAfter(err);
           key.failures++;
           key.lastFailureAt = Date.now();
-          key.cooldownUntil = 0;
-          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''}`;
+          key.cooldownUntil = Date.now() + Math.min(retryAfter ?? 15_000, 60_000);
+          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''} — rotated to next key`;
           // Standardized backoff: 0.8s, 1.6s, 3.2s cap 5s — max 3 attempts total, then fail fast.
           if (attempt < maxAttempts - 1) {
             const backoff = Math.min(retryAfter ?? 800 * Math.pow(2, attempt), 5_000);
