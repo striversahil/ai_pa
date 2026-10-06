@@ -33,7 +33,55 @@
  * that mirrors this surface. Both read same AI_KEYS contract.
  */
 import { logger } from './logger';
-import { cacheGet, cacheSet } from './cache';
+import { cacheGet, cacheSet, cacheKeys } from './cache';
+
+const GATEWAY_USAGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const GATEWAY_USAGE_PREFIX = 'ai:usage:';
+
+export function gatewayUsageKey(date = new Date()): string {
+  return `${GATEWAY_USAGE_PREFIX}${date.toISOString().slice(0, 10)}`;
+}
+
+export async function logGatewayUsage(usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }): Promise<void> {
+  try {
+    const key = gatewayUsageKey();
+    const rec = await cacheGet<{ prompt: number; completion: number; total: number; calls: number }>(key, GATEWAY_USAGE_TTL_MS).catch(() => null);
+    const u = usage ?? {};
+    await cacheSet(key, {
+      prompt: (rec?.prompt ?? 0) + (u.prompt_tokens ?? 0),
+      completion: (rec?.completion ?? 0) + (u.completion_tokens ?? 0),
+      total: (rec?.total ?? 0) + (u.total_tokens ?? 0),
+      calls: (rec?.calls ?? 0) + 1,
+    }, GATEWAY_USAGE_TTL_MS);
+  } catch { /* best-effort */ }
+}
+
+export async function readGatewayUsage(days: number): Promise<{ total: number; calls: number; byDay: Array<{ day: string; total: number; calls: number }> }> {
+  const out = { total: 0, calls: 0, byDay: [] as Array<{ day: string; total: number; calls: number }> };
+  const n = Math.min(30, Math.max(1, Math.floor(days) || 7));
+  const cutoff = new Date(Date.now() - n * 24 * 60 * 60_000).toISOString().slice(0, 10);
+  let names: string[] = [];
+  try { names = await cacheKeys(GATEWAY_USAGE_PREFIX, 1000); } catch { names = []; }
+  const perDay = new Map<string, { total: number; calls: number }>();
+  for (const name of names) {
+    const m = /^ai:usage:(\d{4}-\d{2}-\d{2})$/.exec(name);
+    if (!m) continue;
+    const [, day] = m;
+    if (day < cutoff) continue;
+    let rec: { total?: number; calls?: number } | null = null;
+    try { rec = await cacheGet<any>(name, GATEWAY_USAGE_TTL_MS).catch(() => null); } catch { rec = null; }
+    const total = Number(rec?.total ?? 0);
+    const calls = Number(rec?.calls ?? 0);
+    if (!(total > 0)) continue;
+    out.total += total;
+    out.calls += calls;
+    perDay.set(day, { total, calls });
+  }
+  out.byDay = [...perDay.entries()]
+    .map(([day, v]) => ({ day, total: v.total, calls: v.calls }))
+    .sort((a, b) => (a.day < b.day ? -1 : 1));
+  return out;
+}
 
 // Stable hash for AI cache keys (djb2)
 function hashAI(s: string): string {
@@ -853,6 +901,7 @@ export class AiGateway {
         if (aiCacheKey) {
           try { await cacheSet(aiCacheKey, result, 5 * 60 * 1000); } catch {}
         }
+        if (result.usage) await logGatewayUsage(result.usage);
         return result;
       } catch (err) {
         lastErr = err;
@@ -1045,6 +1094,11 @@ export class AiGateway {
     const decoder = new TextDecoder();
     let buf = '';
     let gotData = false;
+    // Last provider-reported token usage seen on this stream (OpenRouter
+    // sends `usage` on the final chunk). Logged once the consumer drains
+    // the stream — streamTurn always consumes to completion, and the await
+    // below guarantees the KV write lands before the isolate freezes.
+    let lastUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
     // Probe failure: the model sent nothing before the first-data deadline —
     // flag it down (caller falls back to the fallback model) and throw a
     // retryable error shaped like the whole-stream timeout below.
@@ -1097,7 +1151,7 @@ export class AiGateway {
           try {
             const json: any = JSON.parse(data);
             const choice = json.choices?.[0];
-            if (!choice) { if (json.usage) yield { usage: json.usage }; continue; }
+            if (!choice) { if (json.usage) { lastUsage = json.usage; yield { usage: json.usage }; } continue; }
             const delta = choice.delta ?? {};
             if (typeof delta.content === 'string' && delta.content) yield { contentDelta: delta.content };
             if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) yield { reasoningDelta: delta.reasoning_content };
@@ -1107,7 +1161,7 @@ export class AiGateway {
             if (typeof delta.reasoning === 'string' && delta.reasoning) yield { reasoningDelta: delta.reasoning };
             if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) yield { toolCallDelta: delta.tool_calls };
             if (choice.finish_reason) yield { finishReason: choice.finish_reason };
-            if (json.usage) yield { usage: json.usage };
+            if (json.usage) { lastUsage = json.usage; yield { usage: json.usage }; }
           } catch { /* ignore parse */ }
         }
       }
@@ -1115,6 +1169,7 @@ export class AiGateway {
       try { reader.releaseLock(); } catch {}
     }
     this.pool.reportSuccess(key);
+    if (lastUsage) await logGatewayUsage(lastUsage);
   }
 
   /** Convenience: complete + parse JSON (falls back to extracting the first

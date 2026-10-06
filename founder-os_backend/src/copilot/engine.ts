@@ -225,10 +225,20 @@ async function logUsage(ctx: any): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-/** MIS readout: aggregate per-user chat turns over the last `days` days
- *  (UTC). Served inside /api/debug/ai-health — no new route needed. */
-export async function readChatUsage(days: number): Promise<{ total: number; users: Array<{ id: string; turns: number; lastAt: string | null }>; byDay: Array<{ day: string; turns: number }> }> {
-  const out = { total: 0, users: [] as Array<{ id: string; turns: number; lastAt: string | null }>, byDay: [] as Array<{ day: string; turns: number }> };
+/** MIS readout: aggregate per-user chat turns + gateway token usage over the
+ *  last `days` days (UTC). Served inside /api/debug/ai-health. */
+export async function readChatUsage(days: number): Promise<{
+  total: number;
+  users: Array<{ id: string; turns: number; lastAt: string | null }>;
+  byDay: Array<{ day: string; turns: number }>;
+  gateway: { total: number; calls: number; byDay: Array<{ day: string; total: number; calls: number }> };
+}> {
+  const out = {
+    total: 0,
+    users: [] as Array<{ id: string; turns: number; lastAt: string | null }>,
+    byDay: [] as Array<{ day: string; turns: number }>,
+    gateway: { total: 0, calls: 0, byDay: [] as Array<{ day: string; total: number; calls: number }> },
+  };
   const n = Math.min(30, Math.max(1, Math.floor(days) || 7));
   const cutoff = new Date(Date.now() - n * 24 * 60 * 60_000).toISOString().slice(0, 10);
   let names: string[] = [];
@@ -236,7 +246,6 @@ export async function readChatUsage(days: number): Promise<{ total: number; user
   const perUser = new Map<string, { turns: number; lastAt: string | null }>();
   const perDay = new Map<string, number>();
   for (const name of names) {
-    // name: copilot:usage:<YYYY-MM-DD>:<id>
     const m = /^copilot:usage:(\d{4}-\d{2}-\d{2}):(.+)$/.exec(name);
     if (!m) continue;
     const [, day, id] = m;
@@ -259,6 +268,10 @@ export async function readChatUsage(days: number): Promise<{ total: number; user
   out.byDay = [...perDay.entries()]
     .map(([day, turns]) => ({ day, turns }))
     .sort((a, b) => (a.day < b.day ? -1 : 1));
+  try {
+    const { readGatewayUsage } = await import('../shared/ai-gateway');
+    out.gateway = await readGatewayUsage(n);
+  } catch { /* best-effort */ }
   return out;
 }
 

@@ -9,10 +9,11 @@ type KeyHealth = {
   failures: number; cooldownUntil: number; lastError: string | null;
   lastUsedAt: number; successCount: number;
 };
+type GatewayUsage = { total: number; calls: number; byDay: Array<{ day: string; total: number; calls: number }> };
 type AiHealth = {
   keys: KeyHealth[]; count: number; storm: boolean;
   usageDays: number;
-  usage: { total: number; users: UsageUser[]; byDay: UsageDay[] };
+  usage: { total: number; users: UsageUser[]; byDay: UsageDay[]; gateway: GatewayUsage };
 };
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -133,6 +134,15 @@ export default function AiUsageDashboard() {
             <Stat label="Paid lane" value={paid ? (paid.enabled ? "Live" : "Disabled") : "Missing"} sub={paid ? `deepseek · ${paid.successCount} served` : "OPENROUTER_PAID_API_KEY unset"} />
             <Stat label="Pool state" value={data.storm ? "Throttled" : cooling > 0 ? `${cooling} cooling` : "Healthy"} sub={`${data.count} keys loaded`} />
           </div>
+
+          {usage.gateway && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <Stat label={`Gateway tokens · ${data.usageDays}d`} value={usage.gateway.total > 0 ? usage.gateway.total.toLocaleString() : "0"} sub="all LLM calls" />
+              <Stat label="Gateway calls" value={String(usage.gateway.calls)} sub="runners + extraction + chat" />
+              <Stat label="Avg tokens/call" value={usage.gateway.calls > 0 ? Math.round(usage.gateway.total / usage.gateway.calls).toLocaleString() : "—"} sub="prompt + completion" />
+              <Stat label="Gateway days" value={String(usage.gateway.byDay.length)} sub="with recorded usage" />
+            </div>
+          )}
 
           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-4 py-3">
             <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-3">Turns per day</p>
