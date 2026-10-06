@@ -8,7 +8,7 @@ import {
   createProduct, updateProduct, deleteProduct,
   createGuide, updateGuide, deleteGuide,
   createVendor, updateVendor, deleteVendor,
-  createRate, updateRate, setRateActive,
+  createRate, updateRate, setRateActive, deleteRate,
 } from '../automations/product-line/update';
 
 void prisma;
@@ -114,6 +114,11 @@ router.patch('/rates/:id', quoteGuard, asyncHandler(async (req, res) => {
       res.json(await updateRate(String(req.params.id), body));
     }
   } catch (e: any) { writeError(res, e); }
+}));
+// Hard delete: the quote row is gone completely.
+router.delete('/rates/:id', quoteGuard, asyncHandler(async (req, res) => {
+  try { res.json(await deleteRate(String(req.params.id))); }
+  catch (e: any) { writeError(res, e); }
 }));
 
 export default router;

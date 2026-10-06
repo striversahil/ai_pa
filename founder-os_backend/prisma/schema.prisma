@@ -859,12 +859,74 @@ model VendorRate {
   videoUrl        String?  // vendor manufacturing video (https URL)
   quotedAt        DateTime     @default(now())
   enquiryRef      String?
+  batchId         String?      // bulk-import block id (one-click disable/delete)
+  sourceRef       String?      // e.g. bulk:<batchId>:row-12 (traceability)
+  batch           BulkBatch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
   active          Boolean      @default(true)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
   @@index([productId, attrKey])
   @@index([vendorId])
+  @@index([batchId])
+}
+
+// ── Bulk price-list import (staging: parse → match → review → commit as block) ──
+// One BulkBatch = one dropped-in price list. Rows stage in BulkRow until the
+// batch commits; committed rates carry batchId for block disable/delete.
+model BulkBatch {
+  id           String   @id @default(uuid())
+  vendorId     String?  // preset vendor (every row inherits) — null = detect per row
+  sourceKind   String   @default("paste") // paste | csv | xlsx | pdf | image
+  sourceName   String   @default("")
+  sourceFileKey String? // KV /api/chat/files key for xlsx/pdf/image sources
+  sourceText   String?  // raw pasted/csv text (small sources only)
+  quotedAt     DateTime @default(now()) // batch-level quote date, editable per row later
+  status       String   @default("review") // parsing | review | committed
+  disabled     Boolean  @default(false) // block toggle: hides all batch rates
+  rowCount     Int      @default(0)
+  readyCount   Int      @default(0)
+  createdBy    String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  rows         BulkRow[]
+  rates        VendorRate[]
+
+  @@index([status, createdAt])
+}
+
+model BulkRow {
+  id              String    @id @default(uuid())
+  batchId         String
+  batch           BulkBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  rowNo           Int       @default(0)
+  rawText         String    @default("")
+  rawHash         String    @default("") // dedupe key (same vendor text seen before)
+  productId       String?
+  productName     String?
+  isNewProduct    Boolean   @default(false)
+  newCategory     String?
+  vendorId        String?
+  vendorName      String?
+  price           Float?
+  unit            String?
+  discount        Float?
+  moq             String?
+  deliveryDays    Int?
+  weightPerUnit   Float?
+  packageQty      String?
+  packageDims     String?
+  quotedAt        DateTime?
+  specs           String?   // JSON {attrKey: value}
+  missing         String?   // JSON string[] of missing field labels
+  matchConfidence Float?
+  duplicateOf     String?   // existing VendorRate id (already in master)
+  status          String    @default("needs-product") // matched | needs-product | needs-specs | ready | duplicate
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([batchId, status])
+  @@index([rawHash])
 }
 
 // ── Accounts (recurring compliance taskbar: senior / junior + MIS control) ──

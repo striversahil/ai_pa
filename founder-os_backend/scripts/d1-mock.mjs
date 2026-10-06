@@ -86,6 +86,15 @@ export function fakeD1() {
             }
             return { success: true, meta: { changes } };
           }
+          if (/^delete/i.test(q)) {
+            const m = q.match(/DELETE FROM "?(\w+)"?\s+WHERE\s+([\s\S]*)/i);
+            if (!m) return { success: true, meta: { changes: 0 } };
+            const table = ensure(m[1]);
+            const before = table.length;
+            const kept = table.filter((r) => !matchWhere(r, m[2], vals, 0));
+            tables.set(m[1], kept);
+            return { success: true, meta: { changes: before - kept.length } };
+          }
           return { success: true, meta: { changes: 0 } };
         },
         async first() {
@@ -142,8 +151,13 @@ export function fakeD1() {
     },
     async exec() { return { success: true }; },
     async batch(stmts) {
+      // Real D1 returns result sets for SELECTs inside a batch (used by
+      // auth getAuthSnapshot); writes return run metas.
       const out = [];
-      for (const s of stmts) out.push(await s.run());
+      for (const s of stmts) {
+        if (/^\s*select/i.test(s._q || '')) out.push(await s.all());
+        else out.push(await s.run());
+      }
       return out;
     },
     async dump() { return new ArrayBuffer(0); },

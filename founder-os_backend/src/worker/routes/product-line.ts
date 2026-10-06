@@ -188,4 +188,14 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json(row);
     } catch (e: any) { return writeError(c, e); }
   });
+  // Hard delete: the quote row is gone completely.
+  app.delete('/api/product-line/rates/:id', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return misScopeError(c, e); }
+    try {
+      const { deleteRate } = await import('../../automations/product-line/update');
+      const out = await deleteRate(c.req.param('id') ?? '');
+      notifyLive(c, { type: LiveEvent.ProductLine });
+      return c.json(out);
+    } catch (e: any) { return writeError(c, e); }
+  });
 }

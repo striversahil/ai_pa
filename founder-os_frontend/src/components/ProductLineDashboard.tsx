@@ -9,6 +9,7 @@ import {
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ProductCopilot from "./ProductCopilot";
+import BulkImportDashboard from "./BulkImportDashboard";
 
 // Mirror: founder-os_backend/src/automations/product-line/types.ts
 interface ProductRow { id: string; category: string; name: string; aliases: string[]; active: boolean; guideCount: number; rateCount: number; }
@@ -20,6 +21,7 @@ interface RateRow {
   pricePerUnit: number | null; unit: string; discountPercent: number | null; baseRate: number | null;
   weightPerUnit: number | null; packageQty: string | null; packageDims: string | null;
   moq: string | null; deliveryDays: number | null; quotedAt: string; enquiryRef: string | null; active: boolean;
+  batchId: string | null; sourceRef: string | null;
   imageUrl: string | null; videoUrl: string | null;
 }
 interface Payload { products: ProductRow[]; guide: Record<string, GuideRow[]>; vendors: VendorRow[]; rates: RateRow[]; }
@@ -98,7 +100,7 @@ export default function ProductLineDashboard() {
     return res.json();
   });
 
-  const [tab, setTab] = useState<"products" | "vendors" | "rates">("products");
+  const [tab, setTab] = useState<"products" | "vendors" | "rates" | "bulk">("products");
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [busy, setBusy] = useState(false);
@@ -116,6 +118,7 @@ export default function ProductLineDashboard() {
   const [delGuide, setDelGuide] = useState<GuideRow | null>(null);
   const [vModal, setVModal] = useState<null | { id?: string; name: string; contactPerson: string; contactPhone1: string; contactPhone2: string; location: string; address: string; yearEstablished: string; vendorType: string; active: boolean }>(null);
   const [delVendor, setDelVendor] = useState<VendorRow | null>(null);
+  const [delRate, setDelRate] = useState<RateRow | null>(null);
   const [photoList, setPhotoList] = useState<{ key: string; url: string; name: string }[]>([]);
   const [photoBusy, setPhotoBusy] = useState(false);
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -344,10 +347,10 @@ export default function ProductLineDashboard() {
         ) : (
           <>
             <div className="flex gap-5 border-b border-[var(--border-card)]">
-              {(["products", "vendors", "rates"] as const).map((t) => (
+              {(["products", "vendors", "rates", ...(canEdit ? ["bulk"] as const : [])] as const).map((t) => (
                 <button key={t} type="button" onClick={() => setTab(t)}
                   className={`pb-2 -mb-px text-xs font-bold cursor-pointer bg-transparent border-0 border-b-2 ${tab === t ? "border-brand-indigo text-[var(--text-primary)]" : "border-transparent text-[var(--text-tertiary)]"}`}>
-                  {t[0].toUpperCase() + t.slice(1)}
+                  {t === "bulk" ? "Bulk import" : t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
@@ -490,6 +493,7 @@ export default function ProductLineDashboard() {
                             className={`flex-shrink-0 rounded-xl border-2 px-3.5 py-2.5 text-left cursor-pointer bg-transparent ${active ? "border-brand-indigo" : "border-[var(--border-card)]"}`}>
                             <p className={`text-[13px] font-extrabold ${active ? "text-brand-indigo" : "text-[var(--text-primary)]"}`}>
                               {r.vendorName ?? "Unknown"}{r.active ? "" : " · off"}
+                              {r.batchId && <span title={`Bulk import ${r.sourceRef ?? r.batchId}`} className="ml-1.5 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-600">bulk</span>}
                             </p>
                             <p className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">{specSummary(r)}</p>
                             <p className="mt-0.5 text-[13px] font-extrabold tabular-nums text-[var(--text-primary)]">
@@ -668,7 +672,7 @@ export default function ProductLineDashboard() {
                     <>
                       <span className="flex-1" />
                       <button type="button" onClick={() => setVModal({ id: v.id, name: v.name, contactPerson: v.contactPerson ?? "", contactPhone1: v.contactPhone1 ?? "", contactPhone2: v.contactPhone2 ?? "", location: v.location ?? "", address: v.address ?? "", yearEstablished: v.yearEstablished != null ? String(v.yearEstablished) : "", vendorType: v.vendorType, active: v.active })} className={ghostBtn}><Pencil size={12} /> Edit</button>
-                      <button type="button" onClick={() => setDelVendor(v)} className={dangerBtn}>Off</button>
+                      <button type="button" onClick={() => setDelVendor(v)} className={dangerBtn}><Trash2 size={12} /> Delete</button>
                     </>
                   )}
                 </div>
@@ -722,7 +726,8 @@ export default function ProductLineDashboard() {
                     {canQuote && (
                       <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60 text-right whitespace-nowrap">
                         <button type="button" onClick={() => openRateModal(r.productId ?? "", r)} className={ghostBtn}><Pencil size={12} /> Edit</button>{" "}
-                        <button type="button" disabled={busy} onClick={() => void mutate(() => api(`/api/product-line/rates/${r.id}`, "PATCH", { active: !r.active }).then(() => {}))} className={ghostBtn}>{r.active ? "Turn off" : "Turn on"}</button>
+                        <button type="button" disabled={busy} onClick={() => void mutate(() => api(`/api/product-line/rates/${r.id}`, "PATCH", { active: !r.active }).then(() => {}))} className={ghostBtn}>{r.active ? "Turn off" : "Turn on"}</button>{" "}
+                        <button type="button" disabled={busy} onClick={() => setDelRate(r)} className={dangerBtn}><Trash2 size={12} /> Delete</button>
                       </td>
                     )}
                   </tr>
@@ -738,6 +743,9 @@ export default function ProductLineDashboard() {
           </div>
         </div>
       )}
+
+      {/* ══ LIST: bulk import (root-only staging → commit-as-block) ══ */}
+      {!detailId && tab === "bulk" && <BulkImportDashboard />}
 
       {/* ── Product modal ── */}
       {pModal && (
@@ -863,10 +871,26 @@ export default function ProductLineDashboard() {
       )}
 
       {delVendor && (
-        <ModalShell title={`Turn off ${delVendor.name}?`} onClose={() => setDelVendor(null)} narrow>
-          <p className="text-[13px] leading-relaxed text-[var(--text-secondary)]">Soft off — its {delVendor.rateCount} rate row(s) stay queryable.</p>
-          <ModalFoot onCancel={() => setDelVendor(null)} busy={busy} danger="Turn off"
+        <ModalShell title={`Delete ${delVendor.name}?`} onClose={() => setDelVendor(null)} narrow>
+          <p className="text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {delVendor.rateCount > 0
+              ? <span className="font-bold text-[var(--color-danger)]">Blocked while {delVendor.rateCount} vendor rate(s) reference it — delete those quotes first.</span>
+              : "The vendor row is gone completely. This cannot be undone."}
+          </p>
+          <ModalFoot onCancel={() => setDelVendor(null)} busy={busy} danger="Delete" disabled={delVendor.rateCount > 0}
             onSave={() => void mutate(async () => { await api(`/api/product-line/vendors/${delVendor.id}`, "DELETE"); setDelVendor(null); })} />
+        </ModalShell>
+      )}
+
+      {delRate && (
+        <ModalShell title="Delete this quote?" onClose={() => setDelRate(null)} narrow>
+          <p className="text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            <span className="font-bold text-[var(--text-primary)]">{delRate.productName ?? "—"}</span>
+            {" @ "}{delRate.pricePerUnit != null ? `${fmtINR(delRate.pricePerUnit)}${delRate.unit ? `/${delRate.unit}` : ""}` : "—"}
+            {" — "}{delRate.vendorName ?? "—"}. Permanent — the quote row is gone completely. This cannot be undone.
+          </p>
+          <ModalFoot onCancel={() => setDelRate(null)} busy={busy} danger="Delete"
+            onSave={() => void mutate(async () => { await api(`/api/product-line/rates/${delRate.id}`, "DELETE"); setDelRate(null); })} />
         </ModalShell>
       )}
 

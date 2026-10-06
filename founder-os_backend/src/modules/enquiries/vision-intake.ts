@@ -1,9 +1,9 @@
 /**
- * vision-intake.ts — Worker-native Agnes vision intake (no GH Actions).
+ * vision-intake.ts — Worker-native vision intake (no GH Actions).
  *
- * Directly in the Worker (via waitUntil), uses Agnes agnes-3.0-flash vision
- * (probed alive 2026-09-21 PM; 2.5-flash remains the automatic fallback if
- * the 3.0 channel ever hangs again).
+ * Awaited inline by the write routes (no waitUntil, no sweeper), paid DeepSeek lane primary
+ * (deepseek-v4.1-flash for text; the lane's vision model for photo passes),
+ * Agnes → OpenRouter free as fallbacks.
  *   Call 1 SEGMENT (vision+text, NO catalogue): splits unstructured text +
  *   enquiry/item images into verbatim line items. The model never sees KYP
  *   so it cannot hallucinate catalogue names or drop lines to fit them.
@@ -37,7 +37,7 @@ import {
 } from '../../automations/product-line/match';
 import type { EnquiryStore } from './store';
 
-const ROUTER_SYSTEM_AGNES = `You are a B2B industrial-spare intake for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
+const ROUTER_SYSTEM = `You are a B2B industrial-spare intake for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
 For EACH item return: {"verbatim": "client wording for the product, copied exactly as written/seen — NEVER rename", "qty": "quantity with unit or empty", "dims": "dimensions as written", "spec": "material/variant/spec detail as written", "name": "short product name derived from verbatim"}.
 Also extract the lead block: {"lead": {"clientCompany": "customer company, or empty", "contactName": "contact person, or empty", "contactEmail": "or empty", "contactPhone": "mobile/phone, or empty", "location": "city/state, or empty", "sourceLead": "lead source like IndiaMART/reference, or empty"}} — NEVER invent; empty when not stated. The sales agent's own name ("Lead of ...") is NOT the customer — ignore it.
 Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
@@ -158,18 +158,19 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
 
   const gateway = getGateway(env as any);
   const health = gateway.health();
+  const hasPaid = health.some((h) => h.provider === 'openrouter-paid');
   const hasAgnes = health.some((h) => h.provider === 'agnes');
-  const hasGroq = health.some((h) => h.provider === 'groq');
   const hasOpenRouter = health.some((h) => h.provider === 'openrouter');
-  if (!hasAgnes && !hasGroq && !hasOpenRouter) {
+  if (!hasPaid && !hasAgnes && !hasOpenRouter) {
     console.warn('[vision-intake] no AI key — skipping');
     return;
   }
-  // Standardized fallback chain: Agnes primary → Groq vision → OpenRouter vision
-  // Ensures manual intake never sticks on Agnes 1015 WAF (Cloudflare IP throttled)
+  // Paid DeepSeek lane primary (text → deepseek-v4.1-flash; photo passes ride
+  // the lane's vision model). Agnes → OpenRouter free stay as fallbacks so
+  // intake never sticks on a single provider. (Groq keys never load — dropped.)
   const providers: string[] = [];
+  if (hasPaid) providers.push('openrouter-paid');
   if (hasAgnes) providers.push('agnes');
-  if (hasGroq) providers.push('groq');
   if (hasOpenRouter) providers.push('openrouter');
   // Dedupe while preserving order
   const chain = [...new Set(providers)];
@@ -218,11 +219,14 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
         const t = setTimeout(() => ac.abort(), 20_000);
         try {
           routed = await gateway.completeJson<any>({
-            messages: [{ role: 'system', content: ROUTER_SYSTEM_AGNES }, { role: 'user', content }],
+            messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content }],
             temperature: 0, json: true, maxTokens: 24000, provider: prov, signal: ac.signal as any,
             // Never burn 100s on doomed direct-Agnes attempts: relay lane if
             // warm, else fail fast to the next provider (OpenRouter).
             agnesRelayOnly: true,
+            // Splitting lines needs no chain-of-thought — thinking tokens are
+            // billed output with zero UI use on this path.
+            reasoningOff: true,
           });
         } finally { clearTimeout(t); }
         lastErr = null;
@@ -355,6 +359,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
           ],
           temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac2.signal as any,
           agnesRelayOnly: true,
+          reasoningOff: true,
         });
       } finally { clearTimeout(t2); }
       const matches = Array.isArray(out?.matches) ? out.matches : [];
@@ -450,6 +455,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
           ],
           temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac3.signal as any,
           agnesRelayOnly: true,
+          reasoningOff: true,
         });
       } finally { clearTimeout(t3); }
       const checks = Array.isArray(raw?.checks) ? raw.checks : [];
@@ -576,71 +582,4 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   console.log(`[vision-intake] ${id}: provider=${successProvider} items=${outItems.length} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
 }
 
-/**
- * sweepStaleAiPending — self-healing backstop for intake jobs that died with
- * zero output (kicked but the waitUntil task never wrote KV or markers, or
- * pre-fix fossils still carrying `aiPending`).
- *
- * Finds rows still carrying `"aiPending":true` that haven't been touched for
- * `olderThanMin` (default 10 — a fresh save has its own in-flight intake, so
- * never double-kick) and re-runs the intake for up to `maxRows` (default 3,
- * oldest first, sequential to bound edge CPU). A per-row sweep-claim backs
- * off repeats to one attempt/hour so a permanently-failing row can't burn
- * LLM calls every sweep. Pure D1 + store — no Zoho/NeoDove traffic.
- */
-export async function sweepStaleAiPending(
-  env: Record<string, unknown>,
-  store: EnquiryStore,
-  opts?: { olderThanMin?: number; maxRows?: number },
-): Promise<{ checked: number; rekicked: string[] }> {
-  const olderThanMs = (opts?.olderThanMin ?? 10) * 60_000;
-  const maxRows = opts?.maxRows ?? 3;
-  const cutoff = new Date(Date.now() - olderThanMs).toISOString();
-  const backoffCutoff = new Date(Date.now() - 60 * 60_000).toISOString();
-  const out = { checked: 0, rekicked: [] as string[] };
-  const db: any = (env as any)?.DB;
-  if (!db) return out;
-  let ids: string[] = [];
-  try {
-    const res: any = await db
-      .prepare(`SELECT id FROM Enquiry WHERE items LIKE ? AND updatedAt < ? ORDER BY updatedAt ASC LIMIT ?`)
-      .bind('%"aiPending":true%', cutoff, maxRows)
-      .all();
-    const rows = Array.isArray(res?.results) ? res.results : [];
-    ids = rows.map((r: any) => String(r?.id ?? '')).filter(Boolean);
-  } catch (e: any) {
-    console.log(`[intake-sweep] candidate scan failed (${String(e?.message ?? e).slice(0, 120)})`);
-    return out;
-  }
-  out.checked = ids.length;
-  if (!ids.length) return out;
-  for (const id of ids) {
-    try {
-      // Backoff: skip rows swept within the hour.
-      let claimedAt = '';
-      try {
-        const c: any = await db.prepare(`SELECT value FROM Setting WHERE key = ?`).bind('enquiry:intake:sweep:' + id).first();
-        claimedAt = String((c as any)?.value ?? '');
-      } catch {}
-      if (claimedAt && claimedAt > backoffCutoff) {
-        console.log(`[intake-sweep] ${id}: swept recently (${claimedAt}) — backing off`);
-        continue;
-      }
-      // Re-verify the flag is still set (row may have healed since the scan).
-      let cur: any = null;
-      try { cur = await store.getEnquiry(id); } catch { cur = null; }
-      const stillPending = Array.isArray((cur as any)?.items) && (cur as any).items.some((it: any) => it?.aiPending === true);
-      if (!cur || !stillPending) continue;
-      const nowIso = new Date().toISOString();
-      try {
-        await db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:sweep:' + id, nowIso, nowIso).run();
-      } catch {}
-      console.log(`[intake-sweep] ${id}: re-kicking stale intake`);
-      await runAgnesVisionIntake(env, store, id);
-      out.rekicked.push(id);
-    } catch (e: any) {
-      console.log(`[intake-sweep] ${id} failed (${String(e?.message ?? e).slice(0, 160)})`);
-    }
-  }
-  return out;
-}
+

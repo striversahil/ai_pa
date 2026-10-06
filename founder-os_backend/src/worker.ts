@@ -28,6 +28,7 @@ import { registerAutomationRoutes, registerMarketingRoutes } from './worker/rout
 import { registerAccountsRoutes } from './worker/routes/accounts';
 import { registerCopilotRoutes } from './worker/routes/copilot';
 import { registerProductLineRoutes } from './worker/routes/product-line';
+import { registerBulkImportRoutes } from './worker/routes/bulk-import';
 import { registerDigitalMarketingRoutes } from './worker/routes/digital-marketing';
 import { registerLinkedinRoutes } from './worker/routes/linkedin';
 import { registerEmailRoutes } from './worker/routes/email';
@@ -52,6 +53,7 @@ registerAutomationRoutes(app);
 registerAccountsRoutes(app);
 registerCopilotRoutes(app);
 registerProductLineRoutes(app);
+registerBulkImportRoutes(app);
 registerDigitalMarketingRoutes(app);
 registerLinkedinRoutes(app);
 registerEmailRoutes(app);

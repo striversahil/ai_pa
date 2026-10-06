@@ -10,13 +10,20 @@
  * (15 MB cap); upstream responses are STREAMED back byte-for-byte, so SSE
  * (`stream: true`) chat works transparently.
  *
- * Security: allowlists apihub.agnes-ai.com ONLY, requires the shared
+ * Security: allowlists apihub.agnes-ai.com + openrouter.ai ONLY (path-routed:
+ * /api/* → OpenRouter, everything else → Agnes), requires the shared
  * x-proxy-secret on every call, never logs keys or bodies.
  */
 'use strict';
 const http = require('http');
 
-const UPSTREAM = 'https://apihub.agnes-ai.com';
+const UPSTREAM_AGNES = 'https://apihub.agnes-ai.com';
+const UPSTREAM_OPENROUTER = 'https://openrouter.ai';
+// Path discriminator (matches the gateway's provider baseURL pathnames):
+// OpenRouter chat-completions live under /api/v1/..., Agnes under /v1/...
+function upstreamFor(url) {
+  return String(url || '').startsWith('/api/') ? UPSTREAM_OPENROUTER : UPSTREAM_AGNES;
+}
 const SECRET = String(process.env.PROXY_SECRET || '');
 const PORT = Number(process.env.PORT || 3000);
 const MAX_BODY = 15 * 1024 * 1024;
@@ -42,7 +49,7 @@ const server = http.createServer((req, res) => {
     console.log(`[proxy] ${req.method} ${req.url} -> ${res.statusCode} ${Date.now() - t0}ms`);
   });
   if (req.method === 'GET' && req.url === '/health') {
-    return send(res, 200, { ok: true, upstream: UPSTREAM });
+    return send(res, 200, { ok: true, upstreams: { agnes: UPSTREAM_AGNES, openrouter: UPSTREAM_OPENROUTER } });
   }
   if (req.method !== 'POST') {
     res.writeHead(405, { 'Content-Type': 'application/json' });
@@ -63,6 +70,9 @@ const server = http.createServer((req, res) => {
   req.on('end', async () => {
     if (tooLarge) return send(res, 413, { error: 'body too large' });
     const body = Buffer.concat(chunks);
+    // Hard allowlist: only the two pinned upstreams, routed by path. Any
+    // other path stays on the Agnes default (never an open proxy).
+    const UPSTREAM = upstreamFor(req.url);
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), UPSTREAM_TIMEOUT_MS);
@@ -104,4 +114,4 @@ const server = http.createServer((req, res) => {
   req.on('error', () => { try { res.destroy(); } catch {} });
 });
 
-server.listen(PORT, () => console.log(`[proxy] listening on :${PORT} → ${UPSTREAM}`));
+server.listen(PORT, () => console.log(`[proxy] listening on :${PORT} → agnes ${UPSTREAM_AGNES}, openrouter ${UPSTREAM_OPENROUTER}`));

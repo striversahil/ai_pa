@@ -21,7 +21,7 @@ The list query is derived from the saved curl export
 ## Multi-org (BUI + DPG)
 
 One export file carries the shared login (cookies/headers) plus **every**
-`organization_id` (see `orgs.js`). Rules:
+`organization_id` (core `zoho-orgs.js`). Rules:
 
 * All unique `organization_id=<digits>` in the file, in file order. The FIRST
   is the primary (BUI) — keep BUI first when refreshing cookies.
@@ -38,7 +38,8 @@ One export file carries the shared login (cookies/headers) plus **every**
 Shared/pure logic lives ONE level down, in the sync core
 (`founder-os_backend/src/shared/sync-core/` — also used by `crm-runner.js`).
 The files below own only zoho-sent endpoint shapes and orchestration; the old
-`comments.js` / `orgs.js` / `diff.js` paths are re-export shims.
+`diff.js` path is a re-export shim (`comments.js` / `orgs.js` shims deleted
+2026-10-05 — zero importers, real code lives in the core).
 
 | File | Owns | Never touches |
 |---|---|---|

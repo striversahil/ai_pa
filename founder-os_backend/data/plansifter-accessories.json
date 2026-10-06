@@ -1,0 +1,619 @@
+{
+  "category": "Plansifter Accessories",
+  "generatedAt": "2026-10-03T12:53:59Z",
+  "source": "D1 waba-worker: ProductItem + KypGuide (required + active only)",
+  "itemCount": 26,
+  "items": [
+    {
+      "id": "f5d97177-3323-4c1f-bf94-e42b69bc9028",
+      "name": "Big Triangle Cleaner",
+      "requiredQuestions": [
+        {
+          "key": "confirm_it_is_genuinely_the_big",
+          "question": "Confirm it is genuinely the 'big' size vs the standard triangle cleaner",
+          "guideNote": null
+        },
+        {
+          "key": "ask_trim_with_brush_or_with",
+          "question": "Ask trim: with brush or with studs, and brush type if applicable",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "7c99014e-70af-4ac3-ab23-b69707d46a3c",
+      "name": "Blue Cleaner with Brush, Studs",
+      "requiredQuestions": [
+        {
+          "key": "confirm_size_many_clients_order_this",
+          "question": "Confirm size -- many clients order this by colour name alone ('Blue Cleaner'), so size still needs confirming",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity",
+          "question": "Ask quantity",
+          "guideNote": null
+        },
+        {
+          "key": "offer_a_reference_picture_if_unsure",
+          "question": "Offer a reference picture if unsure",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "e0658694-0c22-45d5-9069-efafed0e5ec9",
+      "name": "Brass Brush",
+      "requiredQuestions": [
+        {
+          "key": "ask_quantity_in_pieces_one_size",
+          "question": "Ask quantity in pieces -- one size only, no size question needed",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "3c398a85-60ca-4055-80d2-0d6e22790aa7",
+      "name": "Cotton Cleaner",
+      "requiredQuestions": [
+        {
+          "key": "ask_ply_grade_2_ply_indian",
+          "question": "Ask ply/grade: 2 ply (Indian manufacture), 4 ply (imported, sturdier), 6 ply light green (70% cotton / 30% polyester), or 6 ply dark green (100% cotton, best quality)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity",
+          "question": "Ask quantity",
+          "guideNote": null
+        },
+        {
+          "key": "offer_a_reference_picture_if_unsure",
+          "question": "Offer a reference picture if unsure -- a common market size is roughly 75x58x8 mm sold about 500 pieces to a carton, but confirm the exact size and pack count before quoting",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "fa075212-87ad-4f43-ae36-71e08cf5100d",
+      "name": "Double Crimped Mesh",
+      "requiredQuestions": [
+        {
+          "key": "ask_opening_size_8_mm_10",
+          "question": "Ask opening size: 8 mm, 10 mm, or 12 mm",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity",
+          "question": "Ask quantity",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "b7587ca1-b8f7-4e26-8dde-948c0148a789",
+      "name": "Felt Seal",
+      "requiredQuestions": [
+        {
+          "key": "ask_which_type_namda_tape_cotton",
+          "question": "Ask which type: Namda tape, cotton tape (Nivard), or glue-backed (peel-paper) tape -- construction and MOQ differ by type",
+          "guideNote": null
+        },
+        {
+          "key": "namda_tape_ask_width_and_thickness",
+          "question": "Namda tape: ask width and thickness; MOQ 100 m per roll",
+          "guideNote": null
+        },
+        {
+          "key": "nivard_cotton_tape_thickness_is_fixed",
+          "question": "Nivard (cotton) tape: thickness is fixed at 1 mm, so only ask width; MOQ 50 m per roll",
+          "guideNote": null
+        },
+        {
+          "key": "glue_type_tape_only_available_in",
+          "question": "Glue-type tape: only available in 3 mm thickness; ask width and quantity; MOQ 100 m per roll",
+          "guideNote": null
+        },
+        {
+          "key": "always_confirm_quantity_in_meters",
+          "question": "Always confirm quantity in meters",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "aba5034e-abe5-4123-8dc0-3946673e5c23",
+      "name": "Fiber Rod / Nylon Rod",
+      "requiredQuestions": [
+        {
+          "key": "ask_diameter_thickness_length_and_quantity",
+          "question": "Ask diameter/thickness, length, and quantity",
+          "guideNote": null
+        },
+        {
+          "key": "request_a_picture_to_confirm_the",
+          "question": "Request a picture to confirm the material -- fiber and nylon look near-identical and clients are often unsure which they actually have",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "90f60743-425d-4b53-9995-ab60348498ce",
+      "name": "Manual Gun Tacker",
+      "requiredQuestions": [
+        {
+          "key": "ask_quantity_and_any_brand_preference",
+          "question": "Ask quantity and any brand preference -- Kangaroo and Max are the common manual brands stocked",
+          "guideNote": null
+        },
+        {
+          "key": "if_unsure_offer_a_reference_picture",
+          "question": "If unsure, offer a reference picture",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "0ed1be20-91c9-44d7-b49f-e6fe12c12349",
+      "name": "Milling Fabric",
+      "requiredQuestions": [
+        {
+          "key": "ask_grade_and_the_number_within",
+          "question": "Ask grade and the number within the grade -- 4 grade families exist: GG (6 GG to 74 GG), XXX (3 XXX to 17 XXX), MF (3 MF to 13 MF), N / double-X (3 N to 25 N)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_fabric_family_standard_sieving_fabric",
+          "question": "Ask fabric family: standard sieving fabric, Milling Forte (heavier thread, same opening, longer life), or heavy-duty XXX grade -- trade-off is service life vs open (sifting) area",
+          "guideNote": null
+        },
+        {
+          "key": "ask_width_3_standard_widths_stocked",
+          "question": "Ask width: 3 standard widths stocked -- 115 cm, 136 cm, 158 cm",
+          "guideNote": null
+        },
+        {
+          "key": "ask_length_in_meters_priced_and",
+          "question": "Ask length in meters -- priced and ordered per meter",
+          "guideNote": null
+        },
+        {
+          "key": "ask_the_plansifter_make_frame_stretching",
+          "question": "Ask the plansifter make -- frame/stretching sizes differ by machine (1250x1250 mm and 1500x1500 mm are common)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_the_micron_opening_if_the",
+          "question": "Ask the micron opening if the client knows it; if not, ask what flour it is sifting (maida, suji/rava, chokar/bran) so the opening can be matched to the product, since spec is really driven by micron opening rather than the grade number alone",
+          "guideNote": null
+        },
+        {
+          "key": "if_the_client_is_unsure_of",
+          "question": "If the client is unsure of the grade, request a picture or a physical swatch of the old cloth",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "08c0ad12-9392-494e-9885-eb0e031dd009",
+      "name": "Oval Ball",
+      "requiredQuestions": [
+        {
+          "key": "ask_the_plansifter_make_three_standard",
+          "question": "Ask the plansifter make -- three standard sizes/numbers (Type 1/2/3) exist and fit differs by machine; ask which type, or the diameter in mm, if the client is unsure",
+          "guideNote": null
+        },
+        {
+          "key": "ask_material_rubber_nylon_plastic_or",
+          "question": "Ask material: rubber, nylon (= plastic), or PVC (clear, also called penny ball); PVC is also available in a food-grade variant",
+          "guideNote": null
+        },
+        {
+          "key": "ask_material_hardness_of_the_rubber",
+          "question": "Ask material/hardness of the rubber if known",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity_moq_differs_by_material",
+          "question": "Ask quantity -- MOQ differs by material: rubber 500 pcs, nylon 200 pcs, PVC 200 pcs; order strictly in multiples of the MOQ",
+          "guideNote": null
+        },
+        {
+          "key": "offer_a_reference_picture_the_three",
+          "question": "Offer a reference picture -- the three types look alike at a glance",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "8f18203c-fcff-4c61-909f-bfeefea4236a",
+      "name": "Paper Gum Tape",
+      "requiredQuestions": [
+        {
+          "key": "ask_width_1_inch_1_5",
+          "question": "Ask width: 1 inch, 1.5 inch, or 2 inch",
+          "guideNote": null
+        },
+        {
+          "key": "ask_number_of_bales_1_inch",
+          "question": "Ask number of bales -- 1 inch = 30 rolls x 25 m per bale; 1.5 inch = 20 rolls x 25 m per bale; 2 inch = 15 rolls x 25 m per bale",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "b5dce4cf-b0bf-4016-84fb-6454c4baea4c",
+      "name": "Plansifter Channel",
+      "requiredQuestions": [
+        {
+          "key": "ask_brand_of_the_plansifter",
+          "question": "Ask brand of the plansifter",
+          "guideNote": null
+        },
+        {
+          "key": "ask_size_of_the_channel",
+          "question": "Ask size of the channel",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity",
+          "question": "Ask quantity",
+          "guideNote": null
+        },
+        {
+          "key": "request_a_picture_to_confirm",
+          "question": "Request a picture to confirm",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "65ee5ca7-3612-4bff-ada9-972e74a18acb",
+      "name": "Plansifter Sleeves",
+      "requiredQuestions": [
+        {
+          "key": "ask_diameter_and_length_in_inches",
+          "question": "Ask diameter and length in inches, being clear whether it is flat diameter or actual (inflated) diameter -- these two numbers are different and easy to mix up",
+          "guideNote": null
+        },
+        {
+          "key": "ask_finishing_option_single_ring_in",
+          "question": "Ask finishing option: single ring in the center, or elastic on both top and bottom",
+          "guideNote": null
+        },
+        {
+          "key": "ask_fabric_option_indian_regular_turkish",
+          "question": "Ask fabric option: Indian regular, Turkish, or imported (most expensive)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_the_plansifter_make_model_as",
+          "question": "Ask the plansifter make/model as an alternative to exact dimensions -- sizes are frame-specific and vary a lot between machines",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity_of_bags_pieces_required",
+          "question": "Ask quantity of bags/pieces required",
+          "guideNote": null
+        },
+        {
+          "key": "if_the_client_has_a_specific",
+          "question": "If the client has a specific fabric or the exact old sleeve, request a picture or a sample -- easy to send the wrong size without one",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "07a60703-d122-4220-a7a2-97f5c8fe1a64",
+      "name": "Plansifter Step Sheet",
+      "requiredQuestions": [
+        {
+          "key": "ask_variant_with_hole_or_without",
+          "question": "Ask variant: with hole or without hole",
+          "guideNote": null
+        },
+        {
+          "key": "ask_material_ms_regular_iron_or",
+          "question": "Ask material: MS (regular iron), or stainless steel if requested",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity",
+          "question": "Ask quantity",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "b05f8423-760e-4427-8e34-88b99f67a27f",
+      "name": "Plansifter Tin Sheet",
+      "requiredQuestions": [
+        {
+          "key": "ask_material_mild_steel_standard_or",
+          "question": "Ask material: mild steel (standard) or stainless steel if requested",
+          "guideNote": null
+        },
+        {
+          "key": "ask_gauge_28_gauge_or_32",
+          "question": "Ask gauge: 28 gauge or 32 gauge",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity",
+          "question": "Ask quantity",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "a2960d7e-8ca6-4620-998f-3961d66d9f78",
+      "name": "Plansifter Upper & Lower Housing",
+      "requiredQuestions": [
+        {
+          "key": "ask_the_manufacturer_name_of_the",
+          "question": "Ask the manufacturer name of the plansifter",
+          "guideNote": null
+        },
+        {
+          "key": "ask_the_size_of_the_plansifter",
+          "question": "Ask the size of the plansifter",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity_in_pieces",
+          "question": "Ask quantity in pieces",
+          "guideNote": null
+        },
+        {
+          "key": "request_pictures_to_confirm_the_exact",
+          "question": "Request pictures to confirm the exact part -- this is a large, made-to-order part, not stocked",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "7e4d30df-de63-48b0-a73a-0dc82c0ba502",
+      "name": "Plansifter Wire Rope",
+      "requiredQuestions": [
+        {
+          "key": "ask_what_it_is_for_plansifter",
+          "question": "Ask what it is for -- plansifter suspension/hanging vs general lifting/hoisting -- since the spec needed differs by use",
+          "guideNote": null
+        },
+        {
+          "key": "ask_thickness_diameter_of_the_wire",
+          "question": "Ask thickness/diameter of the wire rope (mm)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_length_quantity_required",
+          "question": "Ask length/quantity required",
+          "guideNote": null
+        },
+        {
+          "key": "ask_material_construction_mild_steel_galvanized",
+          "question": "Ask material/construction: mild steel (galvanized) or stainless steel, and specific grade if the client has a preference",
+          "guideNote": null
+        },
+        {
+          "key": "if_unsure_of_the_exact_rope",
+          "question": "If unsure of the exact rope needed, offer a reference picture",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "4d908ed2-4c74-4aea-bdba-7fc2c4bfabdc",
+      "name": "Plansifter Wooden Frame",
+      "requiredQuestions": [
+        {
+          "key": "ask_the_make_of_the_plansifter",
+          "question": "Ask the make of the plansifter -- frame size is machine-specific",
+          "guideNote": null
+        },
+        {
+          "key": "ask_finish_plain_wooden_or_with",
+          "question": "Ask finish: plain wooden, or with Sunmica laminate (increases service life)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_what_sits_underneath_the_mesh",
+          "question": "Ask what sits underneath the mesh: round-hole perforated sheet (6 mm holes) or double crimped mesh, and for the perforated option ask gauge -- 28 gauge (better quality) or 32 gauge (cheaper, thinner)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity_priced_per_piece",
+          "question": "Ask quantity, priced per piece",
+          "guideNote": null
+        },
+        {
+          "key": "if_unsure_offer_request_a_picture",
+          "question": "If unsure, offer/request a picture",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "e3091484-fa87-4a2c-b6da-a42b7b783a70",
+      "name": "Plansifter Works (Box)",
+      "requiredQuestions": [
+        {
+          "key": "ask_brand_of_the_plansifter",
+          "question": "Ask brand of the plansifter",
+          "guideNote": null
+        },
+        {
+          "key": "ask_size_of_the_plansifter",
+          "question": "Ask size of the plansifter",
+          "guideNote": null
+        },
+        {
+          "key": "ask_section_of_the_box_e",
+          "question": "Ask section of the box (E section or other)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity_of_boxes",
+          "question": "Ask quantity of boxes",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "4e56f28e-c5d8-42a6-9548-8d791d4634ed",
+      "name": "Pneumatic Tacker",
+      "requiredQuestions": [
+        {
+          "key": "ask_the_working_air_pressure_compressor",
+          "question": "Ask the working air pressure / compressor capacity available at the client's site",
+          "guideNote": null
+        },
+        {
+          "key": "ask_the_pin_staple_size_the",
+          "question": "Ask the pin/staple size the tool should take (see Staple Pin)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_brand_preference_and_quantity",
+          "question": "Ask brand preference and quantity",
+          "guideNote": null
+        },
+        {
+          "key": "if_unsure_offer_a_reference_picture",
+          "question": "If unsure, offer a reference picture",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "e8c78332-9a48-4aee-8757-99bc9823d657",
+      "name": "Rectangular Sieve Cleaner",
+      "requiredQuestions": [
+        {
+          "key": "ask_knob_type_metal_or_plastic",
+          "question": "Ask knob type: metal or plastic in the center",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity",
+          "question": "Ask quantity",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "a7886490-ec4e-4796-94a4-85429672864d",
+      "name": "Rubber Ball",
+      "requiredQuestions": [
+        {
+          "key": "ask_diameter_mm_16_mm_is",
+          "question": "Ask diameter (mm) -- 16 mm is the standard/default size -- and hardness if known",
+          "guideNote": null
+        },
+        {
+          "key": "ask_bounce_type_high_bounce_or",
+          "question": "Ask bounce type: high bounce or medium bounce",
+          "guideNote": null
+        },
+        {
+          "key": "ask_quantity_moq_500_pcs_order",
+          "question": "Ask quantity -- MOQ 500 pcs, order in multiples of 500",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "cce31da4-1de4-44a0-9278-0579ad8b8264",
+      "name": "Stainless Steel Wire Mesh",
+      "requiredQuestions": [
+        {
+          "key": "ask_mesh_count_holes_per_inch",
+          "question": "Ask mesh count (holes per inch); if the client does not know it, ask the opening in microns or mm (mm = wire-to-wire distance)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_wire_thickness_in_mm_or",
+          "question": "Ask wire thickness in mm or gauge",
+          "guideNote": null
+        },
+        {
+          "key": "ask_width_standard_is_4_ft",
+          "question": "Ask width -- standard is 4 ft (3 ft, 5 ft, 2 m, or wider also available)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_length_required_quantity_is_priced",
+          "question": "Ask length required; quantity is priced per meter",
+          "guideNote": null
+        },
+        {
+          "key": "ask_grade_304_standard_corrosion_resistant",
+          "question": "Ask grade: 304 (standard, corrosion-resistant) or 202 (cheaper, lower corrosion resistance)",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "6bef85d0-54b0-4aa9-b098-41cfc63076c3",
+      "name": "Staple Pin",
+      "requiredQuestions": [
+        {
+          "key": "ask_leg_length_and_crown_width",
+          "question": "Ask leg length and crown width (mm) -- must match the tacker brand/model, since pins for one gun brand do not always fit another; confirm which tacker/brand the client owns before quoting",
+          "guideNote": null
+        },
+        {
+          "key": "ask_material_galvanized_or_stainless",
+          "question": "Ask material: galvanized or stainless",
+          "guideNote": null
+        },
+        {
+          "key": "ask_number_of_boxes_required_1",
+          "question": "Ask number of boxes required -- 1 box = 20 packets, and it is priced/sold per box",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "942cb279-b7b9-4602-ac34-998c5fa7b3c3",
+      "name": "Star Type Cleaner",
+      "requiredQuestions": [
+        {
+          "key": "ask_trim_with_brush_or_with",
+          "question": "Ask trim: with brush or with studs",
+          "guideNote": null
+        },
+        {
+          "key": "ask_size_and_quantity",
+          "question": "Ask size and quantity",
+          "guideNote": null
+        }
+      ]
+    },
+    {
+      "id": "cb26d8bb-4f21-4a3e-a875-32ef52c6b1dc",
+      "name": "Triangle Cleaner (Standard)",
+      "requiredQuestions": [
+        {
+          "key": "ask_which_trim_combination_the_client",
+          "question": "Ask which trim combination the client currently has fitted: with brush, with studs, with metal knob, or with plastic knob",
+          "guideNote": null
+        },
+        {
+          "key": "if_the_brush_variant_ask_quality",
+          "question": "If the brush variant, ask quality: polyurethane, PU, or PU with a full internal nylon brush hidden inside (most expensive)",
+          "guideNote": null
+        },
+        {
+          "key": "ask_size_length_x_width_mm",
+          "question": "Ask size (length x width, mm) and quantity -- ordered in multiples of 100",
+          "guideNote": null
+        },
+        {
+          "key": "request_a_picture_or_the_old",
+          "question": "Request a picture or the old part -- this design has the most variants in the range",
+          "guideNote": null
+        }
+      ]
+    }
+  ]
+}

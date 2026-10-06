@@ -26,6 +26,7 @@ const ProductLineDashboard = dynamic(() => import("./ProductLineDashboard"), { s
 const SamarthOverviewDashboard = dynamic(() => import("./SamarthOverviewDashboard"), { ssr: false });
 const SahilOverviewDashboard = dynamic(() => import("./SahilOverviewDashboard"), { ssr: false });
 const LinkedinDashboard = dynamic(() => import("./LinkedinDashboard"), { ssr: false });
+const AiUsageDashboard = dynamic(() => import("./AiUsageDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -143,6 +144,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "samarth-overview") return <SamarthOverviewDashboard />;
     if (selected === "sahil-overview") return <SahilOverviewDashboard />;
     if (selected === "linkedin") return <LinkedinDashboard />;
+    if (selected === "ai-usage") return <AiUsageDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;

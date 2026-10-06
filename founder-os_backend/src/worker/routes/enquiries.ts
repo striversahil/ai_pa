@@ -2,11 +2,12 @@
 // routes/enquiries.ts — live sales-pipeline enquiry tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, type Bindings } from '../context';
+import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, requireMisScope, misScopeError, type Bindings } from '../context';
 import { chatTurn, clearSalesChat, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
+import { runAgnesVisionIntake } from '../../modules/enquiries/vision-intake';
 import { isZohoClosedStatus, procurementSubmittable } from '../../modules/enquiries/queues';
 import { getManagementQueues, invalidateManagementQueues } from '../../modules/enquiries/queues-cache';
 import { canManageRates } from '../../modules/enquiries/scopes';
@@ -21,41 +22,36 @@ function bustQueues(c: any): void {
   } catch { /* best-effort */ }
 }
 
-// Agnes vision intake — Worker-native, no GH Actions (fast edge, <5s).
-// Replaces the GH runner `enquiry-intake-runner.js` (OpenRouter vision).
-function kickAgnesIntake(c: any, id: string): void {
+// Write-time AI, INLINE (no waitUntil, no background kicks, no sweeper):
+// enrichment fills client fields + the procurement redaction cache, intake
+// splits items — all awaited before the response returns, so a finished save
+// is always a finished AI pass. Never throws: a failed AI pass must never
+// fail the save (it logs, and the next save retries from scratch).
+async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<void> {
+  const eid = String(id ?? '');
+  if (!eid) return;
   try {
     const store = createEnquiryStore(c.env);
-    const task = (async () => {
+    try {
+      await runEnquiryExtraction(c.env, store, eid);
+    } catch (e: any) {
+      console.error(`[enquiry-ai] ${eid}: extraction failed (${String(e?.message ?? e).slice(0, 160)})`);
+    }
+    if (withIntake) {
       try {
-        const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
-        await runAgnesVisionIntake(c.env as any, store, String(id));
-        // Broadcast so EnquiryDetail auto-populates without refresh (useIntake depends on updatedAt)
-        try {
-          const { LiveEvent } = await import('../../live');
-          const { broadcastLive } = await import('../../live');
-          // Use the same live channel as enquiry mutations — useEnquiryData merges the row live
-          broadcastLive(c, LiveEvent.Enquiries, { action: 'updated', id: String(id) });
-          // Also bust the tracker KV so next list fetch isn't stale
-          const { cacheDel } = await import('../../shared/cache');
-          const p = cacheDel(`enquiry:redacted:${String(id)}`);
-          if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(p);
-        } catch {}
+        await runAgnesVisionIntake(c.env as any, store, eid);
       } catch (e: any) {
-        console.error('[kickAgnesIntake] failed', e?.message ?? e);
-        // Even on failure, unstick the UI — write empty intake already handled inside vision-intake, but ensure live
-        try {
-          const { LiveEvent, broadcastLive } = await import('../../live');
-          broadcastLive(c, LiveEvent.Enquiries, { action: 'updated', id: String(id) });
-        } catch {}
+        console.error(`[enquiry-ai] ${eid}: intake failed (${String(e?.message ?? e).slice(0, 160)})`);
       }
-    })();
-    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') c.executionCtx.waitUntil(task);
-    else void task;
+      try { await cacheDel(`enquiry:redacted:${eid}`); } catch {}
+    }
+    // Broadcast so EnquiryDetail auto-populates without refresh.
+    try {
+      const { LiveEvent, broadcastLive } = await import('../../live');
+      broadcastLive(c, LiveEvent.Enquiries, { action: 'updated', id: eid });
+    } catch {}
   } catch {}
 }
-// Legacy: keep dispatch for backwards compat, now no-op (GH intake removed).
-function kickIntakeNow(_c: any): void { /* GH intake removed — use kickAgnesIntake */ }
 
 function aiConfigured(c: any): boolean {
   try {
@@ -63,20 +59,6 @@ function aiConfigured(c: any): boolean {
   } catch {
     return true;
   }
-}
-
-// Background AI enrichment (structured fields + procurement redaction cache).
-// Fire-and-forget via waitUntil — never blocks or fails the request.
-function kick(c: any, id: string): void {
-  try {
-    const store = createEnquiryStore(c.env);
-    const task = runEnquiryExtraction(c.env, store, String(id));
-    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
-      c.executionCtx.waitUntil(task);
-    } else {
-      void task;
-    }
-  } catch { /* enrichment never fails a request */ }
 }
 
   // Live Zoho status chip: enrich enquiries with Estimate.status (from the
@@ -336,9 +318,8 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         maybePromoteEnquiriesSent(c, list);
       }
     } catch {}
-    if (restricted) {
-      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
-    }
+    // No background re-enrichment on reads: every write path enriches inline,
+    // so the cache is fresh after any save. A stale row heals on next edit.
     return c.json(r.body, r.status as any);
   });
   // ── Management Review queues (KV-cached, MIS-only) ─────────────────────
@@ -364,7 +345,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
           aiConfigured: aiConfigured(c),
           all: c.req.query('all') === '1',
         });
-        for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
         return c.json(r.body, r.status as any);
       } catch (e: any) {
         return c.json({ error: e?.message ?? 'queues failed' }, 500);
@@ -465,8 +445,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // New free text needs its procurement-safe rewrite now — otherwise the
     // redacted copy only appears after the next list fetch kicks enrichment.
     if ((r as any).status === 201 && (r.body as any)?.id) {
-      kick(c, String((r.body as any).id));
-      kickAgnesIntake(c, String((r.body as any).id));
+      await runEnquiryAi(c, String((r.body as any).id), true);
       bustQueues(c);
     }
     return c.json(r.body, r.status as any);
@@ -478,11 +457,10 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const r = await EnquiryRoutes.enquiryUpdate(createEnquiryStore(c.env), me, c.req.param('id') ?? '', patchBody);
     enquirySend(c, r);
     if ((r as any).status === 200 && (r.body as any)?.id) {
-      kick(c, String((r.body as any).id));
-      bustQueues(c);
       const hasAiBulk = Array.isArray((patchBody as any)?.items)
         && (patchBody as any).items.some((it: any) => it?.aiPending === true);
-      if ((patchBody as any)?.description !== undefined || hasAiBulk) kickAgnesIntake(c, String((r.body as any)?.id ?? c.req.param('id') ?? ''));
+      await runEnquiryAi(c, String((r.body as any).id), (patchBody as any)?.description !== undefined || hasAiBulk);
+      bustQueues(c);
     }
     return c.json(r.body, r.status as any);
   });
@@ -492,11 +470,9 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const r = await EnquiryRoutes.enquiryAddRequirement(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
     enquirySend(c, r);
     if ((r as any).status === 201) {
-      kick(c, String(c.req.param('id') ?? ''));
+      // Requirement arrives as an aiPending raw item — split inline, same as Add-via-AI.
+      await runEnquiryAi(c, String(c.req.param('id') ?? ''), true);
       bustQueues(c);
-      // Requirement arrives as an aiPending raw item — split it in-Worker via
-      // the relay lanes (no GH container), same as Add-via-AI.
-      kickAgnesIntake(c, String(c.req.param('id') ?? ''));
     }
     return c.json(r.body, r.status as any);
   });
@@ -525,7 +501,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me)) {
       try {
         const r = await EnquiryRoutes.enquiryGetRedacted(createEnquiryStore(c.env), c.req.param('id') ?? '', aiConfigured(c));
-        for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
         return c.json(r.body, r.status as any);
       } catch (e: any) {
         return c.json({ error: e?.message ?? 'not found' }, 404);
@@ -545,9 +520,6 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
     const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '', restricted ? { redact: true, aiConfigured: aiConfigured(c) } : undefined);
-    if (restricted) {
-      for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) kick(c, String(id));
-    }
     return c.json(r.body, r.status as any);
   });
   app.get('/api/enquiries/:id/intake', async (c) => {
@@ -575,13 +547,21 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
   app.get('/api/debug/ai-health', async (c) => {
+    // MIS-gated: usage readout carries per-user emails, and key health is
+    // owner-sensitive. Only users granted access via the admin panel pass.
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const gw = getGateway(c.env as any);
       const { cacheGet } = await import('../../shared/cache');
       // Pool-wide storm flag: when true, every copilot answers "busy" without
       // touching any key (set on any 429, 120s TTL, refreshed by each new 429).
-      const storm = !!(await cacheGet('ai:storm:agnes', 120_000).catch(() => null));
-      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes'), storm });
+      const storm = !!(await cacheGet('ai:storm:chat', 120_000).catch(() => null));
+      // Per-user chat usage (?days=7, max 30): who used the copilots and how
+      // much. Logged awaitedly per served turn (refusals excluded, root included).
+      const { readChatUsage } = await import('../../copilot/engine');
+      const days = Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7));
+      const usage = await readChatUsage(days).catch(() => ({ total: 0, users: [], byDay: [] }));
+      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes'), storm, usageDays: days, usage });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 500);
     }
@@ -745,7 +725,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const r = await EnquiryRoutes.enquiryAddComment(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
     enquirySend(c, r);
-    if ((r as any).status === 201) kick(c, String(c.req.param('id') ?? ''));
+    if ((r as any).status === 201) await runEnquiryAi(c, String(c.req.param('id') ?? ''), false);
     return c.json(r.body, r.status as any);
   });
   // B2B EST-No. Check & Assign button: check the Zoho estimate exists; if

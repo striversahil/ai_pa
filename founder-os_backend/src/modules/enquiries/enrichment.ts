@@ -118,8 +118,3 @@ export async function runEnquiryExtraction(env: Record<string, unknown>, store: 
     try { console.error('enquiry extraction failed:', e?.message); } catch { /* noop */ }
   }
 }
-
-/** Fire-and-forget kick used by route handlers (Worker waitUntil / Express). */
-export function kickEnquiryExtraction(env: Record<string, unknown>, store: EnquiryStore, id: string): void {
-  try { void runEnquiryExtraction(env, store, id); } catch { /* ignore */ }
-}

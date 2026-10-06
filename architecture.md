@@ -107,7 +107,7 @@ Worker + GitHub Actions.
 ├── local-runner.js                     # local AI classification loop (drains waba-worker)
 ├── scripts/                            # GH Actions file-based runners (heavy AI runs HERE)
 │   ├── runner-lib.js                   # shared helpers (workerRequest, groq/groqJson direct-Groq primary + omniroute fallback, extractJson)
-│   ├── zoho-sync/                      # zoho-sent-runner split: fetch.js (Zoho reads) / diff.js (pure change detection) / persist.js (worker writes) / analyze.js (only AI spender) / comments.js (shared pure helpers) — see its README
+│   ├── zoho-sync/                      # zoho-sent-runner split: fetch.js (Zoho reads) / diff.js (pure change detection, re-export shim of sync-core) / persist.js (worker writes) / analyze.js (only AI spender) — see its README
 │   ├── whatsapp-digest-runner.js
 │   ├── morning-brief-runner.js
 │   ├── eod-summary-runner.js

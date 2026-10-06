@@ -51,7 +51,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const message = String(body?.message ?? '').trim().slice(0, 2000);
     if (!message) return c.json({ error: 'message required' }, 400);
     try {
-      const ctx = await def.buildCtx(c.env as any, me, {});
+      const ctx = await def.buildCtx(c.env as any, me, { batchId: String(body?.batchId ?? body?.action?.batchId ?? '') });
       return c.json(await runTurn(c.env as any, def, ctx, message));
     } catch (e: any) {
       return chatError(c, e);
@@ -67,7 +67,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const message = String(body?.message ?? '').trim().slice(0, 2000);
     if (!message) return c.json({ error: 'message required' }, 400);
     try {
-      const ctx = await def.buildCtx(c.env as any, me, {});
+      const ctx = await def.buildCtx(c.env as any, me, { batchId: String(body?.batchId ?? body?.action?.batchId ?? '') });
       return sseResponse(streamTurn(c.env as any, def, ctx, message));
     } catch (e: any) {
       return chatError(c, e);
@@ -99,7 +99,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!def.executeProposal) return c.json({ error: 'this copilot is read-only', applied: 'none' }, 400);
     const body = await c.req.json().catch(() => ({}));
     try {
-      const ctx = await def.buildCtx(c.env as any, me, {});
+      const ctx = await def.buildCtx(c.env as any, me, { batchId: String(body?.batchId ?? body?.action?.batchId ?? '') });
       const { result, applied } = await def.executeProposal(
         ctx, (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
       );

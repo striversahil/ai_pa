@@ -122,8 +122,10 @@ Sole taxonomy source: `founder-os_backend/data/know_your_product_v2.json`
 
 - Finalized items embedded (spec text only, 384-dim, never PII), one namespace
   per KYP category (`uncategorized` for pre-KYP rows):
-  `founder-os_backend/src/modules/enquiries/similarity.ts`,
-  `scripts/enquiry-memory-backfill-runner.js`.
+  `founder-os_backend/src/modules/enquiries/similarity.ts`
+  (one-off backfill runner `scripts/enquiry-memory-backfill-runner.js`
+  deleted 2026-10-05 after the backfill — re-create from git if a re-backfill
+  is ever needed).
 - Routing per item: `exact` (score ≥ 0.97 + dims-equal → `rateAvailable: true`,
   skips the procurement→management loop) / `suggest` (≥ 0.85 → 1-click card in
   sales `IntakePanel`) / `miss` (procurement queue as usual).

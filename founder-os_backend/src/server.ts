@@ -30,6 +30,7 @@ import telecallersRouter from './routes/telecallers';
 import accountsRouter from './routes/accounts';
 import digitalMarketingRouter from './routes/digital-marketing';
 import productLineRouter from './routes/product-line';
+import bulkImportRouter, { bulkImportRunnerRouter } from './routes/bulk-import';
 import { automationRouter } from './modules/automation';
 import * as AuthRoutes from './modules/auth/routes';
 import { PrismaAuthStore } from './modules/auth/store-prisma';
@@ -127,6 +128,10 @@ app.use('/api/digital-marketing', digitalMarketingRouter);
 
 // --- Product Line master CRUD (MIS-gated) ---
 app.use('/api/product-line', productLineRouter);
+
+// --- Bulk price-list import (root-only) ---
+app.use('/api/bulk-import', bulkImportRouter);
+app.use('/api/runner/bulk-import', bulkImportRunnerRouter);
 
 // --- Google Auth (routes + root user management) ---
 app.get('/api/auth/google', (req, res) => sendAuth(res, AuthRoutes.authLogin(config, publicOriginOf(req))));

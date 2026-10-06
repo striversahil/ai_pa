@@ -13,8 +13,8 @@ plain JS + JSDoc so the Cloudflare Worker bundle and Express can adopt it too
 | `zoho-auth.js` | Curl-export credential parsing + lazy context (multi-org, primary-first) | `zoho-sync/fetch.js` (superset — also replaced crm-runner's older copy) |
 | `zoho-net.js` | Single-attempt fetch + the two retry policies (estimates / CRM-list) + `sleep` + 429 backoff | `zoho-sync/fetch.js`, `crm-runner.js` |
 | `zoho-dates.js` | `istDateString` (IST day boundary both pipelines key on) | both runners |
-| `zoho-comments.js` | HTML cleaning, system-comment filter, IST timestamp ordering, sales-comment extraction | `zoho-sync/comments.js` (now a re-export shim) |
-| `zoho-orgs.js` | Org parsing, `<org>:<id>` DB namespacing, URL swapping, CRM snapshot key scheme | `zoho-sync/orgs.js` (shim) + crm-runner's `orgScope` |
+| `zoho-comments.js` | HTML cleaning, system-comment filter, IST timestamp ordering, sales-comment extraction | `zoho-sync/comments.js` (shim deleted 2026-10-05) |
+| `zoho-orgs.js` | Org parsing, `<org>:<id>` DB namespacing, URL swapping, CRM snapshot key scheme | `zoho-sync/orgs.js` (shim deleted 2026-10-05) + crm-runner's `orgScope` |
 | `estimate-changes.js` | Fingerprint build/parse/capped-tick merge, metadata diff, transitions, newcomer detection, work-item selection | `zoho-sync/diff.js` (shim) |
 
 ## Rules for editors

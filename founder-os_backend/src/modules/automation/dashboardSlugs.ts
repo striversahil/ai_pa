@@ -28,6 +28,7 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'samarth-overview',
   'sahil-overview',
   'linkedin',
+  'ai-usage',
   // generic sheet-analysis renderer (SheetAnalysisDashboard fallback)
   'telecalling-agent-analysis',
 ]);

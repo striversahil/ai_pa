@@ -9,9 +9,9 @@
  * all 5 generated IN PARALLEL → POST batch to the worker.
  *
  * The old research→draft→edit pipeline (linkedin-research.js,
- * linkedin-visual.js, linkedin-format.js, linkedin-topics.js) is
- * DISCARDED as a generation path — those files are dormant on disk,
- * nothing imports them now. Text via the unified AI gateway
+ * linkedin-visual.js, linkedin-format.js, linkedin-topics.js) was
+ * DISCARDED as a generation path and deleted 2026-10-05 — nothing
+ * imported them. Text via the unified AI gateway
  * (agnes-3.0-flash default); images via kie.ai GPT-Image-2.5 Flare
  * (scripts/kie-image.js, KIE_API_KEY), Agnes image lane as fallback.
  * No auto-posting: the batch lands as status=draft for dashboard review.

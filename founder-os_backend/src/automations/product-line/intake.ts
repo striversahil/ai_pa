@@ -672,7 +672,8 @@ export const productLineIntakeDef: CopilotDef<IntakeCtx> = {
     '3) Resolve the product with find_product — like the sales enquiry splitter, loosely infer the item and its category, then verify against the master: a single exact name/alias hit (resolvedProductId) means the product EXISTS — set productId via update_draft, never create. Several candidates: ask the user to pick one, never guess, never create. Zero candidates: ask the user for the product name AND ask them to pick the category, then propose_product — never invent a category; a made-up category is rejected. ' +
     '4) Once productId is known, call required_specs ONCE to see the FULL checklist (required + optional, with guide notes) — then call ask_specs to render the missing required details as an interactive form INSTEAD of asking spec/commercial questions in chat text. The user fills the form; their answers arrive as the next message — file them with update_draft (specs object for spec keys, plain fields for commercials). ' +
     '5) Resolve the vendor with find_vendor — exact match: set vendorId; none: propose_vendor (ask only for missing name/phone/type). 6) When product + vendor + EVERY required spec + ALL commercials are known, call propose_vendor/propose_product first for anything new, then propose_rate. ' +
-    'Gates: a rate is draftable ONLY when the vendor quote answers every required spec AND every commercial (price, unit, discount — ask and record 0 when none, MOQ, weight per unit, pack qty, pack dims, delivery days, quote date) is filed — missing items block the draft (ask the user for them). Nothing on the quote card is optional. When listing captured specs to the user in replies or summaries, always use the raw question text from required_specs — never show attrKey slugs (e.g. ask_width_required, spec_sss); slugs are storage-only. Keep replies short; confirm each created draft reports back before the next step.'
+    'Gates: a rate is draftable ONLY when the vendor quote answers every required spec AND every commercial (price, unit, discount — ask and record 0 when none, MOQ, weight per unit, pack qty, pack dims, delivery days, quote date) is filed — missing items block the draft (ask the user for them). Nothing on the quote card is optional. When listing captured specs to the user in replies or summaries, always use the raw question text from required_specs — never show attrKey slugs (e.g. ask_width_required, spec_sss); slugs are storage-only. Keep replies short; confirm each created draft reports back before the next step. ' +
+    'Deletes are NEVER done here: if the user asks to delete a rate or vendor, point them to the Product Line dashboard (Rates/Vendors tabs → Delete button). There are no delete tools — do not propose, stage, or execute any deletion.'
   ),
   toolDefs: () => TOOL_DEFS,
   execTool,
@@ -710,6 +711,6 @@ export const productLineIntakeDef: CopilotDef<IntakeCtx> = {
   },
   executeProposal,
   modelEnvVar: 'COPILOT_MODEL',
-  defaultModel: 'agnes-3.0-flash',
+  defaultModel: 'deepseek/deepseek-v4.1-flash',
   emptyHint: 'I can’t help with that — paste a vendor quote, or tell me the product, vendor, price and unit.',
 };

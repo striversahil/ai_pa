@@ -83,7 +83,7 @@ async function main() {
 
   // 2. All-status estimates, newest-modified first (any mover is in-window).
   // Multi-org: fetch.js loops every organization_id in sent_estimates.txt
-  // (same login) and namespaces non-primary ids (see scripts/zoho-sync/orgs.js).
+  // (same login) and namespaces non-primary ids (core zoho-orgs.js).
   // coverIds extends paging per org until every locally-sent row is seen:
   // comments don't bump last_modified_time, so comment-only sent rows sink
   // past page 2 and would otherwise never sync (2026-09-28 incident).

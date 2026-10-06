@@ -21,7 +21,7 @@ export interface CopilotProposal {
 }
 
 interface CopilotActivity { tool: string; label: string; }
-interface CopilotMsg { role: "user" | "assistant"; text: string; proposals?: CopilotProposal[]; activity?: CopilotActivity[]; }
+interface CopilotMsg { role: "user" | "assistant"; text: string; proposals?: CopilotProposal[]; activity?: CopilotActivity[]; thinking?: string; }
 
 export interface CopilotConfig {
   title: string;
@@ -38,9 +38,11 @@ export interface CopilotConfig {
   /** Chat clears whenever this changes (e.g. selected enquiry/product id). */
   resetKey: string | number;
   userInitial?: string;
+  /** Extra body fields sent with every message (e.g. { batchId } for bulk). */
+  context?: Record<string, string>;
 }
 
-export default function CopilotChat({ config, open, onClose, onOpen, chrome = "full", modes, mode, onModeChange }: {
+export default function CopilotChat({ config, open, onClose, onOpen, chrome = "full", modes, mode, onModeChange, headerExtra }: {
   config: CopilotConfig;
   open: boolean;
   onClose: () => void;
@@ -49,6 +51,8 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   chrome?: "full" | "popup";
   /** Mode tabs shown inside the popup header (e.g. Knowledge | Add Rates). */
   modes?: { id: string; label: string }[];
+  /** Rendered inside the popup below the mode tabs (e.g. bulk batch picker). */
+  headerExtra?: React.ReactNode;
   mode?: string;
   onModeChange?: (id: string) => void;
 }) {
@@ -108,7 +112,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
         const res = await fetch(config.streamUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-          body: JSON.stringify({ message: q }),
+          body: JSON.stringify({ message: q, ...(config.context ?? {}) }),
           signal: ctrl.signal,
         });
         if (!res.ok) {
@@ -123,6 +127,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
         const decoder = new TextDecoder();
         let buffer = "";
         let accText = "";
+        let accThink = "";
         let accActivity: CopilotActivity[] = [];
         let accProposals: CopilotProposal[] = [];
         let sawDone = false;
@@ -157,8 +162,19 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                     return [...cp];
                   });
                 } else if (evt.type === "thinking" && typeof evt.data?.text === "string") {
-                  const t = String(evt.data.text).trim().slice(-140);
-                  if (t) setThinking(t);
+                  const t = String(evt.data.text);
+                  if (t) {
+                    // Accumulate the full reasoning stream onto the message
+                    // (minimized dropdown below); the chip keeps only the tail.
+                    accThink = (accThink + t).slice(-6000);
+                    setThinking(accThink.slice(-140).trim());
+                    const frozen = accThink;
+                    setMsgs((p) => {
+                      const cp = [...p]; const last = cp[cp.length - 1];
+                      if (last?.role === "assistant") last.thinking = frozen;
+                      return [...cp];
+                    });
+                  }
                 } else if (evt.type === "done" && evt.data) {
                   setThinking("");
                   // Keep the live-streamed text — replacing it with the final
@@ -211,7 +227,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
       const res = await fetch(config.chatUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: q }),
+        body: JSON.stringify({ message: q, ...(config.context ?? {}) }),
         signal: ctrl.signal,
       });
       clearTimeout(t);
@@ -363,6 +379,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                   ))}
                 </div>
           )}
+          {headerExtra && <div className="px-5 pt-3">{headerExtra}</div>}
 
           {/* Messages with staggered entrance */}
           <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-5 py-5 space-y-5 bg-transparent scrollbar-thin scroll-smooth">
@@ -412,6 +429,12 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                                 </span>
                               ))}
                             </div>
+                          )}
+                          {m.thinking && (
+                            <details className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-1.5">
+                              <summary className="cursor-pointer text-[12px] font-bold text-[var(--text-tertiary)] select-none">Thinking</summary>
+                              <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap max-h-48 overflow-y-auto">{m.thinking}</p>
+                            </details>
                           )}
                           <div className="bg-[var(--bg-input)] border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-[1.7] text-[var(--text-primary)] chat-markdown">
                             <Markdown text={m.text} className="md-text !text-[15px] !leading-[1.7]" />

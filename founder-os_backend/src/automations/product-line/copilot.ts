@@ -301,6 +301,6 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
     }
   },
   modelEnvVar: 'COPILOT_MODEL',
-  defaultModel: 'agnes-3.0-flash',
+  defaultModel: 'deepseek/deepseek-v4.1-flash',
   emptyHint: 'I can’t help with that — try asking about a product, vendor, or quote.',
 };

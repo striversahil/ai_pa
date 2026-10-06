@@ -23,7 +23,7 @@ interface ChatProposal {
   rows?: { variation: string; markedPrice: number; unit: string; confidence: number; quoteAgeDays?: number | null; moq?: string | null; deliveryDays?: number | null; best?: boolean; itemIndex?: number; itemName?: string }[];
 }
 interface ChatActivity { tool: string; label: string; }
-interface ChatMsg { role: "user" | "assistant"; text: string; proposals?: ChatProposal[]; activity?: ChatActivity[]; }
+interface ChatMsg { role: "user" | "assistant"; text: string; proposals?: ChatProposal[]; activity?: ChatActivity[]; thinking?: string; }
 
 const SUGGESTIONS = ["What's missing on this enquiry?", "Get AI price for an item", "Draft a note for the enquiry thread", "Help me fix an item spec"];
 const TOOL_ICON: Record<string, string> = {
@@ -115,6 +115,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
         const decoder = new TextDecoder();
         let buffer = "";
         let accText = "";
+        let accThink = "";
         let accActivity: ChatActivity[] = [];
         let accProposals: ChatProposal[] = [];
         let sawDone = false;
@@ -149,8 +150,19 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                     return [...cp];
                   });
                 } else if (evt.type === "thinking" && typeof evt.data?.text === "string") {
-                  const t = String(evt.data.text).trim().slice(-140);
-                  if (t) setThinking(t);
+                  const t = String(evt.data.text);
+                  if (t) {
+                    // Accumulate the full reasoning stream onto the message
+                    // (minimized dropdown below); the chip keeps only the tail.
+                    accThink = (accThink + t).slice(-6000);
+                    setThinking(accThink.slice(-140).trim());
+                    const frozen = accThink;
+                    setMsgs((p) => {
+                      const cp = [...p]; const last = cp[cp.length - 1];
+                      if (last?.role === "assistant") last.thinking = frozen;
+                      return [...cp];
+                    });
+                  }
                 } else if (evt.type === "done" && evt.data) {
                   setThinking("");
                   // Keep the live-streamed text — replacing it with the final
@@ -386,6 +398,12 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                 </span>
                               ))}
                             </div>
+                          )}
+                          {m.thinking && (
+                            <details className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-1.5">
+                              <summary className="cursor-pointer text-[12px] font-bold text-[var(--text-tertiary)] select-none">Thinking</summary>
+                              <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap max-h-48 overflow-y-auto">{m.thinking}</p>
+                            </details>
                           )}
                           <div className="bg-[var(--bg-input)] border border-white/[0.06] rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-[1.7] text-[var(--text-primary)] chat-markdown">
                             <Markdown text={m.text} className="md-text !text-[15px] !leading-[1.7]" />

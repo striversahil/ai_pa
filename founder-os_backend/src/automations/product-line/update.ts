@@ -169,8 +169,12 @@ export async function updateGuide(id: string, body: any): Promise<any> {
 
 export async function deleteGuide(id: string): Promise<{ ok: true }> {
   const gid = String(id);
+  // Capture the product BEFORE deleting — after the delete the lookup finds
+  // nothing and the product's detail/rates caches stay stale (deleted rows
+  // keep showing in an open product view: "delete is not working").
+  const cur = await (prisma as any).kypGuide.findUnique({ where: { id: gid } }).catch(() => null);
   await (prisma as any).kypGuide.delete({ where: { id: gid } });
-  await touchedGuide(gid);
+  await touchedGuide(undefined, (cur as any)?.productId);
   return { ok: true };
 }
 
@@ -224,8 +228,12 @@ export async function updateVendor(id: string, body: any): Promise<any> {
 }
 
 export async function deleteVendor(id: string): Promise<{ ok: true }> {
-  // Soft-delete: rate history stays queryable.
-  await (prisma as any).vendor.update({ where: { id: String(id) }, data: { active: false } });
+  // Hard delete: the row is gone. Blocked while any rate references it
+  // (delete those rates first) — same guard as deleteProduct.
+  const vid = String(id);
+  const rates = await (prisma as any).vendorRate.findMany({ where: { vendorId: vid }, select: { id: true } }).catch(() => []);
+  if ((rates as any[]).length > 0) fail(`cannot delete — ${(rates as any[]).length} vendor rate(s) reference this vendor (delete them first)`);
+  await (prisma as any).vendor.delete({ where: { id: vid } });
   await touched();
   return { ok: true };
 }
@@ -335,12 +343,26 @@ export async function updateRate(id: string, body: any): Promise<any> {
   return row;
 }
 
+export async function deleteRate(id: string): Promise<{ ok: true }> {
+  // Hard delete: the quote row is gone completely (use the Turn off toggle
+  // when you only want to hide it temporarily).
+  const rid = String(id);
+  const cur = await (prisma as any).vendorRate.findUnique({ where: { id: rid } }).catch(() => null);
+  if (!cur) fail('rate not found');
+  await (prisma as any).vendorRate.delete({ where: { id: rid } });
+  await touched(String((cur as any)?.productId ?? ''));
+  return { ok: true };
+}
+
 export async function setRateActive(id: string, active: boolean): Promise<{ ok: true }> {
   const row = await (prisma as any).vendorRate.update({ where: { id: String(id) }, data: { active } });
   await touched();
   try {
     const pid = (row as any)?.productId;
-    if (pid) await invalidateProductDetailCache(String(pid));
+    if (pid) {
+      await invalidateProductDetailCache(String(pid));
+      await invalidateProductRatesCache(String(pid));
+    }
   } catch { /* best-effort */ }
   return { ok: true };
 }

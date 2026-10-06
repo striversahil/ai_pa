@@ -112,6 +112,8 @@ export async function getProductLineData(): Promise<ProductLineData> {
         videoUrl: r.videoUrl ? String(r.videoUrl) : null,
         quotedAt: String(r.quotedAt ?? ''),
         enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+        batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
+        sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
         active: r.active !== false && r.active !== 0,
       };
     });
@@ -215,6 +217,8 @@ export async function getRatesForProduct(productId: string): Promise<RateRow[]> 
       videoUrl: r.videoUrl ? String(r.videoUrl) : null,
       quotedAt: String(r.quotedAt ?? ''),
       enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+        batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
+        sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
       active: r.active !== false && r.active !== 0,
     }));
   });
@@ -222,6 +226,46 @@ export async function getRatesForProduct(productId: string): Promise<RateRow[]> 
 
 export async function invalidateProductRatesCache(productId: string): Promise<void> {
   try { await cacheDel(`product-line:rates:v1:${String(productId)}`); } catch { /* best-effort */ }
+}
+
+/** Single rate by id with vendor/product names joined (delete-confirm path). */
+export async function getRateById(id: string): Promise<RateRow | null> {
+  const rid = String(id);
+  const r = await (prisma as any).vendorRate.findUnique({ where: { id: rid } }).catch(() => null);
+  if (!r) return null;
+  const pid = String((r as any).productId ?? '');
+  const vendor = (r as any).vendorId
+    ? await (prisma as any).vendor.findUnique({ where: { id: String((r as any).vendorId) } }).catch(() => null)
+    : null;
+  const product = pid
+    ? await (prisma as any).productItem.findUnique({ where: { id: pid } }).catch(() => null)
+    : null;
+  return {
+    id: rid,
+    vendorId: String((r as any).vendorId ?? ''),
+    vendorName: vendor ? String((vendor as any).name ?? '') : null,
+    vendorType: vendor ? String((vendor as any).vendorType ?? '') : null,
+    productId: pid,
+    productName: product ? String((product as any).name ?? '') : '',
+    attrKey: String((r as any).attrKey ?? ''),
+    attrValues: parseAttrValues((r as any).attrValues),
+    pricePerUnit: (r as any).pricePerUnit != null ? Number((r as any).pricePerUnit) : null,
+    unit: String((r as any).unit ?? ''),
+    discountPercent: (r as any).discountPercent != null ? Number((r as any).discountPercent) : null,
+    baseRate: (r as any).baseRate != null ? Number((r as any).baseRate) : null,
+    weightPerUnit: (r as any).weightPerUnit != null ? Number((r as any).weightPerUnit) : null,
+    packageQty: (r as any).packageQty != null ? String((r as any).packageQty) : null,
+    packageDims: (r as any).packageDims != null ? String((r as any).packageDims) : null,
+    moq: (r as any).moq != null ? String((r as any).moq) : null,
+    deliveryDays: (r as any).deliveryDays != null ? Number((r as any).deliveryDays) : null,
+    imageUrl: (r as any).imageUrl ? String((r as any).imageUrl) : null,
+    videoUrl: (r as any).videoUrl ? String((r as any).videoUrl) : null,
+    quotedAt: String((r as any).quotedAt ?? ''),
+    enquiryRef: (r as any).enquiryRef != null ? String((r as any).enquiryRef) : null,
+    batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
+    sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
+    active: (r as any).active !== false && (r as any).active !== 0,
+  };
 }
 
 export interface VendorIndexRow {
@@ -257,6 +301,16 @@ export async function invalidateVendorIndex(): Promise<void> {
 export async function countRatesForVendor(vendorId: string): Promise<number> {
   try {
     const n = await (prisma as any).vendorRate.count({ where: { vendorId: String(vendorId) } });
+    return Number(n) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** ACTIVE rate count for one vendor (vendor-delete guard — history stays deletable). */
+export async function countActiveRatesForVendor(vendorId: string): Promise<number> {
+  try {
+    const n = await (prisma as any).vendorRate.count({ where: { vendorId: String(vendorId), active: true } });
     return Number(n) || 0;
   } catch {
     return 0;
@@ -315,6 +369,8 @@ export async function getProductDetail(id: string): Promise<ProductDetail> {
       videoUrl: r.videoUrl ? String(r.videoUrl) : null,
       quotedAt: String(r.quotedAt ?? ''),
       enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+        batchId: (r as any).batchId != null ? String((r as any).batchId) : null,
+        sourceRef: (r as any).sourceRef != null ? String((r as any).sourceRef) : null,
       active: r.active !== false && r.active !== 0,
     }));
     return {

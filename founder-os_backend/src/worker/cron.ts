@@ -33,9 +33,8 @@ import { RELAY_ACTIVE_KEY, RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS, RELAY_COOLDOWN_KE
 
 const GITHUB_REPO = 'striversahil/ai_pa';
 const GITHUB_REF = 'main';
-// Event-driven intake target (fired by kickIntakeNow on enquiry create, NOT
-// by the cron router — there is no per-minute tick). The every-30min workflow
-// carries the same job as a backstop for missed dispatches.
+// Legacy intake workflow id (kept for the dispatch helper signature;
+// intake itself runs inline on enquiry writes — no kicks, no sweeper).
 export const INTAKE_WORKFLOW = 'ops-enquiry-intake.yml';
 const GITHUB_WORKFLOWS: Record<string, string> = {
   'every-5min': 'cron-every-5min.yml',
@@ -178,28 +177,6 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     );
   }
 
-  // Stale intake sweeper every 15 min (native, token-independent — runs before
-  // the dispatcher early-return below): re-kicks Add-via-AI jobs whose
-  // waitUntil task died with zero output (no KV, no markers — the flag would
-  // otherwise sit forever with no retry). Untouched ≥10 min only, so fresh
-  // saves with in-flight intakes are never double-kicked; per-row hourly
-  // backoff bounds LLM spend. Sales-side LLM work (not Zoho/NeoDove) — runs
-  // in quiet hours too.
-  if (min % 15 === 0) {
-    ctx.waitUntil(
-      (async () => {
-        try {
-          const { createEnquiryStore } = await import('./context');
-          const { sweepStaleAiPending } = await import('../modules/enquiries/vision-intake');
-          const r = await sweepStaleAiPending(env as any, createEnquiryStore(env), { olderThanMin: 10, maxRows: 3 });
-          if (r.checked > 0) console.log(`[cron] intake-sweep checked=${r.checked} rekicked=${r.rekicked.join(',') || 'none'}`);
-        } catch (e: any) {
-          console.error('[cron] intake-sweep failed:', e?.message);
-        }
-      })(),
-    );
-  }
-
   // Email outbox tick every minute (native, token-independent — runs before
   // the dispatcher early-return below): sends due one-shot + daily-repeat
   // mails via the Gmail API. CAS-claimed, max 10/tick, 5 attempts then dead.
@@ -260,8 +237,8 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     ctx.waitUntil(Promise.all(runs));
   }
 
-  // Agnes 1015 storm → on-demand GH relay lanes (primary + hot-standby
-  // backup). chat.ts sets ai:storm:agnes (120s TTL) on throttles; each relay
+  // Egress-blockage storm → on-demand GH relay lanes (primary + hot-standby
+  // backup). copilot engine sets ai:storm:chat (120s TTL) on throttles; each relay
   // run registers its own ai:relay:active[:bak] flag and heartbeats it.
   // Cooldown prevents dispatch flapping; relay TTLs bound cost (~6h/run max).
   // Best-effort — never fails the tick.
@@ -290,7 +267,7 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
       }
       // 2. Storm with a lane down: (re)dispatch whatever is missing so the
       //    backup boots alongside primary — failover stays per-attempt.
-      const storm = await cacheGet('ai:storm:agnes', 120_000);
+      const storm = await cacheGet('ai:storm:chat', 120_000);
       if (!storm) return;
       const primaryAlive = await cacheGet(RELAY_ACTIVE_KEY, RELAY_TTL_MS);
       const bakAlive = await cacheGet(RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS);

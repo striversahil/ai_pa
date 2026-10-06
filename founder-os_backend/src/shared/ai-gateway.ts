@@ -1,7 +1,10 @@
 /**
  * Unified multi-provider AI gateway — the SINGLE module every AI call in the
- * system routes through. **Agnes (apihub.agnes-ai.com) is primary** — Dahl
- * and Groq remain as fallbacks. Every key in the pool is provider-tagged;
+ * system routes through. **Dashboard chat copilots are primary on the paid
+ * OpenRouter lane** (`openrouter-paid`: deepseek/deepseek-v4.1-flash,
+ * streamlake/fp8 preferred) — direct Cloudflare egress first, GH relay lanes
+ * only on 1015/blockage. Agnes stays pooled for runners; Dahl and Groq
+ * remain as fallbacks. Every key in the pool is provider-tagged;
  * the gateway handles least-failures selection, 429 cooldown (honors
  * retry-after), 401/403 disable, 5xx rotate. Primary model agnes-3.0-flash
  * (2.5-flash is the automatic fallback if the 3.0 channel hangs).
@@ -81,6 +84,11 @@ export interface ProviderConfig {
 
 const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
 const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
+/** Default OpenRouter routing for the paid chat lane (founder-pinned):
+ *  prefer streamlake/fp8, allow OpenRouter reroute on outage. Lives on the
+ *  provider entry so EVERY caller (chat, intake, extraction) inherits it;
+ *  per-request `extraParams` still overrides. */
+export const PAID_CHAT_ROUTING = { provider: { only: ['streamlake/fp8'], allow_fallbacks: true } };
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
   agnes: {
@@ -122,6 +130,22 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     jsonMode: { type: 'json_object' },
     defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
     visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+  },
+  // Paid OpenRouter lane — PRIMARY for dashboard chat copilots (2026-10-06).
+  // Same endpoint as `openrouter`, but keys come only from
+  // OPENROUTER_PAID_API_KEY (chat pins provider 'openrouter-paid' so free-tier
+  // keys can never serve a turn). defaultModel is the founder-pinned
+  // deepseek/deepseek-v4.1-flash; per-request `extraParams.provider` carries
+  // the streamlake/fp8 preference. GH relay lanes serve this provider as the
+  // 1015/blockage fallback (relay routes /api/* paths to openrouter.ai).
+  'openrouter-paid': {
+    id: 'openrouter-paid',
+    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
+    supportsReasoning: true,
+    reasoningObject: true,
+    extraParams: PAID_CHAT_ROUTING,
+    defaultModel: 'deepseek/deepseek-v4.1-flash',
+    visionModel: 'dots-studio/dots-3-note-preview:free',
   },
 };
 
@@ -222,9 +246,17 @@ export interface CompletionRequest {
    *  tests 3.0 for 8s, then serves from 2.5 with a 20s budget. */
   probeTimeoutMs?: number;
   json?: boolean;
-  model?: string;
-  reasoningEffort?: 'low' | 'medium' | 'high';
-  signal?: AbortSignal;
+   model?: string;
+   reasoningEffort?: 'low' | 'medium' | 'high';
+   /** Suppress chain-of-thought (no `reasoning` param sent): for
+    *  classification/extraction calls where thinking tokens are pure billed
+    *  overhead with zero UI use. Chat leaves this unset (thinking dropdown). */
+   reasoningOff?: boolean;
+   /** Per-request provider body params, merged over provider.extraParams
+    *  (e.g. OpenRouter `{ provider: { only: [...], allow_fallbacks: true } }`
+    *  routing for the paid chat lane). */
+   extraParams?: Record<string, unknown>;
+   signal?: AbortSignal;
   /** OpenAI-style function tools (passed through verbatim). */
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
@@ -245,6 +277,8 @@ export interface CompletionResult {
   jsonParsed: boolean;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   toolCalls?: ToolCall[];
+  /** Assistant reasoning text (OpenRouter `message.reasoning`), when present. */
+  reasoning?: string;
 }
 
 // ── Key pool ─────────────────────────────────────────────────────────────────
@@ -300,6 +334,8 @@ export class KeyPool {
     for (const key of raw(env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
+    // Paid lane (chat primary): separate provider id so chat pins paid-only.
+    for (const key of raw((env as any).OPENROUTER_PAID_API_KEY).split(',')) add('openrouter-paid', key, 'paid');
     for (const key of raw(env.REQUESTLY_API_KEY).split(',')) add('requestly', key);
     for (const key of raw((env as any).REQUESTLY_API_KEYS).split(',')) add('requestly', key);
     for (const key of raw(env.DEEPSEEK_API_KEYS).split(',')) add('deepseek', key);
@@ -556,10 +592,12 @@ export class AiGateway {
     return this.pool.health();
   }
 
-  /** Lane configured for this provider? (Agnes only — the throttled one.)
-   *  Sync gate: URL + secret present and off the skip-ladder. */
+  /** Lane configured for this provider? Relayable providers only (Agnes —
+   *  the throttled one — plus the paid OpenRouter chat lane as the
+   *  egress-blockage fallback). Sync gate: URL + secret present and off the
+   *  skip-ladder. */
   private laneEnabled(lane: ProxyLane, provider: ProviderConfig): boolean {
-    return provider.id === 'agnes' && !!lane.url && !!lane.secret && Date.now() >= lane.skipUntil;
+    return (provider.id === 'agnes' || provider.id === 'openrouter-paid') && !!lane.url && !!lane.secret && Date.now() >= lane.skipUntil;
   }
 
   /** Lane's relay run live? Memoized 60s per isolate per lane (KV, not per call). */
@@ -722,7 +760,7 @@ export class AiGateway {
     if (this.aigAccount && this.aigGateway) {
       // Standardized Cloudflare AI Gateway reverse proxy (custom providers use custom-{slug})
       if (provider.id === 'agnes') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/custom-agnes/v1/chat/completions`;
-      if (provider.id === 'openrouter') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/custom-openrouter/api/v1/chat/completions`;
+      if (provider.id === 'openrouter' || provider.id === 'openrouter-paid') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/custom-openrouter/api/v1/chat/completions`;
       if (provider.id === 'groq') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/groq/chat/completions`;
       if (provider.id === 'requestly') return provider.baseURL; // not via gateway
     }
@@ -939,12 +977,12 @@ export class AiGateway {
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
       ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
       ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
-      ...provider.extraParams, stream: true,
+      ...provider.extraParams, ...(req.extraParams ?? {}), stream: true,
     };
     if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
-    if (provider.id === 'agnes' && req.reasoningEffort) (body as any).chat_template_kwargs = { enable_thinking: true };
-    else if (provider.reasoningObject) (body as any).reasoning = { enabled: true };
-    else if (provider.supportsReasoning && req.reasoningEffort) (body as any).reasoning_effort = req.reasoningEffort;
+    if (provider.id === 'agnes' && req.reasoningEffort && !req.reasoningOff) (body as any).chat_template_kwargs = { enable_thinking: true };
+    else if (provider.reasoningObject && !req.reasoningOff) (body as any).reasoning = { enabled: true };
+    else if (provider.supportsReasoning && req.reasoningEffort && !req.reasoningOff) (body as any).reasoning_effort = req.reasoningEffort;
     const url = this.gatewayBaseURL(provider);
     const payload = JSON.stringify(body);
     // Direct-first for streams: try Cloudflare egress first, relay only on
@@ -1056,6 +1094,10 @@ export class AiGateway {
             const delta = choice.delta ?? {};
             if (typeof delta.content === 'string' && delta.content) yield { contentDelta: delta.content };
             if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) yield { reasoningDelta: delta.reasoning_content };
+            // OpenRouter/DeepSeek streams thinking as `delta.reasoning` (NOT
+            // `reasoning_content`) — without this the chat "Thinking" UI gets
+            // nothing on the paid lane.
+            if (typeof delta.reasoning === 'string' && delta.reasoning) yield { reasoningDelta: delta.reasoning };
             if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) yield { toolCallDelta: delta.tool_calls };
             if (choice.finish_reason) yield { finishReason: choice.finish_reason };
             if (json.usage) yield { usage: json.usage };
@@ -1110,18 +1152,19 @@ export class AiGateway {
       ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
       ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
       ...provider.extraParams,
+      ...(req.extraParams ?? {}),
     };
     if (req.json && provider.jsonMode) {
       body.response_format = provider.jsonMode;
     }
-    if (provider.id === 'agnes' && req.reasoningEffort) {
+    if (provider.id === 'agnes' && req.reasoningEffort && !req.reasoningOff) {
       // Agnes uses chat_template_kwargs.enable_thinking for reasoning depth (OpenAI-compatible).
       // Verified 2026-09-20: agnes-2.5-flash streams reasoning_content with this flag.
       (body as any).chat_template_kwargs = { enable_thinking: true };
-    } else if (provider.reasoningObject) {
+    } else if (provider.reasoningObject && !req.reasoningOff) {
       // OpenRouter-style reasoning switch (ling models etc.).
       body.reasoning = { enabled: true };
-    } else if (provider.supportsReasoning && req.reasoningEffort) {
+    } else if (provider.supportsReasoning && req.reasoningEffort && !req.reasoningOff) {
       body.reasoning_effort = req.reasoningEffort;
     }
     const payload = JSON.stringify(body);
@@ -1205,10 +1248,12 @@ export class AiGateway {
           arguments: typeof t.function.arguments === 'string' ? t.function.arguments : JSON.stringify(t.function.arguments ?? {}),
         }))
       : undefined;
+    const reasoning: string = typeof msg?.reasoning === 'string' ? msg.reasoning : '';
     return {
       content, provider: key.provider, keyId: key.id, model,
       jsonParsed: !!req.json, usage: data?.usage,
       ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
+      ...(reasoning ? { reasoning } : {}),
     };
   }
 

@@ -1,0 +1,9 @@
+{
+  "name": "Bulk Import",
+  "description": "Vendor price-list importer: paste or drop Excel/CSV/PDF/photo, AI chunks into staged rows, review, commit as one disable/delete block.",
+  "type": "handler",
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": "product-line"
+}

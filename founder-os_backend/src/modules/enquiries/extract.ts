@@ -41,9 +41,10 @@ export interface EnquiryAgentRef {
   name: string;
 }
 
-/** Enquiry pipeline provider: Agnes (agnes-3.0-flash, text+vision) — direct Worker, no GH Actions.
- *  Without an Agnes key the extraction skips (returns null). OpenRouter legacy kept as fallback. */
-const ENQUIRY_PROVIDER = 'agnes';
+/** Enquiry pipeline provider: paid DeepSeek lane (deepseek-v4.1-flash) —
+ *  direct Worker, no GH Actions. Without a paid key the extraction falls back
+ *  to Agnes → OpenRouter free; with no key at all it skips (returns null). */
+const ENQUIRY_PROVIDER = 'openrouter-paid';
 
 /** AI line-item splitting is KEPT but OFF: sales agents enter items manually
  *  in the modal (Add Item + per-item documents), so the enrichment must never
@@ -234,13 +235,14 @@ export async function extractEnquiryFieldsRobust(
     return null;
   }
   try {
+    const hasPaid = gateway.health().some((h) => h.provider === ENQUIRY_PROVIDER);
     const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
     const hasOpenRouter = gateway.health().some((h) => h.provider === 'openrouter');
-    if (!hasAgnes && !hasOpenRouter) {
-      console.warn('[extract] no Agnes/OpenRouter key configured — skipping extraction');
+    if (!hasPaid && !hasAgnes && !hasOpenRouter) {
+      console.warn('[extract] no paid/Agnes/OpenRouter key configured — skipping extraction');
       return null;
     }
-    const provider = hasAgnes ? 'agnes' : 'openrouter';
+    const provider = hasPaid ? ENQUIRY_PROVIDER : hasAgnes ? 'agnes' : 'openrouter';
     const parsed = await gateway.completeJson<any>({
       messages: [
         { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
@@ -249,6 +251,9 @@ export async function extractEnquiryFieldsRobust(
       temperature: 0,
       provider,
       json: true,
+      // Field extraction needs no chain-of-thought — thinking tokens are
+      // billed output with zero UI use on this path.
+      reasoningOff: true,
     });
     return shapeResult(parsed);
   } catch (err) {

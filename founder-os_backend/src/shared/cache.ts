@@ -150,6 +150,36 @@ export async function cacheDelPrefix(prefix: string): Promise<number> {
   return deleted;
 }
 
+/** List cache key names under a prefix (without the `kvx:` namespace).
+ *  Paginates fully; capped at `cap` names. Read-only — for MIS readouts. */
+export async function cacheKeys(prefix: string, cap = 1000): Promise<string[]> {
+  const fullPrefix = `${NS}:${prefix}`;
+  const out: string[] = [];
+  if (kv) {
+    try {
+      let cursor: string | undefined;
+      do {
+        const page = await kv.list({ prefix: fullPrefix, cursor });
+        for (const k of page.keys) {
+          out.push(String(k.name).startsWith(fullPrefix) ? String(k.name).slice(fullPrefix.length) : String(k.name));
+          if (out.length >= cap) return out;
+        }
+        cursor = page.list_complete ? undefined : page.cursor;
+      } while (cursor);
+    } catch (e: any) {
+      logger.warn({ err: e?.message, prefix }, 'kv cache key list failed');
+    }
+  }
+  for (const k of [...memory.keys()]) {
+    if (k.startsWith(fullPrefix)) {
+      const short = k.slice(fullPrefix.length);
+      if (!out.includes(short)) out.push(short);
+    }
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
 /**
  * Read-through cache helper. Every route that computes an expensive payload
  * should call `cached` — it serves fresh data, refreshes when stale, and falls

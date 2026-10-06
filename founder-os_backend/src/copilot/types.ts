@@ -60,6 +60,10 @@ export interface CopilotDef<T> {
   /** Env var overriding the model, e.g. 'ENQUIRY_CHAT_MODEL'. */
   modelEnvVar: string;
   defaultModel: string;
+  /** Max USER turns per hour for non-root users (default 20). Counts one per
+   *  user turn at entry — the LLM's own tool steps never consume budget.
+   *  Root bypasses. Set 0/negative for unlimited. */
+  hourlyLimit?: number;
   /** Reply when the model returns no content. */
   emptyHint: string;
 }
