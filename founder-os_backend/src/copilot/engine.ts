@@ -27,9 +27,22 @@ export const CHAT_PROVIDER = 'openrouter-paid';
 /** OpenRouter routing: single source is PAID_CHAT_ROUTING (gateway) — chat
  *  passes it explicitly so the intent stays visible at the call site. */
 const CHAT_PROVIDER_PARAMS = PAID_CHAT_ROUTING;
-// Reasoning models burn tokens on chain-of-thought — chat budgets 4000
-// completion tokens so thinking + tool calls never truncate (finish=length).
-const CHAT_MAX_TOKENS = 4000;
+// Reasoning models burn completion tokens on chain-of-thought (reasoning
+// counts against max_tokens) — big blobs think for thousands of tokens
+// before answering, so chat budgets 16000 (founder order): room to think
+// AND to reply. A step still cut off by the cap (finish=length, empty
+// content, no tools) is auto-continued in-loop (≤2 per turn) instead of
+// surfacing emptyHint. NOTE: attempts carry no timeout at all (founder
+// order), so long generations are never killed before the tokens arrive.
+const CHAT_MAX_TOKENS = 16000;
+/** NO time constraint on chat model calls (founder order): no per-attempt
+ *  timeout, no first-data probe. A call lives until the provider answers or
+ *  the connection itself errors. Price: a silently-dead channel hangs the
+ *  turn instead of failing over — remedy is a fresh chat + retry. */
+/** Nudge appended when a step was cut off by the token cap — resumes the
+ *  turn instead of ending it on an empty step. */
+const CUT_RESUME = 'Your reply was cut off at the length limit — continue exactly where you left off, no preamble.';
+const MAX_CUT_RESUMES = 2;
 
 function parseArgs(raw: string): Record<string, any> {
   try {
@@ -78,6 +91,7 @@ async function runTool<T>(
   ctx: T,
   name: string,
   args: Record<string, any>,
+  fullMessage?: string,
 ): Promise<{ out: { result: unknown; proposals?: CopilotProposal[] }; label: string }> {
   if (name === WEB_SEARCH_TOOL) {
     try {
@@ -98,12 +112,21 @@ async function runTool<T>(
     return { out, label: calculateActivity(args, out) };
   }
   try {
-    const out = await def.execTool(ctx, name, args);
+    const out = await def.execTool(ctx, name, args, fullMessage);
     return { out, label: def.activityLabel(name, args, out) };
   } catch (e: any) {
     const out = { result: { error: String(e?.message ?? e).slice(0, 200) } };
     return { out, label: def.activityLabel(name, args, out) };
   }
+}
+
+/** "Starting" chime for a tool call (shown before it returns). */
+function startLabel<T>(def: CopilotDef<T>, name: string, args: Record<string, any>): string {
+  try {
+    const l = (def as any)?.activityStartLabel?.(name, args);
+    if (l) return String(l);
+  } catch { /* fall through */ }
+  return `Running ${String(name ?? 'tool').replace(/_/g, ' ')}…`;
 }
 
 function is429Like(e: any): boolean {
@@ -136,13 +159,21 @@ async function loadHistory<T>(def: CopilotDef<T>, ctx: T): Promise<{ messages: C
     const userTurns = past.filter((m) => m.role === 'user').length;
     const recent = past.slice(-SEND_RECENT);
     const older = past.slice(0, Math.max(0, past.length - SEND_RECENT));
-    return {
-      messages: [
-        ...older.map((m) => ({ role: m.role, content: String(m.text).slice(0, GIST_CAP) })),
-        ...recent.map((m) => ({ role: m.role, content: String(m.text).slice(0, RECENT_CAP) })),
-      ],
-      userTurns,
-    };
+    const recentCap = def.historyRecentCap ?? RECENT_CAP;
+    const messages: ChatMessage[] = [
+      ...older.map((m) => ({ role: m.role, content: String(m.text).slice(0, GIST_CAP) })),
+      ...recent.map((m) => ({ role: m.role, content: String(m.text).slice(0, recentCap) })),
+    ];
+    // Total prompt budget: trim oldest-first so one giant paste (or a long
+    // chat) can never overflow the model's context. Default 24k sits above
+    // what default per-message caps can produce — other defs unaffected.
+    const totalCap = def.historyTotalCap ?? 24_000;
+    let total = messages.reduce((n, m) => n + String((m as any)?.content ?? '').length, 0);
+    while (messages.length > 1 && total > totalCap) {
+      const dropped = messages.shift()!;
+      total -= String((dropped as any)?.content ?? '').length;
+    }
+    return { messages, userTurns };
   } catch {
     return { messages: [], userTurns: 0 };
   }
@@ -150,7 +181,8 @@ async function loadHistory<T>(def: CopilotDef<T>, ctx: T): Promise<{ messages: C
 
 /** Tool-output carry-forward (keepToolOutputs defs only): last turn's tool
  *  results, appended to the next turn's system prompt so "continue" truly
- *  continues. Bounded (12k chars) — big reads fit, history stays cheap. */
+ *  continues. Bounded (12k chars default, def.traceCap overrides) — big
+ *  reads fit, history stays cheap. Flushed per step, not just at turn end. */
 const TRACE_CAP = 12_000;
 export async function loadToolTrace<T>(def: CopilotDef<T>, ctx: T): Promise<string> {
   try {
@@ -163,27 +195,49 @@ export async function loadToolTrace<T>(def: CopilotDef<T>, ctx: T): Promise<stri
     return '';
   }
 }
-export async function saveToolTrace<T>(def: CopilotDef<T>, ctx: T, parts: string[]): Promise<void> {
+export async function saveToolTrace<T>(def: CopilotDef<T>, ctx: T, parts: string[], epoch?: number | null): Promise<void> {
   try {
     if (!def.keepToolOutputs || !parts.length) return;
+    if (!(await epochCurrent(def, ctx, epoch))) return;
     const key = def.historyKey?.(ctx);
     if (!key) return;
     const ttl = def.historyTtlMs ?? SESSION_TTL_MS;
+    const cap = def.traceCap ?? TRACE_CAP;
     const prev = (await cacheGet<string>(`${key}:trace`, ttl)) ?? '';
-    const combined = [...parts, ...(prev ? [prev] : [])].join('\n').slice(0, TRACE_CAP);
+    const combined = [...parts, ...(prev ? [prev] : [])].join('\n').slice(0, cap);
     await cacheSet(`${key}:trace`, combined, ttl);
   } catch { /* best-effort */ }
 }
 
-/** Append this exchange, keeping the window bounded. Skipped when stateless. */
-async function saveHistory<T>(def: CopilotDef<T>, ctx: T, userText: string, replyText: string): Promise<void> {
+/** History is saved INCREMENTALLY, never only at turn end: the user's
+ *  message lands in KV before the first model call, each step's tool
+ *  outputs flush as they happen, and the assistant reply closes the turn.
+ *  A turn killed mid-flight (client abort, exception, isolate freeze) still
+ *  leaves resumable state — "continue" sees the blob AND the partial work.
+ *  Skipped when stateless. */
+async function saveUserTurn<T>(def: CopilotDef<T>, ctx: T, userText: string, epoch?: number | null): Promise<void> {
   try {
+    if (!(await epochCurrent(def, ctx, epoch))) return;
     const key = def.historyKey?.(ctx);
-    if (!key || !replyText.trim()) return;
+    if (!key || !String(userText ?? '').trim()) return;
     const ttl = def.historyTtlMs ?? SESSION_TTL_MS;
     const max = def.historyMaxMsgs ?? 12;
+    const storeCap = def.historyStoreCap ?? 1500;
     const past = (await cacheGet<HistMsg[]>(key, ttl)) ?? [];
-    const next = [...past, { role: 'user' as const, text: String(userText).slice(0, 1500) }, { role: 'assistant' as const, text: String(replyText).slice(0, 1500) }];
+    const next = [...past, { role: 'user' as const, text: String(userText).slice(0, storeCap) }];
+    await cacheSet(key, next.slice(-max), ttl);
+  } catch { /* best-effort */ }
+}
+async function saveAssistantReply<T>(def: CopilotDef<T>, ctx: T, replyText: string, epoch?: number | null): Promise<void> {
+  try {
+    if (!(await epochCurrent(def, ctx, epoch))) return;
+    const key = def.historyKey?.(ctx);
+    if (!key || !String(replyText ?? '').trim()) return;
+    const ttl = def.historyTtlMs ?? SESSION_TTL_MS;
+    const max = def.historyMaxMsgs ?? 12;
+    const storeCap = def.historyStoreCap ?? 1500;
+    const past = (await cacheGet<HistMsg[]>(key, ttl)) ?? [];
+    const next = [...past, { role: 'assistant' as const, text: String(replyText).slice(0, storeCap) }];
     await cacheSet(key, next.slice(-max), ttl);
   } catch { /* best-effort */ }
 }
@@ -282,11 +336,46 @@ async function checkHourlyLimit<T>(def: CopilotDef<T>, ctx: T): Promise<{ ok: bo
   return { ok: true };
 }
 
+/** Volatile session id: the client mints one per visible conversation and
+ *  sends it with every message. Memory (history + trace + epoch) is keyed
+ *  under it — a new chat mints a new id, so the old thread is simply
+ *  unreachable (KV TTL reaps it). Normal-LLM behaviour: memory lives exactly
+ *  as long as the conversation on screen. Absent = legacy user-keyed memory. */
+export function cleanSession(v: unknown): string {
+  return String((v as any) ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+}
+
+/** Chat epoch: bumped on every new-chat. Turns capture it at entry and
+ *  every save refuses to write when it moved — so a turn still running (or
+ *  a killed turn's generator limping on server-side) can never resurrect
+ *  memory the user just cleared. */
+async function readEpoch<T>(def: CopilotDef<T>, ctx: T): Promise<number | null> {
+  try {
+    const key = def.historyKey?.(ctx);
+    if (!key) return null;
+    return (await cacheGet<number>(`${key}:epoch`, def.historyTtlMs ?? SESSION_TTL_MS)) ?? 0;
+  } catch {
+    return 0;
+  }
+}
+async function epochCurrent<T>(def: CopilotDef<T>, ctx: T, epoch: number | null | undefined): Promise<boolean> {
+  if (epoch === null || epoch === undefined) return true;
+  return (await readEpoch(def, ctx)) === epoch;
+}
+
 /** New-chat: wipe rolling history + any copilot extras (e.g. intake draft). */
 export async function clearState<T>(def: CopilotDef<T>, ctx: T): Promise<void> {
   try {
     const key = def.historyKey?.(ctx);
+    // History + carried-forward tool trace go together, or "new chat" lies.
     if (key) await cacheDel(key);
+    if (key) await cacheDel(`${key}:trace`).catch(() => {});
+    // Copilot scratch state (e.g. intake's per-chat draft registry) dies
+    // with the chat too — a new conversation must never inherit old claims.
+    if (key) await cacheDel(`${key}:prop`).catch(() => {});
+    // Bump AFTER wiping: any in-flight turn holds the old epoch and all
+    // its subsequent saves (user msg, per-step trace, reply) are refused.
+    if (key) await cacheSet(`${key}:epoch`, Date.now(), def.historyTtlMs ?? SESSION_TTL_MS).catch(() => {});
   } catch { /* best-effort */ }
   try {
     await def.clearExtra?.(ctx);
@@ -329,11 +418,29 @@ export async function runTurn<T>(
     ...hist.messages,
     { role: 'user', content: String(message ?? '') },
   ];
+  // User message persists BEFORE the first model call (see saveUserTurn —
+  // a killed turn must still leave the blob behind for "continue").
+  // AWAIT (never fire-and-forget): Workers freeze the isolate once the
+  // response returns, killing any pending KV put.
+  const epoch = await readEpoch(def, ctx);
+  await saveUserTurn(def, ctx, String(message ?? ''), epoch);
   const proposals: CopilotProposal[] = [];
   const traceParts: string[] = [];
+  const flushTrace = async () => { if (traceParts.length) { const p = traceParts.splice(0); await saveToolTrace(def, ctx, p, epoch); } };
   const activity: CopilotActivity[] = [];
   let reply = '';
+  let autoCuts = 0;
+  // Transport budget (NOT an AI limit): yield the turn before its HTTP hop
+  // approaches the edge ~100s guillotine. State is already flushed
+  // incrementally, so the client's auto-continued hop resumes seamlessly.
+  const deadline = Date.now() + (def.turnBudgetMs ?? 80_000);
   for (let step = 0; step < (def.maxSteps ?? MAX_STEPS); step++) {
+    if (step > 0 && Date.now() > deadline) {
+      await flushTrace();
+      const partial = reply || 'Working through it — continuing…';
+      await saveAssistantReply(def, ctx, partial, epoch);
+      return { reply: partial, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true };
+    }
     let res: any;
     try {
       res = await gateway.complete({
@@ -341,15 +448,17 @@ export async function runTurn<T>(
         provider: CHAT_PROVIDER, model, extraParams: CHAT_PROVIDER_PARAMS,
         tools, toolChoice: 'auto',
         sessionKey: key,
-        // Stall guard: reasoning first-tokens are slower — 20s probe, 30s cap.
-        timeoutMs: 30_000,
-        probeTimeoutMs: 20_000,
+        // No time constraint (founder order) — see CHAT note above.
+        timeoutMs: undefined,
+        probeTimeoutMs: undefined,
       });
     } catch (e: any) {
       if (is429Like(e)) {
         await markStorm();
+        await flushTrace();
         return { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
       }
+      await flushTrace();
       throw e;
     }
     if (res.toolCalls && res.toolCalls.length > 0) {
@@ -358,9 +467,20 @@ export async function runTurn<T>(
         content: res.content || '',
         tool_calls: res.toolCalls.map((tc: any) => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: tc.arguments } })),
       });
-      for (const tc of res.toolCalls.slice(0, 3)) {
-        const args = parseArgs(tc.arguments);
-        const { out, label } = await runTool(env, def, ctx, tc.name, args);
+      // Parallel fan-out: independent calls resolve together, results
+      // re-attached in call order. One failing call must not sink the batch.
+      const batch = res.toolCalls.slice(0, def.maxParallelTools ?? 3);
+      const results = await Promise.all(batch.map(async (tc: any) => {
+        try {
+          const args = parseArgs(tc.arguments);
+          const { out, label } = await runTool(env, def, ctx, tc.name, args, String(message ?? ''));
+          return { tc, out, label };
+        } catch (e: any) {
+          const out: { result: unknown; proposals?: CopilotProposal[] } = { result: { error: String(e?.message ?? e).slice(0, 200) } };
+          return { tc, out, label: def.activityLabel(tc.name, {}, out) };
+        }
+      }));
+      for (const { tc, out, label } of results) {
         if (out.proposals) proposals.push(...out.proposals);
         activity.push({ tool: tc.name, label });
         messages.push({
@@ -369,17 +489,23 @@ export async function runTurn<T>(
           tool_call_id: tc.id,
         });
       }
+      await flushTrace();
+      continue;
+    }
+    // Length-cutoff with nothing usable: the model thought itself into the
+    // token cap (reasoning counts against it). Resume in-loop instead of
+    // ending the turn on an empty step.
+    const cutOff = !(res.toolCalls?.length > 0) && !res.content?.trim() && (res as any)?.finishReason === 'length';
+    if (cutOff && autoCuts < MAX_CUT_RESUMES) {
+      autoCuts++;
+      messages.push({ role: 'assistant' as const, content: '' }, { role: 'user' as const, content: CUT_RESUME });
       continue;
     }
     reply = res.content?.trim() || def.emptyHint;
     break;
   }
   if (!reply) reply = 'I ran out of steps — try a narrower question.';
-  // AWAIT (never fire-and-forget): Workers freeze the isolate once the
-  // response returns, killing any pending KV put — the next turn would land
-  // on a fresh isolate with no recall ("new session" symptom).
-  await saveHistory(def, ctx, String(message ?? ''), reply);
-  await saveToolTrace(def, ctx, traceParts);
+  await saveAssistantReply(def, ctx, reply, epoch);
   return { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
 }
 
@@ -426,12 +552,26 @@ export async function* streamTurn<T>(
     ...hist.messages,
     { role: 'user', content: String(message ?? '') },
   ];
+  const epoch = await readEpoch(def, ctx);
+  await saveUserTurn(def, ctx, String(message ?? ''), epoch);
   const proposals: CopilotProposal[] = [];
   const traceParts: string[] = [];
+  const flushTrace = async () => { if (traceParts.length) { const p = traceParts.splice(0); await saveToolTrace(def, ctx, p, epoch); } };
   const activity: CopilotActivity[] = [];
   let reply = '';
+  let autoCuts = 0;
+  let turnText = '';
+  // Transport budget, same as runTurn: yield before the edge guillotine.
+  const deadline = Date.now() + (def.turnBudgetMs ?? 80_000);
   for (let step = 0; step < (def.maxSteps ?? MAX_STEPS); step++) {
     let stepContent = '';
+    if (step > 0 && Date.now() > deadline) {
+      await flushTrace();
+      const partial: CopilotReply = { reply: turnText, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true };
+      yield { type: 'done', data: partial };
+      await saveAssistantReply(def, ctx, turnText || 'Working through it — continuing…', epoch);
+      return partial;
+    }
     // Live streaming: every content token goes out as a delta immediately
     // (token-by-token typing). Steps that end in tool calls are working
     // notes — their streamed text stays visible in the bubble (never
@@ -444,7 +584,7 @@ export async function* streamTurn<T>(
         extraParams: CHAT_PROVIDER_PARAMS,
         tools, toolChoice: 'auto',
         sessionKey: key,
-        timeoutMs: 30_000, probeTimeoutMs: 20_000,
+        timeoutMs: undefined, probeTimeoutMs: undefined,
       })) {
         if (chunk.contentDelta) {
           stepContent += chunk.contentDelta;
@@ -469,6 +609,7 @@ export async function* streamTurn<T>(
     } catch (e: any) {
       if (is429Like(e)) {
         await markStorm();
+        await flushTrace();
         const r: CopilotReply = { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
         yield { type: 'done', data: r };
         return r;
@@ -479,7 +620,7 @@ export async function* streamTurn<T>(
         extraParams: CHAT_PROVIDER_PARAMS,
         tools, toolChoice: 'auto',
         sessionKey: key,
-        timeoutMs: 30_000, probeTimeoutMs: 20_000,
+        timeoutMs: undefined, probeTimeoutMs: undefined,
       });
       if (res.reasoning) yield { type: 'thinking', data: { text: String(res.reasoning).slice(0, 2000) } };
       if (res.toolCalls && res.toolCalls.length) {
@@ -498,26 +639,53 @@ export async function* streamTurn<T>(
         role: 'assistant', content: stepContent,
         tool_calls: toolCalls.map((tc) => ({ id: tc.id || `call_${Math.random().toString(36).slice(2)}`, type: 'function' as const, function: { name: tc.name, arguments: tc.args || '{}' } })),
       });
-      for (const tc of toolCalls.slice(0, 3)) {
-        const args = parseArgs(tc.args);
-        const { out, label } = await runTool(env, def, ctx, tc.name, args);
+      turnText += stepContent;
+      const batch = toolCalls.slice(0, def.maxParallelTools ?? 3);
+      // Announce every call BEFORE it runs: a 5s lookup with no signal
+      // feels broken, while "Looking up vendors…" (pulsing) feels alive.
+      // Completions below replace these pending chips in place.
+      for (const tc of batch) {
+        yield { type: 'activity-start', data: { tool: tc.name, label: startLabel(def, tc.name, parseArgs(tc.args)) } };
+      }
+      const results = await Promise.all(batch.map(async (tc) => {
+        try {
+          const args = parseArgs(tc.args);
+          const { out, label } = await runTool(env, def, ctx, tc.name, args, String(message ?? ''));
+          return { tc, out, label };
+        } catch (e: any) {
+          const out: { result: unknown; proposals?: CopilotProposal[] } = { result: { error: String(e?.message ?? e).slice(0, 200) } };
+          return { tc, out, label: def.activityLabel(tc.name, {}, out) };
+        }
+      }));
+      for (const { tc, out, label } of results) {
         if (out.proposals) proposals.push(...out.proposals);
         const act = { tool: tc.name, label };
         activity.push(act);
         yield { type: 'activity', data: act };
         (() => { const c2 = JSON.stringify(out.result).slice(0, def.toolResultCap ?? 3000); traceParts.push(`${tc.name}: ${c2}`.slice(0, def.toolResultCap ?? 3000)); messages.push({ role: 'tool', content: c2, tool_call_id: tc.id }); })();
       }
+      await flushTrace();
       continue;
     }
-    reply = stepContent.trim() || def.emptyHint;
+    // Same length-cutoff resume as runTurn (finishReason is captured per
+    // step above). The resumed thinking streams live like any other step.
+    const cutOff = toolCalls.length === 0 && !stepContent.trim() && finishReason === 'length';
+    if (cutOff && autoCuts < MAX_CUT_RESUMES) {
+      autoCuts++;
+      messages.push({ role: 'assistant' as const, content: stepContent }, { role: 'user' as const, content: CUT_RESUME });
+      continue;
+    }
+    turnText += stepContent;
+    reply = turnText.trim() || def.emptyHint;
     // Already streamed live above — nothing more to emit for the final step.
     break;
   }
   if (!reply) reply = 'I ran out of steps — try a narrower question.';
   const final: CopilotReply = { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
   yield { type: 'done', data: final };
-  // AWAIT (see runTurn): a fire-and-forget KV put dies with the isolate.
-  await saveHistory(def, ctx, String(message ?? ''), reply);
-  await saveToolTrace(def, ctx, traceParts);
+  // AWAIT: a fire-and-forget KV put dies with the isolate. (User turn +
+  // per-step trace were already flushed during the loop — this only closes
+  // the turn with the assistant reply.)
+  await saveAssistantReply(def, ctx, reply, epoch);
   return final;
 }

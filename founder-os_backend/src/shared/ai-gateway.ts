@@ -281,6 +281,9 @@ export interface CompletionResult {
   toolCalls?: ToolCall[];
   /** Assistant reasoning text (OpenRouter `message.reasoning`), when present. */
   reasoning?: string;
+  /** Provider stop reason (`choices[0].finish_reason`) — lets callers tell
+   *  "model chose silence" apart from "cut off by max_tokens" (length). */
+  finishReason?: string;
 }
 
 // ── Key pool ─────────────────────────────────────────────────────────────────
@@ -1256,11 +1259,13 @@ export class AiGateway {
         }))
       : undefined;
     const reasoning: string = typeof msg?.reasoning === 'string' ? msg.reasoning : '';
+    const finishReason: string = typeof data?.choices?.[0]?.finish_reason === 'string' ? data.choices[0].finish_reason : '';
     return {
       content, provider: key.provider, keyId: key.id, model,
       jsonParsed: !!req.json, usage: data?.usage,
       ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
       ...(reasoning ? { reasoning } : {}),
+      ...(finishReason ? { finishReason } : {}),
     };
   }
 

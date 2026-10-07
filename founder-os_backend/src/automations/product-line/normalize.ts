@@ -6,6 +6,19 @@
 // the model's job — it has the checklist questions; this only cleans text.
 // Shared by Worker + Express (no prisma, no KV, no fetch).
 
+/** Loose numeric field: ''/null/NaN → undefined (field absent). */
+export function numField(v: unknown): number | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Trimmed string field (max capped): '' → undefined (field absent). */
+export function strField(v: unknown, max = 300): string | undefined {
+  const s = String(v ?? '').trim().slice(0, max);
+  return s || undefined;
+}
+
 /** 4" → 4 inch · 4in → 4 inch · 6′ → 6 feet. Leaves other text untouched. */
 export function normalizeInches(s: unknown): string {
   let t = String(s ?? '').trim();

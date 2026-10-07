@@ -22,6 +22,10 @@ export interface CopilotReply {
   reply: string;
   proposals: CopilotProposal[];
   activity: CopilotActivity[];
+  /** More work remains: the turn stopped early so its HTTP hop stays under
+   *  the edge ~100s guillotine — the client auto-continues (same session)
+   *  without user action. NOT an AI limit: steps/tokens stay unbounded. */
+  continued?: boolean;
 }
 
 export interface CopilotExecResult {
@@ -50,9 +54,17 @@ export interface CopilotDef<T> {
   countKey(ctx: T): string | null;
   systemPrompt(ctx: T): string;
   toolDefs(ctx: T): ToolDefinition[];
-  execTool(ctx: T, name: string, args: Record<string, any>): Promise<{ result: unknown; proposals?: CopilotProposal[] }>;
+  /** Execute a tool. `message` is the turn's raw user text, threaded through
+   *  for tools that need the verbatim paste (e.g. blob ingestion) without
+   *  the model re-emitting it through args (which the completion cap would
+   *  truncate). Defs that ignore it are unaffected. */
+  execTool(ctx: T, name: string, args: Record<string, any>, message?: string): Promise<{ result: unknown; proposals?: CopilotProposal[] }>;
   /** One-line chime shown in the UI while a tool runs. */
   activityLabel(name: string, args: Record<string, any>, out: { result: unknown }): string;
+  /** "Starting" chime shown the moment a tool call begins (before it
+   *  returns) so multi-second tools never look stuck. Optional — engine
+   *  falls back to `Running <tool>…`. */
+  activityStartLabel?(name: string, args: Record<string, any>): string;
   /** Confirm path for proposals. Absent = read-only copilot (no execute). */
   executeProposal?(ctx: T, action: Record<string, any>): Promise<CopilotExecResult>;
   /** Opt out of engine-default tools (web_search, fetch_page, calculate). Default false = enabled for every copilot. */
@@ -68,6 +80,11 @@ export interface CopilotDef<T> {
    *  chain reads → searches → proposals raise this so work finishes instead
    *  of stalling mid-pipeline. */
   maxSteps?: number;
+  /** Max tool calls executed per model step (default 3), run in PARALLEL via
+   *  Promise.all (results re-attached in order). Defs whose tools are pure +
+   *  independent (intake reads/captures) raise this so a 14-quote blob
+   *  resolves in a few wide steps instead of dozens of sequential ones. */
+  maxParallelTools?: number;
   /** Carry last turn's tool outputs into the next turn's prompt (default
    *  false). When true, tool results persist in KV and are appended to the
    *  system prompt — later turns continue from them instead of re-running
@@ -79,4 +96,26 @@ export interface CopilotDef<T> {
    *  Bulk-style defs that page row text raise this so one read covers the
    *  batch instead of N paged calls hammering RPM limits. */
   toolResultCap?: number;
+  /** Max chars of carried-forward tool trace in the next turn's prompt
+   *  (default 12000). Long-pipeline defs (intake) raise this so a 14-quote
+   *  blob's split + captures all survive into "continue". */
+  traceCap?: number;
+  /** Max chars per recent history message SENT to the model (default 1200).
+   *  Defs whose user message IS the working data (pasted blobs) raise this
+   *  or resume turns only ever see the head of the paste. */
+  historyRecentCap?: number;
+  /** Max chars per message STORED in rolling history (default 1500). Raise
+   *  alongside historyRecentCap or there is nothing fuller to send. */
+  historyStoreCap?: number;
+  /** Max TOTAL chars of history sent per turn, trimmed oldest-first (default
+   *  24000 — under it, current per-message caps can never overflow it, so
+   *  other defs are unaffected). Defs carrying whole pastes (intake) raise
+   *  this instead of piling uncapped messages onto every prompt. */
+  historyTotalCap?: number;
+  /** Per-hop wall clock ms (default 80000): a turn yields here so its HTTP
+   *  request never meets the edge ~100s guillotine (which answers long
+   *  requests with an HTML error page, not JSON). The client chains the
+   *  next hop automatically from saved state — TRANSPORT chunking only,
+   *  never a limit on the AI's total work. */
+  turnBudgetMs?: number;
 }

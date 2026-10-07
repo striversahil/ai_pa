@@ -938,6 +938,20 @@ export const salesCopilotDef: CopilotDef<SalesCtx> = {
   toolDefs,
   execTool,
   activityLabel,
+  activityStartLabel: (name) => {
+    switch (name) {
+      case 'get_enquiry_summary': return 'Reading enquiry…';
+      case 'propose_comment': return 'Drafting comment…';
+      case 'propose_spec_fix': return 'Drafting spec fix…';
+      case 'ask_question': return 'Preparing question…';
+      case 'find_price': return 'Looking up price…';
+      case 'ask_specs': return 'Preparing spec form…';
+      case 'quote_price': return 'Pricing…';
+      case 'find_price_batch': return 'Matching batch…';
+      case 'quote_price_batch': return 'Pricing batch…';
+      default: return `Running ${name}…`;
+    }
+  },
   modelEnvVar: 'ENQUIRY_CHAT_MODEL',
   defaultModel: 'deepseek/deepseek-v4.1-flash',
   emptyHint: 'I can’t help with that — try asking about items, specs, missing details, or an AI price.',

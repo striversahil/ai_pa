@@ -57,6 +57,16 @@ const INTAKE: CopilotConfig = {
     propose_vendor: "🏪",
     propose_product: "📦",
     propose_rate: "💰",
+    commit_all: "⚡",
+    find_rate: "🔎",
+    update_rate: "🔧",
+    update_vendor: "🏭",
+    delete_rate: "🗑️",
+    delete_vendor: "🗑️",
+    delete_product: "🗑️",
+    find_duplicates: "👯",
+    merge_vendor: "🔀",
+    merge_product: "🔀",
     clear_draft: "🗑️",
     web_search: "🌐",
     fetch_page: "📄",
@@ -67,6 +77,7 @@ const INTAKE: CopilotConfig = {
   executeUrl: "/api/copilot/product-line-intake/chat/execute",
   clearUrl: "/api/copilot/product-line-intake/chat/clear",
   resetKey: "product-line-intake",
+  timeoutMs: 0,
 };
 
 const MODES = [

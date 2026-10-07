@@ -8,7 +8,7 @@
 import type { Hono } from 'hono';
 import { authStore, getMe, notifyLive, readSessionCookie, LiveEvent, type Bindings } from '../context';
 import { getCopilot } from '../../copilot/registry';
-import { clearState, runTurn, streamTurn } from '../../copilot/engine';
+import { cleanSession, clearState, runTurn, streamTurn } from '../../copilot/engine';
 import type { CopilotReply } from '../../copilot/types';
 
 function sseResponse(gen: AsyncGenerator<{ type: string; data: any }, CopilotReply, unknown>): Response {
@@ -52,7 +52,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const message = String(body?.message ?? '').trim();
     if (!message) return c.json({ error: 'message required' }, 400);
     try {
-      const ctx = await def.buildCtx(c.env as any, me, {});
+      const ctx = await def.buildCtx(c.env as any, me, { session: cleanSession(body?.session) });
       return c.json(await runTurn(c.env as any, def, ctx, message));
     } catch (e: any) {
       return chatError(c, e);
@@ -69,7 +69,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const message = String(body?.message ?? '').trim();
     if (!message) return c.json({ error: 'message required' }, 400);
     try {
-      const ctx = await def.buildCtx(c.env as any, me, {});
+      const ctx = await def.buildCtx(c.env as any, me, { session: cleanSession(body?.session) });
       return sseResponse(streamTurn(c.env as any, def, ctx, message));
     } catch (e: any) {
       return chatError(c, e);
@@ -84,7 +84,8 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = def.checkAccess(me);
     if (denied) return c.json({ error: denied.error }, denied.status as any);
     try {
-      const ctx = await def.buildCtx(c.env as any, me, {});
+      const clearBody = await c.req.json().catch(() => ({}));
+      const ctx = await def.buildCtx(c.env as any, me, { session: cleanSession(clearBody?.session) });
       await clearState(def, ctx);
       return c.json({ ok: true });
     } catch (e: any) {
@@ -101,7 +102,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!def.executeProposal) return c.json({ error: 'this copilot is read-only', applied: 'none' }, 400);
     const body = await c.req.json().catch(() => ({}));
     try {
-      const ctx = await def.buildCtx(c.env as any, me, {});
+      const ctx = await def.buildCtx(c.env as any, me, { session: cleanSession(body?.session) });
       const { result, applied } = await def.executeProposal(
         ctx, (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
       );

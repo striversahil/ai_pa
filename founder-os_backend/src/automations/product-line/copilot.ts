@@ -194,14 +194,17 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
     if (scopes.includes('product-line') || scopes.includes('mis')) return null;
     return { status: 403, error: "Requires 'product-line' permission" };
   },
-  buildCtx: (env, me) => ({ env, me }),
+  buildCtx: (env, me, extra) => ({
+    env, me,
+    session: String((extra as any)?.session ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64),
+  }),
   sessionKey: (ctx) => {
     const who = String(ctx.me?.user?.email ?? ctx.me?.user?.id ?? 'anon').toLowerCase();
-    return `copilot:product-line:${who}`;
+    return `copilot:product-line:${who}${(ctx as any).session ? `:${(ctx as any).session}` : ''}`;
   },
   historyKey: (ctx) => {
     const who = String(ctx.me?.user?.email ?? ctx.me?.user?.id ?? 'anon').toLowerCase();
-    return `copilot:hist:pl:${who}`;
+    return `copilot:hist:pl:${who}${(ctx as any).session ? `:${(ctx as any).session}` : ''}`;
   },
   historyTtlMs: 60 * 60 * 1000,
   historyMaxMsgs: 100,
@@ -275,6 +278,16 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
     },
   ],
   execTool,
+  activityStartLabel: (name) => {
+    switch (name) {
+      case 'search_products': return 'Searching products…';
+      case 'get_product_detail': return 'Reading product…';
+      case 'compare_quotes': return 'Comparing quotes…';
+      case 'vendor_lookup': return 'Looking up vendor…';
+      case 'ask_question': return 'Preparing question…';
+      default: return `Running ${name}…`;
+    }
+  },
   activityLabel: (name, args, out) => {
     const r = (out.result ?? {}) as Record<string, any>;
     switch (name) {

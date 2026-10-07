@@ -22,7 +22,7 @@ interface ChatProposal {
   questions?: { key: string; label: string; note?: string; required?: boolean; type?: "options" | "multiselect" | "text" | "number" | "date"; options?: string[] }[];
   rows?: { variation: string; markedPrice: number; unit: string; confidence: number; quoteAgeDays?: number | null; moq?: string | null; deliveryDays?: number | null; best?: boolean; itemIndex?: number; itemName?: string }[];
 }
-interface ChatActivity { tool: string; label: string; }
+interface ChatActivity { tool: string; label: string; pending?: boolean; }
 interface ChatMsg { role: "user" | "assistant"; text: string; proposals?: ChatProposal[]; activity?: ChatActivity[]; thinking?: string; }
 
 const SUGGESTIONS = ["What's missing on this enquiry?", "Get AI price for an item", "Draft a note for the enquiry thread", "Help me fix an item spec"];
@@ -80,20 +80,52 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
     }
   }, [open, visible]);
 
-  const send = async (text: string) => {
+  const abortRef = useRef<AbortController | null>(null);
+  const userStoppedRef = useRef(false);
+  const stop = () => {
+    userStoppedRef.current = true;
+    try { abortRef.current?.abort(); } catch {}
+  };
+
+  const cleanErr = (m: string): string => {
+    const t = String(m ?? "");
+    if (t.includes("<!DOCTYPE") || t.trimStart().startsWith("<html") || /HTTP \d+ </.test(t)) {
+      return "Server hiccup mid-turn (edge error page) — work so far is saved. Say continue to resume.";
+    }
+    return t;
+  };
+
+  const send = async (text: string, hop = 0): Promise<void> => {
     const q = text.trim();
-    if (!q || busy) return;
-    if (!open) onOpen();
-    setBusy(true);
-    setThinking("");
-    // Assistant placeholder goes up INSTANTLY (before any network), so the
-    // thinking chip is visible through the whole dead window: connect +
-    // worker boot + model queue, not just after the first token.
-    setMsgs((p) => [...p, { role: "user", text: q }, { role: "assistant", text: "", activity: [], proposals: [] }]);
-    setInput("");
-    const tryStream = async (): Promise<boolean> => {
+    if (!q) return;
+    if (hop === 0) {
+      if (busy) return;
+      userStoppedRef.current = false;
+      if (!open) onOpen();
+      setBusy(true);
+      setThinking("");
+      // Assistant placeholder goes up INSTANTLY (before any network), so the
+      // thinking chip is visible through the whole dead window: connect +
+      // worker boot + model queue, not just after the first token.
+      setMsgs((p) => [...p, { role: "user", text: q }, { role: "assistant", text: "", activity: [], proposals: [] }]);
+      setInput("");
+    } else {
+      setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
+    }
+    const chainNext = async (): Promise<void> => {
+      if (userStoppedRef.current || hop >= 9) {
+        if (!userStoppedRef.current) {
+          setMsgs((p) => [...p, { role: "assistant", text: "Paused after a long run — say continue to resume.", proposals: [], activity: [] }]);
+        }
+        setBusy(false);
+        return;
+      }
+      return send("continue", hop + 1);
+    };
+    const tryStream = async (): Promise<"done" | "continued" | "failed"> => {
       try {
         const ctrl = new AbortController();
+        abortRef.current = ctrl;
         // 60s budget: the primary may be throttled and the turn can fail over
         // to a reasoning-model fallback running a multi-step tools loop.
         const t = setTimeout(() => ctrl.abort(), 60000);
@@ -119,6 +151,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
         let accActivity: ChatActivity[] = [];
         let accProposals: ChatProposal[] = [];
         let sawDone = false;
+        let streamContinued = false;
         // Placeholder was already appended in send() — don't add a second one.
         const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 55000);
         try {
@@ -142,8 +175,22 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                     if (last?.role === "assistant") last.text = accText;
                     return [...cp];
                   });
+                } else if (evt.type === "activity-start" && evt.data) {
+                  // Tool announced BEFORE it runs — pulsing chip until the
+                  // completion event settles it in place (same as CopilotChat).
+                  const chip = { ...(evt.data as ChatActivity), pending: true };
+                  accActivity = [...accActivity, chip];
+                  setMsgs((p) => {
+                    const cp = [...p]; const last = cp[cp.length - 1];
+                    if (last?.role === "assistant") last.activity = [...accActivity];
+                    return [...cp];
+                  });
                 } else if (evt.type === "activity" && evt.data) {
-                  accActivity = [...accActivity, evt.data as ChatActivity];
+                  const done = { ...(evt.data as ChatActivity), pending: false };
+                  const idx = accActivity.findIndex((a) => a.tool === done.tool && a.pending);
+                  accActivity = idx >= 0
+                    ? [...accActivity.slice(0, idx), done, ...accActivity.slice(idx + 1)]
+                    : [...accActivity, done];
                   setMsgs((p) => {
                     const cp = [...p]; const last = cp[cp.length - 1];
                     if (last?.role === "assistant") last.activity = [...accActivity];
@@ -170,6 +217,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                   if (!accText) accText = String(evt.data.reply ?? "");
                   accActivity = Array.isArray(evt.data.activity) ? evt.data.activity : accActivity;
                   accProposals = Array.isArray(evt.data.proposals) ? evt.data.proposals : [];
+                  if ((evt.data as any)?.continued) streamContinued = true;
                   setMsgs((p) => {
                     const cp = [...p]; const last = cp[cp.length - 1];
                     if (last?.role === "assistant") {
@@ -194,23 +242,33 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
         } finally {
           clearTimeout(timeout);
           clearTimeout(t);
+          if (abortRef.current === ctrl) abortRef.current = null;
           try { reader.releaseLock(); } catch {}
         }
         if (!accText && accProposals.length === 0 && accActivity.length === 0) throw new Error("empty stream");
-        return true;
+        return streamContinued ? "continued" : "done";
       } catch {
-        setMsgs((p) => {
-          const last = p[p.length - 1];
-          if (last?.role === "assistant" && last.text === "" && last.proposals?.length === 0) return p.slice(0, -1);
-          return p;
-        });
-        return false;
+        // KEEP the placeholder: thinking stays live through the fallback,
+        // which fills this same bubble in place (no dead-silent gap).
+        return "failed";
       }
     };
-    const streamed = await tryStream();
-    if (streamed) { setBusy(false); return; }
+    const s = await tryStream();
+    if (s === "done") { setBusy(false); return; }
+    if (s === "continued") return chainNext();
+    if (userStoppedRef.current) {
+      setMsgs((p) => {
+        const cp = [...p]; const last = cp[cp.length - 1];
+        if (last?.role === "assistant" && !last.text && (last.proposals?.length ?? 0) === 0 && (last.activity?.length ?? 0) === 0) {
+          last.text = "Stopped — nothing had arrived yet. Send anything to resume.";
+        }
+        return [...cp];
+      });
+      setBusy(false); return;
+    }
     try {
       const ctrl = new AbortController();
+      abortRef.current = ctrl;
       const t = setTimeout(() => ctrl.abort(), 60000);
       const res = await fetch(`/api/enquiries/${enquiryId}/chat`, {
         method: "POST",
@@ -219,21 +277,43 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
         signal: ctrl.signal,
       });
       clearTimeout(t);
+      if (abortRef.current === ctrl) abortRef.current = null;
       if (!res.ok) {
-        const errText = await res.text().catch(() => "");
+        const raw = await res.text().catch(() => "");
+        const errText = cleanErr(raw) || `HTTP ${res.status}`;
         if (res.status === 429) throw new Error("Rate-limited — please wait a minute and retry.");
-        throw new Error(errText || `HTTP ${res.status}`);
+        throw new Error(errText);
       }
       const data = await res.json();
-      setMsgs((p) => [...p, {
-        role: "assistant",
-        text: String(data.reply || data.error || "No answer."),
-        proposals: Array.isArray(data.proposals) ? data.proposals : [],
-        activity: Array.isArray(data.activity) ? data.activity : [],
-      }]);
+      const fill = (text: string, proposals: any[] = [], activity: any[] = []) => {
+        setMsgs((p) => {
+          const cp = [...p]; const last = cp[cp.length - 1];
+          if (last?.role === "assistant" && !last.text && (last.proposals?.length ?? 0) === 0) {
+            cp[cp.length - 1] = { ...last, text, proposals, activity };
+            return [...cp];
+          }
+          return [...p, { role: "assistant", text, proposals, activity }];
+        });
+      };
+      fill(
+        String(data.reply || data.error || "No answer."),
+        Array.isArray(data.proposals) ? data.proposals : [],
+        Array.isArray(data.activity) ? data.activity : [],
+      );
+      if ((data as any)?.continued && !userStoppedRef.current) return chainNext();
     } catch (e: any) {
-      const msg = e?.name === "AbortError" ? "Chat timed out — please retry." : String(e?.message || "Chat failed — please retry.").slice(0, 200);
-      setMsgs((p) => [...p, { role: "assistant", text: msg }]);
+      abortRef.current = null;
+      const msg = cleanErr(userStoppedRef.current
+        ? "Stopped — partial work is kept. Say continue to resume."
+        : e?.name === "AbortError" ? "Chat timed out — please retry." : String(e?.message || "Chat failed — please retry.").slice(0, 200));
+      setMsgs((p) => {
+        const cp = [...p]; const last = cp[cp.length - 1];
+        if (last?.role === "assistant" && !last.text && (last.proposals?.length ?? 0) === 0) {
+          cp[cp.length - 1] = { ...last, text: msg };
+          return [...cp];
+        }
+        return [...p, { role: "assistant", text: msg }];
+      });
     } finally {
       setBusy(false);
     }
@@ -393,8 +473,8 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                           {m.activity && m.activity.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
                               {m.activity.map((a, ai) => (
-                                <span key={ai} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-white/[0.06]">
-                                  <span>{TOOL_ICON[a.tool] ?? "⚙️"}</span>{a.label}
+                                <span key={ai} className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-white/[0.06]${a.pending ? " animate-pulse" : ""}`}>
+                                  <span>{a.pending ? "⏳" : (TOOL_ICON[a.tool] ?? "⚙️")}</span>{a.label}
                                 </span>
                               ))}
                             </div>
@@ -599,10 +679,23 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 10a7 7 0 01-14 0M12 18v3M8 21h8" />
             </svg>
           </button>
+          {busy ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); stop(); }}
+              aria-label="Stop"
+              title="Stop the agent"
+              className="h-9 w-9 rounded-full border-0 flex items-center justify-center cursor-pointer transition-colors duration-200 bg-red-500/90 text-white hover:bg-red-500"
+            >
+              <svg className="w-[13px] h-[13px]" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+          ) : (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); void send(input); }}
-            disabled={!input.trim() || busy}
+            disabled={!input.trim()}
             aria-label="Send"
             className={`h-9 w-9 rounded-full border-0 flex items-center justify-center cursor-pointer transition-colors duration-200 disabled:opacity-40 ${input.trim() ? "bg-violet-600 text-white hover:bg-violet-500" : "bg-white/[0.06] text-[var(--text-tertiary)]"}`}
           >
@@ -610,6 +703,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h12M12 5l7 7-7 7" />
             </svg>
           </button>
+          )}
         </div>
       </div>
     </>

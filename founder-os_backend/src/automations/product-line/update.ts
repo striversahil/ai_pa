@@ -323,7 +323,13 @@ export async function createRate(body: any): Promise<any> {
   }
   const row = await (prisma as any).vendorRate.create({ data });
   await touched();
-  if (productId) await invalidateProductDetailCache(productId);
+  // Per-product rates cache MUST bust here: dup detection (commit_all) and
+  // sales matching read getRatesForProduct, which would otherwise serve the
+  // pre-create snapshot for the full TTL.
+  if (productId) {
+    await invalidateProductDetailCache(productId);
+    await invalidateProductRatesCache(productId).catch(() => {});
+  }
   return row;
 }
 
@@ -342,7 +348,10 @@ export async function updateRate(id: string, body: any): Promise<any> {
   await touched();
   try {
     const pid = (row as any)?.productId ?? (body as any)?.productId;
-    if (pid) await invalidateProductDetailCache(String(pid));
+    if (pid) {
+      await invalidateProductDetailCache(String(pid));
+      await invalidateProductRatesCache(String(pid)).catch(() => {});
+    }
   } catch { /* best-effort */ }
   return row;
 }

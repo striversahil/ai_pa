@@ -20,7 +20,7 @@ export interface CopilotProposal {
   questions?: SpecQuestion[];
 }
 
-interface CopilotActivity { tool: string; label: string; }
+interface CopilotActivity { tool: string; label: string; pending?: boolean; }
 interface CopilotMsg { role: "user" | "assistant"; text: string; proposals?: CopilotProposal[]; activity?: CopilotActivity[]; thinking?: string; }
 
 export interface CopilotConfig {
@@ -38,6 +38,8 @@ export interface CopilotConfig {
   /** Chat clears whenever this changes (e.g. selected enquiry/product id). */
   resetKey: string | number;
   userInitial?: string;
+  /** Per-request abort budget ms (default 60000). 0 or negative = no timer. */
+  timeoutMs?: number;
   /** Extra body fields sent with every message (e.g. { batchId } for bulk). */
   context?: Record<string, string>;
 }
@@ -60,6 +62,14 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   const [msgs, setMsgs] = useState<CopilotMsg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // User interrupt: the live request's controller + a flag separating
+  // "I hit stop" from real timeouts (different message, no fallback run).
+  const abortRef = useRef<AbortController | null>(null);
+  const userStoppedRef = useRef(false);
+  const stop = () => {
+    userStoppedRef.current = true;
+    try { abortRef.current?.abort(); } catch {}
+  };
   const [thinking, setThinking] = useState("");
   const [thinkSecs, setThinkSecs] = useState(0);
   // Liveness clock: ticks while a turn is in flight so even a long silent
@@ -79,6 +89,27 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   const recogRef = useRef<any>(null);
 
   useEffect(() => { setMsgs([]); setConfirmed(new Set()); }, [config.resetKey]);
+  // Arriving at the automation = new chat: wipe server memory + screen every
+  // time the panel opens (page refresh lands closed, so first open clears
+  // any pre-refresh thread too). In-panel tab switches don't re-trigger.
+
+  // Volatile conversation id: minted once per page load (a refresh or a
+  // return to the automation remounts → fresh id → fresh memory, exactly
+  // like a normal LLM). Closing/reopening the panel (✕, backdrop click)
+  // only hides it — the id and the thread survive. ONLY the ↻ button mints
+  // a new id (a deliberate new chat). Sent with every message; server
+  // memory is keyed under it, so a new chat can never inherit an old
+  // thread — nothing to wipe, nothing that can fail.
+  const sessionRef = useRef<string>("");
+  if (!sessionRef.current) {
+    try { sessionRef.current = (crypto as any)?.randomUUID?.() ?? ""; } catch {}
+    if (!sessionRef.current) sessionRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+  const rotateSession = () => {
+    try { sessionRef.current = (crypto as any)?.randomUUID?.() ?? ""; } catch {}
+    if (!sessionRef.current || sessionRef.current.length < 8) sessionRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    setMsgs([]); setConfirmed(new Set()); setThinking("");
+  };
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -92,31 +123,68 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
     }
   }, [open, visible]);
 
-  const send = async (text: string) => {
+  /** Edge pages are HTML, never chat text: if any error body looks like
+   *  markup (Cloudflare guillotine, proxy death), say so plainly instead
+   *  of dumping `<!DOCTYPE…` into the thread. State was already saved
+   *  server-side per step, so "continue" resumes. */
+  const cleanErr = (m: string): string => {
+    const t = String(m ?? "");
+    if (t.includes("<!DOCTYPE") || t.trimStart().startsWith("<html") || /HTTP \d+ </.test(t)) {
+      return "Server hiccup mid-turn (edge error page) — work so far is saved. Say continue to resume.";
+    }
+    return t;
+  };
+
+  // Transport chaining (see engine turnBudgetMs): one user message may take
+  // several HTTP hops; hop 0 shows the user bubble, later hops silently add
+  // fresh assistant bubbles on the same thread. busy stays true across hops
+  // and drops only when the chain truly ends — no interleaved sends.
+  const send = async (text: string, hop = 0): Promise<void> => {
     const q = text.trim();
-    if (!q || busy) return;
-    if (!open) onOpen();
-    setBusy(true);
-    setThinking("");
-    // Assistant placeholder goes up INSTANTLY (before any network), so the
-    // thinking chip is visible through the whole dead window: connect +
-    // worker boot + model queue, not just after the first token.
-    setMsgs((p) => [...p, { role: "user", text: q }, { role: "assistant", text: "", activity: [], proposals: [] }]);
-    setInput("");
-    const tryStream = async (): Promise<boolean> => {
+    if (!q) return;
+    if (hop === 0) {
+      if (busy) return;
+      userStoppedRef.current = false;
+      if (!open) onOpen();
+      setBusy(true);
+      setThinking("");
+      // Assistant placeholder goes up INSTANTLY (before any network), so the
+      // thinking chip is visible through the whole dead window: connect +
+      // worker boot + model queue, not just after the first token.
+      setMsgs((p) => [...p, { role: "user", text: q }, { role: "assistant", text: "", activity: [], proposals: [] }]);
+      setInput("");
+    } else {
+      setMsgs((p) => [...p, { role: "assistant", text: "", activity: [], proposals: [] }]);
+    }
+    const chainNext = async (): Promise<void> => {
+      if (userStoppedRef.current || hop >= 9) {
+        if (!userStoppedRef.current) {
+          setMsgs((p) => [...p, { role: "assistant", text: "Paused after a long run — say continue to resume.", proposals: [], activity: [] }]);
+        }
+        setBusy(false);
+        return;
+      }
+      return send("continue", hop + 1);
+    };
+    const tryStream = async (): Promise<"done" | "continued" | "failed"> => {
       try {
         const ctrl = new AbortController();
-        // 60s budget: the primary may be throttled and the turn can fail over
-        // to a reasoning-model fallback running a multi-step tools loop.
-        const t = setTimeout(() => ctrl.abort(), 60000);
+        abortRef.current = ctrl;
+        // Abort budget (default 60s). timeoutMs 0 (or negative) = NO timer —
+        // the request lives until the server answers or the user navigates.
+        const streamBudget = config.timeoutMs ?? 60000;
+        const t = streamBudget > 0 ? setTimeout(() => ctrl.abort(), streamBudget) : undefined;
         const res = await fetch(config.streamUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-          body: JSON.stringify({ message: q, ...(config.context ?? {}) }),
+          body: JSON.stringify({ message: q, session: sessionRef.current, ...(config.context ?? {}) }),
           signal: ctrl.signal,
         });
         if (!res.ok) {
-          const errText = await res.text().catch(() => "");
+          const raw = await res.text().catch(() => "");
+          // Edge guillotine answers with an HTML page (status 524 etc.) —
+          // surface it cleanly; the turn's state was saved per step.
+          const errText = cleanErr(raw).slice(0, 200) || `HTTP ${res.status}`;
           if (res.status === 429) throw new Error("Rate-limited");
           throw new Error(`HTTP ${res.status} ${errText.slice(0,120)}`);
         }
@@ -131,8 +199,11 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
         let accActivity: CopilotActivity[] = [];
         let accProposals: CopilotProposal[] = [];
         let sawDone = false;
+        let streamContinued = false;
         // Placeholder was already appended in send() — don't add a second one.
-        const timeout = setTimeout(() => { try { reader.cancel(); } catch {} }, 55000);
+        // Reader cap follows the same budget (0/negative = no cap).
+        const readBudget = config.timeoutMs ?? 60000;
+        const timeout = readBudget > 0 ? setTimeout(() => { try { reader.cancel(); } catch {} }, readBudget) : undefined;
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -154,8 +225,25 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                     if (last?.role === "assistant") last.text = accText;
                     return [...cp];
                   });
+                } else if (evt.type === "activity-start" && evt.data) {
+                  // Tool announced BEFORE it runs — pulsing chip until the
+                  // completion event below replaces it. No more dead air
+                  // during multi-second lookups.
+                  const chip = { ...(evt.data as CopilotActivity), pending: true };
+                  accActivity = [...accActivity, chip];
+                  setMsgs((p) => {
+                    const cp = [...p]; const last = cp[cp.length - 1];
+                    if (last?.role === "assistant") last.activity = [...accActivity];
+                    return [...cp];
+                  });
                 } else if (evt.type === "activity" && evt.data) {
-                  accActivity = [...accActivity, evt.data as CopilotActivity];
+                  // Completion settles the matching pending chip in place
+                  // (first pending with the same tool); unmatched appends.
+                  const done = { ...(evt.data as CopilotActivity), pending: false };
+                  const idx = accActivity.findIndex((a) => a.tool === done.tool && a.pending);
+                  accActivity = idx >= 0
+                    ? [...accActivity.slice(0, idx), done, ...accActivity.slice(idx + 1)]
+                    : [...accActivity, done];
                   setMsgs((p) => {
                     const cp = [...p]; const last = cp[cp.length - 1];
                     if (last?.role === "assistant") last.activity = [...accActivity];
@@ -182,6 +270,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                   if (!accText) accText = String(evt.data.reply ?? "");
                   accActivity = Array.isArray(evt.data.activity) ? evt.data.activity : accActivity;
                   accProposals = Array.isArray(evt.data.proposals) ? evt.data.proposals : [];
+                  if ((evt.data as any)?.continued) streamContinued = true;
                   setMsgs((p) => {
                     const cp = [...p]; const last = cp[cp.length - 1];
                     if (last?.role === "assistant") {
@@ -206,46 +295,90 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
         } finally {
           clearTimeout(timeout);
           clearTimeout(t);
+          if (abortRef.current === ctrl) abortRef.current = null;
           try { reader.releaseLock(); } catch {}
         }
         if (!accText && accProposals.length === 0 && accActivity.length === 0) throw new Error("empty stream");
-        return true;
+        return streamContinued ? "continued" : "done";
       } catch {
-        setMsgs((p) => {
-          const last = p[p.length - 1];
-          if (last?.role === "assistant" && last.text === "" && last.proposals?.length === 0) return p.slice(0, -1);
-          return p;
-        });
-        return false;
+        // KEEP the placeholder: the non-streaming fallback below fills it in
+        // place, and the thinking indicator stays live while it runs.
+        // (Deleting it here opened a dead-silent gap — no bubble, no
+        // thinking — while the fallback worked for minutes.)
+        return "failed";
       }
     };
-    const streamed = await tryStream();
-    if (streamed) { setBusy(false); return; }
+    const s = await tryStream();
+    if (s === "done") { setBusy(false); return; }
+    // Turn yielded for transport (server saved state): follow silently on
+    // the same session — the user sees one continuous working thread.
+    if (s === "continued") return chainNext();
+    // User hit stop mid-stream: do NOT run the fallback — the partial
+    // bubble stays as-is (server kept per-step state; "continue" resumes).
+    if (userStoppedRef.current) {
+      setMsgs((p) => {
+        const cp = [...p]; const last = cp[cp.length - 1];
+        if (last?.role === "assistant" && !last.text && (last.proposals?.length ?? 0) === 0 && (last.activity?.length ?? 0) === 0) {
+          last.text = "Stopped — nothing had arrived yet. Send anything to resume.";
+        }
+        return [...cp];
+      });
+      setBusy(false); return;
+    }
     try {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 60000);
+      abortRef.current = ctrl;
+      const chatBudget = config.timeoutMs ?? 60000;
+      const t = chatBudget > 0 ? setTimeout(() => ctrl.abort(), chatBudget) : undefined;
       const res = await fetch(config.chatUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: q, ...(config.context ?? {}) }),
+        body: JSON.stringify({ message: q, session: sessionRef.current, ...(config.context ?? {}) }),
         signal: ctrl.signal,
       });
       clearTimeout(t);
+      if (abortRef.current === ctrl) abortRef.current = null;
       if (!res.ok) {
-        const errText = await res.text().catch(() => "");
+        const raw = await res.text().catch(() => "");
+        const errText = cleanErr(raw) || `HTTP ${res.status}`;
         if (res.status === 429) throw new Error("Rate-limited — please wait a minute and retry.");
-        throw new Error(errText || `HTTP ${res.status}`);
+        throw new Error(errText);
       }
       const data = await res.json();
-      setMsgs((p) => [...p, {
-        role: "assistant",
-        text: String(data.reply || data.error || "No answer."),
-        proposals: Array.isArray(data.proposals) ? data.proposals : [],
-        activity: Array.isArray(data.activity) ? data.activity : [],
-      }]);
+      // Fill the waiting placeholder in place (kept alive above) — append
+      // only if it somehow went missing, so replies never duplicate.
+      const fill = (text: string, proposals: any[] = [], activity: any[] = []) => {
+        setMsgs((p) => {
+          const cp = [...p]; const last = cp[cp.length - 1];
+          if (last?.role === "assistant" && !last.text && (last.proposals?.length ?? 0) === 0) {
+            cp[cp.length - 1] = { ...last, text, proposals, activity };
+            return [...cp];
+          }
+          return [...p, { role: "assistant", text, proposals, activity }];
+        });
+      };
+      fill(
+        String(data.reply || data.error || "No answer."),
+        Array.isArray(data.proposals) ? data.proposals : [],
+        Array.isArray(data.activity) ? data.activity : [],
+      );
+      // Fallback hop also yields for transport: chain it the same way.
+      if ((data as any)?.continued && !userStoppedRef.current) return chainNext();
     } catch (e: any) {
-      const msg = e?.name === "AbortError" ? "Chat timed out — please retry." : String(e?.message || "Chat failed — please retry.").slice(0, 200);
-      setMsgs((p) => [...p, { role: "assistant", text: msg }]);
+      abortRef.current = null;
+      // A user stop is not an error: partial work stays in the bubble and
+      // the server kept per-step state, so "continue" resumes the turn.
+      const msg = cleanErr(userStoppedRef.current
+        ? "Stopped — partial work is kept. Say continue to resume."
+        : e?.name === "AbortError" ? "Chat timed out — please retry." : String(e?.message || "Chat failed — please retry.").slice(0, 200));
+      setMsgs((p) => {
+        const cp = [...p]; const last = cp[cp.length - 1];
+        if (last?.role === "assistant" && !last.text && (last.proposals?.length ?? 0) === 0) {
+          cp[cp.length - 1] = { ...last, text: msg };
+          return [...cp];
+        }
+        return [...p, { role: "assistant", text: msg }];
+      });
     } finally {
       setBusy(false);
     }
@@ -296,12 +429,10 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   };
 
   const handleRefresh = () => {
-    // New chat: clear the screen AND server memory (history + drafts).
-    if (config.clearUrl) {
-      fetch(config.clearUrl, { method: "POST" }).catch(() => {});
-    }
-    setMsgs([]); setConfirmed(new Set());
-    setThinking("");
+    // New chat = new conversation id. Server memory is keyed under the id,
+    // so rotation alone guarantees freshness — no wipe request that can fail
+    // and leave a secretly-alive thread behind. Old threads expire by TTL.
+    rotateSession();
   };
 
   // Thinking status shows only while the answer hasn't started streaming —
@@ -424,8 +555,8 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                           {m.activity && m.activity.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
                               {m.activity.map((a, ai) => (
-                                <span key={ai} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-white/[0.06]">
-                                  <span>{config.toolIcons[a.tool] ?? "⚙️"}</span>{a.label}
+                                <span key={ai} className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-full bg-[var(--bg-input)] text-[var(--text-secondary)] border border-white/[0.06]${a.pending ? " animate-pulse" : ""}`}>
+                                  <span>{a.pending ? "⏳" : (config.toolIcons[a.tool] ?? "⚙️")}</span>{a.label}
                                 </span>
                               ))}
                             </div>
@@ -458,6 +589,28 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                                   <div key={pi} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
                                     <p className="font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
                                     {(p.text || p.spec) && <p className="mt-1.5 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
+                                    {Array.isArray((p as any)?.table?.rows) && (p as any).table.rows.length > 0 && (
+                                      <div className="mt-2 overflow-x-auto rounded-lg border border-white/10">
+                                        <table className="w-full text-[12px]">
+                                          <thead>
+                                            <tr>
+                                              {((p as any).table.columns ?? Object.keys((p as any).table.rows[0] ?? {})).map((c: string) => (
+                                                <th key={c} className="px-2 py-1.5 text-left font-extrabold text-[var(--text-tertiary)] border-b border-white/10 whitespace-nowrap">{c}</th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {(p as any).table.rows.slice(0, 20).map((r: Record<string, string>, ri: number) => (
+                                              <tr key={ri} className="border-b border-white/[0.04] last:border-0">
+                                                {((p as any).table.columns ?? Object.keys(r)).map((c: string) => (
+                                                  <td key={c} className="px-2 py-1.5 text-[var(--text-secondary)] align-top">{String(r?.[c] ?? "—")}</td>
+                                                ))}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
                                     <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200">
                                       {done ? "✓ Applied" : "Confirm & apply →"}
                                     </button>
@@ -517,17 +670,31 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 10a7 7 0 01-14 0M12 18v3M8 21h8" />
             </svg>
           </button>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); void send(input); }}
-            disabled={!input.trim() || busy}
-            aria-label="Send"
-            className={`h-9 w-9 rounded-full border-0 flex items-center justify-center cursor-pointer transition-colors duration-200 disabled:opacity-40 ${input.trim() ? "bg-violet-600 text-white hover:bg-violet-500" : "bg-white/[0.06] text-[var(--text-tertiary)]"}`}
-          >
-            <svg className="w-[14px] h-[14px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h12M12 5l7 7-7 7" />
-            </svg>
-          </button>
+          {busy ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); stop(); }}
+              aria-label="Stop"
+              title="Stop the agent"
+              className="h-9 w-9 rounded-full border-0 flex items-center justify-center cursor-pointer transition-colors duration-200 bg-red-500/90 text-white hover:bg-red-500"
+            >
+              <svg className="w-[13px] h-[13px]" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); void send(input); }}
+              disabled={!input.trim()}
+              aria-label="Send"
+              className={`h-9 w-9 rounded-full border-0 flex items-center justify-center cursor-pointer transition-colors duration-200 disabled:opacity-40 ${input.trim() ? "bg-violet-600 text-white hover:bg-violet-500" : "bg-white/[0.06] text-[var(--text-tertiary)]"}`}
+            >
+              <svg className="w-[14px] h-[14px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h12M12 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
       )}

@@ -8,6 +8,7 @@ import { WhatsAppService } from './modules/whatsapp/service';
 import { DigestService } from './modules/digest/service';
 import { processMessagesToDigests } from './automations/whatsapp-digest/process';
 import { TasksService } from './modules/tasks/service';
+import { cleanSession } from './copilot/engine';
 import { StorageRepository } from './modules/storage/repository';
 import { AIService } from './modules/ai/service';
 import { EmailService } from './modules/email/service';
@@ -516,7 +517,7 @@ app.post('/api/copilot/:id/chat', async (req, res) => {
   const message = String((req.body as any)?.message ?? '').trim().slice(0, 2000);
   if (!message) return res.status(400).json({ error: 'message required' });
   try {
-    const ctx = await def.buildCtx(process.env as any, me as any, {});
+    const ctx = await def.buildCtx(process.env as any, me as any, { session: cleanSession((req.body as any)?.session) });
     res.json(await runTurn(process.env as any, def, ctx, message));
   } catch (e: any) {
     res.status(500).json({ error: String(e?.message ?? 'chat failed').slice(0, 500), reply: 'Chat failed — please retry.' });
@@ -532,7 +533,7 @@ app.post('/api/copilot/:id/chat/clear', async (req, res) => {
   const denied = def.checkAccess(me);
   if (denied) return res.status(denied.status).json({ error: denied.error });
   try {
-    const ctx = await def.buildCtx(process.env as any, me as any, {});
+    const ctx = await def.buildCtx(process.env as any, me as any, { session: cleanSession((req.body as any)?.session) });
     await clearState(def, ctx);
     res.json({ ok: true });
   } catch (e: any) {
@@ -548,7 +549,7 @@ app.post('/api/copilot/:id/chat/execute', async (req, res) => {
   if (denied) return res.status(denied.status).json({ error: denied.error });
   if (!def.executeProposal) return res.status(400).json({ error: 'this copilot is read-only', applied: 'none' });
   try {
-    const ctx = await def.buildCtx(process.env as any, me as any, {});
+    const ctx = await def.buildCtx(process.env as any, me as any, { session: cleanSession((req.body as any)?.session) });
     const { result, applied } = await def.executeProposal(
       ctx, (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
     );
