@@ -5,7 +5,7 @@ import ItemRateForm from "@/components/ItemRateForm";
 import FlagThread from "@/components/FlagThread";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { historyDateChip } from "@/types";
-import { filesToMedia, dragHasFiles } from "@/lib/imageFiles";
+import { filesToUploadedMedia, dragHasFiles } from "@/lib/imageFiles";
 
 interface ProcurementItemCardProps {
   item: EnquiryItem;
@@ -52,7 +52,7 @@ export default function ProcurementItemCard({
   const threadFileRef = React.useRef<HTMLInputElement>(null);
   const handleThreadImages = async (files: FileList | File[] | null) => {
     if (!files || files.length===0) return;
-    const { media } = await filesToMedia(Array.from(files));
+    const { media } = await filesToUploadedMedia(Array.from(files));
     const urls = media.filter((m) => m.type === "image").map((m) => m.url);
     if (urls.length) setThreadImages((prev) => [...prev, ...urls]);
   };
@@ -85,7 +85,7 @@ export default function ProcurementItemCard({
   const attachRateRefs = async (ri: number, files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     setRefError(null);
-    const { media, skipped } = await filesToMedia(files);
+    const { media, skipped } = await filesToUploadedMedia(files);
     if (skipped.length > 0) setRefError(`Skipped: ${skipped.join(", ")}`);
     if (media.length === 0) return;
     const cur = rates[ri];
@@ -285,7 +285,7 @@ export default function ProcurementItemCard({
               <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={async (e) => {
                 const files = e.target.files;
                 if (!files || files.length===0) return;
-                const { media } = await filesToMedia(Array.from(files));
+                const { media } = await filesToUploadedMedia(Array.from(files));
                 if (media.length) onAddItemMedia(media);
                 e.target.value="";
               }} />

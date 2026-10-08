@@ -66,6 +66,11 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const [agents, setAgents] = useState<Agent[]>([]);
   const [clients, setClients] = useState<Array<{ name: string; openEstimates: number; enquiries: number }>>([]);
   const [loaded, setLoaded] = useState(false);
+  // Last item/enquiry save failure, shown as a banner (never a silent
+  // console-only revert — sales re-clicking a "stuck" save is how duplicates
+  // and lost items happened). Cleared on the next mutation attempt.
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const dismissSaveError = useCallback(() => setSaveError(null), []);
   // False when the backend has no AI keys: the redacted view then withholds
   // free text with an explicit banner (not silent blanks).
   const [aiConfigured, setAiConfigured] = useState(true);
@@ -502,6 +507,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const updateEnquiry = useCallback(async (id: string, updates: Partial<Enquiry>) => {
     const prev = enquiriesRef.current;
     const current = prev.find((x) => x.id === id);
+    setSaveError(null);
     if (current) {
       setEnquiriesSynced(prev.map((x) => (x.id === id
         ? { ...x, ...updates, updatedAt: new Date().toISOString() } as Enquiry
@@ -513,6 +519,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       return saved;
     } catch (err) {
       console.error('updateEnquiry failed, resyncing:', err);
+      setSaveError(err instanceof Error ? err.message : 'Save failed — your change was NOT saved. Retry.');
       void fetchEnquiriesRef.current();
       throw err;
     }
@@ -547,9 +554,16 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   }, []);
 
   const addRequirement = useCallback(async (enquiryId: string, text: string, imageUrl?: string, imageUrls?: string[]) => {
-    const saved = await persist('POST', `/api/enquiries/${enquiryId}/additional-requirements`, { text, imageUrl, imageUrls });
-    if (saved.enquiry) setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? toEnquiry(saved.enquiry) : x)));
-    return saved.requirement;
+    setSaveError(null);
+    try {
+      const saved = await persist('POST', `/api/enquiries/${enquiryId}/additional-requirements`, { text, imageUrl, imageUrls });
+      if (saved.enquiry) setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? toEnquiry(saved.enquiry) : x)));
+      return saved.requirement;
+    } catch (err) {
+      console.error('addRequirement failed:', err);
+      setSaveError(err instanceof Error ? err.message : 'Add-via-AI failed — nothing was added. Retry.');
+      throw err;
+    }
   }, []);
 
   // Serialized per enquiry: each step builds its PATCH body from the ref
@@ -564,8 +578,12 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     surface?: "sales" | "procurement" | "management",
   ) => {
     const run = async () => {
+      // Updater form reads the LATEST items at execution time (after every
+      // queued write resolved) — never a stale render snapshot. This is what
+      // makes rapid add→delete→remark sequences lossless.
       const base = enquiriesRef.current.find((x) => x.id === enquiryId)?.items ?? [];
       const items = typeof itemsOrFn === "function" ? itemsOrFn(base) : itemsOrFn;
+      setSaveError(null);
       setEnquiriesSynced(enquiriesRef.current.map((x) =>
         x.id === enquiryId ? { ...x, items: items as EnquiryItem[] } : x));
       try {
@@ -574,6 +592,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         return saved;
       } catch (err) {
         console.error('updateItems failed, resyncing:', err);
+        setSaveError(err instanceof Error ? err.message : 'Save failed — your change was NOT saved. Retry.');
         void fetchEnquiriesRef.current();
         throw err;
       }
@@ -618,6 +637,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     addComment,
     addRequirement,
     updateItems,
+    saveError, dismissSaveError,
     upsertEnquiry,
     makeActivity,
     refresh: fetchEnquiries,

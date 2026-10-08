@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
+import fs from 'fs';
 import path from 'path';
 import { config } from './config';
 import { logger } from './shared/logger';
@@ -337,6 +338,60 @@ async function kickIntakeNowLocal(): Promise<void> {
     await dispatchGitHubWorkflow(INTAKE_WORKFLOW, token);
   } catch { /* intake dispatch never fails a request */ }
 }
+// --- Enquiry item media uploads (Express mirror of worker/routes/enquiry-files.ts) ---
+// Same protocol (JSON { name, type, dataUrl }) and same response shape; bytes
+// live on local disk instead of Workers KV (this runtime has no KV binding).
+// Auth-only here, matching every neighboring enquiry route (Express is the
+// alternate runtime, not the production path).
+const ENQUIRY_FILES_DIR = path.join(__dirname, '../data/enquiry-files');
+const MAX_ENQUIRY_FILE_BYTES = 10 * 1024 * 1024;
+function enquiryFileKeyIsSafe(key: string): boolean {
+  return /^enq\/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/.test(key);
+}
+app.post('/api/enquiries/files', async (req, res) => {
+  const me = await enquiryMe(req);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  const dataUrl = String(req.body?.dataUrl ?? '');
+  const m = /^data:([a-zA-Z0-9][a-zA-Z0-9/+.=-]*);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+  if (!m) return res.status(400).json({ error: 'dataUrl must be a base64 data-URI' });
+  const mime = m[1].toLowerCase();
+  if (!(mime.startsWith('image/') || mime.startsWith('video/') || mime === 'application/pdf')) {
+    return res.status(400).json({ error: 'Only image, video and PDF uploads are allowed' });
+  }
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(m[2], 'base64');
+  } catch {
+    return res.status(400).json({ error: 'Undecodable base64 payload' });
+  }
+  if (bytes.length === 0) return res.status(400).json({ error: 'Empty file' });
+  if (bytes.length > MAX_ENQUIRY_FILE_BYTES) return res.status(413).json({ error: 'File too large (max 10MB)' });
+  const name = String(req.body?.name ?? 'file').slice(0, 200);
+  const ext = (name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+  const { randomUUID } = await import('crypto');
+  const key = `enq/${randomUUID()}${ext ? '.' + ext : ''}`;
+  try {
+    fs.mkdirSync(ENQUIRY_FILES_DIR, { recursive: true });
+    fs.writeFileSync(path.join(ENQUIRY_FILES_DIR, key.slice(4)), bytes);
+  } catch (e: any) {
+    return res.status(500).json({ error: `Storage write failed: ${String(e?.message ?? e).slice(0, 200)}` });
+  }
+  res.status(201).json({ key, name, size: bytes.length, type: mime, url: `/api/enquiries/files/${key}` });
+});
+app.get('/api/enquiries/files/:key', async (req, res) => {
+  const key = `enq/${req.params.key ?? ''}`;
+  if (!enquiryFileKeyIsSafe(key)) return res.status(404).json({ error: 'File not found' });
+  const filePath = path.join(ENQUIRY_FILES_DIR, key.slice(4));
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+  const ext = (key.split('.').pop() || '').toLowerCase();
+  const type = ext === 'pdf' ? 'application/pdf'
+    : ['mp4', 'mov', 'webm'].includes(ext) ? `video/${ext === 'mov' ? 'quicktime' : ext}`
+    : ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif'
+    : 'image/jpeg';
+  res.setHeader('Content-Type', type);
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  fs.createReadStream(filePath).pipe(res);
+});
 app.post('/api/enquiries', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });

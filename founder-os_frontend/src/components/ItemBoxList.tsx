@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { EnquiryItem } from "../types";
 import ToggleSwitch from "./ToggleSwitch";
-import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
+import { filesToUploadedMedia, dragHasFiles } from "../lib/imageFiles";
 
 /** ~10MB per item file (stored as data-URI on the item; server re-checks). */
 const MAX_ITEM_FILE_BYTES = 10 * 1024 * 1024;
@@ -54,7 +54,7 @@ export default function ItemBoxList({ items, onChange, showRateToggle = true }: 
     const list = Array.from(files);
     const tooBig = list.find((f) => f.size > MAX_ITEM_FILE_BYTES);
     if (tooBig) setFileError(`"${tooBig.name}" exceeds 10MB and was skipped.`);
-    const { media, skipped } = await filesToMedia(list.filter((f) => f.size <= MAX_ITEM_FILE_BYTES));
+    const { media, skipped } = await filesToUploadedMedia(list.filter((f) => f.size <= MAX_ITEM_FILE_BYTES));
     if (skipped.length > 0) {
       setFileError((prev) => [prev, `Skipped: ${skipped.join(", ")}`].filter(Boolean).join(" "));
     }

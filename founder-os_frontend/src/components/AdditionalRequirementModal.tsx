@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { filesToMedia } from "../lib/imageFiles";
+import { filesToUploadedMedia } from "../lib/imageFiles";
 
 interface AdditionalRequirementModalProps {
   isOpen: boolean;
@@ -27,7 +27,7 @@ export default function AdditionalRequirementModal({ isOpen, onClose, onSave }: 
     const files = e.target.files;
     e.target.value = "";
     if (!files || files.length === 0) return;
-    const { media } = await filesToMedia(files);
+    const { media } = await filesToUploadedMedia(files);
     const urls = media.filter((m) => m.type === "image").map((m) => m.url);
     if (urls.length > 0) setImages((prev) => [...prev, ...urls]);
   };

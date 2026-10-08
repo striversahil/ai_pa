@@ -51,6 +51,7 @@ export default function EnquiryTracker() {
     enquiries, comments, agents, currentAgent, loaded,
     addEnquiry, updateEnquiry, deleteEnquiry,
     addComment, updateItems, addRequirement, makeActivity, clients,
+    saveError: itemsSaveError, dismissSaveError: dismissItemsSaveError,
   } = useEnquiryData("sales");
   // Fallback telecaller roster for root/MIS: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
   const [telecallers, setTelecallers] = useState<any[]>([]);
@@ -211,15 +212,15 @@ export default function EnquiryTracker() {
     await addComment(newComment);
   }, [addComment]);
 
-  const handleUpdateItems = useCallback(async (id: string, items: EnquiryItem[]) => {
-    await updateItems(id, items, "sales");
+  const handleUpdateItems = useCallback(async (id: string, itemsOrFn: EnquiryItem[] | ((items: EnquiryItem[]) => EnquiryItem[])) => {
+    return updateItems(id, itemsOrFn, "sales");
   }, [updateItems]);
 
   // "Add via AI" — server-side append to FRESH stored items (never a
   // full-array echo of possibly-stale client state, which once wiped an
   // enquiry's AI-split lines — Enquiry No 3 - 30 SEP TL, 2026-09-30).
   const handleAddRequirement = useCallback(async (id: string, text: string, imageUrls?: string[]) => {
-    await addRequirement(id, text, undefined, imageUrls);
+    return addRequirement(id, text, undefined, imageUrls);
   }, [addRequirement]);
 
   const handleMarkSent = useCallback(async (id: string) => {
@@ -231,12 +232,11 @@ export default function EnquiryTracker() {
   }, [updateEnquiry]);
 
   // Price-memory accept: item already has a known rate — skip the loop.
+  // Updater form: reads latest items at execution time, so a concurrent
+  // in-flight save can't be wiped by this one-click accept.
   const handleAcceptSuggestion = useCallback(async (id: string, itemIndex: number) => {
-    const target = enquiries.find((e) => e.id === id);
-    if (!target) return;
-    const items = (target.items ?? []).map((it, i) => (i === itemIndex ? { ...it, rateAvailable: true } : it));
-    await updateEnquiry(id, { items });
-  }, [enquiries, updateEnquiry]);
+    await updateItems(id, (items) => (items ?? []).map((it, i) => (i === itemIndex ? { ...it, rateAvailable: true } : it)), "sales");
+  }, [updateItems]);
 
   const handleExportCSV = useCallback(() => {
     const rows = [["EST No.", "Company", "Contact", "Title", "Status", "Priority"]];
@@ -267,8 +267,10 @@ export default function EnquiryTracker() {
           onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
           onUpdateAgent={(id, a) => void handleUpdateAgent(id, a)}
           onAddComment={(c) => void handleAddComment(c)}
-          onUpdateItems={(id, items) => void handleUpdateItems(id, items)}
+          onUpdateItems={handleUpdateItems}
           onAddRequirement={(id, text, imageUrls) => void handleAddRequirement(id, text, imageUrls)}
+          saveError={itemsSaveError}
+          onDismissSaveError={dismissItemsSaveError}
           onAcceptSuggestion={(id, idx) => handleAcceptSuggestion(id, idx)}
           onMarkSent={(id) => handleMarkSent(id)}
           onReviseSent={(id) => handleReviseSent(id)}

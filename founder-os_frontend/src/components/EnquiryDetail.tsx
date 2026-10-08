@@ -16,14 +16,17 @@ interface EnquiryDetailProps {
   onUpdateStatus: (id: string, newStatus: Enquiry["status"]) => void;
   onUpdateAgent: (id: string, newAgentId: string) => void;
   onAddComment: (comment: Comment) => void;
-  onUpdateItems?: (id: string, items: EnquiryItem[]) => void;
+  onUpdateItems?: (id: string, items: EnquiryItem[] | ((prev: EnquiryItem[]) => EnquiryItem[])) => Promise<any> | void;
   /** Server-side append of an "Add via AI" raw requirement (preferred — never echoes stale items). */
-  onAddRequirement?: (id: string, text: string, imageUrls?: string[]) => void;
+  onAddRequirement?: (id: string, text: string, imageUrls?: string[]) => Promise<any> | void;
   /** Accept a price-memory suggestion: marks the item rate-available (skips the loop). */
   onAcceptSuggestion?: (id: string, itemIndex: number) => Promise<void>;
   onMarkSent?: (id: string) => Promise<void>;
   /** Reopen a sent enquiry for additional scope (any team member). */
   onReviseSent?: (id: string) => Promise<void>;
+  /** Last save failure from useEnquiryData (bannered — never a silent revert). */
+  saveError?: string | null;
+  onDismissSaveError?: () => void;
   onDeleteEnquiry: (id: string) => void;
   onOpenEdit: (enq: Enquiry) => void;
   onBack: () => void;
@@ -49,7 +52,9 @@ export default function EnquiryDetail({
   onBack,
   onOpenLightbox,
   redacted = false,
-  ratesMode
+  ratesMode,
+  saveError,
+  onDismissSaveError
 }: EnquiryDetailProps) {
   const userInitial = String(currentAgent?.name || currentAgent?.id || "S").trim().charAt(0).toUpperCase() || "S";
 
@@ -57,6 +62,9 @@ export default function EnquiryDetail({
   // duplicate + new-item box), appended to the enquiry's items on save.
   const [itemsOpen, setItemsOpen] = useState(false);
   const [newItems, setNewItems] = useState<EnquiryItem[]>([blankItem()]);
+  // Structured-add in flight: the button disables + labels itself so a slow
+  // save can never be double-submitted into duplicate items.
+  const [savingItems, setSavingItems] = useState(false);
   // AI bulk requirement (unstructured) — same textarea + photos as Log New B2B Enquiry create (AI intake path). Appended as a new line item with spec=text + media so it reuses the existing items flow.
   const [addReqText, setAddReqText] = useState("");
   const [addReqImages, setAddReqImages] = useState<string[]>([]);
@@ -101,16 +109,26 @@ export default function EnquiryDetail({
 
   const handleSaveNewItems = () => {
     const fresh = newItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0);
-    if (fresh.length === 0 || !onUpdateItems) return;
-    onUpdateItems(selectedEnquiry.id, [...(selectedEnquiry.items ?? []), ...fresh]);
-    setNewItems([blankItem()]);
-    setItemsOpen(false);
+    if (fresh.length === 0 || !onUpdateItems || savingItems) return;
+    // Updater form: appends to the LATEST items at execution time (after any
+    // queued write resolved) — a slow earlier save can no longer be wiped by
+    // this one, which is how added items "disappeared" and got re-added as
+    // duplicates. Modal closes only on success; failure keeps it open with
+    // the saveError banner explaining why.
+    setSavingItems(true);
+    Promise.resolve(onUpdateItems(selectedEnquiry.id, (prev) => [...(prev ?? []), ...fresh]))
+      .then(() => {
+        setNewItems([blankItem()]);
+        setItemsOpen(false);
+      })
+      .catch(() => { /* saveError banner carries the message; boxes are kept */ })
+      .finally(() => setSavingItems(false));
   };
 
   const handleAddReqImages = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     const list = Array.from(files);
-    const { media } = await import("../lib/imageFiles").then(m => m.filesToMedia(list));
+    const { media } = await import("../lib/imageFiles").then(m => m.filesToUploadedMedia(list));
     const urls = media.filter((m) => m.type === "image").map((m) => m.url);
     if (urls.length > 0) setAddReqImages((prev) => [...prev, ...urls]);
   };
@@ -121,11 +139,26 @@ export default function EnquiryDetail({
   // items, appends ONE raw aiPending row, kicks intake). The old full-array
   // echo via onUpdateItems is fallback only — echoing stale client items once
   // wiped an enquiry's AI-split lines (No 3 - 30 SEP TL).
+  // Single-flight: while an aiPending row is unprocessed the split is still
+  // working — the button disables (backend also 409s) so an impatient second
+  // click can't append a twin row that splits into duplicate lines.
+  const aiSplitActive = (selectedEnquiry.items ?? []).some((it) => (it as any)?.aiPending === true);
+  const [savingReq, setSavingReq] = useState(false);
   const handleSaveAdditionalRequirement = () => {
     const text = addReqText.trim();
-    if (!text && addReqImages.length === 0) return;
+    if ((!text && addReqImages.length === 0) || savingReq) return;
+    if (aiSplitActive) return;
+    const done = () => {
+      setAddReqText("");
+      setAddReqImages([]);
+      setItemsOpen(false);
+      setSavingReq(false);
+    };
     if (onAddRequirement) {
-      onAddRequirement(selectedEnquiry.id, text, addReqImages.length > 0 ? addReqImages : undefined);
+      setSavingReq(true);
+      Promise.resolve(onAddRequirement(selectedEnquiry.id, text, addReqImages.length > 0 ? addReqImages : undefined))
+        .then(done)
+        .catch(() => setSavingReq(false));
     } else {
       if (!onUpdateItems) return;
       const newItem: EnquiryItem = {
@@ -135,11 +168,11 @@ export default function EnquiryDetail({
         media: addReqImages.map((url) => ({ type: "image" as const, url })),
         aiPending: true,
       };
-      onUpdateItems(selectedEnquiry.id, [...(selectedEnquiry.items ?? []), newItem]);
+      setSavingReq(true);
+      Promise.resolve(onUpdateItems(selectedEnquiry.id, (prev) => [...(prev ?? []), newItem]))
+        .then(done)
+        .catch(() => setSavingReq(false));
     }
-    setAddReqText("");
-    setAddReqImages([]);
-    setItemsOpen(false);
   };
 
   return (
@@ -304,10 +337,24 @@ export default function EnquiryDetail({
             onOpenLightbox={onOpenLightbox}
             redacted={redacted}
             ratesMode={ratesMode}
-            onUpdateItems={onUpdateItems ? (items) => onUpdateItems(selectedEnquiry.id, items) : undefined}
+            onUpdateItems={onUpdateItems ? (itemsOrFn) => { void Promise.resolve(onUpdateItems(selectedEnquiry.id, itemsOrFn)).catch(() => { /* failure surfaces via the saveError banner */ }); } : undefined}
             intake={intake}
             onAcceptSuggestion={onAcceptSuggestion ? (idx) => void onAcceptSuggestion(selectedEnquiry.id, idx) : undefined}
           />
+
+          {saveError && (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-start gap-3">
+              <span className="text-sm">⚠</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-extrabold text-red-600 dark:text-red-400">Save failed — nothing was lost on screen, but the server did NOT keep your last change</p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)] break-words">{saveError}</p>
+                <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">Check connection, then retry the same action — do not re-add the item (that creates duplicates).</p>
+              </div>
+              {onDismissSaveError && (
+                <button type="button" onClick={onDismissSaveError} className="text-[11px] font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 flex-shrink-0">Dismiss</button>
+              )}
+            </div>
+          )}
 
           {redacted && selectedEnquiry.redactedPending && (
             <p className="text-[11px] text-amber-500 font-semibold px-1">Securing the latest updates for this view…</p>
@@ -420,8 +467,14 @@ export default function EnquiryDetail({
               </div>
             )}
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] text-[var(--text-tertiary)]">Runs the AI intake action — items auto-split in ~1 min</span>
-              <button type="button" disabled={!addReqText.trim() && addReqImages.length===0} onClick={handleSaveAdditionalRequirement} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer disabled:opacity-40">Add via AI</button>
+              <span className="text-[11px] text-[var(--text-tertiary)]">
+                {aiSplitActive
+                  ? "AI is splitting the pending requirement below — wait for it to finish before adding again (a second add would duplicate every line)"
+                  : "Runs the AI intake action — items auto-split in ~1 min"}
+              </span>
+              <button type="button" disabled={(!addReqText.trim() && addReqImages.length===0) || aiSplitActive || savingReq} onClick={handleSaveAdditionalRequirement} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer disabled:opacity-40">
+                {savingReq ? "Adding…" : aiSplitActive ? "Splitting…" : "Add via AI"}
+              </button>
             </div>
           </div>
 
@@ -434,8 +487,8 @@ export default function EnquiryDetail({
           <ItemBoxList items={newItems} onChange={setNewItems} />
           <div className="flex justify-end gap-2 pt-3">
             <button type="button" onClick={() => { setItemsOpen(false); setAddReqText(""); setAddReqImages([]); setNewItems([blankItem()]); }} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
-            <button type="button" onClick={handleSaveNewItems} className="px-3.5 py-1.5 bg-transparent border border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/10 font-bold text-xs rounded-lg cursor-pointer">
-              Add structured items
+            <button type="button" onClick={handleSaveNewItems} disabled={savingItems} className="px-3.5 py-1.5 bg-transparent border border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/10 font-bold text-xs rounded-lg cursor-pointer disabled:opacity-50">
+              {savingItems ? "Saving…" : "Add structured items"}
             </button>
           </div>
         </Modal>

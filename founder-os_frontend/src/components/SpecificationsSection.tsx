@@ -7,7 +7,7 @@ import AiProcessingLoader from "./AiProcessingLoader";
 import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS, type IntakeSuggestion } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import FlagThread from "./FlagThread";
-import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
+import { filesToUploadedMedia, dragHasFiles } from "../lib/imageFiles";
 
 /** ~10MB per file (stored as data-URI on the item; server re-checks). */
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
@@ -16,7 +16,7 @@ interface SpecificationsSectionProps {
   selectedEnquiry: Enquiry;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   onAddRequirement?: (text: string, images: string[]) => void;
-  onUpdateItems?: (items: EnquiryItem[]) => void;
+  onUpdateItems?: (items: EnquiryItem[] | ((prev: EnquiryItem[]) => EnquiryItem[])) => void;
   redacted?: boolean;
   /** Vendor-rate visibility per view: sales sees finals only ('none');
    *  procurement collects rates ('edit'); management reviews them ('view'). */
@@ -51,7 +51,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const handleAltReqImages = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     const list = Array.from(files);
-    const { media } = await import("../lib/imageFiles").then((m) => m.filesToMedia(list));
+    const { media } = await import("../lib/imageFiles").then((m) => m.filesToUploadedMedia(list));
     const urls = media.filter((m) => m.type === "image").map((m) => m.url);
     if (urls.length > 0) setAltReqImages((prev) => [...prev, ...urls]);
   };
@@ -64,12 +64,18 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const handleThreadComposeImages = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     const list = Array.from(files);
-    const { media } = await import("../lib/imageFiles").then((m) => m.filesToMedia(list));
+    const { media } = await import("../lib/imageFiles").then((m) => m.filesToUploadedMedia(list));
     const urls = media.filter((m) => m.type === "image").map((m) => m.url);
     if (urls.length > 0) setThreadComposeImages((prev) => [...prev, ...urls]);
   };
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
+  // All writes below use the updater form: the mutation applies to the LATEST
+  // items at execution time (after every queued write resolved), never to this
+  // render's snapshot — rapid add→delete→remark sequences can't wipe each other.
+  const saveItems = (updater: (prev: EnquiryItem[]) => EnquiryItem[]) => {
+    if (onUpdateItems) onUpdateItems(updater);
+  };
   const editable = !!onUpdateItems && !redacted;
   // Vendor-rate collection follows the view mode, not the item-edit flag:
   // procurement ('edit') collects, management ('view') reviews. Sales
@@ -102,22 +108,20 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     }
     setRateError(null);
     const specSame = d.specMode !== "diff";
-    const next = items.map((it, i) => (i === idx ? { ...it, rates: [...(it.rates ?? []), {
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, rates: [...(it.rates ?? []), {
       vendor,
       rate,
       description: d.description.trim() || undefined,
       specSame,
       specDiff: !specSame && d.specDiff.trim() ? d.specDiff.trim() : undefined,
       quotedAt: new Date().toISOString(),
-    }] } : it));
-    onUpdateItems(next);
+    }] } : it)));
     setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: "", description: "", rate: "", specMode: "same", specDiff: "" } }));
   };
 
   const removeItemRate = (idx: number, rateIdx: number) => {
     if (!onUpdateItems) return;
-    const next = items.map((it, i) => (i === idx ? { ...it, rates: (it.rates ?? []).filter((_, j) => j !== rateIdx) } : it));
-    onUpdateItems(next);
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, rates: (it.rates ?? []).filter((_, j) => j !== rateIdx) } : it)));
   };
 
   const openItemMedia = (idx: number, url: string) => {
@@ -133,13 +137,12 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     if (tooBig) {
       setMediaError(`"${tooBig.name}" exceeds 10MB and was skipped.`);
     }
-    const { media, skipped } = await filesToMedia(list.filter((f) => f.size <= MAX_MEDIA_BYTES));
+    const { media, skipped } = await filesToUploadedMedia(list.filter((f) => f.size <= MAX_MEDIA_BYTES));
     if (skipped.length > 0) {
       setMediaError((prev) => [prev, `Skipped: ${skipped.join(", ")}`].filter(Boolean).join(" "));
     }
     if (media.length === 0) return;
-    const next = items.map((it, i) => (i === idx ? { ...it, media: [...(it.media ?? []), ...media] } : it));
-    onUpdateItems(next);
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, media: [...(it.media ?? []), ...media] } : it)));
   };
 
   const [dropIdx, setDropIdx] = useState<number | null>(null);
@@ -153,8 +156,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
 
   const removeItemMedia = (idx: number, mediaIdx: number) => {
     if (!onUpdateItems) return;
-    const next = items.map((it, i) => (i === idx ? { ...it, media: (it.media ?? []).filter((_, j) => j !== mediaIdx) } : it));
-    onUpdateItems(next);
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, media: (it.media ?? []).filter((_, j) => j !== mediaIdx) } : it)));
   };
 
   const startEdit = (idx: number) => {
@@ -168,21 +170,20 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     // action never overwrites a hand-corrected item.
     const { aiPending, ...draftRest } = draft as any;
     void aiPending;
-    const next = items.map((it, i) => (i === editingIdx ? { ...draftRest, media: it.media ?? [] } : it));
-    onUpdateItems(next);
+    saveItems((prev) => prev.map((it, i) => (i === editingIdx ? { ...draftRest, media: it.media ?? [] } : it)));
     setEditingIdx(null);
   };
   const sendRemark = (idx: number) => {
     const text = remarkText.trim();
     if (!text || !onUpdateItems) return;
     const entry = { by: "sales" as const, kind: "remark" as const, text: text.slice(0, 2000), at: new Date().toISOString() };
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, thread: [...(it.thread ?? []), entry] } : it)));
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, thread: [...(it.thread ?? []), entry] } : it)));
     setRemarkText("");
     setRemarkIdx(null);
   };
   const deleteItem = (idx: number) => {
     if (!onUpdateItems) return;
-    onUpdateItems(items.filter((_, i) => i !== idx));
+    saveItems((prev) => prev.filter((_, i) => i !== idx));
     if (editingIdx === idx) setEditingIdx(null);
   };
   // Sales-owned expected price: target ₹ (+ optional note like "client
@@ -214,7 +215,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
       ? `Expected price set: ₹${rate.toLocaleString("en-IN")}${note ? ` — ${note}` : ""}`
       : "Expected price removed";
     const entry = { by: "sales" as const, kind: "remark" as const, text: text.slice(0, 500), at: new Date().toISOString() };
-    onUpdateItems(items.map((it, i) => (i === idx ? {
+    saveItems((prev) => prev.map((it, i) => (i === idx ? {
       ...it,
       expectedRate: rate,
       expectedNote: note || undefined,
@@ -226,14 +227,17 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   };
   const copyItem = (idx: number) => {
     if (!onUpdateItems) return;
-    onUpdateItems([...items.slice(0, idx + 1), duplicateItem(items[idx]), ...items.slice(idx + 1)]);
+    saveItems((prev) => {
+      if (!prev[idx]) return prev;
+      return [...prev.slice(0, idx + 1), duplicateItem(prev[idx]), ...prev.slice(idx + 1)];
+    });
   };
   // Request info/alternate for item idx: saves variationRequest + common attachment.
   const sendAlternateRequest = (idx: number) => {
     const text = altReqText.trim().slice(0, 500);
     if (!text || !onUpdateItems) return;
     const media = altReqImages.map((url) => ({ type: "image" as const, url }));
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: text, variationRequestMedia: media.length ? media : undefined } : it)));
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, variationRequest: text, variationRequestMedia: media.length ? media : undefined } : it)));
     setAltReqText("");
     setAltReqImages([]);
     setAltReqOpen(null);
@@ -241,7 +245,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   // Withdraw a pending request (explicit "" clears server-side).
   const withdrawAlternateRequest = (idx: number) => {
     if (!onUpdateItems) return;
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, variationRequest: "", variationRequestMedia: undefined } : it)));
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, variationRequest: "", variationRequestMedia: undefined } : it)));
     setAltReqOpen(null);
     setAltReqText("");
     setAltReqImages([]);
@@ -252,18 +256,18 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     if ((!text && threadComposeImages.length === 0) || !onUpdateItems) return;
     const media = threadComposeImages.map((url) => ({ type: "image" as const, url }));
     const entry: any = { kind: "remark" as const, text: text.slice(0, 2000) || (media.length ? "Attachment" : ""), at: new Date().toISOString(), media: media.length ? media : undefined };
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, thread: [...(it.thread ?? []), entry] } : it)));
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, thread: [...(it.thread ?? []), entry] } : it)));
     setThreadComposeText("");
     setThreadComposeImages([]);
     setThreadComposeIdx(null);
   };
   const resolveThread = (idx: number) => {
     if (!onUpdateItems) return;
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, threadResolved: true } : it)));
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, threadResolved: true } : it)));
   };
   const reopenThread = (idx: number) => {
     if (!onUpdateItems) return;
-    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, threadResolved: false } : it)));
+    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, threadResolved: false } : it)));
   };
 
   return (
@@ -387,7 +391,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 checked={it.rateAvailable === true}
                                 onChange={(next) => {
                                   if (!onUpdateItems) return;
-                                  onUpdateItems(items.map((x, i) => (i === idx ? { ...x, rateAvailable: next } : x)));
+                                  saveItems((prev) => prev.map((x, i) => (i === idx ? { ...x, rateAvailable: next } : x)));
                                 }}
                                 label="Rate available"
                                 title="Toggle live — the procurement/management queues update instantly"
@@ -554,6 +558,13 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           <p className="mt-1 text-[var(--text-tertiary)]">Sales sees this item as not available.</p>
                           <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                         </div>
+                      )}
+                      {/* Flagged AND already quoted (flags never delete quotes): none of the
+                          branches above render the trail, but the reply box below still
+                          shows — so history would vanish exactly when the back-and-forth
+                          matters most. Render it here. */}
+                      {!redacted && !!it.specIssue && !!(it as any).rateAvailable && (it.thread ?? []).length > 0 && (
+                        <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
                       {it.spec && <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed mt-0.5">{it.spec}</p>}

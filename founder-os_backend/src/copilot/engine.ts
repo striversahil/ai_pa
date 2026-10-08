@@ -411,7 +411,7 @@ export async function runTurn<T>(
   }
   const allowed = await checkHourlyLimit(def, ctx);
   if (!allowed.ok) {
-    return { reply: allowed.reply ?? 'Hourly chat limit reached — please retry in a bit.', proposals: [], activity: [] };
+    return { reply: allowed.reply ?? 'Hourly chat limit reached — please retry in a bit.', proposals: [], activity: [], memoryTurns: 0 };
   }
   await logUsage(ctx);
   const gateway = getGateway(env);
@@ -423,7 +423,7 @@ export async function runTurn<T>(
   // 25-human-turn cap: the refused message is NOT stored, so the cap holds
   // until the user opens a new chat (clear wipes history).
   if (hist.userTurns >= MAX_HUMAN_TURNS) {
-    return { reply: LIMIT_REPLY, proposals: [], activity: [] };
+    return { reply: LIMIT_REPLY, proposals: [], activity: [], memoryTurns: hist.userTurns };
   }
   const toolTrace = await loadToolTrace(def, ctx);
   const messages: ChatMessage[] = [
@@ -452,7 +452,7 @@ export async function runTurn<T>(
       await flushTrace();
       const partial = reply || 'Working through it — continuing…';
       await saveAssistantReply(def, ctx, partial, epoch);
-      return { reply: partial, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true };
+      return { reply: partial, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true, memoryTurns: hist.userTurns };
     }
     let res: any;
     try {
@@ -469,7 +469,7 @@ export async function runTurn<T>(
       if (is429Like(e)) {
         await markStorm();
         await flushTrace();
-        return { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
+        return { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), memoryTurns: hist.userTurns };
       }
       await flushTrace();
       throw e;
@@ -519,7 +519,7 @@ export async function runTurn<T>(
   }
   if (!reply) reply = 'I ran out of steps — try a narrower question.';
   await saveAssistantReply(def, ctx, reply, epoch);
-  return { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
+  return { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), memoryTurns: hist.userTurns };
 }
 
 /** Streaming variant — yields SSE events for live typing. Same loop. */
@@ -542,7 +542,7 @@ export async function* streamTurn<T>(
   if (!allowed.ok) {
     const r: CopilotReply = {
       reply: allowed.reply ?? 'Hourly chat limit reached — please retry in a bit.',
-      proposals: [], activity: [],
+      proposals: [], activity: [], memoryTurns: 0,
     };
     yield { type: 'done', data: r };
     return r;
@@ -555,7 +555,7 @@ export async function* streamTurn<T>(
   const model = String((env as any)?.[def.modelEnvVar] ?? '').trim() || def.defaultModel;
   const hist = await loadHistory(def, ctx);
   if (hist.userTurns >= MAX_HUMAN_TURNS) {
-    const r: CopilotReply = { reply: LIMIT_REPLY, proposals: [], activity: [] };
+    const r: CopilotReply = { reply: LIMIT_REPLY, proposals: [], activity: [], memoryTurns: hist.userTurns };
     yield { type: 'done', data: r };
     return r;
   }
@@ -580,7 +580,7 @@ export async function* streamTurn<T>(
     let stepContent = '';
     if (step > 0 && Date.now() > deadline) {
       await flushTrace();
-      const partial: CopilotReply = { reply: turnText, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true };
+      const partial: CopilotReply = { reply: turnText, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true, memoryTurns: hist.userTurns };
       yield { type: 'done', data: partial };
       await saveAssistantReply(def, ctx, turnText || 'Working through it — continuing…', epoch);
       return partial;
@@ -623,7 +623,7 @@ export async function* streamTurn<T>(
       if (is429Like(e)) {
         await markStorm();
         await flushTrace();
-        const r: CopilotReply = { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
+        const r: CopilotReply = { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), memoryTurns: hist.userTurns };
         yield { type: 'done', data: r };
         return r;
       }
@@ -694,7 +694,7 @@ export async function* streamTurn<T>(
     break;
   }
   if (!reply) reply = 'I ran out of steps — try a narrower question.';
-  const final: CopilotReply = { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9) };
+  const final: CopilotReply = { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), memoryTurns: hist.userTurns };
   yield { type: 'done', data: final };
   // AWAIT: a fire-and-forget KV put dies with the isolate. (User turn +
   // per-step trace were already flushed during the loop — this only closes

@@ -19,7 +19,7 @@ import {
   REDACTED_CACHE_TTL_MS,
   type RedactedViewCache,
 } from "./extract";
-import { cacheSet } from "../../shared/cache";
+import { cacheGet, cacheSet } from "../../shared/cache";
 
 // NOTE: hashItem lives in routes.ts (serve-time twin). Importing it here
 // would cycle routes → enrichment. store.ts re-exports nothing… so we keep a
@@ -30,6 +30,24 @@ function hashSalesItem(item: { name: string; qty: string; spec: string; media?: 
     : [];
   return hashText(JSON.stringify([String(item?.name ?? ''), String(item?.qty ?? ''), String(item?.spec ?? ''), media]));
 }
+
+/** Fingerprint of everything the extraction reads: when it matches the last
+ *  successful run AND the structured fields are already filled, there is
+ *  nothing new for the LLM to learn — skip the call. This is what makes
+ *  rapid item micro-saves (remark, delete, toggle) cheap: only the first
+ *  save after a real content change pays for the AI pass. */
+function extractionFingerprint(enquiry: any, comments: any[], reqTexts: string[], salesItems: Array<{ name: string; qty: string; spec: string }>): string {
+  return hashText(JSON.stringify([
+    String(enquiry?.description ?? ''),
+    (comments || []).map((cm: any) => `${String((cm as any)?.id ?? '')}:${String((cm as any)?.content ?? '')}`),
+    reqTexts,
+    salesItems,
+  ]));
+}
+function extractionKey(id: string): string {
+  return `enquiry:extract-fp:${id}`;
+}
+const EXTRACT_FP_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 export async function runEnquiryExtraction(env: Record<string, unknown>, store: EnquiryStore, id: string): Promise<void> {
   try {
@@ -44,6 +62,29 @@ export async function runEnquiryExtraction(env: Record<string, unknown>, store: 
     const reqTexts = Array.isArray((enquiry as any).additionalRequirements)
       ? (enquiry as any).additionalRequirements.map((r: any) => (typeof r === 'string' ? r : String(r?.text ?? '')))
       : [];
+    // Sales line items are manual-only (AI auto-split permanently OFF).
+    const salesItemsSimple: Array<{ name: string; qty: string; spec: string }> =
+      (Array.isArray((enquiry as any).items) ? (enquiry as any).items : []).map((it: any) => ({
+        name: String(it?.name ?? ''),
+        qty: String(it?.qty ?? ''),
+        spec: String(it?.spec ?? ''),
+      }));
+    // Skip-if-unchanged: every item micro-save (remark, delete, toggle,
+    // resolve) used to pay a full LLM pass. Fingerprint covers all
+    // extraction inputs; a match with filled structured fields means the
+    // stored redaction cache is still valid — serve-time hash checks agree.
+    // Fingerprint is stored ONLY on a successful run, so a failed AI pass
+    // retries on the next save instead of going quiet forever.
+    const fieldsFilled = Boolean(
+      (enquiry as any)?.title
+      && (enquiry as any)?.clientCompany
+      && ((enquiry as any)?.contactName || (enquiry as any)?.contactPhone || (enquiry as any)?.contactEmail),
+    );
+    const fp = extractionFingerprint(enquiry, comments, reqTexts, salesItemsSimple);
+    try {
+      const prevFp = await cacheGet<string>(extractionKey(id), EXTRACT_FP_TTL_MS).catch(() => null);
+      if (prevFp === fp && fieldsFilled) return;
+    } catch { /* fingerprint unreadable — run extraction */ }
     const { text, description } = splitExtractionText(
       enquiry.description,
       firstComments,
@@ -55,13 +96,12 @@ export async function runEnquiryExtraction(env: Record<string, unknown>, store: 
       title: enquiry.title,
       company: enquiry.clientCompany,
       description,
-      salesItems: (Array.isArray((enquiry as any).items) ? (enquiry as any).items : []).map((it: any) => ({
-        name: String(it?.name ?? ''),
-        qty: String(it?.qty ?? ''),
-        spec: String(it?.spec ?? ''),
-      })),
+      salesItems: salesItemsSimple,
     });
     if (!extracted) return;
+    // Successful run: remember the fingerprint so identical follow-up saves
+    // skip the LLM call. Failures store nothing → the next save retries.
+    try { await cacheSet(extractionKey(id), fp, EXTRACT_FP_TTL_MS); } catch { /* best-effort */ }
     // Sales line items are manual-only (AI auto-split permanently OFF).
     const salesItems: Array<{ name: string; qty: string; spec: string }> =
       Array.isArray((enquiry as any).items) ? (enquiry as any).items : [];

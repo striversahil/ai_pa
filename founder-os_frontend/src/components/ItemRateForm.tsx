@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import type { EnquiryItemRate, EnquiryMedia } from "@/types";
 import { parseMoneyInput } from "@/types";
-import { filesToMedia } from "@/lib/imageFiles";
+import { filesToUploadedMedia } from "@/lib/imageFiles";
 
 interface ItemRateFormProps {
   onAdd: (rate: EnquiryItemRate) => void;
@@ -33,7 +33,7 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
   const attachRefs = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setRefError(null);
-    const { media, skipped } = await filesToMedia(files);
+    const { media, skipped } = await filesToUploadedMedia(files);
     if (skipped.length > 0) setRefError(`Skipped: ${skipped.join(", ")}`);
     if (media.length > 0) setRefs((prev) => [...prev, ...media]);
   };

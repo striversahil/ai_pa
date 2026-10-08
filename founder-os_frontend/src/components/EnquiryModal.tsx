@@ -1,10 +1,6 @@
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import { Agent, Enquiry, EnquiryItem, ENQUIRY_SOURCES } from "../types";
 import ItemBoxList from "./ItemBoxList";
-import { filesToMedia, dragHasFiles } from "../lib/imageFiles";
-
-// Enquiry-level image cap mirrors ItemBoxList (10MB per file, data-URI).
-const MAX_ENQUIRY_IMAGE_BYTES = 10 * 1024 * 1024;
 
 interface EnquiryModalProps {
   isOpen: boolean;
@@ -54,12 +50,6 @@ export default function EnquiryModal({
   // is preserved on edit and empty on create, submitted through untouched.
   const [formDescription, setFormDescription] = useState(() => editingEnquiry?.description || "");
   const [formSource, setFormSource] = useState<string>(() => editingEnquiry?.source || "TL");
-  // Unstructured intake (create only): enquiry-level photos for the vision
-  // extractor. Media lives per item on edit; imageUrls pass through there.
-  const [formImages, setFormImages] = useState<string[]>(() => editingEnquiry?.imageUrls || []);
-  const [imageError, setImageError] = useState<string | null>(null);
-  const [photoDragOver, setPhotoDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formItems, setFormItems] = useState<EnquiryItem[]>(() => (editingEnquiry?.items || []).map((it) => ({ ...it, media: [...(it.media ?? [])] })));
   // B2B EST-No. Check & Assign: verify the Zoho estimate exists; if free,
   // assign it to this enquiry's Lead By agent (creator). Held estimates are
@@ -119,33 +109,6 @@ export default function EnquiryModal({
 
   const isCreate = !editingEnquiry;
 
-  const handleImages = async (files: FileList | File[] | null) => {
-    if (!files || files.length === 0) return;
-    setImageError(null);
-    const list = Array.from(files);
-    const tooBig = list.find((f) => f.size > MAX_ENQUIRY_IMAGE_BYTES);
-    // Downscaled photos land at ~200-500KB — always under the intake vision
-    // cap, so dropped images actually reach the AI (not just the gallery).
-    const { media, skipped } = await filesToMedia(list.filter((f) => f.size <= MAX_ENQUIRY_IMAGE_BYTES));
-    if (tooBig || skipped.length > 0) {
-      setImageError(
-        [tooBig ? `"${tooBig.name}" exceeds 10MB and was skipped.` : null, skipped.length > 0 ? `Skipped: ${skipped.join(", ")}` : null]
-          .filter(Boolean)
-          .join(" ")
-      );
-    }
-    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
-    if (urls.length > 0) setFormImages((prev) => [...prev, ...urls]);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const handlePhotoDrop = (e: React.DragEvent) => {
-    if (!dragHasFiles(e)) return;
-    e.preventDefault();
-    setPhotoDragOver(false);
-    void handleImages(e.dataTransfer.files);
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -168,7 +131,9 @@ export default function EnquiryModal({
       // server-side by login email); edits preserve the stored lead.
       assignedAgentId: editingEnquiry?.assignedAgentId || "",
       description: formDescription,
-      imageUrls: formImages,
+      // New logs are text-only (no enquiry-level photos — see the awareness
+      // banner above); edits pass the stored imageUrls through untouched.
+      imageUrls: isCreate ? [] : (editingEnquiry?.imageUrls || []),
       items,
     });
   };
@@ -206,59 +171,6 @@ export default function EnquiryModal({
               />
             </div>
 
-            {/* Awareness: paste the quotation/description text — product/part
-                photos are NOT accepted. Shown on the log form so sales agents
-                see it at the moment they attach photos. */}
-            <div className="rounded-xl overflow-hidden border border-[var(--border-card)]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/accepted_awareness.png" alt="Accepted: quotation / description text. Not accepted: product image / physical part photo." className="w-full h-auto block" loading="lazy" />
-            </div>
-
-            <div
-              className={`space-y-2 rounded-xl p-2 -m-2 transition-colors ${photoDragOver ? "bg-brand-indigo/10 outline-2 outline-dashed outline-brand-indigo" : ""}`}
-              onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setPhotoDragOver(true); } }}
-              onDragLeave={() => setPhotoDragOver(false)}
-              onDrop={handlePhotoDrop}
-            >
-              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Photos — nameplate / drawing / chit ({formImages.length})</label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => handleImages(e.target.files)}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center px-3 py-2 border border-dashed border-[var(--border-card)] rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent"
-              >
-                + Attach photos
-              </button>
-              {imageError && <p className="text-[11px] text-red-500 font-semibold">{imageError}</p>}
-              {formImages.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {formImages.map((url, i) => (
-                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={url} alt={`attachment ${i + 1}`} className="w-full h-full object-cover" />
-                      <button
-                        type="button"
-                        aria-label="Remove photo"
-                        onClick={() => setFormImages((prev) => prev.filter((_, j) => j !== i))}
-                        className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] leading-none cursor-pointer border-0"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <p className="text-[11px] text-[var(--text-tertiary)]">
-                Attach photos or drag &amp; drop them here. AI reads the text + photos, splits items and checks past prices. Missing details will be asked right on the enquiry — nothing goes to procurement incomplete.
-              </p>
-            </div>
             </>
             ) : null}
             {(!isCreate && !redacted) && (

@@ -26,6 +26,9 @@ export interface CopilotReply {
    *  the edge ~100s guillotine — the client auto-continues (same session)
    *  without user action. NOT an AI limit: steps/tokens stay unbounded. */
   continued?: boolean;
+  /** Diagnosis signal: how many prior user turns the server loaded for this
+   *  turn (0 = amnesiac — wrong session, cleared state, or a store fault). */
+  memoryTurns?: number;
 }
 
 export interface CopilotExecResult {

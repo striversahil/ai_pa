@@ -89,25 +89,23 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   const recogRef = useRef<any>(null);
 
   useEffect(() => { setMsgs([]); setConfirmed(new Set()); }, [config.resetKey]);
-  // Arriving at the automation = new chat: wipe server memory + screen every
-  // time the panel opens (page refresh lands closed, so first open clears
-  // any pre-refresh thread too). In-panel tab switches don't re-trigger.
 
-  // Volatile conversation id: minted once per page load (a refresh or a
-  // return to the automation remounts → fresh id → fresh memory, exactly
-  // like a normal LLM). Closing/reopening the panel (✕, backdrop click)
-  // only hides it — the id and the thread survive. ONLY the ↻ button mints
-  // a new id (a deliberate new chat). Sent with every message; server
-  // memory is keyed under it, so a new chat can never inherit an old
-  // thread — nothing to wipe, nothing that can fail.
+  // Conversation id, VOLATILE per mount (founder order): a refresh or a
+  // remount mints a FRESH id → fresh server thread (history + trace +
+  // draft are keyed under it). Closing/reopening the panel (✕, backdrop)
+  // only hides it — no remount, so the thread survives. ONLY the ↻ button
+  // mints a new id mid-mount (a deliberate new chat). Sent with every
+  // message. Nothing is persisted — a reload always starts a new chat.
+  const mintSession = () => {
+    let s = "";
+    try { s = (crypto as any)?.randomUUID?.() ?? ""; } catch {}
+    if (!s) s = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    return s;
+  };
   const sessionRef = useRef<string>("");
-  if (!sessionRef.current) {
-    try { sessionRef.current = (crypto as any)?.randomUUID?.() ?? ""; } catch {}
-    if (!sessionRef.current) sessionRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  }
+  if (!sessionRef.current) sessionRef.current = mintSession();
   const rotateSession = () => {
-    try { sessionRef.current = (crypto as any)?.randomUUID?.() ?? ""; } catch {}
-    if (!sessionRef.current || sessionRef.current.length < 8) sessionRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    sessionRef.current = mintSession();
     setMsgs([]); setConfirmed(new Set()); setThinking("");
   };
   useEffect(() => {

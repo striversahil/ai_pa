@@ -459,7 +459,16 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if ((r as any).status === 200 && (r.body as any)?.id) {
       const hasAiBulk = Array.isArray((patchBody as any)?.items)
         && (patchBody as any).items.some((it: any) => it?.aiPending === true);
-      await runEnquiryAi(c, String((r.body as any).id), (patchBody as any)?.description !== undefined || hasAiBulk);
+      const eid = String((r.body as any).id);
+      const withIntake = (patchBody as any)?.description !== undefined || hasAiBulk;
+      // AI enrichment runs OFF the response path (waitUntil): every item
+      // micro-save (remark, delete, toggle) used to block on a full LLM
+      // extraction pass, which is why saves felt stuck for 10-60s. The D1
+      // write above is already committed; enrichment + broadcast converge
+      // live within seconds. Never throws (runEnquiryAi swallows AI faults).
+      // No executionCtx in tests/smoke — fall back to inline there.
+      if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(runEnquiryAi(c, eid, withIntake));
+      else await runEnquiryAi(c, eid, withIntake);
       bustQueues(c);
     }
     return c.json(r.body, r.status as any);
@@ -552,7 +561,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const gw = getGateway(c.env as any);
-      const { cacheGet } = await import('../../shared/cache');
+      const { cacheGet, hasKvCache } = await import('../../shared/cache');
       // Pool-wide storm flag: when true, every copilot answers "busy" without
       // touching any key (set on any 429, 120s TTL, refreshed by each new 429).
       const storm = !!(await cacheGet('ai:storm:chat', 120_000).catch(() => null));
@@ -561,7 +570,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const { readChatUsage } = await import('../../copilot/engine');
       const days = Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7));
       const usage = await readChatUsage(days).catch(() => ({ total: 0, users: [], byDay: [] }));
-      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes'), storm, usageDays: days, usage });
+      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes'), storm, usageDays: days, usage, kvCache: hasKvCache() });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 500);
     }

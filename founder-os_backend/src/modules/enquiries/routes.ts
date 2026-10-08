@@ -695,6 +695,13 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
   if (!text && !imageUrl && imageUrls.length === 0) return json(400, { error: "text required" });
   const existing = await store.getEnquiry(id);
   if (!existing) return json(404, { error: "not found" });
+  // Single-flight: an unprocessed aiPending row means the intake split is
+  // still working (or a previous click already queued it). A second append
+  // would split twice and duplicate every line — refuse with 409 so the UI
+  // can point at the in-progress row instead of creating twins.
+  if (Array.isArray((existing as any).items) && (existing as any).items.some((it: any) => it?.aiPending === true)) {
+    return json(409, { error: "AI split already in progress for this enquiry — wait for the pending item to resolve before adding again." });
+  }
   // An additional requirement is simply a NEW LINE ITEM: appended to the
   // previous items with no vendor rates, so it shows up as rate-pending in
   // Procurement and then flows to Management Review like any other item.

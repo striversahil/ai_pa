@@ -77,8 +77,7 @@ export interface MediaLoadResult {
 
 /** File picker OR drag-and-drop files → media entries, images downscaled.
  *  Unsupported types are skipped (reported, not attached). */
-export async function filesToMedia(files: FileList | File[] | null): Promise<MediaLoadResult> {
-  const list = files ? Array.from(files) : [];
+export async function filesToMedia(files: FileList | File[] | null): Promise<MediaLoadResult> {  const list = files ? Array.from(files) : [];
   const media: MediaLoadResult["media"] = [];
   const skipped: string[] = [];
   for (const f of list) {
@@ -101,4 +100,41 @@ export async function filesToMedia(files: FileList | File[] | null): Promise<Med
  *  Gate drop handlers on this so textarea drag-editing keeps working. */
 export function dragHasFiles(e: DragEvent): boolean {
   return Array.from(e.dataTransfer?.types ?? []).includes("Files");
+}
+
+/** Upload one downscaled data-URI to the server file locker
+ *  (POST /api/enquiries/files — worker KV / express disk, same protocol).
+ *  Returns the served-URL media entry, or null when the upload fails — the
+ *  caller keeps the data-URI so a locker outage never blocks saving. */
+export async function uploadMediaFile(dataUrl: string, name: string): Promise<{ type: MediaKind; url: string; name: string } | null> {
+  try {
+    const res = await fetch("/api/enquiries/files", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, dataUrl }),
+    });
+    if (!res.ok) return null;
+    const d = await res.json().catch(() => null);
+    if (!d?.url) return null;
+    const mime = String(d.type ?? "");
+    const type: MediaKind = mime === "application/pdf" ? "pdf" : mime.startsWith("video/") ? "video" : "image";
+    return { type, url: String(d.url), name: String(d.name ?? name) };
+  } catch {
+    return null;
+  }
+}
+
+/** filesToMedia + server upload: downscale locally, then store each file in
+ *  the server locker so item PATCHes ship short URLs instead of megabytes of
+ *  embedded data-URIs (which made every remark/delete/toggle slow and flaky).
+ *  Upload failures fall back to data-URIs per file — saving is never blocked.
+ *  Drop-in replacement for filesToMedia at every attachment call site. */
+export async function filesToUploadedMedia(files: FileList | File[] | null): Promise<MediaLoadResult> {
+  const base = await filesToMedia(files);
+  const media: MediaLoadResult["media"] = [];
+  for (const m of base.media) {
+    if (!m.url.startsWith("data:")) { media.push(m); continue; }
+    media.push((await uploadMediaFile(m.url, m.name)) ?? m);
+  }
+  return { media, skipped: base.skipped };
 }
