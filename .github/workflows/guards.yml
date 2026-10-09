@@ -1,0 +1,22 @@
+name: Guards (Phase-0 refactor tripwires)
+
+# Unlike cron-*.yml (Worker-dispatched, heavy AI), this workflow runs on every
+# push/PR and needs NO secrets: the guards use fake data + static parsing.
+# esbuild comes from `npx -y esbuild@0.28.2` (pinned) when the backend
+# node_modules/.bin copy is absent (stock runners never install deps).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard suite (node --test, zero-dep)
+        run: node --test "scripts/guards/*.test.mjs"
+
+      - name: Worker still builds (refactor must not break the edge bundle)
+        run: node founder-os_backend/scripts/build-worker.mjs
