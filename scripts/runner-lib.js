@@ -10,13 +10,12 @@
  * Env:
  *   WORKER_URL          — founder-os-worker URL (same as workflow WORKER_URL)
  *   SHARED_SECRET       — must match the worker's SHARED_SECRET
- *   LLM                 — EITHER GROQ_API_KEYS (mandatory now):
- *   GROQ_API_KEYS       — comma-separated Groq keys, rotated per call via the
- *                         unified AiGateway (least-failures selection,
- *                         429 cooldown / 401 disable / 5xx rotate)
- *   GROQ_MODEL          — override (default: openai/gpt-oss-120b)
- *   GROQ_REASONING_EFFORT — override (default: high)
- *   (OMNIROUTE_* REMOVED — no legacy fallback; Groq is the only LLM path.)
+ *   AI_KEYS             — unified gateway keys "provider:key:label,..."
+ *                         (agnes primary; groq NEVER loaded — founder rule)
+ *   AGNES_API_KEY(S) / OPENROUTER_API_KEY(S) / OPENROUTER_PAID_API_KEY /
+ *   REQUESTLY_API_KEY(S) — legacy per-provider vars, still merged
+ *   GROQ_MODEL          — legacy override, ignored (groq never loads)
+ *   GROQ_REASONING_EFFORT — legacy override, ignored (groq never loads)
  */
 
 const WORKER_URL = process.env.WORKER_URL;
@@ -68,10 +67,10 @@ async function workerRequest(path, { method = 'GET', body, timeoutMs = 90000 } =
  * healthiest key, rotates on 429/5xx, and respects cooldowns. Legacy omniroute
  * stays as the final fallback (gateway tries direct providers first).
  */
-const { getGateway } = require('./ai-gateway');
+const { getGateway, extractJson } = require('./ai-gateway');
 const gateway = getGateway(process.env);
 
-async function groq(system, user, { temperature = 0.5, maxTokens, reasoningEffort } = {}) {
+async function groq(system, user, { temperature = 0.5, maxTokens, reasoningEffort, reasoningOff, timeoutMs } = {}) {
   const res = await gateway.complete({
     messages: [
       { role: 'system', content: system },
@@ -80,13 +79,15 @@ async function groq(system, user, { temperature = 0.5, maxTokens, reasoningEffor
     temperature,
     ...(maxTokens ? { maxTokens } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(reasoningOff ? { reasoningOff } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
   });
   return res.content;
 }
 
 // Agnes-only text completion (agnes-3.0-flash default) — same gateway, explicit
 // provider so no Groq fallback is ever in the path. Prefer this in new runners.
-async function agnesText(system, user, { temperature = 0.5, maxTokens, reasoningEffort, model = 'agnes-3.0-flash', sessionKey } = {}) {
+async function agnesText(system, user, { temperature = 0.5, maxTokens, reasoningEffort, reasoningOff, timeoutMs, model = 'agnes-3.0-flash', sessionKey } = {}) {
   const res = await gateway.complete({
     provider: 'agnes',
     model,
@@ -97,12 +98,14 @@ async function agnesText(system, user, { temperature = 0.5, maxTokens, reasoning
     temperature,
     ...(maxTokens ? { maxTokens } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(reasoningOff ? { reasoningOff } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
     ...(sessionKey ? { sessionKey } : {}),
   });
   return res.content;
 }
 
-async function groqJson(system, user, { temperature = 0, maxTokens, reasoningEffort } = {}) {
+async function groqJson(system, user, { temperature = 0, maxTokens, reasoningEffort, reasoningOff, timeoutMs } = {}) {
   return gateway.completeJson({
     messages: [
       { role: 'system', content: system },
@@ -111,6 +114,8 @@ async function groqJson(system, user, { temperature = 0, maxTokens, reasoningEff
     temperature,
     ...(maxTokens ? { maxTokens } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(reasoningOff ? { reasoningOff } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
     json: true,
   });
 }
@@ -131,45 +136,8 @@ async function agnesImage(prompt, { size = '1024x1024' } = {}) {
   throw new Error('image provider returned neither b64 nor url');
 }
 
-function extractJson(raw) {
-  const str = String(raw || '').trim();
-  if (!str) return null;
-  try {
-    return JSON.parse(str);
-  } catch { /* fall through */ }
-  const fenced = str.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) {
-    try {
-      return JSON.parse(fenced[1].trim());
-    } catch { /* fall through */ }
-  }
-  let start = str.indexOf('{');
-  if (start === -1) start = str.indexOf('[');
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < str.length; i++) {
-    const ch = str[i];
-    if (inString) {
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\') { escaped = true; continue; }
-      if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') { inString = true; continue; }
-    if (ch === '{' || ch === '[') depth++;
-    else if (ch === '}' || ch === ']') {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(str.slice(start, i + 1));
-        } catch { return null; }
-      }
-    }
-  }
-  return null;
-}
+// extractJson is re-exported from the gateway (single implementation —
+// previously copy-pasted here and in ai-gateway.js).
 
 module.exports = {
   requireEnv,

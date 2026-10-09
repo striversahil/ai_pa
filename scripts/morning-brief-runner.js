@@ -8,8 +8,8 @@
  * from the worker → build the same context strings the engines produce →
  * LLM generate the brief → persist as a founder note.
  *
- * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (primary direct-Groq LLM;
- * OMNIROUTE_* kept as legacy fallback) — all via runner-lib.
+ * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (unified gateway: Agnes primary;
+ * legacy GROQ/OPENROUTER/REQUESTLY vars still merged) — all via runner-lib.
  */
 
 const { requireEnv, workerRequest, groq } = require('./runner-lib');

@@ -7,16 +7,28 @@
  *
  * Key sources (single contract, both runtimes):
  *   env.AGNES_API_KEY / env.AGNES_API_KEYS = Agnes keys (primary, sk-...)
- *   env.GROQ_API_KEYS = Groq keys (fallback, gsk_...)
+ *   env.GROQ_API_KEYS = Groq keys (NEVER loaded — founder rule, same gate as TS)
  *   env.OPENROUTER_API_KEYS / env.OPENROUTER_API_KEY = OpenRouter keys
- *   env.AI_KEYS = "provider:key:label,..." (e.g. "agnes:sk-...:primary")
+ *   env.OPENROUTER_PAID_API_KEY = paid-lane keys (provider `openrouter-paid`)
+ *   env.REQUESTLY_API_KEY(S) = Requestly keys
+ *   env.AI_KEYS = "provider:key:label,..." (e.g. "agnes:sk-...:primary";
+ *     provider auto-detected when omitted: gsk_→groq, sk-or-*→openrouter,
+ *     else agnes — same detectProvider as TS)
  * Agnes primary via https://apihub.agnes-ai.com/v1 (agnes-3.0-flash, 512K;
  * 2.5-flash is the automatic fallback),
- * reasoning via chat_template_kwargs.enable_thinking (mapped from reasoningEffort).
+ * reasoning via chat_template_kwargs.enable_thinking (mapped from reasoningEffort;
+ * reasoningOff suppresses it — canonical TS flag, `noReasoning` kept as alias).
  * Rotation: one fresh key per attempt (bounded, ≤5) — plain Agnes 429 cools
  * that key and rotates; Cloudflare 1015 cools briefly and also rotates. Optional
  * req.sessionKey pins a conversation to one key via consistent hashing
  * (cache affinity, no mid-chat hopping); one-shots spread randomly.
+ * req.strictProvider fails fast on pinned-provider exhaustion (mirror of TS
+ * strictProvider — never a silent cross-provider fallback).
+ * req.timeoutMs caps the whole call (runner batch semantic — no first-token
+ * probe like the worker path).
+ * Deliberate divergences from TS (runner batch design, not drift): no
+ * stream(), no KV response cache (in-process model flags only), direct egress
+ * only (no relay lanes — GH relay remains Worker-side).
  * Home-egress (home tunnel) DISABLED 2026-09-22 — GH relay
  * (agnes-relay.yml / agnes-relay-bak.yml) remains for Worker only; runner
  * is direct egress (no proxy).
@@ -25,6 +37,10 @@
 // ── Provider registry (mirror of TS) ─────────────────────────────────────────
 const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
 const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
+/** Default OpenRouter routing for the paid chat lane (mirror of TS
+ *  PAID_CHAT_ROUTING): `order` (not `only`) so a throttled first choice
+ *  spills forward instead of failing. */
+const PAID_CHAT_ROUTING = { provider: { order: ['streamlake/fp8', 'deepinfra/fp8'], allow_fallbacks: true } };
 const PROVIDERS = {
   agnes: {
     id: 'agnes',
@@ -60,6 +76,20 @@ const PROVIDERS = {
     jsonMode: { type: 'json_object' },
     defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
     visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+  },
+  // Paid OpenRouter lane (mirror of TS `openrouter-paid`): same endpoint as
+  // `openrouter`, but keys come only from OPENROUTER_PAID_API_KEY (callers pin
+  // provider 'openrouter-paid' so free-tier keys can never serve the turn).
+  // Without this entry, `openrouter-paid:` AI_KEYS entries fell through to
+  // the groq baseURL with an OpenRouter key (auth failure).
+  'openrouter-paid': {
+    id: 'openrouter-paid',
+    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
+    supportsReasoning: true,
+    reasoningObject: true,
+    extraParams: PAID_CHAT_ROUTING,
+    defaultModel: 'deepseek/deepseek-v4.1-flash',
+    visionModel: OPENROUTER_VISION_MODEL,
   },
 };
 
@@ -147,6 +177,17 @@ function hashAI(s) {
   return h.toString(36);
 }
 
+// detectProvider: infer provider from key prefix when an AI_KEYS entry omits
+// the explicit provider (mirror of TS). ORDER MATTERS: `sk-or-*` starts with
+// `sk-` — check OpenRouter first or those keys misclassify as Agnes (wrong
+// baseURL → auth failure on every call).
+function detectProvider(key) {
+  const k = String(key || '').trim();
+  if (k.startsWith('gsk_')) return 'groq';
+  if (k.startsWith('sk-or-') || k.startsWith('sk-or-v1-')) return 'openrouter';
+  return 'agnes';
+}
+
 // ── Key pool ─────────────────────────────────────────────────────────────────
 class KeyPool {
   constructor() {
@@ -174,6 +215,8 @@ class KeyPool {
     for (const key of raw(env && env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env && env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env && env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
+    // Paid lane (chat primary): separate provider id so chat pins paid-only.
+    for (const key of raw(env && env.OPENROUTER_PAID_API_KEY).split(',')) add('openrouter-paid', key, 'paid');
     for (const key of raw(env && env.REQUESTLY_API_KEY).split(',')) add('requestly', key);
     for (const key of raw(env && env.REQUESTLY_API_KEYS).split(',')) add('requestly', key);
     const aiKeys = raw(env && env.AI_KEYS);
@@ -181,7 +224,6 @@ class KeyPool {
       for (const entry of aiKeys.split(',')) {
         const parts = entry.split(':');
         if (parts.length >= 2) {
-          const prov = (parts[0] || '').trim();
           let key, label;
           if (parts.length >= 3) {
             label = parts[parts.length - 1];
@@ -189,9 +231,7 @@ class KeyPool {
           } else {
             key = parts[1];
           }
-          let provider = prov || (key.trim().startsWith('gsk_') ? 'groq' : key.trim().startsWith('sk-') ? 'agnes' : 'agnes');
-          if (!provider) provider = key.trim().startsWith('gsk_') ? 'groq' : 'agnes';
-          add(provider, key, label);
+          add(parts[0].trim() || detectProvider(key), key, label);
         }
       }
     }
@@ -226,12 +266,17 @@ class KeyPool {
    *    cooled/failed pin drops out and traffic shifts automatically.
    *  - `sessionKey` absent → uniform random pick inside the least-failures
    *    tier: statistical load-spreading, no coordination needed.
+   *  - `strictPin` (mirror of TS strictProvider): a pinned provider with zero
+   *    healthy keys returns null instead of silently rolling a random
+   *    cross-provider key — exhaustion must fail over explicitly, never serve
+   *    a weak model disguised as the pinned provider.
    */
-  select(provider, sessionKey) {
+  select(provider, sessionKey, strictPin = false) {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
     if (provider) {
       const f = pool.filter((k) => k.provider === provider);
+      if (strictPin && f.length === 0) return null;
       if (f.length > 0) pool = f;
     }
     if (pool.length === 0) return null;
@@ -320,12 +365,35 @@ class KeyPool {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Combine a caller signal with an optional whole-call timeoutMs (mirror of
+ *  TS combineSignals, minus the first-token probe — runners are batch, so a
+ *  single whole-call cap is the honest semantic). Previously a hung model
+ *  hung the runner job until GitHub killed it; now callers can cap it. */
+function combineSignals(signal, timeoutMs) {
+  if (timeoutMs == null && !signal) return undefined;
+  if (timeoutMs == null) return signal;
+  const t = AbortSignal.timeout(timeoutMs);
+  if (!signal) return t;
+  if (signal.aborted) return signal;
+  const c = new AbortController();
+  const onAbort = () => c.abort();
+  signal.addEventListener('abort', onAbort, { once: true });
+  t.addEventListener('abort', () => {
+    signal.removeEventListener('abort', onAbort);
+    c.abort();
+  }, { once: true });
+  return c.signal;
+}
+
 // ── Gateway ──────────────────────────────────────────────────────────────────
 class AiGateway {
   constructor(env) {
     this.pool = new KeyPool();
     this.visionModelOverride = '';
-    this.openrouterModels = [OPENROUTER_VISION_MODEL];
+    // Text-model rotation pool (mirror of TS): 429 streaks on model-less text
+    // calls rotate through THESE — default TEXT (a vision default would route
+    // text requests at a vision model on the first 429).
+    this.openrouterModels = [OPENROUTER_TEXT_MODEL];
     this.modelIdx = 0;
     if (env) this.configure(env);
   }
@@ -367,9 +435,11 @@ class AiGateway {
       fellBack = true;
     }
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // strictProvider (mirror of TS): pinned-provider exhaustion fails fast
+      // (null) instead of serving a cross-provider fallback.
       const key = req.keyId
-        ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider, req.sessionKey))
-        : this.pool.select(req.provider, req.sessionKey);
+        ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider, req.sessionKey, req.strictProvider))
+        : this.pool.select(req.provider, req.sessionKey, req.strictProvider);
       if (!key) {
         const waitMs = this.pool.earliestCooldownMs();
         const retryAfter = waitMs > 0 ? Math.min(waitMs, 60000) : 60000;
@@ -489,17 +559,20 @@ class AiGateway {
       ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
       ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
       ...(provider.extraParams || {}),
+      ...(req.extraParams || {}),
     };
     if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
-    if (provider.id === 'agnes' && req.reasoningEffort) body.chat_template_kwargs = { enable_thinking: true };
-    else if (provider.reasoningObject && !req.noReasoning) body.reasoning = { enabled: true };
-    else if (provider.supportsReasoning && req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
+    // reasoningOff is canonical (TS); noReasoning kept as a legacy alias.
+    const thinkingOff = req.reasoningOff || req.noReasoning;
+    if (provider.id === 'agnes' && req.reasoningEffort && !thinkingOff) body.chat_template_kwargs = { enable_thinking: true };
+    else if (provider.reasoningObject && !thinkingOff) body.reasoning = { enabled: true };
+    else if (provider.supportsReasoning && req.reasoningEffort && !thinkingOff) body.reasoning_effort = req.reasoningEffort;
 
     const res = await fetch(provider.baseURL, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: req.signal,
+      signal: combineSignals(req.signal, req.timeoutMs),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');

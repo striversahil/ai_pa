@@ -28,7 +28,7 @@
  *  8. AI classification + lead-details (sent + just-transitioned only).
  *  9. Watermark + fingerprint on a fully-complete pass.
  *
- * Env: WORKER_URL, SHARED_SECRET, GROQ_API_KEYS (comma-separated, rotated).
+ * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (unified gateway: Agnes primary).
  * Zoho credentials are inferred from the curl export at
  * founder-os_backend/zoho_sent/sent_estimates.txt (list scope derived programmatically).
  * SO_ONLY=1: manual lightweight tick — sales-orders-today only, then exit.
