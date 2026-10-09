@@ -20,7 +20,6 @@ import { BrainService } from './modules/brain/service';
 import { GoogleSheetsService } from './modules/google_sheets/service';
 import { asyncHandler } from './utils/asyncHandler';
 import { errorHandler, notFoundHandler } from './utils/errorHandler';
-import { isSystemGeneratedComment } from './shared/systemComment';
 import { OutboundService } from './modules/whatsapp/outbound';
 import { MessageQueueService } from './modules/queue/service';
 import { AuditService } from './modules/audit/service';
@@ -896,39 +895,14 @@ app.post('/api/trigger/telecalling/eod', asyncHandler(async (req, res) => {
 
 /**
  * GET /api/estimates
- * Fetches active sent estimates and classifications
+ * Shared KV-cached payload (same bytes as the Worker route — estimates with
+ * leadOf attribution, system-comment filtering, org list, sales-orders-today).
+ * Previously a stale parallel query here served an uncached subset (no
+ * leadOf/organizations/salesOrdersToday) — deleted in favor of the core.
  */
 app.get('/api/estimates', asyncHandler(async (req, res) => {
-  const [estimates, lastCompleteSync] = await Promise.all([
-    prisma.estimate.findMany({
-      where: {
-        OR: [
-          { status: 'sent' },
-          { status: 'accepted' },
-          { status: 'declined' },
-          { status: 'confirmed' }
-        ]
-      },
-      include: {
-        classification: true,
-        comments: {
-          orderBy: { commentId: 'desc' }
-        }
-      }
-    }),
-    prisma.setting.findUnique({ where: { key: 'sales_copilot:last_complete_sync_at' } }),
-  ]);
-  // Zoho auto-logged comments ("Quote marked as sent", "Quote updated. Amount
-  // changed ...") carry no sales intent and must not reach the UI timeline or
-  // comment counts, nor the LLM prompt. Filter them out of the payload.
-  const estimatesWithRealComments = estimates.map(e => ({
-    ...e,
-    comments: (e.comments || []).filter(c => !isSystemGeneratedComment(c.description, c.commentedBy))
-  }));
-  res.status(200).json({
-    estimates: estimatesWithRealComments,
-    lastCompleteSyncAt: lastCompleteSync?.value ? lastCompleteSync.value : null
-  });
+  const { getEstimatesPayload } = require('./shared/estimates-cache');
+  res.status(200).json(await getEstimatesPayload());
 }));
 
 /**

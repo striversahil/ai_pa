@@ -10,6 +10,7 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
   - `routes/*.ts` — one module per domain (auth, chat, enquiries, system, estimates, whatsapp, triggers, runner, autopilot, automations, events).
   - `cron.ts` — the `* * * * *` cron router (see Cron below).
 - **Express `src/routes/` is a PARALLEL implementation** of the same endpoints. Adding an endpoint usually means touching both the Worker route module and the Express router (mirror the route). Keep handlers thin; heavy/AI work goes to a GH Actions runner.
+- **Express is FROZEN (deprecation track, founder decision): new endpoints are Worker-only** — do not add new Express mirrors. Shared cores (`src/shared/*`, `src/modules/*`) stay dual-runtime; existing Express mirrors are maintained until removal. First deprecations landed: Express `/api/estimates` now delegates to `getEstimatesPayload()` (was a stale parallel query); dead `src/routes/estimates.ts` removed.
 
 ## Cron / scheduling (Cloudflare-only dispatch)
 - ONE Cloudflare Cron Trigger `* * * * *` (wrangler.toml). `src/worker/cron.ts` runs every minute and dispatches GitHub Actions `workflow_dispatch` by **UTC minute alignment**:
