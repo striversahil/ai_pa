@@ -432,18 +432,43 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         const missingCount = Array.isArray(kypMissing) ? kypMissing.length : 0;
                         const isComplete = kypComplete === true;
                         const isIncomplete = kypComplete === false;
+                        // Phase-1 split, classification still running (both arrive
+                        // in the phase-2 write). Hide the Uncategorized badge
+                        // meanwhile — unclassified is not unclassifiable.
+                        // In-flight gate (Oct 2026 stuck-chip fix): a bare
+                        // missing category does NOT mean running — manual items
+                        // intake never touched would spin forever. Only rows
+                        // carrying split output (verbatim) or an unprocessed
+                        // aiPending flag — this item's or a sibling's — read as
+                        // "classification landing shortly"; the rest truthfully
+                        // show Uncategorized below.
+                        const inFlight = (it as any).verbatim !== undefined
+                          || (it as any).aiPending === true
+                          || (Array.isArray(items) && items.some((x: any) => (x as any)?.aiPending === true));
+                        const classifying = inFlight && cat === undefined && kypComplete === undefined;
                         return (
                           <div className="mt-2 rounded-xl border border-[var(--border-card)]/80 bg-[var(--bg-card)]/60 p-2.5 space-y-2">
                             <div className="flex flex-wrap items-center gap-1.5">
+                              {!classifying && (
                               <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full border ${isUncat ? "bg-zinc-500/10 text-zinc-500 border-zinc-500/20" : isComplete ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25" : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25"}`}>
                                 {isUncat ? "Uncategorized" : cat}
                               </span>
+                              )}
                               {kypItem && !isUncat && (
                                 <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-brand-indigo/10 text-brand-indigo border border-brand-indigo/20">{kypItem}</span>
                               )}
                               {!isUncat && kypComplete !== undefined && (
                                 <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${isComplete ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border-amber-500/20"}`}>
                                   {isComplete ? "Spec complete ✓" : `Needs ${missingCount} detail${missingCount === 1 ? "" : "s"}`}
+                                </span>
+                              )}
+                              {/* Phase-1 split, classification still running: category
+                                  and kypComplete both arrive in the phase-2 write.
+                                  Legacy rows always carry at least a category, so
+                                  this chip can never stick on old items. */}
+                              {classifying && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/25 animate-pulse" title="AI split the items — catalogue match landing shortly">
+                                  classifying…
                                 </span>
                               )}
                               {editable && isIncomplete && Array.isArray(kypMissing) && kypMissing.length > 0 && (

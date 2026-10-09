@@ -6,7 +6,11 @@
 // D1 rewrote the whole items JSON — saves felt stuck and sometimes failed
 // silently. New photos now upload ONCE here and items carry short
 // `/api/enquiries/files/<key>` URLs; every later save ships small JSON.
-// Bytes live in Workers KV (CHAT_FILES, same locker as team-chat + SO files).
+//
+// STORAGE IS D1 (EnquiryFile table), NOT Workers KV: in Oct 2026, KV
+// accepted worker PUTs (same-request read-back passed) yet every key vanished
+// within ~60s while CLI-written keys persisted — silent platform-level loss
+// with no error anywhere. D1 reads/writes verify end-to-end via CLI.
 // Upload needs any authenticated member (no more privileged than editing
 // items); download is by unguessable key (mirrors /api/chat/files/:key, so
 // <img> tags and the AI intake fetcher work without session cookies).
@@ -17,16 +21,22 @@ import {
   enquiryMe, isApproved,
   type Bindings,
 } from '../context';
+import {
+  MAX_ENQUIRY_FILE_BYTES,
+  parseEnquiryFileDataUrl,
+  isAllowedEnquiryFileMime,
+  isSafeEnquiryFileKey,
+  buildEnquiryFileKey,
+  storedMimeFor,
+  cleanEnquiryFileName,
+} from '../../shared/enquiry-files';
 
-/** Matches the client downscale cap (imageFiles.ts) — bigger files are rejected. */
-const MAX_ENQUIRY_FILE_BYTES = 10 * 1024 * 1024;
-
-function isAllowedMime(mime: string): boolean {
-  return mime.startsWith('image/') || mime.startsWith('video/') || mime === 'application/pdf';
-}
-
-function keyIsSafe(key: string): boolean {
-  return /^enq\/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/.test(key);
+function db(c: any): any | null {
+  try {
+    const d = (c.env as any)?.DB;
+    if (!d || typeof d.prepare !== 'function') return null;
+    return d;
+  } catch { return null; }
 }
 
 export function registerEnquiryFileRoutes(app: Hono<{ Bindings: Bindings }>): void {
@@ -37,21 +47,21 @@ export function registerEnquiryFileRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     if (!isApproved(me)) return c.json({ error: 'Approval required' }, 403);
-    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+    const database = db(c);
+    if (!database) return c.json({ error: 'File storage is not configured' }, 501);
     let body: any;
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: 'Expected JSON { name, type, dataUrl }' }, 400);
     }
-    const dataUrl = String(body?.dataUrl ?? '');
-    const m = /^data:([a-zA-Z0-9][a-zA-Z0-9/+.=-]*);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-    if (!m) return c.json({ error: 'dataUrl must be a base64 data-URI' }, 400);
-    const mime = m[1].toLowerCase();
-    if (!isAllowedMime(mime)) return c.json({ error: 'Only image, video and PDF uploads are allowed' }, 400);
+    const parsed = parseEnquiryFileDataUrl(body?.dataUrl);
+    if ('error' in parsed) return c.json({ error: parsed.error }, 400);
+    const mime = parsed.mime;
+    if (!isAllowedEnquiryFileMime(mime)) return c.json({ error: 'Only image, video and PDF uploads are allowed' }, 400);
     let bytes: Uint8Array;
     try {
-      const bin = atob(m[2]);
+      const bin = atob(parsed.b64);
       bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     } catch {
@@ -59,51 +69,63 @@ export function registerEnquiryFileRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
     if (bytes.length === 0) return c.json({ error: 'Empty file' }, 400);
     if (bytes.length > MAX_ENQUIRY_FILE_BYTES) return c.json({ error: 'File too large (max 10MB)' }, 413);
-    const name = String(body?.name ?? 'file').slice(0, 200);
-    const ext = (name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
-    const key = `enq/${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
+    const name = cleanEnquiryFileName(body?.name);
+    const key = buildEnquiryFileKey(name, crypto.randomUUID());
+    const storedMime = storedMimeFor(mime, body?.type);
+    const nowIso = new Date().toISOString();
     try {
-      await c.env.CHAT_FILES.put(key, bytes, {
-        metadata: { name, type: body?.type && String(body.type).startsWith(mime.split('/')[0]) ? String(body.type) : mime },
-      });
+      await database.prepare(
+        `INSERT INTO EnquiryFile(key, mime, name, size, data, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
+      ).bind(key, storedMime, name, bytes.length, bytes, nowIso).run();
     } catch (e: any) {
-      console.error(`[enquiry-files] KV put failed for ${key}: ${String(e?.message ?? e).slice(0, 200)}`);
+      console.error(`[enquiry-files] D1 insert failed for ${key}: ${String(e?.message ?? e).slice(0, 200)}`);
       return c.json({ error: 'File storage write failed — retry (your photo was NOT lost, nothing was saved)' }, 500);
     }
     // Read-back gate: a 201 MUST mean the bytes are servable. If the write
-    // didn't persist (silent KV fault), fail loudly so the frontend keeps the
-    // inline data-URI instead of storing a dead locker URL (Oct 2026: three
-    // uploads returned 201 yet no keys ever persisted — dashboard showed
-    // broken thumbnails with no error anywhere).
+    // didn't persist, fail loudly so the frontend keeps the inline data-URI
+    // instead of storing a dead locker URL.
     try {
-      const check = await c.env.CHAT_FILES.get(key, 'arrayBuffer');
-      if (!check || check.byteLength !== bytes.length) {
-        console.error(`[enquiry-files] read-back mismatch for ${key}: wrote ${bytes.length}B, read ${check?.byteLength ?? 'null'}`);
-        try { await c.env.CHAT_FILES.delete(key); } catch { /* best-effort */ }
+      const check: any = await database.prepare(`SELECT length(data) AS n FROM EnquiryFile WHERE key = ?`).bind(key).first();
+      const n = Number(check?.n ?? -1);
+      if (n !== bytes.length) {
+        console.error(`[enquiry-files] read-back mismatch for ${key}: wrote ${bytes.length}B, read ${n}`);
+        try { await database.prepare(`DELETE FROM EnquiryFile WHERE key = ?`).bind(key).run(); } catch { /* best-effort */ }
         return c.json({ error: 'File storage verification failed — retry (your photo was NOT lost, nothing was saved)' }, 500);
       }
     } catch (e: any) {
       console.error(`[enquiry-files] read-back failed for ${key}: ${String(e?.message ?? e).slice(0, 200)}`);
       return c.json({ error: 'File storage verification failed — retry (your photo was NOT lost, nothing was saved)' }, 500);
     }
-    return c.json({ key, name, size: bytes.length, type: mime, url: `/api/enquiries/files/${key}` }, 201);
+    // Success audit: proves put+read-back server-side in tail.
+    console.log(`[enquiry-files] stored ${key} (${bytes.length}B ${storedMime}, read-back ok)`);
+    return c.json({ key, name, size: bytes.length, type: storedMime, url: `/api/enquiries/files/${key}` }, 201);
   });
 
-  // Serve bytes by key (never exposes raw KV keys — the key IS the id).
-  app.get('/api/enquiries/files/:key', async (c) => {
-    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
-    const key = `enq/${c.req.param('key') ?? ''}`;
-    if (!keyIsSafe(key)) return c.json({ error: 'File not found' }, 404);
-    const obj = await c.env.CHAT_FILES.getWithMetadata(key, 'arrayBuffer');
-    if (obj.value === null) return c.json({ error: 'File not found' }, 404);
-    const meta = (obj.metadata || {}) as { name?: string; type?: string };
-    const type = meta.type || 'application/octet-stream';
-    const name = meta.name || key;
+  // Serve bytes by key. Keys are `enq/<uuid>.<ext>` (TWO segments) so the
+  // route matches both — a single `:key` param never matched and 404'd every
+  // photo (Oct 2026 outage). No auth: keys are unguessable, and the key IS
+  // the id (mirrors /api/chat/files/:key, so <img> tags and the AI intake
+  // fetcher work without session cookies).
+  app.get('/api/enquiries/files/enq/:name', async (c) => {
+    const database = db(c);
+    if (!database) return c.json({ error: 'File storage is not configured' }, 501);
+    const key = `enq/${c.req.param('name') ?? ''}`;
+    if (!isSafeEnquiryFileKey(key)) return c.json({ error: 'File not found' }, 404);
+    let row: any = null;
+    try {
+      row = await database.prepare(`SELECT mime, name, data FROM EnquiryFile WHERE key = ?`).bind(key).first();
+    } catch { /* fall through to 404 */ }
+    if (!row?.data) return c.json({ error: 'File not found' }, 404);
+    const type = String((row as any)?.mime || 'application/octet-stream');
+    const name = String((row as any)?.name || key);
     const headers = new Headers();
     headers.set('Content-Type', type);
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
     const inline = /^image\/|^video\/|^audio\/|^text\/|^application\/pdf$/.test(type);
     if (!inline) headers.set('Content-Disposition', `attachment; filename="${name.replace(/["\\]/g, '')}"`);
-    return new Response(obj.value, { headers });
+    const data = (row as any).data;
+    const buf: ArrayBuffer = data instanceof ArrayBuffer ? data : new Uint8Array(data as any).buffer as ArrayBuffer;
+    return new Response(buf, { headers });
   });
+
 }

@@ -205,6 +205,12 @@ export const AUTH_EXEMPT = [
   // unguessable). <img> subrequests can't carry auth reliably — see
   // routes/linkedin.ts header. Draft text + actions stay gated.
   '/api/linkedin/image/',
+  // Enquiry item photos (locker URLs `enq/<uuid>.<ext>` — 128-bit random ids,
+  // unguessable). <img> tags fetch cross-origin through the Pages proxy where
+  // the session cookie isn't reliably attached, and the AI intake passes these
+  // URLs to vision providers that fetch with no credentials at all — a gated
+  // GET blinds both. Uploads stay fully gated; only byte-serving is open.
+  '/api/enquiries/files/',
   // Email OAuth callback: Google redirects here (no session yet on first
   // connect). State token in KV is the CSRF guard. All other /api/email/*
   // actions stay behind the session gate (+ MIS for sends/writes).

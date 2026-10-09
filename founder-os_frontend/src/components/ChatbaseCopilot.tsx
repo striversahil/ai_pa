@@ -604,13 +604,28 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                       })()
                                     : [{ itemIndex: 0, name: undefined, rows: p.rows.map((r, ri) => ({ r, ri })) }];
                                   const colSpan = batched ? 5 : 4;
+                                  // Minimized dropdown: the full variation list stays collapsed
+                                  // until opened — summary shows count + best price. Per-item
+                                  // groups in batch tables collapse independently.
+                                  const bestOf = (rows: { r: NonNullable<ChatProposal["rows"]>[number] }[]) =>
+                                    rows.reduce((m, { r }) => Math.min(m, Number(r.markedPrice) || Infinity), Infinity);
+                                  const tableBest = bestOf(p.rows.map((r) => ({ r })));
                                   return (
                                     <div key={pi} className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
-                                      <p className="px-4 pt-3 pb-2 font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
                                       {mediaStrip(p.itemMedia)}
-                                      {groups.map((g) => (
+                                      <details>
+                                        <summary className="px-4 pt-3 pb-2 font-bold text-[13px] text-[var(--text-primary)] cursor-pointer select-none list-none flex items-center gap-2">
+                                          <span className="text-[var(--text-tertiary)] text-[11px]">▸</span>
+                                          {p.label}
+                                          <span className="font-bold text-[var(--text-tertiary)]">
+                                            · {p.rows.length} variation{p.rows.length === 1 ? "" : "s"}{Number.isFinite(tableBest) ? ` · from ₹${tableBest.toLocaleString("en-IN")}` : ""}
+                                          </span>
+                                        </summary>
+                                      {groups.map((g) => {
+                                        const gBest = bestOf(g.rows);
+                                        const gBody = (
                                         <div key={g.itemIndex}>
-                                          {batched && (
+                                          {batched && groups.length < 2 && (
                                             <p className="px-4 pt-2 text-[12px] font-extrabold text-indigo-300">
                                               Item {g.itemIndex}{g.name ? <span className="font-bold text-[var(--text-secondary)]"> — {g.name}</span> : null}
                                             </p>
@@ -709,7 +724,21 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                             </tbody>
                                           </table>
                                         </div>
-                                      ))}
+                                        );
+                                        // Batch with several items: each item group is its own
+                                        // dropdown; a lone group renders open directly.
+                                        if (!batched || groups.length < 2) return gBody;
+                                        return (
+                                          <details key={g.itemIndex}>
+                                            <summary className="px-4 py-1.5 text-[12px] font-extrabold text-indigo-300 cursor-pointer select-none list-none">
+                                              ▸ Item {g.itemIndex}{g.name ? <span className="font-bold text-[var(--text-secondary)]"> — {g.name}</span> : null}
+                                              <span className="font-bold text-[var(--text-tertiary)]"> · {g.rows.length} variation{g.rows.length === 1 ? "" : "s"}{Number.isFinite(gBest) ? ` · from ₹${gBest.toLocaleString("en-IN")}` : ""}</span>
+                                            </summary>
+                                            {gBody}
+                                          </details>
+                                        );
+                                      })}
+                                      </details>
                                       {p.needsProcurement && <div className="px-4 pb-3">{fetchBtn}</div>}
                                     </div>
                                   );

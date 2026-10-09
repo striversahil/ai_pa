@@ -30,6 +30,15 @@ function bustQueues(c: any): void {
 async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<void> {
   const eid = String(id ?? '');
   if (!eid) return;
+  // Two-phase intake: the split persists + broadcasts first (items render in
+  // ~10-20s), classification merges + broadcasts second (chips stream in).
+  // Each stage invalidates independently so no view waits on the other.
+  const onStage = async (stage: 'split' | 'classified') => {
+    try {
+      const { LiveEvent, broadcastLive } = await import('../../live');
+      broadcastLive(c, LiveEvent.Enquiries, { action: 'updated', id: eid, stage });
+    } catch {}
+  };
   try {
     const store = createEnquiryStore(c.env);
     try {
@@ -39,7 +48,7 @@ async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<vo
     }
     if (withIntake) {
       try {
-        await runAgnesVisionIntake(c.env as any, store, eid);
+        await runAgnesVisionIntake(c.env as any, store, eid, onStage);
       } catch (e: any) {
         console.error(`[enquiry-ai] ${eid}: intake failed (${String(e?.message ?? e).slice(0, 160)})`);
       }
@@ -317,6 +326,16 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         await attachZohoStatus(list);
         maybePromoteEnquiriesSent(c, list);
       }
+    } catch {}
+    // List payloads ship WITHOUT item media bytes (same strip as the queue
+    // endpoints — one inline-photo row is megabytes, and the sales dashboard
+    // refetches this list on every poll/event). Full media returns on
+    // single-row reads (`GET /api/enquiries/:id`), which the dashboards fetch
+    // when a row is opened; saves from slim rows are safe (the write path
+    // preserves stored media on empty incoming — update.ts `isStaleEmpty`).
+    try {
+      const list = (r.body as any)?.enquiries;
+      if (Array.isArray(list)) (r.body as any).enquiries = EnquiryRoutes.stripQueueMediaUrls(list);
     } catch {}
     // No background re-enrichment on reads: every write path enriches inline,
     // so the cache is fresh after any save. A stale row heals on next edit.

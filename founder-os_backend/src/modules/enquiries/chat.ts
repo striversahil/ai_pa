@@ -18,7 +18,7 @@ import type { EnquiryStore } from './store';
 import type { MeResponse } from '../auth/types';
 import { getProductDetail, getProductIndex, getRatesForProduct } from '../../automations/product-line/service';
 import {
-  MIN_QUOTE_CONFIDENCE, rankProducts, requiredChecklist, resolveProduct,
+  MIN_QUOTE_CONFIDENCE, applyMarkup, effectivePrice, rankProducts, requiredChecklist, resolveProduct,
   salesSafeQuote, scoreRates,
   type MatchGuideRow, type MatchProduct, type MatchRate, type SalesQuote,
 } from '../../automations/product-line/match';
@@ -50,6 +50,8 @@ export interface PriceTableRow {
   itemName?: string;
   /** 'Catalogue' past-quote rows vs 'Earlier' item-history rows. */
   tag?: string;
+  /** Vendor-blind row key (lets the quote card link its pick to a row). */
+  rateId?: string;
   /** Full labeled spec list for the per-item "all info" view. */
   specs?: { question: string; value: string }[];
   /** Vendor's rate photo (no vendor identity). */
@@ -181,6 +183,34 @@ function normSpecKey(s: unknown): string {
   return String(s ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+/**
+ * Whole-value vague words ("small", "normal", "standard" standing alone)
+ * are NOT specs — filing them poisons scoring and dedupe. Dropped here
+ * (quote paths only) and returned for targeted follow-up questions.
+ * Whole-value match only: "Indian regular" (fabric) never trips "regular".
+ */
+const VAGUE_SPEC_VALUES = new Set([
+  'small', 'medium', 'large', 'normal', 'standard', 'regular',
+  'ok', 'okay', 'fine', 'good', 'average', 'usual', 'as usual',
+  'same', 'default', 'any', 'whatever',
+]);
+function dropVagueSpecs(
+  specs: Record<string, string>,
+  required: { attrKey: string; question: string }[],
+): { clean: Record<string, string>; vague: { key: string; question: string; value: string }[] } {
+  const clean: Record<string, string> = {};
+  const vague: { key: string; question: string; value: string }[] = [];
+  const label = new Map(required.map((g) => [g.attrKey, g.question]));
+  for (const [k, v] of Object.entries(specs ?? {})) {
+    if (VAGUE_SPEC_VALUES.has(String(v ?? '').trim().toLowerCase())) {
+      vague.push({ key: k, question: label.get(k) ?? k, value: String(v).trim().slice(0, 120) });
+      continue;
+    }
+    clean[k] = v;
+  }
+  return { clean, vague };
+}
+
 /** Price sessions hold ONLY catalogue checklist specs (attrKeys). Generic
  *  ask_question answers share the same reply channel — drop anything that
  *  is not a known checklist key so conversational answers can never pollute
@@ -309,7 +339,7 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         type: 'function',
         function: {
           name: 'find_price',
-          description: 'Start a price lookup for one enquiry item: resolves the item (via its kypItem/category mapping) to a live catalogue product and returns its required spec checklist + the item spec on file. Call this first whenever the user asks for a price/rate. If a previous call returned candidates, pass the user-picked productId to lock it in.',
+          description: 'Start a price lookup for one enquiry item: resolves the item (via its kypItem/category mapping) to a live catalogue product and returns its required spec checklist + the item spec on file + the FULL vendor-blind past-rate list (no top-N cut — every rate with specs, price, age). YOU rank those rates against the client\'s verbatim wording (itemSpec): deterministic confidence is only a signal, your language judgment picks the right variation when wording is loose. Call this first whenever the user asks for a price/rate. If a previous call returned candidates, pass the user-picked productId to lock it in.',
           parameters: {
             type: 'object',
             properties: {
@@ -339,7 +369,7 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         type: 'function',
         function: {
           name: 'quote_price',
-          description: 'Look up past vendor rates for a catalogue product, score them against the collected specs, and draft a customer price (final price; cost basis and vendor hidden) for confirm. Details are OPTIONAL: pass skipSpecs:true to quote with whatever is collected — below-confidence still quotes with caveats instead of routing. Only no-past-rates routes to procurement.',
+          description: 'Look up past vendor rates for a catalogue product, score them against the collected specs, and draft a customer price (final price; cost basis and vendor hidden) for confirm. GUIDE-FIRST: with zero usable specs collected it returns needSpecs instead of quoting — call ask_specs/ask_question first, then quote. Pass skipSpecs:true only when the user says quote with what we have. Vague whole-value words (small/normal/standard) are auto-dropped and returned as vague for targeted questions. Below-confidence still quotes with caveats. Only no-past-rates routes to procurement.',
           parameters: {
             type: 'object',
             properties: {
@@ -399,7 +429,7 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         type: 'function',
         function: {
           name: 'quote_price_batch',
-          description: 'BATCH quoting for MULTIPLE items in ONE call — use this (never quote_price in a loop) after the specs are collected (or immediately when the user wants prices now: details are OPTIONAL, pass skipSpecs:true). Scores every item against its resolved product and returns per-item prices plus ONE combined price table (per-row Apply in the UI). Below-confidence items still quote with caveats. Only items without a resolved product or past rates route to procurement individually.',
+          description: 'BATCH quoting for MULTIPLE items in ONE call — use this (never quote_price in a loop) after the specs are collected. GUIDE-FIRST per item: zero usable specs returns needSpecs for that item (ask first, then quote); pass top-level skipSpecs:true only when the user says quote with what we have. Scores every item against its resolved product and returns per-item prices plus ONE combined price table (per-row Apply in the UI). Below-confidence items still quote with caveats. Only items without a resolved product or past rates route to procurement individually.',
           parameters: {
             type: 'object',
             properties: {
@@ -538,7 +568,7 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     specs: Record<string, string>,
     required: MatchGuideRow[],
     i: number,
-    extra?: { itemIndex?: number; itemName?: string; tag?: string; maxBits?: number },
+    extra?: { itemIndex?: number; itemName?: string; tag?: string; maxBits?: number; best?: boolean },
   ): PriceTableRow => {
     const q = salesSafeQuote(product, s as any, specs, required, guide);
     const bits = Object.entries(s.rate.attrValues ?? {})
@@ -546,6 +576,9 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       .filter(Boolean)
       .filter((v, vi, arr) => arr.indexOf(v) === vi)
       .slice(0, extra?.maxBits ?? 4);
+    // BEST is earned, not positional: only a row at/above apply-confidence
+    // gets the badge — a low-confidence first row must never claim it.
+    const best = extra?.best ?? (i === 0 && s.confidence >= MIN_QUOTE_CONFIDENCE);
     return {
       variation: bits.length > 0 ? bits.join(' · ').slice(0, 140) : `Quote ${i + 1}`,
       markedPrice: q.markedPrice,
@@ -554,7 +587,8 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       quoteAgeDays: q.quoteAgeDays,
       moq: q.moq,
       deliveryDays: q.deliveryDays,
-      best: i === 0,
+      rateId: String(s.rate.id ?? ''),
+      best,
       ...(extra?.itemIndex != null ? { itemIndex: extra.itemIndex } : {}),
       ...(extra?.itemName ? { itemName: extra.itemName } : {}),
       ...(extra?.tag ? { tag: extra.tag } : {}),
@@ -683,6 +717,23 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       activeItem: idx,
     };
     await savePriceSession(ctx.enquiryId, who, session);
+    // FULL vendor-blind rate list (no top-N cut): the model ranks these
+    // against the client's verbatim wording, which deterministic scoring
+    // alone can misread. No vendor fields anywhere by design.
+    const allRates = (await liveRates(resolved.product.id))
+      .filter((r) => r.active !== false && effectivePrice(r.pricePerUnit, r.discountPercent) != null)
+      .map((r) => {
+        const eff = effectivePrice(r.pricePerUnit, r.discountPercent) ?? 0;
+        return {
+          specs: { ...(r.attrValues ?? {}) },
+          markedPrice: applyMarkup(eff),
+          unit: String(r.unit ?? ''),
+          moq: r.moq,
+          deliveryDays: r.deliveryDays,
+          quotedAt: String(r.quotedAt ?? ''),
+          imageUrl: (r as any)?.imageUrl ?? null,
+        };
+      });
     return {
       result: {
         itemIndex: parsed.num,
@@ -691,6 +742,8 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
         itemSpec: String((it as any)?.spec ?? '').slice(0, 800),
         intakeMissing: Array.isArray((it as any)?.kypMissing) ? (it as any).kypMissing.slice(0, 10) : [],
         sessionSpecs: kept,
+        rates: allRates,
+        rateCount: allRates.length,
       },
     };
   }
@@ -806,6 +859,22 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       const s = String(v ?? '').trim().slice(0, 200);
       if (s) specs[String(k)] = s;
     }
+    const skipSpecs = (args as any)?.skipSpecs === true;
+    // Vague words are not specs — drop + flag for targeted questions.
+    const dv = dropVagueSpecs(specs, required);
+    for (const k of Object.keys(specs)) if (!(k in dv.clean)) delete specs[k];
+    // GUIDE-FIRST gate (founder order): nothing usable collected and the
+    // product asks questions → don't quote; ask first. skipSpecs ("quote
+    // with what we have") bypasses explicitly.
+    if (!skipSpecs && Object.keys(specs).length === 0 && required.length > 0) {
+      return {
+        result: {
+          needSpecs: true, productId: pid, productName: product.name,
+          vague: dv.vague, hasUsablePrices: false,
+          hint: 'no usable specs collected — call ask_specs (options auto-mined from past quotes) or ask_question for the vague ones, then quote_price. Never re-call quote_price with empty specs.',
+        },
+      };
+    }
     await savePriceSession(ctx.enquiryId, who, {
       items: { ...(prev.items ?? {}), [String(idx)]: { productId: pid, productName: product.name, specs } },
       activeItem: idx,
@@ -825,9 +894,9 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       };
     }
     const best = scored[0];
-    // Variation table: every scored past rate as a vendor-blind row so sales
-    // can SEE all matching variations, not just the single best.
-    const rows: PriceTableRow[] = scored.slice(0, 5).map((s, i) =>
+    // Full variation table (NO top-N cut): every scored past rate as a
+    // vendor-blind row — the model + user rank from the whole list.
+    const rows: PriceTableRow[] = scored.map((s, i) =>
       catalogueRow(product, guide, s, specs, required, i, { itemIndex: parsedQ.num }));
     const proposals: ChatProposal[] = [{
       kind: 'price_table', itemIndex: idx,
@@ -864,7 +933,7 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
         label: `Update Item ${idx + 1} spec with confirmed details`,
       });
     }
-    return { result: { proposed: true, caveated, hasUsablePrices: true, ...quote }, proposals };
+    return { result: { proposed: true, caveated, hasUsablePrices: true, ...(dv.vague.length ? { vague: dv.vague } : {}), ...quote }, proposals };
   }
 
   if (name === 'lookup_price') {
@@ -908,7 +977,7 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     const scored = scoreRates(await liveRates(product.id), product.id, specs, required);
     if (scored.length === 0) return { result: { error: 'no past rates for this product', hasUsablePrices: false } };
     const best = scored[0];
-    const rows: PriceTableRow[] = scored.slice(0, 5).map((s, i) =>
+    const rows: PriceTableRow[] = scored.map((s, i) =>
       catalogueRow(product, guide, s, specs, required, i, { tag: 'Catalogue' }));
     const quote: SalesQuote = salesSafeQuote(product, best, specs, required, guide);
     const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
@@ -1081,6 +1150,17 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
         const s = String(v ?? '').trim().slice(0, 200);
         if (s) specs[String(k)] = s;
       }
+      const skipAll = (args as any)?.skipSpecs === true;
+      const bv = dropVagueSpecs(specs, required);
+      for (const k of Object.keys(specs)) if (!(k in bv.clean)) delete specs[k];
+      // GUIDE-FIRST gate per item: nothing usable → ask first, not quote.
+      if (!skipAll && Object.keys(specs).length === 0 && required.length > 0) {
+        out.push({
+          itemIndex: num, product: product.name, needSpecs: true, hasUsablePrices: false,
+          vague: bv.vague, note: 'no usable specs — ask first via ask_specs/ask_question, then quote',
+        });
+        continue;
+      }
       nextItems[String(idx)] = { productId: product.id, productName: product.name, specs };
       const scored = scoreRates(await liveRates(product.id), product.id, specs, required);
       const itemName = String((allItems[idx] as any)?.name ?? `Item ${num}`).slice(0, 80);
@@ -1105,10 +1185,14 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
         markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
         quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
         ...(caveated ? { caveated: true as const, missing: quote.missingSpecs.map((m) => m.question) } : {}),
+        ...(bv.vague.length ? { vague: bv.vague } : {}),
         hasUsablePrices: true,
       });
-      // Top variation per item lands in the combined table (per-row Apply).
-      rows.push(catalogueRow(product, guide, scored[0], specs, required, 0, { itemIndex: num, itemName, tag: 'Catalogue', maxBits: 3 }));
+      // Every variation per item lands in the combined table (per-row
+      // Apply) — no top-N cut; the model + user rank the whole list.
+      scored.forEach((s, si) => {
+        rows.push(catalogueRow(product, guide, s, specs, required, si, { itemIndex: num, itemName, tag: 'Catalogue', maxBits: 3 }));
+      });
     }
     await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem });
     const proposals: ChatProposal[] = [
@@ -1135,7 +1219,7 @@ function systemPrompt(ctx: SalesCtx): string {
   const langNote = !ctx.restricted && !ctx.privileged
     ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — sales-floor style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
     : '';
-  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. Items are numbered from 1 exactly as shown (Item 1, Item 2, …) — always speak and accept item numbers 1-based; there is no Item 0, never say "index". ${langNote} Prior turns AND the price session are recalled automatically every turn — never claim to be a new session or to lack earlier context. When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it recalls the saved product + collected specs for the item) — never re-ask specs that are already collected. When they ask the rate of ANYTHING not on this enquiry (or before items exist), use lookup_price straight away — NEVER tell them to add the item first; that lookup is view-only by design. BATCH RULE: when prices are asked for MULTIPLE items, use find_price_batch ONCE for all of them (never find_price in a loop), then one ask_specs per distinct product, then quote_price_batch ONCE for all of them (never quote_price in a loop). If find_price returns candidates, offer them to the user to pick one, then call find_price again with the picked productId. Then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price — but details are OPTIONAL, never mandatory: every spec question is skippable, and quote_price/quote_price_batch quote with whatever is collected (pass skipSpecs:true when the user wants the price now), flagging unconfirmed details as caveats on the quote. OTHER PRICES: when the user asks what was quoted before, what other prices exist, or the price history of an item, use list_enquiry_rates (the item's own stored rates, vendor-blind) — never guess from memory. QUESTIONS: whenever you need ANY answer, decision, or confirmation from the user — specs, choice between options, go-ahead, free-text detail — ask it through ask_specs (catalogue spec checklists) or ask_question (everything else), which render as answerable cards. NEVER leave a question buried in prose: prose questions have no answer box. Answers to ask_question cards are conversational — read them from history, never file them as specs. The user's spec-form answers arrive as the next message labeled by question text — file them via quote_price and continue. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. PROCUREMENT RULE: offer the fetch-from-procurement button ONLY when the lookup found no usable price (no past rates, no matched product) — never alongside a quoted price. When routed, say so plainly and point at the button; when quoted with caveats, present the price plus exactly what is unconfirmed.`;
+  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. Items are numbered from 1 exactly as shown (Item 1, Item 2, …) — always speak and accept item numbers 1-based; there is no Item 0, never say "index". ${langNote} Prior turns AND the price session are recalled automatically every turn — never claim to be a new session or to lack earlier context. When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it recalls the saved product + collected specs for the item) — never re-ask specs that are already collected. When they ask the rate of ANYTHING not on this enquiry (or before items exist), use lookup_price straight away — NEVER tell them to add the item first; that lookup is view-only by design. RANKING RULE: find_price hands you EVERY past rate vendor-blind plus the client's verbatim spec — YOU rank them with language judgment (client words beat the deterministic confidence score when wording is loose or partial); tables likewise list every variation, never top-N. BATCH RULE: when prices are asked for MULTIPLE items, use find_price_batch ONCE for all of them (never find_price in a loop), then one ask_specs per distinct product, then quote_price_batch ONCE for all of them (never quote_price in a loop). If find_price returns candidates, offer them to the user to pick one, then call find_price again with the picked productId. Then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price. GUIDE-FIRST DISCIPLINE (founder order): a quote without specs is a guess — before ANY quote_price/quote_price_batch, check what is actually collected. Nothing usable (or only vague words like small / normal / standard / "regular size", which the tools strip and hand back as vague) → do NOT quote; call ask_specs (options are auto-mined from past quotes — offer them, don't open-quiz) or ask_question for the vague ones, then quote. Use milling-spares intelligence on unclear terminology: MS = mild steel, SS = stainless (SS304/SS316), GZ = gauge (lower number = thicker), jali = mesh/screen/sieve, JINDAL = steel brand (not the maker), elevator bucket size = width x projection x depth — interpret first, then CONFIRM via options rather than filing a guess. Quote only when specs suffice, or the instant the user says quote with what we have (skipSpecs:true) — flagging unconfirmed details as caveats on the quote. OTHER PRICES: when the user asks what was quoted before, what other prices exist, or the price history of an item, use list_enquiry_rates (the item's own stored rates, vendor-blind) — never guess from memory. QUESTIONS: whenever you need ANY answer, decision, or confirmation from the user — specs, choice between options, go-ahead, free-text detail — ask it through ask_specs (catalogue spec checklists) or ask_question (everything else), which render as answerable cards. NEVER leave a question buried in prose: prose questions have no answer box. Answers to ask_question cards are conversational — read them from history, never file them as specs. The user's spec-form answers arrive as the next message labeled by question text — file them via quote_price and continue. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. PROCUREMENT RULE: offer the fetch-from-procurement button ONLY when the lookup found no usable price (no past rates, no matched product) — never alongside a quoted price. When routed, say so plainly and point at the button; when quoted with caveats, present the price plus exactly what is unconfirmed.`;
 }
 
 /** Sales department definition for the shared engine. */

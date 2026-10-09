@@ -47,6 +47,15 @@ import { createEnquiryStore } from './modules/enquiries/store';
 import { runEnquiryExtraction } from './modules/enquiries/enrichment';
 import { getGateway } from './shared/ai-gateway';
 import { cacheDel } from './shared/cache';
+import {
+  MAX_ENQUIRY_FILE_BYTES,
+  parseEnquiryFileDataUrl,
+  isAllowedEnquiryFileMime,
+  isSafeEnquiryFileKey,
+  buildEnquiryFileKey,
+  storedMimeFor,
+  cleanEnquiryFileName,
+} from './shared/enquiry-files';
 
 
 const app = express();
@@ -259,6 +268,12 @@ app.get('/api/enquiries', async (req, res) => {
       try { void runEnquiryExtractionLocal(String(id)); } catch { /* ignore */ }
     }
   }
+  // Same media strip as the worker list route: list payloads never carry item
+  // media bytes (full media returns on single-row reads when a row is opened).
+  try {
+    const list = (r.body as any)?.enquiries;
+    if (Array.isArray(list)) (r.body as any).enquiries = EnquiryRoutes.stripQueueMediaUrls(list);
+  } catch {}
   res.status(r.status).json(r.body);
 });
 app.get('/api/enquiries/agents', async (req, res) => {
@@ -340,36 +355,32 @@ async function kickIntakeNowLocal(): Promise<void> {
 }
 // --- Enquiry item media uploads (Express mirror of worker/routes/enquiry-files.ts) ---
 // Same protocol (JSON { name, type, dataUrl }) and same response shape; bytes
-// live on local disk instead of Workers KV (this runtime has no KV binding).
+// live on local disk instead of D1 (this runtime has no D1 binding).
+// Validation rules are shared (./shared/enquiry-files) so the twins can't drift.
 // Auth-only here, matching every neighboring enquiry route (Express is the
 // alternate runtime, not the production path).
 const ENQUIRY_FILES_DIR = path.join(__dirname, '../data/enquiry-files');
-const MAX_ENQUIRY_FILE_BYTES = 10 * 1024 * 1024;
-function enquiryFileKeyIsSafe(key: string): boolean {
-  return /^enq\/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/.test(key);
-}
 app.post('/api/enquiries/files', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const dataUrl = String(req.body?.dataUrl ?? '');
-  const m = /^data:([a-zA-Z0-9][a-zA-Z0-9/+.=-]*);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-  if (!m) return res.status(400).json({ error: 'dataUrl must be a base64 data-URI' });
-  const mime = m[1].toLowerCase();
-  if (!(mime.startsWith('image/') || mime.startsWith('video/') || mime === 'application/pdf')) {
+  const parsed = parseEnquiryFileDataUrl(req.body?.dataUrl);
+  if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+  const mime = parsed.mime;
+  if (!isAllowedEnquiryFileMime(mime)) {
     return res.status(400).json({ error: 'Only image, video and PDF uploads are allowed' });
   }
   let bytes: Buffer;
   try {
-    bytes = Buffer.from(m[2], 'base64');
+    bytes = Buffer.from(parsed.b64, 'base64');
   } catch {
     return res.status(400).json({ error: 'Undecodable base64 payload' });
   }
   if (bytes.length === 0) return res.status(400).json({ error: 'Empty file' });
   if (bytes.length > MAX_ENQUIRY_FILE_BYTES) return res.status(413).json({ error: 'File too large (max 10MB)' });
-  const name = String(req.body?.name ?? 'file').slice(0, 200);
-  const ext = (name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+  const name = cleanEnquiryFileName(req.body?.name);
   const { randomUUID } = await import('crypto');
-  const key = `enq/${randomUUID()}${ext ? '.' + ext : ''}`;
+  const key = buildEnquiryFileKey(name, randomUUID());
+  const storedMime = storedMimeFor(mime, req.body?.type);
   const filePath = path.join(ENQUIRY_FILES_DIR, key.slice(4));
   try {
     fs.mkdirSync(ENQUIRY_FILES_DIR, { recursive: true });
@@ -387,11 +398,13 @@ app.post('/api/enquiries/files', async (req, res) => {
   } catch {
     return res.status(500).json({ error: 'File storage verification failed — retry (your photo was NOT lost, nothing was saved)' });
   }
-  res.status(201).json({ key, name, size: bytes.length, type: mime, url: `/api/enquiries/files/${key}` });
+  res.status(201).json({ key, name, size: bytes.length, type: storedMime, url: `/api/enquiries/files/${key}` });
 });
-app.get('/api/enquiries/files/:key', async (req, res) => {
-  const key = `enq/${req.params.key ?? ''}`;
-  if (!enquiryFileKeyIsSafe(key)) return res.status(404).json({ error: 'File not found' });
+// Two-segment match (`enq/<uuid>.<ext>`) — same Oct 2026 lesson as the worker
+// route: a single `:key` param never matched and 404'd every photo.
+app.get('/api/enquiries/files/enq/:name', async (req, res) => {
+  const key = `enq/${req.params.name ?? ''}`;
+  if (!isSafeEnquiryFileKey(key)) return res.status(404).json({ error: 'File not found' });
   const filePath = path.join(ENQUIRY_FILES_DIR, key.slice(4));
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
   const ext = (key.split('.').pop() || '').toLowerCase();

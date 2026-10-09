@@ -103,7 +103,7 @@ export function dragHasFiles(e: DragEvent): boolean {
 }
 
 /** Upload one downscaled data-URI to the server file locker
- *  (POST /api/enquiries/files — worker KV / express disk, same protocol).
+ *  (POST /api/enquiries/files — worker D1 / express disk, same protocol).
  *  Returns the served-URL media entry, or null when the upload fails — the
  *  caller keeps the data-URI so a locker outage never blocks saving. */
 export async function uploadMediaFile(dataUrl: string, name: string): Promise<{ type: MediaKind; url: string; name: string } | null> {

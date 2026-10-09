@@ -239,6 +239,27 @@ assert('intake fans out in parallel', (productLineIntakeDef as any)?.maxParallel
   const pp2 = await def.execTool(ctx3, 'propose_product', { name: 'New Widget', category: 'Belts' });
   assert('identical product re-fire refused', (pp2.result as any)?.duplicate === true, JSON.stringify(pp2.result));
 
+  // Shared session memory (copilot/session.ts): history + trace + reasoning
+  // accumulate, and clearState wipes ALL of them (the sales "clear didn't
+  // work" bug was the surviving :reason key) while bumping the epoch.
+  const { clearState, loadHistory, loadReasoning, loadToolTrace, readEpoch, saveAssistantReply, saveReasoning, saveToolTrace, saveUserTurn } = await import('../src/copilot/session');
+  const memDef: any = { historyKey: () => 'e2e:session', historyTtlMs: 60000, historyMaxMsgs: 100, keepToolOutputs: true };
+  const memCtx: any = {};
+  await saveUserTurn(memDef, memCtx, 'price for V belt?');
+  await saveAssistantReply(memDef, memCtx, 'V belt @ ₹450/pcs');
+  await saveToolTrace(memDef, memCtx, ['find_product: {...}']);
+  await saveReasoning(memDef, memCtx, 'user wants V belt, checking catalogue');
+  const h0 = await loadHistory(memDef, memCtx);
+  assert('session accumulates turns', h0.userTurns === 1 && h0.messages.length === 2, JSON.stringify({ turns: h0.userTurns, n: h0.messages.length }));
+  assert('trace + reasoning persist', (await loadToolTrace(memDef, memCtx)) !== '' && (await loadReasoning(memDef, memCtx)) !== '', 'trace/reason missing');
+  const e0 = await readEpoch(memDef, memCtx);
+  await clearState(memDef, memCtx);
+  const h1 = await loadHistory(memDef, memCtx);
+  assert('clear wipes history', h1.userTurns === 0 && h1.messages.length === 0, JSON.stringify({ turns: h1.userTurns, n: h1.messages.length }));
+  assert('clear wipes trace + reasoning', (await loadToolTrace(memDef, memCtx)) === '' && (await loadReasoning(memDef, memCtx)) === '', 'stale carry-forward');
+  const e1 = await readEpoch(memDef, memCtx);
+  assert('clear bumps epoch', (e1 ?? 0) > (e0 ?? 0), JSON.stringify({ before: e0, after: e1 }));
+
   console.log(`\nintake-e2e: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

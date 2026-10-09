@@ -338,12 +338,14 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   // Single-row live merge (full view only): fetch the changed row scoped to
   // this viewer and splice it in, replacing that row's thread. Falls back to
   // a list refetch when the row is gone (deleted) or unreadable (403).
+  // Also used when a row is opened: list payloads ship WITHOUT item media
+  // bytes (payload size), so the opened row backfills its full media here.
   const mergeSingle = useCallback(async (id: string) => {
     // While searching, updates to visible rows still merge but brand-new
     // rows never intrude into the match set.
     if (searchActiveRef.current && !enquiriesRef.current.some((x) => x.id === id)) return;
     try {
-      const res = await fetch(`/api/enquiries/${encodeURIComponent(id)}`);
+      const res = await fetch(`/api/enquiries/${encodeURIComponent(id)}`, { cache: "no-store" });
       if (res.status === 404) {
         setEnquiriesSynced(enquiriesRef.current.filter((x) => x.id !== id));
         setComments((prev) => prev.filter((c) => c.enquiryId !== id));
@@ -638,7 +640,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     addRequirement,
     updateItems,
     saveError, dismissSaveError,
-    upsertEnquiry,
+    upsertEnquiry, mergeSingle,
     makeActivity,
     refresh: fetchEnquiries,
   };

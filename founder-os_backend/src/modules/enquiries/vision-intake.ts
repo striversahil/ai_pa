@@ -40,7 +40,7 @@ import type { EnquiryStore } from './store';
 const ROUTER_SYSTEM = `You are a B2B industrial-spare intake for flour-mill machinery. From the sales text + attached photos, split the enquiry into purchasable line items.
 For EACH item return: {"verbatim": "client wording for the product, copied exactly as written/seen — NEVER rename", "qty": "quantity with unit or empty", "dims": "dimensions as written", "spec": "material/variant/spec detail as written", "name": "short product name derived from verbatim"}.
 Also extract the lead block: {"lead": {"clientCompany": "customer company, or empty", "contactName": "contact person, or empty", "contactEmail": "or empty", "contactPhone": "mobile/phone, or empty", "location": "city/state, or empty", "sourceLead": "lead source like IndiaMART/reference, or empty"}} — NEVER invent; empty when not stated. The sales agent's own name ("Lead of ...") is NOT the customer — ignore it.
-Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; spec sub-lines (e.g. "• Thickness: 6mm", "• Size: L-10\", W-6\"") belong to the product line directly ABOVE them — copy them into that item's dims/spec, never drop them; a quantity trailing at the end of a spec line (e.g. "...H-4.5\" 100 Pc", "...2.5 suta 500 Pc") is that item's qty; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
+Rules: one entry per distinct product; a line containing ONLY a quantity (e.g. "QTY - 1") is NOT its own product — attach it to the product line directly above it; spec sub-lines (e.g. "• Thickness: 6mm", "• Size: L-10\", W-6\"") belong to the product line directly ABOVE them — copy them into that item's dims/spec, never drop them; a quantity trailing at the end of a spec line (e.g. "...H-4.5\" 100 Pc", "...2.5 suta 500 Pc") is that item's qty; quantities and dimensions hide behind dashes and spaces — "130 mm x 1500 mm- 36 - pc" splits to dims "130 mm x 1500 mm" + qty "36 pc", "70/90 mm - 20 pair" to dims "70/90 mm" + qty "20 pair"; "=" also separates ("Airlock Glass 150 mm = Qty 10 Pcs" → dims "150 mm", qty "10 Pcs"; "Airlock = 150mm = 10 pc" → dims "150mm", qty "10 pc"); leading item numbers ("1.", "11.") are NEVER quantities; NEVER drop or merge product lines — every product mentioned in the text or seen in a photo gets its own entry; qty ALWAYS keeps its number when one is written ("30 pcs", never a bare "pcs"); never invent quantities, dimensions or contact details — if absent, leave empty; return STRICT JSON {"lines":[...],"lead":{...}} with no other text.`;
 
 /** ── Call-2 lookup: line → live catalogue product (verbatim never touched). ──
  *  Reads the LIVE ProductItem table via the KV-cached slim index — the same
@@ -143,7 +143,12 @@ function isRateLimited(e: any): boolean {
   return /429|rate-limit|1015|exhausted/i.test(msg) || (e as any)?.status === 429;
 }
 
-export async function runAgnesVisionIntake(env: Record<string, unknown>, store: EnquiryStore, id: string): Promise<{ lines: any[]; provider: string } | null> {
+export async function runAgnesVisionIntake(
+  env: Record<string, unknown>,
+  store: EnquiryStore,
+  id: string,
+  onStage?: (stage: 'split' | 'classified') => void | Promise<void>,
+): Promise<{ lines: any[]; provider: string } | null> {
   let enquiry: any;
   try { enquiry = await store.getEnquiry(id); } catch (e: any) {
     // Never die silently here — a dropped initial read used to masquerade as
@@ -251,6 +256,9 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
             // Never burn 100s on doomed direct-Agnes attempts: relay lane if
             // warm, else fail fast to the next provider (OpenRouter).
             agnesRelayOnly: true,
+            // Strict pin: a starved provider fails over to the next chain leg
+            // explicitly — never a silent weak-model substitution.
+            strictProvider: true,
             // Splitting lines needs no chain-of-thought — thinking tokens are
             // billed output with zero UI use on this path.
             reasoningOff: true,
@@ -297,7 +305,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   if (lastErr && !routed) {
     const is429 = isRateLimited(lastErr);
     if (is429) {
-      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.join('→')}) — writing empty intake so UI unsticks; flags stay set so the next edit or the 15-min sweeper retries`);
+      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.join('→')}) — writing empty intake so UI unsticks; flags stay set so the next edit or the 15-min intake-sweep retries`);
       try {
         await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000);
         try {
@@ -363,9 +371,73 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   const leadRaw = (routed.lead && typeof routed.lead === 'object') ? routed.lead : {};
   const fields: Record<string, string> = {};
   for (const f of ['clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead']) {
-    const v = String((leadRaw as any)[f] || '').trim().slice(0, 300);
+    const v = String((leadRaw as any)[f] ?? '').trim().slice(0, 300);
     if (v) fields[f] = v;
   }
+
+  // ── Phase 1: persist the SPLIT immediately so dashboards render the items
+  // the moment the router succeeds — lookup + spec-check (below) stream
+  // classification afterwards via a second write + event, instead of holding
+  // the whole save hostage. Split fields only (name/qty/spec/verbatim);
+  // category/kyp* merge in phase 2. Same result path the runner used
+  // (fill-empty-only fields, bulk-merge items, KV intake for UI).
+  const tSplit = Date.now();
+  const splitItems = lines.map((l: any) => ({
+    name: l.name || l.verbatim.split('|')[0].trim().slice(0, 300) || l.verbatim.slice(0, 300),
+    qty: l.qty,
+    spec: [l.dims, l.spec].filter(Boolean).join(' | ').slice(0, 2000),
+    verbatim: l.verbatim.slice(0, 500),
+  }));
+  // RETIRED: Pinecone price-memory removed — pricing comes exclusively from
+  // live product-line VendorRates via the sales chat matcher. Suggestions and
+  // candidates stay empty; the KV shape is unchanged for the sales UI.
+  const suggestions: any[] = [];
+  const candidates: any[] = [];
+  const existing: any = enquiry;
+  const updates: Record<string, any> = {};
+  for (const f of ['title', 'clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead'] as const) {
+    const v = String((fields as any)[f] ?? '').trim();
+    if (!v || String(existing[f] ?? '').trim()) continue;
+    if (f === 'sourceLead' && /sales|lead\s*of|agent/i.test(v)) continue;
+    (updates as any)[f] = v.slice(0, 300);
+  }
+  const existingItems = Array.isArray(existing.items) ? existing.items : [];
+  if (existingItems.length === 0 && splitItems.length > 0) {
+    (updates as any).items = splitItems.slice(0, 50).map((it: any) => ({
+      name: it.name, qty: it.qty, spec: it.spec, media: [], verbatim: it.verbatim,
+    }));
+  } else if (existingItems.length > 0) {
+    // NOTE: no `splitItems.length > 0` guard — on zero router lines the helper
+    // clears the aiPending flags (raw items stay) so a spent job can never
+    // wedge the row, per its contract. Null = no pending block, keep as-is.
+    // Category/kyp keys are absent here by construction (phase-2 merges them),
+    // so phase-1 rows read "unclassified" until the second write lands.
+    const { applyIntakeBulkResult } = await import('./update');
+    const merged: any = (applyIntakeBulkResult as any)(existingItems, splitItems);
+    if (merged) (updates as any).items = merged;
+    else console.log(`[vision-intake] ${id}: ${splitItems.length} lines discarded, no aiPending item stored`);
+  }
+  if (String((existing as any)?.rateStatus ?? '') === 'finalized') {
+    const mergedItems = Array.isArray((updates as any).items) ? (updates as any).items : existingItems;
+    const loop = mergedItems.filter((it: any) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
+    const done = loop.filter((it: any) => it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
+    const loopDone = loop.length === 0 ? mergedItems.length > 0 : done.length === loop.length;
+    if (!loopDone) (updates as any).rateStatus = 'rates_received';
+  }
+  let updated: any = existing;
+  if (Object.keys(updates).length > 0) {
+    try { updated = await store.updateEnquiry(id, updates).catch(() => null) ?? existing; } catch {}
+  }
+  try {
+    await cacheSet(`enquiry:intake:${id}`, {
+      at: new Date().toISOString(),
+      suggestions: suggestions.slice(0, 25),
+      missing: [],
+      candidates: candidates.slice(0, 10),
+    }, 7 * 24 * 60 * 60 * 1000);
+  } catch {}
+  try { await onStage?.('split'); } catch { /* stage signal never fails the run */ }
+  console.log(`[vision-intake] ${id}: phase-1 split persisted (${splitItems.length} lines, ${Date.now() - tSplit}ms since router)`);
 
   // Verbatim items + Call-2 lookup (category side-field only — the client's
   // exact wording is never renamed). Live catalogue first: deterministic
@@ -400,15 +472,16 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       const t2 = setTimeout(() => ac2.abort(), 20_000);
       let out: any;
       try {
-        out = await gateway.completeJson<any>({
-          messages: [
-            { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
-            { role: 'user', content: `Match each line:\n${input}` },
-          ],
-          temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac2.signal as any,
-          agnesRelayOnly: true,
-          reasoningOff: true,
-        });
+          out = await gateway.completeJson<any>({
+            messages: [
+              { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
+              { role: 'user', content: `Match each line:\n${input}` },
+            ],
+            temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac2.signal as any,
+            agnesRelayOnly: true,
+            strictProvider: true,
+            reasoningOff: true,
+          });
       } finally { clearTimeout(t2); }
       const matches = Array.isArray(out?.matches) ? out.matches : [];
       idx.forEach((lineIdx, k) => {
@@ -503,6 +576,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
           ],
           temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac3.signal as any,
           agnesRelayOnly: true,
+          strictProvider: true,
           reasoningOff: true,
         });
       } finally { clearTimeout(t3); }
@@ -551,59 +625,45 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   const nComplete = kypComplete.filter((v) => v === true).length;
   const nIncomplete = kypComplete.filter((v) => v === false).length;
   if (checkableIdx.length > 0) console.log(`[vision-intake] ${id}: spec-check complete=${nComplete} incomplete=${nIncomplete}/${checkableIdx.length}`);
-  const outItems = lines.map((l: any, i: number) => ({
-    name: l.name || l.verbatim.split('|')[0].trim().slice(0, 300) || l.verbatim.slice(0, 300),
-    qty: l.qty,
-    spec: [l.dims, l.spec].filter(Boolean).join(' | ').slice(0, 2000),
-    verbatim: l.verbatim.slice(0, 500),
-    category: cats[i] || 'Uncategorized',
-    kypItem: kypItems[i],
-    kypMissing: kypMissing[i],
-    kypComplete: kypComplete[i],
-  }));
-
-  // RETIRED: Pinecone price-memory removed — pricing comes exclusively from
-  // live product-line VendorRates via the sales chat matcher. Suggestions and
-  // candidates stay empty; the KV shape is unchanged for the sales UI.
-  const suggestions: any[] = [];
-  const candidates: any[] = [];
-
-  // Apply via the same result path the runner used, but directly via store + KV
-  // (fill-empty-only for fields, bulk-merge for items, KV intake for UI).
-  const existing: any = enquiry;
-  const updates: Record<string, any> = {};
-  for (const f of ['title', 'clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead'] as const) {
-    const v = String((fields as any)[f] ?? '').trim();
-    if (!v || String(existing[f] ?? '').trim()) continue;
-    if (f === 'sourceLead' && /sales|lead\s*of|agent/i.test(v)) continue;
-    (updates as any)[f] = v.slice(0, 300);
-  }
-  const existingItems = Array.isArray(existing.items) ? existing.items : [];
-  if (existingItems.length === 0 && outItems.length > 0) {
-    (updates as any).items = outItems.slice(0, 50).map((it: any) => ({
-      name: it.name, qty: it.qty, spec: it.spec, media: [], category: it.category, verbatim: it.verbatim,
-      kypItem: it.kypItem, kypMissing: it.kypMissing, kypComplete: it.kypComplete,
-    }));
-  } else if (existingItems.length > 0) {
-    // NOTE: no `outItems.length > 0` guard — on zero router lines the helper
-    // clears the aiPending flags (raw items stay) so a spent job can never
-    // wedge the row, per its contract. Null = no pending block, keep as-is.
-    const { applyIntakeBulkResult } = await import('./update');
-    const merged: any = (applyIntakeBulkResult as any)(existingItems, outItems);
-    if (merged) (updates as any).items = merged;
-    else console.log(`[vision-intake] ${id}: ${outItems.length} lines discarded, no aiPending item stored`);
-  }
-  if (String((existing as any)?.rateStatus ?? '') === 'finalized') {
-    const mergedItems = Array.isArray((updates as any).items) ? (updates as any).items : existingItems;
-    const loop = mergedItems.filter((it: any) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
-    const done = loop.filter((it: any) => it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
-    const loopDone = loop.length === 0 ? mergedItems.length > 0 : done.length === loop.length;
-    if (!loopDone) (updates as any).rateStatus = 'rates_received';
-  }
-  let updated: any = existing;
-  if (Object.keys(updates).length > 0) {
-    try { updated = await store.updateEnquiry(id, updates).catch(() => null) ?? existing; } catch {}
-  }
+  // ── Phase 2: merge CLASSIFICATION onto the stored rows (category/kyp*
+  // fields only). Fresh-read + occurrence-order name matching + a
+  // both-undefined guard: a mid-flight user edit can never be clobbered, and
+  // drifted rows are skipped (they re-classify on the next re-intake). The
+  // caller re-broadcasts via onStage('classified') so chips stream into the
+  // already-visible items.
+  const normPhaseName = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+  try {
+    const storedNow: any = await store.getEnquiry(id).catch(() => null);
+    const storedItems: any[] = Array.isArray(storedNow?.items) ? storedNow.items : [];
+    const lineQueues = new Map<string, number[]>();
+    lines.forEach((l: any, i: number) => {
+      const k = normPhaseName((l as any)?.name || (l as any)?.verbatim);
+      if (!k) return;
+      if (!lineQueues.has(k)) lineQueues.set(k, []);
+      lineQueues.get(k)!.push(i);
+    });
+    let applied = 0;
+    const mergedItems = storedItems.map((it: any) => {
+      if ((it as any)?.category !== undefined || (it as any)?.kypComplete !== undefined) return it;
+      const q = lineQueues.get(normPhaseName((it as any)?.name));
+      const li = q && q.length ? q.shift()! : -1;
+      if (li < 0 || li >= cats.length) return it;
+      applied++;
+      return {
+        ...(it as any),
+        category: cats[li] || 'Uncategorized',
+        kypItem: kypItems[li],
+        kypMissing: kypMissing[li],
+        kypComplete: kypComplete[li],
+      };
+    });
+    if (applied > 0) {
+      await store.updateEnquiry(id, { items: mergedItems }).catch(() => null);
+      console.log(`[vision-intake] ${id}: phase-2 classification merged onto ${applied}/${storedItems.length} stored rows`);
+    } else {
+      console.log(`[vision-intake] ${id}: phase-2 classification matched 0 stored rows (drifted?) — leaving split as-is`);
+    }
+  } catch { /* phase-2 merge never fails the run */ }
   try {
     await cacheSet(`enquiry:intake:${id}`, {
       at: new Date().toISOString(),
@@ -612,6 +672,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       candidates: candidates.slice(0, 10),
     }, 7 * 24 * 60 * 60 * 1000);
   } catch {}
+  try { await onStage?.('classified'); } catch { /* stage signal never fails the run */ }
   // Mark done/claim markers so the old runner queue skips this id
   try {
     const db: any = (env as any)?.DB;
@@ -627,7 +688,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       ]);
     }
   } catch {}
-  console.log(`[vision-intake] ${id}: provider=${successProvider} items=${outItems.length} dropped=${acceptedDropped} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
+  console.log(`[vision-intake] ${id}: provider=${successProvider} items=${lines.length} dropped=${acceptedDropped} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
   // Returned for diagnostics (debug endpoint) — callers otherwise ignore it.
   return { lines, provider: successProvider };
 }

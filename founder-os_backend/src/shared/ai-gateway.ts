@@ -320,6 +320,13 @@ export interface CompletionRequest {
    *  instead of burning two minutes on doomed direct attempts. No new infra —
    *  this only gates the already-built lane vs direct choice per request. */
   agnesRelayOnly?: boolean;
+  /** Strict provider pin: when set with `provider`, key selection returns
+   *  null unless a HEALTHY key of that exact provider exists — never a random
+   *  cross-provider fallback. Intake sets this so paid-lane exhaustion fails
+   *  over to the next chain leg explicitly instead of serving a weak model
+   *  disguised as the pinned provider. Default (unset) keeps the loose
+   *  degrade-through-pool contract chat/copilot rely on. */
+  strictProvider?: boolean;
 }
 
 export interface CompletionResult {
@@ -433,11 +440,17 @@ export class KeyPool {
    *    tier: statistical load-spreading with zero cross-isolate coordination
    *    (per-isolate LRU alone would hammer key #0 on every cold start).
    */
-  select(provider?: string, sessionKey?: string): AiKey | null {
+  select(provider?: string, sessionKey?: string, strictPin = false): AiKey | null {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
     if (provider) {
       const filtered = pool.filter((k) => k.provider === provider);
+      // Strict pin (intake): a pinned provider with zero healthy keys must
+      // FAIL FAST, never silently roll a random cross-provider key — that
+      // fallback served weak free-tier models as paid wins and persisted
+      // names-only splits (Oct 2026). Default stays loose: pinned 'groq' and
+      // chat/copilot callers degrade through the whole pool by design.
+      if (strictPin && filtered.length === 0) return null;
       if (filtered.length > 0) pool = filtered;
     }
     if (pool.length === 0) return null;
@@ -881,12 +894,17 @@ export class AiGateway {
     }
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const key = req.keyId
-        ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey)
-        : this.pool.select(req.provider, req.sessionKey);
+        ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey, req.strictProvider === true)
+        : this.pool.select(req.provider, req.sessionKey, req.strictProvider === true);
       if (!key) {
         const waitMs = this.pool.earliestCooldownMs();
         const retryAfter = waitMs > 0 ? Math.min(waitMs, 60_000) : 60_000;
-        const e: any = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(retryAfter/1000)}s)`);
+        // Strict pin: name the starved provider so the caller's chain fails
+        // over to its next leg explicitly (vision-intake treats 429 as
+        // try-next-provider). Message carries "Rate-limited" for isRateLimited.
+        const e: any = req.provider && req.strictProvider
+          ? new Error(`HTTP 429: Rate-limited (no healthy ${req.provider} key — pinned, not falling back; retry after ${Math.round(retryAfter/1000)}s)`)
+          : new Error(`HTTP 429: Rate-limited (retry after ${Math.round(retryAfter/1000)}s)`);
         e.status = 429; e.retryAfter = retryAfter;
         throw e;
       }

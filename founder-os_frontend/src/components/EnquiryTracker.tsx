@@ -52,6 +52,7 @@ export default function EnquiryTracker() {
     addEnquiry, updateEnquiry, deleteEnquiry,
     addComment, updateItems, addRequirement, makeActivity, clients,
     saveError: itemsSaveError, dismissSaveError: dismissItemsSaveError,
+    mergeSingle,
   } = useEnquiryData("sales");
   // Fallback telecaller roster for root/MIS: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
   const [telecallers, setTelecallers] = useState<any[]>([]);
@@ -67,6 +68,14 @@ export default function EnquiryTracker() {
   }, [isAdmin]);
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
+
+  // List rows arrive WITHOUT item media bytes (payload size) — backfill the
+  // full row (photos, threads) the moment it is opened, same pattern as the
+  // procurement/management dashboards. Saves from slim rows are safe: the
+  // backend preserves stored media on empty incoming.
+  useEffect(() => {
+    if (selectedId) void mergeSingle(selectedId);
+  }, [selectedId, mergeSingle]);
 
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 

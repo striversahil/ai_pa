@@ -141,6 +141,105 @@ export async function dispatchLinkedinRegen(token: string, topic = ''): Promise<
   await dispatchGitHubWorkflow(LINKEDIN_WORKFLOW, token, inputs);
 }
 
+// ── Intake retry sweeper ─────────────────────────────────────────────────────
+// A row needs intake when ≥1 item has neither `category` nor `kypComplete`
+// (phase-2 never merged) and no `enquiry:intake:done:<id>` marker covers its
+// current updatedAt. Successful and terminal-failed runs always write that
+// marker; traceless early exits (no-AI-key skip, pre-router throw) leave
+// none — those rows are exactly this sweeper's beat. Claims use the same
+// Setting keys as the GH runner queue (runner.ts) so the two can never
+// double-process an id.
+const SWEEP_MAX_INTAKES = 3;
+const SWEEP_LOOKBACK_HOURS = 24;
+const SWEEP_SETTLE_MINUTES = 6;
+const SWEEP_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+async function sweepStuckIntake(env: Bindings): Promise<void> {
+  try {
+    const db: any = (env as any)?.DB;
+    if (!db || typeof db.prepare !== 'function') return;
+    const since = new Date(Date.now() - SWEEP_LOOKBACK_HOURS * 3600_000).toISOString();
+    const settled = new Date(Date.now() - SWEEP_SETTLE_MINUTES * 60_000).toISOString();
+    let ids: Array<{ id: string; updatedAt: string }>;
+    try {
+      const res: any = await db.prepare(
+        `SELECT id, updatedAt FROM Enquiry WHERE updatedAt >= ? AND updatedAt < ? ORDER BY updatedAt DESC LIMIT 40`,
+      ).bind(since, settled).all();
+      ids = ((res as any)?.results ?? []).map((r: any) => ({ id: String(r?.id ?? ''), updatedAt: String(r?.updatedAt ?? '') })).filter((r: any) => r.id);
+    } catch (e: any) {
+      console.error(`[cron] intake-sweep scan failed: ${String(e?.message ?? e).slice(0, 120)}`);
+      return;
+    }
+    if (ids.length === 0) return;
+    // Marker read (done + claim per id; chunked under D1's variable cap).
+    const markers = new Map<string, string>();
+    try {
+      for (let i = 0; i < ids.length; i += 40) {
+        const chunk = ids.slice(i, i + 40);
+        const keys: string[] = [];
+        for (const r of chunk) keys.push('enquiry:intake:done:' + r.id, 'enquiry:intake:claim:' + r.id);
+        const placeholders = keys.map(() => '?').join(',');
+        const res: any = await db.prepare(`SELECT key, value FROM Setting WHERE key IN (${placeholders})`).bind(...keys).all();
+        for (const row of ((res as any)?.results ?? [])) markers.set(String((row as any)?.key ?? ''), String((row as any)?.value ?? ''));
+      }
+    } catch { /* marker read failure → treat all as unmarked would over-process; abort tick instead */ return; }
+    const nowMs = Date.now();
+    const todo: typeof ids = [];
+    for (const r of ids) {
+      const done = markers.get('enquiry:intake:done:' + r.id) ?? '';
+      if (done && done >= r.updatedAt) continue;
+      const claim = markers.get('enquiry:intake:claim:' + r.id) ?? '';
+      if (claim && nowMs - Date.parse(claim) < SWEEP_CLAIM_TTL_MS) continue;
+      todo.push(r);
+    }
+    if (todo.length === 0) return;
+    const { createEnquiryStore } = await import('../modules/enquiries/store');
+    const { runAgnesVisionIntake } = await import('../modules/enquiries/vision-intake');
+    const store = createEnquiryStore(env as any);
+    let ran = 0;
+    let checked = 0;
+    for (const r of todo) {
+      if (ran >= SWEEP_MAX_INTAKES || checked >= 10) break;
+      let full: any = null;
+      try { full = await store.getEnquiry(r.id); } catch { continue; }
+      checked++;
+      const items = Array.isArray(full?.items) ? full.items : [];
+      // Fresh full-row check: skip rows whose items all classified since the scan.
+      if (items.length > 0 && !items.some((it: any) => (it as any)?.category === undefined && (it as any)?.kypComplete === undefined)) continue;
+      // Claim before running (fresh stamp = owned this tick).
+      const nowIso = new Date().toISOString();
+      try {
+        await db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + r.id, nowIso, nowIso).run();
+      } catch { continue; }
+      ran++;
+      try {
+        await runAgnesVisionIntake(env as any, store, r.id);
+        console.log(`[cron] intake-sweep ${r.id}: attempted`);
+      } catch (e: any) {
+        console.error(`[cron] intake-sweep ${r.id} failed: ${String(e?.message ?? e).slice(0, 160)}`);
+      }
+      // Post-attempt markers: success/terminal paths already wrote done +
+      // expired claim; a traceless exit (rate-limit) leaves our fresh claim,
+      // which backs this row off until the TTL lapses — then it's retried.
+      try {
+        const chk: any = await db.prepare(`SELECT value FROM Setting WHERE key = ?`).bind('enquiry:intake:done:' + r.id).first();
+        const doneAt = String((chk as any)?.value ?? '');
+        const cur: any = await store.getEnquiry(r.id).catch(() => null);
+        const curUpdated = String((cur as any)?.updatedAt ?? (full as any)?.updatedAt ?? '');
+        if (doneAt && curUpdated && doneAt >= curUpdated) {
+          const exp = new Date(Date.now() - SWEEP_CLAIM_TTL_MS - 1000).toISOString();
+          await db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + r.id, exp, nowIso).run();
+        }
+        const { invalidateManagementQueues } = await import('../modules/enquiries/queues-cache');
+        await invalidateManagementQueues().catch(() => null);
+      } catch { /* marker hygiene never fails the tick */ }
+    }
+    if (ran > 0) console.log(`[cron] intake-sweep tick: ${ran} row(s) attempted`);
+  } catch (e: any) {
+    console.error('[cron] intake-sweep tick failed:', String(e?.message ?? e).slice(0, 160));
+  }
+}
+
 async function runScheduled(event: { cron?: string; scheduledTime?: number }, env: Bindings, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
   bootstrapEnv(env);
   // Gate cadence on the *scheduled* slot time, not execution time — Cloudflare
@@ -202,6 +301,20 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
       }
     })(),
   );
+
+  // Intake retry sweeper, every 15 min (native, LLM-only — no Zoho/NeoDove,
+  // so quiet hours don't apply). Heals rows whose write-path intake exited
+  // tracelessly (Oct 2026 stuck-chip outage: a pool-wide rate-limit storm hit
+  // "no AI key — skipping" at creation, leaving no done marker, no KV intake
+  // record — and no sweeper existed to retry, so the classifying chip spun
+  // forever). Bounded: last-24h rows only, ≤3 intakes/tick, claim-guarded so
+  // concurrent ticks and the (legacy) GH runner never double-process.
+  // Cost ceiling per tick with work: one id scan + ≤10 full-row reads +
+  // ≤3 intake runs (deterministic catalogue tiers absorb most matches before
+  // any LLM call). Never throws — a failed tick just retries next time.
+  if (min % 15 === 0) {
+    ctx.waitUntil(sweepStuckIntake(env));
+  }
 
   // GitHub Actions dispatcher — fire workflow_dispatch for every due workflow.
   const token = env.GITHUB_ACCESS_TOKEN;
