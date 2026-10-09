@@ -397,3 +397,38 @@ export async function enquiryAgentByEstNumber(estimateNumbers: string[]): Promis
   } catch { /* fail-open: engine falls back to createdBy/comment inference */ }
   return out;
 }
+
+/** Live Zoho status (Estimate.status from the 5-min sync) rides each row in
+ *  BOTH views: attached pre-redaction so the procurement payload keeps
+ *  `zohoStatus` even though `estNumber` itself is blanked. Only the status
+ *  travels redacted — `zohoCustomerName` stays full-view-only. Fail-open,
+ *  never throws. Moved verbatim from routes.ts enquiryList (Phase-1 split). */
+export async function attachZohoStatuses(enquiries: any[]): Promise<void> {
+  try {
+    const nums = (enquiries as any[]).map((e) => String((e as any)?.estNumber ?? '').trim()).filter(Boolean);
+    if (nums.length) {
+      // Org-preferring chip: on a cross-org number clash the row whose org
+      // matches the enquiry wins (untagged enquiries read first-match).
+      const orgByNum = new Map<string, string>();
+      for (const e of enquiries as any[]) {
+        const n = String((e as any)?.estNumber ?? '').trim();
+        const o = String((e as any)?.organizationId ?? '').trim();
+        if (n && o && !orgByNum.has(n)) orgByNum.set(n, o);
+      }
+      const byNum = await estimateStatusByNumbers(nums, orgByNum);
+      for (const e of enquiries as any[]) {
+        const n = String((e as any)?.estNumber ?? '').trim();
+        const o = String((e as any)?.organizationId ?? '').trim();
+        // Org-scoped key first: two enquiries sharing one EST number with
+        // different orgs (BUI + DPG share the series) each read their own
+        // org's status; fall back to the legacy bare key for untagged rows.
+        const hit = (o && byNum.get(`${o}||${n}`)) || byNum.get(n);
+        (e as any).zohoStatus = hit ? hit.status : null;
+      }
+    } else {
+      for (const e of enquiries as any[]) (e as any).zohoStatus = null;
+    }
+  } catch {
+    for (const e of enquiries as any[]) if ((e as any).zohoStatus === undefined) (e as any).zohoStatus = null;
+  }
+}

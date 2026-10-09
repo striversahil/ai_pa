@@ -11,6 +11,7 @@ import type {
   FlagThreadBy,
   FlagThreadEntry,
 } from "./types";
+import { enquiryLabelText } from "./types";
 
 export interface ItemWriteCtx {
   storedItems: any[];
@@ -833,5 +834,59 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
         (updates as any).rateStatus = 'rates_received';
       }
     }
+  }
+}
+
+/** Completeness gate (all writers): 'finalized' / 'sent' are enquiry-level
+ *  commitments, but decisions are per-item. Refuses to close an enquiry
+ *  while any loop item (correct spec, rate not already available) still
+ *  lacks a final rate — otherwise a partial finalize/sent looks complete
+ *  to Sales and locks the Management panel (locked = finalized || sent)
+ *  with undecided items stranded inside it. Returns the refusal message,
+ *  or null when the transition is allowed. Moved verbatim from routes.ts
+ *  enquiryUpdate (Phase-1 split). */
+export function assertFinalizeGate(merged: any[], rateStatus: unknown): string | null {
+  if (rateStatus !== 'finalized' && rateStatus !== 'sent') return null;
+  // Every non-held item must have either a vendor rate or be marked
+  // rateAvailable — otherwise a half-quoted enquiry could be finalized/sent.
+  // Sales saw this as "Mark as sent works even though some items have no
+  // rates" (2026-09-17). Block here so both roles get the same hard gate.
+  const missingRates = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && ((it as any)?.rates ?? []).length === 0);
+  if (missingRates.length > 0) {
+    const verb = rateStatus === 'sent' ? 'mark as sent' : 'finalize';
+    return `${missingRates.length} item${missingRates.length === 1 ? "" : "s"} still need vendor rates (or mark rate available / not available) before you ${verb}`;
+  }
+  const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable);
+  const done = loop.filter((it) =>
+    it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
+  if (done.length < loop.length) {
+    const verb = rateStatus === 'sent' ? 'mark as sent' : 'finalize';
+    return `Only ${done.length} of ${loop.length} items have final rates — decide every item before you ${verb}`;
+  }
+  return null;
+}
+
+/** Source change retitles auto-titles: the title snapshots the label at
+ *  creation (`Enquiry No 3 - 24 SEP TL`); when the source flips TL→AI an
+ *  untouched auto-title follows it so the number reads AI. Custom titles
+ *  (anything differing from the old auto-label) never rewrite. Mutates
+ *  `updates` in place. Moved verbatim from routes.ts enquiryUpdate. */
+export function retitleOnSourceChange(updates: any, storedForItems: any): void {
+  const nextSource = (updates as any).source;
+  if (typeof nextSource !== 'string' || !storedForItems) return;
+  const oldSource = String((storedForItems as any)?.source ?? 'TL');
+  if (nextSource === oldSource) return;
+  const storedTitle = String((storedForItems as any)?.title ?? '').trim();
+  const autoOld = enquiryLabelText(
+    (storedForItems as any)?.dailyNo ?? null,
+    String((storedForItems as any)?.createdAt ?? ''),
+    oldSource,
+  );
+  if (!storedTitle || storedTitle === autoOld) {
+    (updates as any).title = enquiryLabelText(
+      (storedForItems as any)?.dailyNo ?? null,
+      String((storedForItems as any)?.createdAt ?? ''),
+      nextSource,
+    );
   }
 }

@@ -11,17 +11,14 @@
 //   update.ts   — item lifecycles (normalizeItemWrites/applyRateLifecycles/…)
 //   store.ts    — persistence (D1/Memory/Prisma via store-prisma.ts)
 // Re-exports below preserve existing `EnquiryRoutes.*` import paths.
-import type { Enquiry, EnquiryStore, FlagThreadBy, FlagThreadEntry } from "./types";
+import type { EnquiryStore } from "./types";
 import {
   parseItemMedia,
   parseItemRates,
   numOrUndefined,
-  signedNumOrUndefined,
-  rateIdxOrUndefined,
   normalizeQty,
-  parseFlagThread,
   normalizeVisibility,
-  isoOrUndefined,
+  pickEnquiryFields,
 } from "./parse";
 import { normalizeEnquirySource, nextDailyNo, enquiryLabelText } from "./types";
 import { decodeEnquiryCursor, encodeEnquiryCursor } from "./types";
@@ -57,10 +54,9 @@ export { getManagementQueues, invalidateManagementQueues } from "./queues-cache"
 export type { EnquiryLiveSummary };
 import type { MeResponse } from "../auth/types";
 import { LiveEvent } from "../../live";
-import { hashText, redactedCacheKey, REDACTED_CACHE_TTL_MS, type RedactedViewCache } from "./extract";
 import { cacheGet } from "../../shared/cache";
 import { linkEnquiryEstimate } from "../../automations/telecalling/service";
-import { estimateStatusByNumbers } from "./estimate-link";
+import { attachZohoStatuses } from "./estimate-link";
 
 export interface EnquiryResult {
   status: number;
@@ -80,96 +76,6 @@ const err = (message: string, status = 403): EnquiryResult => json(status, { err
 // missing/stale is withheld (redactedPending) while a background
 // re-enrichment is kicked — the route handlers below do that via the
 // returned flag. Stored rows stay intact for sales + AI.
-
-function pick(data: any): Partial<Enquiry> | null {
-  const map: any = {
-    estNumber: "estNumber", enquiryNumber: "enquiryNumber", sourceLead: "sourceLead", location: "location",
-    clientCompany: "clientCompany", contactName: "contactName",
-    contactEmail: "contactEmail", contactPhone: "contactPhone",
-    title: "title", description: "description",
-    priority: "priority", status: "status", assignedAgentId: "assignedAgentId",
-    imageUrls: "imageUrls", activities: "activities",
-  };
-  const out: any = {};
-  for (const [k, v] of Object.entries(map)) {
-    if (data[k] !== undefined) out[k] = data[k];
-  }
-  // Source is editable (drives the label); the daily number is server-assigned
-  // and never client-writable.
-  if (data.source !== undefined) out.source = normalizeEnquirySource(data.source);
-  if (data.additionalRequirements !== undefined) {
-    out.additionalRequirements = (Array.isArray(data.additionalRequirements) ? data.additionalRequirements : [])
-      .map((r: any) => (typeof r === "string" ? { text: r } : { text: String(r?.text ?? ""), imageUrl: r?.imageUrl || undefined }))
-      .filter((r: any) => r.text.trim().length > 0);
-  }
-  if (data.items !== undefined) {
-    const parseDiscount = (v: unknown): number | undefined => {
-      if (v === undefined || v === null || v === '') return undefined;
-      const n = Number(String(v).trim());
-      if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
-      return Math.round(n * 100) / 100;
-    };
-    out.items = (Array.isArray(data.items) ? data.items : [])
-      .map((r: any) => ({
-        name: String(r?.name ?? '').slice(0, 300),
-        qty: normalizeQty(r?.qty).slice(0, 120),
-        spec: String(r?.spec ?? '').slice(0, 2000),
-        media: parseItemMedia(r?.media),
-        category: r?.category ? String(r.category).slice(0, 120) : undefined,
-        verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
-        rates: parseItemRates(r?.rates),
-        selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
-        selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
-        markup: signedNumOrUndefined(r?.markup),
-        finalRate: numOrUndefined(r?.finalRate),
-        finalDiscountPercent: parseDiscount(r?.finalDiscountPercent),
-        finalizedAt: isoOrUndefined(r?.finalizedAt),
-        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
-        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
-        rateAvailable: r?.rateAvailable === true,
-        notAvailable: (r as any)?.notAvailable !== undefined ? (r as any).notAvailable === true : undefined,
-        notAvailableReason: (r as any)?.notAvailableReason !== undefined ? String((r as any).notAvailableReason).slice(0, 500) : undefined,
-        notAvailableAt: isoOrUndefined((r as any)?.notAvailableAt),
-        notAvailableRequested: (r as any)?.notAvailableRequested !== undefined ? String((r as any).notAvailableRequested).slice(0, 500) : undefined,
-        notAvailableRequestedAt: isoOrUndefined((r as any)?.notAvailableRequestedAt),
-        internalRates: r?.internalRates === true,
-        internalRatesAt: isoOrUndefined(r?.internalRatesAt),
-        // ""-preserving: management withdraws a rate request by saving an
-        // explicit empty string (mirrors variationRequest below). Absent =
-        // leave stored; answering procurement clears via rate change.
-        ratesRequested: (r as any)?.ratesRequested !== undefined ? String((r as any).ratesRequested).slice(0, 500) : undefined,
-        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
-        // ""-preserving (unlike the fields above): sales withdraws a
-        // variation request by saving an explicit empty string.
-        variationRequest: (r as any)?.variationRequest !== undefined ? String((r as any).variationRequest).slice(0, 500) : undefined,
-        variationRequestMedia: (r as any)?.variationRequestMedia !== undefined ? parseItemMedia((r as any).variationRequestMedia) : undefined,
-        thread: parseFlagThread(r?.thread),
-        threadResolved: (r as any)?.threadResolved === true ? true : (r as any)?.threadResolved === false ? false : undefined,
-        threadResolvedBy: (r as any)?.threadResolvedBy ? String((r as any).threadResolvedBy).slice(0, 20) : undefined,
-        threadResolvedAt: isoOrUndefined((r as any)?.threadResolvedAt),
-        // Detail-view "Add via AI" flag — the GH intake action replaces
-        // these raw rows with vision-split lines (applyIntakeBulkResult).
-        // Dropped here, the runner computes lines the merge then discards.
-        aiPending: r?.aiPending === true ? true : undefined,
-        // Sales-owned negotiation target (client-expected price + note).
-        expectedRate: numOrUndefined(r?.expectedRate),
-        expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
-      }))
-      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
-      .slice(0, 100);
-  }
-  if (data.rateStatus !== undefined) {
-    const rs = String(data.rateStatus ?? '');
-    if (['', 'rate_pending', 'rates_received', 'finalized', 'sent'].includes(rs)) (out as any).rateStatus = rs;
-  }
-  // Procurement handoff flag: ISO instant or '' (clear). Scope-enforced in
-  // enquiryUpdate (sales can never touch it); validated here only.
-  if (data.procurementSubmittedAt !== undefined) {
-    const v = String(data.procurementSubmittedAt ?? '').trim();
-    (out as any).procurementSubmittedAt = v ? (isoOrUndefined(v) ?? '') : '';
-  }
-  return Object.keys(out).length ? out : null;
-}
 
 export interface RedactOpts {
   redact?: boolean;
@@ -239,37 +145,9 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
   }
   // Live Zoho status (Estimate.status from the 5-min sync) rides the row in
-  // BOTH views: attached here pre-redaction so the procurement payload keeps
-  // `zohoStatus` even though `estNumber` itself is blanked below (the worker
-  // route preserves pre-attached values). Only the status travels redacted —
-  // `zohoCustomerName` stays full-view-only. Fail-open, never throws.
-  try {
-    const nums = (enquiries as any[]).map((e) => String((e as any)?.estNumber ?? '').trim()).filter(Boolean);
-    if (nums.length) {
-      // Org-preferring chip: on a cross-org number clash the row whose org
-      // matches the enquiry wins (untagged enquiries read first-match).
-      const orgByNum = new Map<string, string>();
-      for (const e of enquiries as any[]) {
-        const n = String((e as any)?.estNumber ?? '').trim();
-        const o = String((e as any)?.organizationId ?? '').trim();
-        if (n && o && !orgByNum.has(n)) orgByNum.set(n, o);
-      }
-      const byNum = await estimateStatusByNumbers(nums, orgByNum);
-      for (const e of enquiries as any[]) {
-        const n = String((e as any)?.estNumber ?? '').trim();
-        const o = String((e as any)?.organizationId ?? '').trim();
-        // Org-scoped key first: two enquiries sharing one EST number with
-        // different orgs (BUI + DPG share the series) each read their own
-        // org's status; fall back to the legacy bare key for untagged rows.
-        const hit = (o && byNum.get(`${o}||${n}`)) || byNum.get(n);
-        (e as any).zohoStatus = hit ? hit.status : null;
-      }
-    } else {
-      for (const e of enquiries as any[]) (e as any).zohoStatus = null;
-    }
-  } catch {
-    for (const e of enquiries as any[]) if ((e as any).zohoStatus === undefined) (e as any).zohoStatus = null;
-  }
+  // BOTH views — see estimate-link.ts attachZohoStatuses (attached here
+  // pre-redaction so the procurement payload keeps `zohoStatus`).
+  await attachZohoStatuses(enquiries as any[]);
   if (!opts?.redact) {
     // Sales sees final rates but never margin internals (selectedVendor /
     // markup stay Management-only). Management (MIS) gets the full row.
@@ -291,205 +169,9 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
   });
 }
 
-// ── Procurement redaction (shared) ───────────────────────────────────────────
-// Extracted verbatim from `enquiryList` (no behavior change): redacts a row
-// list through the write-time enrichment cache (hash-verified, fail-closed).
-// Used by the list endpoint AND the cached procurement queue endpoints.
-export async function redactEnquiryRows(
-  rows: any[],
-  comments: any[],
-  aiConfigured: boolean,
-): Promise<{ enquiries: any[]; comments: any[]; redactionPendingIds: string[] }> {
-  const enquiries = rows as any[];
-// AI-only procurement view: each piece comes from the write-time enrichment
-// cache (RedactedViewCache) and only when its hash still matches the source.
-// Anything missing/stale is WITHHELD with redactedPending=true — the route
-// layer kicks a background re-enrichment and the client refetches on the
-// live event. Raw text is never served, and no deterministic fallback exists.
-// Sales-scope comments never enter this payload (procurement sees only the
-// shared ops thread).
-const scopeComments = (comments as any[]).filter(
-  (cm) => normalizeVisibility((cm as any)?.visibility) === 'procurement',
-);
-const commentsByEnquiry = new Map<string, any[]>();
-for (const cm of scopeComments) {
-  const key = String(cm.enquiryId);
-  if (!commentsByEnquiry.has(key)) commentsByEnquiry.set(key, []);
-  commentsByEnquiry.get(key)!.push(cm);
-}
-const redacted = await Promise.all(enquiries.map(async (e: any) => {
-  const id = String(e.id);
-  let raw: unknown = null;
-  try {
-    raw = await cacheGet<RedactedViewCache>(redactedCacheKey(id), REDACTED_CACHE_TTL_MS);
-  } catch { raw = null; }
-  const entry = asRedactedViewCache(raw);
-  let pending = false;
-  let description = '';
-  const srcDesc = String(e.description ?? '');
-  if (!srcDesc.trim()) {
-    // Nothing to secure — legitimately empty, not pending.
-    description = '';
-  } else if (entry && entry.descHash === hashText(srcDesc) && typeof entry.description === 'string') {
-    description = entry.description;
-  } else {
-    pending = true;
-  }
-  const servedComments: any[] = [];
-  for (const cm of commentsByEnquiry.get(id) ?? []) {
-    const cid = String(cm.id);
-    const cached = entry?.comments[cid];
-    if (cached && cached.hash === hashText(String(cm.content ?? '')) && typeof cached.content === 'string') {
-      servedComments.push({ ...cm, content: cached.content });
-    } else {
-      pending = true;
-    }
-  }
-  const servedRequirements: any[] = [];
-  const rawReqs = Array.isArray(e.additionalRequirements) ? e.additionalRequirements : [];
-  rawReqs.forEach((r: any, i: number) => {
-    const text = typeof r === 'string' ? r : String(r?.text ?? '');
-    const cached = entry?.requirements?.[i];
-    if (cached && cached.hash === hashText(text) && typeof cached.text === 'string') {
-      servedRequirements.push(typeof r === 'string' ? cached.text : { ...r, text: cached.text });
-    } else {
-      pending = true;
-    }
-  });
-  // Line items: manual entry is served as-is in BOTH views (specs, not
-  // PII) — EXCEPT markup decisions, which are Management-only: restricted
-  // viewers see vendor rates but never selectedVendor/markup/finalRate.
-  // A cached AI rewrite (legacy AI-split rows) still wins when its hash
-  // matches; otherwise the stored item is served with no pending flag.
-  const salesItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> =
-    Array.isArray((e as any).items) ? (e as any).items : [];
-  const servedItems: Array<{ name: string; qty: string; spec: string; media: Array<{ type: string; url: string; name?: string }>; rates?: Array<{ vendor: string; rate: number }> }> = [];
-  salesItems.forEach((it: any, i: number) => {
-    const sales = {
-      name: String(it?.name ?? ''),
-      qty: String(it?.qty ?? ''),
-      spec: String(it?.spec ?? ''),
-      media: parseItemMedia(it?.media),
-      rates: parseItemRates(it?.rates),
-      selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
-      markup: signedNumOrUndefined(it?.markup),
-      finalRate: numOrUndefined(it?.finalRate),
-      finalizedAt: isoOrUndefined(it?.finalizedAt),
-      specIssue: it?.specIssue ? String(it.specIssue).slice(0, 2000) : undefined,
-      specFlaggedAt: isoOrUndefined(it?.specFlaggedAt),
-    };
-    const cached = entry?.items?.[i];
-    let served: any;
-    if (cached && cached.hash === hashItem(sales)
-      && typeof cached.name === 'string' && typeof cached.qty === 'string' && typeof cached.spec === 'string') {
-      // Cached AI rewrite wins for name/qty/spec — but rates are LIVE
-      // workflow data (adding a quote never changes the hash above), so
-      // they must always ride along. Dropping them here made newly added
-      // vendor rates "show for a second, then disappear" on refetch.
-      served = { name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media, rates: sales.rates };
-    } else {
-      // Markup decisions AND finalize timing stay Management-only.
-      const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = sales;
-      served = rest;
-    }
-    // Spec-dispute flags are live workflow metadata (not PII, not a markup
-    // decision): always overlay the stored values so a flag change never
-    // waits on — or invalidates — the AI rewrite cache.
-    if (it?.specIssue) {
-      served.specIssue = String(it.specIssue).slice(0, 2000);
-      if (it?.specFlaggedAt) served.specFlaggedAt = String(it.specFlaggedAt);
-    }
-    // Rate-availability / not-available is live workflow metadata too: the procurement queue
-    // predicate depends on it, so it rides along regardless of cache path.
-    served.rateAvailable = (it as any)?.rateAvailable === true;
-    served.notAvailable = (it as any)?.notAvailable === true;
-    if ((it as any)?.notAvailableReason) served.notAvailableReason = String((it as any).notAvailableReason).slice(0, 500);
-    if ((it as any)?.notAvailableAt) served.notAvailableAt = String((it as any).notAvailableAt);
-    if ((it as any)?.notAvailableRequested) {
-      served.notAvailableRequested = String((it as any).notAvailableRequested).slice(0, 500);
-      if ((it as any)?.notAvailableRequestedAt) served.notAvailableRequestedAt = String((it as any).notAvailableRequestedAt);
-    }
-    // Management rate-requests are live workflow metadata as well: overlay
-    // stored values so the queue predicate never waits on the AI cache.
-    if ((it as any)?.ratesRequested) {
-      served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
-      if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
-    }
-    // Sales alternate/info requests are live workflow metadata too: procurement
-    // must see them (banner + queue) the moment sales asks — never gated
-    // on the AI rewrite cache. Common attachment travels with the text.
-    if ((it as any)?.variationRequest) {
-      served.variationRequest = String((it as any).variationRequest).slice(0, 500);
-      if ((it as any)?.variationRequestedAt) served.variationRequestedAt = String((it as any).variationRequestedAt);
-      if (Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0) {
-        served.variationRequestMedia = parseItemMedia((it as any).variationRequestMedia);
-      }
-    }
-      // Loop trail is live workflow metadata too: always the stored values.
-      served.thread = parseFlagThread((it as any)?.thread);
-      // Resolution is live workflow metadata as well: without it a resolved
-      // flag's lingering text would read as still awaiting sales fix (chip +
-      // conclude gate both key on openness, never on text presence).
-      served.threadResolved = (it as any)?.threadResolved === true;
-      if ((it as any)?.threadResolvedBy) served.threadResolvedBy = String((it as any).threadResolvedBy).slice(0, 40);
-      if ((it as any)?.threadResolvedAt) served.threadResolvedAt = String((it as any).threadResolvedAt);
-      servedItems.push(served);
-  });
-  return {
-    entry: { id, pending },
-    payload: {
-      ...redactEnquiryPII(e),
-      description,
-      additionalRequirements: servedRequirements,
-      items: servedItems,
-      redactedPending: pending,
-    },
-    servedComments,
-  };
-}));
-  return {
-    enquiries: redacted.map((r) => r.payload),
-    comments: redacted.flatMap((r) => r.servedComments),
-    // Route layer kicks a background re-enrichment for these (fire-and-forget).
-    redactionPendingIds: redacted.filter((r) => r.entry.pending).map((r) => r.entry.id),
-  };
-}
-
-// Queue payloads must stay small: item `media` carries embedded base64
-// photos/video (one row alone is ~2.5MB; ~84% of all item bytes), and every
-// dashboard render + 60s poll + live-event refetch hauls the full queues.
-// Strip media BYTES at every queue serve point (tables never render them —
-// counts/chips read metadata, never urls). Threads stay fully intact: the
-// write path appends remarks by media-identity dedupe, so a slimmed thread
-// echo would re-push every stored remark as a duplicate.
-// Full media returns on single-row reads (`enquiryGet` / `enquiryGetRedacted`
-// below) — dashboard modals fetch the open row on demand.
-export function stripQueueMediaUrls(rows: any[]): any[] {
-  return (rows ?? []).map((e: any) => {
-    const items = Array.isArray((e as any)?.items) ? (e as any).items : null;
-    if (!items) return e;
-    let touched = false;
-    const out = items.map((it: any) => {
-      const hasMedia = Array.isArray((it as any)?.media) && (it as any).media.length > 0;
-      const hasVarMedia = Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0;
-      if (!hasMedia && !hasVarMedia) return it;
-      touched = true;
-      const c: any = { ...(it as any) };
-      if (hasMedia) c.media = [];
-      // Sales' request reference photo MUST stay visible to procurement (the
-      // whole point of the alternate/info request) — but only as short
-      // locker URLs. Legacy embedded data-URIs stay stripped: they are the
-      // megabytes this strip exists for, and old rows re-upload on next edit.
-      if (hasVarMedia) {
-        c.variationRequestMedia = ((it as any).variationRequestMedia as any[]).filter(
-          (m: any) => m && typeof (m as any)?.url === 'string' && !(m as any).url.startsWith('data:'),
-        );
-      }
-      return c;
-    });
-    return touched ? { ...(e as any), items: out } : e;
-  });
-}
+// Row redaction + media stripping live in redaction.ts (Phase-1 split);
+// re-exported here so existing `EnquiryRoutes.*` call sites keep working.
+export { redactCommentList, redactEnquiryRows, stripQueueMediaUrls } from "./redaction";
 
 export interface ProcQueueOpts {
   queue: 'pending' | 'history';
@@ -740,7 +422,7 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
 }
 
 export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: string, body: any): Promise<EnquiryResult> {
-  const picked = pick(body || {});
+  const picked = pickEnquiryFields(body || {});
   const updates: any = picked ?? {};
   // Revise verb (privileged only, enforced in applySentRevision): reopen a
   // `sent` enquiry for additional scope. Read off `body` — never stored.
@@ -773,31 +455,9 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
       storedItems, privileged, restricted, actingProcurement, surface: declaredSurface,
     } as any);
   }
-  // Source change retitles auto-titles: the title snapshots the label at
-  // creation (`Enquiry No 3 - 24 SEP TL`); when the source flips TL→AI an
-  // untouched auto-title follows it so the number reads AI. Custom titles
-  // (anything differing from the old auto-label) never rewrite.
-  {
-    const nextSource = (updates as any).source;
-    if (typeof nextSource === 'string' && storedForItems) {
-      const oldSource = String((storedForItems as any)?.source ?? 'TL');
-      if (nextSource !== oldSource) {
-        const storedTitle = String((storedForItems as any)?.title ?? '').trim();
-        const autoOld = enquiryLabelText(
-          (storedForItems as any)?.dailyNo ?? null,
-          String((storedForItems as any)?.createdAt ?? ''),
-          oldSource,
-        );
-        if (!storedTitle || storedTitle === autoOld) {
-          (updates as any).title = enquiryLabelText(
-            (storedForItems as any)?.dailyNo ?? null,
-            String((storedForItems as any)?.createdAt ?? ''),
-            nextSource,
-          );
-        }
-      }
-    }
-  }
+  // Source change retitles auto-titles — see update.ts retitleOnSourceChange.
+  const { retitleOnSourceChange } = await import('./update');
+  retitleOnSourceChange(updates, storedForItems);
   // Submit-to-Management lifecycle + reopen + auto-finalize — see update.ts.
   {
     const { applyRateLifecycles, applySentRevision } = await import('./update');
@@ -810,37 +470,14 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     if (reviseErr) return json(403, { error: reviseErr });
     applyRateLifecycles(updates, { storedForItems, storedItems, privileged, restricted, canConclude: canConcludeProcurement(me) });
   }
-  // Completeness gate (all writers): 'finalized' / 'sent' are enquiry-level
-  // commitments, but decisions are per-item. Refuse to close an enquiry
-  // while any loop item (correct spec, rate not already available) still
-  // lacks a final rate — otherwise a partial finalize/sent looks complete
-  // to Sales and locks the Management panel (locked = finalized || sent)
-  // with undecided items stranded inside it. Partial work must stay on
-  // plain item saves; finalize/sent unlock only at 100%.
+  // Completeness gate (all writers) — see update.ts assertFinalizeGate.
   if ((updates as any).rateStatus === 'finalized' || (updates as any).rateStatus === 'sent') {
     const merged: any[] = Array.isArray((updates as any).items)
       ? (updates as any).items
       : (Array.isArray((storedForItems as any)?.items) ? (storedForItems as any).items : []);
-    // Every non-held item must have either a vendor rate or be marked
-    // rateAvailable — otherwise a half-quoted enquiry could be finalized/sent.
-    // Sales saw this as "Mark as sent works even though some items have no
-    // rates" (2026-09-17). Block here so both roles get the same hard gate.
-    const missingRates = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && ((it as any)?.rates ?? []).length === 0);
-    if (missingRates.length > 0) {
-      const verb = (updates as any).rateStatus === 'sent' ? 'mark as sent' : 'finalize';
-      return json(400, {
-        error: `${missingRates.length} item${missingRates.length === 1 ? "" : "s"} still need vendor rates (or mark rate available / not available) before you ${verb}`,
-      });
-    }
-    const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable);
-    const done = loop.filter((it) =>
-      it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
-    if (done.length < loop.length) {
-      const verb = (updates as any).rateStatus === 'sent' ? 'mark as sent' : 'finalize';
-      return json(400, {
-        error: `Only ${done.length} of ${loop.length} items have final rates — decide every item before you ${verb}`,
-      });
-    }
+    const { assertFinalizeGate } = await import('./update');
+    const gateErr = assertFinalizeGate(merged, (updates as any).rateStatus);
+    if (gateErr) return json(400, { error: gateErr });
   }
   if (!privileged) {
     // Sales "Mark as sent": finalized → sent, and only with an EST No. on
@@ -956,23 +593,8 @@ export async function enquiryComments(store: EnquiryStore, me: MeResponse, enqui
     : all;
   if (!opts?.redact) return json(200, list);
   // AI-only: serve cached rewrites whose hashes match; withhold the rest.
-  let raw: unknown = null;
-  try {
-    raw = await cacheGet<RedactedViewCache>(redactedCacheKey(enquiryId), REDACTED_CACHE_TTL_MS);
-  } catch { raw = null; }
-  const entry = asRedactedViewCache(raw);
-  const served: any[] = [];
-  let pending = false;
-  for (const cm of list as any[]) {
-    const cid = String(cm.id);
-    const cached = entry?.comments[cid];
-    if (cached && cached.hash === hashText(String(cm.content ?? '')) && typeof cached.content === 'string') {
-      served.push({ ...cm, content: cached.content });
-    } else {
-      pending = true;
-    }
-  }
-  return json(200, { comments: served, redactionPendingIds: pending ? [enquiryId] : [], aiConfigured: opts?.aiConfigured ?? true });
+  const red = await redactCommentList(enquiryId, list as any[], opts?.aiConfigured ?? true);
+  return json(200, { comments: red.comments, redactionPendingIds: red.redactionPendingIds, aiConfigured: opts?.aiConfigured ?? true });
 }
 
 /** Intake panel (unstructured intake → items + price-memory suggestions).

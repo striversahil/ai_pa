@@ -3,7 +3,8 @@
 // Extracted from store.ts (no behavior change). Everything here is pure
 // (no I/O): media/rate/thread parsing, money/quantity/ISO coercion, and the
 // JSON-column parsers for items + requirements.
-import type { EnquiryItem, EnquiryItemRate, EnquiryMedia, EnquiryRequirement, FlagThreadBy, FlagThreadEntry } from "./types";
+import type { Enquiry, EnquiryItem, EnquiryItemRate, EnquiryMedia, EnquiryRequirement, FlagThreadBy, FlagThreadEntry } from "./types";
+import { normalizeEnquirySource } from "./types";
 
 const THREAD_BY = new Set(['sales', 'procurement', 'management']);
 const THREAD_KIND = new Set(['flag', 'remark', 'fix', 'request', 'quoted']);
@@ -187,3 +188,97 @@ export function parseRequirements(raw: string | null): EnquiryRequirement[] {
     return [];
   }
 }
+
+/** Request-body → writable enquiry fields (whitelist + coerce). Pure input
+ *  normalization for create/update: drops unknown keys, clamps lengths,
+ *  parses nested item rows. Moved verbatim from routes.ts (Phase-1 split). */
+export function pickEnquiryFields(data: any): Partial<Enquiry> | null {
+  const map: any = {
+    estNumber: "estNumber", enquiryNumber: "enquiryNumber", sourceLead: "sourceLead", location: "location",
+    clientCompany: "clientCompany", contactName: "contactName",
+    contactEmail: "contactEmail", contactPhone: "contactPhone",
+    title: "title", description: "description",
+    priority: "priority", status: "status", assignedAgentId: "assignedAgentId",
+    imageUrls: "imageUrls", activities: "activities",
+  };
+  const out: any = {};
+  for (const [k, v] of Object.entries(map)) {
+    if (data[k] !== undefined) out[k] = data[k];
+  }
+  // Source is editable (drives the label); the daily number is server-assigned
+  // and never client-writable.
+  if (data.source !== undefined) out.source = normalizeEnquirySource(data.source);
+  if (data.additionalRequirements !== undefined) {
+    out.additionalRequirements = (Array.isArray(data.additionalRequirements) ? data.additionalRequirements : [])
+      .map((r: any) => (typeof r === "string" ? { text: r } : { text: String(r?.text ?? ""), imageUrl: r?.imageUrl || undefined }))
+      .filter((r: any) => r.text.trim().length > 0);
+  }
+  if (data.items !== undefined) {
+    const parseDiscount = (v: unknown): number | undefined => {
+      if (v === undefined || v === null || v === '') return undefined;
+      const n = Number(String(v).trim());
+      if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
+      return Math.round(n * 100) / 100;
+    };
+    out.items = (Array.isArray(data.items) ? data.items : [])
+      .map((r: any) => ({
+        name: String(r?.name ?? '').slice(0, 300),
+        qty: normalizeQty(r?.qty).slice(0, 120),
+        spec: String(r?.spec ?? '').slice(0, 2000),
+        media: parseItemMedia(r?.media),
+        category: r?.category ? String(r.category).slice(0, 120) : undefined,
+        verbatim: r?.verbatim ? String(r.verbatim).slice(0, 500) : undefined,
+        rates: parseItemRates(r?.rates),
+        selectedVendor: r?.selectedVendor ? String(r.selectedVendor).slice(0, 200) : undefined,
+        selectedRateIdx: rateIdxOrUndefined(r?.selectedRateIdx),
+        markup: signedNumOrUndefined(r?.markup),
+        finalRate: numOrUndefined(r?.finalRate),
+        finalDiscountPercent: parseDiscount(r?.finalDiscountPercent),
+        finalizedAt: isoOrUndefined(r?.finalizedAt),
+        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
+        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
+        rateAvailable: r?.rateAvailable === true,
+        notAvailable: (r as any)?.notAvailable !== undefined ? (r as any).notAvailable === true : undefined,
+        notAvailableReason: (r as any)?.notAvailableReason !== undefined ? String((r as any).notAvailableReason).slice(0, 500) : undefined,
+        notAvailableAt: isoOrUndefined((r as any)?.notAvailableAt),
+        notAvailableRequested: (r as any)?.notAvailableRequested !== undefined ? String((r as any).notAvailableRequested).slice(0, 500) : undefined,
+        notAvailableRequestedAt: isoOrUndefined((r as any)?.notAvailableRequestedAt),
+        internalRates: r?.internalRates === true,
+        internalRatesAt: isoOrUndefined(r?.internalRatesAt),
+        // ""-preserving: management withdraws a rate request by saving an
+        // explicit empty string (mirrors variationRequest below). Absent =
+        // leave stored; answering procurement clears via rate change.
+        ratesRequested: (r as any)?.ratesRequested !== undefined ? String((r as any).ratesRequested).slice(0, 500) : undefined,
+        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
+        // ""-preserving (unlike the fields above): sales withdraws a
+        // variation request by saving an explicit empty string.
+        variationRequest: (r as any)?.variationRequest !== undefined ? String((r as any).variationRequest).slice(0, 500) : undefined,
+        variationRequestMedia: (r as any)?.variationRequestMedia !== undefined ? parseItemMedia((r as any).variationRequestMedia) : undefined,
+        thread: parseFlagThread(r?.thread),
+        threadResolved: (r as any)?.threadResolved === true ? true : (r as any)?.threadResolved === false ? false : undefined,
+        threadResolvedBy: (r as any)?.threadResolvedBy ? String((r as any).threadResolvedBy).slice(0, 20) : undefined,
+        threadResolvedAt: isoOrUndefined((r as any)?.threadResolvedAt),
+        // Detail-view "Add via AI" flag — the GH intake action replaces
+        // these raw rows with vision-split lines (applyIntakeBulkResult).
+        // Dropped here, the runner computes lines the merge then discards.
+        aiPending: r?.aiPending === true ? true : undefined,
+        // Sales-owned negotiation target (client-expected price + note).
+        expectedRate: numOrUndefined(r?.expectedRate),
+        expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
+      }))
+      .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
+      .slice(0, 100);
+  }
+  if (data.rateStatus !== undefined) {
+    const rs = String(data.rateStatus ?? '');
+    if (['', 'rate_pending', 'rates_received', 'finalized', 'sent'].includes(rs)) (out as any).rateStatus = rs;
+  }
+  // Procurement handoff flag: ISO instant or '' (clear). Scope-enforced in
+  // enquiryUpdate (sales can never touch it); validated here only.
+  if (data.procurementSubmittedAt !== undefined) {
+    const v = String(data.procurementSubmittedAt ?? '').trim();
+    (out as any).procurementSubmittedAt = v ? (isoOrUndefined(v) ?? '') : '';
+  }
+  return Object.keys(out).length ? out : null;
+}
+
