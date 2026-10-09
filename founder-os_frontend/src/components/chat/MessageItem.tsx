@@ -2,7 +2,7 @@
 
 import React, { useRef } from "react";
 import { CornerUpLeft, Pencil, Reply, SmilePlus, Trash2, FileText } from "lucide-react";
-import MarkdownBody from "./Markdown";
+import Markdown from "../Markdown";
 import {
   ChatAttachment,
   ChatMessage,
@@ -287,7 +287,7 @@ export default function MessageItem({
               }
               style={settings.bubbles && own ? { backgroundColor: settings.accent } : { fontSize: fontPx(settings) }}
             >
-              <MarkdownBody text={m.body} />
+              <Markdown text={m.body} />
               {m.editedAt && <span className="ml-1 align-baseline text-[10px] text-[var(--chat-muted)]">(edited)</span>}
             </div>
           )}

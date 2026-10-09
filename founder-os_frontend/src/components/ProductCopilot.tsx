@@ -34,7 +34,6 @@ const KNOWLEDGE: CopilotConfig = {
   },
   streamUrl: "/api/copilot/product-line/chat/stream",
   chatUrl: "/api/copilot/product-line/chat",
-  clearUrl: "/api/copilot/product-line/chat/clear",
   resetKey: "product-line",
 };
 
@@ -75,7 +74,6 @@ const INTAKE: CopilotConfig = {
   streamUrl: "/api/copilot/product-line-intake/chat/stream",
   chatUrl: "/api/copilot/product-line-intake/chat",
   executeUrl: "/api/copilot/product-line-intake/chat/execute",
-  clearUrl: "/api/copilot/product-line-intake/chat/clear",
   resetKey: "product-line-intake",
   timeoutMs: 0,
 };

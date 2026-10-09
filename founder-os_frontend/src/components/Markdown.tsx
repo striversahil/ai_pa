@@ -25,12 +25,16 @@ function inline(s: string): string {
   out = out.replace(/\\\((.+?)\\\)/g, (_, p1) => renderLatex(p1, false));
   out = out.replace(/\$\$([\s\S]+?)\$\$/g, (_, p1) => renderLatex(p1, true));
   out = out.replace(/(^|[^$])\$([^$\n]+?)\$(?=[^$])/g, (_, p1, p2) => `${p1}${renderLatex(p2, false)}`);
-  // strikethrough
+  // strikethrough + underline
   out = out.replace(/~~([^~]+)~~/g, "<s>$1</s>");
+  out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>");
   out = out.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  // bare URLs (after [t](url) above: href="…" values are preceded by a quote,
+  // never by whitespace/paren, so they are never double-linked)
+  out = out.replace(/(^|[\s(])(https?:\/\/[^\s<>"']+)/g, '$1<a href="$2" target="_blank" rel="noreferrer">$2</a>');
   return out;
 }
 
