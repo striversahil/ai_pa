@@ -112,7 +112,9 @@ async function computeManagementQueues(store: EnquiryStore): Promise<CachedQueue
   const all = await store.listEnquiries();
   await attachQueueZoho(all as any[]);
   // Same partition as the frontend (`ManagementReview.tsx`): pending ⊂ open,
-  // history disjoint, unprocessed = every non-history row carrying items.
+  // history disjoint, unprocessed = every non-history row carrying items,
+  // empty = item-less rows that are NOT concluded (terminal rows live in
+  // history even with zero items — otherwise they'd sit in both tabs).
   // Procurement partitions use the procurement predicates (`ProcurementQueue.tsx`).
   const id = (e: any) => String((e as any)?.id ?? '');
   const byId: Record<string, any> = {};
@@ -123,7 +125,7 @@ async function computeManagementQueues(store: EnquiryStore): Promise<CachedQueue
   const unprocessed = (all as any[]).filter(
     (e) => !isManagementHistoryEnquiry(e as any) && (((e as any).items ?? []).length > 0),
   );
-  const empty = (all as any[]).filter((e) => (((e as any).items ?? []).length === 0));
+  const empty = (all as any[]).filter((e) => (((e as any).items ?? []).length === 0) && !isManagementHistoryEnquiry(e as any));
   const procPending = (all as any[]).filter((e) => isProcurementPendingEnquiry(e as any));
   const procHistory = (all as any[]).filter((e) => isProcurementHistoryEnquiry(e as any));
   return {

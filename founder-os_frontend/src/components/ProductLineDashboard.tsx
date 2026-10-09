@@ -19,7 +19,7 @@ interface RateRow {
   productId: string | null; productName: string | null; attrKey: string; attrValues: Record<string, string>;
   pricePerUnit: number | null; unit: string; discountPercent: number | null; baseRate: number | null;
   weightPerUnit: number | null; packageQty: string | null; packageDims: string | null;
-  moq: string | null; deliveryDays: number | null; quotedAt: string; enquiryRef: string | null; missingSpecs: string[] | null; active: boolean;
+  moq: string | null; deliveryDays: number | null; quotedAt: string; enquiryRef: string | null; notes?: string | null; missingSpecs: string[] | null; active: boolean;
   imageUrl: string | null; videoUrl: string | null;
 }
 interface Payload { products: ProductRow[]; guide: Record<string, GuideRow[]>; vendors: VendorRow[]; rates: RateRow[]; }
@@ -528,14 +528,20 @@ export default function ProductLineDashboard() {
                               <span title={`Specs unknown at filing:\n${(selRate.missingSpecs ?? []).join("\n")}`} className="ml-2 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-600">specs missing ({(selRate.missingSpecs ?? []).length})</span>
                             )}
                           </p>
-                          {Object.keys(selRate.attrValues ?? {}).length === 0 && <p className="px-4 py-3 text-sm text-[var(--text-tertiary)]">No spec breakup recorded on this quote.</p>}
+                          {Object.keys(selRate.attrValues ?? {}).length === 0 && !(selRate as any)?.notes && <p className="px-4 py-3 text-sm text-[var(--text-tertiary)]">No spec breakup recorded on this quote.</p>}
                           <dl>
                             {Object.entries(selRate.attrValues ?? {}).map(([k, v], idx) => (
-                              <div key={k} className="flex gap-3 px-4 py-2 border-b border-[var(--border-card)]/50 last:border-0">
+                              <div key={k} className="flex gap-3 px-4 py-2 border-b border-white/[0.04] last:border-0 border-b border-[var(--border-card)]/50 last:border-0">
                                 <dt className="w-2/5 flex-shrink-0 text-xs leading-relaxed text-[var(--text-secondary)]">{attrLabel(k, detail.guide)}</dt>
                                 <dd className="flex-1 text-[13px] font-bold text-[var(--text-primary)]">{v || "—"}</dd>
                               </div>
                             ))}
+                            {(selRate as any)?.notes && (
+                              <div className="flex gap-3 px-4 py-2 border-b border-[var(--border-card)]/50 last:border-0 bg-amber-500/[0.04]">
+                                <dt className="w-2/5 flex-shrink-0 text-xs leading-relaxed text-[var(--text-secondary)]">Notes (non-spec extras)</dt>
+                                <dd className="flex-1 text-[13px] font-bold text-[var(--text-primary)] whitespace-pre-wrap">{String((selRate as any).notes)}</dd>
+                              </div>
+                            )}
                           </dl>
                         </div>
                         <div className="lg:col-span-2 rounded-xl border border-[var(--border-card)]/80 overflow-hidden h-fit">

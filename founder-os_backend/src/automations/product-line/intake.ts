@@ -12,7 +12,7 @@ import type { ToolDefinition } from '../../shared/ai-gateway';
 import { cacheDel, cacheGet, cacheSet } from '../../shared/cache';
 import type { CopilotDef, CopilotExecResult } from '../../copilot/types';
 import { getProductDetail, getProductIndex, getRatesForProduct, getVendorIndex } from './service';
-import { matchTokens, tokenOverlap, TOKEN_MIN_SCORE, TOKEN_MIN_SHARED } from './match';
+import { matchCatalogueProducts, matchTokens, tokenOverlap, TOKEN_MIN_SCORE, TOKEN_MIN_SHARED } from './match';
 import { createProduct, createRate, createVendor } from './update';
 import { invalidateProductLineCache } from './service';
 import { numField, strField } from './normalize';
@@ -46,6 +46,9 @@ interface IntakeDraft {
   packDims?: string;
   quotedAt?: string;
   specs: Record<string, string>;
+  /** Non-spec vendor extras (delivery notes, stray details matching no KYP
+   *  key) — stored on the rate, never as spec keys. */
+  notes?: string;
 }
 
 function parseAttrValues(raw: unknown): Record<string, string> {
@@ -87,6 +90,157 @@ function rateCard(r: any): Record<string, unknown> {
     active: r?.active !== false,
     quotedAt: r?.quotedAt != null ? String(r.quotedAt).slice(0, 10) : null,
   };
+}
+
+const SPEC_FILLER = new Set(['ask', 'the', 'a', 'an', 'of', 'or', 'if', 'in', 'on', 'to', 'for', 'with', 'is', 'are', 'it', 'and', 'too', 'unsure', 'offer', 'usually']);
+
+/** Cross-vocabulary synonyms: vendor says "size", checklist says "diameter".
+ *  Milling-spares trade words included (jali = mesh, MS/SS shorthands) —
+ *  matching only, stored values stay verbatim. */
+const SPEC_SYNONYMS: string[][] = [
+  ['size', 'diameter', 'dia', 'dimension', 'dimensions'],
+  ['width', 'w'],
+  ['thickness', 'gauge', 'thick', 'gz'],
+  ['length', 'len'],
+  ['quantity', 'qty', 'quantities'],
+  ['material', 'mtrl'],
+  ['make', 'brand', 'manufacturer', 'model'],
+  ['color', 'colour'],
+  ['finish', 'finishing', 'laminate'],
+  ['hole', 'holes', 'perforation'],
+  ['mesh', 'screen', 'sieve', 'jali', 'net'],
+  ['ms', 'mild'],
+  ['ss', 'stainless'],
+  ['weight', 'wt'],
+];
+const SPEC_SYN_MAP = new Map<string, Set<string>>();
+for (const g of SPEC_SYNONYMS) {
+  const all = new Set(g);
+  for (const w of g) SPEC_SYN_MAP.set(w, all);
+}
+
+function specTokens(s: unknown): string[] {
+  return String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter((w) => w && !SPEC_FILLER.has(w));
+}
+
+/** A raw input token hits the guide token set directly or via synonyms. */
+function specTokenHits(input: string[], guide: Set<string>): number {
+  let hits = 0;
+  for (const t of input) {
+    if (guide.has(t)) { hits++; continue; }
+    const syns = SPEC_SYN_MAP.get(t);
+    if (syns) {
+      for (const s of syns) {
+        if (s !== t && guide.has(s)) { hits++; break; }
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * Map vendor-worded spec keys to real KYP attrKeys. Exact attrKey (or its
+ * case/punctuation fold) always wins; otherwise token-overlap against
+ * attrKey + question, requiring a UNIQUE best (score ≥ 0.5, ties abstain —
+ * never guess between twins). Anything unresolvable is returned, never
+ * stored as a spec. Two input keys hitting one attrKey with different
+ * values = conflict: exact-key input wins, else first wins, loser noted.
+ */
+export function resolveSpecKeys(
+  raw: Record<string, string>,
+  guide: { attrKey: string; question: string }[],
+): { mapped: Record<string, string>; unmapped: { key: string; value: string }[]; conflicts: string[] } {
+  const mapped: Record<string, string> = {};
+  const unmapped: { key: string; value: string }[] = [];
+  const conflicts: string[] = [];
+  const wonBy: Record<string, string[]> = {};
+  const keys = (guide ?? []).filter((g) => g && g.attrKey).map((g) => ({
+    attrKey: String(g.attrKey),
+    // Anchor = attrKey tokens: question text carries incidental words
+    // ("size" inside a picture question, "material" inside a confirm-the-
+    // material question) that cause confident-but-wrong mappings. A
+    // candidate must share at least one token with the attrKey slug itself;
+    // scoring then uses the full vocabulary for long vendor keys.
+    anchor: new Set(specTokens(g.attrKey)),
+    toks: new Set([...specTokens(g.attrKey), ...specTokens(g.question)]),
+  }));
+  for (const [k, v] of Object.entries(raw ?? {})) {
+    const val = String(v ?? '').trim();
+    if (!String(k ?? '').trim() || !val) continue;
+    const key = String(k).trim().slice(0, 120);
+    let hit: string | null = null;
+    if (keys.some((g) => g.attrKey === key)) {
+      hit = key;
+    } else {
+      const nk = String(k).toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const fold = keys.find((g) => g.attrKey.toLowerCase().replace(/[^a-z0-9]+/g, '') === nk);
+      if (fold) {
+        hit = fold.attrKey;
+      } else {
+        const it = specTokens(k);
+        if (it.length > 0 && keys.length > 0) {
+          let best = '';
+          let bestScore = 0;
+          let tied = false;
+          for (const g of keys) {
+            // Anchor first (see above), then hit-rate over the INPUT's
+            // tokens (direct or synonym): the vendor's word must land.
+            if (specTokenHits(it, g.anchor) === 0) continue;
+            const score = specTokenHits(it, g.toks) / it.length;
+            if (score > bestScore + 1e-9) { bestScore = score; best = g.attrKey; tied = false; }
+            else if (score > 0 && Math.abs(score - bestScore) < 1e-9) { tied = true; }
+          }
+          if (bestScore >= 0.5 && !tied) hit = best;
+        }
+      }
+    }
+    if (!hit) {
+      unmapped.push({ key, value: val.slice(0, 200) });
+      continue;
+    }
+    if (mapped[hit] !== undefined && mapped[hit] !== val && !(wonBy[hit] ?? []).includes(key)) {
+      // Several inputs, one attrKey: DISTINCT facets (diameter + length +
+      // quantity answering one combined question) join with ' / '; genuine
+      // same-facet clashes stay visible in one value + flagged, never
+      // silently dropped to notes and never stored as twin keys.
+      const parts = String(mapped[hit]).split(' / ').map((s) => s.trim()).filter(Boolean);
+      if (!parts.includes(val)) parts.push(val);
+      conflicts.push(`"${key}" (${val}) merged into "${hit}" with "${wonBy[hit].join('", "')}"`);
+      mapped[hit] = parts.join(' / ').slice(0, 500);
+      wonBy[hit] = [...(wonBy[hit] ?? []), key];
+      continue;
+    }
+    if (mapped[hit] === undefined) {
+      mapped[hit] = val;
+      wonBy[hit] = [key];
+    }
+  }
+  return { mapped, unmapped, conflicts };
+}
+
+/**
+ * Capture vendor-worded specs against a product guide: values normalized,
+ * keys resolved to real attrKeys, leftovers appended to notes (never stored
+ * as spec keys). Pass guide=[] when the product is unknown — everything
+ * stays verbatim and `unchecked` tells the caller keys weren't validated.
+ */
+export async function captureSpecs(
+  raw: unknown,
+  guide: { attrKey: string; question: string }[],
+): Promise<{ specs: Record<string, string>; notes: string; unmapped: { key: string; value: string }[]; conflicts: string[]; unchecked: boolean }> {
+  const { normalizeSpecValue } = await import('./normalize');
+  const clean: Record<string, string> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const key = String(k).trim().slice(0, 120);
+      const val = normalizeSpecValue(v);
+      if (key && val) clean[key] = val;
+    }
+  }
+  if (!guide.length) return { specs: clean, notes: '', unmapped: [], conflicts: [], unchecked: true };
+  const r = resolveSpecKeys(clean, guide);
+  const notes = r.unmapped.map((u) => `${u.key}: ${u.value}`).join('; ').slice(0, 2000);
+  return { specs: r.mapped, notes, unmapped: r.unmapped, conflicts: r.conflicts, unchecked: false };
 }
 
 /** Canonical spec identity — same algorithm as update.ts rateData: sorted
@@ -160,6 +314,13 @@ async function fileDraft(d: IntakeDraft): Promise<FiledRate> {
   const { createRate, updateRate } = await import('./update');
   const { getRatesForProduct } = await import('./service');
   const { prisma } = await import('../../shared/prisma');
+  // Authoritative key resolution (creates allowed above): vendor words →
+  // real attrKeys; leftovers ride in notes, never as spec keys. Idempotent
+  // when capture already resolved.
+  const fullF = await fullChecklist(productId).catch(() => []);
+  const capF = await captureSpecs(d.specs, fullF.map((g) => ({ attrKey: g.key, question: g.question })));
+  d.specs = capF.specs;
+  if (capF.notes) d.notes = [d.notes, capF.notes].filter(Boolean).join('; ').slice(0, 2000);
   const req = await requiredSpecs(productId).catch(() => []);
   const missingSpecs = req.filter((q) => !String((d.specs ?? {})[q.key] ?? '').trim()).map((q) => q.question);
   const commercialMissing: string[] = [];
@@ -180,6 +341,7 @@ async function fileDraft(d: IntakeDraft): Promise<FiledRate> {
     moq: d.moq ?? null, deliveryDays: d.delivery ?? null,
     weightPerUnit: d.weight ?? null, packageQty: d.packQty ?? null, packageDims: d.packDims ?? null,
     quotedAt: quoted, missingSpecs: missingSpecs.slice(0, 50),
+    ...(d.notes ? { notes: d.notes } : {}),
   };
   // 0) explicit rateId (a previous receipt, carried in-conversation) → update it.
   const priorId = String((d as any)?.rateId ?? '').trim();
@@ -379,37 +541,14 @@ function matchVendors(vendors: any[], q: string): { row: any; exact: boolean; sc
   return out.slice(0, 5);
 }
 
-/** Scored catalogue match: exact name/alias first, then substring/token
- *  score desc. Token tier catches reordered/noisy lines ("belt black
- *  rubber", "6in 4ply 100m nylon belt"); typos still need the LLM pick. */
+/** Scored catalogue match (intake flavor): exact name/alias first, then
+ *  substring/token score desc — category counts in the substring tier,
+ *  inactive rows included, no category gate. Thin wrapper over the shared
+ *  matchCatalogueProducts (single source of truth); behavior preserved
+ *  exactly. Token tier catches reordered/noisy lines ("belt black rubber",
+ *  "6in 4ply 100m nylon belt"); typos still need the LLM pick. */
 function matchProducts(products: any[], q: string): { row: any; exact: boolean }[] {
-  const needle = norm(q);
-  if (!needle) return [];
-  const needleToks = matchTokens(needle);
-  const out: { row: any; exact: boolean; score: number }[] = [];
-  for (const p of (products ?? []) as any[]) {
-    const name = norm(p.name);
-    const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
-    const cat = norm(p.category);
-    if (p.id === q.trim() || name === needle || aliases.includes(needle)) {
-      out.push({ row: p, exact: true, score: 2 });
-    } else {
-      const sub =
-        (name.includes(needle) || needle.includes(name) ||
-          aliases.some((a) => a && (a.includes(needle) || needle.includes(a))) ||
-          cat.includes(needle)) ? 1 : 0;
-      let score = sub;
-      if (!sub && needleToks.length > 0) {
-        const hayToks = matchTokens([name, ...aliases].join(' '));
-        const shared = needleToks.filter((t) => hayToks.includes(t)).length;
-        const ov = tokenOverlap(needleToks, hayToks);
-        if (shared >= TOKEN_MIN_SHARED && ov >= TOKEN_MIN_SCORE) score = ov;
-      }
-      if (score > 0) out.push({ row: p, exact: false, score });
-    }
-  }
-  out.sort((a, b) => (Number(b.exact) - Number(a.exact)) || (b.score - a.score));
-  return out.slice(0, 5);
+  return matchCatalogueProducts(products, q, { substringCategory: true, onlyActive: false, limit: 5 });
 }
 
 /** Paging args shared by the flexible reads: how much data the model wants.
@@ -485,12 +624,14 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>,
   if (name === 'update_draft') {
     // Pure capture: normalize + validate, return the structured draft. NOT
     // stored — the conversation holds it; resend it (full) with the next call.
-    const { normalizeSpecValue, normalizeUnit } = await import('./normalize');
+    const { normalizeUnit } = await import('./normalize');
     const nd: IntakeDraft = { specs: {} };
     for (const f of ['rateId', 'productId', 'productName', 'productCategory', 'vendorId', 'vendorName', 'vendorType', 'vendorPhone', 'vendorLocation', 'moq', 'packQty', 'packDims'] as const) {
       const v = strField((args as any)[f]);
       if (v !== undefined) (nd as any)[f] = v;
     }
+    const notesArg = strField((args as any).notes, 2000);
+    if (notesArg !== undefined) nd.notes = notesArg;
     // Unit + spec values pass the normalizer (4" → 4 inch, mtr → meter…).
     const unitRaw = strField((args as any).unit, 120);
     if (unitRaw !== undefined) {
@@ -503,18 +644,16 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>,
     }
     const qd = validDate((args as any).quotedAt);
     if (qd) nd.quotedAt = qd;
-    const specs = (args as any).specs;
-    if (specs && typeof specs === 'object') {
-      for (const [k, v] of Object.entries(specs as Record<string, unknown>)) {
-        const key = String(k).trim().slice(0, 120);
-        const val = normalizeSpecValue(v);
-        if (key && val) nd.specs[key] = val;
-      }
-    }
+    // Keys resolve to real KYP attrKeys; vendor extras that match nothing
+    // land in notes (never as spec keys). Unknown product → verbatim.
+    const full0 = nd.productId ? await fullChecklist(nd.productId).catch(() => []) : [];
+    const cap0 = await captureSpecs((args as any).specs, full0.map((g) => ({ attrKey: g.key, question: g.question })));
+    nd.specs = cap0.specs;
+    if (cap0.notes) nd.notes = [nd.notes, cap0.notes].filter(Boolean).join('; ').slice(0, 2000);
     const draftNo = Math.floor(Number(args?.draft));
     const req = nd.productId ? await requiredSpecs(nd.productId).catch(() => []) : [];
     const details = await specDetails(nd.productId, nd.specs);
-    return { result: { draft: nd, ...(Number.isFinite(draftNo) && draftNo >= 1 ? { draftNumber: draftNo } : {}), specDetails: details, requiredSpecs: req, missing: missing(nd, req) } };
+    return { result: { draft: nd, ...(Number.isFinite(draftNo) && draftNo >= 1 ? { draftNumber: draftNo } : {}), specDetails: details, requiredSpecs: req, missing: missing(nd, req), ...(cap0.unmapped.length ? { unmapped: cap0.unmapped } : {}), ...(cap0.conflicts.length ? { conflicts: cap0.conflicts } : {}) } };
   }
 
   if (name === 'find_product') {
@@ -674,14 +813,25 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>,
       }
       const qd = validDate(r.quotedAt);
       if (qd) d.quotedAt = qd;
-      const sp = r.specs;
-      if (sp && typeof sp === 'object') {
-        for (const [k, v] of Object.entries(sp as Record<string, unknown>)) {
-          const key = String(k).trim().slice(0, 120);
-          const val = normalizeSpecValue(v);
-          if (key && val) d.specs[key] = val;
+      const notesR = strField((r as any).notes, 2000);
+      if (notesR !== undefined) d.notes = notesR;
+      // Resolve keys now when the product is known WITHOUT creating: id
+      // direct, else exact name match only. Unknown → verbatim, re-resolved
+      // authoritatively at file time (creates allowed there).
+      let guideR: { attrKey: string; question: string }[] = [];
+      try {
+        let pidR = String((d as any)?.productId ?? '').trim();
+        if (!pidR && (d as any)?.productName) {
+          const products = await getProductIndex().catch(() => []);
+          const hit = matchProducts(products, String((d as any).productName))[0];
+          if (hit?.exact) pidR = String(hit.row.id);
         }
-      }
+        if (pidR) guideR = (await fullChecklist(pidR).catch(() => [])).map((g) => ({ attrKey: g.key, question: g.question }));
+      } catch { /* verbatim fallback below */ }
+      const capR = await captureSpecs((r as any).specs, guideR);
+      d.specs = capR.specs;
+      if (capR.notes) d.notes = [d.notes, capR.notes].filter(Boolean).join('; ').slice(0, 2000);
+      (d as any).unmappedCount = capR.unmapped.length + capR.conflicts.length;
       if (!d.productId && !d.productName) { problems.push({ index: i + 1, error: 'product missing' }); continue; }
       if (!d.vendorId && !d.vendorName) { problems.push({ index: i + 1, error: 'vendor missing' }); continue; }
       if (d.price === undefined || !(d.price > 0)) { problems.push({ index: i + 1, error: 'price missing' }); continue; }
@@ -692,7 +842,8 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>,
     const lines = rates.map((d, i) => {
       const n = i + 1;
       const specBits = Object.entries(d.specs ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
-      return `${n}. ${d.productName ?? d.productId} @ ₹${d.price}/${d.unit} — ${d.vendorName ?? d.vendorId}${specBits ? ` (${specBits.slice(0, 100)})` : ''}`;
+      const uw = Number((d as any)?.unmappedCount ?? 0);
+      return `${n}. ${d.productName ?? d.productId} @ ₹${d.price}/${d.unit} — ${d.vendorName ?? d.vendorId}${specBits ? ` (${specBits.slice(0, 100)})` : ''}${uw > 0 ? ` (+${uw} unmatched → notes)` : ''}${d.notes ? ` [notes: ${String(d.notes).slice(0, 120)}]` : ''}`;
     });
     const tableRows = rates.map((d, i) => {
       const gaps: string[] = [];
@@ -825,10 +976,12 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>,
     let mergedSpecs: Record<string, string> | null = null;
     if (specs && typeof specs === 'object') {
       mergedSpecs = parseAttrValues(cur.attrValues);
-      for (const [k, v] of Object.entries(specs as Record<string, unknown>)) {
-        const key = String(k).trim().slice(0, 120);
-        const val = normalizeSpecValue(v);
-        if (key && val) mergedSpecs[key] = val;
+      const fullU = await fullChecklist(String((cur as any)?.productId ?? '')).catch(() => []);
+      const capU = await captureSpecs(specs, fullU.map((g) => ({ attrKey: g.key, question: g.question })));
+      for (const [k, v] of Object.entries(capU.specs)) mergedSpecs[k] = v;
+      if (capU.notes) {
+        const prevN = String((cur as any)?.notes ?? '').trim();
+        patch.notes = [prevN, capU.notes].filter(Boolean).join('; ').slice(0, 2000);
       }
       patch.attrValues = mergedSpecs;
       patch.attrKey = canonicalAttrKey(mergedSpecs);
@@ -1208,14 +1361,23 @@ async function claimDraft(ctx: IntakeCtx, kind: string, key: string): Promise<bo
     }
     const qd0 = validDate((args as any).quotedAt);
     if (qd0) d.quotedAt = qd0;
-    const sp0 = (args as any).specs;
-    if (sp0 && typeof sp0 === 'object') {
-      for (const [k, v] of Object.entries(sp0 as Record<string, unknown>)) {
-        const key = String(k).trim().slice(0, 120);
-        const val = nsv(v);
-        if (key && val) d.specs[key] = val;
+    const notesP = strField((args as any).notes, 2000);
+    if (notesP !== undefined) d.notes = notesP;
+    // Resolve keys to real attrKeys (no creates — id direct, else exact
+    // name match); leftovers ride in notes and are reported, never stored.
+    let guideP: { attrKey: string; question: string }[] = [];
+    try {
+      let pidP = String((d as any)?.productId ?? '').trim();
+      if (!pidP && (d as any)?.productName) {
+        const products = await getProductIndex().catch(() => []);
+        const hit = matchProducts(products, String((d as any).productName))[0];
+        if (hit?.exact) pidP = String(hit.row.id);
       }
-    }
+      if (pidP) guideP = (await fullChecklist(pidP).catch(() => [])).map((g) => ({ attrKey: g.key, question: g.question }));
+    } catch { /* verbatim fallback below */ }
+    const capP = await captureSpecs((args as any).specs, guideP);
+    d.specs = capP.specs;
+    if (capP.notes) d.notes = [d.notes, capP.notes].filter(Boolean).join('; ').slice(0, 2000);
     const hasProduct = !!(d.productId || (d.productName && d.productCategory));
     const hasVendor = !!(d.vendorId || d.vendorName);
     if (!hasProduct) return { result: { error: 'product unresolved — match or draft it first' } };
@@ -1266,7 +1428,7 @@ async function claimDraft(ctx: IntakeCtx, kind: string, key: string): Promise<bo
       : 'No gaps — all required details captured.';
     const text = [title, ...specLines, ...extraLines, specNote].join('\n');
     return {
-      result: { proposed: true, gaps, missingSpecs: missingSpecQs.map((q) => q.question) },
+      result: { proposed: true, gaps, missingSpecs: missingSpecQs.map((q) => q.question), ...(capP.unmapped.length ? { unmapped: capP.unmapped } : {}), ...(capP.conflicts.length ? { conflicts: capP.conflicts } : {}) },
       proposals: [{
         kind: 'rate_draft', label: `Add rate: ${title}`,
         text,
@@ -1275,7 +1437,7 @@ async function claimDraft(ctx: IntakeCtx, kind: string, key: string): Promise<bo
           vendorId: d.vendorId, vendorName: d.vendorName,
           price: d.price, unit: d.unit, discount: d.discount, moq: d.moq, delivery: d.delivery,
           weight: d.weight, packQty: d.packQty, packDims: d.packDims, quotedAt: d.quotedAt,
-          specs: { ...d.specs },
+          specs: { ...d.specs }, ...(d.notes ? { notes: d.notes } : {}),
         },
         missingSpecs: missingSpecQs.map((q) => q.question),
       }],
@@ -1350,22 +1512,91 @@ async function executeProposal(ctx: IntakeCtx, action: Record<string, any>): Pro
   if (kind === 'commit_all_draft') {
     // One Confirm for the whole table: file each payload rate (create or
     // update via identity match), collect receipts + failures.
+    // SPEED: rows are grouped by (product, vendor) — groups file in
+    // PARALLEL (cap 6 waves at once), rows inside one group stay sequential.
+    // Grouping is semantics-preserving: the identity scan only ever matches
+    // same-product + same-vendor rows, so different groups can never affect
+    // each other, while same-group rows keep match-against-just-filed order
+    // (and can't race-create the same vendor/product).
     try {
       const rates = Array.isArray(action?.rates) ? action.rates : [];
       if (!rates.length) return fail('no rates in proposal');
-      const filed: FiledRate[] = [];
-      const failed: { index: number; error: string }[] = [];
-      for (let i = 0; i < rates.length; i++) {
-        try {
-          const d = { specs: {}, ...((rates[i] ?? {}) as Record<string, unknown>) } as IntakeDraft;
-          if (!d.specs || typeof d.specs !== 'object') d.specs = {};
-          filed.push(await fileDraft(d));
-        } catch (e: any) {
-          failed.push({ index: i + 1, error: String(e?.message ?? 'file failed').slice(0, 200) });
+      const prep = (r: unknown): IntakeDraft => {
+        const d = { specs: {}, ...((r ?? {}) as Record<string, unknown>) } as IntakeDraft;
+        if (!d.specs || typeof d.specs !== 'object') d.specs = {};
+        return d;
+      };
+      const drafts = rates.map(prep);
+      // Phase 1 — resolve identities, one dimension at a time. Same-name
+      // rows serialize (a new vendor/product is created exactly once);
+      // different names resolve in parallel (reads, or independent creates).
+      // Unresolvable rows are left unset — fileDraft throws for them below,
+      // exactly as before. Dimension-separated (not combined-key) grouping:
+      // rows sharing vendor V1 but different products must still resolve V1
+      // through ONE serialized lane, or parallel auto-creates fork duplicates.
+      const runCapped = async <T>(items: T[], cap: number, fn: (t: T) => Promise<void>): Promise<void> => {
+        for (let i = 0; i < items.length; i += cap) {
+          await Promise.all(items.slice(i, i + cap).map(fn));
         }
-      }
+      };
+      const vGroups = new Map<string, number[]>();
+      drafts.forEach((d, i) => {
+        const k = String((d as any)?.vendorId ?? '').trim()
+          || `n:${String((d as any)?.vendorName ?? '').trim().toLowerCase()}`;
+        if (!vGroups.has(k)) vGroups.set(k, []);
+        vGroups.get(k)!.push(i);
+      });
+      await runCapped([...vGroups.values()], 6, async (idxs) => {
+        for (const i of idxs) {
+          try {
+            const id = await ensureVendorId(drafts[i]);
+            if (id) (drafts[i] as any).vendorId = id;
+          } catch { /* fileDraft reports it per row */ }
+        }
+      });
+      const pGroups = new Map<string, number[]>();
+      drafts.forEach((d, i) => {
+        const k = String((d as any)?.productId ?? '').trim()
+          || `n:${String((d as any)?.productName ?? '').trim().toLowerCase()}`;
+        if (!pGroups.has(k)) pGroups.set(k, []);
+        pGroups.get(k)!.push(i);
+      });
+      await runCapped([...pGroups.values()], 6, async (idxs) => {
+        for (const i of idxs) {
+          try {
+            const id = await ensureProductId(drafts[i]);
+            if (id) (drafts[i] as any).productId = id;
+          } catch { /* fileDraft reports it per row */ }
+        }
+      });
+      // Phase 2 — file. Grouped by RESOLVED (product, vendor, rateId):
+      // groups file in parallel, rows inside one group stay sequential.
+      // Semantics-preserving: the identity scan only ever matches
+      // same-product + same-vendor rows, so different groups can never
+      // affect each other, while same-group rows keep
+      // match-against-just-filed order.
+      const fGroups = new Map<string, { index: number; d: IntakeDraft }[]>();
+      drafts.forEach((d, i) => {
+        const k = `${String((d as any)?.productId ?? '')}|||${String((d as any)?.vendorId ?? '')}|||${String((d as any)?.rateId ?? '')}`;
+        if (!fGroups.has(k)) fGroups.set(k, []);
+        fGroups.get(k)!.push({ index: i + 1, d });
+      });
+      const filed: { index: number; r: FiledRate }[] = [];
+      const failed: { index: number; error: string }[] = [];
+      const fileOne = async (index: number, d: IntakeDraft): Promise<void> => {
+        try {
+          filed.push({ index, r: await fileDraft(d) });
+        } catch (e: any) {
+          failed.push({ index, error: String(e?.message ?? 'file failed').slice(0, 200) });
+        }
+      };
+      await runCapped([...fGroups.values()], 6, async (g) => {
+        for (const { index, d } of g) await fileOne(index, d);
+      });
+      filed.sort((a, b) => a.index - b.index);
+      failed.sort((a, b) => a.index - b.index);
       await invalidateProductLineCache().catch(() => {});
-      return { result: { status: 201, body: { ok: true, filed, failed, live: 'product-line' } }, applied: 'commit_all_draft' };
+      return { result: { status: 201, body: { ok: true, filed: filed.map((f) => f.r), failed, live: 'product-line' } }, applied: 'commit_all_draft' };
     } catch (e: any) {
       return fail(String(e?.message ?? 'commit failed').slice(0, 300));
     }
@@ -1505,7 +1736,7 @@ const TOOL_DEFS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'update_draft',
-      description: 'Save extracted quote fields into the draft (product/vendor/price/unit/commercials/specs object).',
+      description: 'Save extracted quote fields into the draft (product/vendor/price/unit/commercials/specs object). Spec keys MUST be exact attrKeys from required_specs — vendor-worded keys are auto-mapped; anything matching no key lands in notes (returned as unmapped) and is NEVER stored as a spec. Pass stray non-spec details (delivery notes etc.) in notes directly.',
       parameters: {
         type: 'object',
         properties: {
@@ -1516,7 +1747,8 @@ const TOOL_DEFS: ToolDefinition[] = [
           moq: { type: 'string' }, delivery: { type: 'number' },
           weight: { type: 'number' }, packQty: { type: 'string' }, packDims: { type: 'string' },
           quotedAt: { type: 'string', description: 'Quote date (any parseable date; ask the user, "today" is fine)' },
-          specs: { type: 'object', description: 'Spec key/value pairs quoted by the vendor' },
+          specs: { type: 'object', description: 'Spec key/value pairs quoted by the vendor — keys MUST be exact attrKeys from required_specs' },
+          notes: { type: 'string', description: 'Non-spec vendor extras (delivery notes, stray details) — never spec keys' },
           label: { type: 'string', description: 'Your own tag for this quote (e.g. #3) — echoed back so multi-quote threads stay readable' },
         },
       },
@@ -1596,7 +1828,7 @@ const TOOL_DEFS: ToolDefinition[] = [
       type: 'function',
       function: {
       name: 'propose_rate',
-      description: 'Draft ONE rate for user confirm. Pass the complete captured state (product + vendor + commercials + specs) — it is validated here: missing commercials are returned as errors (ask the user), unknown SPECS do NOT block (they file flagged as missing).',
+      description: 'Draft ONE rate for user confirm. Pass the complete captured state (product + vendor + commercials + specs) — it is validated here: missing commercials are returned as errors (ask the user). Spec keys MUST be exact attrKeys; unmatched words move to notes automatically (returned as unmapped) — never invent keys, never fill two keys with the same meaning.',
       parameters: {
         type: 'object',
         properties: {
@@ -1607,7 +1839,8 @@ const TOOL_DEFS: ToolDefinition[] = [
           price: { type: 'number' }, unit: { type: 'string' }, discount: { type: 'number' },
           moq: { type: 'string' }, delivery: { type: 'number' },
           weight: { type: 'number' }, packQty: { type: 'string' }, packDims: { type: 'string' },
-          quotedAt: { type: 'string' }, specs: { type: 'object' },
+          quotedAt: { type: 'string' }, specs: { type: 'object', description: 'Keys MUST be exact attrKeys from required_specs' },
+          notes: { type: 'string', description: 'Non-spec vendor extras — never spec keys' },
         },
       },
       },
@@ -1616,7 +1849,7 @@ const TOOL_DEFS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'commit_all',
-      description: 'Present the WHOLE table for one Confirm: pass every captured rate (product + vendor + price + unit + specs + commercials each). Returns a single consolidated proposal listing each row + what is missing per row. On Confirm, each files (create or update via vendor+product+spec identity — never duplicates; unknown specs flagged). Use after split_quotes + extraction, when the user pastes several prices or says file/add everything.',
+      description: 'Present the WHOLE table for one Confirm: pass every captured rate (product + vendor + price + unit + specs + commercials each). Returns a single consolidated proposal listing each row + what is missing per row. On Confirm, each files (create or update via vendor+product+spec identity — never duplicates). Spec keys MUST be exact attrKeys; unmatched words move to notes (shown per row as "+N unmatched → notes"). Use after split_quotes + extraction, when the user pastes several prices or says file/add everything.',
       parameters: {
         type: 'object',
         properties: {
@@ -1632,7 +1865,8 @@ const TOOL_DEFS: ToolDefinition[] = [
                 price: { type: 'number' }, unit: { type: 'string' }, discount: { type: 'number' },
                 moq: { type: 'string' }, delivery: { type: 'number' },
                 weight: { type: 'number' }, packQty: { type: 'string' }, packDims: { type: 'string' },
-                quotedAt: { type: 'string' }, specs: { type: 'object' },
+                quotedAt: { type: 'string' }, specs: { type: 'object', description: 'Keys MUST be exact attrKeys from required_specs' },
+                notes: { type: 'string', description: 'Non-spec vendor extras — never spec keys' },
               },
               required: ['price', 'unit'],
             },
@@ -1657,7 +1891,7 @@ const TOOL_DEFS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'update_rate',
-      description: 'Patch a LIVE rate directly (no confirm): price, unit, discount, moq, delivery, weight, packQty, packDims, quotedAt, specs object (merged). Missing-spec flags recompute automatically. Use when the user supplies missing info for rates you already filed — updates in place, never creates a second rate.',
+      description: 'Patch a LIVE rate directly (no confirm): price, unit, discount, moq, delivery, weight, packQty, packDims, quotedAt, specs object (merged). Spec keys MUST be exact attrKeys — anything else moves to notes. Missing-spec flags recompute automatically. Use when the user supplies missing info for rates you already filed — updates in place, never creates a second rate.',
       parameters: {
         type: 'object',
         properties: {
@@ -1790,7 +2024,8 @@ export const productLineIntakeDef: CopilotDef<IntakeCtx> = {
     'How a turn goes — 1) READ the message (prior turns are recalled automatically; never claim to be new). 2) If it holds SEVERAL quotes, call split_quotes first (no limit — 200 lines split into 200), then work items by number (#1, #2…). For very large pastes, work through the blob in order across turns and say "done through #N of M" after each stretch so progress survives; commit each finished stretch with commit_all (no per-call limit — one table per stretch keeps Confirms reviewable). SPEED: fire independent calls TOGETHER in one block — all captures at once, all product matches at once, all vendor lookups at once — instead of one item per round; they execute in parallel. Reads pull what you ask: empty query + high limit lists everything at once; include expands each row (products: quotes/checklist; vendors: rates/contact; rates: commercials); every search reports total + truncated, so page big lists with offset. 3) Extract facts with update_draft — write values AS the vendor wrote them (4", mtr, nos auto-normalize to 4 inch / meter / pcs). 4) Resolve each product with find_product: single exact hit = EXISTS (use its id, never create); several = ask the user to pick, never guess; zero = ask name + category, then propose_product (category from the live list only — invented ones are rejected). 5) required_specs ONCE per product, then ask_specs renders the missing-details form (options come from past quotes) instead of prose questions. 6) find_vendor: exact hit = use id; none = propose_vendor. 7) propose_vendor/propose_product first for anything new, then propose_rate per item — or ONE commit_all with the whole table when several items are ready. TALLIES FROM RECEIPTS ONLY: filed/blocked counts come strictly from execute + commit tool results in this session — never estimate, never restate totals from memory; if unsure, say exactly what is and is not confirmed. If the user says "continue" but you have NO trace and NO blob in history, the earlier work died before it was saved — say so plainly and ask them to re-paste; never answer empty. ' +
     'TABLE FIRST: before filing multiple items, show a compact table — one row per item (product, vendor, price/unit, missing). Then the proposal(s). After Confirm, report per-rate results (created vs updated) + what is still missing per rate. Later corrections (user supplies missing info for some or all) UPDATE the same rates via commit_all again or update_rate — never second rates. ' +
     'DATA FIDELITY (highest rule): maintain data accuracy — NEVER hallucinate, invent, guess, or fill gaps with plausible-looking values. Every filed value must come from the vendor text or the user; anything unstated stays missing and flagged, never fabricated. EXTRACTION TO THE END: read each quote fully and capture EVERYTHING present — product, vendor + vendor type, phone, location/address, price, unit, discount, MOQ, weight, pack qty + pack dims, delivery days, quote date, and every spec — not just name + price. A new vendor without its phone/location, or a quote without its commercials, is an incomplete capture: go back to the text before drafting. ' +
-    'Gates: filing needs product + vendor + price + unit. Unknown SPECS do not block — they file flagged as missing (say which). Missing commercials block the card — ask the user. Use raw question text in replies, never attrKey slugs. Keep replies short. ' +
+    'Gates: filing needs product + vendor + price + unit. KEY FIDELITY (hard rule): spec keys MUST be exact attrKeys from required_specs — the tools auto-map vendor wording and push leftovers to notes (shown as unmapped), but NEVER invent a key, and NEVER fill two keys with the same meaning (one concept = one key; a second same-meaning value is a conflict to flag, not a second key). Non-spec extras (delivery notes, stray details) go to notes, never specs. Use raw question text in replies, never attrKey slugs. Keep replies short. ' +
+    'MILLING SPARES DOMAIN (you deal in flour-mill / roller-flour-mill machinery spare parts — plansifters, elevator buckets + belts, conveyors, sieves + meshes, bearings, belts, hoppers — and you know it): MS = mild steel (regular iron); SS = stainless steel, SS304/SS316 food-grade; GZ = sheet gauge/thickness, and LOWER number = thicker (18GZ is thicker than 28GZ); perforated sheet means round holes + gauge matters, double-crimped/wire mesh means no gauge; jali = mesh/screen/sieve. JINDAL and similar are STEEL BRANDS, never the maker — maker names (MEMCO, PREM, GOKAL…) answer make/model questions. Bucket sizes read width x projection x depth, usually inches; frame sizes in mm. MOQ in pcs or meters as quoted; rates per pc/meter/kg. Elevator belt thickness/ply/grade are belt specs, not bucket specs — never conflate. ' +
     'Updates: rate corrections → update_rate directly; vendor detail corrections (phone/location from a newer quote) → update_vendor directly. Deletes: find the item first (find_rate / find_vendor), show the user exactly what will go, then propose the delete (delete_rate / delete_vendor / delete_product) — it files ONLY on Confirm, like creates. DEDUPE + RECEIPTS (hard rule): ONE draft per distinct vendor / product / rate per chat — check your trace before proposing; an identical draft already proposed MUST be reused, never re-fired (the tool refuses duplicates — that error means the card already exists, use it). A tool result of {proposed:true} IS the delivery receipt: the card is with the user. Re-firing never fixes anything, it only multiplies cards. Past ~5 new drafts, pause and present the table for Confirm before drafting more. DUPLICATES (the designed flow): same vendor spelled two ways or same product twice → run find_duplicates, show the pairs, then MERGE into the survivor (merge_vendor / merge_product: rates move over, aliases + checklist questions union, exact-duplicate rates collapse newest-kept, loser deleted — all on Confirm). A delete blocked by live rates is a MERGE signal, never a reason to delete rates. Never keep known duplicates side by side.'
   ),
   toolDefs: () => TOOL_DEFS,

@@ -30,6 +30,7 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   const isOverdue = !sent && hoursOverdue >= 24;
   const overdueLevel = isOverdue ? Math.min(3, Math.floor((hoursOverdue - 24) / 24)) : -1; // 0:24-48,1:48-72,2:72-96,3:96+
   const overdueLabel = isOverdue ? (hoursOverdue >= 48 ? `${Math.floor(hoursOverdue/24)}d overdue` : `${hoursOverdue}h overdue`) : null;
+  const noItems = items.length === 0;
   return (
     <div
       className="flex cursor-pointer flex-col items-start gap-3 rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)] p-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:border-[var(--color-brand-indigo)]/50 hover:bg-[var(--bg-input)]/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6"
@@ -59,6 +60,9 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
             <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
               overdueLevel === 3 ? "bg-red-700 text-white border-red-700" : overdueLevel === 2 ? "bg-red-600 text-white border-red-600" : overdueLevel === 1 ? "bg-red-500 text-white border-red-500" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/40"
             }`}>{overdueLabel}</span>
+          )}
+          {noItems && (
+            <span className="px-2 py-0.5 text-[11px] font-black uppercase tracking-wide rounded-full border-2 whitespace-nowrap bg-violet-600 text-white border-violet-700 shadow-sm" title="No line items yet — open the enquiry and add items before quoting">⚠ No items</span>
           )}
           {!hideIdentity && (
             <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${

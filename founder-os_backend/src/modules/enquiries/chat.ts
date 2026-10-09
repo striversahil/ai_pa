@@ -39,7 +39,8 @@ export interface PriceTableRow {
   variation: string;
   markedPrice: number;
   unit: string;
-  confidence: number;
+  /** Null for non-scored rows (e.g. the item's own earlier prices). */
+  confidence: number | null;
   quoteAgeDays: number | null;
   moq: string | null;
   deliveryDays: number | null;
@@ -47,6 +48,12 @@ export interface PriceTableRow {
   /** 1-based item number + name (set for batch tables spanning items). */
   itemIndex?: number;
   itemName?: string;
+  /** 'Catalogue' past-quote rows vs 'Earlier' item-history rows. */
+  tag?: string;
+  /** Full labeled spec list for the per-item "all info" view. */
+  specs?: { question: string; value: string }[];
+  /** Vendor's rate photo (no vendor identity). */
+  imageUrl?: string | null;
 }
 
 export interface ChatProposal {
@@ -69,6 +76,11 @@ export interface ChatProposal {
   questions?: SpecQuestion[];
   // price_table only:
   rows?: PriceTableRow[];
+  /** Enquiry item's own photo urls (image-type media) for the per-item view. */
+  itemMedia?: string[];
+  /** True when the lookup found NO usable price — the UI then offers the
+   *  "Fetch from procurement" button (and only then). */
+  needsProcurement?: boolean;
 }
 
 /** Audible-visible step for the UI chime: which tool ran + one-line outcome. */
@@ -124,6 +136,14 @@ function getItemState(s: PriceSession, idx: number): PriceItemState {
 function priceWho(me: any): string {
   return String(me?.user?.email ?? me?.user?.id ?? 'anon').toLowerCase();
 }
+
+/** History key for the sales thread (mirrors salesCopilotDef.historyKey) —
+ *  used by the /chat/execute route to record confirms in-thread. */
+export function salesChatHistoryKey(enquiryId: string, me: any): string {
+  const who = String((me as any)?.user?.email ?? (me as any)?.user?.id ?? 'anon').toLowerCase();
+  return `enquiry:chat:hist2:${enquiryId}:${who}`;
+}
+export const SALES_CHAT_HISTORY_TTL_MS = THREAD_TTL_MS;
 
 function priceSessionKey(enquiryId: string, who: string): string {
   return `enquiry:price:${enquiryId}:${who}`;
@@ -304,7 +324,7 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         type: 'function',
         function: {
           name: 'ask_specs',
-          description: 'Show the sales agent a stepped spec questionnaire (spec_form card) for the still-missing required specs of a catalogue product. Prefer this over asking spec questions in prose.',
+          description: 'Show the sales agent a stepped spec questionnaire (spec_form card) for the still-missing required specs of a catalogue product. Every question is OPTIONAL and skippable — the form also offers "Quote with what we have". Prefer this over asking spec questions in prose. You may skip this entirely and call quote_price directly when the user wants a price now.',
           parameters: {
             type: 'object',
             properties: {
@@ -319,15 +339,31 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         type: 'function',
         function: {
           name: 'quote_price',
-          description: 'Look up past vendor rates for a catalogue product, score them against the collected specs, and draft a customer price (final price; cost basis and vendor hidden) for confirm. Below-confidence lookups route to procurement instead of quoting.',
+          description: 'Look up past vendor rates for a catalogue product, score them against the collected specs, and draft a customer price (final price; cost basis and vendor hidden) for confirm. Details are OPTIONAL: pass skipSpecs:true to quote with whatever is collected — below-confidence still quotes with caveats instead of routing. Only no-past-rates routes to procurement.',
           parameters: {
             type: 'object',
             properties: {
               productId: { type: 'string' },
               itemIndex: { type: 'number', description: '1-based item number as shown in the chat (Item 1, Item 2, …)' },
               specs: { type: 'object', description: 'attrKey → collected spec value', additionalProperties: { type: 'string' } },
+              skipSpecs: { type: 'boolean', description: 'Quote now with collected specs, flagging the missing ones as caveats' },
             },
-            required: ['productId', 'itemIndex', 'specs'],
+            required: ['productId', 'itemIndex'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'lookup_price',
+          description: 'Catalogue price lookup for ANY product by name — no enquiry item needed. Use the moment the user asks the rate of something that is NOT on this enquiry (or before any item exists). Resolves the product, scores past vendor rates against optional specs, and shows the vendor-blind table (view-only: no apply, no procurement — there is no item to attach to). NEVER tell the user to add the item first.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Product name as the user said it ("V belt", "Damru", …)' },
+              productId: { type: 'string', description: 'Catalogue product id picked from a previous candidates list (skips matching)' },
+              specs: { type: 'object', description: 'attrKey → known spec value (optional)', additionalProperties: { type: 'string' } },
+            },
           },
         },
       },
@@ -348,8 +384,22 @@ function toolDefs(ctx: SalesCtx): ToolDefinition[] {
       {
         type: 'function',
         function: {
+          name: 'list_enquiry_rates',
+          description: 'Show the OTHER prices already on one enquiry item: every rate quoted on it before (vendor-blind — no vendor names), plus its expected and final rate. Use when the user asks what was quoted earlier, what other prices exist, or the price history of an item. Never invent — only stored rows.',
+          parameters: {
+            type: 'object',
+            properties: {
+              itemIndex: { type: 'number', description: '1-based item number as shown in the chat (Item 1, Item 2, …)' },
+            },
+            required: ['itemIndex'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'quote_price_batch',
-          description: 'BATCH quoting for MULTIPLE items in ONE call — use this (never quote_price in a loop) after the specs are collected. Scores every item against its resolved product and returns per-item prices plus ONE combined price table (per-row Apply in the UI). Items without a resolved product or past rates route to procurement individually.',
+          description: 'BATCH quoting for MULTIPLE items in ONE call — use this (never quote_price in a loop) after the specs are collected (or immediately when the user wants prices now: details are OPTIONAL, pass skipSpecs:true). Scores every item against its resolved product and returns per-item prices plus ONE combined price table (per-row Apply in the UI). Below-confidence items still quote with caveats. Only items without a resolved product or past rates route to procurement individually.',
           parameters: {
             type: 'object',
             properties: {
@@ -456,6 +506,7 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
       moq: r.moq != null ? String(r.moq) : null,
       deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
+      imageUrl: (r as any)?.imageUrl ? String((r as any).imageUrl) : null,
       quotedAt: String(r.quotedAt ?? ''),
       active: r.active !== false,
     }));
@@ -468,6 +519,48 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v]) => v);
+  };
+  /** Item's own photo urls (image-type media only) for the per-item view. */
+  const itemPhotos = (it: any): string[] => {
+    const out: string[] = [];
+    for (const m of (Array.isArray(it?.media) ? it.media : [])) {
+      if ((m as any)?.type === 'image' && (m as any)?.url && out.length < 6) out.push(String((m as any).url));
+    }
+    return out;
+  };
+  /** One vendor-blind table row from a scored catalogue rate — shared by
+   *  quote_price, quote_price_batch and list_enquiry_rates, so every table
+   *  carries the same full-spec + photo payload for the per-item view. */
+  const catalogueRow = (
+    product: MatchProduct,
+    guide: MatchGuideRow[],
+    s: { rate: MatchRate; confidence: number },
+    specs: Record<string, string>,
+    required: MatchGuideRow[],
+    i: number,
+    extra?: { itemIndex?: number; itemName?: string; tag?: string; maxBits?: number },
+  ): PriceTableRow => {
+    const q = salesSafeQuote(product, s as any, specs, required, guide);
+    const bits = Object.entries(s.rate.attrValues ?? {})
+      .map(([, v]) => String(v ?? '').trim())
+      .filter(Boolean)
+      .filter((v, vi, arr) => arr.indexOf(v) === vi)
+      .slice(0, extra?.maxBits ?? 4);
+    return {
+      variation: bits.length > 0 ? bits.join(' · ').slice(0, 140) : `Quote ${i + 1}`,
+      markedPrice: q.markedPrice,
+      unit: q.unit,
+      confidence: q.confidence,
+      quoteAgeDays: q.quoteAgeDays,
+      moq: q.moq,
+      deliveryDays: q.deliveryDays,
+      best: i === 0,
+      ...(extra?.itemIndex != null ? { itemIndex: extra.itemIndex } : {}),
+      ...(extra?.itemName ? { itemName: extra.itemName } : {}),
+      ...(extra?.tag ? { tag: extra.tag } : {}),
+      specs: q.allSpecs.map((a) => ({ question: a.question, value: a.value || '—' })),
+      imageUrl: q.imageUrl,
+    };
   };
 
   if (name === 'get_enquiry_summary') {    const items = (Array.isArray(view.items) ? view.items : []).map((it: any, i: number) => ({
@@ -642,7 +735,9 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
         key: g.attrKey,
         label: g.question,
         note: g.guideNote ?? '',
-        required: true,
+        // Details are OPTIONAL (founder order): every question skippable,
+        // and quote_price may be called any time — it quotes with caveats.
+        required: false,
         type: options.length >= 2 ? 'options' : 'text',
         options,
       });
@@ -694,7 +789,8 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     const idx = parsedQ.idx;
     const product = (await liveProducts()).find((p) => p.id === pid);
     if (!product) return { result: { error: 'unknown product' } };
-    const required = requiredChecklist(await liveGuide(pid));
+    const guide = await liveGuide(pid);
+    const required = requiredChecklist(guide);
     // Merge order: session (prior turns) < explicit args (this turn wins).
     // Question-labeled answers (from the spec form) resolve to attrKeys.
     const who = priceWho(ctx.me);
@@ -715,42 +811,38 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       activeItem: idx,
     });
     const scored = scoreRates(await liveRates(pid), pid, specs, required);
-    if (scored.length === 0) return { result: { error: 'no past rates for this product', routed: 'procurement' } };
+    if (scored.length === 0) {
+      return {
+        result: { error: 'no past rates for this product', routed: 'procurement', hasUsablePrices: false },
+        proposals: [{
+          kind: 'price_table', itemIndex: idx,
+          productId: product.id, productName: product.name,
+          rows: [], label: `Past prices · ${product.name} (none found)`,
+          text: 'No past prices found for this product.',
+          itemMedia: itemPhotos(itemsQ[idx]),
+          needsProcurement: true,
+        }],
+      };
+    }
     const best = scored[0];
     // Variation table: every scored past rate as a vendor-blind row so sales
-    // can SEE all matching variations, not just the single best. The table is
-    // view-only — one-tap apply stays gated on best-confidence below.
-    const rows: PriceTableRow[] = scored.slice(0, 5).map((s, i) => {
-      const q = salesSafeQuote(product, s, specs, required);
-      const bits = Object.entries(s.rate.attrValues ?? {})
-        .map(([, v]) => String(v ?? '').trim())
-        .filter(Boolean)
-        .filter((v, vi, arr) => arr.indexOf(v) === vi)
-        .slice(0, 4);
-      return {
-        variation: bits.length > 0 ? bits.join(' · ').slice(0, 140) : `Quote ${i + 1}`,
-        markedPrice: q.markedPrice,
-        unit: q.unit,
-        confidence: q.confidence,
-        quoteAgeDays: q.quoteAgeDays,
-        moq: q.moq,
-        deliveryDays: q.deliveryDays,
-        best: i === 0,
-        itemIndex: parsedQ.num,
-      };
-    });
+    // can SEE all matching variations, not just the single best.
+    const rows: PriceTableRow[] = scored.slice(0, 5).map((s, i) =>
+      catalogueRow(product, guide, s, specs, required, i, { itemIndex: parsedQ.num }));
     const proposals: ChatProposal[] = [{
       kind: 'price_table', itemIndex: idx,
       productId: product.id, productName: product.name,
       rows, label: `Past prices · ${product.name} (${rows.length})`,
+      itemMedia: itemPhotos(itemsQ[idx]),
+      needsProcurement: false,
     }];
-    if (best.confidence < MIN_QUOTE_CONFIDENCE) {
-      return {
-        result: { routed: 'procurement', confidence: best.confidence, variations: rows.length, note: 'below apply-confidence — table shown for reference only; tell the user this item is routed to procurement' },
-        proposals,
-      };
-    }
-    const quote: SalesQuote = salesSafeQuote(product, best, specs, required);
+    // Details are OPTIONAL (founder order): below-confidence still quotes —
+    // flagged with caveats instead of routing to procurement.
+    const quote: SalesQuote = salesSafeQuote(product, best, specs, required, guide);
+    const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
+    const caveatNote = caveated && quote.missingSpecs.length > 0
+      ? ` — note: ${quote.missingSpecs.map((m) => m.question).join(', ')} not confirmed; closest past match — fetch from procurement if it doesn't work`
+      : caveated ? ' — closest past match, lower confidence — fetch from procurement if it doesn\'t work' : '';
     const items = Array.isArray(enquiry.items) ? enquiry.items : [];
     const existing = String((items[idx] as any)?.spec ?? '');
     // Companion spec update: append only genuinely new "Question: value" lines.
@@ -762,8 +854,8 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       productId: product.id, productName: product.name,
       markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
       quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
-      text: `${product.name} @ ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} — confidence ${quote.confidence}, quote ~${quote.quoteAgeDays ?? '?'}d old${quote.moq ? `, MOQ ${quote.moq}` : ''}${quote.deliveryDays != null ? `, ${quote.deliveryDays}d delivery` : ''}`,
-      label: `Apply AI price · ${product.name}`,
+      text: `${product.name} @ ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} — confidence ${quote.confidence}, quote ~${quote.quoteAgeDays ?? '?'}d old${quote.moq ? `, MOQ ${quote.moq}` : ''}${quote.deliveryDays != null ? `, ${quote.deliveryDays}d delivery` : ''}${caveatNote}`,
+      label: caveated ? `Apply AI price · ${product.name} (closest match)` : `Apply AI price · ${product.name}`,
     });
     if (fresh.length > 0) {
       proposals.push({
@@ -772,7 +864,72 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
         label: `Update Item ${idx + 1} spec with confirmed details`,
       });
     }
-    return { result: { proposed: true, ...quote }, proposals };
+    return { result: { proposed: true, caveated, hasUsablePrices: true, ...quote }, proposals };
+  }
+
+  if (name === 'lookup_price') {
+    // Catalogue-wide rate lookup with NO enquiry item: the user just wants
+    // to know the rate of something. View-only by design (no itemIndex →
+    // no Apply column, no procurement button in the UI).
+    if (ctx.restricted) return { result: { error: 'not permitted' } };
+    const q = String((args as any)?.query ?? (args as any)?.productName ?? '').trim().slice(0, 200);
+    const products = await liveProducts();
+    const pickedId = String(args.productId ?? '').trim();
+    const picked = pickedId ? products.find((p) => p.id === pickedId && p.active !== false) : null;
+    if (pickedId && !picked) return { result: { error: 'unknown productId — ask the user to pick from the candidates list again' } };
+    const resolved = picked ? { product: picked, exact: true } : (q ? resolveProduct(products, q, '') : null);
+    if (!resolved) {
+      const cands = q
+        ? rankProducts(products, q, 5, 1, 0.2).map((c) => ({ id: c.product.id, name: c.product.name, category: c.product.category }))
+        : [];
+      if (cands.length > 0) {
+        return {
+          result: {
+            error: 'no confident catalogue match', candidates: cands,
+            hint: 'offer these candidates to the user to pick one, then call lookup_price again with the picked productId',
+          },
+        };
+      }
+      return { result: { error: q ? 'no catalogue match for that product' : 'tell me which product you want the rate of', hasUsablePrices: false } };
+    }
+    const product = resolved.product;
+    const guide = await liveGuide(product.id);
+    const required = requiredChecklist(guide);
+    const specsIn = (args.specs && typeof args.specs === 'object' ? args.specs : {}) as Record<string, unknown>;
+    const merged = filterChecklistSpecs(resolveSpecKeys(
+      specsIn as Record<string, string>,
+      guide.map((g) => ({ attrKey: g.attrKey, question: g.question })),
+    ), guide);
+    const specs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(merged)) {
+      const s = String(v ?? '').trim().slice(0, 200);
+      if (s) specs[String(k)] = s;
+    }
+    const scored = scoreRates(await liveRates(product.id), product.id, specs, required);
+    if (scored.length === 0) return { result: { error: 'no past rates for this product', hasUsablePrices: false } };
+    const best = scored[0];
+    const rows: PriceTableRow[] = scored.slice(0, 5).map((s, i) =>
+      catalogueRow(product, guide, s, specs, required, i, { tag: 'Catalogue' }));
+    const quote: SalesQuote = salesSafeQuote(product, best, specs, required, guide);
+    const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
+    const caveatBits = caveated && quote.missingSpecs.length > 0
+      ? ` — note: ${quote.missingSpecs.map((m) => m.question).join(', ')} not confirmed, closest past match`
+      : '';
+    return {
+      result: {
+        proposed: true, caveated, hasUsablePrices: true,
+        productId: product.id, productName: product.name,
+        markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
+        note: 'view-only catalogue rate (no enquiry item) — no apply, no procurement',
+      },
+      proposals: [{
+        kind: 'price_table',
+        productId: product.id, productName: product.name,
+        rows, label: `Catalogue prices · ${product.name} (${rows.length})`,
+        text: `${product.name} around ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} (confidence ${quote.confidence}${caveatBits}). Not on this enquiry — view only.`,
+        needsProcurement: false,
+      }],
+    };
   }
 
   if (name === 'find_price_batch') {
@@ -818,6 +975,68 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     return { result: { items: out } };
   }
 
+  if (name === 'list_enquiry_rates') {
+    if (ctx.restricted) return { result: { error: 'not permitted' } };
+    const itemsAll = Array.isArray(enquiry.items) ? enquiry.items : [];
+    const parsed = itemIdx(args, itemsAll.length);
+    if ('error' in parsed) return { result: { error: parsed.error } };
+    const idx = parsed.idx;
+    const it = itemsAll[idx] as any;
+    const itemName = String(it?.name ?? `Item ${parsed.num}`).slice(0, 80);
+    // Vendor-blind by construction: vendor names are dropped, only the
+    // numbers + vendor-neutral notes surface (mirrors salesSafeQuote).
+    const rows: PriceTableRow[] = ((it?.rates ?? []) as any[]).map((r, i) => {
+      const bits: string[] = [];
+      const desc = String(r?.description ?? '').trim();
+      if (desc) bits.push(desc.slice(0, 120));
+      if (r?.specSame === false && String(r?.specDiff ?? '').trim()) {
+        bits.push(`Spec: ${String(r.specDiff).trim().slice(0, 100)}`);
+      }
+      const refs = (Array.isArray(r?.references) ? r.references : [])
+        .filter((m: any) => m?.type === 'image' && m?.url)
+        .map((m: any) => String(m.url)).slice(0, 3);
+      const t = new Date(String(r?.quotedAt ?? '')).getTime();
+      return {
+        variation: bits.length > 0 ? bits.join(' · ').slice(0, 140) : `Earlier quote ${i + 1}`,
+        markedPrice: Number(r?.rate) || 0,
+        unit: '',
+        confidence: null,
+        quoteAgeDays: isNaN(t) ? null : Math.max(0, Math.round((Date.now() - t) / 86_400_000)),
+        moq: null,
+        deliveryDays: null,
+        best: false,
+        itemIndex: parsed.num,
+        itemName,
+        tag: 'Earlier',
+        specs: [
+          ...(r?.specSame === false && String(r?.specDiff ?? '').trim()
+            ? [{ question: 'Their spec', value: String(r.specDiff).trim().slice(0, 200) }] : []),
+          ...((r?.sharedWithSales && String(r?.salesNote ?? '').trim())
+            ? [{ question: 'Note', value: String(r.salesNote).trim().slice(0, 200) }] : []),
+        ],
+        imageUrl: refs[0] ?? null,
+      };
+    }).filter((r) => r.markedPrice > 0);
+    const expected = it?.expectedRate != null ? Number(it.expectedRate) : null;
+    return {
+      result: {
+        itemIndex: parsed.num, prices: rows.length,
+        expectedRate: Number.isFinite(expected) ? expected : null,
+        finalRate: it?.finalRate ?? null, hasUsablePrices: rows.length > 0,
+      },
+      proposals: [{
+        kind: 'price_table', itemIndex: idx,
+        productName: itemName,
+        rows, label: `Earlier prices · Item ${parsed.num} ${itemName} (${rows.length})`,
+        text: rows.length > 0
+          ? `On this item so far${Number.isFinite(expected) && (expected as number) > 0 ? ` — expected ₹${expected}` : ''}${it?.finalRate != null ? `, final ₹${it.finalRate}` : ''}.`
+          : 'No earlier prices on this item yet.',
+        itemMedia: itemPhotos(it),
+        needsProcurement: rows.length === 0,
+      }],
+    };
+  }
+
   if (name === 'quote_price_batch') {
     if (ctx.restricted) return { result: { error: 'not permitted' } };
     const rawList = Array.isArray(args.items) ? args.items : [];
@@ -829,6 +1048,7 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
     const nextItems: Record<string, PriceItemState> = { ...(prev.items ?? {}) };
     const out: any[] = [];
     const rows: PriceTableRow[] = [];
+    const unpriced: ChatProposal[] = [];
     for (const entry of rawList.slice(0, 20)) {
       const num = Math.floor(Number((entry as any)?.itemIndex) || 0);
       if (!(num >= 1) || num > allItems.length) {
@@ -839,10 +1059,18 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       const st = getItemState({ items: nextItems, activeItem: prev.activeItem }, idx);
       const product = products.find((p) => p.id === st.productId && p.active !== false);
       if (!product) {
-        out.push({ itemIndex: num, routed: 'procurement', note: 'no resolved product — run find_price_batch first' });
+        out.push({ itemIndex: num, routed: 'procurement', hasUsablePrices: false, note: 'no resolved product — run find_price_batch first' });
+        unpriced.push({
+          kind: 'price_table', itemIndex: idx,
+          rows: [], label: `Past prices · Item ${num} (no product matched)`,
+          text: 'No catalogue product matched — fetch from procurement.',
+          itemMedia: itemPhotos(allItems[idx]),
+          needsProcurement: true,
+        });
         continue;
       }
-      const required = requiredChecklist(await liveGuide(product.id));
+      const guide = await liveGuide(product.id);
+      const required = requiredChecklist(guide);
       const entrySpecs = ((entry as any)?.specs && typeof (entry as any).specs === 'object' ? (entry as any).specs : {}) as Record<string, unknown>;
       const merged = filterChecklistSpecs(resolveSpecKeys(
         { ...(st.specs ?? {}), ...(entrySpecs as Record<string, string>) },
@@ -857,41 +1085,41 @@ async function execTool(ctx: SalesCtx, name: string, args: Record<string, any>):
       const scored = scoreRates(await liveRates(product.id), product.id, specs, required);
       const itemName = String((allItems[idx] as any)?.name ?? `Item ${num}`).slice(0, 80);
       if (scored.length === 0) {
-        out.push({ itemIndex: num, product: product.name, routed: 'procurement', note: 'no past rates for this product' });
+        out.push({ itemIndex: num, product: product.name, routed: 'procurement', hasUsablePrices: false, note: 'no past rates for this product' });
+        unpriced.push({
+          kind: 'price_table', itemIndex: idx,
+          productId: product.id, productName: product.name,
+          rows: [], label: `Past prices · Item ${num} ${itemName} (none found)`,
+          text: 'No past prices found for this product.',
+          itemMedia: itemPhotos(allItems[idx]),
+          needsProcurement: true,
+        });
         continue;
       }
+      // Details are OPTIONAL: below-confidence still quotes with caveats.
       const best = scored[0];
-      if (best.confidence < MIN_QUOTE_CONFIDENCE) {
-        out.push({ itemIndex: num, product: product.name, routed: 'procurement', confidence: best.confidence, note: 'below confidence — manual procurement owns this item' });
-        continue;
-      }
-      const quote = salesSafeQuote(product, best, specs, required);
+      const quote = salesSafeQuote(product, best, specs, required, guide);
+      const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
       out.push({
         itemIndex: num, productId: product.id, productName: product.name,
         markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
         quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
+        ...(caveated ? { caveated: true as const, missing: quote.missingSpecs.map((m) => m.question) } : {}),
+        hasUsablePrices: true,
       });
       // Top variation per item lands in the combined table (per-row Apply).
-      const top = scored[0];
-      const tq = salesSafeQuote(product, top, specs, required);
-      const bits = Object.entries(top.rate.attrValues ?? {})
-        .map(([, v]) => String(v ?? '').trim())
-        .filter(Boolean)
-        .filter((v, vi, arr) => arr.indexOf(v) === vi)
-        .slice(0, 3);
-      rows.push({
-        variation: bits.length > 0 ? bits.join(' · ').slice(0, 120) : product.name,
-        markedPrice: tq.markedPrice, unit: tq.unit, confidence: tq.confidence,
-        quoteAgeDays: tq.quoteAgeDays, moq: tq.moq, deliveryDays: tq.deliveryDays,
-        best: true, itemIndex: num, itemName,
-      });
+      rows.push(catalogueRow(product, guide, scored[0], specs, required, 0, { itemIndex: num, itemName, tag: 'Catalogue', maxBits: 3 }));
     }
     await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem });
-    const proposals: ChatProposal[] = rows.length > 0 ? [{
-      kind: 'price_table',
-      productName: 'Batch prices',
-      rows, label: `Batch prices · ${out.filter((o) => typeof o.markedPrice === 'number').length}/${out.length} items priced`,
-    }] : [];
+    const proposals: ChatProposal[] = [
+      ...(rows.length > 0 ? [{
+        kind: 'price_table' as const,
+        productName: 'Batch prices',
+        rows, label: `Batch prices · ${out.filter((o) => typeof o.markedPrice === 'number').length}/${out.length} items priced`,
+        needsProcurement: false as const,
+      }] : []),
+      ...unpriced,
+    ];
     return { result: { items: out, proposed: rows.length > 0 }, proposals };
   }
 
@@ -907,7 +1135,7 @@ function systemPrompt(ctx: SalesCtx): string {
   const langNote = !ctx.restricted && !ctx.privileged
     ? 'Reply in Hinglish (Hindi + English mix, Roman script) by default — sales-floor style, short & bazaar-friendly. Use Hindi words for common talk (bhai, kya chahiye, pic bhejo, size pucho) mixed with English specs/prices. Keep specs, grades, and prices in English as written.'
     : '';
-  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. Items are numbered from 1 exactly as shown (Item 1, Item 2, …) — always speak and accept item numbers 1-based; there is no Item 0, never say "index". ${langNote} Prior turns AND the price session are recalled automatically every turn — never claim to be a new session or to lack earlier context. When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it recalls the saved product + collected specs for the item) — never re-ask specs that are already collected. BATCH RULE: when prices are asked for MULTIPLE items, use find_price_batch ONCE for all of them (never find_price in a loop), then one ask_specs per distinct product, then quote_price_batch ONCE for all of them (never quote_price in a loop). If find_price returns candidates, offer them to the user to pick one, then call find_price again with the picked productId. Then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price. QUESTIONS: whenever you need ANY answer, decision, or confirmation from the user — specs, choice between options, go-ahead, free-text detail — ask it through ask_specs (catalogue spec checklists) or ask_question (everything else), which render as answerable cards. NEVER leave a question buried in prose: prose questions have no answer box. Answers to ask_question cards are conversational — read them from history, never file them as specs. The user's spec-form answers arrive as the next message labeled by question text — file them via quote_price and continue. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. When a lookup routes to procurement, say so plainly and stop — do not quote.`;
+  return `You are the sales agent's assistant for ONE sales enquiry (ID ${ctx.enquiryId}). Fill gaps, draft notes, fix specs, find prices, and push the enquiry toward price-ready. Answer using the tools — never invent specs, rates, or statuses. You have full KYP catalogue context: each item has category/kypItem/kypMissing/kypComplete and completeness counts — use them to answer "what's missing". Keep replies short. Items are numbered from 1 exactly as shown (Item 1, Item 2, …) — always speak and accept item numbers 1-based; there is no Item 0, never say "index". ${langNote} Prior turns AND the price session are recalled automatically every turn — never claim to be a new session or to lack earlier context. When the user asks to send, post, or write anything to the enquiry thread, draft it via propose_comment so the sales agent can confirm with one tap — do not claim it is done until confirmed. ${scopeNote} When you need to compare items or specs, use a markdown table. PRICE LOOKUPS: when the user asks for a price/rate on an item, always start with find_price (it recalls the saved product + collected specs for the item) — never re-ask specs that are already collected. When they ask the rate of ANYTHING not on this enquiry (or before items exist), use lookup_price straight away — NEVER tell them to add the item first; that lookup is view-only by design. BATCH RULE: when prices are asked for MULTIPLE items, use find_price_batch ONCE for all of them (never find_price in a loop), then one ask_specs per distinct product, then quote_price_batch ONCE for all of them (never quote_price in a loop). If find_price returns candidates, offer them to the user to pick one, then call find_price again with the picked productId. Then ask_specs to collect missing specs through the stepped form (never interrogate in prose when the form can do it), then quote_price — but details are OPTIONAL, never mandatory: every spec question is skippable, and quote_price/quote_price_batch quote with whatever is collected (pass skipSpecs:true when the user wants the price now), flagging unconfirmed details as caveats on the quote. OTHER PRICES: when the user asks what was quoted before, what other prices exist, or the price history of an item, use list_enquiry_rates (the item's own stored rates, vendor-blind) — never guess from memory. QUESTIONS: whenever you need ANY answer, decision, or confirmation from the user — specs, choice between options, go-ahead, free-text detail — ask it through ask_specs (catalogue spec checklists) or ask_question (everything else), which render as answerable cards. NEVER leave a question buried in prose: prose questions have no answer box. Answers to ask_question cards are conversational — read them from history, never file them as specs. The user's spec-form answers arrive as the next message labeled by question text — file them via quote_price and continue. Quote ONLY from tool output — never invent rates. Prices from quote_price are final customer prices. NEVER mention, hint at, or discuss markup, margin, vendor cost, or how a price was derived — in no world does the sales agent hear about markup. If asked where a price comes from, say it is based on recent matching vendor quotes. Vendor identity is hidden from you and the user by design — never guess, name, or hint at vendors. PROCUREMENT RULE: offer the fetch-from-procurement button ONLY when the lookup found no usable price (no past rates, no matched product) — never alongside a quoted price. When routed, say so plainly and point at the button; when quoted with caveats, present the price plus exactly what is unconfirmed.`;
 }
 
 /** Sales department definition for the shared engine. */
@@ -945,10 +1173,12 @@ export const salesCopilotDef: CopilotDef<SalesCtx> = {
       case 'propose_spec_fix': return 'Drafting spec fix…';
       case 'ask_question': return 'Preparing question…';
       case 'find_price': return 'Looking up price…';
+      case 'lookup_price': return 'Looking up catalogue price…';
       case 'ask_specs': return 'Preparing spec form…';
       case 'quote_price': return 'Pricing…';
       case 'find_price_batch': return 'Matching batch…';
       case 'quote_price_batch': return 'Pricing batch…';
+      case 'list_enquiry_rates': return 'Reading earlier prices…';
       default: return `Running ${name}…`;
     }
   },
@@ -1049,6 +1279,22 @@ export async function executeProposal(
       return { result: r, applied: r.status === 200 ? 'price_quote' : 'none' };
     } catch (e: any) {
       return { result: { status: 500, body: { error: String(e?.message ?? 'price apply failed').slice(0, 300) } }, applied: 'none' };
+    }
+  }
+  if (kind === 'fetch_procurement') {
+    // Telecaller fallback: flag the item for procurement (ratesRequested).
+    // Offered ONLY when the lookup found no usable price (needsProcurement).
+    const idx = Math.max(0, Math.floor(Number(action?.itemIndex) || 0));
+    try {
+      const existing: any = await store.getEnquiry(enquiryId).catch(() => null);
+      if (!existing) return { result: { status: 404, body: { error: 'not found' } }, applied: 'none' };
+      const items = Array.isArray(existing.items) ? [...existing.items] : [];
+      if (!items[idx]) return { result: { status: 400, body: { error: 'bad item index' } }, applied: 'none' };
+      items[idx] = { ...items[idx], ratesRequested: 'AI chat · telecaller request', ratesRequestedAt: new Date().toISOString() };
+      const r = await enquiryUpdate(store, me, enquiryId, { items });
+      return { result: r, applied: r.status === 200 ? 'fetch_procurement' : 'none' };
+    } catch (e: any) {
+      return { result: { status: 500, body: { error: String(e?.message ?? 'procurement request failed').slice(0, 300) } }, applied: 'none' };
     }
   }
   return { result: { status: 400, body: { error: 'unknown action' } }, applied: 'none' };

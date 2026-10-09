@@ -59,6 +59,7 @@ export default function ProcurementItemCard({
 
   const rates = item.rates ?? [];
   const flagged = !!item.specIssue;
+  const alternateRequested = !!String((item as any)?.variationRequest ?? "").trim();
   const locked = item.finalRate !== undefined && item.finalRate !== null;
   const media = item.media ?? [];
   const images = media.map((m) => m.url).filter(Boolean);
@@ -111,11 +112,13 @@ export default function ProcurementItemCard({
         <span className={`ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
           flagged
             ? "bg-red-500/10 text-red-500 border-red-500/30"
+            : alternateRequested
+              ? "bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/40"
             : rates.length === 0
               ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
               : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
         }`}>
-          {flagged ? "Awaiting sales fix" : rates.length === 0 ? "Needs rates" : `${rates.length} rate${rates.length === 1 ? "" : "s"}`}
+          {flagged ? "Awaiting sales fix" : alternateRequested ? "Alternate requested" : rates.length === 0 ? "Needs rates" : `${rates.length} rate${rates.length === 1 ? "" : "s"}`}
         </span>
         {item.rateAvailable && (
           <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-indigo-500/10 text-indigo-500 border-indigo-500/30">
@@ -265,34 +268,10 @@ export default function ProcurementItemCard({
         </div>
       )}
 
-      {(item as any).variationRequest && (
-        <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5 text-[11px] leading-relaxed">
-          <p className="font-extrabold text-sky-600 dark:text-sky-400 uppercase tracking-wide text-[10px]">Sales requested info / alternate</p>
-          <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((item as any).variationRequest)}</p>
-          {Array.isArray((item as any).variationRequestMedia) && (item as any).variationRequestMedia.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 pt-1.5">
-              {(item as any).variationRequestMedia.map((m: any, mi: number) => (
-                <img key={mi} src={m.url} alt={`Request ref ${mi+1}`} className="w-12 h-12 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => onOpenLightbox(m.url, (item as any).variationRequestMedia.map((x: any)=>x.url), mi)} />
-              ))}
-            </div>
-          )}
-          <p className="mt-1 text-[var(--text-tertiary)]">
-            Quote as new vendor rate or attach reference media to item attachments — request clears automatically (no management queue).
-          </p>
-          {onAddItemMedia && (
-            <label className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-dashed border-sky-500/40 bg-white/50 hover:bg-sky-500/10 cursor-pointer text-[11px] font-bold text-sky-600">
-              + Attach reference to item
-              <input type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={async (e) => {
-                const files = e.target.files;
-                if (!files || files.length===0) return;
-                const { media } = await filesToUploadedMedia(Array.from(files));
-                if (media.length) onAddItemMedia(media);
-                e.target.value="";
-              }} />
-            </label>
-          )}
-        </div>
-      )}
+      {/* Sales info/alternate requests open IN THE THREAD above (as a sales
+          flag — same trail, same pending detection, same reply-to-resolve as
+          a procurement flag). Answer from the thread composer: text or
+          attachment both clear the request. No separate banner here. */}
 
       {rates.length > 0 && (
         <ul className="space-y-1">

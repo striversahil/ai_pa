@@ -32,15 +32,21 @@ export function normalizeInches(s: unknown): string {
   return t.replace(/\s+/g, ' ').trim();
 }
 
-/** Canonical unit words: mtr/meter/metre → meter; nos/pc → pcs; kg/kgs → kg. */
+/** Canonical unit words: mtr/meter/metre → meter; nos/pc → pcs; kg/kgs → kg.
+ *  Milling-trade extras: "per pc" (cards showed ₹300/per pc vs ₹300/pcs for
+ *  the SAME rate — mixed units that broke identity matching) folds to pcs. */
 const UNIT_MAP: Record<string, string> = {
   mtr: 'meter', mtrs: 'meter', meter: 'meter', meters: 'meter', metre: 'meter', metres: 'meter',
   nos: 'pcs', no: 'pcs', 'nos.': 'pcs', pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs',
+  'per pc': 'pcs', 'per pcs': 'pcs', '/pc': 'pcs', '/pcs': 'pcs', 'per piece': 'pcs',
+  'per meter': 'meter', 'per metre': 'meter', '/meter': 'meter',
+  'per kg': 'kg', '/kg': 'kg',
   kg: 'kg', kgs: 'kg', kilogram: 'kg',
   ft: 'feet', feet: 'feet', foot: 'feet',
   mm: 'mm', cm: 'cm', inch: 'inch', inches: 'inch',
   sqft: 'sqft', 'sq.ft': 'sqft', sqm: 'sqm',
   roll: 'roll', rolls: 'roll', coil: 'coil', coils: 'coil', box: 'box', set: 'set', pair: 'pair',
+  lot: 'lot', bag: 'bag', bags: 'bag',
 };
 
 export function normalizeUnit(s: unknown): string | undefined {
@@ -52,9 +58,13 @@ export function normalizeUnit(s: unknown): string | undefined {
 }
 
 /** Full spec-value cleanup: inch marks + squeeze whitespace. Keeps brand
- *  names, grades, free text verbatim (only the dimension/unit tail changes). */
+ *  names, grades, free text verbatim (only the dimension/unit tail changes).
+ *  Milling-trade: bare "GZ" (28 GZ / 28GZ) folds to "gauge" so the same
+ *  thickness doesn't file as two variants; MS/SS/grades stay verbatim. */
 export function normalizeSpecValue(s: unknown, max = 500): string {
-  return normalizeInches(s).slice(0, max);
+  let t = normalizeInches(s);
+  t = t.replace(/(\d+(?:\.\d+)?)\s*gz\.?$/i, '$1 gauge');
+  return t.slice(0, max);
 }
 
 /** "Nylon 4"" → { cleaned, dimHint }: pulls a bare trailing dimension out so

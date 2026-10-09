@@ -62,9 +62,30 @@ export function registerEnquiryFileRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const name = String(body?.name ?? 'file').slice(0, 200);
     const ext = (name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
     const key = `enq/${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
-    await c.env.CHAT_FILES.put(key, bytes, {
-      metadata: { name, type: body?.type && String(body.type).startsWith(mime.split('/')[0]) ? String(body.type) : mime },
-    });
+    try {
+      await c.env.CHAT_FILES.put(key, bytes, {
+        metadata: { name, type: body?.type && String(body.type).startsWith(mime.split('/')[0]) ? String(body.type) : mime },
+      });
+    } catch (e: any) {
+      console.error(`[enquiry-files] KV put failed for ${key}: ${String(e?.message ?? e).slice(0, 200)}`);
+      return c.json({ error: 'File storage write failed — retry (your photo was NOT lost, nothing was saved)' }, 500);
+    }
+    // Read-back gate: a 201 MUST mean the bytes are servable. If the write
+    // didn't persist (silent KV fault), fail loudly so the frontend keeps the
+    // inline data-URI instead of storing a dead locker URL (Oct 2026: three
+    // uploads returned 201 yet no keys ever persisted — dashboard showed
+    // broken thumbnails with no error anywhere).
+    try {
+      const check = await c.env.CHAT_FILES.get(key, 'arrayBuffer');
+      if (!check || check.byteLength !== bytes.length) {
+        console.error(`[enquiry-files] read-back mismatch for ${key}: wrote ${bytes.length}B, read ${check?.byteLength ?? 'null'}`);
+        try { await c.env.CHAT_FILES.delete(key); } catch { /* best-effort */ }
+        return c.json({ error: 'File storage verification failed — retry (your photo was NOT lost, nothing was saved)' }, 500);
+      }
+    } catch (e: any) {
+      console.error(`[enquiry-files] read-back failed for ${key}: ${String(e?.message ?? e).slice(0, 200)}`);
+      return c.json({ error: 'File storage verification failed — retry (your photo was NOT lost, nothing was saved)' }, 500);
+    }
     return c.json({ key, name, size: bytes.length, type: mime, url: `/api/enquiries/files/${key}` }, 201);
   });
 

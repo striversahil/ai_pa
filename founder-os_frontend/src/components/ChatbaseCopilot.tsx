@@ -3,9 +3,10 @@
 import React, { useState, useRef, useEffect } from "react";
 import Markdown from "./Markdown";
 import SpecForm, { type SpecQuestion } from "./SpecForm";
+import Lightbox from "./Lightbox";
 
 interface ChatProposal {
-  kind: "comment" | "spec_fix" | "price_quote" | "spec_form" | "price_table";
+  kind: "comment" | "spec_fix" | "price_quote" | "spec_form" | "price_table" | "fetch_procurement";
   text?: string;
   scope?: string;
   itemIndex?: number;
@@ -15,12 +16,14 @@ interface ChatProposal {
   productName?: string;
   markedPrice?: number;
   unit?: string;
-  confidence?: number;
+  confidence?: number | null;
   quoteAgeDays?: number | null;
   moq?: string | null;
   deliveryDays?: number | null;
   questions?: { key: string; label: string; note?: string; required?: boolean; type?: "options" | "multiselect" | "text" | "number" | "date"; options?: string[] }[];
-  rows?: { variation: string; markedPrice: number; unit: string; confidence: number; quoteAgeDays?: number | null; moq?: string | null; deliveryDays?: number | null; best?: boolean; itemIndex?: number; itemName?: string }[];
+  rows?: { variation: string; markedPrice: number; unit: string; confidence?: number | null; quoteAgeDays?: number | null; moq?: string | null; deliveryDays?: number | null; best?: boolean; itemIndex?: number; itemName?: string; tag?: string; specs?: { question: string; value: string }[]; imageUrl?: string | null }[];
+  itemMedia?: string[];
+  needsProcurement?: boolean;
 }
 interface ChatActivity { tool: string; label: string; pending?: boolean; }
 interface ChatMsg { role: "user" | "assistant"; text: string; proposals?: ChatProposal[]; activity?: ChatActivity[]; thinking?: string; }
@@ -59,6 +62,10 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
     return () => clearInterval(id);
   }, [busy]);
   const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
+  const [applying, setApplying] = useState<Set<number>>(new Set());
+  const [requested, setRequested] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [listening, setListening] = useState(false);
   const [visible, setVisible] = useState(open);
   const [exiting, setExiting] = useState(false);
@@ -66,7 +73,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
   const inputRef = useRef<HTMLInputElement>(null);
   const recogRef = useRef<any>(null);
 
-  useEffect(() => { setMsgs([]); setConfirmed(new Set()); }, [enquiryId]);
+  useEffect(() => { setMsgs([]); setConfirmed(new Set()); setApplying(new Set()); setRequested(new Set()); setExpanded(new Set()); setLightbox(null); }, [enquiryId]);
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -321,7 +328,8 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
 
   const confirm = async (msgIdx: number, pIdx: number, p: ChatProposal) => {
     const key = msgIdx * 100 + pIdx;
-    if (confirmed.has(key)) return;
+    if (confirmed.has(key) || applying.has(key)) return;
+    setApplying((s) => new Set(s).add(key));
     try {
       const res = await fetch(`/api/enquiries/${enquiryId}/chat/execute`, {
         method: "POST",
@@ -337,6 +345,35 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
       }
     } catch {
       setMsgs((ms) => [...ms, { role: "assistant", text: "Apply failed — please retry." }]);
+    } finally {
+      setApplying((s) => { const n = new Set(s); n.delete(key); return n; });
+    }
+  };
+
+  // Telecaller fallback: flag the item for procurement. Rendered ONLY on
+  // price cards where the lookup found no usable price (needsProcurement).
+  const fetchProcurement = async (msgIdx: number, pIdx: number, p: ChatProposal) => {
+    const key = msgIdx * 100 + pIdx;
+    if (requested.has(key) || applying.has(key)) return;
+    setApplying((s) => new Set(s).add(key));
+    const n = (p.itemIndex ?? 0) + 1;
+    try {
+      const res = await fetch(`/api/enquiries/${enquiryId}/chat/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: { kind: "fetch_procurement", itemIndex: p.itemIndex ?? 0, label: `Fetch from procurement · Item ${n}` } }),
+      });
+      const data = await res.json();
+      if (data.applied && data.applied !== "none") {
+        setRequested((s) => new Set(s).add(key));
+        setMsgs((ms) => [...ms, { role: "assistant", text: `✓ Item ${n} sent to procurement — they'll price it and you'll see it here.` }]);
+      } else {
+        setMsgs((ms) => [...ms, { role: "assistant", text: `Could not request procurement: ${data.error || "rejected"}.` }]);
+      }
+    } catch {
+      setMsgs((ms) => [...ms, { role: "assistant", text: "Procurement request failed — please retry." }]);
+    } finally {
+      setApplying((s) => { const n = new Set(s); n.delete(key); return n; });
     }
   };
 
@@ -496,7 +533,47 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                               {m.proposals.map((p, pi) => {
                                 const key = mi * 100 + pi;
                                 const done = confirmed.has(key);
-                                if (p.kind === "price_table" && Array.isArray(p.rows) && p.rows.length > 0) {
+                                if (p.kind === "price_table" && Array.isArray(p.rows)) {
+                                  const fetchBtn = p.needsProcurement ? (
+                                    <button
+                                      type="button"
+                                      disabled={requested.has(key) || applying.has(key)}
+                                      onClick={() => void fetchProcurement(mi, pi, p)}
+                                      className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200"
+                                    >
+                                      {applying.has(key) ? (
+                                        <span className="inline-flex items-center gap-1.5">
+                                          <span className="h-3 w-3 rounded-full border-2 border-black/40 border-t-black animate-spin" />
+                                          Requesting…
+                                        </span>
+                                      ) : requested.has(key) ? "✓ Procurement requested" : "Fetch from procurement →"}
+                                    </button>
+                                  ) : null;
+                                  const mediaStrip = (urls?: string[]) => (Array.isArray(urls) && urls.length > 0 ? (
+                                    <div className="flex gap-1.5 px-4 pb-2 pt-1">
+                                      {urls.map((u, ui) => (
+                                        <img
+                                          key={ui}
+                                          src={u}
+                                          alt=""
+                                          loading="lazy"
+                                          onClick={() => setLightbox({ images: urls, index: ui })}
+                                          className="h-12 w-12 rounded-lg object-cover border border-white/10 cursor-zoom-in hover:opacity-90"
+                                        />
+                                      ))}
+                                    </div>
+                                  ) : null);
+                                  // Empty result: no usable price — text + (only here) procurement button.
+                                  if (p.rows.length === 0) {
+                                    return (
+                                      <div key={pi} className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden px-4 py-3">
+                                        <p className="font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
+                                        {(p.text) && <p className="mt-1.5 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text}</p>}
+                                        {mediaStrip(p.itemMedia)}
+                                        {fetchBtn}
+                                      </div>
+                                    );
+                                  }
                                   const batched = p.rows.some((r) => r.itemIndex != null);
                                   const applyRow = (r: NonNullable<ChatProposal["rows"]>[number], ri: number) => {
                                     if (r.itemIndex == null) return;
@@ -507,7 +584,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                       unit: r.unit,
                                       productName: p.productName,
                                       productId: p.productId,
-                                      confidence: r.confidence,
+                                      confidence: r.confidence ?? undefined,
                                       quoteAgeDays: r.quoteAgeDays ?? null,
                                       moq: r.moq ?? null,
                                       deliveryDays: r.deliveryDays ?? null,
@@ -526,9 +603,11 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                         return order.map((k) => ({ itemIndex: k, ...map.get(k)! }));
                                       })()
                                     : [{ itemIndex: 0, name: undefined, rows: p.rows.map((r, ri) => ({ r, ri })) }];
+                                  const colSpan = batched ? 5 : 4;
                                   return (
                                     <div key={pi} className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
                                       <p className="px-4 pt-3 pb-2 font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
+                                      {mediaStrip(p.itemMedia)}
                                       {groups.map((g) => (
                                         <div key={g.itemIndex}>
                                           {batched && (
@@ -550,41 +629,88 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                               {g.rows.map(({ r, ri }) => {
                                                 const doneKey = mi * 100 + 900 + ri;
                                                 const done = confirmed.has(doneKey);
+                                                const expKey = `${mi}-${pi}-${ri}`;
+                                                const open = expanded.has(expKey);
+                                                const hasDetail = (Array.isArray(r.specs) && r.specs.length > 0) || !!r.imageUrl;
+                                                const confOk = typeof r.confidence === "number" && Number.isFinite(r.confidence);
                                                 return (
-                                                  <tr key={ri} className={`border-b border-white/[0.04] last:border-0 ${r.best ? "bg-emerald-500/[0.07]" : ""}`}>
-                                                    <td className="px-4 py-2 text-[var(--text-secondary)]">
-                                                      {r.best && <span className="mr-1.5 inline-block text-[10px] font-extrabold px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 align-middle">BEST</span>}
-                                                      {r.variation}
-                                                      {(r.moq || r.deliveryDays != null) && (
-                                                        <span className="block text-[11px] text-[var(--text-tertiary)]">
-                                                          {[r.moq ? `MOQ ${r.moq}` : null, r.deliveryDays != null ? `${r.deliveryDays}d delivery` : null].filter(Boolean).join(" · ")}
-                                                        </span>
-                                                      )}
-                                                    </td>
-                                                    <td className="px-2 py-2 text-right font-extrabold text-white whitespace-nowrap">
-                                                      ₹{Number(r.markedPrice).toLocaleString("en-IN")}{r.unit ? <span className="font-bold text-[var(--text-tertiary)]">/{r.unit}</span> : null}
-                                                    </td>
-                                                    <td className="px-2 py-2 text-right font-bold text-[var(--text-secondary)] whitespace-nowrap">{(Number(r.confidence) * 100).toFixed(0)}%</td>
-                                                    <td className="px-2 py-2 text-right text-[var(--text-tertiary)] whitespace-nowrap">{r.quoteAgeDays != null ? `${r.quoteAgeDays}d` : "—"}</td>
-                                                    {batched && (
-                                                      <td className="px-4 py-2 text-right whitespace-nowrap">
+                                                  <React.Fragment key={ri}>
+                                                    <tr className={`border-b border-white/[0.04] ${open ? "" : "last:border-0"} ${r.best ? "bg-emerald-500/[0.07]" : ""}`}>
+                                                      <td className="px-4 py-2 text-[var(--text-secondary)]">
+                                                        {r.best && <span className="mr-1.5 inline-block text-[10px] font-extrabold px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 align-middle">BEST</span>}
+                                                        {r.tag === "Earlier" && <span className="mr-1.5 inline-block text-[10px] font-extrabold px-1.5 py-px rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 align-middle">Earlier</span>}
+                                                        {r.variation}
+                                                        {(r.moq || r.deliveryDays != null) && (
+                                                          <span className="block text-[11px] text-[var(--text-tertiary)]">
+                                                            {[r.moq ? `MOQ ${r.moq}` : null, r.deliveryDays != null ? `${r.deliveryDays}d delivery` : null].filter(Boolean).join(" · ")}
+                                                          </span>
+                                                        )}
+                                                        {hasDetail && (
+                                                          <button
+                                                            type="button"
+                                                            onClick={() => setExpanded((s) => { const n = new Set(s); if (n.has(expKey)) n.delete(expKey); else n.add(expKey); return n; })}
+                                                            className="block mt-0.5 text-[11px] font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer border-0 bg-transparent p-0"
+                                                          >
+                                                            {open ? "▾ Hide details" : "▸ Full specs & photo"}
+                                                          </button>
+                                                        )}
+                                                      </td>
+                                                      <td className="px-2 py-2 text-right font-extrabold text-white whitespace-nowrap">
+                                                        ₹{Number(r.markedPrice).toLocaleString("en-IN")}{r.unit ? <span className="font-bold text-[var(--text-tertiary)]">/{r.unit}</span> : null}
+                                                      </td>
+                                                      <td className="px-2 py-2 text-right font-bold text-[var(--text-secondary)] whitespace-nowrap">{confOk ? `${(Number(r.confidence) * 100).toFixed(0)}%` : "actual"}</td>
+                                                      <td className="px-2 py-2 text-right text-[var(--text-tertiary)] whitespace-nowrap">{r.quoteAgeDays != null ? `${r.quoteAgeDays}d` : "—"}</td>
+                                                      {batched && (
+                                                        <td className="px-4 py-2 text-right whitespace-nowrap">
                                                         <button
                                                           type="button"
-                                                          disabled={done}
+                                                          disabled={done || applying.has(doneKey)}
                                                           onClick={() => applyRow(r, ri)}
                                                           className="px-3 py-1 text-[11px] font-extrabold rounded-full bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200"
                                                         >
-                                                          {done ? "✓" : "Apply →"}
+                                                          {applying.has(doneKey) ? (
+                                                            <span className="inline-flex items-center gap-1">
+                                                              <span className="h-2.5 w-2.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                                                              …
+                                                            </span>
+                                                          ) : done ? "✓" : "Apply →"}
                                                         </button>
-                                                      </td>
+                                                        </td>
+                                                      )}
+                                                    </tr>
+                                                    {open && hasDetail && (
+                                                      <tr className="border-b border-white/[0.04] last:border-0 bg-white/[0.02]">
+                                                        <td colSpan={colSpan} className="px-4 py-2">
+                                                          {r.imageUrl && (
+                                                            <img
+                                                              src={r.imageUrl}
+                                                              alt=""
+                                                              loading="lazy"
+                                                              onClick={() => setLightbox({ images: [r.imageUrl as string], index: 0 })}
+                                                              className="mb-2 h-20 w-20 rounded-lg object-cover border border-white/10 cursor-zoom-in hover:opacity-90"
+                                                            />
+                                                          )}
+                                                          {Array.isArray(r.specs) && r.specs.length > 0 && (
+                                                            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12px]">
+                                                              {r.specs.map((s, si) => (
+                                                                <React.Fragment key={si}>
+                                                                  <dt className="font-bold text-[var(--text-tertiary)]">{s.question}</dt>
+                                                                  <dd className="text-[var(--text-secondary)]">{s.value}</dd>
+                                                                </React.Fragment>
+                                                              ))}
+                                                            </dl>
+                                                          )}
+                                                        </td>
+                                                      </tr>
                                                     )}
-                                                  </tr>
+                                                  </React.Fragment>
                                                 );
                                               })}
                                             </tbody>
                                           </table>
                                         </div>
                                       ))}
+                                      {p.needsProcurement && <div className="px-4 pb-3">{fetchBtn}</div>}
                                     </div>
                                   );
                                 }
@@ -599,12 +725,20 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                     section: "spec",
                                   }));
                                   return (
-                                    <SpecForm
-                                      key={pi}
-                                      title={p.productName ?? p.label}
-                                      questions={qs}
-                                      onSubmit={(text) => void send(text)}
-                                    />
+                                    <div key={pi}>
+                                      <SpecForm
+                                        title={p.productName ?? p.label}
+                                        questions={qs}
+                                        onSubmit={(text) => void send(text)}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => void send(`Quote with what we have for ${p.productName ?? "this item"} — skip remaining details`)}
+                                        className="mt-2 px-4 py-2 text-[12px] font-bold rounded-full bg-white/[0.06] text-[var(--text-secondary)] hover:bg-white/[0.1] hover:text-[var(--text-primary)] cursor-pointer border border-white/10 transition-colors duration-200"
+                                      >
+                                        Quote with what we have →
+                                      </button>
+                                    </div>
                                   );
                                 }
                                 return (
@@ -613,16 +747,21 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                     {p.kind === "price_quote" && typeof p.markedPrice === "number" && (
                                       <p className="mt-1 text-[22px] font-extrabold text-white tracking-tight">
                                         ₹{p.markedPrice.toLocaleString("en-IN")}{p.unit ? <span className="text-[13px] font-bold text-[var(--text-secondary)]">/{p.unit}</span> : null}
-                                        {typeof p.confidence === "number" && (
-                                          <span className="ml-2 align-middle text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                            {(p.confidence * 100).toFixed(0)}% match
+                                        {typeof p.confidence === "number" && Number.isFinite(p.confidence) && (
+                                          <span className={`ml-2 align-middle text-[11px] font-bold px-2 py-0.5 rounded-full border ${p.confidence < 0.6 ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"}`}>
+                                            {(p.confidence * 100).toFixed(0)}% match{typeof p.confidence === "number" && p.confidence < 0.6 ? " · closest" : ""}
                                           </span>
                                         )}
                                       </p>
                                     )}
                                     {(p.text || p.spec) && <p className="mt-1.5 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
-                                    <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200">
-                                      {done ? "✓ Applied" : "Confirm & apply →"}
+                                    <button type="button" disabled={done || applying.has(key)} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200">
+                                      {applying.has(key) ? (
+                                        <span className="inline-flex items-center gap-1.5">
+                                          <span className="h-3 w-3 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                                          Applying…
+                                        </span>
+                                      ) : done ? "✓ Applied" : "Confirm & apply →"}
                                     </button>
                                   </div>
                                 );
@@ -706,6 +845,14 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
           )}
         </div>
       </div>
+      {lightbox && (
+        <Lightbox
+          images={lightbox.images}
+          initialIndex={lightbox.index}
+          image={null}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </>
   );
 }

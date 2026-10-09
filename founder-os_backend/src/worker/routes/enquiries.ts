@@ -649,9 +649,9 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     try {
       const store = createEnquiryStore(c.env);
       const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
-      await runAgnesVisionIntake(c.env as any, store, id);
+      const result = await runAgnesVisionIntake(c.env as any, store, id);
       const enq: any = await store.getEnquiry(id).catch(() => null);
-      return c.json({ ok: true, enquiryId: id, items: enq?.items ?? [], intake: await (await import('../../shared/cache')).cacheGet(`enquiry:intake:${id}`, 7*24*60*60*1000).catch(() => null) });
+      return c.json({ ok: true, enquiryId: id, items: enq?.items ?? [], intake: await (await import('../../shared/cache')).cacheGet(`enquiry:intake:${id}`, 7*24*60*60*1000).catch(() => null), routerLines: result?.lines ?? null, routerProvider: result?.provider ?? null });
     } catch (e: any) {
       return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 1000), stack: String(e?.stack ?? '').slice(0, 800) }, 500);
     }
@@ -718,10 +718,17 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const body = await c.req.json().catch(() => ({}));
     try {
+      const action = (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>;
       const { result, applied } = await executeProposal(
-        createEnquiryStore(c.env), me, c.req.param('id') ?? '',
-        (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
+        createEnquiryStore(c.env), me, c.req.param('id') ?? '', action,
       );
+      // Record the outcome in the sales thread (history + price awareness).
+      const { appendHistoryNote, appliedNote } = await import('../../copilot/engine');
+      const { salesChatHistoryKey, SALES_CHAT_HISTORY_TTL_MS } = await import('../../modules/enquiries/chat');
+      await appendHistoryNote(
+        salesChatHistoryKey(c.req.param('id') ?? '', me), SALES_CHAT_HISTORY_TTL_MS,
+        appliedNote(action, applied, (result as any)?.body),
+      ).catch(() => {});
       if (applied !== 'none' && (result as any).live) enquirySend(c, result as any);
       return c.json({ ...(result.body as any), applied }, (result as any).status as any);
     } catch (e: any) {

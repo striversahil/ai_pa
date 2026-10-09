@@ -141,6 +141,17 @@ interface HistMsg { role: 'user' | 'assistant'; text: string; }
 export const MAX_HUMAN_TURNS = 25;
 export const LIMIT_REPLY = 'Limit reached (25 chats) — open a new chat to continue.';
 
+/**
+ * Thinking discipline (all copilots): deepseek-v4-flash via OpenRouter has
+ * NO thinking-token budget parameter (reasoning.max_tokens is not honored;
+ * effort low/medium silently map to high), so the only real lever on
+ * deliberation length is instruction + context size. This line rides every
+ * system prompt: brief, non-repetitive internal reasoning, never
+ * re-deriving settled facts. It cuts CoT length without touching quality
+ * of the visible answer or the tools.
+ */
+const THINK_BRIEF = '\n\nThink efficiently: keep internal reasoning brief and non-repetitive — state the plan once, act, and move on. Never re-derive settled facts or re-weigh decided options.';
+
 /** Load rolling history (user/assistant texts only — tool payloads stay out).
  *  Storage keeps the full window (e.g. 50 requests); each turn SENDS only a
  *  compact slice — recent messages near-verbatim, older ones as gist lines —
@@ -209,6 +220,35 @@ export async function saveToolTrace<T>(def: CopilotDef<T>, ctx: T, parts: string
   } catch { /* best-effort */ }
 }
 
+/** Reasoning carry-forward: the model's deliberation is echoed on the next
+ *  call (assistant-message `reasoning`, which DeepSeek-style models require
+ *  for tool chains and which keeps continued hops mid-thought) and survives
+ *  transport yields in KV. Bounded: per-message cap + stored-window cap
+ *  (tail kept — the latest deliberation is what continuation needs).
+ *  Best-effort throughout; a miss only costs re-thinking, never correctness. */
+const REASON_MSG_CAP = 6000;
+const REASON_STORE_CAP = 12_000;
+const capReason = (t: unknown): string => String(t ?? '').trim().slice(-REASON_MSG_CAP);
+export async function loadReasoning<T>(def: CopilotDef<T>, ctx: T): Promise<string> {
+  try {
+    const key = def.historyKey?.(ctx);
+    if (!key) return '';
+    const t = await cacheGet<string>(`${key}:reason`, def.historyTtlMs ?? SESSION_TTL_MS);
+    return typeof t === 'string' ? t : '';
+  } catch {
+    return '';
+  }
+}
+export async function saveReasoning<T>(def: CopilotDef<T>, ctx: T, text: string, epoch?: number | null): Promise<void> {
+  try {
+    if (!String(text ?? '').trim()) return;
+    if (!(await epochCurrent(def, ctx, epoch))) return;
+    const key = def.historyKey?.(ctx);
+    if (!key) return;
+    await cacheSet(`${key}:reason`, String(text).slice(-REASON_STORE_CAP), def.historyTtlMs ?? SESSION_TTL_MS);
+  } catch { /* best-effort */ }
+}
+
 /** History is saved INCREMENTALLY, never only at turn end: the user's
  *  message lands in KV before the first model call, each step's tool
  *  outputs flush as they happen, and the assistant reply closes the turn.
@@ -244,6 +284,41 @@ async function saveAssistantReply<T>(def: CopilotDef<T>, ctx: T, replyText: stri
 
 async function markStorm(): Promise<void> {
   try { await cacheSet('ai:storm:chat', { at: Date.now() }, 120_000); } catch { /* best-effort */ }
+}
+
+/**
+ * Confirm-path memory: after the user hits Confirm/Apply, the write must
+ * land in THIS thread's history — otherwise the model never learns it
+ * happened and re-derives (or re-proposes) from stale context on the next
+ * turn. Called by every /chat/execute route after executeProposal settles,
+ * success or failure. Raw-key form so store-bound routes (sales) without a
+ * CopilotDef ctx can use it too. Deliberately no epoch gate: a confirm is
+ * an explicit user act on a visible card.
+ */
+export async function appendHistoryNote(key: string | null | undefined, ttlMs: number, text: string): Promise<void> {
+  try {
+    if (!key || !String(text ?? '').trim()) return;
+    const past = (await cacheGet<HistMsg[]>(key, ttlMs)) ?? [];
+    const next = [...past, { role: 'assistant' as const, text: String(text).slice(0, 1500) }];
+    await cacheSet(key, next.slice(-100), ttlMs);
+  } catch { /* best-effort */ }
+}
+
+/** One-line applied/failed record for appendHistoryNote. Capped, no payloads. */
+export function appliedNote(action: Record<string, any>, applied: string, body: any): string {
+  const label = String(action?.label ?? action?.kind ?? applied).slice(0, 160);
+  if (!applied || applied === 'none') {
+    return `✗ Apply failed: ${label} — ${String(body?.error ?? 'rejected').slice(0, 200)}`;
+  }
+  const b = (body ?? {}) as Record<string, any>;
+  const bits: string[] = [];
+  if (Array.isArray(b.filed)) bits.push(`${b.filed.length} filed`);
+  if (Array.isArray(b.failed) && b.failed.length) bits.push(`${b.failed.length} failed`);
+  if (b.rateId) bits.push(`rate ${String(b.rateId).slice(0, 8)}`);
+  if (b.id) bits.push(`id ${String(b.id).slice(0, 8)}`);
+  if (b.expectedRate != null) bits.push(`expected ₹${b.expectedRate}`);
+  if (typeof b.items === 'number') bits.push(`${b.items} items`);
+  return `✓ Applied: ${label}${bits.length ? ` (${bits.join(', ')})` : ''}`;
 }
 
 // ── Hourly user-turn budget (20/hr default, non-root only) ─────────────────
@@ -426,8 +501,9 @@ export async function runTurn<T>(
     return { reply: LIMIT_REPLY, proposals: [], activity: [], memoryTurns: hist.userTurns };
   }
   const toolTrace = await loadToolTrace(def, ctx);
+  const priorReasoning = await loadReasoning(def, ctx);
   const messages: ChatMessage[] = [
-    { role: 'system', content: def.systemPrompt(ctx) + (toolTrace ? `\n\n[Tool outputs from your earlier turns here \u2014 already known, do NOT re-run these tools, continue from them:\n${toolTrace}]` : '') },
+    { role: 'system', content: def.systemPrompt(ctx) + THINK_BRIEF + (priorReasoning ? `\n\n[Your unfinished deliberation from the previous hop — continue from it, do not restart:\n${priorReasoning}]` : '') + (toolTrace ? `\n\n[Tool outputs from your earlier turns here \u2014 already known, do NOT re-run these tools, continue from them:\n${toolTrace}]` : '') },
     ...hist.messages,
     { role: 'user', content: String(message ?? '') },
   ];
@@ -443,6 +519,7 @@ export async function runTurn<T>(
   const activity: CopilotActivity[] = [];
   let reply = '';
   let autoCuts = 0;
+  let lastReasoning = '';
   // Transport budget (NOT an AI limit): yield the turn before its HTTP hop
   // approaches the edge ~100s guillotine. State is already flushed
   // incrementally, so the client's auto-continued hop resumes seamlessly.
@@ -452,6 +529,7 @@ export async function runTurn<T>(
       await flushTrace();
       const partial = reply || 'Working through it — continuing…';
       await saveAssistantReply(def, ctx, partial, epoch);
+      await saveReasoning(def, ctx, lastReasoning, epoch);
       return { reply: partial, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true, memoryTurns: hist.userTurns };
     }
     let res: any;
@@ -474,11 +552,14 @@ export async function runTurn<T>(
       await flushTrace();
       throw e;
     }
+    const stepReasoning = capReason((res as any)?.reasoning);
+    if (stepReasoning) lastReasoning = stepReasoning;
     if (res.toolCalls && res.toolCalls.length > 0) {
       messages.push({
         role: 'assistant',
         content: res.content || '',
         tool_calls: res.toolCalls.map((tc: any) => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: tc.arguments } })),
+        ...(stepReasoning ? { reasoning: stepReasoning } : {}),
       });
       // Parallel fan-out: independent calls resolve together, results
       // re-attached in call order. One failing call must not sink the batch.
@@ -519,6 +600,7 @@ export async function runTurn<T>(
   }
   if (!reply) reply = 'I ran out of steps — try a narrower question.';
   await saveAssistantReply(def, ctx, reply, epoch);
+  await saveReasoning(def, ctx, lastReasoning, epoch);
   return { reply, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), memoryTurns: hist.userTurns };
 }
 
@@ -560,8 +642,9 @@ export async function* streamTurn<T>(
     return r;
   }
   const toolTrace = await loadToolTrace(def, ctx);
+  const priorReasoning = await loadReasoning(def, ctx);
   const messages: ChatMessage[] = [
-    { role: 'system', content: def.systemPrompt(ctx) + (toolTrace ? `\n\n[Tool outputs from your earlier turns here \u2014 already known, do NOT re-run these tools, continue from them:\n${toolTrace}]` : '') },
+    { role: 'system', content: def.systemPrompt(ctx) + THINK_BRIEF + (priorReasoning ? `\n\n[Your unfinished deliberation from the previous hop — continue from it, do not restart:\n${priorReasoning}]` : '') + (toolTrace ? `\n\n[Tool outputs from your earlier turns here \u2014 already known, do NOT re-run these tools, continue from them:\n${toolTrace}]` : '') },
     ...hist.messages,
     { role: 'user', content: String(message ?? '') },
   ];
@@ -573,16 +656,19 @@ export async function* streamTurn<T>(
   const activity: CopilotActivity[] = [];
   let reply = '';
   let autoCuts = 0;
+  let lastReasoning = '';
   let turnText = '';
   // Transport budget, same as runTurn: yield before the edge guillotine.
   const deadline = Date.now() + (def.turnBudgetMs ?? 80_000);
   for (let step = 0; step < (def.maxSteps ?? MAX_STEPS); step++) {
     let stepContent = '';
+    let stepReasoning = '';
     if (step > 0 && Date.now() > deadline) {
       await flushTrace();
       const partial: CopilotReply = { reply: turnText, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true, memoryTurns: hist.userTurns };
       yield { type: 'done', data: partial };
       await saveAssistantReply(def, ctx, turnText || 'Working through it — continuing…', epoch);
+      await saveReasoning(def, ctx, lastReasoning, epoch);
       return partial;
     }
     // Live streaming: every content token goes out as a delta immediately
@@ -604,6 +690,7 @@ export async function* streamTurn<T>(
           yield { type: 'delta', data: { text: chunk.contentDelta } };
         }
         if (chunk.reasoningDelta) {
+          stepReasoning += String(chunk.reasoningDelta);
           yield { type: 'thinking', data: { text: String(chunk.reasoningDelta).slice(0, 500) } };
         }
         if (chunk.toolCallDelta) {
@@ -635,7 +722,10 @@ export async function* streamTurn<T>(
         sessionKey: key,
         timeoutMs: undefined, probeTimeoutMs: undefined,
       });
-      if (res.reasoning) yield { type: 'thinking', data: { text: String(res.reasoning).slice(0, 2000) } };
+      if (res.reasoning) {
+        stepReasoning += String(res.reasoning);
+        yield { type: 'thinking', data: { text: String(res.reasoning).slice(0, 2000) } };
+      }
       if (res.toolCalls && res.toolCalls.length) {
         for (const tc of res.toolCalls) toolMap.set(toolMap.size, { id: tc.id, name: tc.name, args: tc.arguments });
         finishReason = 'tool_calls';
@@ -648,9 +738,12 @@ export async function* streamTurn<T>(
     const toolCalls = [...toolMap.values()].filter((t) => t.name);
     if (toolCalls.length > 0) {
       if (stepContent.trim()) yield { type: 'thinking', data: { text: stepContent.trim().slice(0, 500) } };
+      const cappedStepReasoning = capReason(stepReasoning);
+      if (cappedStepReasoning) lastReasoning = cappedStepReasoning;
       messages.push({
         role: 'assistant', content: stepContent,
         tool_calls: toolCalls.map((tc) => ({ id: tc.id || `call_${Math.random().toString(36).slice(2)}`, type: 'function' as const, function: { name: tc.name, arguments: tc.args || '{}' } })),
+        ...(cappedStepReasoning ? { reasoning: cappedStepReasoning } : {}),
       });
       turnText += stepContent;
       const batch = toolCalls.slice(0, def.maxParallelTools ?? 3);
@@ -685,7 +778,9 @@ export async function* streamTurn<T>(
     const cutOff = toolCalls.length === 0 && !stepContent.trim() && finishReason === 'length';
     if (cutOff && autoCuts < MAX_CUT_RESUMES) {
       autoCuts++;
-      messages.push({ role: 'assistant' as const, content: stepContent }, { role: 'user' as const, content: CUT_RESUME });
+      const cappedCutReasoning = capReason(stepReasoning);
+      if (cappedCutReasoning) lastReasoning = cappedCutReasoning;
+      messages.push({ role: 'assistant' as const, content: stepContent, ...(cappedCutReasoning ? { reasoning: cappedCutReasoning } : {}) }, { role: 'user' as const, content: CUT_RESUME });
       continue;
     }
     turnText += stepContent;
@@ -700,5 +795,6 @@ export async function* streamTurn<T>(
   // per-step trace were already flushed during the loop — this only closes
   // the turn with the assistant reply.)
   await saveAssistantReply(def, ctx, reply, epoch);
+  await saveReasoning(def, ctx, lastReasoning, epoch);
   return final;
 }

@@ -8,7 +8,7 @@
 import type { Hono } from 'hono';
 import { authStore, getMe, notifyLive, readSessionCookie, LiveEvent, type Bindings } from '../context';
 import { getCopilot } from '../../copilot/registry';
-import { cleanSession, clearState, runTurn, streamTurn } from '../../copilot/engine';
+import { appendHistoryNote, appliedNote, cleanSession, clearState, runTurn, streamTurn } from '../../copilot/engine';
 import type { CopilotReply } from '../../copilot/types';
 
 function sseResponse(gen: AsyncGenerator<{ type: string; data: any }, CopilotReply, unknown>): Response {
@@ -103,9 +103,14 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const body = await c.req.json().catch(() => ({}));
     try {
       const ctx = await def.buildCtx(c.env as any, me, { session: cleanSession(body?.session) });
-      const { result, applied } = await def.executeProposal(
-        ctx, (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>,
-      );
+      const action = (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>;
+      const { result, applied } = await def.executeProposal(ctx, action);
+      // Record the outcome in-thread: the next turn must KNOW the write
+      // happened instead of re-deriving from stale context.
+      await appendHistoryNote(
+        def.historyKey?.(ctx), def.historyTtlMs ?? 30 * 60 * 1000,
+        appliedNote(action, applied, (result as any)?.body),
+      ).catch(() => {});
       // Intake-style defs flag catalogue writes so dashboards refresh live.
       if (applied !== 'none' && (result.body as any)?.live === 'product-line') {
         notifyLive(c, { type: LiveEvent.ProductLine });

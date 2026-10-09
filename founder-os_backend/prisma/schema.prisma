@@ -859,6 +859,7 @@ model VendorRate {
   videoUrl        String?  // vendor manufacturing video (https URL)
   quotedAt        DateTime     @default(now())
   enquiryRef      String?
+  notes           String?      // vendor extras matching no KYP key (delivery notes, stray details) — never spec keys
   missingSpecs    String?      // JSON text: required checklist questions unanswered at filing
   active          Boolean      @default(true)
   createdAt       DateTime     @default(now())

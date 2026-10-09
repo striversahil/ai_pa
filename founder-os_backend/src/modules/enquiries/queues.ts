@@ -249,8 +249,21 @@ export function hasAnySalesThread(e: Pick<Enquiry, "items">): boolean {
 
 export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items" | "rateStatus">): boolean {
   const items = (e as any).items ?? [];
-  if (items.length === 0) return false;
   if (isManagementPendingEnquiry(e as any)) return false;
+  // Terminal Zoho/sent rows are concluded even with undecided items — the
+  // estimate already left draft (sent/accepted/declined…), so there is no
+  // decision left to make. Mirrors the sales/procurement auto-conclude
+  // (maybePromoteEnquiriesSent in worker/routes/enquiries.ts): flags and
+  // unquoted items never block it. Open sent-revisions stay exempt.
+  // Zero-item rows are included too: a non-draft estimate with nothing logged
+  // has nothing to quote or decide — it belongs in History, not Empty.
+  // Mirror: frontend/src/enquiry/queue.ts — change both together.
+  if (!isSentReopened(e as any)) {
+    const sent = String((e as any)?.rateStatus ?? '') === 'sent';
+    const zs = String((e as any)?.zohoStatus ?? '').trim().toLowerCase();
+    if (sent || (zs && zs !== 'draft')) return true;
+  }
+  if (items.length === 0) return false;
   const relevant = items.filter((it: any) => !it?.specIssue && !(it as any)?.notAvailableRequested);
   if (relevant.length === 0) return false;
   // Every non-held item must be accounted for — either rate-available / not-available or

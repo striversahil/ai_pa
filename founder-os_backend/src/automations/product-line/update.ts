@@ -41,15 +41,19 @@ function parseAliasesInput(v: unknown): string | null {
 }
 
 async function touched(productId?: string): Promise<void> {
-  await invalidateProductLineCache();
-  // Scale-path caches: index rebuilds on next read (one slim query); rates
-  // cache is per-product. Unconditional — correctness over micro-opt.
-  await invalidateProductIndex().catch(() => {});
-  await invalidateVendorIndex().catch(() => {});
-  if (productId) {
-    await invalidateProductDetailCache(productId);
-    await invalidateProductRatesCache(productId).catch(() => {});
-  }
+  // One wave, not five round trips: every del is independent, so they fire
+  // together. This runs per write — on a 20-row Confirm it used to be
+  // 100 sequential KV deletes.
+  await Promise.all([
+    invalidateProductLineCache(),
+    // Scale-path caches: index rebuilds on next read (one slim query);
+    // rates cache is per-product. Unconditional — correctness over micro-opt.
+    invalidateProductIndex().catch(() => {}),
+    invalidateVendorIndex().catch(() => {}),
+    ...(productId
+      ? [invalidateProductDetailCache(productId), invalidateProductRatesCache(productId).catch(() => {})]
+      : []),
+  ]);
 }
 
 async function touchedGuide(guideId?: string, productId?: string): Promise<void> {
@@ -300,6 +304,7 @@ function rateData(body: any, isCreate: boolean): { data: Record<string, unknown>
     data.quotedAt = new Date().toISOString();
   }
   if (body?.enquiryRef !== undefined) data.enquiryRef = str(body.enquiryRef, 300) || null;
+  if (body?.notes !== undefined) data.notes = str(body.notes, 2000) || null;
   if (body?.missingSpecs !== undefined) {
     const ms = Array.isArray(body.missingSpecs) ? body.missingSpecs.map(String).filter(Boolean).slice(0, 50) : [];
     data.missingSpecs = JSON.stringify(ms);

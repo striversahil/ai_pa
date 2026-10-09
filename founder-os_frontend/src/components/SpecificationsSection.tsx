@@ -699,24 +699,13 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 )}
                                 {editable && (
                                   (it as any)?.variationRequest ? (
-                                    <div className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2 space-y-1">
-                                      <p className="text-[11px] font-extrabold text-sky-600 dark:text-sky-400">
-                                        Info/alternate requested — with procurement
-                                      </p>
-                                      <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((it as any).variationRequest)}</p>
-                                      {Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0 && (
-                                        <div className="flex flex-wrap gap-1.5 pt-1">
-                                          {(it as any).variationRequestMedia.map((m: any, mi: number) => (
-                                            <img key={mi} src={m.url} alt={`Request ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => onOpenLightbox(m.url, (it as any).variationRequestMedia.map((x: any)=>x.url), mi)} />
-                                          ))}
-                                        </div>
-                                      )}
-                                      <p className="text-[10px] text-[var(--text-tertiary)]">With procurement — quoted rate or reference media will clear this.</p>
+                                    <p className="text-[11px] text-[var(--text-tertiary)]">
+                                      Info/alternate request pending with procurement — see the thread below for the full back-and-forth.{" "}
                                       <button type="button" onClick={() => withdrawAlternateRequest(idx)}
-                                        className="text-[11px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0">
+                                        className="font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0">
                                         Withdraw request
                                       </button>
-                                    </div>
+                                    </p>
                                   ) : altReqOpen === idx ? (
                                     <div className="space-y-1.5 rounded-lg border border-dashed border-sky-500/40 p-2">
                                       <textarea
@@ -751,7 +740,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                           Cancel
                                         </button>
                                       </div>
-                                      <p className="text-[10px] text-[var(--text-tertiary)]">Goes straight to procurement — quoted rate or attached reference will clear this. No management queue.</p>
+                                      <p className="text-[10px] text-[var(--text-tertiary)]">Opens in the item thread as a sales flag — procurement replies there (text or photo) to clear this. No management queue.</p>
                                     </div>
                                   ) : (
                                     <button type="button" onClick={() => { setAltReqOpen(idx); setAltReqText(""); setAltReqImages([]); }}

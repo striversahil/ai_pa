@@ -124,6 +124,7 @@ export async function getProductLineData(): Promise<ProductLineData> {
         videoUrl: r.videoUrl ? String(r.videoUrl) : null,
         quotedAt: String(r.quotedAt ?? ''),
         enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+        notes: (r as any).notes ? String((r as any).notes) : null,
         missingSpecs: parseMissingSpecs((r as any).missingSpecs),
         active: r.active !== false && r.active !== 0,
       };
@@ -228,6 +229,7 @@ export async function getRatesForProduct(productId: string): Promise<RateRow[]> 
       videoUrl: r.videoUrl ? String(r.videoUrl) : null,
       quotedAt: String(r.quotedAt ?? ''),
       enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+      notes: (r as any).notes ? String((r as any).notes) : null,
       missingSpecs: parseMissingSpecs((r as any).missingSpecs),
       active: r.active !== false && r.active !== 0,
     }));
@@ -272,6 +274,7 @@ export async function getRateById(id: string): Promise<RateRow | null> {
     videoUrl: (r as any).videoUrl ? String((r as any).videoUrl) : null,
     quotedAt: String((r as any).quotedAt ?? ''),
     enquiryRef: (r as any).enquiryRef != null ? String((r as any).enquiryRef) : null,
+    notes: (r as any).notes ? String((r as any).notes) : null,
     missingSpecs: parseMissingSpecs((r as any).missingSpecs),
     active: (r as any).active !== false && (r as any).active !== 0,
   };
@@ -378,6 +381,7 @@ export async function getProductDetail(id: string): Promise<ProductDetail> {
       videoUrl: r.videoUrl ? String(r.videoUrl) : null,
       quotedAt: String(r.quotedAt ?? ''),
       enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+      notes: (r as any).notes ? String((r as any).notes) : null,
       missingSpecs: parseMissingSpecs((r as any).missingSpecs),
       active: r.active !== false && r.active !== 0,
     }));

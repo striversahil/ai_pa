@@ -3,8 +3,8 @@
 // missingSpecs. Bundled with esbuild (D1 redirects), run under node.
 import { initD1, prisma } from '../src/shared/prisma-d1';
 import { fakeD1 } from './d1-mock.mjs';
-import { normalizeInches, normalizeUnit } from '../src/automations/product-line/normalize';
-import { canonicalAttrKey } from '../src/automations/product-line/intake';
+import { normalizeInches, normalizeSpecValue, normalizeUnit } from '../src/automations/product-line/normalize';
+import { canonicalAttrKey, resolveSpecKeys } from '../src/automations/product-line/intake';
 import { productLineIntakeDef } from '../src/automations/product-line/intake';
 
 initD1({ DB: fakeD1() } as any);
@@ -120,6 +120,52 @@ assert('intake fans out in parallel', (productLineIntakeDef as any)?.maxParallel
   const frp = await def.execTool(ctx, 'find_rate', { query: 'V belt', limit: 1, offset: 1, include: ['commercials'] });
   const frpr = frp.result as any;
   assert('find_rate pages + commercials', frpr.rates.length === 1 && frpr.total >= 2 && frpr.truncated === true && 'moq' in ((frpr.rates[0] as any)?.commercials ?? {}), JSON.stringify({ n: frpr.rates.length, total: frpr.total }));
+
+  // KEY FIDELITY: vendor-worded keys resolve to real attrKeys; leftovers
+  // ride in notes and are NEVER stored as spec keys.
+  const kGuide = [
+    { attrKey: 'ask_material_ms_regular', question: 'Ask material: MS or SS' },
+    { attrKey: 'ask_size_width', question: 'Ask size width x projection x depth' },
+    { attrKey: 'ask_quantity', question: 'Ask quantity' },
+  ];
+  const rk = resolveSpecKeys({ material: 'MS', Size: '4 inch', brand: 'JINDAL', 'delivery note': 'ready' }, kGuide);
+  assert('invented keys resolve to attrKeys', rk.mapped['ask_material_ms_regular'] === 'MS' && rk.mapped['ask_size_width'] === '4 inch' && !('material' in rk.mapped) && !('Size' in rk.mapped), JSON.stringify(rk));
+  assert('non-specs go unmapped, never stored', rk.unmapped.length === 2, JSON.stringify(rk.unmapped));
+  const rk2 = resolveSpecKeys({ 'ask size width x projection x depth': '6 inch', ask_size_width: '4 inch' }, kGuide);
+  assert('twin-key clash joins visibly + flagged', rk2.mapped['ask_size_width'] === '6 inch / 4 inch' && rk2.conflicts.length === 1, JSON.stringify(rk2));
+  const kGuide2 = [
+    { attrKey: 'ask_diameter_mm', question: 'Ask diameter in mm, and hardness if known' },
+    { attrKey: 'ask_bounce_type', question: 'Ask bounce type: high or medium bounce' },
+    { attrKey: 'ask_quantity_moq', question: 'Ask quantity, MOQ 500 pcs' },
+    { attrKey: 'ask_make_model', question: 'Ask the elevator make and model' },
+  ];
+  const rk3 = resolveSpecKeys({ size: '28mm', bounce: 'H.B', qty: '1000', brand: 'JINDAL', 'price basis': 'net' }, kGuide2);
+  assert('synonyms resolve (size→diameter, qty→quantity, brand→make)', rk3.mapped['ask_diameter_mm'] === '28mm' && rk3.mapped['ask_bounce_type'] === 'H.B' && rk3.mapped['ask_quantity_moq'] === '1000' && rk3.mapped['ask_make_model'] === 'JINDAL', JSON.stringify(rk3));
+  assert('commercial chatter stays unmapped', rk3.unmapped.length === 1 && rk3.unmapped[0].key === 'price basis', JSON.stringify(rk3.unmapped));
+  // Milling-spares trade: GZ folds to gauge, per-pc folds to pcs, jali/mesh
+  // and SS shorthands resolve like their checklist words.
+  assert('GZ normalizes to gauge', normalizeSpecValue('28 GZ') === '28 gauge' && normalizeSpecValue('18GZ') === '18 gauge', JSON.stringify([normalizeSpecValue('28 GZ'), normalizeSpecValue('18GZ')]));
+  assert('per-pc folds to pcs', normalizeUnit('per pc') === 'pcs' && normalizeUnit('Per Pc') === 'pcs', JSON.stringify([normalizeUnit('per pc'), normalizeUnit('Per Pc')]));
+  const kGuide3 = [
+    { attrKey: 'ask_mesh_type', question: 'Ask mesh type: perforated sheet or wire mesh' },
+    { attrKey: 'ask_material_ss_or_ms', question: 'Ask material: SS304 or MS' },
+  ];
+  const rk4 = resolveSpecKeys({ jali: 'wire mesh', SS: 'SS304' }, kGuide3);
+  assert('trade synonyms resolve (jali→mesh, SS→stainless)', rk4.mapped['ask_mesh_type'] === 'wire mesh' && rk4.mapped['ask_material_ss_or_ms'] === 'SS304', JSON.stringify(rk4));
+  const udK = await def.execTool(ctx, 'update_draft', { productId: 'p1', productName: 'V belt', vendorName: 'V1', price: 100, unit: 'pcs', specs: { Belt: 'B', Width: '4 inch', Color: 'red' } });
+  const ddK = (udK.result as any)?.draft;
+  assert('update_draft resolves invented keys', ddK?.specs?.belt_type === 'B' && ddK?.specs?.width_inch === '4 inch' && !('Belt' in (ddK?.specs ?? {})) && !('Color' in (ddK?.specs ?? {})), JSON.stringify(ddK?.specs));
+  assert('update_draft leftovers land in notes', String(ddK?.notes ?? '').includes('Color'), JSON.stringify(ddK?.notes));
+  const ck = await def.execTool(ctx, 'commit_all', { rates: [{ productId: 'p1', productName: 'V belt', vendorName: 'V9', price: 200, unit: 'pcs', specs: { Belt: 'C', 'delivery note': 'ready' } }] });
+  const ckProp = (ck as any)?.proposals?.[0];
+  const ckExec = await (def.executeProposal as any)(ctx, { kind: 'commit_all_draft', rates: ckProp.rates });
+  const ckFiled = ((ckExec as any)?.result?.body?.filed ?? [])[0];
+  const ckRow = ckFiled ? await (db.vendorRate.findUnique({ where: { id: ckFiled.rateId } }) as any) : null;
+  const ckVals = JSON.parse(String(ckRow?.attrValues ?? '{}'));
+  assert('commit files resolved keys only', ckVals?.belt_type === 'C' && !('Belt' in ckVals), JSON.stringify(ckVals));
+  assert('commit persists notes', String(ckRow?.notes ?? '').includes('delivery note'), JSON.stringify(ckRow?.notes));
+  const ckDel = await (def as any).executeProposal(ctx, { kind: 'delete_rate', rateId: ckFiled.rateId });
+  assert('cleanup fidelity test rate', (ckDel as any)?.applied === 'delete_rate', JSON.stringify((ckDel as any)?.result?.body));
 
   // delete_vendor blocked while rates reference it.
   const dvBlocked = await def.execTool(ctx, 'delete_vendor', { vendorId: v1.id });

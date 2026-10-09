@@ -370,11 +370,22 @@ app.post('/api/enquiries/files', async (req, res) => {
   const ext = (name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
   const { randomUUID } = await import('crypto');
   const key = `enq/${randomUUID()}${ext ? '.' + ext : ''}`;
+  const filePath = path.join(ENQUIRY_FILES_DIR, key.slice(4));
   try {
     fs.mkdirSync(ENQUIRY_FILES_DIR, { recursive: true });
-    fs.writeFileSync(path.join(ENQUIRY_FILES_DIR, key.slice(4)), bytes);
+    fs.writeFileSync(filePath, bytes);
   } catch (e: any) {
     return res.status(500).json({ error: `Storage write failed: ${String(e?.message ?? e).slice(0, 200)}` });
+  }
+  // Read-back gate (same contract as the worker route): 201 means servable.
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size !== bytes.length) {
+      try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+      return res.status(500).json({ error: 'File storage verification failed — retry (your photo was NOT lost, nothing was saved)' });
+    }
+  } catch {
+    return res.status(500).json({ error: 'File storage verification failed — retry (your photo was NOT lost, nothing was saved)' });
   }
   res.status(201).json({ key, name, size: bytes.length, type: mime, url: `/api/enquiries/files/${key}` });
 });
@@ -550,11 +561,16 @@ app.post('/api/enquiries/:id/chat/execute', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   try {
-    const { executeProposal } = await import('./modules/enquiries/chat');
+    const { executeProposal, salesChatHistoryKey, SALES_CHAT_HISTORY_TTL_MS } = await import('./modules/enquiries/chat');
+    const action = (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>;
     const { result, applied } = await executeProposal(
-      enquiryStore, me as any, req.params.id,
-      (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
+      enquiryStore, me as any, req.params.id, action,
     );
+    const { appendHistoryNote, appliedNote } = await import('./copilot/engine');
+    await appendHistoryNote(
+      salesChatHistoryKey(req.params.id, me), SALES_CHAT_HISTORY_TTL_MS,
+      appliedNote(action, applied, (result as any)?.body),
+    ).catch(() => {});
     res.status((result as any).status).json({ ...((result as any).body as any), applied });
   } catch (e: any) {
     res.status(500).json({ error: String(e?.message ?? 'apply failed').slice(0, 300), applied: 'none' });
@@ -605,9 +621,13 @@ app.post('/api/copilot/:id/chat/execute', async (req, res) => {
   if (!def.executeProposal) return res.status(400).json({ error: 'this copilot is read-only', applied: 'none' });
   try {
     const ctx = await def.buildCtx(process.env as any, me as any, { session: cleanSession((req.body as any)?.session) });
-    const { result, applied } = await def.executeProposal(
-      ctx, (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>,
-    );
+    const action = (req.body?.action && typeof req.body.action === 'object' ? req.body.action : {}) as Record<string, any>;
+    const { result, applied } = await def.executeProposal(ctx, action);
+    const { appendHistoryNote, appliedNote } = await import('./copilot/engine');
+    await appendHistoryNote(
+      def.historyKey?.(ctx), def.historyTtlMs ?? 30 * 60 * 1000,
+      appliedNote(action, applied, (result as any)?.body),
+    ).catch(() => {});
     res.status((result as any).status).json({ ...((result as any).body as any), applied });
   } catch (e: any) {
     res.status(500).json({ error: String(e?.message ?? 'apply failed').slice(0, 300), applied: 'none' });

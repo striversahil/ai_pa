@@ -36,6 +36,8 @@ export interface MatchRate {
   discountPercent: number | null;
   moq: string | null;
   deliveryDays: number | null;
+  /** Vendor's rate photo (VendorRate.imageUrl) — safe for sales (no vendor id). */
+  imageUrl: string | null;
   quotedAt: string;
   active: boolean;
 }
@@ -56,6 +58,11 @@ export interface SalesQuote {
   quoteAgeDays: number | null;
   matchedSpecs: { key: string; question: string; value: string }[];
   missingSpecs: { key: string; question: string }[];
+  /** Vendor's rate photo — safe for sales (no vendor identity). */
+  imageUrl: string | null;
+  /** EVERYTHING the rate states, labeled with full-guide questions
+   *  (required + optional) — the per-item "all available info" view. */
+  allSpecs: { key: string; question: string; value: string }[];
 }
 
 /** Flat sales markup over effective vendor rates (founder decision). */
@@ -138,10 +145,80 @@ export function applyMarkup(eff: number): number {
 }
 
 /**
+ * ONE shared catalogue matcher (single source of truth for product
+ * identification — intake bulk-filing and the sales enquiry copilot both
+ * ride it). Tiers: exact (id / name / alias equality) → substring
+ * either-way → token-overlap (reorder/noise tolerant). Options preserve
+ * each caller's historical behavior:
+ * - substringCategory: intake also matches the category string (default off).
+ * - onlyActive: skip rows with active === false (default on).
+ * - gateCategory: partial/token tiers need category agreement, skipped for
+ *   Uncategorized/empty hints (sales behavior, default off).
+ * Returns ranked [{ row, exact, score }] (exact first, then score desc).
+ */
+export interface CatalogueMatchOptions {
+  substringCategory?: boolean;
+  onlyActive?: boolean;
+  gateCategory?: boolean;
+  category?: string;
+  limit?: number;
+  minShared?: number;
+  minScore?: number;
+}
+export interface CatalogueMatch {
+  row: any;
+  exact: boolean;
+  score: number;
+}
+export function matchCatalogueProducts(
+  products: any[],
+  q: string,
+  opts: CatalogueMatchOptions = {},
+): CatalogueMatch[] {
+  const needle = norm(q);
+  if (!needle) return [];
+  const cat = norm(opts.category ?? '');
+  const gated = (p: any): boolean => {
+    if (!opts.gateCategory) return true;
+    if (!cat || cat === 'uncategorized') return true;
+    return norm((p as any)?.category) === cat;
+  };
+  const out: CatalogueMatch[] = [];
+  for (const p of (products ?? []) as any[]) {
+    if (!p) continue;
+    if (opts.onlyActive !== false && (p as any).active === false) continue;
+    const id = String((p as any).id ?? '');
+    const name = norm((p as any).name);
+    const aliases = (Array.isArray((p as any).aliases) ? (p as any).aliases : []).map(norm);
+    if (id === q.trim() || name === needle || aliases.includes(needle)) {
+      out.push({ row: p, exact: true, score: 2 });
+      continue;
+    }
+    const subHit =
+      (name && (name.includes(needle) || needle.includes(name))) ||
+      aliases.some((a) => a && (a.includes(needle) || needle.includes(a))) ||
+      (opts.substringCategory === true && norm((p as any).category).includes(needle));
+    let score = subHit ? 1 : 0;
+    if (!subHit) {
+      const needleToks = matchTokens(needle);
+      if (needleToks.length > 0) {
+        const hayToks = matchTokens([name, ...aliases].join(' '));
+        const shared = needleToks.filter((t) => hayToks.includes(t)).length;
+        const ov = tokenOverlap(needleToks, hayToks);
+        if (shared >= (opts.minShared ?? TOKEN_MIN_SHARED) && ov >= (opts.minScore ?? TOKEN_MIN_SCORE)) score = ov;
+      }
+    }
+    if (score <= 0) continue;
+    if (!gated(p)) continue;
+    out.push({ row: p, exact: false, score });
+  }
+  out.sort((a, b) => (Number(b.exact) - Number(a.exact)) || (b.score - a.score));
+  return out.slice(0, Math.max(1, Math.min(10, opts.limit ?? 5)));
+}
+
+/**
  * Resolve an intake-written kypItem (+ category hint) to a live catalogue
- * product. Tiers: exact name/alias (id, name, alias equality) → substring
- * either-way → token-overlap (reorder/noise tolerant). Partial/token tiers
- * need category agreement (skipped when the item is Uncategorized).
+ * product. Thin wrapper over matchCatalogueProducts (category-gated).
  * Returns null when nothing credible matches — callers fall through to the
  * LLM/candidate fallback, never guess.
  */
@@ -150,45 +227,11 @@ export function resolveProduct(
   kypItem: string,
   category: string,
 ): { product: MatchProduct; exact: boolean } | null {
-  const needle = norm(kypItem);
-  if (!needle) return null;
-  const cat = norm(category);
-  const gated = (p: MatchProduct): boolean => {
-    // Partial/token tiers only count with category agreement (avoids
-    // cross-category junk). Uncategorized items skip the gate.
-    if (!cat || cat === 'uncategorized') return true;
-    return norm(p.category) === cat;
-  };
-  for (const p of products ?? []) {
-    if (!p || p.active === false) continue;
-    if (String((p as any).id ?? '') === kypItem.trim()) return { product: p, exact: true };
-    const name = norm(p.name);
-    const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
-    if (name === needle || aliases.includes(needle)) return { product: p, exact: true };
-  }
-  const needleToks = matchTokens(needle);
-  let best: MatchProduct | null = null;
-  let bestScore = 0;
-  for (const p of products ?? []) {
-    if (!p || p.active === false) continue;
-    const name = norm(p.name);
-    const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
-    const subHit =
-      (name && (name.includes(needle) || needle.includes(name))) ||
-      aliases.some((a) => a && (a.includes(needle) || needle.includes(a)));
-    let score = subHit ? 1 : 0;
-    if (!subHit && needleToks.length > 0) {
-      const hayToks = matchTokens([name, ...aliases].join(' '));
-      const shared = needleToks.filter((t) => hayToks.includes(t)).length;
-      const ov = tokenOverlap(needleToks, hayToks);
-      if (shared >= TOKEN_MIN_SHARED && ov >= TOKEN_MIN_SCORE) score = ov;
-    }
-    if (score <= 0 || score <= bestScore) continue;
-    if (!gated(p)) continue;
-    best = p;
-    bestScore = score;
-  }
-  return best ? { product: best, exact: false } : null;
+  // Thin wrapper: single best, category-gated (matchCatalogueProducts
+  // sorts exact-first then score desc, so [0] is the same pick the
+  // inline loop made — stable order preserves earliest-on-ties).
+  const hit = matchCatalogueProducts(products, kypItem, { category, gateCategory: true, limit: 10 })[0];
+  return hit ? { product: hit.row as MatchProduct, exact: hit.exact } : null;
 }
 
 /**
@@ -206,32 +249,10 @@ export function rankProducts(
   minShared = TOKEN_MIN_SHARED,
   minScore = TOKEN_MIN_SCORE,
 ): { product: MatchProduct; exact: boolean; score: number }[] {
-  const needle = norm(q);
-  if (!needle) return [];
-  const needleToks = matchTokens(needle);
-  const out: { product: MatchProduct; exact: boolean; score: number }[] = [];
-  for (const p of products ?? []) {
-    if (!p || p.active === false) continue;
-    const name = norm(p.name);
-    const aliases = (Array.isArray(p.aliases) ? p.aliases : []).map(norm);
-    if (String((p as any).id ?? '') === q.trim() || name === needle || aliases.includes(needle)) {
-      out.push({ product: p, exact: true, score: 2 });
-      continue;
-    }
-    const subHit =
-      (name && (name.includes(needle) || needle.includes(name))) ||
-      aliases.some((a) => a && (a.includes(needle) || needle.includes(a)));
-    let score = subHit ? 1 : 0;
-    if (!subHit && needleToks.length > 0) {
-      const hayToks = matchTokens([name, ...aliases].join(' '));
-      const shared = needleToks.filter((t) => hayToks.includes(t)).length;
-      const ov = tokenOverlap(needleToks, hayToks);
-      if (shared >= minShared && ov >= minScore) score = ov;
-    }
-    if (score > 0) out.push({ product: p, exact: false, score });
-  }
-  out.sort((a, b) => (Number(b.exact) - Number(a.exact)) || (b.score - a.score));
-  return out.slice(0, Math.max(1, Math.min(10, limit)));
+  // Thin wrapper: same tiers, same thresholds (matchCatalogueProducts
+  // defaults match these exactly — active-only, no category tier/gate).
+  return matchCatalogueProducts(products, q, { limit, minShared, minScore })
+    .map((m) => ({ product: m.row as MatchProduct, exact: m.exact, score: m.score }));
 }
 
 /** Active required checklist for one product, sortOrder ascending. */
@@ -321,17 +342,31 @@ export function salesSafeQuote(
   scored: ScoredRate,
   specs: Record<string, string>,
   required: MatchGuideRow[],
+  /** Full active guide (required + optional) for the allSpecs view. */
+  guides?: MatchGuideRow[],
 ): SalesQuote {
   const r = scored.rate;
   const eff = effectivePrice(r.pricePerUnit, r.discountPercent) ?? 0;
-  const labels = new Map<string, string>();
-  for (const g of required) labels.set(g.attrKey, g.question);
   const matchedSpecs: SalesQuote['matchedSpecs'] = [];
   const missingSpecs: SalesQuote['missingSpecs'] = [];
   for (const g of required) {
     const v = String(specs?.[g.attrKey] ?? '').trim();
     if (v) matchedSpecs.push({ key: g.attrKey, question: g.question, value: v.slice(0, 200) });
     else missingSpecs.push({ key: g.attrKey, question: g.question });
+  }
+  // All-specs view: what the RATE states, labeled by the full guide.
+  // Falls back to required-only labels when the full guide isn't passed.
+  const labelRows = (guides ?? required).filter((g) => g && g.attrKey);
+  const seen = new Set<string>();
+  const allSpecs: SalesQuote['allSpecs'] = [];
+  for (const g of labelRows) {
+    if (seen.has(g.attrKey)) continue;
+    seen.add(g.attrKey);
+    allSpecs.push({
+      key: g.attrKey,
+      question: g.question,
+      value: String((r.attrValues ?? {})[g.attrKey] ?? '').trim().slice(0, 200),
+    });
   }
   return {
     productId: product.id,
@@ -346,5 +381,7 @@ export function salesSafeQuote(
     quoteAgeDays: ageDays(r.quotedAt) != null ? Math.round(ageDays(r.quotedAt) as number) : null,
     matchedSpecs,
     missingSpecs,
+    imageUrl: (r as any)?.imageUrl ? String((r as any).imageUrl) : null,
+    allSpecs,
   };
 }

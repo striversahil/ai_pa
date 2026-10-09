@@ -143,17 +143,17 @@ function isRateLimited(e: any): boolean {
   return /429|rate-limit|1015|exhausted/i.test(msg) || (e as any)?.status === 429;
 }
 
-export async function runAgnesVisionIntake(env: Record<string, unknown>, store: EnquiryStore, id: string): Promise<void> {
+export async function runAgnesVisionIntake(env: Record<string, unknown>, store: EnquiryStore, id: string): Promise<{ lines: any[]; provider: string } | null> {
   let enquiry: any;
   try { enquiry = await store.getEnquiry(id); } catch (e: any) {
     // Never die silently here — a dropped initial read used to masquerade as
     // "kick never fired" with zero log output. Surface it for `wrangler tail`.
     console.error(`[vision-intake] ${id}: initial read failed (${String(e?.message ?? e).slice(0, 160)}) — intake aborted`);
-    return;
+    return null;
   }
   if (!enquiry) {
     console.error(`[vision-intake] ${id}: row not found — intake aborted`);
-    return;
+    return null;
   }
 
   const gateway = getGateway(env as any);
@@ -163,7 +163,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   const hasOpenRouter = health.some((h) => h.provider === 'openrouter');
   if (!hasPaid && !hasAgnes && !hasOpenRouter) {
     console.warn('[vision-intake] no AI key — skipping');
-    return;
+    return null;
   }
   // Paid DeepSeek lane primary (text → deepseek-v4.1-flash; photo passes ride
   // the lane's vision model). Agnes → OpenRouter free stay as fallbacks so
@@ -211,6 +211,33 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
   let routed: any = null;
   let lastErr: any = null;
   let successProvider = chain[0] ?? 'agnes';
+  // Content-drop gate (Oct 2026: ~half of runs across 3 days persisted
+  // names-only lines — client-written sizes/quantities never reached any
+  // dashboard). A weak provider sometimes "splits" names while dropping every
+  // measurable field. Detected by LENGTH, not regex: a line whose verbatim is
+  // substantially longer than name+qty+dims+spec lost content in transit.
+  // Dropped runs retry on the next provider immediately (same as 1015/429);
+  // if every provider drops, the best attempt still persists (never the
+  // worst), and the drop is logged for `wrangler tail`.
+  const countDroppedLines = (rawLines: any[]): { dropped: number; total: number } => {
+    let dropped = 0, total = 0;
+    for (const l of (Array.isArray(rawLines) ? rawLines : [])) {
+      const name = String(l?.name ?? l?.verbatim ?? '').trim();
+      if (!name) continue;
+      total++;
+      const kept = String(l?.name ?? '').length + String(l?.qty ?? '').length
+        + String(l?.dims ?? '').length + String(l?.spec ?? '').length;
+      const verbatim = String(l?.verbatim ?? '').length;
+      // Numbering/separators account for ~a dozen chars; beyond that, content died.
+      if (verbatim > kept + 12) dropped++;
+    }
+    return { dropped, total };
+  };
+  let bestRouted: any = null;
+  let bestProvider = '';
+  let bestDropped = Number.POSITIVE_INFINITY;
+  let bestTotal = 0;
+  let acceptedDropped = 0;
   // Try each provider in chain until one succeeds (handles Agnes 1015 WAF without empty poison)
   outer: for (const prov of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -229,6 +256,17 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
             reasoningOff: true,
           });
         } finally { clearTimeout(t); }
+        const gate = countDroppedLines((routed as any)?.lines);
+        if (gate.total > 0 && gate.dropped > 0 && gate.dropped / gate.total >= 0.5) {
+          console.log(`[vision-intake] ${id}: provider=${prov} attempt ${attempt + 1}/2 dropped content (${gate.dropped}/${gate.total} lines names-only) — trying next provider`);
+          if (!bestRouted || gate.dropped < bestDropped || (gate.dropped === bestDropped && gate.total > bestTotal)) {
+            bestRouted = routed; bestProvider = prov; bestDropped = gate.dropped; bestTotal = gate.total;
+          }
+          routed = null;
+          lastErr = new Error('router-dropped-content');
+          break; // next provider (don't hammer the same weak one)
+        }
+        acceptedDropped = gate.dropped;
         lastErr = null;
         successProvider = prov;
         break outer;
@@ -245,6 +283,16 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
         if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
       }
     }
+  }
+  // Every provider dropped content: persist the best attempt, never the worst
+  // (a partial split still beats names-only poison — and the next edit
+  // re-runs intake cleanly). Logged so dropped runs stay visible in tail.
+  if (!routed && bestRouted) {
+    routed = bestRouted;
+    successProvider = bestProvider;
+    acceptedDropped = bestDropped;
+    lastErr = null;
+    console.warn(`[vision-intake] ${id}: all providers dropped content — persisting best attempt (${bestProvider}, ${bestDropped}/${bestTotal} lines names-only)`);
   }
   if (lastErr && !routed) {
     const is429 = isRateLimited(lastErr);
@@ -268,7 +316,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
     } else {
       console.error(`[vision-intake] ${id}: vision failed on all providers ${chain.join('→')}: ${String(lastErr?.message ?? lastErr).slice(0, 300)}`);
     }
-    if (is429) return;
+    if (is429) return null;
     try { await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000); } catch {}
     // Terminal failure (non-429): NEVER leave aiPending set with no retry.
     // Clear the flags (raw items stay, same as the zero-lines path) and mark
@@ -297,7 +345,7 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
         ]);
       }
     } catch {}
-    return;
+    return null;
   }
   if (!routed || !Array.isArray(routed.lines) || routed.lines.length === 0) {
     console.log(`[vision-intake] ${id}: router returned 0 lines (lead: ${JSON.stringify(routed?.lead || {}).slice(0, 300)})`);
@@ -579,7 +627,9 @@ export async function runAgnesVisionIntake(env: Record<string, unknown>, store: 
       ]);
     }
   } catch {}
-  console.log(`[vision-intake] ${id}: provider=${successProvider} items=${outItems.length} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
+  console.log(`[vision-intake] ${id}: provider=${successProvider} items=${outItems.length} dropped=${acceptedDropped} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
+  // Returned for diagnostics (debug endpoint) — callers otherwise ignore it.
+  return { lines, provider: successProvider };
 }
 
 

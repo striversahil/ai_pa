@@ -81,6 +81,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
     return () => clearInterval(id);
   }, [busy]);
   const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
+  const [applying, setApplying] = useState<Set<number>>(new Set());
   const [listening, setListening] = useState(false);
   const [visible, setVisible] = useState(open);
   const [exiting, setExiting] = useState(false);
@@ -88,7 +89,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   const inputRef = useRef<HTMLInputElement>(null);
   const recogRef = useRef<any>(null);
 
-  useEffect(() => { setMsgs([]); setConfirmed(new Set()); }, [config.resetKey]);
+  useEffect(() => { setMsgs([]); setConfirmed(new Set()); setApplying(new Set()); }, [config.resetKey]);
 
   // Conversation id, VOLATILE per mount (founder order): a refresh or a
   // remount mints a FRESH id → fresh server thread (history + trace +
@@ -106,7 +107,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   if (!sessionRef.current) sessionRef.current = mintSession();
   const rotateSession = () => {
     sessionRef.current = mintSession();
-    setMsgs([]); setConfirmed(new Set()); setThinking("");
+    setMsgs([]); setConfirmed(new Set()); setApplying(new Set()); setThinking("");
   };
   useEffect(() => {
     const el = scrollRef.current;
@@ -385,12 +386,15 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
   const confirm = async (msgIdx: number, pIdx: number, p: CopilotProposal) => {
     if (!config.executeUrl) return;
     const key = msgIdx * 100 + pIdx;
-    if (confirmed.has(key)) return;
+    if (confirmed.has(key) || applying.has(key)) return;
+    setApplying((s) => new Set(s).add(key));
     try {
       const res = await fetch(config.executeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: p }),
+        // Session threads the outcome into THIS chat's server memory, so
+        // the next turn knows the write happened without re-looking up.
+        body: JSON.stringify({ action: p, session: sessionRef.current }),
       });
       const data = await res.json();
       if (data.applied && data.applied !== "none") {
@@ -401,6 +405,8 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
       }
     } catch {
       setMsgs((ms) => [...ms, { role: "assistant", text: "Apply failed — please retry." }]);
+    } finally {
+      setApplying((s) => { const n = new Set(s); n.delete(key); return n; });
     }
   };
 
@@ -598,7 +604,7 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                                             </tr>
                                           </thead>
                                           <tbody>
-                                            {(p as any).table.rows.slice(0, 20).map((r: Record<string, string>, ri: number) => (
+                                            {(p as any).table.rows.map((r: Record<string, string>, ri: number) => (
                                               <tr key={ri} className="border-b border-white/[0.04] last:border-0">
                                                 {((p as any).table.columns ?? Object.keys(r)).map((c: string) => (
                                                   <td key={c} className="px-2 py-1.5 text-[var(--text-secondary)] align-top">{String(r?.[c] ?? "—")}</td>
@@ -609,8 +615,13 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
                                         </table>
                                       </div>
                                     )}
-                                    <button type="button" disabled={done} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200">
-                                      {done ? "✓ Applied" : "Confirm & apply →"}
+                                    <button type="button" disabled={done || applying.has(key)} onClick={() => void confirm(mi, pi, p)} className="mt-3 px-4 py-2 text-[13px] font-bold rounded-full bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer border-0 transition-colors duration-200">
+                                      {applying.has(key) ? (
+                                        <span className="inline-flex items-center gap-1.5">
+                                          <span className="h-3 w-3 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                                          Applying…
+                                        </span>
+                                      ) : done ? "✓ Applied" : "Confirm & apply →"}
                                     </button>
                                   </div>
                                 );

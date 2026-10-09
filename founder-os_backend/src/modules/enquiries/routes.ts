@@ -476,7 +476,15 @@ export function stripQueueMediaUrls(rows: any[]): any[] {
       touched = true;
       const c: any = { ...(it as any) };
       if (hasMedia) c.media = [];
-      if (hasVarMedia) c.variationRequestMedia = [];
+      // Sales' request reference photo MUST stay visible to procurement (the
+      // whole point of the alternate/info request) — but only as short
+      // locker URLs. Legacy embedded data-URIs stay stripped: they are the
+      // megabytes this strip exists for, and old rows re-upload on next edit.
+      if (hasVarMedia) {
+        c.variationRequestMedia = ((it as any).variationRequestMedia as any[]).filter(
+          (m: any) => m && typeof (m as any)?.url === 'string' && !(m as any).url.startsWith('data:'),
+        );
+      }
       return c;
     });
     return touched ? { ...(e as any), items: out } : e;

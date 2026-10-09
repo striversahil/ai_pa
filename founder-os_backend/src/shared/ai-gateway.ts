@@ -255,6 +255,9 @@ export interface ChatMessage {
   /** Tool-result linkage (agentic loops). Passed through verbatim. */
   tool_call_id?: string;
   tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  /** Assistant deliberation echo (reasoning models): passed through verbatim
+   *  so tool chains continue mid-thought instead of re-deriving. */
+  reasoning?: string;
 }
 
 export interface ToolDefinition {
