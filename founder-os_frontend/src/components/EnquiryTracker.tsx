@@ -52,8 +52,8 @@ export default function EnquiryTracker() {
     addEnquiry, updateEnquiry, deleteEnquiry,
     addComment, updateItems, addRequirement, makeActivity, clients,
     saveError: itemsSaveError, dismissSaveError: dismissItemsSaveError,
-    mergeSingle,
-  } = useEnquiryData("sales");
+    mergeSingle, hasMore, loadMore, loadedCount,
+  } = useEnquiryData("sales", { pageSize: 100 });
   // Fallback telecaller roster for root/MIS: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
   const [telecallers, setTelecallers] = useState<any[]>([]);
   useEffect(() => {
@@ -297,6 +297,15 @@ export default function EnquiryTracker() {
           fileInputRef={fileInputRef}
           triggerCSVInput={() => fileInputRef.current?.click()}
         />
+      )}
+      {/* Cursor paging: newest 100 load first (flat DB cost); older rows append
+          here without disturbing the loaded pipeline. */}
+      {!selectedEnquiry && hasMore && (
+        <div className="flex justify-center pt-1">
+          <button type="button" onClick={loadMore} className="px-4 py-1.5 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)] text-xs font-extrabold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer">
+            Load older enquiries · showing {loadedCount}
+          </button>
+        </div>
       )}
 
       {isAddModalOpen && (

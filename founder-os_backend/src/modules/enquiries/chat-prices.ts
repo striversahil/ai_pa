@@ -158,3 +158,61 @@ export function itemIdx(args: Record<string, any>, count: number): { idx: number
   }
   return { idx: num - 1, num };
 }
+
+export interface SpecVerdictRow {
+  key: string;
+  question: string;
+  /** Value the model asked for under this key (null = not asked). */
+  asked: string | null;
+  /** How many of the returned rate rows carry a value for this key. */
+  rowsCarrying: number;
+  /** Distinct stored values across rows (max 8) — the ground truth for
+   *  "do you have X" questions. The model MUST answer such questions from
+   *  here, never from confidence alone. */
+  values: string[];
+}
+export interface SpecVerdict {
+  variationCount: number;
+  askedSpecs: Record<string, string>;
+  coverage: SpecVerdictRow[];
+}
+/**
+ * Grounding verdict for price/lookup results: per checklist key, what was
+ * asked vs what the returned rows actually carry. Prose answers ("no 2-ply
+ * variation on file") must be checked against this — a low-confidence
+ * caveat is NOT an absence when rowsCarrying > 0.
+ */
+export function specVerdict(
+  rates: Array<{ attrValues?: Record<string, string> | null }>,
+  specs: Record<string, string>,
+  required: { attrKey: string; question: string }[],
+): SpecVerdict {
+  const list = Array.isArray(rates) ? rates : [];
+  const asked: Record<string, string> = {};
+  for (const [k, v] of Object.entries(specs ?? {})) {
+    const s = String(v ?? '').trim();
+    if (s) asked[String(k)] = s;
+  }
+  const coverage: SpecVerdictRow[] = (required ?? []).map((g) => {
+    const vals: string[] = [];
+    let carrying = 0;
+    for (const r of list) {
+      const v = String(r?.attrValues?.[g.attrKey] ?? '').trim();
+      if (!v) continue;
+      carrying++;
+      if (!vals.includes(v)) vals.push(v);
+    }
+    return { key: g.attrKey, question: g.question, asked: asked[g.attrKey] ?? null, rowsCarrying: carrying, values: vals.slice(0, 8) };
+  });
+  return { variationCount: list.length, askedSpecs: asked, coverage };
+}
+/**
+ * Keys the model passed that are NOT required checklist keys for this
+ * product — silently dropped from scoring. Reported back so the model can
+ * re-pass the value under the right attrKey instead of concluding the
+ * spec doesn't exist.
+ */
+export function droppedSpecKeys(resolved: Record<string, unknown>, required: { attrKey: string }[]): string[] {
+  const keep = new Set((required ?? []).map((g) => g.attrKey));
+  return Object.keys(resolved ?? {}).filter((k) => !keep.has(String(k)));
+}

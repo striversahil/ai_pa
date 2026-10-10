@@ -94,12 +94,9 @@ export class PrismaEnquiryStore implements EnquiryStore {
   async searchEnquiries(query: string, limit: number) {
     const lim = Math.min(50, Math.max(1, Math.floor(limit)));
     const q = String(query ?? "");
-    const ci = { contains: q, mode: "insensitive" as const };
-    const ors: any[] = [
-      { estNumber: ci }, { enquiryNumber: ci }, { title: ci }, { clientCompany: ci },
-      { contactName: ci }, { contactPhone: ci }, { sourceLead: ci }, { source: ci },
-      { description: ci },
-    ];
+    // Tight-column search (same rule as the D1 store): the write-maintained
+    // searchText identity mark, never the items blob. Numeric fast path stays.
+    const ors: any[] = [{ searchText: { contains: q, mode: "insensitive" as const } }];
     if (/^\d{1,9}$/.test(q.trim())) ors.push({ dailyNo: Number(q.trim()) });
     const rows = await this.prisma.enquiry.findMany({
       where: { OR: ors },
@@ -156,9 +153,11 @@ export class PrismaEnquiryStore implements EnquiryStore {
     return max + 1;
   }
   async createEnquiry(data) {
+    const { composeSearchText } = await import('./parse');
     const row = await this.prisma.enquiry.create({
       data: {
         ...data,
+        searchText: composeSearchText(data),
         imageUrls: JSON.stringify(data.imageUrls ?? []),
         activities: JSON.stringify(data.activities ?? []),
         additionalRequirements: JSON.stringify(data.additionalRequirements ?? []),
@@ -168,11 +167,21 @@ export class PrismaEnquiryStore implements EnquiryStore {
     return mapEnquiry(row)!;
   }
   async updateEnquiry(id, updates) {
+    const { composeSearchText } = await import('./parse');
     const data: any = { ...updates, updatedAt: new Date() };
     if (data.imageUrls) data.imageUrls = JSON.stringify(data.imageUrls);
     if (data.activities) data.activities = JSON.stringify(data.activities);
     if (data.additionalRequirements) data.additionalRequirements = JSON.stringify(data.additionalRequirements);
     if ((data as any).items) data.items = JSON.stringify((data as any).items);
+    // Recompose the identity mark from the merged row (one indexed PK read,
+    // alt runtime only) so item renames/vendor quotes stay searchable.
+    try {
+      const existing: any = await (this.prisma as any).enquiry.findUnique({ where: { id } }).catch(() => null);
+      if (existing) {
+        const mergedItems = (data as any).items !== undefined ? JSON.parse((data as any).items) : JSON.parse(existing.items ?? '[]');
+        data.searchText = composeSearchText({ ...existing, ...updates, items: mergedItems });
+      }
+    } catch { /* search mark stays stale until next write — never fails a save */ }
     const row = await this.prisma.enquiry.update({ where: { id }, data }).catch(() => null);
     return row ? mapEnquiry(row) : null;
   }

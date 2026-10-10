@@ -282,3 +282,28 @@ export function pickEnquiryFields(data: any): Partial<Enquiry> | null {
   return Object.keys(out).length ? out : null;
 }
 
+
+// ── Search identity (migration 0058) ─────────────────────────────────────────
+// Write-maintained, lowercased, ≤2000 chars: scalars + description prefix +
+// item names/qtys/specs/categories + vendor names. Deliberately EXCLUDED:
+// media data-URIs (the megabytes), thread text, rates amounts, comments.
+// The search path LIKEs this one tight column instead of sweeping blobs —
+// the same exclusion Zoho enforces in COQL criteria (no Description, no line
+// items, no Notes/Attachments in WHERE).
+export function composeSearchText(e: any): string {
+  const s = (v: unknown, n = 300): string => String(v ?? '').trim().slice(0, n);
+  const parts: string[] = [
+    s((e as any)?.estNumber, 40), s((e as any)?.enquiryNumber, 40),
+    s((e as any)?.title), s((e as any)?.clientCompany), s((e as any)?.contactName),
+    s((e as any)?.contactPhone, 40), s((e as any)?.sourceLead), s((e as any)?.location, 120),
+    s((e as any)?.description, 300),
+  ];
+  for (const it of (Array.isArray((e as any)?.items) ? (e as any).items : [])) {
+    parts.push(s(it?.name), s(it?.qty, 120), s(it?.spec, 500), s(it?.category, 120), s(it?.kypItem, 120));
+    for (const r of (Array.isArray(it?.rates) ? it.rates : [])) parts.push(s(r?.vendor, 200));
+  }
+  for (const r of (Array.isArray((e as any)?.additionalRequirements) ? (e as any).additionalRequirements : [])) {
+    parts.push(s(typeof r === 'string' ? r : r?.text));
+  }
+  return parts.map((p) => p.trim()).filter(Boolean).join(' | ').slice(0, 2000).toLowerCase();
+}

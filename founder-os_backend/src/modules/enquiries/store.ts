@@ -42,6 +42,7 @@ import {
   signedNumOrUndefined,
   parseItems,
   parseRequirements,
+  composeSearchText,
 } from "./parse";
 
 export {
@@ -133,7 +134,7 @@ export function mapComment(row: any): EnquiryComment | null {
 // (empty means "not filled", which the LLM extraction later populates).
 export function sanitize(e: any): Enquiry {
   const str = (v: any) => (v === undefined || v === null ? "" : String(v));
-  return {
+  const out: Enquiry = {
     ...e,
     estNumber: str(e.estNumber),
     organizationId: str((e as any).organizationId),
@@ -200,6 +201,11 @@ export function sanitize(e: any): Enquiry {
         }))
       : [],
   };
+  // Search identity recomposes from the NORMALIZED row on every sanitize, so
+  // no write path can leave it stale (renames, new items, vendor quotes all
+  // re-index inline — same write, zero extra queries).
+  out.searchText = composeSearchText(out);
+  return out;
 }
 
 // ── In-memory (dev / fallback) ────────────────────────────────────────────────
@@ -253,13 +259,9 @@ class MemoryEnquiryStore implements EnquiryStore {
     const num = /^\d{1,9}$/.test(q) ? Number(q) : null;
     const hit = (e: Enquiry) => {
       if (num !== null && Number((e as any)?.dailyNo) === num) return true;
-      const hay = [
-        (e as any)?.estNumber ?? "", (e as any)?.enquiryNumber ?? "", e.title ?? "",
-        (e as any)?.clientCompany ?? "", (e as any)?.contactName ?? "", (e as any)?.contactPhone ?? "",
-        (e as any)?.sourceLead ?? "", e.source ?? "", e.description ?? "",
-        JSON.stringify((e as any)?.items ?? []), JSON.stringify((e as any)?.additionalRequirements ?? []),
-      ].join(" ").toLowerCase();
-      return hay.includes(q);
+      // Same identity mark as the D1 searchText column (composed on the fly
+      // here — the memory store is dev-only, no write path maintains it).
+      return composeSearchText(e).includes(q);
     };
     const all = [...this.enquiries]
       .filter(hit)
@@ -342,20 +344,16 @@ class D1EnquiryStore implements EnquiryStore {
     };
   }
   async searchEnquiries(query: string, limit: number) {
-    // Substring sweep newest-first, capped. LIKE '%q%' can't ride a b-tree
-    // (accepted: searches are debounced + user-initiated, not per-refresh),
-    // but the numeric fast path (dailyNo =) and the matched-row comment
-    // lookup stay indexed. Wildcards escaped; pattern byte-capped upstream
-    // (D1 allows 50 bytes per LIKE pattern).
+    // Single tight-column sweep: `searchText` (write-maintained identity mark,
+    // KBs/row) instead of the old 11-column LIKE over `items` (megabytes of
+    // base64 per row) + `description`. Same exclusions Zoho enforces in COQL
+    // criteria. Numeric fast path (dailyNo =) stays indexed; D1 caps LIKE
+    // patterns at 50 bytes — byte-truncate upstream (routes.ts fits to 48).
     const lim = Math.min(50, Math.max(1, Math.floor(limit)));
-    const q = String(query ?? "");
+    const q = String(query ?? "").toLowerCase();
     const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    const cols = [
-      "estNumber", "enquiryNumber", "title", "clientCompany", "contactName",
-      "contactPhone", "sourceLead", "source", "description", "items", "additionalRequirements",
-    ];
-    const conds = cols.map((c) => `${c} LIKE ? ESCAPE '\\'`);
-    const binds: any[] = cols.map(() => pattern);
+    const conds = [`searchText LIKE ? ESCAPE '\\'`];
+    const binds: any[] = [pattern];
     if (/^\d{1,9}$/.test(q.trim())) {
       conds.push("dailyNo = ?");
       binds.push(Number(q.trim()));
@@ -407,12 +405,12 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, organizationId, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, sentRevisionAt, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, organizationId, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, sentRevisionAt, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items, searchText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         e.id, e.estNumber, (e as any).organizationId ?? "", e.dailyNo, e.source, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
         e.priority, e.status, e.rateStatus, e.procurementSubmittedAt, (e as any).sentRevisionAt ?? "", e.assignedAgentId, e.createdAt, e.updatedAt,
-        JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []),
+        JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []), (e as any).searchText ?? "",
       )
       .run();
     return e;
@@ -423,13 +421,13 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, organizationId=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, sentRevisionAt=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, organizationId=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, sentRevisionAt=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=?, searchText=? WHERE id=?",
       )
       .bind(
         merged.estNumber, String((merged as any).organizationId ?? ""), merged.dailyNo, merged.source, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
         merged.description, merged.priority, merged.status, merged.rateStatus, merged.procurementSubmittedAt, String((merged as any).sentRevisionAt ?? ""), merged.assignedAgentId,
         merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
-        JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), id,
+        JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), (merged as any).searchText ?? "", id,
       )
       .run();
     return merged;

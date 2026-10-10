@@ -6,6 +6,10 @@ import { fakeD1 } from './d1-mock.mjs';
 import { normalizeInches, normalizeSpecValue, normalizeUnit } from '../src/automations/product-line/normalize';
 import { canonicalAttrKey, resolveSpecKeys } from '../src/automations/product-line/intake';
 import { productLineIntakeDef } from '../src/automations/product-line/intake';
+import {
+  droppedSpecKeys, filterChecklistSpecs as filterSalesSpecs,
+  resolveSpecKeys as resolveSalesSpecKeys, specVerdict,
+} from '../src/modules/enquiries/chat-prices';
 
 initD1({ DB: fakeD1() } as any);
 
@@ -259,6 +263,24 @@ assert('intake fans out in parallel', (productLineIntakeDef as any)?.maxParallel
   assert('clear wipes trace + reasoning', (await loadToolTrace(memDef, memCtx)) === '' && (await loadReasoning(memDef, memCtx)) === '', 'stale carry-forward');
   const e1 = await readEpoch(memDef, memCtx);
   assert('clear bumps epoch', (e1 ?? 0) > (e0 ?? 0), JSON.stringify({ before: e0, after: e1 }));
+
+  // Spec-verdict grounding (sales "no 2-ply variation" false negative):
+  // prose must be answerable from the verdict, and wrong keys reported.
+  const plyGuide = [{ attrKey: 'ask_ply_grade_2_ply_indian', question: 'Ask ply/grade: 2 ply (Indian manufacture), 4 ply (imported, sturdier)' }];
+  const plyRates = [
+    { attrValues: { ask_ply_grade_2_ply_indian: '2 ply (Indian manufacture)' } },
+    { attrValues: { ask_ply_grade_2_ply_indian: '2 ply (Indian manufacture)' } },
+    { attrValues: {} },
+  ];
+  const rkPly = resolveSalesSpecKeys({ ask_ply_grade_2_ply_indian: '2 ply' }, plyGuide);
+  assert('checklist key survives filtering', (filterSalesSpecs(rkPly, plyGuide) as any).ask_ply_grade_2_ply_indian === '2 ply', JSON.stringify(rkPly));
+  const rw = resolveSalesSpecKeys({ thickness: '2 ply' }, plyGuide);
+  assert('non-checklist key dropped from scoring', !('thickness' in filterSalesSpecs(rw, plyGuide)), JSON.stringify(rw));
+  assert('non-checklist key reported back', droppedSpecKeys(rw, plyGuide).includes('thickness'), JSON.stringify(droppedSpecKeys(rw, plyGuide)));
+  const v = specVerdict(plyRates, { ask_ply_grade_2_ply_indian: '2 ply' }, plyGuide);
+  assert('verdict counts variations', v.variationCount === 3, JSON.stringify(v.variationCount));
+  assert('verdict counts rows carrying the spec', v.coverage[0]?.rowsCarrying === 2, JSON.stringify(v.coverage));
+  assert('verdict echoes the ask + stored values', v.askedSpecs.ask_ply_grade_2_ply_indian === '2 ply' && v.coverage[0]?.values.includes('2 ply (Indian manufacture)'), JSON.stringify(v.coverage));
 
   console.log(`\nintake-e2e: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

@@ -71,10 +71,11 @@ export default function ManagementReview() {
   const [tabPick, setTabPick] = useState<MgmtTab | null>(null);
 
   // ── Data layer: KV-cached server queues (flat D1 cost) ──
-  // Active + Unprocessed + History ALL arrive COMPLETE from cached
-  // computations (`GET /api/enquiries/queues`, history with `&all=1`):
-  // every row however old, zero paging, zero D1 per render (the full scan
-  // runs at most once per 60s TTL and is busted on every write).
+  // Active + Unprocessed + item-less arrive COMPLETE from the cached
+  // computation (`GET /api/enquiries/queues`); History pages server-side
+  // newest-first (page + limit, jumper refetches via hook deps). Every render
+  // costs KV reads only (the full scan runs at most once per 60s TTL and is
+  // busted on every write).
   const byActivity = (a: Enquiry, b: Enquiry): number =>
     String(b.updatedAt ?? b.createdAt ?? "").localeCompare(String(a.updatedAt ?? a.createdAt ?? ""));
   type QueuesPayload = { active: Enquiry[]; unprocessed: Enquiry[]; empty: Enquiry[]; historyTotal: number };
@@ -93,16 +94,21 @@ export default function ManagementReview() {
 
   // Complete server history — one fetch off the same cached computation
   // (no D1 within TTL), revalidated on the same live events as the queues.
-  type HistPayload = { rows: Enquiry[]; total: number };
+  // History pages server-side newest-first (page + limit); the jumper below
+  // refetches via deps. Pending/active tabs stay complete (work queues).
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState<number>(50);
+  type HistPayload = { rows: Enquiry[]; total: number; totalPages: number };
   const hist = useLiveDashboard<HistPayload>(async () => {
-    const res = await fetch("/api/enquiries/queues?queue=history&all=1", { cache: "no-store" });
+    const res = await fetch(`/api/enquiries/queues?queue=history&page=${historyPage}&limit=${historyPageSize}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     const d = await res.json();
     return {
       rows: Array.isArray(d.rows) ? (d.rows as any[]).map(toEnquiry) : [],
       total: Number(d.total ?? 0),
+      totalPages: Number(d.totalPages ?? 1),
     };
-  }, { pollMs: 60000 });
+  }, { pollMs: 60000, deps: [historyPage, historyPageSize] });
 
   // Refresh-all handle with a stable identity for effects (the hook result
   // object itself is new every render — never put it in a dep array).
@@ -291,20 +297,23 @@ export default function ManagementReview() {
     if (!q) return historyEnquiries;
     return historyEnquiries.filter((e) => matchesEnquiryQuery(e, q, [agentNameOf((e as any).assignedAgentId)]));
   }, [historyEnquiries, searchActive, searchQuery, agents]);
-  // History renders from the COMPLETE cached set and pages locally —
-  // every decided row however old, no 100-row cap.
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyPageSize, setHistoryPageSize] = useState<number>(50);
+  // History renders from the server page (newest-first, page + limit above);
+  // the jumper refetches via hook deps — no whole-table dump on first paint.
   const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
   useEffect(() => { setHistoryPage(1); }, [historyPageSize, searchQuery]);
   const visibleHistory = filteredHistory;
   const serverHistoryTotal = hist.data?.total ?? queues.data?.historyTotal ?? 0;
-  // The count follows what's listed: a typed query (either mode) counts the
-  // filtered set, otherwise the server total.
-  const historyTotal = searchQuery.trim() ? filteredHistory.length : serverHistoryTotal;
-  const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyPageSize));
+  // Counts follow the server page when idle (total + totalPages ride the
+  // payload); a typed query counts the match set instead.
+  const searchingNow = !!searchQuery.trim();
+  const historyTotal = searchingNow ? filteredHistory.length : serverHistoryTotal;
+  const historyTotalPages = searchingNow
+    ? Math.max(1, Math.ceil(Math.max(historyTotal, 1) / historyPageSize))
+    : Math.max(1, hist.data?.totalPages ?? Math.ceil(Math.max(historyTotal, 1) / historyPageSize));
   const historyPageClamped = Math.min(historyPage, historyTotalPages);
-  const visibleHistoryPage = visibleHistory.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize);
+  const visibleHistoryPage = searchingNow
+    ? visibleHistory.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize)
+    : visibleHistory;
   // Unprocessed search (same local-first UX as history)
   const filteredUnprocessed = useMemo(() => {
     if (searchActive) return unprocessedEnquiries;
@@ -694,7 +703,7 @@ export default function ManagementReview() {
                 ? <p className="text-xs font-semibold text-[var(--text-secondary)] animate-pulse py-6 text-center">Loading history…</p>
                 : enquiryTable(visibleHistoryPage, "history")}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[var(--border-card)] mt-3">
-                <span className="text-xs font-semibold text-[var(--text-secondary)]">Showing {filteredHistory.length ? (historyPageClamped - 1) * historyPageSize + 1 : 0}–{Math.min(historyPageClamped * historyPageSize, filteredHistory.length)} of {filteredHistory.length} {historyTotalPages > 1 ? `· page ${historyPageClamped} of ${historyTotalPages}` : ""}</span>
+                <span className="text-xs font-semibold text-[var(--text-secondary)]">Showing {visibleHistoryPage.length ? (historyPageClamped - 1) * historyPageSize + 1 : 0}–{(historyPageClamped - 1) * historyPageSize + visibleHistoryPage.length} of {searchingNow ? filteredHistory.length : historyTotal} {historyTotalPages > 1 ? `· page ${historyPageClamped} of ${historyTotalPages}` : ""}</span>
                 <div className="flex items-center gap-2">
                   <label className="text-xs font-semibold text-[var(--text-secondary)]">Show</label>
                   <select value={historyPageSize} onChange={(e) => setHistoryPageSize(Number(e.target.value))} className="px-2 py-1 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg text-xs font-semibold cursor-pointer">

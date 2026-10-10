@@ -118,12 +118,12 @@ export default function ProcurementQueue() {
 
   // Server-partitioned queues off one KV-cached scan: Active arrives COMPLETE
   // Active pending arrives COMPLETE from the cached queue endpoint
-  // (every open row, however old). History arrives COMPLETE the same way
-  // and pages LOCALLY below — no 100-row cap anywhere. Queue predicates run
-  // over the combined store. Search is local-first: typed queries filter
+  // (every open row, however old). History arrives newest-first in 100-row
+  // cursor pages off the same scan and appends via Load older below.
+  // Queue predicates run over the combined store. Search is local-first: typed queries filter
   // instantly over loaded rows (`matchesEnquiryQuery`, shared with the hook
   // gate); the server/database search fires only on a local miss.
-  const { enquiries, loaded, aiConfigured, updateItems, updateEnquiry, comments, addComment, currentAgent, hasMore, loadMore, loadedCount, searchQuery, setSearchQuery, searchActive, searching, searchLocal, upsertEnquiry, clearSearch } =
+  const { enquiries, loaded, aiConfigured, updateItems, updateEnquiry, comments, addComment, currentAgent, hasMore, loadMore, historyHasMore, loadedCount, searchQuery, setSearchQuery, searchActive, searching, searchLocal, upsertEnquiry, clearSearch } =
     useEnquiryData("procurement", { pageSize: 100 });
   // Match-count labels below show when the hook reports server matches
   // (`searchActive`) or instant local matches (`searchLocal` — typed query
@@ -565,6 +565,15 @@ export default function ProcurementQueue() {
                 </div>
               </div>
               {loadOlder}
+              {/* Server history pages newest-first in 100-row cursors off the
+                  cached scan; older pages append without disturbing loaded rows. */}
+              {historyHasMore && (
+                <div className="flex flex-col items-center gap-1 pt-2">
+                  <button type="button" onClick={loadMore} className="px-4 py-1.5 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)] text-xs font-extrabold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer">
+                    Load older history
+                  </button>
+                </div>
+              )}
                </section>
             ) : (
               <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">

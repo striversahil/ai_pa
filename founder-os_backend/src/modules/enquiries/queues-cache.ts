@@ -11,14 +11,15 @@
 // Cost contract:
 //   - Per render (Active/Unprocessed/History page): ONE KV read, zero D1.
 //   - Per TTL window (60s): at most ONE full scan, however many viewers.
-//   - On any enquiry write: `invalidateManagementQueues()` deletes the key so
-//     the next read recomputes immediately (stale window only between a write
-//     and the next read, and live events trigger that refetch at once).
+//   - On enquiry writes: dirty-marked, recomputed at most once per 45s
+//     coalesce window no matter how large the burst (stale ≤45s only under
+//     write storms; zero staleness when idle). Live events re-trigger the
+//     read, which recomputes when the window lapses.
 //
 // Frontend mirror: `ManagementReview.tsx` reads Active/Unprocessed whole and
 // History whole (`GET /api/enquiries/queues?queue=history&all=1`).
 // Queue semantics live in `queues.ts` — this file only caches + partitions.
-import { cached, cacheDel } from '../../shared/cache';
+import { cached, cacheDel, cacheGet, cacheSet } from '../../shared/cache';
 import { estimateStatusByNumbers } from './estimate-link';
 import {
   isManagementPendingEnquiry,
@@ -143,11 +144,12 @@ async function computeManagementQueues(store: EnquiryStore): Promise<CachedQueue
 
 /** Cached read: at most one full scan per TTL no matter how many viewers.
  *  Expands the store-once KV value back into row arrays (same shapes as
- *  before — consumers are untouched). */
+ *  before — consumers are untouched).
+ *  Coalesced busts (see invalidateManagementQueues): a dirty flag only forces
+ *  a recompute when the cached compute is older than COALESCE_MS, so a burst
+ *  of N saves in one minute costs one rescan, not N. */
 export async function getManagementQueues(store: EnquiryStore): Promise<ManagementQueues> {
-  const c = await cached<CachedQueues>(MGMT_QUEUES_KEY, MGMT_QUEUES_TTL_MS, () =>
-    computeManagementQueues(store),
-  );
+  const c = await readQueues(store);
   const rows = (keys: string[]) => keys.map((k) => c.byId[k]).filter(Boolean);
   return {
     active: rows(c.active),
@@ -161,9 +163,38 @@ export async function getManagementQueues(store: EnquiryStore): Promise<Manageme
   };
 }
 
-/** Call after every enquiry write (create/update/delete/claim/requirement). */
+const QUEUES_DIRTY_KEY = 'enquiries:queues:dirty';
+// Max staleness under a write storm: every write marks dirty, but recompute
+// happens at most once per window. Zero staleness when idle (no dirty flag →
+// plain TTL semantics, unchanged).
+const QUEUES_COALESCE_MS = 45_000;
+
+async function readQueues(store: EnquiryStore): Promise<CachedQueues> {
+  const c = await cached<CachedQueues>(MGMT_QUEUES_KEY, MGMT_QUEUES_TTL_MS, () =>
+    computeManagementQueues(store),
+  );
+  let dirtyAt = 0;
+  try {
+    const dirty: any = await cacheGet<{ at: number }>(QUEUES_DIRTY_KEY, 120_000);
+    dirtyAt = Number(dirty?.at ?? 0);
+  } catch { /* no flag → plain TTL path below */ }
+  if (dirtyAt > 0 && Date.now() - Date.parse(String(c.computedAt ?? '')) > QUEUES_COALESCE_MS) {
+    try {
+      await cacheDel(MGMT_QUEUES_KEY);
+      await cacheDel(QUEUES_DIRTY_KEY);
+    } catch { /* best-effort */ }
+    return cached<CachedQueues>(MGMT_QUEUES_KEY, MGMT_QUEUES_TTL_MS, () =>
+      computeManagementQueues(store),
+    );
+  }
+  return c;
+}
+
+/** Call after every enquiry write (create/update/delete/claim/requirement).
+ *  Marks dirty instead of deleting: the next read recomputes only if the
+ *  cached compute is older than the coalesce window (see readQueues). */
 export async function invalidateManagementQueues(): Promise<void> {
   try {
-    await cacheDel(MGMT_QUEUES_KEY);
+    await cacheSet(QUEUES_DIRTY_KEY, { at: Date.now() }, 120_000);
   } catch { /* best-effort */ }
 }

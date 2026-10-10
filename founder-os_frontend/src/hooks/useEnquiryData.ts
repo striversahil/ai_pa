@@ -25,6 +25,11 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const [hasMore, setHasMore] = useState(false);
   const nextCursorRef = useRef<string | null>(null);
   const loadingMoreRef = useRef(false);
+  // Procurement history paging: pending arrives complete (work queue), history
+  // arrives newest-first in 100-row cursor pages off the same cached scan.
+  // Older history appends via loadMoreHistory without disturbing loaded rows.
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const histCursorRef = useRef<string | null>(null);
   // Server search (EST no., enquiry no., client/contact, title, item/vendor
   // text) across ALL rows — old + new, past the 100-cap. Debounced 300ms,
   // min 2 chars, in-flight requests aborted. While active the list IS the
@@ -156,10 +161,34 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       loadingMoreRef.current = true;
     }
     try {
-      // Queue-split fetch (procurement view only): pending-complete plus
-      // history-complete, combined into the one store the memos split.
-      // Everything arrives complete so 'more' is a no-op in this mode.
-      if (mode === 'more' && queueSplit) return;
+      // Queue-split fetch (procurement view only): pending-complete plus the
+      // FIRST history cursor page, combined into the one store the memos
+      // split. Older history appends via loadMoreHistory ('more' below).
+      if (mode === 'more' && queueSplit) {
+        if (!histCursorRef.current || loadingMoreRef.current) return;
+        loadingMoreRef.current = true;
+        try {
+          const r = await fetch(`/api/enquiries/queues?queue=proc-history&limit=100&cursor=${encodeURIComponent(histCursorRef.current)}`);
+          if (!r.ok) throw new Error('load failed');
+          const d = await r.json();
+          const rows = Array.isArray(d.enquiries) ? d.enquiries.map(toEnquiry) : [];
+          const coms = Array.isArray(d.comments) ? d.comments.map(toComment) : [];
+          setEnquiriesSynced((prev) => {
+            const ids = new Set(prev.map((x: Enquiry) => x.id));
+            return [...prev, ...rows.filter((x: Enquiry) => !ids.has(x.id))];
+          });
+          setComments((prev) => {
+            const ids = new Set(prev.map((x: Comment) => x.id));
+            return [...prev, ...coms.filter((x: Comment) => !ids.has(x.id))];
+          });
+          const nc = typeof d.nextCursor === 'string' && d.nextCursor ? d.nextCursor : null;
+          histCursorRef.current = nc;
+          setHistoryHasMore(d.hasMore === true && !!nc);
+        } finally {
+          loadingMoreRef.current = false;
+        }
+        return;
+      }
       const url = mode === 'more'
         ? `/api/enquiries${qs}${qs ? "&" : "?"}limit=${pageSize}&cursor=${encodeURIComponent(nextCursorRef.current ?? '')}`
         : `/api/enquiries${qs}${baseQs}`;
@@ -171,7 +200,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
               if (!r.ok) throw new Error('load failed');
               return r.json();
             }),
-            fetch('/api/enquiries/queues?queue=proc-history&all=1').then(async (r) => {
+            fetch('/api/enquiries/queues?queue=proc-history&limit=100').then(async (r) => {
               if (!r.ok) throw new Error('load failed');
               return r.json();
             }),
@@ -194,6 +223,14 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         : await (enqRes as Response).json();
       const list = Array.isArray(data.enquiries) ? data.enquiries : [];
       const coms = Array.isArray(data.comments) ? data.comments : [];
+      // History cursor bookkeeping (queue-split only): reset adopts the fresh
+      // page-1 cursor; merge keeps the accumulated tail cursor — page 1 tells
+      // us nothing about already-loaded older pages.
+      if (parts && mode !== 'merge') {
+        const hnc = typeof (parts[1] as any)?.nextCursor === 'string' && (parts[1] as any).nextCursor ? String((parts[1] as any).nextCursor) : null;
+        histCursorRef.current = hnc;
+        setHistoryHasMore((parts[1] as any)?.hasMore === true && !!hnc);
+      }
       if (cursorMode && mode === 'more') {
         const freshRows = list.map(toEnquiry);
         const freshComs = coms.map(toComment);
@@ -211,6 +248,16 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         const pageIds = new Set(freshRows.map((x: Enquiry) => x.id));
         setEnquiriesSynced((prev) => [...freshRows, ...prev.filter((x) => !pageIds.has(x.id))]);
         setComments((prev) => [...prev.filter((c) => !pageIds.has(c.enquiryId)), ...freshComs]);
+      } else if (queueSplit && mode === 'merge') {
+        // Poll/live merge: upsert fresh page-1 over the store, RETAINING older
+        // history pages appended via loadMoreHistory (a replace would wipe the
+        // user's loaded tail every 60s). Fresh rows win on overlap.
+        const freshRows = list.map(toEnquiry);
+        const freshComs = coms.map(toComment);
+        const freshIds = new Set(freshRows.map((x: Enquiry) => x.id));
+        const freshComIds = new Set(freshComs.map((x: Comment) => x.id));
+        setEnquiriesSynced((prev) => [...freshRows, ...prev.filter((x) => !freshIds.has(x.id))]);
+        setComments((prev) => [...prev.filter((x) => !freshComIds.has(x.id)), ...freshComs]);
       } else {
         setEnquiriesSynced(list.map(toEnquiry));
         setComments(coms.map(toComment));
@@ -631,7 +678,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     loaded,
     aiConfigured,
     total, page, pageSize, setPage, setPageSize,
-    hasMore, loadMore, loadedCount: enquiries.length,
+    hasMore, loadMore, historyHasMore, loadedCount: enquiries.length,
     searchQuery, setSearchQuery, searchActive, searching, searchLocal, clearSearch,
     addEnquiry,
     updateEnquiry,

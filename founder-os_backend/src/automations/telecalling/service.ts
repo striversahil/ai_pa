@@ -35,6 +35,7 @@ import {
   isPenaltiesEnabled, setPenaltiesEnabled, isEodReassignEnabled, setEodReassignEnabled,
   recordConversionClose, catchUpConversionCloses, getConvertersMap,
   recordSnatchPenalty, recordRemarkPenalty,
+  SNATCH_PENALTY, REMARK_PENALTY,
 } from './scoring';
 import {
   getFollowUpSpecialists, rotateEstimatesRoundRobin, bulkAssignEstimates, recordAssignment,
@@ -46,7 +47,6 @@ import {
   type CallTag,
 } from './call-tags';
 import { linkEnquiryEstimate, sweepEnquiryEstimateLinks, type EnquiryLinkResult } from './enquiry-links';
-import type { EstimateRisk, RiskItem } from './risk';
 
 // ── D1 bound-variable cap ────────────────────────────────────────────────────
 // D1 allows max 100 bound SQL variables per statement (the shim already batches

@@ -760,6 +760,10 @@ model Enquiry {
   // Manual line items (JSON array text): [{ name, qty, spec, media, rates, markup... }].
   // [{ name, qty, spec }] — one entry per purchasable item in the enquiry.
   items          String?
+  // Write-maintained search identity (migration 0058): lowercased scalars +
+  // item names/specs/vendors. The search path LIKEs this tight column instead
+  // of sweeping the items blob. Never served to clients.
+  searchText     String   @default("")
   comments       EnquiryComment[]
 
   @@index([organizationId])

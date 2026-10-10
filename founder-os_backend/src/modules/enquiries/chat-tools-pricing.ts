@@ -12,8 +12,8 @@ import {
 } from '../../automations/product-line/match';
 import type { ChatProposal, PriceItemState, PriceSession, PriceTableRow, SalesCtx, SpecQuestion } from './chat-types';
 import {
-  dropVagueSpecs, filterChecklistSpecs, getItemState, itemIdx,
-  loadPriceSession, priceWho, resolveSpecKeys, savePriceSession,
+  droppedSpecKeys, dropVagueSpecs, filterChecklistSpecs, getItemState, itemIdx,
+  loadPriceSession, priceWho, resolveSpecKeys, savePriceSession, specVerdict,
 } from './chat-prices';
 
 export interface ToolOut {
@@ -183,6 +183,9 @@ export async function execFindPrice(ctx: SalesCtx, _view: any, enquiry: any, arg
         imageUrl: (r as any)?.imageUrl ?? null,
       };
     });
+  // Grounding verdict: what the session specs asked vs what the rows carry —
+  // the model ranks from this, never from confidence alone.
+  const findVerdict = specVerdict(allRates.map((r) => ({ attrValues: r.specs })), kept as Record<string, string>, required);
   return {
     result: {
       itemIndex: parsed.num,
@@ -193,6 +196,8 @@ export async function execFindPrice(ctx: SalesCtx, _view: any, enquiry: any, arg
       sessionSpecs: kept,
       rates: allRates,
       rateCount: allRates.length,
+      askedSpecs: findVerdict.askedSpecs,
+      specVerdict: findVerdict.coverage,
     },
   };
 }
@@ -299,10 +304,15 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
   const prev = await loadPriceSession(ctx.enquiryId, who);
   const prevSt = getItemState(prev, idx);
   const specsIn = (args.specs && typeof args.specs === 'object' ? args.specs : {}) as Record<string, unknown>;
-  const merged = filterChecklistSpecs(resolveSpecKeys(
+  const resolvedKeys = resolveSpecKeys(
     { ...((prevSt.productId === pid ? prevSt.specs : {}) as Record<string, string>), ...(specsIn as Record<string, string>) },
     required.map((g) => ({ attrKey: g.attrKey, question: g.question })),
-  ), required);
+  );
+  // Keys the model passed that are NOT checklist keys — their values never
+  // reached scoring. Report (don't silently drop) so the model re-passes
+  // under the right attrKey instead of concluding the spec doesn't exist.
+  const dropped = droppedSpecKeys(resolvedKeys, required);
+  const merged = filterChecklistSpecs(resolvedKeys, required);
   const specs: Record<string, string> = {};
   for (const [k, v] of Object.entries(merged)) {
     const s = String(v ?? '').trim().slice(0, 200);
@@ -320,7 +330,9 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
       result: {
         needSpecs: true, productId: pid, productName: product.name,
         vague: dv.vague, hasUsablePrices: false,
-        hint: 'no usable specs collected — call ask_specs (options auto-mined from past quotes) or ask_question for the vague ones, then quote_price. Never re-call quote_price with empty specs.',
+        specKeys: required.map((g) => ({ key: g.attrKey, question: g.question })),
+        ...(dropped.length ? { droppedSpecs: dropped } : {}),
+        hint: 'no usable specs collected — call ask_specs (options auto-mined from past quotes) or ask_question for the vague ones, then quote_price. Pass values ONLY under the specKeys attrKeys above. Never re-call quote_price with empty specs.',
       },
     };
   }
@@ -328,7 +340,8 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
     items: { ...(prev.items ?? {}), [String(idx)]: { productId: pid, productName: product.name, specs } },
     activeItem: idx,
   });
-  const scored = scoreRates(await liveRates(pid), pid, specs, required);
+  const quoteRates = await liveRates(pid);
+  const scored = scoreRates(quoteRates, pid, specs, required);
   if (scored.length === 0) {
     return {
       result: { error: 'no past rates for this product', routed: 'procurement', hasUsablePrices: false },
@@ -382,7 +395,25 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
       label: `Update Item ${idx + 1} spec with confirmed details`,
     });
   }
-  return { result: { proposed: true, caveated, hasUsablePrices: true, ...(dv.vague.length ? { vague: dv.vague } : {}), ...quote }, proposals };
+  // Grounding verdict for the prose: row count + what was asked vs what the
+  // rows carry. A low-confidence caveat is NOT an absence — never claim a
+  // variation is missing when specVerdict rows carry it.
+  const quoteVerdict = specVerdict(scored.map((s) => s.rate), specs, required);
+  return {
+    result: {
+      proposed: true, caveated, hasUsablePrices: true,
+      ...(dv.vague.length ? { vague: dv.vague } : {}),
+      ...quote,
+      variationCount: quoteVerdict.variationCount,
+      askedSpecs: quoteVerdict.askedSpecs,
+      specVerdict: quoteVerdict.coverage,
+      ...(dropped.length ? {
+        droppedSpecs: dropped,
+        specHint: `these spec keys are not required checklist keys for ${product.name} — their values did not affect scoring; re-pass values under the specVerdict keys: ${dropped.join(', ')}`,
+      } : {}),
+    },
+    proposals,
+  };
 }
 
 export async function execLookupPrice(ctx: SalesCtx, _view: any, _enquiry: any, args: Record<string, any>): Promise<ToolOut> {
@@ -414,16 +445,19 @@ export async function execLookupPrice(ctx: SalesCtx, _view: any, _enquiry: any, 
   const guide = await liveGuide(product.id);
   const required = requiredChecklist(guide);
   const specsIn = (args.specs && typeof args.specs === 'object' ? args.specs : {}) as Record<string, unknown>;
-  const merged = filterChecklistSpecs(resolveSpecKeys(
+  const resolvedKeys = resolveSpecKeys(
     specsIn as Record<string, string>,
     guide.map((g) => ({ attrKey: g.attrKey, question: g.question })),
-  ), guide);
+  );
+  const dropped = droppedSpecKeys(resolvedKeys, required);
+  const merged = filterChecklistSpecs(resolvedKeys, required);
   const specs: Record<string, string> = {};
   for (const [k, v] of Object.entries(merged)) {
     const s = String(v ?? '').trim().slice(0, 200);
     if (s) specs[String(k)] = s;
   }
-  const scored = scoreRates(await liveRates(product.id), product.id, specs, required);
+  const lookupRates = await liveRates(product.id);
+  const scored = scoreRates(lookupRates, product.id, specs, required);
   if (scored.length === 0) return { result: { error: 'no past rates for this product', hasUsablePrices: false } };
   const best = scored[0];
   const rows: PriceTableRow[] = scored.map((s, i) =>
@@ -433,11 +467,22 @@ export async function execLookupPrice(ctx: SalesCtx, _view: any, _enquiry: any, 
   const caveatBits = caveated && quote.missingSpecs.length > 0
     ? ` — note: ${quote.missingSpecs.map((m) => m.question).join(', ')} not confirmed, closest past match`
     : '';
+  // Grounding verdict for the prose: row count + what was asked vs what the
+  // rows carry. A low-confidence caveat is NOT an absence — never claim a
+  // variation is missing when specVerdict rows carry it.
+  const lookupVerdict = specVerdict(scored.map((s) => s.rate), specs, required);
   return {
     result: {
       proposed: true, caveated, hasUsablePrices: true,
       productId: product.id, productName: product.name,
       markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
+      variationCount: lookupVerdict.variationCount,
+      askedSpecs: lookupVerdict.askedSpecs,
+      specVerdict: lookupVerdict.coverage,
+      ...(dropped.length ? {
+        droppedSpecs: dropped,
+        specHint: `these spec keys are not required checklist keys for ${product.name} — their values did not affect scoring; re-pass values under the specVerdict keys: ${dropped.join(', ')}`,
+      } : {}),
       note: 'view-only catalogue rate (no enquiry item) — no apply, no procurement',
     },
     proposals: [{
@@ -590,10 +635,12 @@ export async function execQuotePriceBatch(ctx: SalesCtx, _view: any, enquiry: an
     const guide = await liveGuide(product.id);
     const required = requiredChecklist(guide);
     const entrySpecs = ((entry as any)?.specs && typeof (entry as any).specs === 'object' ? (entry as any).specs : {}) as Record<string, unknown>;
-    const merged = filterChecklistSpecs(resolveSpecKeys(
+    const batchResolved = resolveSpecKeys(
       { ...(st.specs ?? {}), ...(entrySpecs as Record<string, string>) },
       required.map((g) => ({ attrKey: g.attrKey, question: g.question })),
-    ), required);
+    );
+    const batchDropped = droppedSpecKeys(batchResolved, required);
+    const merged = filterChecklistSpecs(batchResolved, required);
     const specs: Record<string, string> = {};
     for (const [k, v] of Object.entries(merged)) {
       const s = String(v ?? '').trim().slice(0, 200);
@@ -607,11 +654,14 @@ export async function execQuotePriceBatch(ctx: SalesCtx, _view: any, enquiry: an
       out.push({
         itemIndex: num, product: product.name, needSpecs: true, hasUsablePrices: false,
         vague: bv.vague, note: 'no usable specs — ask first via ask_specs/ask_question, then quote',
+        specKeys: required.map((g) => ({ key: g.attrKey, question: g.question })),
+        ...(batchDropped.length ? { droppedSpecs: batchDropped } : {}),
       });
       continue;
     }
     nextItems[String(idx)] = { productId: product.id, productName: product.name, specs };
-    const scored = scoreRates(await liveRates(product.id), product.id, specs, required);
+    const batchRates = await liveRates(product.id);
+    const scored = scoreRates(batchRates, product.id, specs, required);
     const itemName = String((allItems[idx] as any)?.name ?? `Item ${num}`).slice(0, 80);
     if (scored.length === 0) {
       out.push({ itemIndex: num, product: product.name, routed: 'procurement', hasUsablePrices: false, note: 'no past rates for this product' });
@@ -629,6 +679,7 @@ export async function execQuotePriceBatch(ctx: SalesCtx, _view: any, enquiry: an
     const best = scored[0];
     const quote = salesSafeQuote(product, best, specs, required, guide);
     const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
+    const batchVerdict = specVerdict(scored.map((s) => s.rate), specs, required);
     out.push({
       itemIndex: num, productId: product.id, productName: product.name,
       markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
@@ -636,6 +687,10 @@ export async function execQuotePriceBatch(ctx: SalesCtx, _view: any, enquiry: an
       ...(caveated ? { caveated: true as const, missing: quote.missingSpecs.map((m) => m.question) } : {}),
       ...(bv.vague.length ? { vague: bv.vague } : {}),
       hasUsablePrices: true,
+      variationCount: batchVerdict.variationCount,
+      askedSpecs: batchVerdict.askedSpecs,
+      specVerdict: batchVerdict.coverage,
+      ...(batchDropped.length ? { droppedSpecs: batchDropped } : {}),
     });
     // Every variation per item lands in the combined table (per-row
     // Apply) — no top-N cut; the model + user rank the whole list.

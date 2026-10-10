@@ -126,7 +126,7 @@ export function toolDefs(ctx: SalesCtx): ToolDefinition[] {
             properties: {
               productId: { type: 'string' },
               itemIndex: { type: 'number', description: '1-based item number as shown in the chat (Item 1, Item 2, …)' },
-              specs: { type: 'object', description: 'attrKey → collected spec value', additionalProperties: { type: 'string' } },
+              specs: { type: 'object', description: 'attrKey → collected spec value. Keys MUST be catalogue checklist attrKeys (from find_price.required keys or ask_specs) — free-text keys are ignored for scoring and reported back as droppedSpecs', additionalProperties: { type: 'string' } },
               skipSpecs: { type: 'boolean', description: 'Quote now with collected specs, flagging the missing ones as caveats' },
             },
             required: ['productId', 'itemIndex'],
@@ -143,7 +143,7 @@ export function toolDefs(ctx: SalesCtx): ToolDefinition[] {
             properties: {
               query: { type: 'string', description: 'Product name as the user said it ("V belt", "Damru", …)' },
               productId: { type: 'string', description: 'Catalogue product id picked from a previous candidates list (skips matching)' },
-              specs: { type: 'object', description: 'attrKey → known spec value (optional)', additionalProperties: { type: 'string' } },
+              specs: { type: 'object', description: 'attrKey → known spec value (optional). Keys MUST be catalogue checklist attrKeys — if the user names a spec ("2 ply"), pass it under the matching attrKey when known; unknown keys are reported as droppedSpecs, never score. Never invent keys', additionalProperties: { type: 'string' } },
             },
           },
         },

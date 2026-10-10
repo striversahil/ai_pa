@@ -163,6 +163,11 @@ export interface Enquiry {
   activities: EnquiryActivity[];
   additionalRequirements: EnquiryRequirement[];
   items: EnquiryItem[];
+  /** Write-maintained search identity (migration 0058): lowercased scalars +
+   *  description prefix + item names/specs/qtys + vendor names. Never served
+   *  to clients — the search path LIKEs this one tight column instead of
+   *  sweeping the `items` JSON (megabytes of base64) + `description`. */
+  searchText?: string;
 }
 
 export interface EnquiryActivity {

@@ -35,7 +35,7 @@ import {
   resolveCreatorAgentId,
   type EnquiryLiveSummary,
 } from "./scopes";
-import { asRedactedViewCache, hashItem } from "./redaction";
+import { asRedactedViewCache, hashItem, redactCommentList, redactEnquiryRows, stripQueueMediaUrls } from "./redaction";
 export {
   isRestrictedViewer,
   canManageRates,
@@ -88,8 +88,10 @@ export interface RedactOpts {
    *  matter how large the table grows. */
   cursor?: string;
   /** Server search across ALL rows (old + new): EST no., enquiry no.,
-   *  client/contact, title, description, item/vendor text. ≥2 chars;
-   *  shorter returns [] WITHOUT scanning (cost guard). Cap 50. */
+   *  client/contact, title, item names/qtys/specs, vendor names. ≥2 chars;
+   *  shorter returns [] WITHOUT scanning (cost guard). Cap 50. Searches the
+   *  write-maintained `searchText` identity mark — never the items blob or
+   *  full description (same exclusion Zoho enforces in COQL criteria). */
   q?: string;
   /** False when no AI keys are configured — the redacted view then withholds
    *  free text with an explicit badge instead of failing silently. */
@@ -142,7 +144,10 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     comments = await store.listCommentsFor(enquiries.map((e: any) => String(e.id)));
     meta = { total, page, limit: lim };
   } else {
-    [enquiries, comments] = await Promise.all([store.listEnquiries(), store.listAllComments()]);
+    // No-paging fallback (older clients): rows first, then comments scoped to
+    // those ids — never a full comment-table pull (same rule as every branch).
+    enquiries = await store.listEnquiries();
+    comments = await store.listCommentsFor(enquiries.map((e: any) => String(e.id)));
   }
   // Live Zoho status (Estimate.status from the 5-min sync) rides the row in
   // BOTH views — see estimate-link.ts attachZohoStatuses (attached here
@@ -179,8 +184,8 @@ export interface ProcQueueOpts {
   limit?: number;
   aiConfigured?: boolean;
   // all=true returns the COMPLETE history set (same cached scan — KV reads,
-  // zero D1). The dashboards render complete queues in both tabs, so this is
-  // the only history mode they use; cursor paging stays for compat.
+  // zero D1). Compat only: dashboards page history by cursor (`limit` +
+  // `cursor`) and keep pending complete.
   all?: boolean;
 }
 

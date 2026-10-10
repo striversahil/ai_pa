@@ -343,8 +343,8 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   // ── Management Review queues (KV-cached, MIS-only) ─────────────────────
   // Active + Unprocessed arrive COMPLETE (every open row, however old — no
-  // page boundary may ever hide a pending estimate); History arrives COMPLETE
-  // too (`?queue=history&all=1` — same cached scan, still zero D1). Per render
+  // page boundary may ever hide a pending estimate); History pages
+  // server-side (`?queue=history&page=&limit=`, newest-first). Per render
   // this costs ONE KV read: the full scan runs at most once per TTL
   // (single-flight coalesced) and is busted on every write below. Must stay
   // above `/api/enquiries/:id`.
@@ -352,8 +352,9 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     // Procurement queues: any signed-in viewer (payload is redacted by
-    // design, same bytes as `?view=procurement`). Pending and history both
-    // arrive COMPLETE (`all=1` on history) — KV reads, zero D1.
+    // design, same bytes as `?view=procurement`). Pending arrives COMPLETE;
+    // history pages by cursor (`limit` + `cursor`, `all=1` forces complete
+    // for compat) — KV reads, zero D1.
     const qq = c.req.query('queue');
     if (qq === 'proc-pending' || qq === 'proc-history') {
       try {

@@ -43,9 +43,9 @@ export function splitClosePoints(total: unknown): { generator: number; closer: n
   const generator = Math.round(slab * 0.2);
   return { generator, closer: slab - generator };
 }
-const SNATCH_PENALTY = -15;
+export const SNATCH_PENALTY = -15;
 /** EOD remark penalty: one −10 per red-risk estimate held, charged daily. */
-const REMARK_PENALTY = -10;
+export const REMARK_PENALTY = -10;
 // The old −20 decline penalty is RETIRED (founder: too heavy) — historical −20
 // rows stay in the ledger but the score loop below ignores any delta that isn't
 // slab-close/−10/−15, so they no longer affect any board.
