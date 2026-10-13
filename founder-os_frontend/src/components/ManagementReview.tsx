@@ -401,6 +401,19 @@ export default function ManagementReview() {
       null
     );
   }, []);
+  // Open-row state lives up here (before its first use below): the panel
+  // builds every save from this snapshot, so it is refetched on demand —
+  // after each save and when the tab regains focus — never frozen.
+  const [selFull, setSelFull] = useState<Enquiry | null>(null);
+  const fetchSelFull = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/enquiries/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (r.ok) {
+        const d = await r.json();
+        if (d?.enquiry) setSelFull(toEnquiry(d.enquiry));
+      }
+    } catch { /* best-effort — queues stay the fallback */ }
+  }, []);
   const updateEnquiry = useCallback(async (id: string, updates: Partial<Enquiry>) => {
     const run = async () => {
       // 1. Paint instantly from the latest local row (never a stale snapshot).
@@ -442,7 +455,10 @@ export default function ManagementReview() {
 
   const handleSaveRates = useCallback(async (id: string, items: Enquiry["items"], finalize: boolean) => {
     await updateEnquiry(id, { items, ...(finalize ? { rateStatus: "finalized" } : {}) } as Partial<Enquiry>);
-  }, [updateEnquiry]);
+    // Re-read the open row so the next panel save builds on server truth,
+    // never on the pre-save snapshot (stale-snapshot wipe guard).
+    await fetchSelFull(id);
+  }, [updateEnquiry, fetchSelFull]);
 
   // Sent-revision: reopen a `sent` enquiry for additional scope (MIS only).
   // The row drops to `finalized` with a revision marker — new items then loop
@@ -469,18 +485,25 @@ export default function ManagementReview() {
   // management-surface writes.
   // NOTE: hooks — these must stay above ALL early returns below (a hook
   // after a conditional return crashes React #310 the moment the gate
-  // flips, e.g. on the loading→loaded transition).
-  const [selFull, setSelFull] = useState<Enquiry | null>(null);
+  // flips, e.g. on the loading→loaded transition). (selFull state lives
+  // above, next to its first use.)
   useEffect(() => {
     setSelFull(null);
     if (!selectedId) return;
     let dead = false;
-    fetch(`/api/enquiries/${encodeURIComponent(selectedId)}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!dead && d?.enquiry) setSelFull(toEnquiry(d.enquiry)); })
-      .catch(() => {});
+    void (async () => {
+      const r = await fetch(`/api/enquiries/${encodeURIComponent(selectedId)}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      if (!dead && r?.enquiry) setSelFull(toEnquiry(r.enquiry));
+    })();
     return () => { dead = true; };
   }, [selectedId]);
+  useEffect(() => {
+    if (!selectedId) return;
+    const onFocus = () => { void fetchSelFull(selectedId); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [selectedId, fetchSelFull]);
 
   if (!allowed) {
     return (

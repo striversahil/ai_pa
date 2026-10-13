@@ -56,6 +56,13 @@ the backend still honors stored flags so old rows never brick.
   thread note.
 - Pricing math: `final = ceil5(rate × (1−discount%) × (1+markup%))` — see
   frontend `src/enquiry/pricing.ts` (`finalFromMargin`, `splitBulkTotal`).
+- **Rates are append-only (Oct-2026 Greaves incident):** every save merges
+  `rates[]` by `vendor|rate` identity in `normalizeItemWrites` — a stale
+  snapshot save can never delete another writer's quotes; reinstatements and
+  explicit removals stamp the item `thread`. Deleting a quote requires the
+  explicit `removedRates: ["vendor|rate"]` marker (both rate-delete buttons
+  send it); a filtered array alone removes nothing. Guard test:
+  `scripts/guards/enquiry-rates-union.test.mjs` (stale saves × all 3 roles).
 
 ## Code map (maintainability)
 Backend: `modules/enquiries/queues.ts` (predicates), `scopes.ts`

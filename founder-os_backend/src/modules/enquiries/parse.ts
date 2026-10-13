@@ -265,6 +265,12 @@ export function pickEnquiryFields(data: any): Partial<Enquiry> | null {
         // Sales-owned negotiation target (client-expected price + note).
         expectedRate: numOrUndefined(r?.expectedRate),
         expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
+        // Explicit rate-removal marker (both rate-delete buttons send it).
+        // The ONLY path that deletes a stored quote — a filtered rates array
+        // alone removes nothing (union rule in normalizeItemWrites).
+        removedRates: Array.isArray((r as any)?.removedRates)
+          ? (r as any).removedRates.map((k: any) => String(k ?? '').slice(0, 300)).filter((k: string) => k.length > 0)
+          : undefined,
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);

@@ -371,9 +371,21 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       return out;
     });
 
+  // Explicit delete: the removed quote's identity travels in `removedRates`
+  // (the ONLY path that deletes a stored quote — a filtered rates array
+  // alone removes nothing, so a stale snapshot can never wipe quotes).
   const dropRate = (i: number, ri: number) => {
     void onSave(
-      items.map((it, j) => (j === i ? { ...it, rates: (it.rates ?? []).filter((_, k) => k !== ri) } : it)),
+      items.map((it, j) => {
+        if (j !== i) return it;
+        const gone: any = (it.rates ?? [])[ri];
+        const key = gone ? `${String(gone.vendor ?? '')}|${Number(gone.rate)}` : null;
+        return {
+          ...it,
+          rates: (it.rates ?? []).filter((_, k) => k !== ri),
+          ...(key ? { removedRates: [...((it as any).removedRates ?? []), key] } : {}),
+        };
+      }),
       false,
     );
   };

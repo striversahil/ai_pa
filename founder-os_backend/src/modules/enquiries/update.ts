@@ -38,15 +38,59 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // Markup + discount decisions + finalize (+ its timestamp) are Management-only.
     const { selectedVendor, markup, finalRate, finalDiscountPercent, finalizedAt, ...rest } = it;
     const base: any = privileged ? it : rest;
-    // Preserve vendor quotes when only the availability flag flips: a
-    // sales/management toggle of `rateAvailable` must never silently wipe
-    // management-collected `rates` (bug: available→true hid rates, off again
-    // showed empty because the toggle write omitted the array).
-    if (Array.isArray(stored.rates) && stored.rates.length > 0) {
-      const incomingRatesEmpty = !Array.isArray(base.rates) || base.rates.length === 0;
-      const availabilityFlipped = (base.rateAvailable === true) !== (stored.rateAvailable === true);
-      if (incomingRatesEmpty && availabilityFlipped) {
-        base.rates = stored.rates;
+    // ── Rates union (all roles, all loops) ─────────────────────────────────
+    // Writes ADD, never delete by omission. Vendor quotes are money: a stale
+    // snapshot save (old tab, pre-refresh panel, raced PATCH) must not
+    // silently drop quotes another writer stored later. Stored-only quotes
+    // are reinstated; incoming wins field-level on identity matches.
+    // Deliberate removal travels ONLY in `removedRates` ["vendor|rate"]
+    // (both rate-delete buttons send it); a filtered array alone removes
+    // nothing. Reinstatements/deletions are trailed at the end of this
+    // function (stash → lifecycle trail), giving every rescue an audit entry.
+    // Identity matches the vendor|rate keys used below (exact, case-sensitive).
+    const rateKey = (r: any) => `${String(r?.vendor ?? '')}|${Number(r?.rate)}`;
+    if (Array.isArray(base.rates) || Array.isArray(stored.rates)) {
+      const removed = new Set<string>(
+        (Array.isArray((it as any).removedRates) ? (it as any).removedRates : []).map((k: any) => String(k ?? '')),
+      );
+      const byKey = new Map<string, any>();
+      for (const r of Array.isArray(stored.rates) ? stored.rates : []) {
+        const k = rateKey(r);
+        if (k && !removed.has(k) && !byKey.has(k)) byKey.set(k, r);
+      }
+      for (const r of Array.isArray(base.rates) ? base.rates : []) {
+        const k = rateKey(r);
+        if (!k) continue;
+        if (removed.has(k)) { byKey.delete(k); continue; }
+        byKey.set(k, { ...(byKey.get(k) ?? {}), ...r });
+      }
+      const reinstated = (Array.isArray(stored.rates) ? stored.rates : []).filter(
+        (r: any) => byKey.has(rateKey(r)) && !(Array.isArray(base.rates) ? base.rates : []).some((b: any) => rateKey(b) === rateKey(r)),
+      );
+      const deleted = [...removed].filter((k: string) => {
+        const had = (Array.isArray(stored.rates) ? stored.rates : []).some((r: any) => rateKey(r) === k);
+        return had && !byKey.has(k);
+      });
+      base.rates = [...byKey.values()];
+      delete (base as any).removedRates;
+      // Trail note (stashed, stamped into the lifecycle trail at the end of
+      // this function — pushing straight into base.thread here would die in
+      // the remark-only merge below).
+      if (reinstated.length > 0 || deleted.length > 0) {
+        const bits: string[] = [];
+        if (reinstated.length > 0) bits.push(`kept ${reinstated.length} stored quote(s) missing from this save (${reinstated.map((r: any) => String(r?.vendor ?? '')).join(', ')})`);
+        if (deleted.length > 0) bits.push(`removed ${deleted.length} quote(s) by explicit request`);
+        (base as any).ratesTrailNote = bits.join('; ').slice(0, 500);
+      }
+      // Dangling-selection guard: a stale save naming a vendor absent from
+      // the unioned quotes keeps the stored selection (recoverable re-point,
+      // not loss). An explicit empty selection still clears.
+      if ((base as any).selectedVendor) {
+        const names = new Set((base.rates as any[]).map((r: any) => String(r?.vendor ?? '')));
+        if (!names.has(String((base as any).selectedVendor)) && stored.selectedVendor !== undefined
+          && names.has(String(stored.selectedVendor))) {
+          base.selectedVendor = stored.selectedVendor;
+        }
       }
     }
     if (!privileged) {
@@ -549,6 +593,14 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       (base as any).threadResolved = (stored as any)?.threadResolved;
       (base as any).threadResolvedBy = (stored as any)?.threadResolvedBy;
       (base as any).threadResolvedAt = (stored as any)?.threadResolvedAt;
+    }
+    // Rates-union trail note (stashed near the top of this function): a stale
+    // save that dropped stored quotes, or an explicit marker delete, gets an
+    // audit entry here — the incident that motivated the union rule was
+    // invisible precisely because no trail existed.
+    if ((base as any).ratesTrailNote) {
+      trail.push({ by: role, kind: 'quoted', text: String((base as any).ratesTrailNote).slice(0, 500), at: nowIso });
+      delete (base as any).ratesTrailNote;
     }
     base.thread = trail.slice(-50);
     return base;

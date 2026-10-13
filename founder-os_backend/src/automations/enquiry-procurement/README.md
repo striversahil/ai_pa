@@ -35,6 +35,11 @@ scope-safe `enquiries` summaries (counts only, never PII).
 - CANNOT: item identity (name/qty/spec follow stored), `rateAvailable` /
   `expectedRate` (sales-owned), margins (`selectedVendor/markup/finalRate` —
   management-only), new items (index-capped to stored length).
+- **Quotes are append-only (Oct-2026 Greaves incident):** saves merge
+  `rates[]` by `vendor|rate` identity — a stale snapshot (old tab, raced
+  PATCH) can never delete another writer's quotes; the open review row is
+  additionally refetched after each save + on focus. Guard test:
+  `scripts/guards/enquiry-rates-union.test.mjs`.
 
 ## Ops thread
 The queue modal carries the shared ops thread (`ProcurementThread`):

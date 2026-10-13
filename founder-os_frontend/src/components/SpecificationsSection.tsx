@@ -119,9 +119,21 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: "", description: "", rate: "", specMode: "same", specDiff: "" } }));
   };
 
+  // Explicit delete (same contract as management dropRate): the removed
+  // quote's identity travels in `removedRates` — a filtered rates array
+  // alone removes nothing, so a stale snapshot can never wipe quotes.
   const removeItemRate = (idx: number, rateIdx: number) => {
     if (!onUpdateItems) return;
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, rates: (it.rates ?? []).filter((_, j) => j !== rateIdx) } : it)));
+    saveItems((prev) => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const gone: any = (it.rates ?? [])[rateIdx];
+      const key = gone ? `${String(gone.vendor ?? '')}|${Number(gone.rate)}` : null;
+      return {
+        ...it,
+        rates: (it.rates ?? []).filter((_, j) => j !== rateIdx),
+        ...(key ? { removedRates: [...((it as any).removedRates ?? []), key] } : {}),
+      };
+    }));
   };
 
   const openItemMedia = (idx: number, url: string) => {
