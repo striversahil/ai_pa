@@ -129,6 +129,28 @@ describe('rates union: stale snapshots never delete quotes', () => {
     assert.strictEqual(out.removedRates, undefined);
   });
 
+  it('identical vendor|rate twins never collapse (descriptions survive)', () => {
+    const twinA = { vendor: 'CBPL', rate: 19121, description: 'gearbox note' };
+    const twinB = { vendor: 'CBPL', rate: 19121, description: 'motor note' };
+    const stored = { name: 'X', qty: '', spec: 's', rates: [twinA, twinB], thread: [] };
+    // Stale save carrying only one twin: the other is reinstated, not merged away.
+    const out = normalizeItemWrites(
+      [{ name: 'X', qty: '', spec: 's', rates: [{ ...twinA }] }],
+      { ...CTX.management, storedItems: [stored] },
+    )[0];
+    assert.strictEqual(out.rates.length, 2);
+    assert.deepStrictEqual(out.rates.map((r) => r.description).sort(), ['gearbox note', 'motor note']);
+    // Explicit delete removes exactly one twin: the incoming-carried twin
+    // (gearbox — still in the user's view) pairs and stays; the leftover
+    // twin (motor) is what the marker kills.
+    const del = normalizeItemWrites(
+      [{ name: 'X', qty: '', spec: 's', rates: [{ ...twinA }], removedRates: ['CBPL|19121'] }],
+      { ...CTX.management, storedItems: [stored] },
+    )[0];
+    assert.strictEqual(del.rates.length, 1);
+    assert.strictEqual(del.rates[0].description, 'gearbox note');
+  });
+
   it('full PATCH pipeline: stale panel payload survives pickEnquiryFields whitelist', () => {
     // The exact Greaves incident replay: frozen pre-Greaves panel snapshot
     // goes through the real field whitelist, then the real merge.
@@ -140,7 +162,11 @@ describe('rates union: stale snapshots never delete quotes', () => {
   });
 
   it('full PATCH pipeline: explicit delete marker survives the whitelist and deletes', () => {
-    const body = { items: [{ ...storedGreavesItem(), removedRates: ['Greaves|23110'] }] };
+    // Real delete UIs send the filtered array (row gone) PLUS the marker.
+    const gone = { ...storedGreavesItem() };
+    gone.rates = gone.rates.filter((r) => !(r.vendor === 'Greaves' && r.rate === 23110));
+    gone.removedRates = ['Greaves|23110'];
+    const body = { items: [gone] };
     const picked = pickEnquiryFields(body);
     assert.deepStrictEqual(picked.items[0].removedRates, ['Greaves|23110']);
     const out = normalizeItemWrites(picked.items, withStored('management'))[0];

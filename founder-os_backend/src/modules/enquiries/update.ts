@@ -50,36 +50,55 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // Identity matches the vendor|rate keys used below (exact, case-sensitive).
     const rateKey = (r: any) => `${String(r?.vendor ?? '')}|${Number(r?.rate)}`;
     if (Array.isArray(base.rates) || Array.isArray(stored.rates)) {
-      const removed = new Set<string>(
-        (Array.isArray((it as any).removedRates) ? (it as any).removedRates : []).map((k: any) => String(k ?? '')),
-      );
-      const byKey = new Map<string, any>();
-      for (const r of Array.isArray(stored.rates) ? stored.rates : []) {
-        const k = rateKey(r);
-        if (k && !removed.has(k) && !byKey.has(k)) byKey.set(k, r);
+      const incomingRows = Array.isArray(base.rates) ? base.rates : [];
+      const storedRows = Array.isArray(stored.rates) ? stored.rates : [];
+      // Explicit removals, counted per key: one marker deletes one twin, so
+      // deleting one of two identical quotes keeps the other.
+      const removeQuota = new Map<string, number>();
+      for (const raw of Array.isArray((it as any).removedRates) ? (it as any).removedRates : []) {
+        const k = String(raw ?? '');
+        if (k) removeQuota.set(k, (removeQuota.get(k) ?? 0) + 1);
       }
-      for (const r of Array.isArray(base.rates) ? base.rates : []) {
+      // Greedy twin matching (not a Map — identical vendor|rate twins must
+      // NOT collapse into one row and lose their descriptions/notes).
+      const consumed = new Array(storedRows.length).fill(false);
+      const merged: any[] = [];
+      for (const r of incomingRows) {
         const k = rateKey(r);
         if (!k) continue;
-        if (removed.has(k)) { byKey.delete(k); continue; }
-        byKey.set(k, { ...(byKey.get(k) ?? {}), ...r });
+        const si = storedRows.findIndex((s, j) => !consumed[j] && rateKey(s) === k);
+        if (si >= 0) {
+          consumed[si] = true;
+          merged.push({ ...storedRows[si], ...r }); // incoming wins field-level
+        } else {
+          merged.push(r);
+        }
       }
-      const reinstated = (Array.isArray(stored.rates) ? stored.rates : []).filter(
-        (r: any) => byKey.has(rateKey(r)) && !(Array.isArray(base.rates) ? base.rates : []).some((b: any) => rateKey(b) === rateKey(r)),
-      );
-      const deleted = [...removed].filter((k: string) => {
-        const had = (Array.isArray(stored.rates) ? stored.rates : []).some((r: any) => rateKey(r) === k);
-        return had && !byKey.has(k);
+      const reinstated: any[] = [];
+      let deleted = 0;
+      const deletedCount = new Map<string, number>();
+      storedRows.forEach((s, j) => {
+        if (consumed[j]) return;
+        const k = rateKey(s);
+        const quota = removeQuota.get(k) ?? 0;
+        const used = deletedCount.get(k) ?? 0;
+        if (quota > used) {
+          deletedCount.set(k, used + 1);
+          deleted++;
+          return; // explicitly deleted twin — the other twins survive
+        }
+        merged.push(s);
+        reinstated.push(s);
       });
-      base.rates = [...byKey.values()];
+      base.rates = merged;
       delete (base as any).removedRates;
       // Trail note (stashed, stamped into the lifecycle trail at the end of
       // this function — pushing straight into base.thread here would die in
       // the remark-only merge below).
-      if (reinstated.length > 0 || deleted.length > 0) {
+      if (reinstated.length > 0 || deleted > 0) {
         const bits: string[] = [];
         if (reinstated.length > 0) bits.push(`kept ${reinstated.length} stored quote(s) missing from this save (${reinstated.map((r: any) => String(r?.vendor ?? '')).join(', ')})`);
-        if (deleted.length > 0) bits.push(`removed ${deleted.length} quote(s) by explicit request`);
+        if (deleted > 0) bits.push(`removed ${deleted} quote(s) by explicit request`);
         (base as any).ratesTrailNote = bits.join('; ').slice(0, 500);
       }
       // Dangling-selection guard: a stale save naming a vendor absent from
