@@ -11,6 +11,7 @@ import { enquiryLabel, historyDateChip } from "@/types";
 import { itemNeedsDecision, isOpenSpecFlag, isManagementPendingEnquiry, isManagementHistoryEnquiry, itemHasUnreviewedQuotes, isZohoClosedStatus, ratesCoverage } from "@/enquiry/queue";
 import { matchesEnquiryQuery } from "@/enquiry/search";
 import { toEnquiry } from "@/enquiry/normalize";
+import { preserveItemMedia } from "@/enquiry/merge";
 
 /** Only correct-spec, rate-UNAVAILABLE, rated-but-unfinalized items need a
  *  decision — flagged items stay with Sales until the spec is fixed, then
@@ -388,7 +389,7 @@ export default function ManagementReview() {
         total: (prev.total ?? rows.length + (wasIn ? 1 : 0)) + (inHist && !wasIn ? 1 : 0) - (!inHist && wasIn ? 1 : 0),
       };
     });
-    setSelFull((prev) => (prev && prev.id === r.id ? r : prev));
+    setSelFull((prev) => (prev && prev.id === r.id ? preserveItemMedia(prev, r) : prev));
   }, []);
   const findRow = useCallback((id: string): Enquiry | null => {
     const q = queuesRef.current.data;

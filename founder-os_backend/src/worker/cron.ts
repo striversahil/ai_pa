@@ -204,8 +204,11 @@ async function sweepStuckIntake(env: Bindings): Promise<void> {
       try { full = await store.getEnquiry(r.id); } catch { continue; }
       checked++;
       const items = Array.isArray(full?.items) ? full.items : [];
-      // Fresh full-row check: skip rows whose items all classified since the scan.
-      if (items.length > 0 && !items.some((it: any) => (it as any)?.category === undefined && (it as any)?.kypComplete === undefined)) continue;
+      // Fresh full-row check: skip rows whose items all classified since the
+      // scan. 'Uncategorized' counts as unclassified (every writer stamps
+      // the string explicitly) so stuck rows retry against the live
+      // catalogue on the next intake instead of freezing forever.
+      if (items.length > 0 && !items.some((it: any) => ((it as any)?.category === undefined || (it as any)?.category === 'Uncategorized') && (it as any)?.kypComplete === undefined)) continue;
       // Claim before running (fresh stamp = owned this tick).
       const nowIso = new Date().toISOString();
       try {

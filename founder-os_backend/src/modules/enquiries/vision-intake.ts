@@ -29,7 +29,10 @@
  * `suggestions: []` / `candidates: []` so the sales UI contract is unchanged.
  */
 import { getGateway, buildVisionUserContent } from '../../shared/ai-gateway';
+import { resolveIntakeChain, resolveLegModel } from '../../shared/intake-chain';
+import { getAppSetting } from '../../shared/app-settings';
 import { cacheSet } from '../../shared/cache';
+import { FAMILY_PROMPT, gradeRulesPrompt, matchGradeRule } from './intake-grade-rules';
 import { getProductDetail, getProductIndex } from '../../automations/product-line/service';
 import {
   rankProducts, TOKEN_MIN_SHARED, TOKEN_MIN_SCORE,
@@ -128,7 +131,9 @@ function buildLookupList(cats: string[], products: MatchProduct[]): string {
   }).join('; ')}`).join('\n');
 }
 const LOOKUP_FALLBACK_SYSTEM = `You are a product matcher for flour-mill spare parts. For EACH input line, pick the single best catalogue entry.
-Rules: "category" is the category NUMBER as a bare number; "item" is the item_name copied EXACTLY (never an alias, never invented); "confidence" is 0-1 — below 0.65 when the line genuinely matches nothing (custom/fabricated/as-per-drawing must be 0-0.3, never force a catalogue item); return STRICT JSON {"matches":[{"category":"...","item":"...","confidence":0.9}, ...]} with exactly one entry per input line, in order, and no other text.`;
+Rules: "category" is the category NUMBER as a bare number; "item" is the item_name copied EXACTLY (never an alias, never invented); "confidence" is 0-1 — below 0.65 when the line genuinely matches nothing (custom/fabricated/as-per-drawing must be 0-0.3, never force a catalogue item); return STRICT JSON {"matches":[{"category":"...","item":"...","confidence":0.9}, ...]} with exactly one entry per input line, in order, and no other text.
+${gradeRulesPrompt()}
+${FAMILY_PROMPT}`;
 
 const SPEC_CHECK_SYSTEM = `You are a spec-completeness checker for flour-mill spare parts. For EACH item you receive its collected spec text and its checklist (required_attributes). Return which checklist entries are STILL MISSING.
 Rules: an entry is satisfied if the spec text contains a concrete value for it — e.g. "A70" satisfies V-belt number, "Fenner"/"Gates"/any brand token satisfies brand preference, "6 GG" satisfies grade, "115 cm" satisfies width, "2 pcs"/"10 meters"/"3m" satisfies quantity. A brand token anywhere (verbatim, spec, qty) counts; "as per sample" alone does NOT satisfy; return STRICT JSON {"checks":[{"missing":[0,2]}, ...]} where missing lists the 0-based indices of STILL-MISSING entries, one entry per input item, in order. Never invent checklist text — only return indices.`;
@@ -148,6 +153,8 @@ export async function runAgnesVisionIntake(
   store: EnquiryStore,
   id: string,
   onStage?: (stage: 'split' | 'classified') => void | Promise<void>,
+  /** Force a single provider leg ('agnes' for bulk backfills — skips paid). */
+  forceProvider?: string,
 ): Promise<{ lines: any[]; provider: string } | null> {
   let enquiry: any;
   try { enquiry = await store.getEnquiry(id); } catch (e: any) {
@@ -162,23 +169,18 @@ export async function runAgnesVisionIntake(
   }
 
   const gateway = getGateway(env as any);
-  const health = gateway.health();
-  const hasPaid = health.some((h) => h.provider === 'openrouter-paid');
-  const hasAgnes = health.some((h) => h.provider === 'agnes');
-  const hasOpenRouter = health.some((h) => h.provider === 'openrouter');
-  if (!hasPaid && !hasAgnes && !hasOpenRouter) {
-    console.warn('[vision-intake] no AI key — skipping');
+  // Intake chain (resolveIntakeChain): primary pool first (root-controlled
+  // `intake:primary_provider` Setting, default Agnes), the other leg as
+  // fallback — free leg dropped for determinism. forceProvider pins one
+  // leg (bulk backfills — no failover, no paid spend).
+  const intakePrimary = await getAppSetting('intake:primary_provider').catch(() => 'agnes');
+  const intakeOpenrouterModel = await getAppSetting('intake:openrouter_model').catch(() => '');
+  const intakeModels = { openrouterModel: intakeOpenrouterModel };
+  const chain = resolveIntakeChain(env as any, forceProvider, { primary: intakePrimary });
+  if (chain.length === 0) {
+    console.warn(`[vision-intake] no Agnes/paid key${forceProvider ? ` (forced '${forceProvider}' has no key)` : ''} — skipping`);
     return null;
   }
-  // Paid DeepSeek lane primary (text → deepseek-v4.1-flash; photo passes ride
-  // the lane's vision model). Agnes → OpenRouter free stay as fallbacks so
-  // intake never sticks on a single provider. (Groq keys never load — dropped.)
-  const providers: string[] = [];
-  if (hasPaid) providers.push('openrouter-paid');
-  if (hasAgnes) providers.push('agnes');
-  if (hasOpenRouter) providers.push('openrouter');
-  // Dedupe while preserving order
-  const chain = [...new Set(providers)];
 
   // Determine text to split: aiBulkText (Add via AI) takes precedence, otherwise description.
   const items: any[] = Array.isArray(enquiry.items) ? enquiry.items : [];
@@ -252,7 +254,7 @@ export async function runAgnesVisionIntake(
         try {
           routed = await gateway.completeJson<any>({
             messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content }],
-            temperature: 0, json: true, maxTokens: 24000, provider: prov, signal: ac.signal as any,
+            temperature: 0, json: true, maxTokens: 24000, provider: prov, model: resolveLegModel(prov, intakeModels), signal: ac.signal as any,
             // Never burn 100s on doomed direct-Agnes attempts: relay lane if
             // warm, else fail fast to the next provider (OpenRouter).
             agnesRelayOnly: true,
@@ -452,14 +454,20 @@ export async function runAgnesVisionIntake(
   if (liveProducts.length === 0) console.warn(`[vision-intake] ${id}: live catalogue empty — all lines Uncategorized this run`);
   let nAlias = 0;
   let nToken = 0;
+  let nGrade = 0;
   let nLlm = 0;
   let nMisses = 0;
   const kypHits: (KypKey | null)[] = lines.map((l: any) => {
     const extra = `${String(l.name || '')} ${String(l.dims || '')} ${String(l.qty || '')}`;
     const hit = lookupDeterministic(String(l.verbatim || ''), String(l.spec || ''), extra, liveIndex);
     if (hit) { nAlias++; return hit; }
-    const tok = lookupToken(normTok(`${String(l.verbatim || '')} ${String(l.spec || '')} ${extra}`), liveProducts, liveIndex);
+    const fullText = `${String(l.verbatim || '')} ${String(l.spec || '')} ${extra}`;
+    const tok = lookupToken(normTok(fullText), liveProducts, liveIndex);
     if (tok) { nToken++; return tok; }
+    // Founder-editable grade rules (intake-grade-rules.ts): grade-only lines
+    // ("20 GG", "9xxx") are always that product — deterministic, no LLM call.
+    const gr = matchGradeRule(fullText, liveIndex);
+    if (gr) { nGrade++; return gr; }
     nMisses++;
     return null;
   });
@@ -477,7 +485,7 @@ export async function runAgnesVisionIntake(
               { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
               { role: 'user', content: `Match each line:\n${input}` },
             ],
-            temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac2.signal as any,
+            temperature: 0, json: true, maxTokens: 24000, provider: successProvider, model: resolveLegModel(successProvider, intakeModels), signal: ac2.signal as any,
             agnesRelayOnly: true,
             strictProvider: true,
             reasoningOff: true,
@@ -517,7 +525,7 @@ export async function runAgnesVisionIntake(
   const cats: string[] = kypHits.map((h) => h?.category ?? 'Uncategorized');
   const kypItems: (string | undefined)[] = kypHits.map((h) => h?.item ?? undefined);
   const nUncat = cats.filter((c) => c === 'Uncategorized').length;
-  console.log(`[vision-intake] ${id}: lookup alias=${nAlias} token=${nToken} llm=${nLlm} uncategorized=${nUncat}/${lines.length}`);
+  console.log(`[vision-intake] ${id}: lookup alias=${nAlias} token=${nToken} grade=${nGrade} llm=${nLlm} uncategorized=${nUncat}/${lines.length}`);
 
   // Call-2.5 — spec completeness per matched item (one batched LLM call).
   // Required checklist comes from the LIVE KypGuide rows for each matched
@@ -574,7 +582,7 @@ export async function runAgnesVisionIntake(
             { role: 'system', content: SPEC_CHECK_SYSTEM },
             { role: 'user', content: checksInput },
           ],
-          temperature: 0, json: true, maxTokens: 24000, provider: successProvider, signal: ac3.signal as any,
+          temperature: 0, json: true, maxTokens: 24000, provider: successProvider, model: resolveLegModel(successProvider, intakeModels), signal: ac3.signal as any,
           agnesRelayOnly: true,
           strictProvider: true,
           reasoningOff: true,
@@ -631,7 +639,10 @@ export async function runAgnesVisionIntake(
   // drifted rows are skipped (they re-classify on the next re-intake). The
   // caller re-broadcasts via onStage('classified') so chips stream into the
   // already-visible items.
-  const normPhaseName = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+  // Unicode-aware: Devanagari (जाली) and other scripts survive (the old
+  // [^a-z0-9] erased non-Latin names to '' so those rows could never pair —
+  // observed live on the जाली lines). Latin behavior unchanged.
+  const normPhaseName = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
   try {
     const storedNow: any = await store.getEnquiry(id).catch(() => null);
     const storedItems: any[] = Array.isArray(storedNow?.items) ? storedNow.items : [];
@@ -642,11 +653,101 @@ export async function runAgnesVisionIntake(
       if (!lineQueues.has(k)) lineQueues.set(k, []);
       lineQueues.get(k)!.push(i);
     });
+    // Four-pass matching so a prefix fallback can never steal a line an
+    // exact-name row still needs (passes run in order, occurrence-ordered):
+    //  1. exact normalized-name equality;
+    //  2. longest "stored starts with line-name" (stored names often carry
+    //     dims/spec suffixes the router split off — "Lift Bend 4 118 MM Dia
+    //     X 5 MM Thickness" vs line "Lift Bend");
+    //  3. product-gated merge for leftover rows — the line's hit must be
+    //     ABOUT the stored row: either the stored name is grade-like and the
+    //     line hit the same grade product (stored "XXX" vs line "11 XXX" →
+    //     Milling Fabric, position-independent), or the line name starts
+    //     with the stored name and every stored token appears in the hit
+    //     product's name ("Airlock" vs "Airlock 6 ..." → product "Airlock").
+    //     Guards generic words ("Pipe" never merges a "Pipe Ring" line whose
+    //     product is about something else);
+    //  4. identical-twin reuse: a stored name exactly equal to an
+    //     already-consumed line key re-applies that line's classification
+    //     (two identical stored rows, one router line).
+    const eligible = storedItems.map((it: any) => {
+      const cat = (it as any)?.category;
+      return !((cat !== undefined && cat !== 'Uncategorized') || (it as any)?.kypComplete !== undefined);
+    });
+    const matchIdx: number[] = new Array(storedItems.length).fill(-1);
+    // consumedKey remembers every drained line key for pass-4 twin reuse.
+    const consumedKey = new Map<string, number>();
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si]) return;
+      const sname = normPhaseName((it as any)?.name);
+      const q = lineQueues.get(sname);
+      if (q && q.length) { matchIdx[si] = q.shift()!; consumedKey.set(sname, matchIdx[si]); }
+    });
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si] || matchIdx[si] >= 0) return;
+      const sname = normPhaseName((it as any)?.name);
+      let bestKey = '';
+      for (const k of lineQueues.keys()) {
+        if (k && sname.startsWith(k + ' ') && k.length > bestKey.length) bestKey = k;
+      }
+      const bq = bestKey ? lineQueues.get(bestKey) : undefined;
+      if (bq && bq.length) { matchIdx[si] = bq.shift()!; consumedKey.set(bestKey, matchIdx[si]); }
+    });
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si] || matchIdx[si] >= 0) return;
+      const sname = normPhaseName((it as any)?.name);
+      if (!sname) return;
+      // Grade signal reads name + spec: bare-grade names ('जाली') often keep
+      // the grade in spec ('XXX, बींस मीटर') — either side may fire.
+      const gradeHit = matchGradeRule(`${sname} ${normPhaseName((it as any)?.spec)}`, liveIndex);
+      const sToks = sname.split(' ').filter(Boolean);
+      let bestKey = '';
+      let bestLi = -1;
+      for (const [k, q] of lineQueues) {
+        if (!k || !q.length) continue;
+        const li = q[0];
+        const hitItem = li >= 0 && li < kypItems.length ? kypItems[li] : undefined;
+        if (!hitItem) continue;
+        if (gradeHit) {
+          // Grade-like stored row: take the first line that hit the same
+          // grade product (occurrence order — same product either way).
+          if (hitItem !== gradeHit.item) continue;
+        } else if (k.startsWith(sname + ' ')) {
+          const prodToks = new Set(normPhaseName(hitItem).split(' ').filter(Boolean));
+          if (!sToks.every((t) => prodToks.has(t))) continue;
+          if (k.length <= bestKey.length) continue;
+        } else if (k.length >= 6 && sname.includes(k)) {
+          // Stored row carries prefix noise the router split off ("ALASKA
+          // BRAND - PVC BUCKET - 5 INCH ..." vs line "PVC BUCKET"): the
+          // line sits INSIDE the stored name and the hit product covers
+          // every line token — same product either way. Guards: ≥2 tokens
+          // (never bare "belt"/"oven"/"tee") and longest-key wins.
+          const kToks = k.split(' ').filter(Boolean);
+          if (kToks.length < 2) continue;
+          const prodToks = new Set(normPhaseName(hitItem).split(' ').filter(Boolean));
+          if (!kToks.every((t) => prodToks.has(t))) continue;
+          if (k.length <= bestKey.length) continue;
+        } else continue;
+        bestKey = k;
+        bestLi = li;
+      }
+      if (bestLi >= 0) {
+        matchIdx[si] = lineQueues.get(bestKey)!.shift()!;
+        consumedKey.set(bestKey, bestLi);
+      }
+    });
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si] || matchIdx[si] >= 0) return;
+      const sname = normPhaseName((it as any)?.name);
+      if (sname && consumedKey.has(sname)) matchIdx[si] = consumedKey.get(sname)!;
+    });
     let applied = 0;
-    const mergedItems = storedItems.map((it: any) => {
-      if ((it as any)?.category !== undefined || (it as any)?.kypComplete !== undefined) return it;
-      const q = lineQueues.get(normPhaseName((it as any)?.name));
-      const li = q && q.length ? q.shift()! : -1;
+    const mergedItems = storedItems.map((it: any, si: number) => {
+      // 'Uncategorized' is NOT a classification — rows stuck with it (every
+      // writer stamps the string explicitly) must re-attempt lookup on the
+      // next re-intake against the current catalogue. Real categories and
+      // grounded rows are never clobbered.
+      const li = matchIdx[si];
       if (li < 0 || li >= cats.length) return it;
       applied++;
       return {

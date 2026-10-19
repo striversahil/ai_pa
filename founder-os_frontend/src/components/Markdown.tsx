@@ -38,6 +38,53 @@ function inline(s: string): string {
   return out;
 }
 
+/** Native rate highlight: the enquiry copilot emits ```rate-card {json} fences
+ *  inside its own prose when it states a most-likely price (no tool call).
+ *  Strict schema — {product?, price:number, unit?, specs?, note?} — anything
+ *  malformed returns null and the fence renders as a plain code block. */
+function renderRateCard(body: string): string | null {
+  let d: any;
+  try {
+    d = JSON.parse(String(body ?? ""));
+  } catch {
+    return null;
+  }
+  if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+  const price = Number((d as any).price);
+  if (!Number.isFinite(price)) return null;
+  const str = (v: unknown, max = 140): string => escapeHtml(String(v ?? "").slice(0, max)).trim();
+  const product = str((d as any).product);
+  const unit = str((d as any).unit, 24);
+  const note = str((d as any).note, 280);
+  const rawSpecsIn = (d as any).specs;
+  // Tolerant shapes: [{question,value}] | [{spec,value}|{label,value}|...] |
+  // ["Length: 52 inch", ...] | {"Length": "52 inch", ...} | "single spec".
+  const rawSpecs: unknown[] = Array.isArray(rawSpecsIn)
+    ? rawSpecsIn.slice(0, 8)
+    : (rawSpecsIn && typeof rawSpecsIn === "object"
+      ? Object.entries(rawSpecsIn).slice(0, 8).map(([k, v]) => ({ question: k, value: v }))
+      : (typeof rawSpecsIn === "string" && rawSpecsIn.trim() ? [rawSpecsIn] : []));
+  const chips: string[] = [];
+  for (const s of rawSpecs) {
+    if (typeof s === "string" && s.trim()) {
+      chips.push(`<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white/[0.06] text-white/80 border border-white/10">${str(s, 80)}</span>`);
+    } else if (s && typeof s === "object") {
+      const o = s as any;
+      const q = str(o.question ?? o.spec ?? o.label ?? o.name ?? o.key ?? "", 60);
+      const v = str(o.value ?? o.val ?? "", 80);
+      if (q || v) chips.push(`<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white/[0.06] text-white/80 border border-white/10">${q ? `${q}: ` : ""}${v}</span>`);
+    }
+  }
+  const inr = price.toLocaleString("en-IN");
+  return `<div class="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">`
+    + (product ? `<p class="font-bold text-[13px] text-white">${product}</p>` : "")
+    + `<p class="mt-1 text-[30px] leading-none font-extrabold text-white tabular-nums tracking-tight">₹${inr}`
+    + (unit ? `<span class="text-[14px] font-bold text-white/60">/${unit}</span>` : "") + `</p>`
+    + (chips.length ? `<div class="mt-2 flex flex-wrap gap-1.5">${chips.join("")}</div>` : "")
+    + (note ? `<p class="mt-2 text-[12px] leading-relaxed text-white/60">${note}</p>` : "")
+    + `</div>`;
+}
+
 function render(src: string): string {
   const lines = String(src ?? "").split("\n");
   const html: string[] = [];
@@ -125,6 +172,7 @@ function render(src: string): string {
     const fence = line.trim().startsWith("```");
     if (fence) {
       closeList();
+      const lang = line.trim().slice(3).trim().toLowerCase();
       const buf: string[] = [];
       i++;
       while (i < lines.length && !lines[i].trim().startsWith("```")) {
@@ -132,7 +180,8 @@ function render(src: string): string {
         i++;
       }
       i++;
-      html.push(`<pre><code>${escapeHtml(buf.join("\n"))}</code></pre>`);
+      const card = lang === "rate-card" ? renderRateCard(buf.join("\n")) : null;
+      html.push(card ?? `<pre><code>${escapeHtml(buf.join("\n"))}</code></pre>`);
       continue;
     }
     const h = line.match(/^(#{1,3})\s+(.*)$/);

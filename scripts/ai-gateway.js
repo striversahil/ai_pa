@@ -668,6 +668,40 @@ function getGateway(env) {
   return _gateway;
 }
 
+// resolveIntakeChain(env, forceProvider?, opts?) — JS mirror of
+// founder-os_backend/src/shared/intake-chain.ts (same order, same pin
+// semantics): primary pool first (`opts.primary` or INTAKE_PRIMARY_PROVIDER
+// env, default Agnes), the other leg as fallback. Free leg dropped for
+// intake determinism (free-model variance caused names-only content drops).
+// GH runners have clean egress so both legs run direct.
+function resolveIntakeChain(env, forceProvider, opts) {
+  let health = [];
+  try { health = getGateway(env).health(); } catch { return []; }
+  const has = (p) => health.some((h) => h && h.provider === p);
+  if (forceProvider) return has(forceProvider) ? [forceProvider] : [];
+  const legs = ['agnes', 'openrouter-paid'];
+  const want = (opts && opts.primary) || ((env && env.INTAKE_PRIMARY_PROVIDER) || '').trim();
+  const first = legs.includes(want) ? want : legs[0];
+  return [first, ...legs.filter((l) => l !== first)].filter((l) => has(l));
+}
+
+// completeJsonChain(gateway, req, chain) — one JSON turn across the intake
+// chain: tries each leg pinned (strictProvider — never a silent cross-provider
+// substitution), first success wins. Throws the last leg's error when every
+// leg fails so callers keep their existing retry/result handling.
+async function completeJsonChain(gateway, req, chain) {
+  let lastErr = null;
+  for (const provider of (Array.isArray(chain) ? chain : [])) {
+    try {
+      return await gateway.completeJson({ ...req, provider, strictProvider: true });
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[AiGateway] intake leg=${provider} failed (${String((e && e.message) || e).slice(0, 120)}) — trying next leg`);
+    }
+  }
+  throw lastErr || new Error('empty intake chain');
+}
+
 module.exports = {
   AiGateway,
   KeyPool,
@@ -676,4 +710,6 @@ module.exports = {
   AiGatewayError,
   buildVisionUserContent,
   extractJson: extractJsonModule,
+  resolveIntakeChain,
+  completeJsonChain,
 };

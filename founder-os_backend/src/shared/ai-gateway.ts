@@ -919,9 +919,10 @@ export class AiGateway {
         if (probing) callReq.timeoutMs = req.probeTimeoutMs;
         const result = await this.callProvider(provider, key, callReq);
         this.pool.reportSuccess(key);
-        // Proof-of-use audit: which key fingerprint served the call (no
-        // secret material — id is provider + first6/last4 only).
-        logger.info?.(`[AiGateway] served by ${key.id} (${provider.id})`);
+        // Proof-of-use audit: which key fingerprint + model served the call
+        // (no secret material — id is provider + first6/last4 only). The
+        // model half proves runtime Settings (chat/intake model selectors).
+        logger.info?.(`[AiGateway] served by ${key.id} (${provider.id}/${callReq.model ?? provider.defaultModel})`);
         if (aiCacheKey) {
           try { await cacheSet(aiCacheKey, result, 5 * 60 * 1000); } catch {}
         }
@@ -1046,7 +1047,7 @@ export class AiGateway {
     const probing = !!requestedFlaky && req.model === requestedFlaky && !!req.probeTimeoutMs;
     const streamCap = req.timeoutMs;
     const probeMs = probing ? req.probeTimeoutMs : undefined;
-    const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey) : this.pool.select(req.provider, req.sessionKey);
+    const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey, req.strictProvider === true) : this.pool.select(req.provider, req.sessionKey, req.strictProvider === true);
     if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)');
     const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
     const wantsVision = req.messages.some((m) => Array.isArray(m.content));
@@ -1089,10 +1090,23 @@ export class AiGateway {
     };
     let res: Response | null = null;
     try {
-      res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, streamCap) });
-      if (res.status === 429 && (await this.isIpThrottle(res))) {
+      if (provider.id === 'agnes' && (req as any)?.agnesRelayOnly) {
+        // Relay-only streams (chat Agnes leg): direct Cloudflare egress is
+        // WAF-blocked, so lanes-only — fail fast when no lane is warm and
+        // let the caller's leg chain fall through to paid.
         const proxied = await tryProxy();
-        if (proxied) res = proxied;
+        if (!proxied) {
+          const e: any = new Error('Agnes relay lane unavailable — direct skipped (relayOnly)');
+          e.skipProvider = true;
+          throw e;
+        }
+        res = proxied;
+      } else {
+        res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, streamCap) });
+        if (res.status === 429 && (await this.isIpThrottle(res))) {
+          const proxied = await tryProxy();
+          if (proxied) res = proxied;
+        }
       }
     } catch (e) {
       const timedOut = (e as any)?.name === 'TimeoutError' || /timeout/i.test(String((e as any)?.message ?? ''));
@@ -1193,6 +1207,9 @@ export class AiGateway {
       try { reader.releaseLock(); } catch {}
     }
     this.pool.reportSuccess(key);
+    // Same audit for streams (chat serves streamed turns — without this,
+    // streamed legs are invisible in the tail).
+    logger.info?.(`[AiGateway] stream served by ${key.id} (${provider.id}/${model})`);
     if (lastUsage) await logGatewayUsage(lastUsage);
   }
 

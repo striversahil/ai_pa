@@ -137,7 +137,7 @@ export function toolDefs(ctx: SalesCtx): ToolDefinition[] {
         type: 'function',
         function: {
           name: 'lookup_price',
-          description: 'Catalogue price lookup for ANY product by name — no enquiry item needed. Use the moment the user asks the rate of something that is NOT on this enquiry (or before any item exists). Resolves the product, scores past vendor rates against optional specs, and shows the vendor-blind table (view-only: no apply, no procurement — there is no item to attach to). NEVER tell the user to add the item first.',
+          description: 'Catalogue price lookup for ANY product by name — no enquiry item needed. Use the moment the user asks the rate of something that is NOT on this enquiry (or before any item exists). If this product already has a digest line in your system prompt (searched earlier in this enquiry), answer from it — NEVER re-call for the same product unless genuinely new specs arrived. Resolves the product, scores past vendor rates against optional specs, and shows the vendor-blind table (view-only: no apply, no procurement — there is no item to attach to). NEVER tell the user to add the item first.',
           parameters: {
             type: 'object',
             properties: {
@@ -228,7 +228,7 @@ export function activityLabel(name: string, args: Record<string, any>, out: { re
       return r.error ? 'Spec form failed' : 'Asked missing specs';
     case 'quote_price': {
       if ((r as any).error) return 'Price lookup failed';
-      if ((r as any).routed === 'procurement') return 'Low confidence · routed to procurement';
+      if ((r as any).routed === 'procurement') return 'No matching rate · routed to procurement';
       return typeof (r as any).markedPrice === 'number' ? `Quoted ₹${(r as any).markedPrice}` : 'Drafted a price for confirm';
     }
     case 'find_price_batch': {

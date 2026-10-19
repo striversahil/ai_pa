@@ -99,6 +99,13 @@ export interface CopilotDef<T> {
    *  Bulk-style defs that page row text raise this so one read covers the
    *  batch instead of N paged calls hammering RPM limits. */
   toolResultCap?: number;
+  /** Compact per-call trace line override: when set, the engine records
+   *  `traceLine(name, args, out)` (capped) into the carry-forward trace
+   *  instead of the default `${name}: ${resultJSON}` dump. Lets data-working
+   *  defs persist a digest (product + variation values + best price) rather
+   *  than kilobytes of rows — later turns continue from it instead of
+   *  re-running the same reads. Null = use the default dump. */
+  traceLine?(name: string, args: Record<string, any>, out: { result: unknown }): string | null;
   /** Max chars of carried-forward tool trace in the next turn's prompt
    *  (default 12000). Long-pipeline defs (intake) raise this so a 14-quote
    *  blob's split + captures all survive into "continue". */

@@ -21,19 +21,17 @@
  *   POST /api/runner/enquiry-intake/result applies fill-empty-only updates +
  *     KV suggestions for the sales UI.
  *
- * Env: WORKER_URL, SHARED_SECRET, OPENROUTER_API_KEYS / OPENROUTER_API_KEY
- *   (OpenRouter-only; Groq is never used in this workflow),
- *   OPENROUTER_FREE_MODELS (comma-separated free-model rotation for text;
- *   vision stays on ling-3.0-flash-vl), HF_API_KEY,
- *   PINECONE_HOST, PINECONE_API_KEY.
- *   VISION_MODEL override supported by the gateway (default llama-4-scout).
+ * Env: WORKER_URL, SHARED_SECRET, AGNES_API_KEYS (primary pool) /
+ *   OPENROUTER_PAID_API_KEY (fallback leg only; Groq/free keys never used),
+ *   HF_API_KEY, PINECONE_HOST, PINECONE_API_KEY.
+ *   VISION_MODEL override supported by the gateway.
  * Flags: --limit N (cap enquiries per run), --dry-run (no result POSTs).
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { workerRequest } = require('./runner-lib');
-const { getGateway, buildVisionUserContent } = require('./ai-gateway');
+const { getGateway, buildVisionUserContent, resolveIntakeChain, completeJsonChain } = require('./ai-gateway');
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const limitArg = process.argv.find((a) => a.startsWith('--limit='));
@@ -42,10 +40,11 @@ const CAP = limitArg ? Math.max(1, parseInt(limitArg.split('=')[1], 10)) : 25;
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-// Enquiry vision runs on OpenRouter ONLY (paid per-token) — Groq is never
+// Enquiry vision runs Agnes-pool first, paid OpenRouter fallback only
+// (resolveIntakeChain — free leg dropped for determinism). Groq is never
 // used in this workflow.
-if (!process.env.OPENROUTER_API_KEYS && !process.env.OPENROUTER_API_KEY) {
-  missing.push('OPENROUTER_API_KEYS (or OPENROUTER_API_KEY — Groq is not used here)');
+if (!process.env.AGNES_API_KEYS && !process.env.AGNES_API_KEY && !process.env.OPENROUTER_PAID_API_KEY && !process.env.OPENROUTER_API_KEYS && !process.env.OPENROUTER_API_KEY) {
+  missing.push('AGNES_API_KEYS (or OPENROUTER_PAID_API_KEY — Groq is not used here)');
 }
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
@@ -142,14 +141,13 @@ function lookupDeterministic(line) {
   return null;
 }
 
-async function lookupFallbackLLM(gateway, lines) {
+async function lookupFallbackLLM(gateway, chain, lines) {
   if (!lines.length) return [];
   const input = lines.map((l, i) => `${i}. ${l.verbatim}${l.spec ? ` | ${l.spec}` : ''}${l.qty ? ` | ${l.qty}` : ''}`.slice(0, 600)).join('\n');
-  const out = await gateway.completeJson({
+  const out = await completeJsonChain(gateway, {
     messages: [{ role: 'system', content: LOOKUP_SYSTEM }, { role: 'user', content: `Match each line:\n${input}` }],
     temperature: 0, json: true, maxTokens: 4000, noReasoning: true,
-    provider: 'openrouter',
-  });
+  }, chain);
   const matches = Array.isArray(out.matches) ? out.matches : [];
   return lines.map((_, i) => {
     const m = matches[i] || {};
@@ -223,7 +221,7 @@ function routeMatch(score, dimsEqual) {
 
 const canon = (s) => String(s || '').toLowerCase().replace(/["″]/g, ' in ').replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-async function processEnquiry(gateway, eq) {
+async function processEnquiry(gateway, chain, eq) {
   // Call 1 — SEGMENT (vision+text, NO catalogue): pure splitter. Verbatim
   // lines + lead block only; the model never sees KYP so it cannot bend
   // lines toward catalogue names. (ROUTER_LINES intentionally NOT sent.)
@@ -254,28 +252,20 @@ async function processEnquiry(gateway, eq) {
   if (_poolNote.length + images.length > 0 && attachedImgs === 0) {
     console.log(`- ${eq.id}: WARNING ${ _poolNote.length + images.length} image(s) present but none attached to vision call`);
   }
-  // Free-tier models intermittently return empty/unparseable responses
-  // (burst limits) — retry the segment call before giving up on the enquiry.
+  // Segment call across the intake chain (Agnes → paid fallback): each leg
+  // is pinned, first success wins — no same-provider sleep-retry loops.
   let routed;
   let lastErr = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      routed = await gateway.completeJson({
-        messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content: fullContent }],
-        // No reasoning trace (it shares the token budget and truncates the
-        // JSON mid-stream); 8k headroom so the full lines array always fits.
-        temperature: 0, json: true, maxTokens: 8000, noReasoning: true,
-        // Enquiry pipeline runs on OpenRouter (ling text+vision); the gateway
-        // falls back to Groq automatically when no OpenRouter key is set.
-        provider: 'openrouter',
-      });
-      lastErr = null;
-      break;
-    } catch (e) {
-      lastErr = e;
-      console.log(`- ${eq.id}: segment attempt ${attempt + 1}/3 failed (${String(e.message).slice(0, 120)}) — retrying`);
-      await new Promise((r) => setTimeout(r, 15000));
-    }
+  try {
+    routed = await completeJsonChain(gateway, {
+      messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content: fullContent }],
+      // No reasoning trace (it shares the token budget and truncates the
+      // JSON mid-stream); 8k headroom so the full lines array always fits.
+      temperature: 0, json: true, maxTokens: 8000, noReasoning: true,
+    }, chain);
+  } catch (e) {
+    lastErr = e;
+    console.log(`- ${eq.id}: segment failed on every intake leg (${String(e.message).slice(0, 120)})`);
   }
   if (lastErr) {
     return { error: `vision failed: ${lastErr.message}`, items: [], missing: [], suggestions: [], candidates: [] };
@@ -302,7 +292,7 @@ async function processEnquiry(gateway, eq) {
   }
   if (needsLlm.length > 0) {
     try {
-      const fb = await lookupFallbackLLM(gateway, needsLlm);
+      const fb = await lookupFallbackLLM(gateway, chain, needsLlm);
       fb.forEach((r, i) => {
         if (r) { needsLlm[i].category = r.category; nLlm++; }
         else needsLlm[i].category = 'Uncategorized';
@@ -362,11 +352,14 @@ async function processEnquiry(gateway, eq) {
 async function main() {
   const gateway = getGateway(process.env);
   if (gateway.keyCount === 0) { console.error('No AI keys configured'); process.exit(1); }
-  // OpenRouter-only: refuse to run on Groq keys.
-  if (!gateway.health().some((h) => h.provider === 'openrouter')) {
-    console.error('No OpenRouter key in pool — refusing to run on Groq keys');
+  // Intake chain: Agnes-pool first, paid OpenRouter fallback only — refuse
+  // to run on Groq/free keys.
+  const chain = resolveIntakeChain(process.env);
+  if (chain.length === 0) {
+    console.error('No Agnes/paid key in pool — refusing to run on Groq/free keys');
     process.exit(1);
   }
+  console.log(`intake chain: ${chain.join(' → ')}`);
   const pending = await workerRequest(`/api/runner/enquiry-intake/pending?limit=${CAP}`);
   const rows = Array.isArray(pending.rows) ? pending.rows : [];
   // Claim first (parallel runners split the queue; stale claims expire in
@@ -389,7 +382,7 @@ async function main() {
   for (let i = 0; i < mine.length; i += PARALLEL) {
     const batch = mine.slice(i, i + PARALLEL);
     const results = await Promise.allSettled(batch.map(async (eq) => {
-      const out = await processEnquiry(gateway, eq);
+      const out = await processEnquiry(gateway, chain, eq);
       if (DRY_RUN) return { eq, out, posted: false };
       const res = await workerRequest('/api/runner/enquiry-intake/result', {
         method: 'POST',

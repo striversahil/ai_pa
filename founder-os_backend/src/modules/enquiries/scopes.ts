@@ -60,8 +60,12 @@ export function canSeeProcurementRequests(me: MeResponse): boolean {
 }
 
 /** Margin fields are Management-only: non-privileged readers see final rates
- *  but never the chosen vendor NAME or the markup. Vendor-level discounts
- *  stay hidden; per-quote `selected` flag locates the decided row.
+ *  but never the chosen vendor NAME or the markup. Per-quote vendor discounts
+ *  (`discountPercent`) are hidden from SALES only (`opts.hideRequests`) —
+ *  procurement enters them and management prices off them, so both desks
+ *  keep them; stripping them from procurement's own payload made saved
+ *  discounts vanish from his view (and a later edit from the stripped row
+ *  wiped the stored value). Per-quote `selected` flag locates the decided row.
  *  Management-shared ALTERNATES reach sales anonymized: vendor name +
  *  vendor description blanked (they identify the source) — sales sees the
  *  option + green final rate + forwarded salesNote only.
@@ -88,15 +92,19 @@ export function stripMarginFields<T extends Record<string, any>>(enquiry: T, opt
       if (Array.isArray((rest as any).rates)) {
         (rest as any).rates = (rest as any).rates.map((r: any) => {
           if (!r || typeof r !== 'object') return r;
+          // Vendor discounts are procurement's own input (management prices
+          // off them) — hide from sales readers only, never from procurement.
           const { discountPercent, ...rr } = r;
-          if (selectedVendor && r.vendor === selectedVendor) return { ...rr, selected: true };
+          void discountPercent;
+          const shown = opts?.hideRequests ? rr : r;
+          if (selectedVendor && r.vendor === selectedVendor) return { ...shown, selected: true };
           if ((r as any)?.sharedWithSales === true) {
-            const { vendor, description, ...anon } = rr as any;
+            const { vendor, description, ...anon } = shown as any;
             void vendor;
             void description;
             return anon;
           }
-          return rr;
+          return shown;
         });
       }
       // Thread is common channel — keep for sales but strip internal quoted vendor leaks.

@@ -12,8 +12,9 @@ import {
 } from '../../automations/product-line/match';
 import type { ChatProposal, PriceItemState, PriceSession, PriceTableRow, SalesCtx, SpecQuestion } from './chat-types';
 import {
-  droppedSpecKeys, dropVagueSpecs, filterChecklistSpecs, getItemState, itemIdx,
-  loadPriceSession, priceWho, resolveSpecKeys, savePriceSession, specVerdict,
+  digestCoverage, droppedSpecKeys, dropVagueSpecs, filterChecklistSpecs, getItemState, itemIdx,
+  loadPriceSession, priceWho, resolveSpecKeys, savePriceSession, specVerdict, variationDigest,
+  type VariationDigest,
 } from './chat-prices';
 
 export interface ToolOut {
@@ -230,9 +231,9 @@ export async function execAskSpecs(ctx: SalesCtx, _view: any, _enquiry: any, arg
   }
   if (!touchedItem && prev.activeItem !== undefined) {
     const cur = getItemState(prev, prev.activeItem);
-    nextItems[String(prev.activeItem)] = { productId: pid, productName: product.name, specs: { ...cur.specs, ...known } };
+    nextItems[String(prev.activeItem)] = { productId: pid, productName: product.name, specs: { ...cur.specs, ...known }, ...(cur.variations ? { variations: cur.variations } : {}) };
   }
-  await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem });
+  await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem, ...(prev.lookups ? { lookups: prev.lookups } : {}) });
   const rates = await liveRates(pid);
   const questions: SpecQuestion[] = [];
   for (const g of required) {
@@ -337,7 +338,7 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
     };
   }
   await savePriceSession(ctx.enquiryId, who, {
-    items: { ...(prev.items ?? {}), [String(idx)]: { productId: pid, productName: product.name, specs } },
+    items: { ...(prev.items ?? {}), [String(idx)]: { productId: pid, productName: product.name, specs, ...(prevSt.productId === pid && prevSt.variations ? { variations: prevSt.variations } : {}) } },
     activeItem: idx,
   });
   const quoteRates = await liveRates(pid);
@@ -360,20 +361,45 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
   // vendor-blind row — the model + user rank from the whole list.
   const rows: PriceTableRow[] = scored.map((s, i) =>
     catalogueRow(product, guide, s, specs, required, i, { itemIndex: parsedQ.num }));
+  // HARD GATE (founder order): below-confidence never crowns a price. The
+  // table stays informational, the item routes to procurement, and no
+  // price_quote proposal is emitted — a spec-mismatched top rate must not
+  // be quotable. This applies even with skipSpecs:true (that flag accepts
+  // unconfirmed specs, not a divergent rate).
+  const quote: SalesQuote = salesSafeQuote(product, best, specs, required, guide);
+  const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
   const proposals: ChatProposal[] = [{
     kind: 'price_table', itemIndex: idx,
     productId: product.id, productName: product.name,
     rows, label: `Past prices · ${product.name} (${rows.length})`,
     itemMedia: itemPhotos(itemsQ[idx]),
-    needsProcurement: false,
+    needsProcurement: caveated,
   }];
-  // Details are OPTIONAL (founder order): below-confidence still quotes —
-  // flagged with caveats instead of routing to procurement.
-  const quote: SalesQuote = salesSafeQuote(product, best, specs, required, guide);
-  const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
-  const caveatNote = caveated && quote.missingSpecs.length > 0
-    ? ` — note: ${quote.missingSpecs.map((m) => m.question).join(', ')} not confirmed; closest past match — fetch from procurement if it doesn't work`
-    : caveated ? ' — closest past match, lower confidence — fetch from procurement if it doesn\'t work' : '';
+  if (caveated) {
+    const quoteVerdict = specVerdict(scored.map((s) => s.rate), specs, required);
+    const dg = variationDigest(pid, product.name, quoteVerdict, quote, true);
+    await savePriceSession(ctx.enquiryId, who, {
+      items: { ...(prev.items ?? {}), [String(idx)]: { productId: pid, productName: product.name, specs, variations: dg } },
+      activeItem: idx,
+    });
+    return {
+      result: {
+        proposed: false, caveated: true as const, hasUsablePrices: false,
+        routed: 'procurement' as const,
+        confidence: best.confidence,
+        missingSpecs: quote.missingSpecs.map((m) => m.question),
+        note: `no past rate matches these specs closely enough (best confidence ${best.confidence}) — routed to procurement; ${rows.length} past variations shown for reference only, none is quotable`,
+        variationCount: quoteVerdict.variationCount,
+        askedSpecs: quoteVerdict.askedSpecs,
+        specVerdict: quoteVerdict.coverage,
+        ...(dropped.length ? {
+          droppedSpecs: dropped,
+          specHint: `these spec keys are not required checklist keys for ${product.name} — their values did not affect scoring; re-pass values under the specVerdict keys: ${dropped.join(', ')}`,
+        } : {}),
+      },
+      proposals,
+    };
+  }
   const items = Array.isArray(enquiry.items) ? enquiry.items : [];
   const existing = String((items[idx] as any)?.spec ?? '');
   // Companion spec update: append only genuinely new "Question: value" lines.
@@ -385,8 +411,8 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
     productId: product.id, productName: product.name,
     markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
     quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
-    text: `${product.name} @ ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} — confidence ${quote.confidence}, quote ~${quote.quoteAgeDays ?? '?'}d old${quote.moq ? `, MOQ ${quote.moq}` : ''}${quote.deliveryDays != null ? `, ${quote.deliveryDays}d delivery` : ''}${caveatNote}`,
-    label: caveated ? `Apply AI price · ${product.name} (closest match)` : `Apply AI price · ${product.name}`,
+    text: `${product.name} @ ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} — confidence ${quote.confidence}, quote ~${quote.quoteAgeDays ?? '?'}d old${quote.moq ? `, MOQ ${quote.moq}` : ''}${quote.deliveryDays != null ? `, ${quote.deliveryDays}d delivery` : ''}`,
+    label: `Apply AI price · ${product.name}`,
   });
   if (fresh.length > 0) {
     proposals.push({
@@ -399,9 +425,14 @@ export async function execQuotePrice(ctx: SalesCtx, _view: any, enquiry: any, ar
   // rows carry. A low-confidence caveat is NOT an absence — never claim a
   // variation is missing when specVerdict rows carry it.
   const quoteVerdict = specVerdict(scored.map((s) => s.rate), specs, required);
+  const dgOk = variationDigest(pid, product.name, quoteVerdict, quote, false);
+  await savePriceSession(ctx.enquiryId, who, {
+    items: { ...(prev.items ?? {}), [String(idx)]: { productId: pid, productName: product.name, specs, variations: dgOk } },
+    activeItem: idx,
+  });
   return {
     result: {
-      proposed: true, caveated, hasUsablePrices: true,
+      proposed: true, caveated: false, hasUsablePrices: true,
       ...(dv.vague.length ? { vague: dv.vague } : {}),
       ...quote,
       variationCount: quoteVerdict.variationCount,
@@ -456,6 +487,35 @@ export async function execLookupPrice(ctx: SalesCtx, _view: any, _enquiry: any, 
     const s = String(v ?? '').trim().slice(0, 200);
     if (s) specs[String(k)] = s;
   }
+  // Repeat-lookup memo: this product's variations were already surfaced this
+  // enquiry (digest in session). Same product + no new specs → answer from
+  // the digest instead of re-scoring: compact, instant, and loop-proof (a
+  // re-call can never snowball into burned steps again).
+  const lookupWho = priceWho(ctx.me);
+  const lookupPrev = await loadPriceSession(ctx.enquiryId, lookupWho);
+  const memo = (lookupPrev.lookups ?? {})[product.id];
+  const normEq = (a: unknown, b: unknown) => String(a ?? '').trim().toLowerCase().replace(/\s+/g, ' ') === String(b ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const memoHit = memo && typeof memo === 'object' && Object.entries(specs).every(([k, v]) => {
+    const asked = (memo.askedSpecs ?? {})[k];
+    return asked !== undefined && normEq(asked, v);
+  });
+  if (memoHit) {
+    const coverage = digestCoverage(memo);
+    return {
+      result: {
+        cached: true as const, proposed: false,
+        caveated: memo.routed, hasUsablePrices: !memo.routed,
+        ...(memo.routed ? { routed: 'procurement' as const } : {}),
+        productId: product.id, productName: product.name,
+        ...(memo.best ? { markedPrice: memo.best.price, unit: memo.best.unit, confidence: memo.best.confidence } : { confidence: 0 }),
+        variationCount: memo.count,
+        askedSpecs: { ...(memo.askedSpecs ?? {}) },
+        specVerdict: coverage,
+        note: `repeat lookup served from this enquiry's variation memory (table already shown) — answer from specVerdict values, do not re-call`,
+      },
+      proposals: [],
+    };
+  }
   const lookupRates = await liveRates(product.id);
   const scored = scoreRates(lookupRates, product.id, specs, required);
   if (scored.length === 0) return { result: { error: 'no past rates for this product', hasUsablePrices: false } };
@@ -463,17 +523,50 @@ export async function execLookupPrice(ctx: SalesCtx, _view: any, _enquiry: any, 
   const rows: PriceTableRow[] = scored.map((s, i) =>
     catalogueRow(product, guide, s, specs, required, i, { tag: 'Catalogue' }));
   const quote: SalesQuote = salesSafeQuote(product, best, specs, required, guide);
+  // HARD GATE (same founder order): a spec-mismatched top rate is not a
+  // rate at all. View-only table stays, but nothing is crowned — prose must
+  // present rows only, never "around ₹X".
   const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
-  const caveatBits = caveated && quote.missingSpecs.length > 0
-    ? ` — note: ${quote.missingSpecs.map((m) => m.question).join(', ')} not confirmed, closest past match`
-    : '';
   // Grounding verdict for the prose: row count + what was asked vs what the
   // rows carry. A low-confidence caveat is NOT an absence — never claim a
   // variation is missing when specVerdict rows carry it.
   const lookupVerdict = specVerdict(scored.map((s) => s.rate), specs, required);
+  const storeLookupDigest = async (dg: VariationDigest) => {
+    await savePriceSession(ctx.enquiryId, lookupWho, {
+      items: { ...(lookupPrev.items ?? {}) }, activeItem: lookupPrev.activeItem,
+      lookups: { ...(lookupPrev.lookups ?? {}), [product.id]: dg },
+    });
+  };
+  if (caveated) {
+    await storeLookupDigest(variationDigest(product.id, product.name, lookupVerdict, quote, true));
+    return {
+      result: {
+        proposed: true, caveated: true as const, hasUsablePrices: false,
+        productId: product.id, productName: product.name,
+        confidence: best.confidence,
+        missingSpecs: quote.missingSpecs.map((m) => m.question),
+        variationCount: lookupVerdict.variationCount,
+        askedSpecs: lookupVerdict.askedSpecs,
+        specVerdict: lookupVerdict.coverage,
+        ...(dropped.length ? {
+          droppedSpecs: dropped,
+          specHint: `these spec keys are not required checklist keys for ${product.name} — their values did not affect scoring; re-pass values under the specVerdict keys: ${dropped.join(', ')}`,
+        } : {}),
+        note: `view-only catalogue lookup (no enquiry item): ${lookupVerdict.variationCount} past rates shown, none closely matches these specs (best confidence ${best.confidence}) — no rate is quotable from this table`,
+      },
+      proposals: [{
+        kind: 'price_table',
+        productId: product.id, productName: product.name,
+        rows, label: `Catalogue prices · ${product.name} (${rows.length})`,
+        text: `${product.name}: ${rows.length} past catalogue rates, none closely matching these specs (best confidence ${best.confidence}). Not on this enquiry — view only.`,
+        needsProcurement: false,
+      }],
+    };
+  }
+  await storeLookupDigest(variationDigest(product.id, product.name, lookupVerdict, quote, false));
   return {
     result: {
-      proposed: true, caveated, hasUsablePrices: true,
+      proposed: true, caveated: false, hasUsablePrices: true,
       productId: product.id, productName: product.name,
       markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
       variationCount: lookupVerdict.variationCount,
@@ -489,7 +582,7 @@ export async function execLookupPrice(ctx: SalesCtx, _view: any, _enquiry: any, 
       kind: 'price_table',
       productId: product.id, productName: product.name,
       rows, label: `Catalogue prices · ${product.name} (${rows.length})`,
-      text: `${product.name} around ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} (confidence ${quote.confidence}${caveatBits}). Not on this enquiry — view only.`,
+      text: `${product.name} around ₹${quote.markedPrice}${quote.unit ? `/${quote.unit}` : ''} (confidence ${quote.confidence}). Not on this enquiry — view only.`,
       needsProcurement: false,
     }],
   };
@@ -675,36 +768,55 @@ export async function execQuotePriceBatch(ctx: SalesCtx, _view: any, enquiry: an
       });
       continue;
     }
-    // Details are OPTIONAL: below-confidence still quotes with caveats.
+    // HARD GATE (same founder order): a spec-mismatched top rate routes to
+    // procurement instead of pricing the item — no markedPrice emitted.
     const best = scored[0];
     const quote = salesSafeQuote(product, best, specs, required, guide);
     const caveated = best.confidence < MIN_QUOTE_CONFIDENCE;
     const batchVerdict = specVerdict(scored.map((s) => s.rate), specs, required);
-    out.push({
-      itemIndex: num, productId: product.id, productName: product.name,
-      markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
-      quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
-      ...(caveated ? { caveated: true as const, missing: quote.missingSpecs.map((m) => m.question) } : {}),
-      ...(bv.vague.length ? { vague: bv.vague } : {}),
-      hasUsablePrices: true,
-      variationCount: batchVerdict.variationCount,
-      askedSpecs: batchVerdict.askedSpecs,
-      specVerdict: batchVerdict.coverage,
-      ...(batchDropped.length ? { droppedSpecs: batchDropped } : {}),
-    });
+    // Cross-turn memory: per-item variation digest (same as single paths).
+    nextItems[String(idx)] = {
+      productId: product.id, productName: product.name, specs,
+      variations: variationDigest(product.id, product.name, batchVerdict, quote, caveated),
+    };
+    if (caveated) {
+      out.push({
+        itemIndex: num, productId: product.id, productName: product.name,
+        routed: 'procurement' as const, hasUsablePrices: false,
+        confidence: best.confidence,
+        missing: quote.missingSpecs.map((m) => m.question),
+        note: `no past rate matches these specs closely enough (best confidence ${best.confidence}) — routed to procurement`,
+        variationCount: batchVerdict.variationCount,
+        askedSpecs: batchVerdict.askedSpecs,
+        specVerdict: batchVerdict.coverage,
+        ...(batchDropped.length ? { droppedSpecs: batchDropped } : {}),
+      });
+    } else {
+      out.push({
+        itemIndex: num, productId: product.id, productName: product.name,
+        markedPrice: quote.markedPrice, unit: quote.unit, confidence: quote.confidence,
+        quoteAgeDays: quote.quoteAgeDays, moq: quote.moq, deliveryDays: quote.deliveryDays,
+        ...(bv.vague.length ? { vague: bv.vague } : {}),
+        hasUsablePrices: true,
+        variationCount: batchVerdict.variationCount,
+        askedSpecs: batchVerdict.askedSpecs,
+        specVerdict: batchVerdict.coverage,
+        ...(batchDropped.length ? { droppedSpecs: batchDropped } : {}),
+      });
+    }
     // Every variation per item lands in the combined table (per-row
     // Apply) — no top-N cut; the model + user rank the whole list.
     scored.forEach((s, si) => {
       rows.push(catalogueRow(product, guide, s, specs, required, si, { itemIndex: num, itemName, tag: 'Catalogue', maxBits: 3 }));
     });
   }
-  await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem });
+  await savePriceSession(ctx.enquiryId, who, { items: nextItems, activeItem: prev.activeItem, ...(prev.lookups ? { lookups: prev.lookups } : {}) });
   const proposals: ChatProposal[] = [
     ...(rows.length > 0 ? [{
       kind: 'price_table' as const,
       productName: 'Batch prices',
       rows, label: `Batch prices · ${out.filter((o) => typeof o.markedPrice === 'number').length}/${out.length} items priced`,
-      needsProcurement: false as const,
+      needsProcurement: out.some((o) => (o as any).routed === 'procurement'),
     }] : []),
     ...unpriced,
   ];

@@ -462,6 +462,7 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     '/api/token/',     // token store — not dashboard data
     '/api/chat/typing',// high-frequency ephemeral signal
     '/api/chat/files', // attachment store — frontend handles refetch
+    '/api/enquiries/files', // enquiry attachment store — the owning save broadcasts; a bare upload must not storm the list (would merge a media-stripped row over the just-hydrated photo)
     '/api/whatsapp/events', // SSE stream
     '/api/events',     // WebSocket upgrade
   ];

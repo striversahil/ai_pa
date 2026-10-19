@@ -31,6 +31,8 @@ jobs:
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
+          OPENROUTER_PAID_API_KEY: ${{ secrets.OPENROUTER_PAID_API_KEY }}
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
           OPENROUTER_FREE_MODELS: ${{ secrets.OPENROUTER_FREE_MODELS }}
           HF_API_KEY: ${{ secrets.HF_API_KEY }}

@@ -287,8 +287,10 @@ export interface ScoredRate {
 
 /**
  * Score active priced rates for a product against collected specs.
- * confidence = 0.7 × required-spec overlap + 0.2 × recency + 0.1 × exact-hit
- * ratio. Sorted best-first.
+ * confidence = required-spec overlap ONLY (average per-spec credit:
+ * exact-after-normalize = 1, either-contains = 0.5, else 0). No recency,
+ * no exact-ratio bonuses — a fresh but spec-mismatched rate must never
+ * outrank a true spec match. Sorted best-first.
  */
 export function scoreRates(
   rates: MatchRate[],
@@ -325,7 +327,9 @@ export function scoreRates(
     const age = ageDays(r.quotedAt);
     const recency = age == null ? 0.5 : 1 / (1 + age / 180);
     const exactRatio = counted > 0 ? exact / counted : 0;
-    const confidence = Math.round((0.7 * overlap + 0.2 * recency + 0.1 * exactRatio) * 100) / 100;
+    // Founder order: confidence is spec overlap, nothing else. Recency and
+    // exact-ratio are still reported (trace/diagnostics) but carry no weight.
+    const confidence = Math.round(overlap * 100) / 100;
     out.push({ rate: r, confidence, overlap, recency });
   }
   out.sort((a, b) => b.confidence - a.confidence);

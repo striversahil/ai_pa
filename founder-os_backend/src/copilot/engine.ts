@@ -1,11 +1,14 @@
 // copilot/engine.ts — generic agentic chat loop (edge-safe: fetch only).
 //
 // Extracted verbatim from modules/enquiries/chat.ts so every department
-// copilot shares one loop: paid-OpenRouter primary (deepseek-v4.1-flash),
-// max 6 tool steps, writes never applied (tools return proposals; the
-// frontend confirms via /execute).
+// copilot shares one loop: Agnes-pool first via the GH relay lane ONLY
+// (direct Cloudflare egress is WAF-blocked — never attempted), paid
+// OpenRouter fallback; max 6 tool steps, writes never applied (tools return
+// proposals; the frontend confirms via /execute).
 // Chat history is deliberately NOT stored — only a best-effort turn counter.
-import { getGateway, PAID_CHAT_ROUTING, type ChatMessage } from '../shared/ai-gateway';
+import { getGateway, type ChatMessage } from '../shared/ai-gateway';
+import { resolveChatChain, resolveChatModel, paidRouteParams } from '../shared/intake-chain';
+import { getAppSetting } from '../shared/app-settings';
 import { ROOT_EMAIL } from '../modules/auth/types';
 import { cacheDel, cacheGet, cacheKeys, cacheSet } from '../shared/cache';
 import { CALCULATE_TOOL, calculateActivity, calculateToolDef, execCalculate } from '../shared/calculator';
@@ -23,17 +26,33 @@ export * from './session';
 
 const MAX_STEPS = 6;
 const COUNT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-// Chat primary (2026-10-06): paid OpenRouter lane serving
-// deepseek/deepseek-v4.1-flash, streamlake/fp8 preferred with OpenRouter
-// fallback allowed. Direct Cloudflare egress first; GH relay lanes only on
-// 1015/egress blockage (gateway handles both). A throttled pool answers
-// "busy" instead of guessing from a hallucinating fallback model.
+// Chat primary (2026-10-06 paid lane → 2026-10-13 Agnes-first): the chain in
+// shared/intake-chain.ts serves agnes-3.0-flash via the GH relay lane ONLY,
+// with the paid OpenRouter lane (deepseek/deepseek-v4.1-flash,
+// streamlake/fp8 preferred, OpenRouter fallback allowed) as fallback.
+// Direct Cloudflare egress is never attempted for Agnes (WAF-blocked).
+// A fully-exhausted chain answers "busy" instead of guessing from a
+// hallucinating fallback model.
 const BUSY_REPLY = 'The AI is busy (rate-limited) — please retry in a minute.';
-/** Provider id chat turns pin (paid-only keys — free-tier keys never serve chat). */
+/** Legacy single-provider pin (kept exported for compat — the loop now walks
+ *  resolveChatChain instead). Paid-only keys; free-tier keys never serve chat. */
 export const CHAT_PROVIDER = 'openrouter-paid';
-/** OpenRouter routing: single source is PAID_CHAT_ROUTING (gateway) — chat
- *  passes it explicitly so the intent stays visible at the call site. */
-const CHAT_PROVIDER_PARAMS = PAID_CHAT_ROUTING;
+/** Paid-leg routing is root-controlled (`chat:paid_route` + mode) via
+ *  paidRouteParams() — empty route reproduces the compiled StreamLake/FP8
+ *  default. Passed explicitly so the intent stays visible at the call site. */
+/** Per-leg request params for one chat step: Agnes legs run relay-only with
+ *  brief thinking (THINK_BRIEF parity at minimal token cost); the paid leg
+ *  keeps the existing routing params. Every leg is strictly pinned with the
+ *  same sticky sessionKey — no mid-chat key hopping. */
+function chatLegParams(leg: string, def: CopilotDef<any>, env: any, models?: { agnesModel?: string; openrouterModel?: string; paidRoute?: string; paidRouteMode?: string }) {
+  return {
+    provider: leg,
+    model: resolveChatModel(def, env, leg, models),
+    extraParams: leg === 'openrouter-paid' ? paidRouteParams(models?.paidRoute ?? '', models?.paidRouteMode) : undefined,
+    strictProvider: true,
+    ...(leg === 'agnes' ? { agnesRelayOnly: true, reasoningEffort: 'low' as const } : {}),
+  };
+}
 // Reasoning models burn completion tokens on chain-of-thought (reasoning
 // counts against max_tokens) — big blobs think for thousands of tokens
 // before answering, so chat budgets 16000 (founder order): room to think
@@ -90,6 +109,71 @@ function defaultToolDefs<T>(def: CopilotDef<T>, ctx: T) {
   if (!names.has(FETCH_PAGE_TOOL)) tools.push(fetchPageToolDef());
   if (!names.has(CALCULATE_TOOL)) tools.push(calculateToolDef());
   return tools;
+}
+
+// ── Same-tool loop breaker ─────────────────────────────────────────────────
+// A model that gets an inconclusive tool result (e.g. lookup candidates it
+// won't pick from) retries the identical call hoping for a different answer —
+// each retry appends kilobytes of tool output until the turn dies at the
+// token cap ("ran out of space"). Mechanical guard, prompt-independent:
+//   1st call → runs.
+//   2nd identical call → runs, but the tool message carries a system nudge to
+//     decide from existing results instead of calling again.
+//   3rd+ identical call → NOT executed; a loop-blocked error tells the model
+//     to answer from history. Bounded: worst case 2 real calls per signature.
+// Signatures are arg-order/case-insensitive with capped lengths so trivial
+// rewordings ("V belt" vs "v belt") count as the same call. Seeded from
+// loaded history so a continued hop can't restart a loop the previous hop
+// already ran.
+function toolSig(name: string, args: Record<string, any>): string {
+  const norm = (v: unknown): unknown => {
+    if (typeof v === 'string') return v.toLowerCase().trim().slice(0, 300);
+    if (typeof v === 'number' || typeof v === 'boolean') return v;
+    if (Array.isArray(v)) return v.map(norm).slice(0, 20);
+    if (v && typeof v === 'object') {
+      const o: Record<string, unknown> = {};
+      for (const k of Object.keys(v).sort()) o[k] = norm((v as any)[k]);
+      return o;
+    }
+    return null;
+  };
+  let canon = '{}';
+  try { canon = JSON.stringify(norm(args) ?? {}); } catch { /* keep {} */ }
+  return `${String(name)}:${canon}`;
+}
+
+function seedToolSigs(messages: any[]): Map<string, number> {
+  const seen = new Map<string, number>();
+  try {
+    for (const m of (Array.isArray(messages) ? messages : [])) {
+      const calls = (m as any)?.tool_calls;
+      if (!Array.isArray(calls)) continue;
+      for (const tc of calls) {
+        const fn = (tc as any)?.function ?? {};
+        let args: Record<string, any> = {};
+        try { args = parseArgs(typeof fn.arguments === 'string' ? fn.arguments : '{}'); } catch { /* keep {} */ }
+        const sig = toolSig(String(fn.name ?? ''), args);
+        seen.set(sig, (seen.get(sig) ?? 0) + 1);
+      }
+    }
+  } catch { /* fail-open: empty ledger */ }
+  return seen;
+}
+
+/** System nudge appended to the 2nd identical tool result (not stored as a
+ *  separate message — rides the tool output the model just received). */
+function repeatNudge(name: string): string {
+  return `[System note: you already called ${name} with equivalent arguments and have its result above — do NOT call it again. Decide now: offer any returned candidates to the user for a pick, or answer from history.]`;
+}
+
+/** Loop-blocked pseudo-result for the 3rd+ identical call (never executed). */
+function blockedOut(name: string, times: number): { result: unknown; proposals?: CopilotProposal[] } {
+  return {
+    result: {
+      error: 'loop-blocked',
+      note: `STOP calling ${name} with these arguments — it already ran ${times}x this conversation with no new outcome, and further identical calls will also be blocked. Answer NOW from the earlier results: offer the candidates to the user for a pick, or reply from history.`,
+    },
+  };
 }
 
 async function runTool<T>(
@@ -278,7 +362,6 @@ export async function runTurn<T>(
   const key = def.sessionKey(ctx);
   void bumpCount(def.countKey(ctx));
   const tools = defaultToolDefs(def, ctx);
-  const model = String((env as any)?.[def.modelEnvVar] ?? '').trim() || def.defaultModel;
   const hist = await loadHistory(def, ctx);
   // 25-human-turn cap: the refused message is NOT stored, so the cap holds
   // until the user opens a new chat (clear wipes history).
@@ -305,6 +388,20 @@ export async function runTurn<T>(
   let reply = '';
   let autoCuts = 0;
   let lastReasoning = '';
+  // Chat chain resolved once per turn (Agnes relay-only first, paid
+  // fallback — resolveChatChain): every step walks the same legs with the
+  // same sticky sessionKey. Primary + Agnes model are root-controlled
+  // Settings (fail-open to compiled defaults).
+  const chatPrimary = await getAppSetting('chat:primary_provider').catch(() => 'agnes');
+  const chatAgnesModel = await getAppSetting('chat:agnes_model').catch(() => '');
+  const chatOpenrouterModel = await getAppSetting('chat:openrouter_model').catch(() => '');
+  const chatPaidRoute = await getAppSetting('chat:paid_route').catch(() => '');
+  const chatPaidRouteMode = await getAppSetting('chat:paid_route_mode').catch(() => 'prefer');
+  const chatModels = { agnesModel: chatAgnesModel, openrouterModel: chatOpenrouterModel, paidRoute: chatPaidRoute, paidRouteMode: chatPaidRouteMode };
+  const chatChain = resolveChatChain(env, { primary: chatPrimary });
+  // Same-tool loop ledger, seeded from history so a continued hop can't
+  // restart a loop the previous hop already ran (see breaker above).
+  const toolSigs = seedToolSigs(hist.messages);
   // Transport budget (NOT an AI limit): yield the turn before its HTTP hop
   // approaches the edge ~100s guillotine. State is already flushed
   // incrementally, so the client's auto-continued hop resumes seamlessly.
@@ -317,25 +414,41 @@ export async function runTurn<T>(
       await saveReasoning(def, ctx, lastReasoning, epoch);
       return { reply: partial, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), continued: true, memoryTurns: hist.userTurns };
     }
+    // Chat chain (resolved pre-loop): EVERY leg error, 429 included, falls
+    // through to the next leg (each leg rotates keys internally). BUSY only
+    // when the whole chain is exhausted *and* the last error is
+    // rate-limit-like; anything else still throws (same as the old
+    // single-provider behavior).
+    if (chatChain.length === 0) {
+      await flushTrace();
+      throw new Error('No Agnes/paid AI key configured — chat unavailable');
+    }
     let res: any;
-    try {
-      res = await gateway.complete({
-        messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS,
-        provider: CHAT_PROVIDER, model, extraParams: CHAT_PROVIDER_PARAMS,
-        tools, toolChoice: 'auto',
-        sessionKey: key,
-        // No time constraint (founder order) — see CHAT note above.
-        timeoutMs: undefined,
-        probeTimeoutMs: undefined,
-      });
-    } catch (e: any) {
-      if (is429Like(e)) {
-        await markStorm();
-        await flushTrace();
+    let legErr: any = null;
+    for (const leg of chatChain) {
+      try {
+        res = await gateway.complete({
+          messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS,
+          ...chatLegParams(leg, def, env, chatModels),
+          tools, toolChoice: 'auto',
+          sessionKey: key,
+          // No time constraint (founder order) — see CHAT note above.
+          timeoutMs: undefined,
+          probeTimeoutMs: undefined,
+        });
+        legErr = null;
+        break;
+      } catch (e: any) {
+        legErr = e;
+        if (is429Like(e)) await markStorm();
+      }
+    }
+    if (legErr) {
+      await flushTrace();
+      if (is429Like(legErr)) {
         return { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), memoryTurns: hist.userTurns };
       }
-      await flushTrace();
-      throw e;
+      throw legErr;
     }
     const stepReasoning = capReason((res as any)?.reasoning);
     if (stepReasoning) lastReasoning = stepReasoning;
@@ -348,23 +461,35 @@ export async function runTurn<T>(
       });
       // Parallel fan-out: independent calls resolve together, results
       // re-attached in call order. One failing call must not sink the batch.
+      // The loop breaker counts identical signatures: 2nd run carries a
+      // decide-now nudge, 3rd+ never executes (loop-blocked pseudo-result).
       const batch = res.toolCalls.slice(0, def.maxParallelTools ?? 3);
       const results = await Promise.all(batch.map(async (tc: any) => {
         try {
           const args = parseArgs(tc.arguments);
+          const sig = toolSig(tc.name, args);
+          const prior = toolSigs.get(sig) ?? 0;
+          toolSigs.set(sig, prior + 1);
+          if (prior >= 2) {
+            return { tc, args, out: blockedOut(tc.name, prior + 1), label: `${tc.name} blocked (repeat ×${prior + 1})`, note: '' };
+          }
           const { out, label } = await runTool(env, def, ctx, tc.name, args, String(message ?? ''));
-          return { tc, out, label };
+          return { tc, args, out, label, note: prior === 1 ? repeatNudge(tc.name) : '' };
         } catch (e: any) {
           const out: { result: unknown; proposals?: CopilotProposal[] } = { result: { error: String(e?.message ?? e).slice(0, 200) } };
-          return { tc, out, label: def.activityLabel(tc.name, {}, out) };
+          return { tc, args: {} as Record<string, any>, out, label: def.activityLabel(tc.name, {}, out), note: '' };
         }
       }));
-      for (const { tc, out, label } of results) {
-        if (out.proposals) proposals.push(...out.proposals);
+      for (const { tc, args, out, label, note } of results) {
+        if (out.proposals) {
+          for (const p of out.proposals) {
+            if (!proposals.some((q) => q.kind === (p as any).kind && q.label === (p as any).label)) proposals.push(p);
+          }
+        }
         activity.push({ tool: tc.name, label });
         messages.push({
           role: 'tool',
-          content: (() => { const c = JSON.stringify(out.result).slice(0, def.toolResultCap ?? 3000); traceParts.push(`${tc.name}: ${c}`.slice(0, def.toolResultCap ?? 3000)); return c; })(),
+          content: (() => { const c = JSON.stringify(out.result).slice(0, def.toolResultCap ?? 3000); const n = note ? `\n${note}` : ''; traceParts.push(((def.traceLine?.(tc.name, args, out) ?? `${tc.name}: ${c}`)).slice(0, def.toolResultCap ?? 3000)); return c.slice(0, (def.toolResultCap ?? 3000) - n.length) + n; })(),
           tool_call_id: tc.id,
         });
       }
@@ -419,7 +544,6 @@ export async function* streamTurn<T>(
   const key = def.sessionKey(ctx);
   void bumpCount(def.countKey(ctx));
   const tools = defaultToolDefs(def, ctx);
-  const model = String((env as any)?.[def.modelEnvVar] ?? '').trim() || def.defaultModel;
   const hist = await loadHistory(def, ctx);
   if (hist.userTurns >= MAX_HUMAN_TURNS) {
     const r: CopilotReply = { reply: LIMIT_REPLY, proposals: [], activity: [], memoryTurns: hist.userTurns };
@@ -443,6 +567,16 @@ export async function* streamTurn<T>(
   let autoCuts = 0;
   let lastReasoning = '';
   let turnText = '';
+  // Chat chain resolved once per turn (same legs + sticky key every step).
+  const chatPrimaryS = await getAppSetting('chat:primary_provider').catch(() => 'agnes');
+  const chatAgnesModelS = await getAppSetting('chat:agnes_model').catch(() => '');
+  const chatOpenrouterModelS = await getAppSetting('chat:openrouter_model').catch(() => '');
+  const chatPaidRouteS = await getAppSetting('chat:paid_route').catch(() => '');
+  const chatPaidRouteModeS = await getAppSetting('chat:paid_route_mode').catch(() => 'prefer');
+  const chatModelsS = { agnesModel: chatAgnesModelS, openrouterModel: chatOpenrouterModelS, paidRoute: chatPaidRouteS, paidRouteMode: chatPaidRouteModeS };
+  const chatChainS = resolveChatChain(env, { primary: chatPrimaryS });
+  // Same-tool loop ledger (seeded from history — see runTurn).
+  const toolSigsS = seedToolSigs(hist.messages);
   // Transport budget, same as runTurn: yield before the edge guillotine.
   const deadline = Date.now() + (def.turnBudgetMs ?? 80_000);
   for (let step = 0; step < (def.maxSteps ?? MAX_STEPS); step++) {
@@ -462,35 +596,56 @@ export async function* streamTurn<T>(
     // replaced), and a thinking summary is also emitted for status UI.
     const toolMap = new Map<number, { id: string; name: string; args: string }>();
     let finishReason: string | undefined;
+    // Stream leg by leg (chain resolved pre-loop): a leg that dies BEFORE first delta yields to the
+    // next leg's stream; a leg that dies MID-stream (deltas already sent —
+    // another stream can't resume them) drops to non-streaming across the
+    // chain below. Same BUSY/throw contract as runTurn above.
+    if (chatChainS.length === 0) {
+      await flushTrace();
+      throw new Error('No Agnes/paid AI key configured — chat unavailable');
+    }
     try {
-      for await (const chunk of gateway.stream({
-        messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS, provider: CHAT_PROVIDER, model,
-        extraParams: CHAT_PROVIDER_PARAMS,
-        tools, toolChoice: 'auto',
-        sessionKey: key,
-        timeoutMs: undefined, probeTimeoutMs: undefined,
-      })) {
-        if (chunk.contentDelta) {
-          stepContent += chunk.contentDelta;
-          yield { type: 'delta', data: { text: chunk.contentDelta } };
-        }
-        if (chunk.reasoningDelta) {
-          stepReasoning += String(chunk.reasoningDelta);
-          yield { type: 'thinking', data: { text: String(chunk.reasoningDelta).slice(0, 500) } };
-        }
-        if (chunk.toolCallDelta) {
-          for (const tc of chunk.toolCallDelta as any[]) {
-            const idx = Number(tc.index ?? 0);
-            const cur = toolMap.get(idx) ?? { id: '', name: '', args: '' };
-            if (tc.id) cur.id = String(tc.id);
-            if (tc.function?.name) cur.name = String(tc.function.name);
-            if (tc.function?.arguments) cur.args += String(tc.function.arguments);
-            if (!cur.id && tc.id) cur.id = String(tc.id);
-            toolMap.set(idx, cur);
+      let streamed = false;
+      for (const leg of chatChainS) {
+        try {
+          for await (const chunk of gateway.stream({
+            messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS,
+            ...chatLegParams(leg, def, env, chatModelsS),
+            tools, toolChoice: 'auto',
+            sessionKey: key,
+            timeoutMs: undefined, probeTimeoutMs: undefined,
+          })) {
+            if (chunk.contentDelta) {
+              stepContent += chunk.contentDelta;
+              yield { type: 'delta', data: { text: chunk.contentDelta } };
+            }
+            if (chunk.reasoningDelta) {
+              stepReasoning += String(chunk.reasoningDelta);
+              yield { type: 'thinking', data: { text: String(chunk.reasoningDelta).slice(0, 500) } };
+            }
+            if (chunk.toolCallDelta) {
+              for (const tc of chunk.toolCallDelta as any[]) {
+                const idx = Number(tc.index ?? 0);
+                const cur = toolMap.get(idx) ?? { id: '', name: '', args: '' };
+                if (tc.id) cur.id = String(tc.id);
+                if (tc.function?.name) cur.name = String(tc.function.name);
+                if (tc.function?.arguments) cur.args += String(tc.function.arguments);
+                if (!cur.id && tc.id) cur.id = String(tc.id);
+                toolMap.set(idx, cur);
+              }
+            }
+            if (chunk.finishReason) finishReason = String(chunk.finishReason);
           }
+          streamed = true;
+          break;
+        } catch (e: any) {
+          if (is429Like(e)) await markStorm();
+          // Mid-stream death: deltas already went out — stop trying streams.
+          if (stepContent || stepReasoning || toolMap.size > 0) throw e;
+          // Pre-delta death: next leg's stream starts clean.
         }
-        if (chunk.finishReason) finishReason = String(chunk.finishReason);
       }
+      if (!streamed) throw new Error('All chat legs failed before first token');
     } catch (e: any) {
       if (is429Like(e)) {
         await markStorm();
@@ -499,14 +654,35 @@ export async function* streamTurn<T>(
         yield { type: 'done', data: r };
         return r;
       }
-      // Fallback to non-streaming on stream failure.
-      const res = await gateway.complete({
-        messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS, provider: CHAT_PROVIDER, model,
-        extraParams: CHAT_PROVIDER_PARAMS,
-        tools, toolChoice: 'auto',
-        sessionKey: key,
-        timeoutMs: undefined, probeTimeoutMs: undefined,
-      });
+      // Fallback to non-streaming across the chain on stream failure (each
+      // leg rotates keys internally, so a flaky leg may still serve here).
+      let res: any;
+      let legErr: any = null;
+      for (const leg of chatChainS) {
+        try {
+          res = await gateway.complete({
+            messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS,
+            ...chatLegParams(leg, def, env, chatModelsS),
+            tools, toolChoice: 'auto',
+            sessionKey: key,
+            timeoutMs: undefined, probeTimeoutMs: undefined,
+          });
+          legErr = null;
+          break;
+        } catch (e2: any) {
+          legErr = e2;
+          if (is429Like(e2)) await markStorm();
+        }
+      }
+      if (legErr) {
+        await flushTrace();
+        if (is429Like(legErr)) {
+          const r: CopilotReply = { reply: BUSY_REPLY, proposals: proposals.slice(0, 5), activity: activity.slice(0, 9), memoryTurns: hist.userTurns };
+          yield { type: 'done', data: r };
+          return r;
+        }
+        throw legErr;
+      }
       if (res.reasoning) {
         stepReasoning += String(res.reasoning);
         yield { type: 'thinking', data: { text: String(res.reasoning).slice(0, 2000) } };
@@ -541,19 +717,29 @@ export async function* streamTurn<T>(
       const results = await Promise.all(batch.map(async (tc) => {
         try {
           const args = parseArgs(tc.args);
+          const sig = toolSig(tc.name, args);
+          const prior = toolSigsS.get(sig) ?? 0;
+          toolSigsS.set(sig, prior + 1);
+          if (prior >= 2) {
+            return { tc, args, out: blockedOut(tc.name, prior + 1), label: `${tc.name} blocked (repeat ×${prior + 1})`, note: '' };
+          }
           const { out, label } = await runTool(env, def, ctx, tc.name, args, String(message ?? ''));
-          return { tc, out, label };
+          return { tc, args, out, label, note: prior === 1 ? repeatNudge(tc.name) : '' };
         } catch (e: any) {
           const out: { result: unknown; proposals?: CopilotProposal[] } = { result: { error: String(e?.message ?? e).slice(0, 200) } };
-          return { tc, out, label: def.activityLabel(tc.name, {}, out) };
+          return { tc, args: {} as Record<string, any>, out, label: def.activityLabel(tc.name, {}, out), note: '' };
         }
       }));
-      for (const { tc, out, label } of results) {
-        if (out.proposals) proposals.push(...out.proposals);
+      for (const { tc, args, out, label, note } of results) {
+        if (out.proposals) {
+          for (const p of out.proposals) {
+            if (!proposals.some((q) => q.kind === (p as any).kind && q.label === (p as any).label)) proposals.push(p);
+          }
+        }
         const act = { tool: tc.name, label };
         activity.push(act);
         yield { type: 'activity', data: act };
-        (() => { const c2 = JSON.stringify(out.result).slice(0, def.toolResultCap ?? 3000); traceParts.push(`${tc.name}: ${c2}`.slice(0, def.toolResultCap ?? 3000)); messages.push({ role: 'tool', content: c2, tool_call_id: tc.id }); })();
+        (() => { const c2 = JSON.stringify(out.result).slice(0, def.toolResultCap ?? 3000); const n = note ? `\n${note}` : ''; traceParts.push(((def.traceLine?.(tc.name, args, out) ?? `${tc.name}: ${c2}`)).slice(0, def.toolResultCap ?? 3000)); messages.push({ role: 'tool', content: c2.slice(0, (def.toolResultCap ?? 3000) - n.length) + n, tool_call_id: tc.id }); })();
       }
       await flushTrace();
       continue;

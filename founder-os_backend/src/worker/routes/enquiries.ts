@@ -666,10 +666,12 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // Debug: Agnes vision intake without auth (owner testing — parses image+text via agnes-3.0-flash, no GH Actions)
   app.post('/api/debug/vision-intake/:id', async (c) => {
     const id = c.req.param('id') ?? '';
+    // ?provider=agnes pins the Agnes lane (bulk backfills — no paid spend).
+    const forceProvider = (c.req.query('provider') ?? '').trim() || undefined;
     try {
       const store = createEnquiryStore(c.env);
       const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
-      const result = await runAgnesVisionIntake(c.env as any, store, id);
+      const result = await runAgnesVisionIntake(c.env as any, store, id, undefined, forceProvider);
       const enq: any = await store.getEnquiry(id).catch(() => null);
       return c.json({ ok: true, enquiryId: id, items: enq?.items ?? [], intake: await (await import('../../shared/cache')).cacheGet(`enquiry:intake:${id}`, 7*24*60*60*1000).catch(() => null), routerLines: result?.lines ?? null, routerProvider: result?.provider ?? null });
     } catch (e: any) {

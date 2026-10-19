@@ -990,6 +990,12 @@ async function execTool(ctx: IntakeCtx, name: string, args: Record<string, any>,
       const qd = validDate((args as any).quotedAt);
       if (qd) patch.quotedAt = qd;
     }
+    // Direct notes edit (replace outright; empty string clears). Applied
+    // AFTER the specs-merge append above, so an explicit notes arg wins.
+    if ((args as any)?.notes !== undefined) {
+      const nt = String((args as any).notes ?? '').trim().slice(0, 2000);
+      patch.notes = nt ? nt : null;
+    }
     // Recompute missing flags against the live checklist.
     const pid = String((cur as any)?.productId ?? '');
     const req = pid ? await requiredSpecs(pid).catch(() => []) : [];
@@ -1891,18 +1897,19 @@ const TOOL_DEFS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'update_rate',
-      description: 'Patch a LIVE rate directly (no confirm): price, unit, discount, moq, delivery, weight, packQty, packDims, quotedAt, specs object (merged). Spec keys MUST be exact attrKeys — anything else moves to notes. Missing-spec flags recompute automatically. Use when the user supplies missing info for rates you already filed — updates in place, never creates a second rate.',
-      parameters: {
-        type: 'object',
-        properties: {
-          rateId: { type: 'string' },
-          pricePerUnit: { type: 'number' }, unit: { type: 'string' }, discountPercent: { type: 'number' },
-          moq: { type: 'string' }, deliveryDays: { type: 'number' },
-          weightPerUnit: { type: 'number' }, packageQty: { type: 'string' }, packageDims: { type: 'string' },
-          quotedAt: { type: 'string' }, specs: { type: 'object' },
-        },
-        required: ['rateId'],
-      },
+          description: 'Patch a LIVE rate directly (no confirm): price, unit, discount, moq, delivery, weight, packQty, packDims, quotedAt, specs object (merged), notes (exact replacement text — empty string clears it). Spec keys MUST be exact attrKeys — anything else moves to notes. Missing-spec flags recompute automatically. Use when the user supplies missing info for rates you already filed — updates in place, never creates a second rate.',
+          parameters: {
+            type: 'object',
+            properties: {
+              rateId: { type: 'string' },
+              pricePerUnit: { type: 'number' }, unit: { type: 'string' }, discountPercent: { type: 'number' },
+              moq: { type: 'string' }, deliveryDays: { type: 'number' },
+              weightPerUnit: { type: 'number' }, packageQty: { type: 'string' }, packageDims: { type: 'string' },
+              quotedAt: { type: 'string' }, specs: { type: 'object' },
+              notes: { type: 'string' },
+            },
+            required: ['rateId'],
+          },
     },
   },
   {

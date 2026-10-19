@@ -5,6 +5,8 @@
  * extraction prompt + response shaping; the gateway owns the wire call.
  */
 import { getGateway } from '../../shared/ai-gateway';
+import { resolveIntakeChain, resolveLegModel } from '../../shared/intake-chain';
+import { getAppSetting } from '../../shared/app-settings';
 
 export interface RedactedComment {
   id: string;
@@ -41,10 +43,9 @@ export interface EnquiryAgentRef {
   name: string;
 }
 
-/** Enquiry pipeline provider: paid DeepSeek lane (deepseek-v4.1-flash) —
- *  direct Worker, no GH Actions. Without a paid key the extraction falls back
- *  to Agnes → OpenRouter free; with no key at all it skips (returns null). */
-const ENQUIRY_PROVIDER = 'openrouter-paid';
+/** Intake provider order lives in shared/intake-chain.ts: Agnes-pool first,
+ *  paid DeepSeek lane (deepseek-v4.1-flash) fallback only — direct Worker, no
+ *  GH Actions. With no key at all it skips (returns null). */
 
 /** AI line-item splitting is KEPT but OFF: sales agents enter items manually
  *  in the modal (Add Item + per-item documents), so the enrichment must never
@@ -235,26 +236,38 @@ export async function extractEnquiryFieldsRobust(
     return null;
   }
   try {
-    const hasPaid = gateway.health().some((h) => h.provider === ENQUIRY_PROVIDER);
-    const hasAgnes = gateway.health().some((h) => h.provider === 'agnes');
-    const hasOpenRouter = gateway.health().some((h) => h.provider === 'openrouter');
-    if (!hasPaid && !hasAgnes && !hasOpenRouter) {
-      console.warn('[extract] no paid/Agnes/OpenRouter key configured — skipping extraction');
+    const intakePrimary = await getAppSetting('intake:primary_provider').catch(() => 'agnes');
+    const intakeOpenrouterModel = await getAppSetting('intake:openrouter_model').catch(() => '');
+    const chain = resolveIntakeChain(env, undefined, { primary: intakePrimary });
+    if (chain.length === 0) {
+      console.warn('[extract] no Agnes/paid key configured — skipping extraction');
       return null;
     }
-    const provider = hasPaid ? ENQUIRY_PROVIDER : hasAgnes ? 'agnes' : 'openrouter';
-    const parsed = await gateway.completeJson<any>({
-      messages: [
-        { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
-        { role: 'user', content: buildPrompt(input) },
-      ],
-      temperature: 0,
-      provider,
-      json: true,
-      // Field extraction needs no chain-of-thought — thinking tokens are
-      // billed output with zero UI use on this path.
-      reasoningOff: true,
-    });
+    let parsed: any = null;
+    for (const provider of chain) {
+      try {
+        parsed = await gateway.completeJson<any>({
+          messages: [
+            { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
+            { role: 'user', content: buildPrompt(input) },
+          ],
+          temperature: 0,
+          provider,
+          model: resolveLegModel(provider, { openrouterModel: intakeOpenrouterModel }),
+          json: true,
+          // Field extraction needs no chain-of-thought — thinking tokens are
+          // billed output with zero UI use on this path.
+          reasoningOff: true,
+        });
+        break;
+      } catch (e) {
+        console.warn(`[extract] provider=${provider} failed (${String((e as any)?.message ?? e).slice(0, 120)}) — trying next leg`);
+      }
+    }
+    if (!parsed) {
+      console.error('[extract] all intake legs failed — skipping extraction');
+      return null;
+    }
     return shapeResult(parsed);
   } catch (err) {
     console.error(`[extract] gateway extraction failed: ${err instanceof Error ? err.message : String(err)}`);

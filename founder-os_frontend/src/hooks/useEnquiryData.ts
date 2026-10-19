@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Enquiry, Comment, Agent, Activity, EnquiryItem } from '../types';
 import { toEnquiry, toComment, initialsOf } from '@/enquiry/normalize';
+import { preserveItemMedia, preserveRowsMedia } from '@/enquiry/merge';
 import { matchesEnquiryQuery } from '@/enquiry/search';
 import { useLiveEvent } from './useLiveData';
 
@@ -243,7 +244,9 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
           return [...prev, ...freshComs.filter((x: Comment) => !ids.has(x.id))];
         });
       } else if (cursorMode && mode === 'merge' && !queueSplit) {
-        const freshRows = list.map(toEnquiry);
+        // List payloads strip item media bytes — preserve already-hydrated
+        // (full-row) media so a poll/event merge never drops an open photo.
+        const freshRows = preserveRowsMedia(enquiriesRef.current, list.map(toEnquiry));
         const freshComs = coms.map(toComment);
         const pageIds = new Set(freshRows.map((x: Enquiry) => x.id));
         setEnquiriesSynced((prev) => [...freshRows, ...prev.filter((x) => !pageIds.has(x.id))]);
@@ -252,14 +255,16 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         // Poll/live merge: upsert fresh page-1 over the store, RETAINING older
         // history pages appended via loadMoreHistory (a replace would wipe the
         // user's loaded tail every 60s). Fresh rows win on overlap.
-        const freshRows = list.map(toEnquiry);
+        const freshRows = preserveRowsMedia(enquiriesRef.current, list.map(toEnquiry));
         const freshComs = coms.map(toComment);
         const freshIds = new Set(freshRows.map((x: Enquiry) => x.id));
         const freshComIds = new Set(freshComs.map((x: Comment) => x.id));
         setEnquiriesSynced((prev) => [...freshRows, ...prev.filter((x) => !freshIds.has(x.id))]);
         setComments((prev) => [...prev.filter((x) => !freshComIds.has(x.id)), ...freshComs]);
       } else {
-        setEnquiriesSynced(list.map(toEnquiry));
+        // Full replace (mount reset / non-cursor views). Still preserve any
+        // already-hydrated media the incoming list shipped stripped.
+        setEnquiriesSynced(preserveRowsMedia(enquiriesRef.current, list.map(toEnquiry)));
         setComments(coms.map(toComment));
       }
       if (cursorMode) {
@@ -401,7 +406,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       if (!res.ok) throw new Error('single fetch failed');
       const data = await res.json();
       if (!data?.enquiry) throw new Error('empty row');
-      const row = toEnquiry(data.enquiry);
+      const row = preserveItemMedia(enquiriesRef.current.find((x) => x.id === id), toEnquiry(data.enquiry));
       setEnquiriesSynced(enquiriesRef.current.some((x) => x.id === id)
         ? enquiriesRef.current.map((x) => (x.id === id ? row : x))
         : [row, ...enquiriesRef.current]);
@@ -490,7 +495,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       if (paged) { void fetchEnquiriesRef.current(); return; }
       setEnquiriesSynced([toEnquiry(ev.enquiry), ...enquiriesRef.current.filter((x) => x.id !== ev.enquiry.id)]);
     } else if (ev.action === 'updated' && ev.enquiry) {
-      setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === ev.enquiry.id ? toEnquiry(ev.enquiry) : x)));
+      setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === ev.enquiry.id ? preserveItemMedia(x, toEnquiry(ev.enquiry)) : x)));
     } else if (ev.action === 'deleted' && ev.id) {
       setEnquiriesSynced(enquiriesRef.current.filter((x) => x.id !== ev.id));
     } else if (ev.action === 'comment' && ev.comment) {
@@ -500,7 +505,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         return [...prev, c];
       });
     } else if (ev.action === 'requirement' && ev.enquiry) {
-      setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === ev.enquiry.id ? toEnquiry(ev.enquiry) : x)));
+      setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === ev.enquiry.id ? preserveItemMedia(x, toEnquiry(ev.enquiry)) : x)));
     }
   });
 
@@ -564,7 +569,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     }
     try {
       const saved = await persist('PATCH', `/api/enquiries/${id}`, updates);
-      setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === id ? toEnquiry(saved) : x)));
+      setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === id ? preserveItemMedia(x, toEnquiry(saved)) : x)));
       return saved;
     } catch (err) {
       console.error('updateEnquiry failed, resyncing:', err);
@@ -606,7 +611,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     setSaveError(null);
     try {
       const saved = await persist('POST', `/api/enquiries/${enquiryId}/additional-requirements`, { text, imageUrl, imageUrls });
-      if (saved.enquiry) setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? toEnquiry(saved.enquiry) : x)));
+      if (saved.enquiry) setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? preserveItemMedia(x, toEnquiry(saved.enquiry)) : x)));
       return saved.requirement;
     } catch (err) {
       console.error('addRequirement failed:', err);
@@ -637,7 +642,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
         x.id === enquiryId ? { ...x, items: items as EnquiryItem[] } : x));
       try {
         const saved = await persist('PATCH', `/api/enquiries/${enquiryId}`, surface ? { items, surface } : { items });
-        setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? toEnquiry(saved) : x)));
+        setEnquiriesSynced(enquiriesRef.current.map((x) => (x.id === enquiryId ? preserveItemMedia(x, toEnquiry(saved)) : x)));
         return saved;
       } catch (err) {
         console.error('updateItems failed, resyncing:', err);
@@ -665,7 +670,8 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
   const upsertEnquiry = useCallback((row: Enquiry) => {
     setEnquiriesSynced((prev) => {
       if (!prev.some((x) => x.id === row.id)) return [...prev, row];
-      return prev.map((x) => (x.id === row.id ? row : x));
+      // A stripped queue/list row must not un-hydrate an open row's media.
+      return prev.map((x) => (x.id === row.id ? preserveItemMedia(x, row) : x));
     });
   }, [setEnquiriesSynced]);
 

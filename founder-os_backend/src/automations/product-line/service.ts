@@ -60,7 +60,11 @@ export async function getProductLineData(): Promise<ProductLineData> {
       (prisma as any).productItem.findMany({ orderBy: [{ category: 'asc' }, { name: 'asc' }] }),
       (prisma as any).kypGuide.findMany({ orderBy: [{ productId: 'asc' }, { sortOrder: 'asc' }] }),
       (prisma as any).vendor.findMany({ orderBy: [{ name: 'asc' }] }),
-      (prisma as any).vendorRate.findMany({ orderBy: [{ quotedAt: 'desc' }], take: 300 }),
+      // take 2000: the rates tab must show EVERYTHING (a 300-cap silently
+      // dropped older prices once the book passed 300 rows). ~10K rows is
+      // the KV/CPU ceiling — past that, paginate this payload per the note
+      // below instead of raising further.
+      (prisma as any).vendorRate.findMany({ orderBy: [{ quotedAt: 'desc' }], take: 2000 }),
     ]);
     const guideCount = new Map<string, number>();
     const guide: Record<string, GuideRow[]> = {};
@@ -152,11 +156,11 @@ export async function invalidateProductLineCache(): Promise<void> {
 }
 
 // ── Scale path: per-product accessors (no full-table load) ──────────────
-// getProductLineData() above caps rates at 300 and loads every table — it
-// silently drops older rates past ~300 rows and breaches KV/CPU limits past
-// ~10K. Hot paths (sales chat, intake, knowledge copilot) MUST use these
-// targeted, per-product cached queries instead. The monolith stays ONLY for
-// the dashboard payload until it is paginated.
+// getProductLineData() above caps rates at 2000 and loads every table — it
+// breaches KV/CPU limits past ~10K. Hot paths (sales chat, intake,
+// knowledge copilot) MUST use these targeted, per-product cached queries
+// instead. The monolith stays ONLY for the dashboard payload until it is
+// paginated (do NOT raise the cap again — paginate instead).
 
 export interface ProductIndexRow {
   id: string;

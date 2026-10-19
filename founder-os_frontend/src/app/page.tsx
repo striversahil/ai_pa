@@ -20,6 +20,7 @@ const WhatsAppDashboard = dynamic(() => import("../components/WhatsAppDashboard"
 const Automations = dynamic(() => import("../components/Automations"), { ssr: false });
 const ChatRoom = dynamic(() => import("../components/ChatRoom"), { ssr: false });
 const EmailDashboard = dynamic(() => import("../components/EmailDashboard"), { ssr: false });
+const SettingsDashboard = dynamic(() => import("../components/SettingsDashboard"), { ssr: false });
 
 export default function Home() {
   return (
@@ -39,7 +40,7 @@ function AppInner() {
   const { route, navigate } = useHashRoute();
   const sub = route.view === "automations" ? route.sub : null;
   const activeView: ViewType =
-    (["briefing", "whatsapp", "automations", "chat", "admin", "email"] as ViewType[]).includes(route.view as ViewType)
+    (["briefing", "whatsapp", "automations", "chat", "admin", "email", "settings"] as ViewType[]).includes(route.view as ViewType)
       ? (route.view as ViewType)
       : "automations";
 
@@ -143,6 +144,7 @@ function AppInner() {
           {activeView === "whatsapp" && <WhatsAppDashboard />}
           {activeView === "chat" && <ChatRoom />}
           {activeView === "email" && <EmailDashboard />}
+          {activeView === "settings" && <SettingsDashboard />}
           {activeView === "automations" && (
             <Automations slug={sub} onNavigate={navigate} />
           )}

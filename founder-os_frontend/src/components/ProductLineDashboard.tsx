@@ -157,7 +157,7 @@ export default function ProductLineDashboard() {
   const [rModal, setRModal] = useState<null | {
     id?: string; vendorId: string; productId: string; price: string; unit: string; discount: string;
     weight: string; packQty: string; packDims: string; moq: string; delivery: string;
-    quotedAt: string; active: boolean; imageUrl: string; videoUrl: string; attrs: { key: string; value: string }[];
+    quotedAt: string; active: boolean; imageUrl: string; videoUrl: string; notes: string; attrs: { key: string; value: string }[];
   }>(null);
 
   const data = dash.data;
@@ -225,6 +225,7 @@ export default function ProductLineDashboard() {
       active: rate?.active ?? true,
       imageUrl: rate?.imageUrl ?? "",
       videoUrl: rate?.videoUrl ?? "",
+      notes: rate?.notes ?? "",
       attrs: keys.map((k) => ({ key: k, value: existing[k] ?? "" })),
     });
   };
@@ -245,7 +246,7 @@ export default function ProductLineDashboard() {
       packageQty: m.packQty, packageDims: m.packDims, moq: m.moq,
       deliveryDays: m.delivery === "" ? null : Number(m.delivery),
       quotedAt: m.quotedAt || undefined, active: m.active, attrValues,
-      imageUrl: m.imageUrl.trim(), videoUrl: m.videoUrl.trim(),
+      imageUrl: m.imageUrl.trim(), videoUrl: m.videoUrl.trim(), notes: m.notes,
     };
     return mutate(async () => {
       if (m.id) await api(`/api/product-line/rates/${m.id}`, "PATCH", body);
@@ -970,6 +971,9 @@ export default function ProductLineDashboard() {
               <input type="date" value={rModal.quotedAt} onChange={(e) => setRModal({ ...rModal, quotedAt: e.target.value })} className={`${field} mt-1.5 font-normal`} />
             </label>
           </div>
+          <label className={label}>Notes <span className="normal-case font-medium">(vendor extras, delivery remarks — specs stay in the rows above)</span>
+            <textarea value={rModal.notes} onChange={(e) => setRModal({ ...rModal, notes: e.target.value })} rows={2} placeholder="e.g. Bucket type AA." className={`${field} mt-1.5 font-normal`} />
+          </label>
           <label className="flex items-center gap-2 text-[13px] font-bold text-[var(--text-primary)]">
             <input type="checkbox" checked={rModal.active} onChange={(e) => setRModal({ ...rModal, active: e.target.checked })} className="h-4 w-4 accent-indigo-500" /> Active quote
           </label>

@@ -94,13 +94,19 @@ async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>
     const hit = matchProduct(products, q)[0];
     if (!hit) return { result: { error: `no product matches "${q.slice(0, 80)}"` } };
     const detail = await getProductDetail(hit.id);
+    // Paged quotes (default 15): the model pages with offset when the user
+    // wants everything — never silently cap. totalQuotes grounds the prose.
+    const lim = Math.min(200, Math.max(1, Math.floor(Number(args.limit) || 15)));
+    const off = Math.max(0, Math.floor(Number(args.offset) || 0));
+    const all = detail.rates ?? [];
     return {
       result: {
         product: { id: detail.product.id, name: detail.product.name, category: detail.product.category, aliases: detail.product.aliases ?? [] },
         guide: (detail.guide ?? []).filter((g) => g.active).map((g) => ({
           question: g.question, required: g.isRequired, note: g.guideNote,
         })),
-        quotes: (detail.rates ?? []).slice(0, 15).map(rateView),
+        quotes: all.slice(off, off + lim).map(rateView),
+        totalQuotes: all.length, offset: off, limit: lim,
       },
     };
   }
@@ -110,13 +116,15 @@ async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>
     const products = await getProductIndex().catch(() => []);
     const hit = matchProduct(products, q)[0];
     if (!hit) return { result: { error: `no product matches "${q.slice(0, 80)}"` } };
+    const lim = Math.min(200, Math.max(1, Math.floor(Number(args.limit) || 10)));
+    const off = Math.max(0, Math.floor(Number(args.offset) || 0));
     const rows = (await getRatesForProduct(hit.id).catch(() => []))
       .filter((r) => r.active && r.pricePerUnit != null)
       .map((r) => ({ ...rateView(r), _eff: effectivePrice(r) ?? Infinity }))
-      .sort((a, b) => a._eff - b._eff)
-      .slice(0, 10)
-      .map(({ _eff, ...r }) => r);
-    return { result: { product: hit.name, quotes: rows } };
+      .sort((a, b) => a._eff - b._eff);
+    const total = rows.length;
+    const page = rows.slice(off, off + lim).map(({ _eff, ...r }) => r);
+    return { result: { product: hit.name, quotes: page, totalQuotes: total, offset: off, limit: lim } };
   }
 
   if (name === 'vendor_lookup') {
@@ -213,6 +221,7 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
     'You are the product-line staff helper for the BUI catalogue team. Answer questions about the product master, requirement checklists, vendors, and vendor quotes using the tools — never invent products, prices, specs, or vendor details. ' +
     'When comparing vendor quotes, use a markdown table (vendor, effective price, MOQ, delivery). ' +
     'Effective price already accounts for discount. Keep replies short; quote prices exactly as stored (₹, per unit). ' +
+    'Quote lists are PAGED (default 15 of totalQuotes) — when the user wants ALL rates on a product, page through with offset until totalQuotes is covered, and say how many you show out of how many. ' +
     'Whenever you need an answer, decision, or confirmation from the user, ask it through ask_question (renders as an answerable card) — never leave a question buried in prose, which has no answer box.'
   ),
   toolDefs: () => [
@@ -228,16 +237,16 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
       type: 'function',
       function: {
         name: 'get_product_detail',
-        description: 'Full detail for one product: requirement checklist questions plus vendor quotes with specs and prices.',
-        parameters: { type: 'object', properties: { product: { type: 'string', description: 'Product id or name' } }, required: ['product'] },
+        description: 'Full detail for one product: requirement checklist questions plus vendor quotes with specs and prices. Quotes are paged (default 15 of totalQuotes) — pass limit (max 200) + offset to see all.',
+        parameters: { type: 'object', properties: { product: { type: 'string', description: 'Product id or name' }, limit: { type: 'number' }, offset: { type: 'number' } }, required: ['product'] },
       },
     },
     {
       type: 'function',
       function: {
         name: 'compare_quotes',
-        description: 'Active vendor quotes for one product sorted by effective price (cheapest first).',
-        parameters: { type: 'object', properties: { product: { type: 'string', description: 'Product id or name' } }, required: ['product'] },
+        description: 'Active vendor quotes for one product sorted by effective price (cheapest first). Paged (default 10 of totalQuotes) — pass limit (max 200) + offset to see all.',
+        parameters: { type: 'object', properties: { product: { type: 'string', description: 'Product id or name' }, limit: { type: 'number' }, offset: { type: 'number' } }, required: ['product'] },
       },
     },
     {
@@ -297,11 +306,15 @@ export const productLineCopilotDef: CopilotDef<ProductCtx> = {
       }
       case 'get_product_detail': {
         const n = Array.isArray(r.quotes) ? r.quotes.length : 0;
-        return r.error ? 'Product not found' : `Read ${String((r.product as any)?.name ?? 'product').slice(0, 40)} · ${n} quote${n === 1 ? '' : 's'}`;
+        const t = typeof r.totalQuotes === 'number' ? r.totalQuotes : n;
+        const scope = t > n ? ` · showing ${n} of ${t}` : '';
+        return r.error ? 'Product not found' : `Read ${String((r.product as any)?.name ?? 'product').slice(0, 40)} · ${t} quote${t === 1 ? '' : 's'}${scope}`;
       }
       case 'compare_quotes': {
         const n = Array.isArray(r.quotes) ? r.quotes.length : 0;
-        return r.error ? 'Product not found' : `Compared ${n} quote${n === 1 ? '' : 's'}`;
+        const t = typeof r.totalQuotes === 'number' ? r.totalQuotes : n;
+        const scope = t > n ? ` · showing ${n} of ${t}` : '';
+        return r.error ? 'Product not found' : `Compared ${t} quote${t === 1 ? '' : 's'}${scope}`;
       }
       case 'vendor_lookup': {
         const n = Array.isArray(r.vendors) ? r.vendors.length : 0;

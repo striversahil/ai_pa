@@ -86,6 +86,10 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   // Founder email service: ROOT ONLY — not even admins. The backend
   // /api/email/* endpoints enforce the same check independently.
   if (viewOrSlug === "email") return me.isRoot;
+  // Runtime application settings (AI provider priority + model selection):
+  // ROOT ONLY — same contract as email. The backend /api/settings endpoints
+  // enforce the same check independently.
+  if (viewOrSlug === "settings") return me.isRoot;
   if (me.isAdmin) return true;
   // The Automations REGISTRY page is root/admin-only. Non-root users reach
   // their dashboards individually (useDashboardNav) — never the full registry.

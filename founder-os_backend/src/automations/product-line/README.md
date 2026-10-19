@@ -40,8 +40,8 @@ the monolith/detail keys, so reads stay fresh after every write.
 
 Pure, framework-free sales matcher over live D1 rows (Worker + Express
 share it): `resolveProduct()` (exact name/alias beats category-gated
-partial), `scoreRates()` (0.7 spec overlap + 0.2 recency + 0.1 exact hits →
-0–1 confidence), `salesSafeQuote()` (vendor fields stripped BEFORE the LLM
+partial), `scoreRates()` (spec overlap ONLY → 0–1 confidence; recency and
+exact hits are reported but carry no weight), `salesSafeQuote()` (vendor fields stripped BEFORE the LLM
 sees anything), `applyMarkup()` (flat +25%, same ceil5/rupee-round as
 frontend `src/enquiry/pricing.ts` — change both together).
 

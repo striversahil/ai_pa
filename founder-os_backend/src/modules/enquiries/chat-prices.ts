@@ -13,12 +13,83 @@ export interface PriceItemState {
   productId?: string;
   productName?: string;
   specs: Record<string, string>;
+  /** Compact cross-turn memory of what a find/quote surfaced for this item
+   *  (variation values + best price) — tool outputs are stripped from chat
+   *  history, so without this every follow-up ("in Jindal do you have?")
+   *  re-runs the lookup instead of answering from context. */
+  variations?: VariationDigest;
 }
 
+/** Catalogue-wide lookup digests (lookup_price has no enquiry item), keyed
+ *  by product id — doubles as the repeat-lookup memo. */
 export interface PriceSession {
   /** Per-item state, keyed by INTERNAL 0-based index. */
   items: Record<string, PriceItemState>;
   activeItem?: number;
+  lookups?: Record<string, VariationDigest>;
+}
+
+/** Compact variation memory: what values past rates carry per spec question
+ *  + the quotable best (if any). ~200-400 chars serialized — persisted in
+ *  the price session AND the carry-forward tool trace. */
+export interface VariationDigest {
+  productId: string;
+  productName: string;
+  count: number;
+  askedSpecs: Record<string, string>;
+  values: { key: string; question: string; values: string[]; carrying: number }[];
+  best: { price: number; unit: string; confidence: number } | null;
+  routed: boolean;
+}
+
+/** Build a digest from a scored lookup/quote verdict. Pure + bounded. */
+export function variationDigest(
+  productId: string,
+  productName: string,
+  verdict: SpecVerdict,
+  best: { markedPrice?: unknown; unit?: unknown; confidence?: unknown } | null,
+  routed: boolean,
+): VariationDigest {
+  const values = (verdict?.coverage ?? []).slice(0, 6)
+    .filter((c) => c && (c.rowsCarrying > 0 || (c.values ?? []).length > 0))
+    .map((c) => ({
+      key: String(c.key ?? '').slice(0, 60),
+      question: String(c.question ?? c.key ?? '').slice(0, 60),
+      values: (c.values ?? []).slice(0, 8).map((v) => String(v).slice(0, 60)),
+      carrying: c.rowsCarrying ?? 0,
+    }));
+  const price = Number((best as any)?.markedPrice ?? (best as any)?.price);
+  return {
+    productId, productName: String(productName ?? '').slice(0, 120),
+    count: verdict?.variationCount ?? 0,
+    askedSpecs: { ...(verdict?.askedSpecs ?? {}) },
+    values,
+    best: Number.isFinite(price) && !routed
+      ? { price, unit: String((best as any)?.unit ?? '').slice(0, 12), confidence: Number((best as any)?.confidence ?? 0) }
+      : null,
+    routed,
+  };
+}
+
+/** One-line trace rendering of a digest — this is what later turns see in
+ *  their system prompt instead of re-running the lookup. */
+export function digestLine(tool: string, d: VariationDigest): string {
+  const bits = (d.values ?? []).map((v) => `${v.question}: ${v.values.join(', ') || `${v.carrying} rows`}`);
+  const head = `${tool} · ${d.productName}: ${d.count} variations`;
+  const tail = d.best
+    ? `best confident ₹${d.best.price.toLocaleString('en-IN')}${d.best.unit ? `/${d.best.unit}` : ''} (conf ${d.best.confidence})`
+    : 'no quotable rate — routed to procurement';
+  return `${head}${bits.length ? ` · ${bits.join(' · ')}` : ''} · ${tail}`.slice(0, 500);
+}
+
+/** Digest → SpecVerdict coverage rows (for memo hits: rebuilds grounding
+ *  without re-scoring). asked values come from the stored askedSpecs. */
+export function digestCoverage(d: VariationDigest): SpecVerdictRow[] {
+  return (d.values ?? []).map((v) => ({
+    key: v.key, question: v.question,
+    asked: (d.askedSpecs ?? {})[v.key] ?? null,
+    rowsCarrying: v.carrying, values: [...(v.values ?? [])],
+  }));
 }
 
 // ── Price session (mirrors the intake draft method) ─────────────────────
@@ -35,7 +106,7 @@ export function blankItemState(): PriceItemState {
 
 export function getItemState(s: PriceSession, idx: number): PriceItemState {
   const st = (s.items ?? {})[String(idx)];
-  return st && typeof st === 'object' ? { productId: st.productId, productName: st.productName, specs: { ...(st.specs ?? {}) } } : blankItemState();
+  return st && typeof st === 'object' ? { productId: st.productId, productName: st.productName, specs: { ...(st.specs ?? {}) }, ...(st.variations ? { variations: st.variations } : {}) } : blankItemState();
 }
 
 export function priceWho(me: any): string {
@@ -58,7 +129,7 @@ export async function loadPriceSession(enquiryId: string, who: string): Promise<
           activeItem: idx,
         };
       }
-      return { items: { ...((s as any).items ?? {}) }, activeItem: (s as any).activeItem };
+      return { items: { ...((s as any).items ?? {}) }, activeItem: (s as any).activeItem, ...((s as any).lookups && typeof (s as any).lookups === 'object' ? { lookups: { ...((s as any).lookups as Record<string, VariationDigest>) } } : {}) };
     }
   } catch { /* ignore */ }
   return { items: {} };

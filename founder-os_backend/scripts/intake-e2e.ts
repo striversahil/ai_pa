@@ -10,6 +10,7 @@ import {
   droppedSpecKeys, filterChecklistSpecs as filterSalesSpecs,
   resolveSpecKeys as resolveSalesSpecKeys, specVerdict,
 } from '../src/modules/enquiries/chat-prices';
+import { INTAKE_GRADE_RULES, gradeRulesPrompt, matchGradeRule } from '../src/modules/enquiries/intake-grade-rules';
 
 initD1({ DB: fakeD1() } as any);
 
@@ -281,6 +282,32 @@ assert('intake fans out in parallel', (productLineIntakeDef as any)?.maxParallel
   assert('verdict counts variations', v.variationCount === 3, JSON.stringify(v.variationCount));
   assert('verdict counts rows carrying the spec', v.coverage[0]?.rowsCarrying === 2, JSON.stringify(v.coverage));
   assert('verdict echoes the ask + stored values', v.askedSpecs.ask_ply_grade_2_ply_indian === '2 ply' && v.coverage[0]?.values.includes('2 ply (Indian manufacture)'), JSON.stringify(v.coverage));
+
+  // Founder-editable grade rules (intake-grade-rules.ts): grade/fabric-word
+  // lines always resolve to Milling Fabric; non-grades never fire; the same
+  // variable renders the LLM fallback's prompt lines (no drift possible).
+  assert('grade rules configured', INTAKE_GRADE_RULES.length >= 1 && INTAKE_GRADE_RULES[0]?.product === 'Milling Fabric', JSON.stringify(INTAKE_GRADE_RULES.map((r) => r.product)));
+  const gradeIdx = [{ productId: 'p-fab', category: 'Plansifter Accessories', item: 'Milling Fabric' }];
+  for (const line of ['20 GG 115 CM 2 METER', '9xxx', '28gg roller mill', 'Bolting cloth 20 gg', 'Boulting Cloth 22 GG', '12 XXX Jalli', '44 GG', '10 XXX 158 width 10', 'Sefar Nytal 40GG', 'Sifar boating cloth 28 GG', 'CENTRIFUGAL JALI 38 GG', '9XXX JAALI 5 Meter', 'Boating clothes 10 meter', 'MF cloth 115cm', '150 mesh 1pc', '300 mesh 10 meter', '250 mesh']) {
+    assert(`grade rule catches ${line}`, matchGradeRule(line, gradeIdx)?.item === 'Milling Fabric', line);
+  }
+  for (const line of ['M/S Jali', 'MTRB Top Sieve', 'Pipe 120mm X 22Gz', 'Airlock Glass', 'Egg crate', 'GI Sheet 20G', 'Ms Jali 15mm']) {
+    assert(`grade rule ignores ${line}`, matchGradeRule(line, gradeIdx) === null, line);
+  }
+  assert('grade rule needs the product in index', matchGradeRule('20 GG', []) === null, 'empty index');
+  const gp = gradeRulesPrompt();
+  assert('grade prompt names the product + terms', gp.includes('Milling Fabric') && gp.includes('xxx/gg') === false && /gg.*xxx|xxx.*gg/i.test(gp), gp.slice(0, 200));
+  // Numbered-bearing rule (migration 0063 target): observed codes file
+  // deterministically; H-sleeves + generic words must NOT fire (prompt block
+  // routes H→Bearing Sleeve, family prompt carries the rest).
+  assert('bearing rule configured', INTAKE_GRADE_RULES.some((r) => r?.product === 'Bearing (Numbered)'), JSON.stringify(INTAKE_GRADE_RULES.map((r) => r.product)));
+  const brgIdx = [{ productId: 'p-brg', category: 'Power Transmission Elements', item: 'Bearing (Numbered)' }];
+  for (const line of ['Bearing 6215K', 'Bearing 8215', 'Bearing 22226', 'Roll Body Bearing 22216', 'Maize Conveyor Bearing P209', 'Maize Elevator Bearing P208', 'Elevator Bearing F207', 'Bearing P211']) {
+    assert(`bearing rule catches ${line}`, matchGradeRule(line, brgIdx)?.item === 'Bearing (Numbered)', line);
+  }
+  for (const line of ['Bearing Socket H315', 'Roll Body Socket H2316', 'V Belt B-60', 'Worm Hanger']) {
+    assert(`bearing rule ignores ${line}`, matchGradeRule(line, brgIdx) === null, line);
+  }
 
   console.log(`\nintake-e2e: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
