@@ -103,6 +103,13 @@ async function fetchEstimatesAll(pages = 2, { coverIds = null, maxPages = 6 } = 
     }
   }
   if (skippedOrgs.length) console.warn(`zoho-sync/fetch: estimates skipped orgs: ${skippedOrgs.join(', ')}`);
+  // Every org down = no data at all (expired cookie/session → 401). Fail the
+  // tick loudly instead of "succeeding" with zero rows and going stale while
+  // CI stays green (2026-10-21 incident: all 3 orgs 401, job exited 0).
+  const totalOrgs = orgIds.length || 1;
+  if (skippedOrgs.length >= totalOrgs) {
+    throw new Error(`Zoho session dead — all ${totalOrgs} org(s) failed (${skippedOrgs.join(', ')}). Refresh founder-os_backend/zoho_sent/sent_estimates.txt from the browser (status: 401).`);
+  }
   return [...seen.values()];
 }
 
