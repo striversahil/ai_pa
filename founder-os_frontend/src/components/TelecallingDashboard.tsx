@@ -1058,6 +1058,8 @@ export default function TelecallingDashboard() {
   const [rosterError, setRosterError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
   const [regionFilter, setRegionFilter] = useState<string | null>(null);
+  // Dashboard leaderboard scope: "ALL" | R1–R4 | "UNMAPPED".
+  const [regionPick, setRegionPick] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // Call-tag filters (Sheets-style): Not answering / Busy / Callback (+ due-by
   // date for callbacks). Pure client-side over the loaded follow-ups.
@@ -1361,7 +1363,15 @@ export default function TelecallingDashboard() {
   // server-side team total so it matches meta.conversionTarget.value exactly.
   const teamAccepted = kpi?.acceptedValue ?? activeBoard.reduce((s, r) => s + (r.conversion.acceptedValue ?? 0), 0);
   const conv = convTier(teamAccepted, dash.data?.meta?.conversionTarget ?? null);
-  const sorted = [...activeBoard].sort((a, b) => {
+  // Region performance — dashboard period, regions own the estimates. The
+  // 20% generator + 80% closer credits roll up into the region totals.
+  const dashRegions = dash.data?.regions ?? [];
+  const regionSorted = [...dashRegions].sort((a, b) => b.points - a.points || b.won.value - a.won.value || b.open.value - a.open.value);
+  const regionTopPoints = regionSorted[0]?.points ?? 0;
+  const regionLeader = regionSorted[0]?.id ?? null;
+  // Individual performance — optionally scoped to one region (or Unmapped).
+  const scopedBoard = regionPick === "ALL" ? activeBoard : activeBoard.filter((r) => regionKey(r.region) === regionPick);
+  const sorted = [...scopedBoard].sort((a, b) => {
     if (sortKey === "score") return b.score - a.score;
     if (sortKey === "won") return b.conversion.won - a.conversion.won;
     if (sortKey === "callsConnected") return b.generation.callsConnected - a.generation.callsConnected;
@@ -1531,6 +1541,109 @@ export default function TelecallingDashboard() {
                 </div>
               )}
 
+              {/* Region performance — the sales board's first cut: regions own
+                  the estimates, staff earn generator/closer credits inside them. */}
+              <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div>
+                    <h3 className="text-lg font-bold">🏅 Region performance — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Ranked by points. Regions own their estimates — generator (20%) and closer (80%) credits roll up here.
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-mono text-zinc-500 dark:text-zinc-400">{dashRegions.length} regions</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-zinc-500 dark:text-zinc-400 text-xs uppercase">
+                      <tr className="border-b border-zinc-200 dark:border-zinc-800">
+                        <th className="text-left py-2 pr-3">#</th>
+                        <th className="text-left py-2 pr-4 min-w-[12rem]">Region</th>
+                        <th className="text-right py-2 pr-4">Staff</th>
+                        <th className="text-right py-2 pr-4">Won</th>
+                        <th className="text-right py-2 pr-4">Won ₹</th>
+                        <th className="text-right py-2 pr-4">Open ₹</th>
+                        <th className="text-right py-2 pr-4">Calls</th>
+                        <th className="text-right py-2 pr-4">Leads</th>
+                        <th className="text-right py-2 pr-4 whitespace-nowrap min-w-[9rem]">Points</th>
+                        <th className="text-right py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {regionSorted.map((r, i) => {
+                        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+                        const pct = regionTopPoints > 0 ? Math.round((r.points / regionTopPoints) * 100) : 0;
+                        return (
+                          <tr key={r.id} className={`border-b border-zinc-100 dark:border-zinc-800/60 ${i === 0 ? "bg-amber-500/10" : ""}`}>
+                            <td className="py-2 pr-3 font-bold text-lg">{medal ?? i + 1}</td>
+                            <td className="py-2 pr-4">
+                              <button
+                                onClick={() => { setRegionFilter(r.id); setView("conversion"); }}
+                                className="text-left font-semibold text-zinc-900 dark:text-white hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+                                title={`Open ${r.name} follow-ups`}
+                              >
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-500 dark:text-indigo-300">{r.id}</span>
+                                  {r.name}
+                                </span>
+                                <span className="block text-[11px] font-normal text-zinc-500 dark:text-zinc-400">{r.tl} · {r.states.slice(0, 3).join(", ")}{r.states.length > 3 ? "…" : ""}</span>
+                              </button>
+                            </td>
+                            <td className="py-2 pr-4 text-right font-mono text-zinc-600 dark:text-zinc-400">{r.staff.length}</td>
+                            <td className="py-2 pr-4 text-right font-mono text-emerald-400">{r.won.count}</td>
+                            <td className="py-2 pr-4 text-right font-mono text-emerald-400 whitespace-nowrap">₹{fmtNum(r.won.value)}</td>
+                            <td className="py-2 pr-4 text-right font-mono text-zinc-600 dark:text-zinc-300 whitespace-nowrap">₹{fmtNum(r.open.value)}</td>
+                            <td className="py-2 pr-4 text-right font-mono" title={`${r.callsConnected}/${r.kra.connectedTarget} connected calls`}>
+                              <span className={LIGHT_TEXT[r.kra.connectedStatus]}>{fmtNum(r.callsConnected)}</span>
+                            </td>
+                            <td className="py-2 pr-4 text-right font-mono" title={`${r.leadsGenerated}/${r.kra.leadsTarget} leads generated`}>
+                              <span className={LIGHT_TEXT[r.kra.leadsStatus]}>{fmtNum(r.leadsGenerated)}</span>
+                            </td>
+                            <td className="py-2 pr-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-2">
+                                <span className="font-extrabold text-indigo-300 font-mono">{fmtNum(r.points)}</span>
+                                {regionTopPoints > 0 && (
+                                  <span className="hidden sm:inline-block w-16 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden" title={`${pct}% of the leading region`}>
+                                    <span className={`block h-full rounded-full ${r.id === regionLeader ? "bg-amber-400" : "bg-indigo-400"}`} style={{ width: `${Math.max(6, pct)}%` }} />
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-2 text-right">
+                              <button
+                                onClick={() => { setRegionFilter(r.id); setView("conversion"); }}
+                                className="text-[11px] font-semibold rounded-lg border border-zinc-300 dark:border-zinc-700 px-2.5 py-1 hover:border-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+                              >
+                                Follow-ups →
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {regionSorted.length === 0 && (
+                        <tr><td colSpan={10} className="py-4 text-center text-zinc-500">No regions loaded.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {(unmappedBlock?.count ?? 0) > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                    <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                      Unmapped: {unmappedBlock?.count ?? 0} open estimates · ₹{fmtNum(unmappedBlock?.value ?? 0)} outside any region
+                    </span>
+                    <button
+                      onClick={() => {
+                        if ((dash.data?.unmappedStaff?.length ?? 0) > 0) setRegionPick("UNMAPPED");
+                        else { setRegionFilter("UNMAPPED"); setView("conversion"); }
+                      }}
+                      className="text-[11px] font-bold text-amber-700 dark:text-amber-400 underline underline-offset-2"
+                    >
+                      {(dash.data?.unmappedStaff?.length ?? 0) > 0 ? "Show unmapped staff" : "Open unmapped estimates →"}
+                    </button>
+                  </div>
+                )}
+              </section>
+
               {/* Leaderboard */}
               {Boolean(dash.error) && !dash.loading && (
                 <QueryErrorBanner message={String((dash.error as any)?.message ?? dash.error)} onRetry={() => dash.refresh()} />
@@ -1538,7 +1651,7 @@ export default function TelecallingDashboard() {
               <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div>
-                    <h3 className="text-lg font-bold">🏆 Leaderboard — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
+                    <h3 className="text-lg font-bold">🏆 Individual leaderboard — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
                     {/* Scoring criteria — the composite score is the ranking norm. */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
                       <span title="Close points by estimate value: ₹0–1L → +50 · ₹1L–2.5L → +75 · ₹2.5L–5L → +100 · ₹5L and above → +200" className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-400">
@@ -1642,6 +1755,46 @@ export default function TelecallingDashboard() {
                       {p.label}
                     </button>
                   ))}
+                </div>
+                {/* Individual scope — whole team or one region at a time */}
+                <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 dark:text-zinc-400 mr-1">Individuals</span>
+                  <button
+                    onClick={() => setRegionPick("ALL")}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                      regionPick === "ALL"
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                        : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
+                    }`}
+                  >
+                    All regions
+                  </button>
+                  {dashRegions.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => setRegionPick(r.id)}
+                      title={r.name}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                        regionPick === r.id
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                          : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
+                      }`}
+                    >
+                      {r.id}
+                    </button>
+                  ))}
+                  {((dash.data?.unmappedStaff?.length ?? 0) > 0 || (unmappedBlock?.count ?? 0) > 0) && (
+                    <button
+                      onClick={() => setRegionPick("UNMAPPED")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                        regionPick === "UNMAPPED"
+                          ? "bg-amber-600 text-white border-amber-600 shadow-sm"
+                          : "bg-white dark:bg-zinc-950 text-amber-600 dark:text-amber-400 border-amber-500/40 hover:border-amber-400"
+                      }`}
+                    >
+                      Unmapped
+                    </button>
+                  )}
                 </div>
                 {/* Chase podium — top 3 with gaps (composite score ranking) */}
                 {sortKey === "score" && sorted.length >= 2 && (
@@ -1851,7 +2004,7 @@ export default function TelecallingDashboard() {
                         );
                       })}
                       {sorted.length === 0 && (
-                        <tr><td colSpan={9} className="py-4 text-center text-zinc-500">No active telecallers yet.</td></tr>
+                        <tr><td colSpan={9} className="py-4 text-center text-zinc-500">{regionPick === "ALL" ? "No active telecallers yet." : regionPick === "UNMAPPED" ? "No unmapped staff." : `No staff mapped to ${regionPick}.`}</td></tr>
                       )}
                     </tbody>
                   </table>
