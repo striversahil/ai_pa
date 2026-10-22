@@ -719,15 +719,28 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     active: !!t.assignEstimateFollowUps,
   }));
 
-  // ── Region drill-down: ?agent=<id|name> → that staff's REGION follow-ups ───
+  // ── Region drill-down: ?region=R1..R4|unmapped (or ?agent= → that staff's region)
   // Staff work every open estimate in their own region, so the drill shows the
   // whole region's pipeline (not a personal hold). A scoped staff member may
-  // only ever drill into THEIR OWN region: any explicit ?agent= is coerced to
-  // self (blocks reading other regions).
+  // only ever drill into THEIR OWN region: any explicit ?agent=/?region= is
+  // coerced to self (blocks reading other regions).
   const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : null;
   const requestedAgent = typeof q.agent === 'string' && q.agent ? q.agent : undefined;
+  const requestedRegionRaw = typeof q.region === 'string' ? String(q.region).trim() : '';
+  const requestedRegion: string | undefined = requestedRegionRaw
+    ? (requestedRegionRaw.toLowerCase() === 'unmapped' ? '' : requestedRegionRaw.toUpperCase())
+    : undefined;
   const agentFilter = requestedAgent ? (selfAgentId ?? requestedAgent) : undefined;
-  if (agentFilter) {
+  const drillSelfStaff = selfAgentId
+    ? (telecallers as any[]).find((t) => String(t.id) === selfAgentId) ?? null
+    : null;
+
+  let drillStaff: any = null;
+  let regionScope: string | undefined;
+  if (selfAgentId) {
+    drillStaff = drillSelfStaff;
+    regionScope = String(drillSelfStaff?.region ?? '');
+  } else if (agentFilter) {
     const tc = telecallers.find(
       (t: any) => String(t.id) === agentFilter || String(t.name ?? '') === agentFilter || (t.neodoveUserName ?? '') === agentFilter,
     ) as any;
@@ -743,19 +756,24 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         },
       };
     }
-    const regionId = String(tc.region ?? '');
-    const followUpEsts = regionId
-      ? await prisma.estimate.findMany({
-          where: { region: regionId, status: 'sent' },
-          // Highest-value estimates first — staff see the biggest deals at the
-          // top of their region list.
-          orderBy: [{ total: 'desc' }, { date: 'asc' }],
-          // 15-min Zoho analyzer verdict — drives the Satisfactory/Unsatisfactory
-          // chip. Note: D1PrismaClient resolves relations via `include`, not a
-          // nested relation under `select`.
-          include: { classification: true },
-        })
-      : [];
+    drillStaff = tc;
+    regionScope = String(tc.region ?? '');
+  } else if (requestedRegion !== undefined) {
+    regionScope = requestedRegion;
+  }
+
+  if (regionScope !== undefined) {
+    const regionId = regionScope;
+    const followUpEsts = await prisma.estimate.findMany({
+      where: { region: regionId, status: 'sent' },
+      // Highest-value estimates first — staff see the biggest deals at the
+      // top of their region list.
+      orderBy: [{ total: 'desc' }, { date: 'asc' }],
+      // 15-min Zoho analyzer verdict — drives the Satisfactory/Unsatisfactory
+      // chip. Note: D1PrismaClient resolves relations via `include`, not a
+      // nested relation under `select`.
+      include: { classification: true },
+    });
     const followLastComments = new Map<string, string>();
     for (const r of riskItems) {
       if (r.lastCommentDate) followLastComments.set(r.estimateId, r.lastCommentDate);
@@ -855,14 +873,29 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         callTagBy,
         callTagByName: callTagBy ? (nameByTelecallerId.get(String(callTagBy)) ?? null) : null,
         callTagAt: (e as any).callTagAt ?? null,
+        // Dated next step (migration 0028) — the restored NextStepControl
+        // editor writes these via PUT /api/estimates/:id/next-step.
+        nextStep: (e as any).nextStep ?? null,
+        nextStepDate: (e as any).nextStepDate ?? null,
       };
     });
-    const me = staffRows.get(String(tc.id));
+    const me = drillStaff ? staffRows.get(String(drillStaff.id)) ?? null : null;
+    const regionRow = regions.find((r) => r.id === regionId) ?? null;
+    // Region-level aggregate when no staff is targeted (Conversion region tabs):
+    // sum the roster rows mapped to that region ('' = unmapped staff).
+    const regionMembers = [...staffRows.values()].filter((s) => s.region === regionId);
+    const agg = {
+      won: me?.won ?? regionRow?.won.count ?? regionMembers.reduce((s, m) => s + m.won, 0),
+      points: me?.points ?? regionRow?.points ?? Math.round(regionMembers.reduce((s, m) => s + m.points, 0)),
+      callsConnected: me?.callsConnected ?? regionRow?.callsConnected ?? regionMembers.reduce((s, m) => s + m.callsConnected, 0),
+      leadsGenerated: me?.leadsGenerated ?? regionRow?.leadsGenerated ?? regionMembers.reduce((s, m) => s + m.leadsGenerated, 0),
+    };
     const regionOpen = openByRegion.get(regionId) ?? { count: 0, value: 0 };
+    const staffName = drillStaff ? String(drillStaff.name ?? '') : null;
     return {
       meta: {
-        analysis: 'telecalling-agent',
-        title: `Sales Leaderboard — ${String(tc.name ?? '')}`,
+        analysis: 'sales-leaderboard-region',
+        title: staffName ? `Sales Leaderboard — ${staffName}` : `Sales Leaderboard — ${def?.name ?? 'Unmapped'}`,
         day,
         requestedDay,
         usingLatestAvailable,
@@ -872,14 +905,14 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         generatedAt: new Date().toISOString(),
       },
       agent: {
-        id: String(tc.id),
-        name: String(tc.name ?? ''),
+        id: drillStaff ? String(drillStaff.id) : regionId,
+        name: staffName ?? (def?.name ?? 'Unmapped'),
         region: regionId,
-        tlLevel: String(tc.tlLevel ?? ''),
-        won: me?.won ?? 0,
-        points: me?.points ?? 0,
-        callsConnected: me?.callsConnected ?? 0,
-        leadsGenerated: me?.leadsGenerated ?? 0,
+        tlLevel: drillStaff ? String(drillStaff.tlLevel ?? '') : (def?.tl ?? ''),
+        won: agg.won,
+        points: agg.points,
+        callsConnected: agg.callsConnected,
+        leadsGenerated: agg.leadsGenerated,
         regionOpen,
         followUpCount: followUps.length,
       },

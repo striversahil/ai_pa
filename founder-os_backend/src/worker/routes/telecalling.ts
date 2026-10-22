@@ -95,8 +95,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     if (!body?.name) return c.json({ error: 'name required' }, 400);
-    if (body.tlLevel !== undefined && !isValidTlLevel(body.tlLevel)) return c.json({ error: 'tlLevel must be TL1 or TL2 (or unset)' }, 400);
-    if (body.region !== undefined && !isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4 (or unset)' }, 400);
+    if (body.tlLevel !== undefined && body.tlLevel !== '' && !isValidTlLevel(body.tlLevel)) return c.json({ error: 'tlLevel must be TL1 or TL2 (or unset)' }, 400);
+    if (body.region !== undefined && body.region !== '' && !isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4 (or unset)' }, 400);
     const tc = await prisma.telecaller.create({
       data: {
         name: String(body.name).trim(),
@@ -131,11 +131,11 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (body.neodoveUserId !== undefined) data.neodoveUserId = body.neodoveUserId;
     if (body.neodoveUserName !== undefined) data.neodoveUserName = body.neodoveUserName;
     if (body.tlLevel !== undefined) {
-      if (!isValidTlLevel(body.tlLevel)) return c.json({ error: 'tlLevel must be TL1 or TL2 (or unset)' }, 400);
+      if (body.tlLevel !== '' && !isValidTlLevel(body.tlLevel)) return c.json({ error: 'tlLevel must be TL1 or TL2 (or unset)' }, 400);
       data.tlLevel = String(body.tlLevel);
     }
     if (body.region !== undefined) {
-      if (!isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4 (or unset)' }, 400);
+      if (body.region !== '' && !isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4 (or unset)' }, 400);
       data.region = String(body.region);
     }
     if (body.deleted !== undefined) {
