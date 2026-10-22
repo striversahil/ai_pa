@@ -28,6 +28,7 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "autopilot", label: "WhatsApp Autopilot", description: "Autopilot task queue and review dashboard" },
   { key: "mis", label: "MIS", description: "MIS-level control of the telecaller roster (assignment controller)" },
   { key: "telecalling", label: "Telecalling", description: "Telecalling performance dashboard" },
+  { key: "sales-head", label: "Sales Head", description: "Sales leaderboard manager — closer picks, region links, roster, history reset" },
   { key: "crm", label: "CRM", description: "CRM active sales orders pipeline" },
   { key: USER_ADMIN_SCOPE, label: "User Manager", description: "Admin panel: assign roles and edit role scopes (cannot touch root user or grant admin access)" },
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },

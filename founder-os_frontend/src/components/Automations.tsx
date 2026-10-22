@@ -17,6 +17,7 @@ const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDash
 const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
 const AccountsDashboard = dynamic(() => import("./AccountsDashboard"), { ssr: false });
 const DigitalMarketingDashboard = dynamic(() => import("./DigitalMarketingDashboard"), { ssr: false });
+const HumanResourcesDashboard = dynamic(() => import("./HumanResourcesDashboard"), { ssr: false });
 const AutopilotDashboard = dynamic(() => import("./AutopilotDashboard"), { ssr: false });
 const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false });
 const ProcurementQueue = dynamic(() => import("./ProcurementQueue"), { ssr: false });
@@ -27,6 +28,7 @@ const SamarthOverviewDashboard = dynamic(() => import("./SamarthOverviewDashboar
 const SahilOverviewDashboard = dynamic(() => import("./SahilOverviewDashboard"), { ssr: false });
 const LinkedinDashboard = dynamic(() => import("./LinkedinDashboard"), { ssr: false });
 const AiUsageDashboard = dynamic(() => import("./AiUsageDashboard"), { ssr: false });
+const PaymentTrackerDashboard = dynamic(() => import("./PaymentTrackerDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -134,7 +136,9 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
     if (selected === "telecalling") return <TelecallingDashboard />;
     if (selected === "accounts") return <AccountsDashboard />;
+    if (selected === "payment-tracker") return <PaymentTrackerDashboard />;
     if (selected === "digital-marketing") return <DigitalMarketingDashboard />;
+    if (selected === "human-resources") return <HumanResourcesDashboard />;
     if (selected === "whatsapp-autopilot") return <AutopilotDashboard />;
     if (selected === "enquiry-tracker") return <EnquiryTracker />;
     if (selected === "enquiry-procurement") return <ProcurementQueue />;

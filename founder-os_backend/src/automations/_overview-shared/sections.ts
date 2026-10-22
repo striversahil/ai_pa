@@ -78,23 +78,29 @@ function summarizeCrm(d: any) {
 }
 
 function summarizeTelecalling(d: any) {
-  const conv = d.conversion ?? d.leadConversion ?? {};
+  const kpi = d.kpi ?? {};
   const risk = d.risk ?? d.atRisk ?? {};
-  const unassigned = num(conv.unassigned ?? d.unassigned);
-  const red = num(risk.red ?? risk.redCount ?? d.redCount);
-  const today = num(d.callsToday ?? d.connectedToday);
+  const counts = risk.counts ?? risk;
+  const regions: any[] = Array.isArray(d.regions) ? d.regions : [];
+  const points = regions.reduce((s, r) => s + num(r.points), 0);
+  const unmapped = num(d?.unmapped?.count ?? 0);
+  const picks = Array.isArray(d.pendingPicks) ? d.pendingPicks.length : 0;
   const att: string[] = [];
+  const red = num(counts.red), zombie = num(counts.zombie);
   if (red > 0) att.push(`${red} red-risk holdings need chase today`);
-  if (unassigned > 0) att.push(`${unassigned} estimates unassigned — run rotation`);
+  if (zombie > 0) att.push(`${zombie} zombie estimates silent >3 days`);
+  if (unmapped > 0) att.push(`${unmapped} unmapped estimates need a region link`);
+  if (picks > 0) att.push(`${picks} closes awaiting the 80% closer pick`);
+  const won = num(kpi.won), closedValue = num(kpi.closedValue);
   return {
-    headline: `${unassigned} unassigned · ${red} red-risk · ${today} connects today`,
+    headline: `${won} won · ${inr(closedValue)} closed · pipeline ${inr(kpi.pipelineValue)} · ${num(kpi.leadsGenerated)} leads`,
     kpis: [
-      { label: 'Unassigned', value: String(unassigned) },
-      { label: 'Red risk', value: String(red) },
-      { label: 'Connects today', value: String(today) },
-      { label: 'Leaderboard wk', value: String(num(d.weekPoints ?? d.weeklyPoints)) },
+      { label: 'Won', value: `${won} (${inr(closedValue)})` },
+      { label: 'Pipeline', value: inr(kpi.pipelineValue) },
+      { label: 'Leads', value: String(num(kpi.leadsGenerated)) },
+      { label: 'Points', value: String(points) },
     ],
-    attention: att.slice(0, 3),
+    attention: att.slice(0, 4),
   };
 }
 
@@ -189,7 +195,7 @@ export interface SectionDef {
 export const SECTIONS: SectionDef[] = [
   { key: 'zoho', title: 'Zoho Sent Analysis', slugs: ['zoho-sent-analyzer'], linkSlug: 'zoho-sent-analyzer', build: (r) => section('zoho-sent-analyzer', 'Zoho Sent Analysis', r['zoho-sent-analyzer']?.data, r['zoho-sent-analyzer']?.error, summarizeZoho) },
   { key: 'crm', title: 'CRM — Sales Orders', slugs: ['crm'], linkSlug: 'crm', build: (r) => section('crm', 'CRM — Sales Orders', r.crm?.data, r.crm?.error, summarizeCrm) },
-  { key: 'telecalling', title: 'Telecalling', slugs: ['telecalling'], linkSlug: 'telecalling', build: (r) => section('telecalling', 'Telecalling', r.telecalling?.data, r.telecalling?.error, summarizeTelecalling) },
+  { key: 'telecalling', title: 'Sales Leaderboard', slugs: ['telecalling'], linkSlug: 'telecalling', build: (r) => section('telecalling', 'Sales Leaderboard', r.telecalling?.data, r.telecalling?.error, summarizeTelecalling) },
   {
     key: 'enquiries', title: 'Enquiries', slugs: ['enquiry-tracker', 'enquiry-procurement', 'enquiry-management'], linkSlug: 'enquiry-tracker',
     build: (r) => {

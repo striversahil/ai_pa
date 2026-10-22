@@ -1,0 +1,9 @@
+{
+  "name": "Human Resources",
+  "description": "HR delegation task list (assignee + due date/time + status), fixed/variable/field-staff expense tracker, and daily-item inventory with stock utilization and full HR/MIS controls.",
+  "type": "handler",
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": "human-resources"
+}

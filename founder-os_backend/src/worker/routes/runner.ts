@@ -9,8 +9,6 @@ import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, createEnquir
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { cacheGet, cacheSet, cacheDel } from '../../shared/cache';
-import { bulkAssignEstimates } from '../../automations/telecalling/service';
-import { syncEffortSnapshots } from '../../automations/telecalling/effort-sync';
 import { RELAY_ACTIVE_KEY, RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS } from '../../shared/ai-gateway';
 
 /** Procurement materials roll-up from final display rows (shared by the CRM
@@ -927,34 +925,19 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json({ ok: true, count: upserted, skipped: incoming.length - upserted });
   });
 
-  // ── MIS bulk assignment enforcement (one-shot ops tool) ──────────────────────
-  // Body: { moves: [{ estimateNumber?, estimateId?, telecallerId }], followUpAgents?: [id], reason?: string }
-  // Thin secret-gated wrapper around the shared bulkAssignEstimates core (also
-  // used by the interactive MIS endpoint). See service.ts for semantics.
+  // ── Retired: bulk assignment + effort-sync (region model; 2026-10-22) ───────
+  // Stubs only, so the GH workflows that still dispatch these (bulk-assign
+  // manual tooling, every-15min effort-sync) keep answering 200 across the
+  // deploy window. No writes. The bulk-assign UI is gone; closer picks + region
+  // links (PUT /api/telecalling/closer-pick, PUT /api/estimates/:id/region)
+  // replace both mechanics.
   app.post('/api/runner/estimates/bulk-assign', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
-    const moves = Array.isArray(body.moves) ? body.moves : [];
-    const followUpAgents = Array.isArray(body.followUpAgents) ? body.followUpAgents : [];
-    if (moves.length === 0 && followUpAgents.length === 0) {
-      return c.json({ error: 'moves[] or followUpAgents[] required' }, 400);
-    }
-    const result = await bulkAssignEstimates(moves, { followUpAgents, reason: body.reason });
-    if (result.moved.length > 0 || result.flagsUpdated.length > 0) notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json({ ok: result.errors.length === 0, movedCount: result.moved.length, ...result });
+    return c.json({ ok: true, retired: true, message: 'Bulk assignment retired — region model (founder, 2026-10-22)' });
   });
-
-  // ── telecalling effort-sync (every-15min GH runner) ──────────────────────────
-  // Pulls ALL pages of the NeoDove lead-call-log for today + 2 prior IST days
-  // (worker-side fetch — GH egress is blocked by NeoDove) and persists per-day
-  // snapshots to Setting `telecalling:effort:<YYYY-MM-DD>`. The 30-min
-  // assignment engine reads these for the snatch shield; the MIS Shield tab
-  // reads them for audit. Fail-open: ok:false leaves the engine unshielded.
   app.post('/api/runner/telecalling/effort-sync', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const result = await syncEffortSnapshots();
-    if (result.ok) notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json(result);
+    return c.json({ ok: true, retired: true, message: 'Effort sync retired — region model (founder, 2026-10-22)' });
   });
 
   // ── enquiry intake queue (GH intake runner, parallel-safe) ──────────────────

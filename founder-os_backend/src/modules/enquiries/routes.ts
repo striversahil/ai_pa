@@ -369,7 +369,9 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
   if (estNumber && assignedAgentId) {
     try {
       const { syncEstimateCreatorFromEnquiry } = await import('./estimate-link');
-      await syncEstimateCreatorFromEnquiry(estNumber, assignedAgentId);
+      // Pin the org: on a BUI/DPG number clash the creator must land on the
+      // enquiry's own org row, never the other org's duplicate.
+      await syncEstimateCreatorFromEnquiry(estNumber, assignedAgentId, createdOrg);
     } catch { /* fail-open */ }
   }
   const body_ = canManageRates(me) ? enquiry : stripMarginFields(enquiry as any, { hideRequests: !canSeeProcurementRequests(me) });
@@ -549,8 +551,11 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     const nextAgent = (updates as any)?.assignedAgentId !== undefined
       ? String((updates as any).assignedAgentId ?? '')
       : String((enquiry as any)?.assignedAgentId ?? '');
-    if (finalEst && nextAgent.trim()) await syncEstimateCreatorFromEnquiry(finalEst, nextAgent);
-    if (prevEst && prevEst !== finalEst) await reconcileEstimateCreator(prevEst);
+    if (finalEst && nextAgent.trim()) {
+      // Org-pinned like create (cross-org clash safety).
+      await syncEstimateCreatorFromEnquiry(finalEst, nextAgent, String((enquiry as any)?.organizationId ?? ''));
+    }
+    if (prevEst && prevEst !== finalEst) await reconcileEstimateCreator(prevEst, String((enquiry as any)?.organizationId ?? ''));
   } catch { /* fail-open */ }
   const canSeeMargins = canManageRates(me);
   return {

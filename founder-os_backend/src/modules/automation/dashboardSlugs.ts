@@ -19,6 +19,8 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'telecalling',
   'accounts',
   'digital-marketing',
+  'human-resources',
+  'payment-tracker',
   'whatsapp-autopilot',
   'enquiry-tracker',
   'enquiry-procurement',

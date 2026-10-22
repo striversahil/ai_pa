@@ -4,18 +4,14 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { requireScope } from '../modules/auth/service';
 import { AuthError } from '../modules/auth/types';
 import { PrismaAuthStore } from '../modules/auth/store-prisma';
-import {
-  markTelecallerAbsent,
-  markTelecallerPresent,
-  isPenaltiesEnabled,
-  setPenaltiesEnabled,
-  isEodReassignEnabled,
-  setEodReassignEnabled,
-} from '../automations/telecalling/service';
+// Region-model mirror of the Worker roster routes. The penalty toggles,
+// EOD-reassignment switch and the absent/present cover flow are retired
+// (founder decision 2026-10-22) and removed here.
+import { isValidRegion, isValidTlLevel } from '../automations/telecalling/service';
 
 const router = Router();
 
-// MIS-level control: the roster is the assignment controller — every roster
+// MIS-level control: the roster is the region/hierarchy map — every roster
 // read/write requires the `mis` scope (or root/admin).
 const misAuthStore = new PrismaAuthStore(prisma);
 const misGuard = asyncHandler(async (req, res, next) => {
@@ -43,72 +39,45 @@ router.get('/', misGuard, asyncHandler(async (req, res) => {
   res.json({ telecallers: withCounts });
 }));
 
-// ── "Active Penalty" runtime toggle (MIS) — registered BEFORE /:id routes ────
-router.get('/penalty-mode', misGuard, asyncHandler(async (_req, res) => {
-  res.json({ enabled: await isPenaltiesEnabled() });
-}));
-
-router.put('/penalty-mode', misGuard, asyncHandler(async (req, res) => {
-  const { enabled } = req.body || {};
-  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled boolean required' });
-  await setPenaltiesEnabled(enabled);
-  res.json({ ok: true, enabled });
-}));
-
-// ── "EOD Reassignment" master switch (MIS) — registered BEFORE /:id routes ──
-// GET readable by any approved viewer (sales needs it to hide snatch chips
-// when reassignment is OFF — MIS-gating left sales stuck on stale warnings).
-router.get('/eod-reassign', asyncHandler(async (req, res) => {
-  const store = new PrismaAuthStore(prisma);
-  const me = await store.getMe ? null : null;
-  // Use requireScope with isApproved-style check: any approved session may read
-  try {
-    const { getMe, isApproved } = await import('../modules/auth/service');
-    const me2 = await getMe(store as any, req.headers.cookie || null);
-    if (!me2 || !isApproved(me2)) return res.status(me2 ? 403 : 401).json({ error: me2 ? 'Access pending' : 'Authentication required' });
-  } catch (e) {
-    if (e instanceof AuthError) return res.status(e.status).json({ error: e.message });
-    throw e;
-  }
-  res.json({ enabled: await isEodReassignEnabled() });
-}));
-
-router.put('/eod-reassign', misGuard, asyncHandler(async (req, res) => {
-  const { enabled } = req.body || {};
-  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled boolean required' });
-  await setEodReassignEnabled(enabled);
-  res.json({ ok: true, enabled });
-}));
-
-// ── Absentee cover (MIS): mark absent → redistribute, present → return ───────
-router.post('/:id/absent', misGuard, asyncHandler(async (req, res) => {
-  const { absent } = req.body || {};
-  if (absent === false) {
-    const result = await markTelecallerPresent(String(req.params.id));
-    return res.json({ ok: true, absent: false, ...result });
-  }
-  const result = await markTelecallerAbsent(String(req.params.id));
-  res.json({ ok: true, absent: true, ...result });
-}));
-
 router.post('/', misGuard, asyncHandler(async (req, res) => {
-  const { name, email, assignEstimateFollowUps, order } = req.body || {};
+  const { name, email, assignEstimateFollowUps, order, tlLevel, region, phone, whatsapp } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
+  if (tlLevel !== undefined && !isValidTlLevel(tlLevel)) return res.status(400).json({ error: 'tlLevel must be TL1 or TL2 (or unset)' });
+  if (region !== undefined && !isValidRegion(region)) return res.status(400).json({ error: 'region must be R1–R4 (or unset)' });
   const tc = await prisma.telecaller.create({
-    data: { name: String(name).trim(), email: email ?? null, assignEstimateFollowUps: assignEstimateFollowUps ?? true, order: order ?? 0 },
+    data: {
+      name: String(name).trim(),
+      email: email ?? null,
+      phone: phone ?? null,
+      whatsapp: whatsapp ?? null,
+      tlLevel: tlLevel ?? '',
+      region: region ?? '',
+      assignEstimateFollowUps: assignEstimateFollowUps ?? true,
+      order: order ?? 0,
+    },
   });
   return res.status(201).json(tc);
 }));
 
 router.put('/:id', misGuard, asyncHandler(async (req, res) => {
-  const { name, email, assignEstimateFollowUps, order, deleted, neodoveUserId, neodoveUserName } = req.body || {};
+  const { name, email, assignEstimateFollowUps, order, deleted, neodoveUserId, neodoveUserName, tlLevel, region, phone, whatsapp } = req.body || {};
   const data: Record<string, unknown> = {};
   if (name !== undefined) data.name = String(name).trim();
   if (email !== undefined) data.email = email;
+  if (phone !== undefined) data.phone = phone;
+  if (whatsapp !== undefined) data.whatsapp = whatsapp;
   if (assignEstimateFollowUps !== undefined) data.assignEstimateFollowUps = assignEstimateFollowUps;
   if (order !== undefined) data.order = order;
   if (neodoveUserId !== undefined) data.neodoveUserId = neodoveUserId;
   if (neodoveUserName !== undefined) data.neodoveUserName = neodoveUserName;
+  if (tlLevel !== undefined) {
+    if (!isValidTlLevel(tlLevel)) return res.status(400).json({ error: 'tlLevel must be TL1 or TL2 (or unset)' });
+    data.tlLevel = tlLevel;
+  }
+  if (region !== undefined) {
+    if (!isValidRegion(region)) return res.status(400).json({ error: 'region must be R1–R4 (or unset)' });
+    data.region = region;
+  }
   if (deleted !== undefined) {
     data.deleted = !!deleted;
     if (deleted === false && assignEstimateFollowUps === undefined) data.assignEstimateFollowUps = false; // restore comes back without follow-up flag

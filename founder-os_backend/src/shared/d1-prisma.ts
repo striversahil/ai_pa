@@ -51,11 +51,24 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskTemplate: ['active', 'isShared'],
   DigitalMarketingTaskLog: [],
   DigitalMarketingTaskAttachment: [],
+  HumanResourcesMember: ['deleted', 'active'],
+  HumanResourcesTask: ['deleted'],
+  HumanResourcesExpense: ['deleted'],
+  HumanResourcesSalaryComponent: ['deleted', 'isBasic'],
+  HumanResourcesSalaryTemplate: ['isDefault', 'deleted'],
+  HumanResourcesSalaryTemplateComponent: ['isBasic', 'deleted'],
+  HumanResourcesAttendance: ['deleted'],
+  HumanResourcesLeave: ['deleted', 'paid'],
+  HumanResourcesSalarySlip: [],
+  HumanResourcesInventoryItem: ['deleted'],
+  HumanResourcesInventoryTxn: ['deleted'],
   ProductItem: ['active'],
   KypGuide: ['isRequired', 'active'],
   Vendor: ['active'],
   VendorRate: ['active'],
   LinkedinPost: ['hasImage', 'picked'],
+  DebtorInvoice: ['deleted'],
+  PaymentCollection: ['deleted'],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -90,6 +103,18 @@ const DATE_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskTemplate: ['createdAt', 'updatedAt'],
   DigitalMarketingTaskLog: ['createdAt', 'updatedAt'],
   DigitalMarketingTaskAttachment: ['createdAt'],
+  HumanResourcesMember: ['createdAt', 'salaryTemplateAppliedAt'],
+  HumanResourcesTask: ['createdAt', 'updatedAt'],
+  HumanResourcesExpense: ['createdAt', 'updatedAt'],
+  HumanResourcesSalaryComponent: ['createdAt', 'updatedAt'],
+  HumanResourcesSalaryTemplate: ['createdAt', 'updatedAt'],
+  HumanResourcesSalaryTemplateComponent: ['createdAt', 'updatedAt'],
+  HumanResourcesAttendance: ['createdAt', 'updatedAt'],
+  HumanResourcesLeave: ['createdAt', 'updatedAt'],
+  HumanResourcesHoliday: ['createdAt', 'updatedAt'],
+  HumanResourcesSalarySlip: ['finalizedAt', 'paidAt', 'createdAt', 'updatedAt'],
+  HumanResourcesInventoryItem: ['createdAt', 'updatedAt'],
+  HumanResourcesInventoryTxn: ['createdAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
   ProductItem: ['createdAt', 'updatedAt'],
@@ -98,6 +123,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   VendorRate: ['quotedAt', 'createdAt', 'updatedAt'],
   SoAttachment: ['createdAt'],
   LinkedinPost: ['postedAt', 'createdAt'],
+  DebtorInvoice: ['createdAt', 'updatedAt'],
+  PaymentCollection: ['createdAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -152,11 +179,25 @@ const ID_FIELDS: Record<string, string> = {
   DigitalMarketingTaskTemplate: 'id',
   DigitalMarketingTaskLog: 'id',
   DigitalMarketingTaskAttachment: 'id',
+  HumanResourcesMember: 'id',
+  HumanResourcesTask: 'id',
+  HumanResourcesExpense: 'id',
+  HumanResourcesSalaryComponent: 'id',
+  HumanResourcesSalaryTemplate: 'id',
+  HumanResourcesSalaryTemplateComponent: 'id',
+  HumanResourcesAttendance: 'id',
+  HumanResourcesLeave: 'id',
+  HumanResourcesHoliday: 'id',
+  HumanResourcesSalarySlip: 'id',
+  HumanResourcesInventoryItem: 'id',
+  HumanResourcesInventoryTxn: 'id',
   ProductItem: 'id',
   KypGuide: 'id',
   Vendor: 'id',
   VendorRate: 'id',
   LinkedinPost: 'id',
+  DebtorInvoice: 'id',
+  PaymentCollection: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -168,6 +209,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   MarketingLead: ['campaignId', 'phoneNumber'],
   PriceQuote: ['messageId'],
   MessageLineage: ['waMessageId'],
+  DebtorInvoice: ['invoiceNo', 'customerName'],
+  PaymentCollection: ['dedupKey'],
   ProductItem: ['name'],
   Vendor: ['name'],
 };
@@ -179,6 +222,15 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   MessageLineage: ['confidence'],
   WaTaskHistory: ['confidence'],
   OverrideLog: ['systemConfidence'],
+  HumanResourcesSalaryComponent: ['value', 'cap', 'floor'],
+  HumanResourcesSalaryTemplateComponent: ['value', 'cap', 'floor'],
+  HumanResourcesLeave: ['days'],
+  HumanResourcesSalarySlip: ['workingDays', 'payableDays', 'presentDays', 'halfDays', 'absentDays', 'paidLeaveDays', 'unpaidLeaveDays', 'holidayDays', 'unmarkedDays', 'monthlyGross', 'earnedGross', 'absenceDeduction', 'componentDeductions', 'manualDeductions', 'totalDeductions', 'netPay'],
+  HumanResourcesMember: ['salaryInputAmount'],
+  HumanResourcesInventoryItem: ['reorderLevel', 'unitCost'],
+  HumanResourcesInventoryTxn: ['quantity'],
+  DebtorInvoice: ['invoiceAmount', 'baseReceived', 'collectedAtImport'],
+  PaymentCollection: ['amount'],
 };
 
 const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?: boolean }>> = {
@@ -239,6 +291,43 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   DigitalMarketingTaskAttachment: {
     log: { model: 'DigitalMarketingTaskLog', fk: 'logId', one: true },
+  },
+  HumanResourcesMember: {
+    tasks: { model: 'HumanResourcesTask', fk: 'assignedToId' },
+    salaryComponents: { model: 'HumanResourcesSalaryComponent', fk: 'memberId' },
+    attendance: { model: 'HumanResourcesAttendance', fk: 'memberId' },
+    leaves: { model: 'HumanResourcesLeave', fk: 'memberId' },
+    salarySlips: { model: 'HumanResourcesSalarySlip', fk: 'memberId' },
+    salaryTemplate: { model: 'HumanResourcesSalaryTemplate', fk: 'salaryTemplateId', one: true },
+  },
+  HumanResourcesTask: {
+    assignedTo: { model: 'HumanResourcesMember', fk: 'assignedToId', one: true },
+  },
+  HumanResourcesSalaryComponent: {
+    member: { model: 'HumanResourcesMember', fk: 'memberId', one: true },
+    template: { model: 'HumanResourcesSalaryTemplate', fk: 'templateId', one: true },
+  },
+  HumanResourcesSalaryTemplate: {
+    components: { model: 'HumanResourcesSalaryTemplateComponent', fk: 'templateId' },
+    employees: { model: 'HumanResourcesMember', fk: 'salaryTemplateId' },
+  },
+  HumanResourcesSalaryTemplateComponent: {
+    template: { model: 'HumanResourcesSalaryTemplate', fk: 'templateId', one: true },
+  },
+  HumanResourcesAttendance: {
+    member: { model: 'HumanResourcesMember', fk: 'memberId', one: true },
+  },
+  HumanResourcesLeave: {
+    member: { model: 'HumanResourcesMember', fk: 'memberId', one: true },
+  },
+  HumanResourcesSalarySlip: {
+    member: { model: 'HumanResourcesMember', fk: 'memberId', one: true },
+  },
+  HumanResourcesInventoryItem: {
+    transactions: { model: 'HumanResourcesInventoryTxn', fk: 'itemId' },
+  },
+  HumanResourcesInventoryTxn: {
+    item: { model: 'HumanResourcesInventoryItem', fk: 'itemId', one: true },
   },
   ProductItem: {
     guide: { model: 'KypGuide', fk: 'productId' },
@@ -781,6 +870,19 @@ export class D1PrismaClient {
   get digitalMarketingTaskTemplate() { return this.model('DigitalMarketingTaskTemplate'); }
   get digitalMarketingTaskLog() { return this.model('DigitalMarketingTaskLog'); }
   get digitalMarketingTaskAttachment() { return this.model('DigitalMarketingTaskAttachment'); }
+  // Human Resources (ad-hoc tasks + fixed/variable expenses).
+  get humanResourcesMember() { return this.model('HumanResourcesMember'); }
+  get humanResourcesTask() { return this.model('HumanResourcesTask'); }
+  get humanResourcesExpense() { return this.model('HumanResourcesExpense'); }
+  get humanResourcesSalaryComponent() { return this.model('HumanResourcesSalaryComponent'); }
+  get humanResourcesSalaryTemplate() { return this.model('HumanResourcesSalaryTemplate'); }
+  get humanResourcesSalaryTemplateComponent() { return this.model('HumanResourcesSalaryTemplateComponent'); }
+  get humanResourcesAttendance() { return this.model('HumanResourcesAttendance'); }
+  get humanResourcesLeave() { return this.model('HumanResourcesLeave'); }
+  get humanResourcesHoliday() { return this.model('HumanResourcesHoliday'); }
+  get humanResourcesSalarySlip() { return this.model('HumanResourcesSalarySlip'); }
+  get humanResourcesInventoryItem() { return this.model('HumanResourcesInventoryItem'); }
+  get humanResourcesInventoryTxn() { return this.model('HumanResourcesInventoryTxn'); }
   // Product Line master (migration 0046).
   get productItem() { return this.model('ProductItem'); }
   get kypGuide() { return this.model('KypGuide'); }
@@ -788,6 +890,9 @@ export class D1PrismaClient {
   get vendorRate() { return this.model('VendorRate'); }
   // LinkedIn daily drafts (migration 0051).
   get linkedinPost() { return this.model('LinkedinPost'); }
+  // Payment Tracker (migration 0069).
+  get debtorInvoice() { return this.model('DebtorInvoice'); }
+  get paymentCollection() { return this.model('PaymentCollection'); }
 
   $on() {}
   $disconnect() {}

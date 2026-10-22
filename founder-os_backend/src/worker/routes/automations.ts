@@ -133,7 +133,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
       if (c.req.param('slug') === 'telecalling') {
         try {
           const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis');
+          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis') || (me?.scopes ?? []).includes('sales-head');
           if (me && !isAdmin) {
             const selfId = await resolveSelfTelecaller(c);
             if (selfId) query.selfAgentId = selfId;
@@ -168,6 +168,23 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
             (query as any).scope = { scope: self, isAdmin: false };
           } else if (me) {
             (query as any).scope = { scope: null, isAdmin: true };
+          }
+        } catch { /* no session → unscoped */ }
+      }
+      if (c.req.param('slug') === 'human-resources') {
+        try {
+          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+          const scopes = (me?.scopes ?? []) as string[];
+          // Anyone granted the HR dashboard gets the complete HR view: every
+          // task, the full roster and all expenses/inventory. No self-scoping.
+          const hasFullView = !!me?.isAdmin || scopes.includes('mis') || scopes.includes('human-resources');
+          if (me && hasFullView) {
+            (query as any).scope = { scope: null, isAdmin: true };
+          } else if (me) {
+            const { resolveSelfHumanResourcesMember } = await import('../../automations/human-resources/service');
+            // Users without HR/MIS access get no cross-user data.
+            const self = await resolveSelfHumanResourcesMember(null, me as any);
+            (query as any).scope = { scope: self, isAdmin: false };
           }
         } catch { /* no session → unscoped */ }
       }

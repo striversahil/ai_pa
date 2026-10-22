@@ -1,6 +1,6 @@
 {
-  "name": "Telecalling",
-  "description": "Unified daily telecaller performance: Lead Conversion (programmatic estimate assignment) + Lead Generation (NeoDove calls/leads, live), with team KPIs and a leaderboard.",
+  "name": "Sales Leaderboard",
+  "description": "Region-based sales leaderboard: R1-R4 ownership, NeoDove call KPIs, 20/80 close-credit split (generator automatic / 80% closer pick), conversion target and risk model.",
   "type": "handler",
   "trigger": {
     "type": "schedule",

@@ -15,7 +15,6 @@ import { AIService } from './modules/ai/service';
 import { EmailService } from './modules/email/service';
 import { checkDatabaseConnection, useInMemoryDb, prisma } from './shared/prisma';
 import { SalesCopilotService } from './automations/zoho-sent-analyzer/service';
-import { runEodRemarkDeduction } from './automations/telecalling/service';
 import { BrainService } from './modules/brain/service';
 import { GoogleSheetsService } from './modules/google_sheets/service';
 import { asyncHandler } from './utils/asyncHandler';
@@ -886,11 +885,8 @@ app.post('/api/trigger/summary', asyncHandler(async (req, res) => {
  * EOD remark deduction (−10 per red-risk estimate held). Scores only —
  * never moves estimates. Mirrors the Worker route of the same path.
  */
-app.post('/api/trigger/telecalling/eod', asyncHandler(async (req, res) => {
-  const day = typeof req.query.day === 'string' ? req.query.day : undefined;
-  const dryRun = req.query.dry === '1';
-  const result = await runEodRemarkDeduction(day, { dryRun });
-  res.status(200).json({ ok: true, ...result });
+app.post('/api/trigger/telecalling/eod', asyncHandler(async (_req, res) => {
+  res.status(200).json({ ok: true, retired: true, message: 'EOD remark deduction retired — region model (founder, 2026-10-22)' });
 }));
 
 /**

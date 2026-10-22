@@ -175,9 +175,15 @@ model Estimate {
   organizationId        String          @default("")
   // Telecaller who originated this estimate = the agent who created the
   // mapping B2B enquiry (Enquiry.estNumber = Estimate.estimateNumber).
-  // Synced on enquiry save + claim button + assignment engine (always wins).
-  // First-Zoho-comment inference is fallback only for unmapped rows.
+  // Synced on enquiry save + claim button (first-Zoho-comment inference is
+  // fallback only for unmapped rows). Generator credit on close = 20% of the
+  // slab; the other 80% is credited by sales-head closer pick.
   createdBy             String?
+  // Sales region owning this estimate (R1–R4; '' = Unmapped). Stamped from
+  // the creating staff's roster region via the mapping enquiry. Estimates with
+  // createdBy but '' region land in the Unmapped bucket until MIS/root/
+  // sales-head links them (region-set endpoint).
+  region                String          @default("")
   // MIS override: estimate is ALWAYS held by this one agent, never re-poached
   // at EOD even when red/zombie.
   lockedTelecallerId    String?
@@ -262,10 +268,15 @@ model Telecaller {
   // Contact details — used to reach the agent and map incentives/payouts.
   phone                   String?
   whatsapp                String?
-  // Lead-conversion specialist flag: only telecallers with this ON receive
-  // estimate follow-up assignments (new deals + EOD re-poaching). Off = the
-  // telecaller still generates leads (NeoDove) but never holds estimates.
+  // Lead-conversion specialist flag: only telecallers with this ON are
+  // eligible as a CLOSER (the 80% share of a close, picked by sales-head).
+  // Off = the telecaller still generates leads (NeoDove) but can never close.
   assignEstimateFollowUps Boolean  @default(true)
+  // Sales hierarchy (founder table, 2026-10-22): 'TL1' | 'TL2' — '' = unset.
+  tlLevel            String   @default("")
+  // Region this staff member works ('R1'–'R4'; '' = unmapped staff, shown
+  // highlighted in the dashboard but gets no region data).
+  region             String   @default("")
   order                   Int      @default(0)
   // Soft delete: hidden from the roster/leaderboard/assignment engine but kept
   // for history; restorable from the MIS Controller.
@@ -311,17 +322,20 @@ model EstimateAssignment {
   @@index([day])
 }
 
-// Event-ledger scoring for the telecalling leaderboard. +100 per converted
-// estimate (credited to the lead generator, holder only as fallback); -10 per
-// red-risk estimate held at the EOD remark run; -15 legacy EOD snatch rows
-// (re-poaching switched OFF — no new ones written). The
-// day field (IST date) lets any timeframe be summed with a simple filter, so the
-// weekly leaderboard restarts at zero naturally each Sunday/Monday.
+// Event-ledger scoring for the sales leaderboard. Per close (region model):
+// the ENQUIRY GENERATOR (Estimate.createdBy) gets a `generator` kind row worth
+// 20% of the close slab, written automatically by recordConversionClose; the
+// CLOSER gets a `closer` kind row worth the other 80%, written by creditCloser
+// Share on the sales-head pick (re-pick rewrites). Legacy rows have kind ''
+// (+100 close fallback / −10 remark / −15 snatch — historic only). The day
+// field (IST date) lets any timeframe be summed with a simple filter, so the
+// weekly leaderboard restarts at zero naturally each Monday.
 model TelecallerScoreEvent {
   id           String     @id @default(uuid())
   telecallerId String
   estimateId   String
-  delta        Int // +100 close · -10 remark · -15 legacy snatch
+  kind         String     @default("") // "" legacy · "generator" · "closer"
+  delta        Int // +slab share on close · −10 remark · −15 snatch (legacy)
   day          String // YYYY-MM-DD the event occurred (IST)
   reason       String?
   createdAt    DateTime   @default(now())
@@ -1165,6 +1179,278 @@ model DigitalMarketingTaskAttachment {
   @@index([logId])
 }
 
+// ── Human Resources (ad-hoc delegated task list + fixed/variable expenses) ──
+model HumanResourcesMember {
+  id                    String   @id @default(uuid())
+  name                  String
+  email                 String?
+  phone                 String?
+  designation           String?
+  employeeCode          String?
+  photoUrl              String?
+  department            String?
+  joiningDate           String?
+  exitDate              String?
+  employmentType        String?  @default("full_time")
+  active                Boolean  @default(true)
+  dateOfBirth           String?
+  address               String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  pan                   String?
+  aadhaarLast4          String?
+  bankName              String?
+  bankAccountNumber     String?
+  bankIfsc              String?
+  pfNumber              String?
+  esiNumber             String?
+  notes                 String?
+  salaryTemplateId      String?
+  salaryTemplate        HumanResourcesSalaryTemplate? @relation(fields: [salaryTemplateId], references: [id], onDelete: SetNull)
+  salaryInputMode       String?  // gross | basic
+  salaryInputAmount     Float?
+  salaryTemplateAppliedAt DateTime?
+  order                 Int      @default(0)
+  deleted               Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  tasks                 HumanResourcesTask[]
+  salaryComponents      HumanResourcesSalaryComponent[]
+  attendance            HumanResourcesAttendance[]
+  leaves                HumanResourcesLeave[]
+  salarySlips           HumanResourcesSalarySlip[]
+
+  @@index([deleted, order])
+  @@index([deleted, active, order])
+}
+
+model HumanResourcesSalaryComponent {
+  id            String                @id @default(uuid())
+  memberId      String
+  member        HumanResourcesMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  name          String
+  componentType String                // earning | deduction
+  calcType      String                @default("fixed") // fixed | percent_basic | percent_gross | formula | balance
+  value         Float
+  formula       String?
+  code          String?
+  cap           Float?
+  floor         Float?
+  templateId    String?
+  template      HumanResourcesSalaryTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  isBasic       Boolean               @default(false)
+  order         Int                   @default(0)
+  deleted       Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@index([memberId, deleted, order])
+  @@index([templateId])
+}
+
+model HumanResourcesSalaryTemplate {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  inputMode   String   @default("gross") // gross | basic
+  isDefault   Boolean  @default(false)
+  deleted     Boolean  @default(false)
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  components  HumanResourcesSalaryTemplateComponent[]
+  snapshots   HumanResourcesSalaryComponent[]
+  employees   HumanResourcesMember[]
+
+  @@index([deleted, isDefault])
+}
+
+model HumanResourcesSalaryTemplateComponent {
+  id            String   @id @default(uuid())
+  templateId    String
+  template      HumanResourcesSalaryTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  componentType String   @default("earning") // earning | deduction
+  calcType      String   @default("fixed") // fixed | percent_basic | percent_gross | formula | balance
+  value         Float    @default(0)
+  formula       String?
+  cap           Float?
+  floor         Float?
+  isBasic       Boolean  @default(false)
+  order         Int      @default(0)
+  deleted       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([templateId, deleted, order])
+}
+
+model HumanResourcesAttendance {
+  id        String               @id @default(uuid())
+  memberId  String
+  member    HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  date      String               // YYYY-MM-DD IST
+  inTime    String?              // HH:mm IST
+  outTime   String?              // HH:mm IST
+  status    String               @default("present") // present | half_day | absent | holiday
+  notes     String?
+  createdBy String?
+  updatedBy String?
+  deleted   Boolean              @default(false)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@unique([memberId, date])
+  @@index([date, deleted])
+}
+
+model HumanResourcesLeave {
+  id        String               @id @default(uuid())
+  memberId  String
+  member    HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  leaveType String               // casual | sick | earned | unpaid | other
+  paid      Boolean              @default(true)
+  startDate String               // YYYY-MM-DD IST
+  endDate   String               // YYYY-MM-DD IST
+  days      Float                @default(0)
+  reason    String?
+  createdBy String?
+  updatedBy String?
+  deleted   Boolean              @default(false)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([memberId, startDate])
+  @@index([startDate, endDate, deleted])
+}
+
+model HumanResourcesHoliday {
+  id        String   @id @default(uuid())
+  date      String   @unique // YYYY-MM-DD IST
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+}
+
+model HumanResourcesSalarySlip {
+  id                 String               @id @default(uuid())
+  memberId           String
+  member             HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  month              String               // YYYY-MM IST
+  status             String               @default("draft") // draft | finalized | paid
+  employeeName       String
+  employeeCode       String?
+  designation        String?
+  department         String?
+  workingDays        Float                @default(0)
+  payableDays        Float                @default(0)
+  presentDays        Float                @default(0)
+  halfDays           Float                @default(0)
+  absentDays         Float                @default(0)
+  paidLeaveDays      Float                @default(0)
+  unpaidLeaveDays    Float                @default(0)
+  holidayDays        Float                @default(0)
+  unmarkedDays       Float                @default(0)
+  monthlyGross       Float                @default(0)
+  earnedGross        Float                @default(0)
+  absenceDeduction   Float                @default(0)
+  componentDeductions Float               @default(0)
+  manualDeductions   Float                @default(0)
+  totalDeductions    Float                @default(0)
+  netPay             Float                @default(0)
+  snapshot           String               @default("{}")
+  notes              String?
+  finalizedAt        DateTime?
+  paidAt             DateTime?
+  createdBy          String?
+  updatedBy          String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@unique([memberId, month])
+  @@index([month, status])
+}
+
+model HumanResourcesTask {
+  id           String                 @id @default(uuid())
+  title        String
+  description  String?
+  assignedToId String?
+  assignedTo   HumanResourcesMember?  @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  dueDate      String // YYYY-MM-DD IST
+  dueTime      String? // HH:mm IST
+  priority     String   @default("normal") // low | normal | high | urgent
+  status       String   @default("pending") // pending | in_progress | done
+  remark       String?
+  createdBy    String?
+  updatedBy    String?
+  deleted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([deleted, status, dueDate])
+  @@index([assignedToId, dueDate])
+}
+
+model HumanResourcesExpense {
+  id           String   @id @default(uuid())
+  title        String
+  expenseType  String // fixed | variable
+  category     String?
+  amount       Float
+  expenseDate  String // YYYY-MM-DD IST
+  expenseMonth String // YYYY-MM IST
+  paymentMode  String?
+  notes        String?
+  createdBy    String?
+  updatedBy    String?
+  deleted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([deleted, expenseMonth, expenseType])
+  @@index([expenseDate])
+}
+
+model HumanResourcesInventoryItem {
+  id           String                       @id @default(uuid())
+  name         String
+  category     String?
+  unit         String                       @default("pcs")
+  reorderLevel Float                        @default(0)
+  unitCost     Float?
+  notes        String?
+  order        Int                          @default(0)
+  deleted      Boolean                      @default(false)
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+  transactions HumanResourcesInventoryTxn[]
+
+  @@index([deleted, order])
+}
+
+model HumanResourcesInventoryTxn {
+  id        String                     @id @default(uuid())
+  itemId    String
+  item      HumanResourcesInventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  txnType   String // opening | purchase | consumption | adjustment
+  quantity  Float
+  txnDate   String // YYYY-MM-DD IST
+  txnMonth  String // YYYY-MM IST
+  notes     String?
+  expenseId String? // optional expense created with a stock-in
+  createdBy String?
+  deleted   Boolean                    @default(false)
+  createdAt DateTime                   @default(now())
+
+  @@index([itemId, txnDate])
+  @@index([txnMonth, txnType])
+  @@index([expenseId])
+}
+
 model LinkedinPost {
   id            String   @id @default(uuid())
   batchDate     String
@@ -1187,4 +1473,66 @@ model LinkedinPost {
   @@unique([batchDate, topic])
   @@index([batchDate])
   @@index([status])
+}
+
+// ── Payment Tracker (migration 0069) ─────────────────────────────────────────
+// Debtors ledger imported by pasting the accounts ageing sheet (Excel clipboard
+// TSV). One row per invoice; upsert key = (invoiceNo, customerName).
+model DebtorInvoice {
+  id                String   @id @default(uuid())
+  customerName      String
+  invoiceNo         String
+  invoiceDate       String?
+  creditPeriodDays  Int?
+  dueDate           String?
+  invoiceAmount     Float    @default(0)
+  baseReceived      Float    @default(0)
+  collectedAtImport Float    @default(0)
+  contactName       String   @default("")
+  contactPhone      String   @default("")
+  contactMail       String   @default("")
+  lastCallDate      String?
+  callStatus        String   @default("")
+  paymentStatus     String   @default("")
+  remarks           String   @default("")
+  accountStatus     String   @default("")
+  mis               String   @default("")
+  accountsRemarks   String   @default("")
+  employee          String   @default("")
+  state             String   @default("")
+  region            String   @default("")
+  ledgerLink        String   @default("")
+  importedBy        String   @default("")
+  lastImportAt      String?
+  deleted           Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now())
+
+  @@unique([invoiceNo, customerName])
+  @@index([customerName])
+  @@index([dueDate])
+}
+
+// Collections ledger: pasted receipts / credit notes (negative = debit note).
+// Matched to DebtorInvoice rows by invoice no, else the customer's oldest
+// open invoice; 'none' rows stay visible in the ledger for manual fix-up.
+model PaymentCollection {
+  id                String   @id @default(uuid())
+  customerName      String
+  invoiceNo         String   @default("")
+  collectionDate    String?
+  amount            Float    @default(0)
+  mode              String   @default("")
+  remarks           String   @default("")
+  weekStart         String   @default("")
+  matchStatus       String   @default("none")
+  resolvedInvoiceId String?
+  dedupKey          String   @unique
+  importedBy        String   @default("")
+  deleted           Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  @@index([customerName])
+  @@index([collectionDate])
+  @@index([resolvedInvoiceId])
 }

@@ -256,12 +256,15 @@ export async function lookupEstimateStatus(estNumber: unknown): Promise<{
 }
 
 /**
- * Claim flow for the B2B button: check exists → if held by someone else,
- * report holder only (no steal); if free, assign to the enquiry's agent
- * AND overwrite createdBy (enquiry always wins). Fail-open, never throws.
- * estimateId pins the row when the agent picked one org of a cross-org
- * number clash; without a pin an ambiguous number returns
- * { ok:false, ambiguous:true, matches } instead of linking the wrong org.
+ * Claim flow for the B2B button (region model): check exists → if the
+ * generator (createdBy) is someone else, report who generated it only (no
+ * steal); if unclaimed, stamp the enquiry's agent as the generator AND aim the
+ * estimate at the agent's roster region. The enquiry always wins on region
+ * when the estimate is unmapped. estimateId pins the row when the agent
+ * picked one org of a cross-org number clash; without a pin an ambiguous
+ * number returns { ok:false, ambiguous:true, matches } instead of linking the
+ * wrong org. (Response keeps the legacy holder* fields — the acknowledged
+ * "holder" in the region model is the current generator.)
  */
 export async function claimEstimateForAgent(
   estNumber: unknown,
@@ -323,25 +326,40 @@ export async function claimEstimateForAgent(
   if (!est) return { ok: false, error: 'Estimate not found in Zoho sync yet' };
   const resolvedEstimateId = String(est.estimateId);
   const organizationId = String((est as any).organizationId ?? '');
-  const holder = (est as any).assignedTelecallerId ? String((est as any).assignedTelecallerId) : null;
-  if (holder && holder !== agent) {
-    return { ok: false, alreadyAssigned: true, estimateId: resolvedEstimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
+  // Region model: the "holder" everyone sees is the generator (createdBy).
+  const generator = (est as any).createdBy ? String((est as any).createdBy) : null;
+  if (generator && generator !== agent) {
+    return { ok: false, alreadyAssigned: true, estimateId: resolvedEstimateId, organizationId, holderId: generator, holderName: await telecallerName(generator) };
   }
-  if (holder === agent) {
-    // Already mine — still ensure creator reflects the enquiry.
-    await syncEstimateCreatorFromEnquiry(num, agent, organizationId);
-    return { ok: true, alreadyMine: true, estimateId: resolvedEstimateId, organizationId, holderId: holder, holderName: await telecallerName(holder) };
+  if (generator === agent) {
+    // Already the enquiry author's — still ensure the region reflects the
+    // author's roster region (no-op when already set).
+    try {
+      const self: any = await (prisma as any).telecaller.findUnique({ where: { id: agent }, select: { region: true } });
+      const staffRegion = String(self?.region ?? '');
+      if (staffRegion && !String((est as any).region ?? '')) {
+        await (prisma as any).estimate.update({
+          where: { estimateId: resolvedEstimateId },
+          data: { region: staffRegion },
+        });
+      }
+    } catch { /* best-effort */ }
+    return { ok: true, alreadyMine: true, estimateId: resolvedEstimateId, organizationId, holderId: generator, holderName: await telecallerName(generator) };
   }
-  // Free → assign + stamp creator (enquiry always wins).
+  // Unclaimed → stamp creator (enquiry always wins) + aim at the author's
+  // region. No individual assignment, no ledger row.
   try {
+    let staffRegion = '';
+    try {
+      const self: any = await (prisma as any).telecaller.findUnique({ where: { id: agent }, select: { region: true } });
+      staffRegion = String(self?.region ?? '');
+    } catch { /* best-effort */ }
+    const data: Record<string, unknown> = { createdBy: agent };
+    if (staffRegion && !String((est as any).region ?? '')) data.region = staffRegion;
     await (prisma as any).estimate.update({
       where: { estimateId: resolvedEstimateId },
-      data: { assignedTelecallerId: agent, createdBy: agent },
+      data,
     });
-    try {
-      const { recordAssignment } = await import('../../automations/telecalling/service');
-      await recordAssignment(resolvedEstimateId, agent, reason);
-    } catch { /* ledger best-effort */ }
     try {
       const { invalidateRiskCache } = await import('../../automations/telecalling/service');
       await invalidateRiskCache();

@@ -1,31 +1,13 @@
-// enquiry-links.ts — enquiry→estimate lead attribution.
+// enquiry-links.ts — enquiry→estimate lead attribution (region model).
 //
-// Verbatim extract from service.ts (Phase-3 split): linking a Zoho estimate
-// number on an enquiry row to the enquiry's agent (Lead By), plus the daily
-// self-heal sweep. Assigns ONLY free estimates; fills createdBy (generator
-// credit) ONLY when empty.
+// Linking a Zoho estimate number (Enquiry.estNumber) on an enquiry row to the
+// enquiry's agent stamps the estimate's ownership: `createdBy` (generator
+// credit 20%) when empty, and `region` from the agent's roster region —
+// region-ownership, not an individual assignment. Assigns ONLY `sent`
+// estimates; never steals a converted estimate.
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { invalidateRiskCache } from './risk';
-import { recordAssignment } from './rotation';
-
-// ── Creator resolution ───────────────────────────────────────────────────────
-// REMOVED (founder rule): first-Zoho-comment creator inference
-// (normName/creatorMatches/inferEstimateCreator). Estimate.createdBy ("Lead
-// of" / "By") is written ONLY from the mapping B2B enquiry
-// (modules/enquiries/estimate-link.ts) — never inferred from comments.
-
-// ── Enquiry-linked lead attribution ──────────────────────────────────────────
-// Lead-by-estimate flows through the Sales Enquiries dashboard (NOT NeoDove and
-// NOT Zoho comment signatures): an enquiry carrying a Zoho estimate number
-// (Enquiry.estNumber — optional in the New Enquiry form, mandatory at
-// Mark-as-sent) links that estimate to the enquiry's agent
-// (Enquiry.assignedAgentId, a Telecaller id auto-resolved from the creator's
-// login). Rules: assign ONLY when the estimate is free (unassigned `sent`);
-// never steal a held/converted/locked/skipped estimate; fill `createdBy`
-// (generator credit) ONLY when empty so historical AI-signature credits stand.
-// A missing estimate (Zoho hasn't synced it yet) is simply skipped here — the
-// daily sweep below picks it up once it arrives.
 
 export interface EnquiryLinkResult {
   linked: boolean;
@@ -45,7 +27,7 @@ export async function linkEnquiryEstimate(opts: {
   if (!agentId) return { linked: false, reason: 'empty-agent' };
   try {
     const tc = await prisma.telecaller.findUnique({ where: { id: agentId } });
-    if (!tc || (tc as any).deleted || (tc as any).absentSince) {
+    if (!tc || (tc as any).deleted) {
       return { linked: false, reason: 'agent-invalid' };
     }
     // Exact match first, then an uppercase fallback for typo'd entries. On a
@@ -65,24 +47,16 @@ export async function linkEnquiryEstimate(opts: {
     }
     if (!est) return { linked: false, reason: 'not-synced' };
     if (est.status !== 'sent') return { linked: false, reason: `status-${est.status}` };
-    if ((est as any).skipAssignment) return { linked: false, reason: 'skip-assignment' };
-    if ((est as any).lockedTelecallerId) return { linked: false, reason: 'locked' };
-    const holder = (est as any).assignedTelecallerId ? String((est as any).assignedTelecallerId) : null;
-    if (holder && holder !== agentId) return { linked: false, reason: 'held' };
+    const hasCreator = !!(est as any).createdBy;
+    const estRegion = String((est as any).region ?? '');
+    const staffRegion = String((tc as any).region ?? '');
     const updates: Record<string, unknown> = {};
-    if (!holder) updates.assignedTelecallerId = agentId;
-    if (!(est as any).createdBy) updates.createdBy = agentId;
+    if (!hasCreator) updates.createdBy = agentId;
+    if (staffRegion && !estRegion) updates.region = staffRegion;
     if (Object.keys(updates).length === 0) return { linked: false, reason: 'already-linked' };
     await prisma.estimate.update({ where: { estimateId: est.estimateId }, data: updates });
-    if (!holder) {
-      await recordAssignment(
-        est.estimateId,
-        agentId,
-        `Enquiry link — ${est.estimateNumber}${opts.label ? ` (${opts.label})` : ''}`,
-      );
-    }
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    logger.info({ estimateNumber: est.estimateNumber, agentId }, 'enquiry-estimate link applied');
+    logger.info({ estimateNumber: est.estimateNumber, agentId, region: staffRegion }, 'enquiry-estimate link applied');
     return { linked: true, reason: 'linked' };
   } catch (e: any) {
     logger.warn({ err: e?.message, estNo }, 'linkEnquiryEstimate failed');
@@ -92,10 +66,10 @@ export async function linkEnquiryEstimate(opts: {
 
 /**
  * Daily self-heal: resolve every enquiry→estimate link whose estimate has
- * since synced (or that predates this feature). Idempotent — already-held or
- * already-linked rows no-op. Runs inside runLeadConversion so no new cron or
- * sync-code hook is needed; the pending queue is simply "enquiries with an
- * estNumber whose estimate isn't linked yet".
+ * since synced (or that predates this feature). Idempotent — already-linked
+ * rows no-op. Runs inside runLeadConversion so no new cron or sync-code hook
+ * is needed; the pending queue is simply "enquiries with an estNumber whose
+ * estimate isn't linked yet".
  */
 export async function sweepEnquiryEstimateLinks(): Promise<{ linked: number; scanned: number }> {
   let linked = 0;

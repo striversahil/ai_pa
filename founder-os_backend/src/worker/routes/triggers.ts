@@ -2,27 +2,20 @@
 // routes/triggers.ts — automation trigger endpoints (GitHub Actions cron calls
 // these) + internal run-automation for the async runner.
 // ─────────────────────────────────────────────────────────────────────────────
+// Region model (founder, 2026-10-22): the EOD remark-deduction run is retired
+// (no individual holds, no penalties). The route stays staged as a stub so the
+// daily workflow keeps firing harmlessly across deploy windows; remove it
+// together with the workflow when cron.ts drops the slot.
 import type { Hono } from 'hono';
 import { deps, requireSecret, getEntryOrReload, notifyLive, type Bindings } from '../context';
 import { LiveEvent } from '../../live';
-import { runEodRemarkDeduction } from '../../automations/telecalling/service';
 
 export function registerTriggerRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // EOD remark deduction (−10 per red-risk estimate held). Fired by the 21:00
-  // IST telecalling-eod job. Never moves estimates — scores only.
-  // Registered before /:slug so the two-segment path can never collide.
+  // Retired EOD remark deduction — kept as a stub while the GH daily workflow
+  // still dispatches it (telecalling-eod-deduction job). Harmless: no writes.
   app.post('/api/trigger/telecalling/eod', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const day = c.req.query('day') || undefined;
-    // ?dry=1 previews tonight's charges (per-agent counts, shields,
-    // close catch-ups) without writing anything — MIS planning + verification.
-    const dryRun = c.req.query('dry') === '1';
-    const result = await runEodRemarkDeduction(day, { dryRun });
-    if (!dryRun) {
-      notifyLive(c, { type: LiveEvent.Telecalling });
-      notifyLive(c, { type: 'automation', slug: 'telecalling' });
-    }
-    return c.json({ ok: true, ...result });
+    return c.json({ ok: true, retired: true, message: 'EOD remark deduction retired — region model (founder, 2026-10-22)' });
   });
 
   app.post('/api/trigger/:slug', async (c) => {

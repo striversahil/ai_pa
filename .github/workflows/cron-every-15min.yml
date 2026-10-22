@@ -23,16 +23,6 @@ concurrency:
   group: cron-every-15min
 
 jobs:
-  telecalling-effort-sync:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: effort-sync (NeoDove call-log snapshots for snatch shield)
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-        run: node scripts/effort-sync-runner.js
-
   # Zoho Books pings live here and ONLY here (one workflow, serial group).
   # crm snapshots the active sales-orders pipeline; the analyzer full-syncs
   # estimates + sales orders (refreshing sales-orders-today first thing, so no

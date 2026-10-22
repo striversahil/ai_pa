@@ -32,8 +32,10 @@ import { registerAccountsRoutes } from './worker/routes/accounts';
 import { registerCopilotRoutes } from './worker/routes/copilot';
 import { registerProductLineRoutes } from './worker/routes/product-line';
 import { registerDigitalMarketingRoutes } from './worker/routes/digital-marketing';
+import { registerHumanResourcesRoutes } from './worker/routes/human-resources';
 import { registerLinkedinRoutes } from './worker/routes/linkedin';
 import { registerEmailRoutes } from './worker/routes/email';
+import { registerPaymentTrackerRoutes } from './worker/routes/payment-tracker';
 import { registerEventsRoute } from './worker/routes/events';
 import { scheduled } from './worker/cron';
 
@@ -59,8 +61,10 @@ registerAccountsRoutes(app);
 registerCopilotRoutes(app);
 registerProductLineRoutes(app);
 registerDigitalMarketingRoutes(app);
+registerHumanResourcesRoutes(app);
 registerLinkedinRoutes(app);
 registerEmailRoutes(app);
+registerPaymentTrackerRoutes(app);
 registerMarketingRoutes(app);
 registerEventsRoute(app);
 
