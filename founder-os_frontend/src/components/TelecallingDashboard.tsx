@@ -2409,7 +2409,7 @@ function PendingPicksSection({
         <div className="space-y-1.5">
           {pending.map((p) => {
             const region = p.region || "";
-            const eligible = rosterRows.filter((t) => t.closerEligible !== false && (!region || !t.region || t.region === region));
+            const eligible = rosterRows.filter((t) => t.assignEstimateFollowUps && (!region || !t.region || t.region === region));
             return (
               <div key={p.estimateId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
                 <div className="min-w-0">
