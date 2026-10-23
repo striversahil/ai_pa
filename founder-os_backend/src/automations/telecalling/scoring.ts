@@ -102,10 +102,19 @@ export async function recordConversionClose(estimateId: string, opts?: { day?: s
     const generator = (est as any).createdBy || null;
     if (!generator) return false;
     const existing = await prisma.telecallerScoreEvent.findMany({
-      where: { estimateId, kind: { in: ['generator', 'closer'] } },
-      select: { kind: true },
+      where: { estimateId },
+      select: { kind: true, delta: true },
     });
-    if ((existing as any[]).some((e) => String(e.kind ?? '') === 'generator')) return false;
+    // A legacy full-slab/half close row also means the deal is already
+    // credited. Without this, a status replay after the October
+    // reclassification would add a second 20% generator row on top of the
+    // reclassified legacy credit.
+    const alreadyCredited = (existing as any[]).some((e) => {
+      const kind = String(e.kind ?? '');
+      const delta = Number(e.delta) || 0;
+      return kind === 'generator' || (kind === '' && delta > 0 && isCloseDelta(delta));
+    });
+    if (alreadyCredited) return false;
     const day = opts?.day && DATE_RE.test(opts.day) ? opts.day : istDate();
     const total = Math.round(Number((est as any).total ?? 0) || 0);
     const { generator: gPts, closer: cPts } = splitClosePoints((est as any).total);

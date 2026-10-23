@@ -5,6 +5,7 @@ import { Trash2 } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useLiveQuery, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
+import { TabBar } from "@/components/ui/TabBar";
 import { KNOWN_ORG_LABELS } from "./zoho/orgs";
 import { REGIONS, type RegionId } from "@/telecalling/regions";
 
@@ -38,7 +39,7 @@ interface LeaderRow {
   /** Region model: the staff's region ('' = unmapped). */
   region?: string;
   regionName?: string;
-  /** Ledger points (20% generator + 80% closer credited). */
+  /** Accepted points: full slab once per accepted deal in this lead region. */
   points?: number;
   /** Closed value credited to this staff (generator + closer). */
   closedValue?: number;
@@ -108,6 +109,17 @@ interface UnmappedItem {
   lastSync?: string | null;
 }
 
+interface UnmappedAcceptedItem {
+  estimateId: string;
+  estimateNumber?: string | null;
+  customerName?: string | null;
+  total?: number | null;
+  status?: string | null;
+  date?: string | null;
+  generatedBy?: string | null;
+  hasCreator?: boolean;
+}
+
 interface DashData {
   meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null; canManage?: boolean; taxonomy?: { id: string; name: string; tl: string; states: string[] }[]; epoch?: string | null; viewer?: { staffId: string | null; name: string | null; region: string | null; tlLevel: string | null } | null };
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; acceptedValue?: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
@@ -131,6 +143,8 @@ interface DashData {
   pendingPicks?: PendingPick[];
   /** Unmapped open estimates (managers only). */
   unmapped?: { count: number; value: number; items: UnmappedItem[] } | null;
+  /** Accepted estimates with no lead region (managers only). */
+  unmappedAccepted?: { count: number; value: number; points: number; items: UnmappedAcceptedItem[] } | null;
   /** History reset epoch — points read only from this day onward. */
   epoch?: string | null;
 }
@@ -852,6 +866,7 @@ function adaptDashData(d: any): DashData {
     unmappedStaff: (d?.unmappedStaff ?? []).map((s: any) => adaptLeaderRow(s, null, targets)),
     pendingPicks: d?.pendingPicks ?? [],
     unmapped: d?.unmapped ?? null,
+    unmappedAccepted: d?.unmappedAccepted ?? null,
     epoch: d?.meta?.epoch ?? null,
   };
 }
@@ -1476,25 +1491,11 @@ export default function TelecallingDashboard() {
       <div className="flex flex-col gap-6">
         {/* Tabs (full-width horizontal row) */}
         <aside className="w-full shrink-0">
-          <nav className="flex flex-row flex-wrap gap-2">
-            {TABS.filter((t) => t.key !== "controller" || canManageRoster).map((t) => {
-              const active = view === t.key;
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => setView(t.key)}
-                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors text-left ${
-                    active
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                  }`}
-                >
-                  <span className="text-base leading-none">{t.icon}</span>
-                  {t.label}
-                </button>
-              );
-            })}
-          </nav>
+          <TabBar
+            items={TABS.filter((t) => t.key !== "controller" || canManageRoster)}
+            active={view}
+            onChange={setView}
+          />
         </aside>
 
         {/* Content (seamless switch — queries stay mounted) */}
@@ -1553,7 +1554,7 @@ export default function TelecallingDashboard() {
                   <div>
                     <h3 className="text-lg font-bold">🏅 Region performance — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
                     <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      Ranked by points. Regions own their estimates — generator (20%) and closer (80%) credits roll up here.
+                      Ranked by accepted points. Each accepted deal's full slab counts once in the lead creator's region — individual 20/80 credits are separate.
                     </p>
                   </div>
                   <span className="text-[11px] font-mono text-zinc-500 dark:text-zinc-400">{dashRegions.length} regions</span>
@@ -1606,7 +1607,7 @@ export default function TelecallingDashboard() {
                             </td>
                             <td className="py-2 pr-4 text-right whitespace-nowrap">
                               <div className="flex items-center justify-end gap-2">
-                                <span className="font-extrabold text-indigo-300 font-mono">{fmtNum(r.points)}</span>
+                                <span title="Full accepted slab for deals whose lead creator belongs to this region" className="font-extrabold text-indigo-300 font-mono">{fmtNum(r.points)}</span>
                                 {regionTopPoints > 0 && (
                                   <span className="hidden sm:inline-block w-16 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden" title={`${pct}% of the leading region`}>
                                     <span className={`block h-full rounded-full ${r.id === regionLeader ? "bg-amber-400" : "bg-indigo-400"}`} style={{ width: `${Math.max(6, pct)}%` }} />
@@ -2314,6 +2315,7 @@ export default function TelecallingDashboard() {
                 />
                 <UnmappedSection
                   unmapped={unmappedBlock}
+                  unmappedAccepted={dash.data?.unmappedAccepted ?? convDash.data?.unmappedAccepted ?? null}
                   busy={busy}
                   setBusy={setBusy}
                   setError={setRosterError}
@@ -2610,12 +2612,14 @@ function PendingPicksSection({
  *  KRA and the leaderboard count it. */
 function UnmappedSection({
   unmapped,
+  unmappedAccepted,
   busy,
   setBusy,
   setError,
   refreshAll,
 }: {
   unmapped: DashData["unmapped"];
+  unmappedAccepted: DashData["unmappedAccepted"];
   busy: boolean;
   setBusy: (b: boolean) => void;
   setError: (e: string | null) => void;
@@ -2689,6 +2693,64 @@ function UnmappedSection({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {unmappedAccepted && unmappedAccepted.count > 0 && (
+        <div className="mt-4 pt-4 border-t border-amber-500/20">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <div>
+              <h4 className="text-sm font-bold text-amber-700 dark:text-amber-400">Accepted, no lead region</h4>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                Accepted deals outside every region — they add no points or wins until linked.
+                Rows without a lead creator stay uncredited even after a region is picked.
+              </p>
+            </div>
+            <span className="text-[11px] text-zinc-600 dark:text-zinc-400 font-mono">
+              {unmappedAccepted.count} · ₹{fmtNum(unmappedAccepted.value)} · {fmtNum(unmappedAccepted.points)} pts unlinked
+            </span>
+          </div>
+          <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+            {(unmappedAccepted.items ?? []).map((it) => (
+              <div key={it.estimateId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-white dark:bg-zinc-950 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate flex items-center gap-1.5">
+                    {it.customerName ?? "—"}
+                    {!it.hasCreator && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-500 font-bold">No lead creator</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">
+                    {it.estimateNumber ?? it.estimateId} · ₹{fmtNum(Number(it.total ?? 0))} · {it.status ?? ""}
+                    {it.date ? ` · ${it.date}` : ""}
+                    {it.generatedBy ? ` · by ${it.generatedBy}` : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={regionBy[it.estimateId] ?? ""}
+                    onChange={(e) => setRegionBy((prev) => ({ ...prev, [it.estimateId]: e.target.value as RegionId }))}
+                    className="px-2 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
+                  >
+                    <option value="">Region…</option>
+                    {REGIONS.map((r) => <option key={r.id} value={r.id}>{r.id} · {r.name}</option>)}
+                  </select>
+                  <button
+                    onClick={() => void link(it.estimateId)}
+                    disabled={busy || !regionBy[it.estimateId]}
+                    className="text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 disabled:opacity-50"
+                  >
+                    Link
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {unmappedAccepted.count > (unmappedAccepted.items?.length ?? 0) && (
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-600 mt-1">
+              Showing the first {unmappedAccepted.items?.length ?? 0} of {unmappedAccepted.count}.
+            </p>
+          )}
         </div>
       )}
     </section>

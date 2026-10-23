@@ -513,6 +513,19 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     logger.warn({ err: e?.message }, 'close-estimate totals read failed — won ₹ falls back to 0');
   }
 
+  // Region accepted points: full slab once per credited accepted estimate,
+  // attributed to the estimate's LEAD region (Estimate.region), not to the
+  // roster region of whoever happened to hold the 80% closer share. This is
+  // why a region's points can differ from the sum of its members' ledger
+  // points (pending closers, moved legacy halve, deleted actors).
+  const regionPointsById = new Map<string, number>();
+  for (const eid of allWonIds) {
+    const total = valueByEstimate.get(eid);
+    if (total === undefined) continue;
+    const region = regionByEstimate.get(eid) ?? '';
+    regionPointsById.set(region, (regionPointsById.get(region) ?? 0) + closePointsFor(total));
+  }
+
   // Live pipeline risk over the open `sent` estimates — served from the 15-min
   // cache (D1 row-read budget protection). Informational only.
   const nowMs = Date.now();
@@ -547,6 +560,47 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const unmappedValue = unmappedCount > 0
     ? (sentOpen as any[]).filter((e) => !String(e.region ?? '')).reduce((s: number, e: any) => s + (Number(e.total ?? 0) || 0), 0)
     : 0;
+
+  // Accepted but not yet linked to a lead region — data-quality bucket for
+  // managers. These deals cannot land on a region card until linked; the 20%
+  // creator share may also be missing (no enquiry mapping).
+  const acceptedFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
+  const acceptedTo = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
+  let unmappedAccepted: {
+    count: number;
+    value: number;
+    points: number;
+    items: Array<Record<string, unknown>>;
+  } = { count: 0, value: 0, points: 0, items: [] };
+  try {
+    const rows = await prisma.estimate.findMany({
+      where: {
+        status: { in: ['accepted', 'confirmed'] },
+        region: '',
+        date: { gte: acceptedFrom, lte: acceptedTo },
+      },
+      select: { estimateId: true, estimateNumber: true, customerName: true, total: true, createdBy: true, status: true, date: true },
+      orderBy: { date: 'desc' },
+    });
+    const items = (rows as any[]) ?? [];
+    unmappedAccepted = {
+      count: items.length,
+      value: Math.round(items.reduce((sum, e) => sum + (Number(e.total ?? 0) || 0), 0)),
+      points: items.reduce((sum, e) => sum + closePointsFor(e.total), 0),
+      items: items.slice(0, 25).map((e) => ({
+        estimateId: e.estimateId,
+        estimateNumber: e.estimateNumber,
+        customerName: e.customerName,
+        total: Number(e.total ?? 0) || 0,
+        status: e.status,
+        date: e.date,
+        generatedBy: e.createdBy ? nameById.get(String(e.createdBy)) ?? null : null,
+        hasCreator: !!String(e.createdBy ?? ''),
+      })),
+    };
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'unmapped accepted lookup failed');
+  }
 
   // ── Pending closer picks (sales-head pick-up queue) ────────────────────────
   let pendingPicks: Array<Record<string, unknown>> = [];
@@ -653,14 +707,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   for (const def of REGIONS) {
     const members = (telecallers as any[]).filter((t) => String((t as any).region ?? '') === def.id)
       .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
-    const gWonIds = new Set<string>();
-    for (const m of members) {
-      for (const eid of wonGenIdsByTc.get(m.id) ?? []) gWonIds.add(eid);
-      for (const eid of wonCloserIdsByTc.get(m.id) ?? []) gWonIds.add(eid);
-    }
-    // Region won counts estimate ids whose LIVE region matches (a re-aim
-    // moves the win with the region).
-    const regionWonIds = [...gWonIds].filter((eid) => regionByEstimate.get(eid) === def.id);
+    // Region wins/points are attributed by the ESTIMATE's lead region, not
+    // by which staff member's ledger row carried the credit. Deduped by
+    // estimate id via allWonIds, so a 20/80 pair still counts one deal.
+    const regionWonIds = allWonIds.filter((eid) => regionByEstimate.get(eid) === def.id);
     const regionWonValue = regionWonIds.reduce((s, eid) => s + (valueByEstimate.get(eid) ?? 0), 0);
     const open = openByRegion.get(def.id) ?? { count: 0, value: 0 };
     const callsAttempted = members.reduce((s, m) => s + m.callsAttempted, 0);
@@ -668,7 +718,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const callsNotConnected = members.reduce((s, m) => s + m.callsNotConnected, 0);
     const talkTimeSec = members.reduce((s, m) => s + m.talkTimeSec, 0);
     const leadsGenerated = members.reduce((s, m) => s + m.leadsGenerated, 0);
-    const points = members.reduce((s, m) => s + m.points, 0);
     const connectedTarget = CONNECTED_CALLS_PER_DAY * workingDays;
     const connectedPct = connectedTarget > 0 ? Math.round((callsConnected / connectedTarget) * 100) : 0;
     const connectedStatus: 'green' | 'amber' | 'red' =
@@ -690,7 +739,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       callsConnected,
       callsNotConnected,
       talkTimeSec,
-      points,
+      points: regionPointsById.get(def.id) ?? 0,
       kra: { connectedTarget, connectedPct, connectedStatus, leadsTarget, leadsPct, leadsStatus },
       staff: members as unknown as Array<Record<string, unknown>>,
     });
@@ -1050,6 +1099,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         value: Math.round(unmappedValue),
         items: unmappedSent,
       },
+      // Accepted deals still outside any region (lead-source region unknown).
+      unmappedAccepted,
       // Awaiting a closer pick (80% share pending sales-head decision).
       pendingPicks,
     } : {}),

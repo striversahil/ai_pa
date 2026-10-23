@@ -9,6 +9,10 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { invalidateRiskCache } from './risk';
 
+function normEst(s: unknown): string {
+  return String(s ?? '').trim();
+}
+
 export interface EnquiryLinkResult {
   linked: boolean;
   reason: string;
@@ -65,6 +69,70 @@ export async function linkEnquiryEstimate(opts: {
 }
 
 /**
+ * Daily self-heal for CONVERTED estimates: fill a blank createdBy from the
+ * mapping enquiry and a blank region from the creator's roster region. Unlike
+ * linkEnquiryEstimate this never re-owns a live/sent row — it only repairs
+ * accepted/confirmed rows that already converted with incomplete attribution.
+ * Safe/idempotent; used after the October close-credit reclassification so a
+ * roster region fix (e.g. a previously unmapped creator) flows through to
+ * their accepted deals without touching the ledger.
+ */
+export async function healConvertedAttribution(): Promise<{ scanned: number; creators: number; regions: number }> {
+  let scanned = 0;
+  let creators = 0;
+  let regions = 0;
+  try {
+    const estimates = await prisma.estimate.findMany({
+      where: { status: { in: ['accepted', 'confirmed'] } },
+      select: { estimateId: true, estimateNumber: true, organizationId: true, createdBy: true, region: true },
+    });
+    const needing = ((estimates as any[]) ?? []).filter(
+      (e) => !String(e?.createdBy ?? '').trim() || !String(e?.region ?? '').trim(),
+    );
+    scanned = needing.length;
+    if (needing.length === 0) return { scanned, creators, regions };
+
+    const [enquiries, telecallers] = await Promise.all([
+      prisma.enquiry.findMany({ select: { estNumber: true, assignedAgentId: true, organizationId: true } }),
+      prisma.telecaller.findMany({ select: { id: true, region: true } }),
+    ]);
+    const byNum = new Map<string, any[]>();
+    for (const q of (enquiries as any[]) ?? []) {
+      const num = normEst(q?.estNumber);
+      if (!num) continue;
+      const arr = byNum.get(num) ?? [];
+      arr.push(q);
+      byNum.set(num, arr);
+    }
+    const regionById = new Map<string, string>();
+    for (const t of (telecallers as any[]) ?? []) {
+      regionById.set(String(t.id), String(t.region ?? ''));
+    }
+
+    for (const e of needing) {
+      const num = normEst(e?.estimateNumber);
+      const matches = byNum.get(num) ?? [];
+      const org = String((e as any)?.organizationId ?? '');
+      const pick = (org && matches.find((m) => String((m as any)?.organizationId ?? '') === org)) || matches[0] || null;
+      let creator = String((e as any)?.createdBy ?? '').trim();
+      let region = String((e as any)?.region ?? '').trim();
+      if (!creator && pick) creator = String((pick as any)?.assignedAgentId ?? '').trim();
+      if (!region && creator) region = String(regionById.get(creator) ?? '');
+      const data: Record<string, unknown> = {};
+      if (creator && creator !== String((e as any)?.createdBy ?? '')) { data.createdBy = creator; creators += 1; }
+      if (region && region !== String((e as any)?.region ?? '')) { data.region = region; regions += 1; }
+      if (Object.keys(data).length > 0) {
+        await prisma.estimate.update({ where: { estimateId: String((e as any).estimateId) }, data });
+      }
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'healConvertedAttribution failed');
+  }
+  if (creators > 0 || regions > 0) logger.info({ scanned, creators, regions }, 'converted attribution healed');
+  return { scanned, creators, regions };
+}
+
+/**
  * Daily self-heal: resolve every enquiry→estimate link whose estimate has
  * since synced (or that predates this feature). Idempotent — already-linked
  * rows no-op. Runs inside runLeadConversion so no new cron or sync-code hook
@@ -94,6 +162,9 @@ export async function sweepEnquiryEstimateLinks(): Promise<{ linked: number; sca
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'sweepEnquiryEstimateLinks failed');
   }
+  // Converted rows are never re-owned by linkEnquiryEstimate (it refuses
+  // non-sent status); repair blank attribution/region separately.
+  try { await healConvertedAttribution(); } catch { /* heal logs its own failure */ }
   if (linked > 0) logger.info({ linked, scanned }, 'enquiry-estimate sweep linked estimates');
   return { linked, scanned };
 }
