@@ -353,7 +353,12 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   // Include selfAgentId so a scoped staff member never receives a cached
   // team-wide (managed) payload — each user's view is isolated in the cache.
   const wantDaily = String(q.daily ?? '') === '1' || String(q.daily ?? '').toLowerCase() === 'true';
-  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}`;
+  // Region drills carry their own followUps, so they MUST NOT share a cache
+  // entry with the unfiltered dashboard: whichever request populated the key
+  // used to win, and a dashboard-first load cached a payload with no
+  // followUps → every region tab rendered an empty Lead Conversion list.
+  const regionKey = typeof q.region === 'string' ? q.region.trim().toLowerCase() : '';
+  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}:${regionKey}`;
   const payload = await cached<any>(cacheKey, DASH_TTL_MS, async () => {
     return computeTelecallingDashboardData(ctx);
   });
