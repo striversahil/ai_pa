@@ -25,8 +25,8 @@ const TITLES: Record<ImportKind, string> = {
 };
 
 const EXPECT: Record<ImportKind, string> = {
-  debtors: 'Copy the ageing sheet in Excel (header row + data rows: S.No, Customer Name, Invoice No., Invoice Date, Credit Period, Due Date, Invoice Amount, Amount Received, Balance…) and paste below.',
-  collections: 'Copy the collections sheet in Excel (header row + data rows: S.No, Collection Date, Customer Name, Invoice No., Amount Received, Mode of Receipt, Remarks…) and paste below.',
+  debtors: 'Copy the ageing sheet in Excel — the header row + data rows: Customer Name, Invoice No., Invoice Date, Credit Period (Days), Due Date, Invoice Amount, Amount Received, Balance Receivable. Everything else (call status, remarks, owner, state/region…) is filled in from the dashboard row editor.',
+  collections: 'Copy the collections sheet in Excel (header row + data rows: Collection Date, Customer Name, Invoice No., Amount Received, Mode of Receipt, Remarks, optional Receipt No. / Transaction ID). Re-pasting is idempotent; receipt no. is the strongest duplicate key.',
 };
 
 export default function ImportModal({ kind, onClose, onDone }: Props) {
@@ -60,9 +60,11 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error || `Import failed (${res.status})`);
       const r = body?.report ?? {};
+      const restored = r.restored ? `, ${r.restored} restored` : "";
+      const conflicts = r.conflicts?.length ? `, ${r.conflicts.length} invoice-no conflicts flagged (not merged)` : "";
       const msg = kind === "debtors"
-        ? `Debtors imported — ${r.created ?? 0} new, ${r.updated ?? 0} updated${r.rebooked ? `, ${r.rebooked} collections re-booked` : ""}${r.skippedLines ? `, ${r.skippedLines} lines skipped` : ""}.`
-        : `Collections imported — ${r.created ?? 0} new, ${r.duplicated ?? 0} duplicates skipped, ${r.matchedByInvoice ?? 0} by invoice no, ${r.matchedByCustomer ?? 0} by customer fallback, ${r.unmatched ?? 0} unmatched.`;
+        ? `Debtors imported — ${r.created ?? 0} new, ${r.updated ?? 0} updated${restored}${r.rebooked ? `, ${r.rebooked} collections re-booked` : ""}${conflicts}${r.skippedLines ? `, ${r.skippedLines} lines skipped` : ""}.`
+        : `Collections imported — ${r.created ?? 0} new, ${r.duplicated ?? 0} duplicates skipped${restored}, ${r.matchedByInvoice ?? 0} by invoice no, ${r.matchedByCustomer ?? 0} by customer fallback, ${r.advances ?? 0} customer advances, ${r.unmatched ?? 0} unmatched${conflicts}.`;
       onDone(msg);
     } catch (e: any) {
       setErr(e?.message ?? "Import failed");
@@ -74,7 +76,7 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-3 py-8 overflow-y-auto" onClick={onClose}>
       <div
-        className="w-full max-w-4xl rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 p-5 space-y-4"
+        className="w-full max-w-4xl rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-950 space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -84,7 +86,7 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
         <p className="text-xs text-zinc-500 dark:text-zinc-400">{EXPECT[kind]}</p>
 
         <textarea
-          className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 outline-none focus:border-sky-500 font-mono"
+          className="w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-800 outline-none transition-colors focus:border-sky-500 focus:bg-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:bg-zinc-900"
           rows={8}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -137,13 +139,18 @@ function PreviewTable({ kind, rows }: { kind: ImportKind; rows: unknown[] }) {
           <tbody>
             {shown.map((r, i) => {
               const d = r as DebtorRow;
+              const received = d.baseReceived > 0
+                ? d.baseReceived
+                : (d.balanceReceivable != null && d.invoiceAmount > 0
+                  ? Math.max(0, d.invoiceAmount - d.balanceReceivable)
+                  : 0);
               return (
                 <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800/50">
                   <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-300 max-w-[220px] truncate">{d.customerName}</td>
                   <td className="px-2 py-1.5 font-mono text-zinc-600 dark:text-zinc-400">{d.invoiceNo}</td>
                   <td className="px-2 py-1.5 text-zinc-600 dark:text-zinc-400">{d.dueDate ?? "—"}</td>
                   <td className="px-2 py-1.5 text-right text-zinc-700 dark:text-zinc-300">{formatINR(d.invoiceAmount)}</td>
-                  <td className="px-2 py-1.5 text-right text-zinc-600 dark:text-zinc-400">{formatINR(d.baseReceived)}</td>
+                  <td className="px-2 py-1.5 text-right text-zinc-600 dark:text-zinc-400">{formatINR(received)}</td>
                 </tr>
               );
             })}
@@ -158,6 +165,7 @@ function PreviewTable({ kind, rows }: { kind: ImportKind; rows: unknown[] }) {
         <thead>
           <tr className="text-left text-zinc-500 dark:text-zinc-400">
             <th className="px-2 py-1.5">Date</th><th className="px-2 py-1.5">Customer</th><th className="px-2 py-1.5">Invoice</th>
+            <th className="px-2 py-1.5">Receipt</th>
             <th className="px-2 py-1.5 text-right">Amount</th><th className="px-2 py-1.5">Mode</th><th className="px-2 py-1.5">Remarks</th>
           </tr>
         </thead>
@@ -169,6 +177,7 @@ function PreviewTable({ kind, rows }: { kind: ImportKind; rows: unknown[] }) {
                 <td className="px-2 py-1.5 text-zinc-600 dark:text-zinc-400">{c.collectionDate ?? "—"}</td>
                 <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-300 max-w-[220px] truncate">{c.customerName}</td>
                 <td className="px-2 py-1.5 font-mono text-zinc-600 dark:text-zinc-400 max-w-[140px] truncate">{c.invoiceNo || "—"}</td>
+                <td className="px-2 py-1.5 font-mono text-zinc-600 dark:text-zinc-400 max-w-[120px] truncate">{c.receiptNo || "—"}</td>
                 <td className={`px-2 py-1.5 text-right ${c.amount < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{formatINR(c.amount, false)}</td>
                 <td className="px-2 py-1.5 text-zinc-600 dark:text-zinc-400">{c.mode || "—"}</td>
                 <td className="px-2 py-1.5 text-zinc-500 dark:text-zinc-500 max-w-[260px] truncate">{c.remarks || "—"}</td>

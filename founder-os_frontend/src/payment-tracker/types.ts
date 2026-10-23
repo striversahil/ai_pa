@@ -17,7 +17,15 @@ export interface LiveInvoice {
   effectiveReceived: number;
   balance: number;
   daysOverdue: number | null;
+  /** Derived helpers (never pasted) — ageing inferred from the invoice date. */
+  daysSinceInvoice: number | null;
+  dueMonth: string;
+  invoiceWeekStart: string | null;
+  dueWeekStart: string | null;
   bucket: Bucket | "PAID";
+  contactName: string;
+  contactPhone: string;
+  contactMail: string;
   lastCallDate: string | null;
   callStatus: string;
   paymentStatus: string;
@@ -35,6 +43,17 @@ export interface LiveInvoice {
 
 export interface CustomerAgeingRow {
   customerName: string;
+  /** Normalized identity key for contacts + reminders. */
+  customerKey: string;
+  phone: string;
+  email: string;
+  region: string;
+  whatsappOptIn: boolean;
+  notes: string;
+  lastReminderAt: string | null;
+  lastReminderStatus: string;
+  lastFollowUpDate: string | null;
+  lastFollowUpStatus: string;
   totalReceivable: number;
   notDue: number;
   bucket0to30: number;
@@ -52,6 +71,8 @@ export interface LiveCollection {
   id: string;
   customerName: string;
   invoiceNo: string;
+  /** Optional receipt / transaction reference from the source export. */
+  receiptNo: string;
   collectionDate: string | null;
   amount: number;
   mode: string;
@@ -59,6 +80,45 @@ export interface LiveCollection {
   matchStatus: string;
   resolvedInvoiceId: string | null;
   createdAt: string;
+}
+
+export type CustomerLedgerEntryType = "invoice" | "sheet_received" | "receipt";
+
+export interface CustomerLedgerEntry {
+  id: string;
+  date: string | null;
+  type: CustomerLedgerEntryType;
+  reference: string;
+  invoiceNo: string;
+  description: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  status: string;
+}
+
+export interface CustomerLedgerTotals {
+  invoiceCount: number;
+  receiptCount: number;
+  totalInvoiced: number;
+  itemizedReceived: number;
+  sheetReceived: number;
+  totalReceived: number;
+  invoiceBalance: number;
+  unappliedReceived: number;
+  netReceivable: number;
+}
+
+export interface CustomerLedger {
+  customerKey: string;
+  customerName: string;
+  phone: string;
+  email: string;
+  region: string;
+  asOfIST: string;
+  entries: CustomerLedgerEntry[];
+  totals: CustomerLedgerTotals;
+  unappliedReceiptIds: string[];
 }
 
 export interface SummaryRow {
@@ -78,12 +138,44 @@ export interface SummaryRow {
   customerCount: number;
 }
 
+export interface LiveReminder {
+  id: string;
+  customerKey: string;
+  customerName: string;
+  phone: string;
+  channel: string;
+  status: string;
+  amount: number;
+  invoiceCount: number;
+  invoiceNos: string;
+  oldestDueDate: string | null;
+  message: string;
+  error: string;
+  runDay: string;
+  trigger: string;
+  createdAt: string;
+}
+
+export interface InvoiceNoConflict {
+  invoiceNo: string;
+  customers: string[];
+}
+
 export interface PaymentTrackerPayload {
   summary: SummaryRow;
   customers: CustomerAgeingRow[];
   invoices: LiveInvoice[];
   collections: LiveCollection[];
-  meta: { asOfIST: string; totalInvoices: number; totalCollections: number };
+  reminders: LiveReminder[];
+  meta: {
+    asOfIST: string;
+    totalInvoices: number;
+    totalCollections: number;
+    reminderConfigured: boolean;
+    reminderMode: "dry_run" | "live";
+    reminderRunDay: string;
+    invoiceConflicts: InvoiceNoConflict[];
+  };
 }
 
 export const BUCKET_LABELS: Record<Bucket | "PAID", string> = {
@@ -103,7 +195,19 @@ export function formatINR(n: number | null | undefined, dashZero = true): string
   if (n == null || (!isFinite(n))) return "—";
   if (n === 0 && dashZero) return "—";
   const s = inrFmt.format(Math.round(Math.abs(n)));
-  return n < 0 ? `(₹ ${s})` : `₹ ${s}`;
+  // A non-breaking space keeps the rupee symbol on the same line as its amount.
+  return n < 0 ? `(₹\u00A0${s})` : `₹\u00A0${s}`;
+}
+
+/** Chart/type classification: the receipt remarks mention an advance. */
+export function isAdvancePayment(c: Pick<LiveCollection, "remarks">): boolean {
+  return /advance/i.test(String(c.remarks || ""));
+}
+
+/** True when an advance receipt carries a real bill/invoice reference. */
+export function hasBillReference(c: Pick<LiveCollection, "invoiceNo">): boolean {
+  const no = String(c.invoiceNo || "").trim();
+  return no !== "" && !/^advance\b/i.test(no);
 }
 
 export function formatDays(days: number | null): string {
@@ -127,4 +231,9 @@ export function normalizeCustomerName(name: string): string {
 
 export function normalizeInvoiceNo(no: string): string {
   return String(no || "").replace(/\s+/g, " ").trim();
+}
+
+/** MIRROR: backend types.ts normalizeCustomerKey */
+export function normalizeCustomerKey(name: string): string {
+  return normalizeCustomerName(name).toLowerCase();
 }

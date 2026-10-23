@@ -1198,7 +1198,7 @@ model HumanResourcesMember {
   email                 String?
   phone                 String?
   designation           String?
-  employeeCode          String?
+  employeeCode          String?  @unique
   photoUrl              String?
   department            String?
   joiningDate           String?
@@ -1358,6 +1358,7 @@ model HumanResourcesSalarySlip {
   designation        String?
   department         String?
   workingDays        Float                @default(0)
+  eligibleDays       Float                @default(0)
   payableDays        Float                @default(0)
   presentDays        Float                @default(0)
   halfDays           Float                @default(0)
@@ -1366,6 +1367,7 @@ model HumanResourcesSalarySlip {
   unpaidLeaveDays    Float                @default(0)
   holidayDays        Float                @default(0)
   unmarkedDays       Float                @default(0)
+  perDay             Float                @default(0)
   monthlyGross       Float                @default(0)
   earnedGross        Float                @default(0)
   absenceDeduction   Float                @default(0)
@@ -1532,6 +1534,9 @@ model PaymentCollection {
   id                String   @id @default(uuid())
   customerName      String
   invoiceNo         String   @default("")
+  // Optional receipt/transaction reference from the source export. Strongest
+  // dedupe key when present.
+  receiptNo         String   @default("")
   collectionDate    String?
   amount            Float    @default(0)
   mode              String   @default("")
@@ -1547,4 +1552,52 @@ model PaymentCollection {
   @@index([customerName])
   @@index([collectionDate])
   @@index([resolvedInvoiceId])
+}
+
+// Customer contact master for the Payment Tracker. Keyed by the normalized
+// customer name because the pasted accounting sheets carry no customer code.
+// Phone/email drive the daily WhatsApp reminder (accounts-only editing).
+model PaymentCustomer {
+  id           String   @id @default(uuid())
+  customerKey  String   @unique
+  customerName String
+  phone        String   @default("")
+  email        String   @default("")
+  /** Sales region (R1–R4); '' = unassigned. Mirrored onto invoice rows. */
+  region       String   @default("")
+  whatsappOptIn Boolean @default(false)
+  optInAt      String?
+  notes        String   @default("")
+  updatedBy    String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now())
+
+  @@index([customerName])
+}
+
+// Every reminder attempt. Dry-run rows record the exact aggregated message
+// that a live WABA send would deliver. dedupKey = customerKey|runDay|channel.
+model PaymentReminder {
+  id                String   @id @default(uuid())
+  customerKey       String
+  customerName      String
+  phone             String   @default("")
+  channel           String   @default("whatsapp")
+  kind              String   @default("due")
+  status            String   @default("dry_run")
+  amount            Float    @default(0)
+  invoiceCount      Int      @default(0)
+  invoiceNos        String   @default("")
+  oldestDueDate     String?
+  message           String   @default("")
+  providerMessageId String   @default("")
+  error             String   @default("")
+  runDay            String
+  trigger           String   @default("cron")
+  dedupKey          String?  @unique
+  createdAt         DateTime @default(now())
+
+  @@index([customerKey])
+  @@index([runDay])
+  @@index([createdAt])
 }

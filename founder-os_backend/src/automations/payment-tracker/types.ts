@@ -4,13 +4,19 @@
  *
  * Design (locked with the founder):
  * - Debtor data arrives as Excel-clipboard pastes of the accounts ageing
- *   sheet; upsert/append by (invoiceNo, customerName).
- * - Collections arrive as pastes of the receipts sheet; matched to invoices
- *   by invoice no, else the customer's oldest open invoice; else unmatched.
- * - Receiving math: effectiveReceived = baseReceived (pasted column at last
- *   debtor import) + (Σledger collections − collectedAtImport). This is the
- *   drift-free rule chosen to survive both "paste refreshed sheet" and
- *   "ledger-only" workflows without double-counting money.
+ *   sheet; upsert/append by (invoiceNo, customerName). Invoice no is the
+ *   matching key; the same invoice no under a DIFFERENT customer is reported
+ *   as a conflict (source data collision) and never silently merged.
+ * - Collections arrive as pastes of the receipts sheet (a cumulative
+ *   history); matched to invoices by invoice no, else the customer's oldest
+ *   open invoice; invoice no "Advance" is a customer advance, not a match.
+ *   Re-pastes are idempotent: an optional receipt no. is the strongest key,
+ *   else invoice no + date + amount + mode.
+ * - Receiving math: effectiveReceived = max(baseReceived, Σledger
+ *   collections), where baseReceived is the pasted amount (else
+ *   invoiceAmount − balance). Taking the larger of sheet vs cumulative
+ *   receipts is paste-order independent and never double-counts the history;
+ *   new receipts register once the cumulative ledger exceeds the sheet.
  */
 
 export const DEBTOR_COLUMNS_LEGEND = [
@@ -25,6 +31,7 @@ export const DEBTOR_COLUMNS_LEGEND = [
 export const COLLECTION_COLUMNS_LEGEND = [
   'S.No', 'Collection Date', 'Customer Name', 'Invoice No.', 'Amount Received',
   'Mode of Receipt', 'Remarks', 'Collection Week Start',
+  'Receipt No. / Transaction ID (optional, strongest dedupe key)',
 ] as const;
 
 export interface DebtorRow {
@@ -62,10 +69,26 @@ export interface CollectionRow {
   collectionDate: string | null;
   customerName: string;
   invoiceNo: string;
+  /** Receipt/transaction reference from the source export (optional). */
+  receiptNo: string;
   amount: number;
   mode: string;
   remarks: string;
   weekStart: string;
+}
+
+/** A same-invoice-no / different-customer collision found during import. */
+/** Resulting ledger collision: one invoice no. across multiple customers. */
+export interface InvoiceNoConflict {
+  invoiceNo: string;
+  customers: string[];
+}
+
+export interface ImportConflict {
+  invoiceNo: string;
+  customerName: string;
+  existingCustomerName: string;
+  reason: string;
 }
 
 export interface DebtorImportReport {
@@ -75,14 +98,20 @@ export interface DebtorImportReport {
   updated: number;
   /** Unmatched collections re-booked onto invoices by matching invoice no. */
   rebooked: number;
+  /** Soft-deleted rows brought back by this paste. */
+  restored: number;
+  /** Same invoice no under another customer — kept as separate receivables. */
+  conflicts: ImportConflict[];
   skippedLines: number;
   skipped: string[];
 }
 
 export interface CollectionImportReport extends DebtorImportReport {
+  /** Exact re-paste rows skipped because the receipt already exists. */
   duplicated: number;
   matchedByInvoice: number;
   matchedByCustomer: number;
+  advances: number;
   unmatched: number;
 }
 
@@ -107,15 +136,36 @@ export interface PaymentTrackerPayload {
   customers: CustomerAgeingRow[];
   invoices: LiveInvoice[];
   collections: LiveCollection[];
+  /** Latest reminder attempts (dry-run now, live later). */
+  reminders: LiveReminder[];
   meta: {
     asOfIST: string;
     totalInvoices: number;
     totalCollections: number;
+    /** True when WABA Cloud API credentials are present in the runtime. */
+    reminderConfigured: boolean;
+    /** 'live' only when credentials + the live flag are both set. */
+    reminderMode: 'dry_run' | 'live';
+    reminderRunDay: string;
+    /** Same invoice no. under multiple customers — review, never auto-merge. */
+    invoiceConflicts: InvoiceNoConflict[];
   };
 }
 
 export interface CustomerAgeingRow {
   customerName: string;
+  /** Normalized identity key used by the contact master + reminder log. */
+  customerKey: string;
+  phone: string;
+  email: string;
+  region: string;
+  whatsappOptIn: boolean;
+  notes: string;
+  lastReminderAt: string | null;
+  lastReminderStatus: string;
+  /** Latest follow-up across the customer's invoices (sales workflow). */
+  lastFollowUpDate: string | null;
+  lastFollowUpStatus: string;
   totalReceivable: number;
   notDue: number;
   bucket0to30: number;
@@ -142,7 +192,15 @@ export interface LiveInvoice {
   effectiveReceived: number;
   balance: number;
   daysOverdue: number | null;
+  /** Derived helpers (never pasted) — ageing inferred from the invoice date. */
+  daysSinceInvoice: number | null;
+  dueMonth: string;
+  invoiceWeekStart: string | null;
+  dueWeekStart: string | null;
   bucket: Bucket | 'PAID';
+  contactName: string;
+  contactPhone: string;
+  contactMail: string;
   lastCallDate: string | null;
   callStatus: string;
   paymentStatus: string;
@@ -167,12 +225,79 @@ export interface LiveCollection {
   id: string;
   customerName: string;
   invoiceNo: string;
+  receiptNo: string;
   collectionDate: string | null;
   amount: number;
   mode: string;
   remarks: string;
   matchStatus: string;
   resolvedInvoiceId: string | null;
+  createdAt: string;
+}
+
+export type CustomerLedgerEntryType = 'invoice' | 'sheet_received' | 'receipt';
+
+/** One debit/credit line in a customer's complete statement. */
+export interface CustomerLedgerEntry {
+  id: string;
+  /** ISO date where known; null entries sort last. */
+  date: string | null;
+  type: CustomerLedgerEntryType;
+  reference: string;
+  invoiceNo: string;
+  description: string;
+  debit: number;
+  credit: number;
+  /** Running balance after this line. */
+  balance: number;
+  /** Bucket for invoices; match status (invoice/customer/advance/none) for receipts. */
+  status: string;
+}
+
+export interface CustomerLedgerTotals {
+  invoiceCount: number;
+  receiptCount: number;
+  totalInvoiced: number;
+  itemizedReceived: number;
+  sheetReceived: number;
+  totalReceived: number;
+  /** Sum of invoice balances (after itemized receipts + sheet adjustments). */
+  invoiceBalance: number;
+  /** Advance + unmatched receipts, shown as credits but not applied to an invoice. */
+  unappliedReceived: number;
+  /** invoiceBalance − unappliedReceived. */
+  netReceivable: number;
+}
+
+/** GET /api/payment-tracker/customers/:customerKey/ledger */
+export interface CustomerLedger {
+  customerKey: string;
+  customerName: string;
+  phone: string;
+  email: string;
+  region: string;
+  asOfIST: string;
+  entries: CustomerLedgerEntry[];
+  totals: CustomerLedgerTotals;
+  /** Rows that are advances or unmatched receipts (still present in entries). */
+  unappliedReceiptIds: string[];
+}
+
+export interface LiveReminder {
+  id: string;
+  customerKey: string;
+  customerName: string;
+  phone: string;
+  channel: string;
+  status: string;
+  amount: number;
+  invoiceCount: number;
+  invoiceNos: string;
+  oldestDueDate: string | null;
+  message: string;
+  error: string;
+  runDay: string;
+  trigger: string;
   createdAt: string;
 }
 
@@ -209,6 +334,11 @@ export function normalizeCustomerName(name: string): string {
   return String(name || '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** Stable customer identity for the contact master + reminder log. */
+export function normalizeCustomerKey(name: string): string {
+  return normalizeCustomerName(name).toLowerCase();
 }
 
 export function normalizeInvoiceNo(no: string): string {

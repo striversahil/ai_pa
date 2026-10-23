@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import KraKpiCharts from "./DigitalMarketingCharts";
 import { useAuth } from "@/auth/AuthContext";
+import { TabBar } from "@/components/ui/TabBar";
 
 interface FileItem {
   id: string;
@@ -618,31 +619,11 @@ export default function AccountsDashboard() {
         {/* Tabs (full-width horizontal row, like Telecalling). Non-MIS viewers
             only get Dashboard + Tasks — the Controller tab never renders. */}
         <aside className="w-full shrink-0">
-          <nav className="flex flex-row flex-wrap gap-2">
-            {visibleTabs.filter((t) => t.key !== "controller" || canMIS).map((t) => {
-              const active = view === t.key;
-              const count: number | null = null;
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => setView(t.key)}
-                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors text-left ${
-                    active
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                  }`}
-                >
-                  <span className="text-base leading-none">{t.icon}</span>
-                  {t.label}
-                  {count !== null && count > 0 && (
-                    <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-extrabold ${active ? "bg-white/25 text-white" : "bg-rose-500/15 text-rose-500 dark:text-rose-400"}`}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+          <TabBar
+            items={visibleTabs.filter((t) => t.key !== "controller" || canMIS)}
+            active={view}
+            onChange={setView}
+          />
         </aside>
 
         {/* Content (seamless switch — queries stay mounted) */}

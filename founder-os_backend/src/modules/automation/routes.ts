@@ -12,7 +12,7 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { AutomationEngine } from './engine';
 import { DASHBOARD_SLUGS } from './dashboardSlugs';
-import { AUTOMATION_SCOPES } from './registry-worker';
+import { AUTOMATION_SCOPES, accessScopesFor } from './registry-worker';
 import { asyncHandler } from '../../middleware/asyncHandler';
 
 const router = Router();
@@ -51,6 +51,7 @@ router.get('/', asyncHandler(async (_req, res) => {
     // Permission scope for the dashboard (rule.json `scope`, mirrored in the
     // registry; defaults to the slug so new dashboards work with zero edits).
     scope: AUTOMATION_SCOPES[r.slug] ?? r.slug,
+    scopes: accessScopesFor(r.slug, AUTOMATION_SCOPES[r.slug] ?? r.slug),
     trigger: parseJson(r.triggerJson),
     condition: parseJson(r.conditionJson),
     actions: parseJson(r.actionsJson),
@@ -65,8 +66,11 @@ router.get('/', asyncHandler(async (_req, res) => {
   const grantedScopes = (((_req as any)?.me?.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
   const granted = new Set(grantedScopes);
   return res.json(full
-    .filter((r: any) => granted.has(String(r.scope ?? r.slug).toLowerCase()))
-    .map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
+    .filter((r: any) => (r.scopes as string[]).some((s) => granted.has(String(s).toLowerCase())))
+    .map((r: any) => ({
+      slug: r.slug, name: r.name, hasDashboard: r.hasDashboard,
+      scope: r.scope ?? r.slug, scopes: r.scopes,
+    })));
 }));
 
 router.get('/:slug', asyncHandler(async (req, res) => {

@@ -7,6 +7,7 @@ import SalaryPlanEditor from "./SalaryPlanEditor";
 import { EMPLOYMENT_TYPES, EMPLOYMENT_TYPE_LABEL, type EmploymentType, type HrEmployee, type HrSalaryComponent, type HrSalaryTemplate } from "@/hr/types";
 import { applySalaryPlan, jsonRequest, listSalaryTemplates, readError, reapplySalaryPlan } from "@/hr/api";
 import { fileToDataUrl, uploadMediaFile } from "@/lib/imageFiles";
+import { resolveSalary } from "@/hr/salary";
 import { initials, todayIST } from "@/hr/format";
 
 const field = "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500";
@@ -29,7 +30,6 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const editing = !!employee;
   const [form, setForm] = useState({
     name: employee?.name ?? "",
-    employeeCode: employee?.employeeCode ?? "",
     email: employee?.email ?? "",
     phone: employee?.phone ?? "",
     designation: employee?.designation ?? "",
@@ -72,16 +72,23 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   useEffect(() => {
     let alive = true;
     listSalaryTemplates()
-      .then((rows) => { if (alive) setTemplates(rows); })
+      .then((rows) => {
+        if (!alive) return;
+        setTemplates(rows);
+        if (!editing && !initialTemplateId) {
+          const fallback = rows.find((row) => row.isDefault) ?? rows[0];
+          if (fallback) setTemplateId(fallback.id);
+        }
+      })
       .catch(() => { /* templates stay unavailable; legacy structure remains editable */ });
     return () => { alive = false; };
-  }, []);
+  }, [editing, initialTemplateId]);
 
   const reapply = async () => {
     if (!employee) return;
     setBusy(true); setErr(null);
     try {
-      const updated: any = await reapplySalaryPlan(employee.id);
+      const updated = await reapplySalaryPlan(employee.id) as Partial<HrEmployee>;
       setTemplateId(updated?.salaryTemplateId ?? initialTemplateId);
       setPlanAmount(updated?.salaryInputAmount ? String(updated.salaryInputAmount) : initialPlanAmount);
       onSaved();
@@ -107,12 +114,20 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) { setErr("Employee name is required"); return; }
+    if (templateId && (!editing || planDirty)) {
+      const amount = Number(planAmount);
+      if (!(amount > 0)) { setErr("Enter the monthly salary amount for the selected template"); return; }
+      const selected = templates.find((row) => row.id === templateId);
+      if (selected) {
+        try { resolveSalary(selected.components, { inputMode: selected.inputMode, inputAmount: amount }); }
+        catch (e2) { setErr(e2 instanceof Error ? e2.message : "Salary formula error"); return; }
+      }
+    }
     setBusy(true); setErr(null);
     try {
       const body = {
         ...form,
         name: form.name.trim(),
-        employeeCode: form.employeeCode.trim() || null,
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
         designation: form.designation.trim() || null,
@@ -184,7 +199,13 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
         <Section title="Basic details">
           <div className="grid gap-2 sm:grid-cols-2">
             <div><label className={label}>Full name</label><input value={form.name} onChange={(e) => set("name", e.target.value)} className={field} autoFocus /></div>
-            <div><label className={label}>Employee code</label><input value={form.employeeCode} onChange={(e) => set("employeeCode", e.target.value)} className={field} placeholder="e.g. BUI-014" /></div>
+            <div>
+              <label className={label}>Employee code</label>
+              <div className={`${field} flex items-center justify-between gap-2 bg-zinc-50 text-zinc-500 dark:bg-zinc-900`}>
+                <span className="font-semibold text-zinc-700 dark:text-zinc-300">{editing ? (employee?.employeeCode || "—") : "Generated on save"}</span>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">BUI-001</span>
+              </div>
+            </div>
             <div><label className={label}>Designation</label><input value={form.designation} onChange={(e) => set("designation", e.target.value)} className={field} /></div>
             <div><label className={label}>Department</label><input value={form.department} onChange={(e) => set("department", e.target.value)} className={field} /></div>
             <div><label className={label}>Phone</label><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className={field} /></div>

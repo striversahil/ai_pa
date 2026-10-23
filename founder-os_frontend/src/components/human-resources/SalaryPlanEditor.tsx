@@ -23,7 +23,7 @@ export default function SalaryPlanEditor({ employee, templates, templateId, amou
   const inputAmount = Number(amount) || null;
   let preview: HrSalaryPreview | null = null;
   let error = "";
-  try {
+  if (!selected || inputAmount) try {
     const resolved = resolveSalary(rows, { inputMode, inputAmount });
     const deductionTotal = resolved.deductions.reduce((sum, line) => sum + line.amount, 0);
     preview = {

@@ -8,6 +8,8 @@ import { templateComponentsForCopy } from './templates';
 import { DATA_CACHE_PREFIX, DATA_TTL_MS, invalidateHumanResourcesCache } from './cache';
 import type { SalaryComponentInput } from './types';
 
+const EMPLOYEE_CODE_PREFIX = 'BUI-';
+
 function salaryOptions(row: any) {
   return {
     inputMode: row?.salaryInputMode ?? null,
@@ -146,25 +148,49 @@ export async function getEmployee(id: string) {
   return employeeJson(row, await componentsFor(id), await templateFor(row));
 }
 
-async function ensureUniqueCode(code: string | null, exceptId?: string) {
-  if (!code) return;
-  const hit: any = await prisma.humanResourcesMember.findFirst({ where: { employeeCode: code } });
-  if (hit && String(hit.id) !== String(exceptId ?? '')) throw new HrError('employee code already exists');
+async function nextEmployeeCode(): Promise<string> {
+  const rows = await prisma.humanResourcesMember.findMany({
+    where: { employeeCode: { startsWith: EMPLOYEE_CODE_PREFIX } },
+    select: { employeeCode: true },
+  }) as any[];
+  let max = 0;
+  for (const row of rows) {
+    const match = /^BUI-(\d+)$/.exec(String(row.employeeCode ?? '').trim());
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return `${EMPLOYEE_CODE_PREFIX}${String(max + 1).padStart(3, '0')}`;
+}
+
+function isEmployeeCodeConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /unique|constraint/i.test(message) && /employeeCode/i.test(message);
 }
 
 export async function createEmployee(input: Record<string, any>) {
   const data = cleanEmployeeCreate(input);
-  await ensureUniqueCode(data.employeeCode);
-  const row: any = await prisma.humanResourcesMember.create({ data });
-  await invalidateHumanResourcesCache();
-  return employeeJson(row, []);
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const employeeCode = await nextEmployeeCode();
+    try {
+      const row: any = await prisma.humanResourcesMember.create({ data: { ...data, employeeCode } });
+      await invalidateHumanResourcesCache();
+      return employeeJson(row, []);
+    } catch (error) {
+      if (!isEmployeeCodeConflict(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw new HrError(
+    `could not generate a unique employee code${lastError instanceof Error ? `: ${lastError.message}` : ''}`,
+  );
 }
 
 export async function updateEmployee(id: string, input: Record<string, any>) {
   const patch = cleanEmployeePatch(input);
+  delete patch.employeeCode;
+  if (Object.keys(patch).length === 0) throw new HrError('employee code is generated automatically');
   const current: any = await prisma.humanResourcesMember.findUnique({ where: { id } });
   if (!current || current.deleted) throw new HrError('employee not found', 404);
-  if (patch.employeeCode !== undefined) await ensureUniqueCode(patch.employeeCode, id);
   const joining = patch.joiningDate !== undefined ? patch.joiningDate : current.joiningDate;
   const exit = patch.exitDate !== undefined ? patch.exitDate : current.exitDate;
   if (joining && exit && exit < joining) throw new HrError('exitDate cannot be before joiningDate');

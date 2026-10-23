@@ -22,7 +22,7 @@ export const VIEW_SCOPE: Record<string, string> = {
   "whatsapp-marketing": "whatsapp-marketing",
   "sheet-analysis": "sheet-analysis",
   "telecalling": "telecalling",
-  "payment-tracker": "accounts",
+  "payment-tracker": "payment-tracker",
   "whatsapp-autopilot": "autopilot",
   "enquiry-tracker": "enquiry-tracker",
   "enquiry-procurement": "procurement",
@@ -43,6 +43,9 @@ export const USER_ADMIN_SCOPE = "user-admin";
 // someone "sales access" shows them an empty sidebar with no way in.
 export const IMPLIED_SCOPES: Record<string, string[]> = {
   sales: ["enquiry-tracker"],
+  // Accounts holders keep read access to the Payment Tracker after it moved to
+  // its own scope (accounts remains the write/import authority).
+  accounts: ["payment-tracker"],
 };
 
 /** All scopes a user effectively holds: granted + implied. */
@@ -66,6 +69,7 @@ export const DASHBOARD_SCOPES = [
   "autopilot",
   "telecalling",
   "accounts",
+  "payment-tracker",
   "human-resources",
   "enquiry-tracker",
   "crm",

@@ -129,7 +129,7 @@ export default function HumanResourcesDashboard() {
           {view === "leaves" && <LeavesTab />}
           {view === "payroll" && <PayrollTab />}
           {data && view === "expenses" && (
-            <ExpensesTab data={data} month={month} canManage={data.meta.canManage} me={me as any} onRefresh={() => dash.refresh()} />
+            <ExpensesTab data={data} month={month} canManage={data.meta.canManage} me={me} onRefresh={() => dash.refresh()} />
           )}
           {data && view === "inventory" && (
             <InventoryTab data={data} canManage={data.meta.canManage} onRefresh={() => dash.refresh()} />

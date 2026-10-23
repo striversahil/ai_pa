@@ -104,6 +104,7 @@ export interface HrSalaryComponent {
   cap?: number | null;
   floor?: number | null;
   templateId?: string | null;
+  deleted?: boolean;
   isBasic: boolean;
   order?: number;
 }

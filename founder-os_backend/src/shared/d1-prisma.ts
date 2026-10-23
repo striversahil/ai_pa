@@ -69,6 +69,8 @@ const BOOL_FIELDS: Record<string, string[]> = {
   LinkedinPost: ['hasImage', 'picked'],
   DebtorInvoice: ['deleted'],
   PaymentCollection: ['deleted'],
+  PaymentCustomer: ['whatsappOptIn'],
+  PaymentReminder: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -125,6 +127,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   LinkedinPost: ['postedAt', 'createdAt'],
   DebtorInvoice: ['createdAt', 'updatedAt'],
   PaymentCollection: ['createdAt'],
+  PaymentCustomer: ['optInAt', 'createdAt', 'updatedAt'],
+  PaymentReminder: ['createdAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -198,6 +202,8 @@ const ID_FIELDS: Record<string, string> = {
   LinkedinPost: 'id',
   DebtorInvoice: 'id',
   PaymentCollection: 'id',
+  PaymentCustomer: 'id',
+  PaymentReminder: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -211,6 +217,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   MessageLineage: ['waMessageId'],
   DebtorInvoice: ['invoiceNo', 'customerName'],
   PaymentCollection: ['dedupKey'],
+  PaymentCustomer: ['customerKey'],
+  PaymentReminder: ['dedupKey'],
   ProductItem: ['name'],
   Vendor: ['name'],
 };
@@ -225,12 +233,13 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   HumanResourcesSalaryComponent: ['value', 'cap', 'floor'],
   HumanResourcesSalaryTemplateComponent: ['value', 'cap', 'floor'],
   HumanResourcesLeave: ['days'],
-  HumanResourcesSalarySlip: ['workingDays', 'payableDays', 'presentDays', 'halfDays', 'absentDays', 'paidLeaveDays', 'unpaidLeaveDays', 'holidayDays', 'unmarkedDays', 'monthlyGross', 'earnedGross', 'absenceDeduction', 'componentDeductions', 'manualDeductions', 'totalDeductions', 'netPay'],
+  HumanResourcesSalarySlip: ['workingDays', 'eligibleDays', 'payableDays', 'presentDays', 'halfDays', 'absentDays', 'paidLeaveDays', 'unpaidLeaveDays', 'holidayDays', 'unmarkedDays', 'perDay', 'monthlyGross', 'earnedGross', 'absenceDeduction', 'componentDeductions', 'manualDeductions', 'totalDeductions', 'netPay'],
   HumanResourcesMember: ['salaryInputAmount'],
   HumanResourcesInventoryItem: ['reorderLevel', 'unitCost'],
   HumanResourcesInventoryTxn: ['quantity'],
   DebtorInvoice: ['invoiceAmount', 'baseReceived', 'collectedAtImport'],
   PaymentCollection: ['amount'],
+  PaymentReminder: ['amount'],
 };
 
 const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?: boolean }>> = {
@@ -893,6 +902,8 @@ export class D1PrismaClient {
   // Payment Tracker (migration 0069).
   get debtorInvoice() { return this.model('DebtorInvoice'); }
   get paymentCollection() { return this.model('PaymentCollection'); }
+  get paymentCustomer() { return this.model('PaymentCustomer'); }
+  get paymentReminder() { return this.model('PaymentReminder'); }
 
   $on() {}
   $disconnect() {}

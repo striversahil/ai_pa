@@ -2,8 +2,9 @@
 // routes/automations.ts — automation admin API + WhatsApp Marketing.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, getEntryOrReload, DASHBOARD_SLUGS, getMe, authStore, readSessionCookie, type Bindings } from '../context';
-import { AUTOMATION_SCOPES } from '../../modules/automation/registry-worker';
+import { deps, getEntryOrReload, DASHBOARD_SLUGS, getMe, authStore, readSessionCookie, requireScope, type Bindings } from '../context';
+import { AuthError } from '../../modules/auth/types';
+import { AUTOMATION_SCOPES, accessScopesFor } from '../../modules/automation/registry-worker';
 
 function parseJson(value: string | null | undefined): unknown {
   if (!value) return null;
@@ -70,8 +71,10 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
       hasDashboard: withDashboard.has(r.slug),
       // Permission scope for the dashboard (rule.json `scope`, mirrored in the
       // registry; defaults to the slug so new dashboards work with zero edits).
-      // Lets the admin render one checkbox per available dashboard.
+      // `scopes` carries legacy aliases for one dashboard (e.g. Payment Tracker
+      // is readable by sales via `payment-tracker` and accounts via `accounts`).
       scope: AUTOMATION_SCOPES[r.slug] ?? r.slug,
+      scopes: accessScopesFor(r.slug, AUTOMATION_SCOPES[r.slug] ?? r.slug),
       trigger: parseJson(r.triggerJson), condition: parseJson(r.conditionJson),
       actions: parseJson(r.actionsJson), config: parseJson(r.configJson),
       createdAt: r.createdAt, updatedAt: r.updatedAt,
@@ -84,8 +87,11 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     // hidden at the API level, not just unlinked in the UI.
     const granted = new Set(((me?.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
     return c.json(full
-      .filter((r: any) => granted.has(String(r.scope ?? r.slug).toLowerCase()))
-      .map((r: any) => ({ slug: r.slug, name: r.name, hasDashboard: r.hasDashboard, scope: r.scope ?? r.slug })));
+      .filter((r: any) => (r.scopes as string[]).some((s) => granted.has(String(s).toLowerCase())))
+      .map((r: any) => ({
+        slug: r.slug, name: r.name, hasDashboard: r.hasDashboard,
+        scope: r.scope ?? r.slug, scopes: r.scopes,
+      })));
   });
 
   app.get('/api/automations/:slug', async (c) => {
@@ -125,6 +131,23 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     try {
       if (!AutomationEngine.get(c.req.param('slug'))) await getEntryOrReload(c.req.param('slug'));
       const query = { ...c.req.query() };
+      // Payment Tracker reads need `payment-tracker` or the legacy `accounts`
+      // alias (the generic data route would otherwise serve it to any
+      // signed-in user).
+      if (c.req.param('slug') === 'payment-tracker') {
+        try {
+          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+          if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+          const held = new Set(((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
+          const allowed = accessScopesFor('payment-tracker', 'payment-tracker').some((s) => held.has(s));
+          if (!me.isAdmin && !allowed) {
+            throw new AuthError('FORBIDDEN', "Requires 'payment-tracker' permission", 403);
+          }
+        } catch (e) {
+          if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
+          throw e;
+        }
+      }
       // For the telecalling dashboard, non-admin sales agents are scoped to
       // their OWN lead conversion + at-risk data (leaderboard stays team-wide).
       // The agent is identified from the signed-in session: exact roster-email

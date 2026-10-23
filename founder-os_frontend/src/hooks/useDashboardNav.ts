@@ -7,6 +7,7 @@ export interface DashboardNavItem {
   slug: string;
   name: string;
   scope: string;
+  scopes: string[];
 }
 
 /** Resolve the permission scope for a dashboard: server-provided scope first,
@@ -16,12 +17,17 @@ export function dashboardScope(a: { slug: string; scope?: string | null }): stri
   return a.scope ?? VIEW_SCOPE[a.slug] ?? a.slug;
 }
 
+/** Every scope that grants this dashboard (legacy aliases included). */
+export function dashboardScopes(a: { slug: string; scope?: string | null; scopes?: string[] | null }): string[] {
+  return a.scopes?.length ? a.scopes : [dashboardScope(a)];
+}
+
 /** Automation dashboards the current user is allowed to see (live).
  *  Admin/root users don't get the sidebar Dashboards section — they reach every
  *  dashboard via the Automations registry. Roles grant dashboards to regular users. */
 export function useDashboardNav(): DashboardNavItem[] {
   const { me } = useAuth();
-  const automations = useLiveQuery<Array<{ slug: string; name: string; hasDashboard: boolean; scope?: string | null }>>(
+  const automations = useLiveQuery<Array<{ slug: string; name: string; hasDashboard: boolean; scope?: string | null; scopes?: string[] | null }>>(
     async () => {
       const res = await fetch("/api/automations");
       if (!res.ok) throw new Error("failed to load automations");
@@ -35,6 +41,9 @@ export function useDashboardNav(): DashboardNavItem[] {
   if (!me) return [];
   const granted = grantedScopes(me);
   return (automations.data ?? [])
-    .filter((a) => a.hasDashboard && granted.has(dashboardScope(a)))
-    .map((a) => ({ slug: a.slug, name: a.name, scope: dashboardScope(a) }));
+    .filter((a) => a.hasDashboard && dashboardScopes(a).some((s) => granted.has(String(s).toLowerCase())))
+    .map((a) => ({
+      slug: a.slug, name: a.name,
+      scope: dashboardScope(a), scopes: dashboardScopes(a),
+    }));
 }

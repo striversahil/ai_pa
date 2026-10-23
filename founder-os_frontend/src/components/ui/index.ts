@@ -5,3 +5,6 @@ export { KpiCard } from "./KpiCard";
 export { Skeleton, SkeletonCard } from "./Skeleton";
 export { EmptyState, ErrorState } from "./States";
 export { Table, thClass, tdClass, stickyCol } from "./Table";
+
+export { TabBar } from "./TabBar";
+export type { TabBarItem } from "./TabBar";

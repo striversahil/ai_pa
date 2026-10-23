@@ -5,7 +5,7 @@ import Modal from "../Modal";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import SalaryComponentsEditor from "./SalaryComponentsEditor";
 import {
-  deleteSalaryTemplate, listSalaryTemplates, readError, saveSalaryTemplate, setDefaultSalaryTemplate,
+  deleteSalaryTemplate, listSalaryTemplates, saveSalaryTemplate, setDefaultSalaryTemplate,
 } from "@/hr/api";
 import type { HrSalaryComponent, HrSalaryTemplate, SalaryInputMode } from "@/hr/types";
 import { resolveSalary } from "@/hr/salary";
@@ -74,7 +74,14 @@ export default function SalaryTemplateModal({ onClose }: { onClose: () => void }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    let alive = true;
+    listSalaryTemplates()
+      .then((rows) => { if (alive) setTemplates(rows); })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : "Could not load templates"); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
 
   const edit = (template: HrSalaryTemplate) => {
     setDraft({
@@ -230,7 +237,7 @@ export default function SalaryTemplateModal({ onClose }: { onClose: () => void }
       <ConfirmDialog
         open={!!deleting}
         title="Delete salary template?"
-        message={<>Delete <b>{deleting?.name}</b>? Employees already using it keep their copied structure, but the template cannot be reapplied.</>}
+        message={<>Delete <b>{deleting?.name}</b>? Templates assigned to employees cannot be deleted; reassign those employees first.</>}
         confirmLabel="Delete"
         busy={busy}
         onConfirm={confirmDelete}

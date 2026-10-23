@@ -280,6 +280,24 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     );
   }
 
+  // Payment Tracker daily reminder dry-run at 10:00 IST (04:30 UTC). Native,
+  // D1-only, no Zoho/NeoDove — runs in quiet hours too. Logs one preview row
+  // per eligible customer; live sending stays disabled until WABA template +
+  // opt-in are provisioned (see automations/payment-tracker/reminders.ts).
+  if (now.getUTCHours() === 4 && min === 30) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const { runReminderDryRun } = await import('../automations/payment-tracker/reminders');
+          const r = await runReminderDryRun({ trigger: 'cron' });
+          console.log(`[cron] payment-reminders ${r.runDay}: mode=${r.mode} logged=${r.logged} eligible=${r.eligible} noPhone=${r.skippedNoPhone}`);
+        } catch (e: any) {
+          console.error('[cron] payment-reminders failed:', e?.message);
+        }
+      })(),
+    );
+  }
+
   // Email outbox tick every minute (native, token-independent — runs before
   // the dispatcher early-return below): sends due one-shot + daily-repeat
   // mails via the Gmail API. CAS-claimed, max 10/tick, 5 attempts then dead.

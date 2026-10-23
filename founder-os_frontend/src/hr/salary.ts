@@ -28,7 +28,7 @@ export interface SalaryStructureOptions {
 
 function rowsFor(components: HrSalaryComponent[]): HrSalaryComponent[] {
   return (components || [])
-    .filter((c) => !(c as any).deleted)
+    .filter((c) => !c.deleted)
     .slice()
     .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
 }

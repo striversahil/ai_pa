@@ -17,7 +17,6 @@ export interface DebtorRow {
   creditPeriodDays: number | null;
   dueDate: string | null;
   invoiceAmount: number;
-  /** Parsed "Amount Received" (blank/— → 0). baseReceivedBlank flags absence. */
   baseReceived: number;
   baseReceivedBlank: boolean;
   balanceReceivable: number | null;
@@ -41,6 +40,7 @@ export interface CollectionRow {
   collectionDate: string | null;
   customerName: string;
   invoiceNo: string;
+  receiptNo: string;
   amount: number;
   mode: string;
   remarks: string;
@@ -155,19 +155,34 @@ function normalizeHeader(name: string): string {
   return name.toLowerCase().replace(/\(.*\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-/** Find the column whose normalized header equals a candidate, else contains it. */
-function findColumn(headers: string[], candidates: string[]): number {
+/**
+ * Find the column whose normalized header equals a candidate, else contains it.
+ * `claimed` excludes indexes already taken by a higher-priority column, so a
+ * short alias (e.g. "Name") can never steal "Customer Name" on an 8-column
+ * paste. `exactOnly` disables the substring fallback entirely (used for
+ * ambiguous aux columns: Name/Number/Remarks/Status/MIS…).
+ */
+function findColumn(
+  headers: string[],
+  candidates: string[],
+  opts: { claimed?: Set<number>; exactOnly?: boolean } = {},
+): number {
   const norm = headers.map(normalizeHeader);
-  for (const cand of candidates) {
-    const c = normalizeHeader(cand);
-    const exact = norm.indexOf(c);
-    if (exact >= 0) return exact;
-  }
-  // Substring fallback: first header that contains the candidate.
+  const claimed = opts.claimed;
+  const free = (i: number) => !claimed || !claimed.has(i);
   for (const cand of candidates) {
     const c = normalizeHeader(cand);
     for (let i = 0; i < norm.length; i++) {
-      if (norm[i].includes(c)) return i;
+      if (norm[i] === c && norm[i] !== '' && free(i)) return i;
+    }
+  }
+  if (opts.exactOnly) return -1;
+  // Substring fallback: first unclaimed header that contains the candidate.
+  for (const cand of candidates) {
+    const c = normalizeHeader(cand);
+    if (c === '') continue;
+    for (let i = 0; i < norm.length; i++) {
+      if (norm[i].includes(c) && free(i)) return i;
     }
   }
   return -1;
@@ -175,21 +190,23 @@ function findColumn(headers: string[], candidates: string[]): number {
 
 const DEBTOR_HEADERS = {
   customer: ['customer name', 'customer debtor', 'customer'],
-  invoiceNo: ['invoice no', 'invoice no', 'invoice number', 'invoice'],
+  invoiceNo: ['invoice no', 'invoice number', 'invoice'],
   invoiceDate: ['invoice date'],
   creditPeriod: ['credit period days', 'credit period'],
   dueDate: ['due date'],
-  invoiceAmount: ['invoice amount', 'invoice amount', 'amount'],
   amountReceived: ['amount received'],
   balance: ['balance receivable', 'balance'],
+  invoiceAmount: ['invoice amount', 'amount'],
+  // Aux columns: exact-header match only — never substring (an 8-column
+  // paste must not let "Name" steal "Customer Name", etc.).
   contactName: ['name'],
-  contactPhone: ['number'],
+  contactPhone: ['number', 'phone'],
   contactMail: ['mail id', 'mail'],
   lastCallDate: ['last call date', 'last call'],
   callStatus: ['call status'],
   paymentStatus: ['payment status'],
   remarks: ['remarks'],
-  status: ['status'],
+  accountStatus: ['status'],
   mis: ['mis'],
   accountsRemarks: ['accounts remarks'],
   employee: ['employee'],
@@ -220,29 +237,38 @@ export function parseDebtorsTsv(text: string): ParseOutcome<DebtorRow> {
     const n = findColumn(row, DEBTOR_HEADERS.invoiceNo as unknown as string[]);
     if (c >= 0 && n >= 0) {
       headerIdx = i;
+      // Claim columns in priority order so no alias can be double-mapped.
+      const claimed = new Set<number>();
+      const pick = (aliases: readonly string[], exactOnly = false): number => {
+        const idx = findColumn(row, aliases as unknown as string[], { claimed, exactOnly });
+        if (idx >= 0) claimed.add(idx);
+        return idx;
+      };
+      claimed.add(c);
+      claimed.add(n);
       cols = {
         customer: c,
         invoiceNo: n,
-        invoiceDate: findColumn(row, DEBTOR_HEADERS.invoiceDate as unknown as string[]),
-        creditPeriod: findColumn(row, DEBTOR_HEADERS.creditPeriod as unknown as string[]),
-        dueDate: findColumn(row, DEBTOR_HEADERS.dueDate as unknown as string[]),
-        invoiceAmount: findColumn(row, DEBTOR_HEADERS.invoiceAmount as unknown as string[]),
-        amountReceived: findColumn(row, DEBTOR_HEADERS.amountReceived as unknown as string[]),
-        balance: findColumn(row, DEBTOR_HEADERS.balance as unknown as string[]),
-        contactName: findColumn(row, DEBTOR_HEADERS.contactName as unknown as string[]),
-        contactPhone: findColumn(row, DEBTOR_HEADERS.contactPhone as unknown as string[]),
-        contactMail: findColumn(row, DEBTOR_HEADERS.contactMail as unknown as string[]),
-        lastCallDate: findColumn(row, DEBTOR_HEADERS.lastCallDate as unknown as string[]),
-        callStatus: findColumn(row, DEBTOR_HEADERS.callStatus as unknown as string[]),
-        paymentStatus: findColumn(row, DEBTOR_HEADERS.paymentStatus as unknown as string[]),
-        remarks: findColumn(row, DEBTOR_HEADERS.remarks as unknown as string[]),
-        accountStatus: findLastOf(row, ['status']),
-        mis: findColumn(row, DEBTOR_HEADERS.mis as unknown as string[]),
-        accountsRemarks: findColumn(row, DEBTOR_HEADERS.accountsRemarks as unknown as string[]),
-        employee: findColumn(row, DEBTOR_HEADERS.employee as unknown as string[]),
-        state: findColumn(row, DEBTOR_HEADERS.state as unknown as string[]),
-        region: findColumn(row, DEBTOR_HEADERS.region as unknown as string[]),
-        ledgerLink: findColumn(row, DEBTOR_HEADERS.ledgerLink as unknown as string[]),
+        invoiceDate: pick(DEBTOR_HEADERS.invoiceDate),
+        creditPeriod: pick(DEBTOR_HEADERS.creditPeriod),
+        dueDate: pick(DEBTOR_HEADERS.dueDate),
+        amountReceived: pick(DEBTOR_HEADERS.amountReceived),
+        balance: pick(DEBTOR_HEADERS.balance),
+        invoiceAmount: pick(DEBTOR_HEADERS.invoiceAmount),
+        contactName: pick(DEBTOR_HEADERS.contactName, true),
+        contactPhone: pick(DEBTOR_HEADERS.contactPhone, true),
+        contactMail: pick(DEBTOR_HEADERS.contactMail, true),
+        lastCallDate: pick(DEBTOR_HEADERS.lastCallDate, true),
+        callStatus: pick(DEBTOR_HEADERS.callStatus, true),
+        paymentStatus: pick(DEBTOR_HEADERS.paymentStatus, true),
+        remarks: pick(DEBTOR_HEADERS.remarks, true),
+        accountStatus: pick(DEBTOR_HEADERS.accountStatus, true),
+        mis: pick(DEBTOR_HEADERS.mis, true),
+        accountsRemarks: pick(DEBTOR_HEADERS.accountsRemarks, true),
+        employee: pick(DEBTOR_HEADERS.employee, true),
+        state: pick(DEBTOR_HEADERS.state, true),
+        region: pick(DEBTOR_HEADERS.region, true),
+        ledgerLink: pick(DEBTOR_HEADERS.ledgerLink, true),
       };
       break;
     }
@@ -318,6 +344,7 @@ const COLLECTION_HEADERS = {
   collectionDate: ['collection date'],
   customer: ['customer name', 'customer debtor', 'customer'],
   invoiceNo: ['invoice no', 'invoice number', 'invoice'],
+  receiptNo: ['receipt no', 'receipt number', 'receipt', 'transaction id', 'txn id', 'reference no', 'reference number', 'reference'],
   amount: ['amount received'],
   mode: ['mode of receipt', 'mode'],
   remarks: ['remarks'],
@@ -342,6 +369,7 @@ export function parseCollectionsTsv(text: string): ParseOutcome<CollectionRow> {
         collectionDate: findColumn(row, COLLECTION_HEADERS.collectionDate as unknown as string[]),
         customer: c,
         invoiceNo: findColumn(row, COLLECTION_HEADERS.invoiceNo as unknown as string[]),
+        receiptNo: findColumn(row, COLLECTION_HEADERS.receiptNo as unknown as string[], { exactOnly: true }),
         amount: a,
         mode: findColumn(row, COLLECTION_HEADERS.mode as unknown as string[]),
         remarks: findColumn(row, COLLECTION_HEADERS.remarks as unknown as string[]),
@@ -370,6 +398,7 @@ export function parseCollectionsTsv(text: string): ParseOutcome<CollectionRow> {
       collectionDate: parseIndianDate(get(row, 'collectionDate')),
       customerName,
       invoiceNo: normalizeInvoiceNo(get(row, 'invoiceNo')),
+      receiptNo: normalizeInvoiceNo(get(row, 'receiptNo')),
       amount,
       mode: get(row, 'mode'),
       remarks: get(row, 'remarks'),
@@ -377,14 +406,4 @@ export function parseCollectionsTsv(text: string): ParseOutcome<CollectionRow> {
     });
   }
   return { rows, headerRowFound, totalLines: grid.length, skipped };
-}
-
-/** Last column whose header equals any of the aliases (e.g. SECOND "Remarks"). */
-function findLastOf(headers: string[], aliases: string[]): number {
-  let idx = -1;
-  for (let i = 0; i < headers.length; i++) {
-    const norm = headers[i].toLowerCase().replace(/\(.*\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-    if (aliases.some((a) => norm === a)) idx = i;
-  }
-  return idx;
 }
