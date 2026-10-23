@@ -133,6 +133,51 @@ export async function healConvertedAttribution(): Promise<{ scanned: number; cre
 }
 
 /**
+ * Daily self-heal: every estimate with a blank region whose creator sits in a
+ * roster region is mapped to that region. Covers sent/draft rows that arrived
+ * via the Zoho sync with `createdBy` already set (the link path only stamps
+ * region at claim time). Never invents attribution: rows with no creator, or a
+ * creator without a roster region (e.g. a deleted/unmapped roster row), stay in
+ * the privileged Unmapped bucket. Idempotent; runs after the enquiry sweep.
+ */
+export async function healUnmappedEstimateRegions(): Promise<{ scanned: number; mapped: number }> {
+  let scanned = 0;
+  let mapped = 0;
+  try {
+    const estimates = await prisma.estimate.findMany({ where: { region: '' } });
+    const needing = ((estimates as any[]) ?? []).filter(
+      (e) => String(e?.createdBy ?? '').trim() && !String(e?.region ?? '').trim(),
+    );
+    scanned = needing.length;
+    if (needing.length === 0) return { scanned, mapped };
+
+    const telecallers = await prisma.telecaller.findMany({ select: { id: true, region: true } });
+    const regionById = new Map<string, string>();
+    for (const t of (telecallers as any[]) ?? []) {
+      const region = String(t?.region ?? '').trim();
+      if (region) regionById.set(String(t.id), region);
+    }
+
+    for (const e of needing) {
+      const region = regionById.get(String(e?.createdBy ?? '').trim());
+      if (!region) continue;
+      await prisma.estimate.update({
+        where: { estimateId: String(e.estimateId) },
+        data: { region },
+      });
+      mapped += 1;
+    }
+    if (mapped > 0) {
+      try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+      logger.info({ scanned, mapped }, 'unmapped estimate regions healed');
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'healUnmappedEstimateRegions failed');
+  }
+  return { scanned, mapped };
+}
+
+/**
  * Daily self-heal: resolve every enquiry→estimate link whose estimate has
  * since synced (or that predates this feature). Idempotent — already-linked
  * rows no-op. Runs inside runLeadConversion so no new cron or sync-code hook
@@ -165,6 +210,7 @@ export async function sweepEnquiryEstimateLinks(): Promise<{ linked: number; sca
   // Converted rows are never re-owned by linkEnquiryEstimate (it refuses
   // non-sent status); repair blank attribution/region separately.
   try { await healConvertedAttribution(); } catch { /* heal logs its own failure */ }
+  try { await healUnmappedEstimateRegions(); } catch { /* heal logs its own failure */ }
   if (linked > 0) logger.info({ linked, scanned }, 'enquiry-estimate sweep linked estimates');
   return { linked, scanned };
 }

@@ -87,6 +87,7 @@ async function telecallerName(id: string | null | undefined): Promise<string | n
 }
 
 /** Overwrite Estimate.createdBy from the enquiry's agent — always wins.
+ *  Region follows the creator's roster region (region-ownership model).
  *  organizationId pins the row on cross-org number clashes. */
 export async function syncEstimateCreatorFromEnquiry(
   estNumber: unknown,
@@ -99,10 +100,27 @@ export async function syncEstimateCreatorFromEnquiry(
   try {
     const est = await findEstimateByNumber(num, String(organizationId ?? ''));
     if (!est) return { updated: false };
-    if (String((est as any).createdBy ?? '') === agent) return { updated: false, estimateId: String(est.estimateId) };
+    let staffRegion = '';
+    try {
+      const tc: any = await (prisma as any).telecaller.findUnique({ where: { id: agent }, select: { region: true } });
+      staffRegion = String(tc?.region ?? '');
+    } catch { /* best-effort */ }
+    if (String((est as any).createdBy ?? '') === agent) {
+      // Same creator: still repair a blank region from their roster region.
+      if (staffRegion && !String((est as any).region ?? '')) {
+        await (prisma as any).estimate.update({
+          where: { estimateId: String(est.estimateId) },
+          data: { region: staffRegion },
+        });
+        return { updated: true, estimateId: String(est.estimateId) };
+      }
+      return { updated: false, estimateId: String(est.estimateId) };
+    }
+    const data: Record<string, unknown> = { createdBy: agent };
+    if (staffRegion) data.region = staffRegion;
     await (prisma as any).estimate.update({
       where: { estimateId: String(est.estimateId) },
-      data: { createdBy: agent },
+      data,
     });
     return { updated: true, estimateId: String(est.estimateId) };
   } catch {
@@ -133,9 +151,17 @@ export async function reconcileEstimateCreator(estNumber: unknown, organizationI
     } catch { /* treat as unmapped below */ }
     const current = String((est as any).createdBy ?? '');
     if ((owner ?? '') === current) return { updated: false };
+    const data: Record<string, unknown> = { createdBy: owner };
+    if (owner) {
+      try {
+        const tc: any = await (prisma as any).telecaller.findUnique({ where: { id: owner }, select: { region: true } });
+        const staffRegion = String(tc?.region ?? '');
+        if (staffRegion) data.region = staffRegion;
+      } catch { /* best-effort */ }
+    }
     await (prisma as any).estimate.update({
       where: { estimateId: String(est.estimateId) },
-      data: { createdBy: owner },
+      data,
     });
     return { updated: true };
   } catch {
