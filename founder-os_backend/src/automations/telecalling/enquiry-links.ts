@@ -133,25 +133,35 @@ export async function healConvertedAttribution(): Promise<{ scanned: number; cre
 }
 
 /**
- * Daily self-heal: every estimate with a blank region whose creator sits in a
- * roster region is mapped to that region. Covers sent/draft rows that arrived
- * via the Zoho sync with `createdBy` already set (the link path only stamps
- * region at claim time). Never invents attribution: rows with no creator, or a
- * creator without a roster region (e.g. a deleted/unmapped roster row), stay in
- * the privileged Unmapped bucket. Idempotent; runs after the enquiry sweep.
+ * Daily self-heal for EVERY estimate with a blank region. Attribution order:
+ *   1. creator (`createdBy`) → their roster region;
+ *   2. mapping enquiry's assigned agent (the B2B creator) → createdBy + region;
+ *   3. legacy `assignedTelecallerId` holder → region only (never invents a
+ *      creator from the old individual-assignment model).
+ * Rows with none of these signals stay in the privileged Unmapped bucket.
+ * Idempotent; runs after the enquiry sweep.
  */
 export async function healUnmappedEstimateRegions(): Promise<{ scanned: number; mapped: number }> {
   let scanned = 0;
   let mapped = 0;
   try {
     const estimates = await prisma.estimate.findMany({ where: { region: '' } });
-    const needing = ((estimates as any[]) ?? []).filter(
-      (e) => String(e?.createdBy ?? '').trim() && !String(e?.region ?? '').trim(),
-    );
+    const needing = ((estimates as any[]) ?? []).filter((e) => !String(e?.region ?? '').trim());
     scanned = needing.length;
     if (needing.length === 0) return { scanned, mapped };
 
-    const telecallers = await prisma.telecaller.findMany({ select: { id: true, region: true } });
+    const [enquiries, telecallers] = await Promise.all([
+      prisma.enquiry.findMany({ select: { estNumber: true, assignedAgentId: true, organizationId: true } }),
+      prisma.telecaller.findMany({ select: { id: true, region: true } }),
+    ]);
+    const byNum = new Map<string, any[]>();
+    for (const q of (enquiries as any[]) ?? []) {
+      const num = normEst(q?.estNumber);
+      if (!num) continue;
+      const arr = byNum.get(num) ?? [];
+      arr.push(q);
+      byNum.set(num, arr);
+    }
     const regionById = new Map<string, string>();
     for (const t of (telecallers as any[]) ?? []) {
       const region = String(t?.region ?? '').trim();
@@ -159,11 +169,32 @@ export async function healUnmappedEstimateRegions(): Promise<{ scanned: number; 
     }
 
     for (const e of needing) {
-      const region = regionById.get(String(e?.createdBy ?? '').trim());
-      if (!region) continue;
+      const data: Record<string, unknown> = {};
+      let creator = String((e as any)?.createdBy ?? '').trim();
+      let region = regionById.get(creator) ?? '';
+      if (!creator) {
+        // The mapping enquiry's agent is the B2B creator of this estimate.
+        const matches = byNum.get(normEst(e.estimateNumber)) ?? [];
+        const org = String((e as any)?.organizationId ?? '');
+        const pick = (org && matches.find((m) => String((m as any)?.organizationId ?? '') === org)) || matches[0] || null;
+        const agent = String((pick as any)?.assignedAgentId ?? '').trim();
+        const agentRegion = agent ? regionById.get(agent) ?? '' : '';
+        if (agentRegion) {
+          creator = agent;
+          region = agentRegion;
+          data.createdBy = agent;
+        }
+      }
+      if (!region) {
+        // Legacy individual assignment is a region-only fallback.
+        const holder = String((e as any)?.assignedTelecallerId ?? '').trim();
+        if (holder) region = regionById.get(holder) ?? '';
+      }
+      if (region) data.region = region;
+      if (Object.keys(data).length === 0) continue;
       await prisma.estimate.update({
         where: { estimateId: String(e.estimateId) },
-        data: { region },
+        data,
       });
       mapped += 1;
     }
