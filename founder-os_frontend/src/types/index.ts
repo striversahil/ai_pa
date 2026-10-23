@@ -7,6 +7,10 @@ export interface Agent {
   /** Roster email (when the backend serves it) — used to match the
    *  signed-in user to their own agent row. */
   email?: string | null;
+  /** Sales-roster type: dashboard telecaller vs field staff (referred leads). */
+  type?: 'telecaller' | 'field_staff';
+  /** Region (R1–R4) from the sales roster; '' = unmapped. */
+  region?: string;
 }
 
 export interface Activity {
@@ -172,7 +176,7 @@ export interface Enquiry {
   /** Daily sequence: Enquiry No {dailyNo} - {DD} {MON} {source}. Auto-assigned,
    *  counter resets every IST day. */
   dailyNo?: number | null;
-  /** Enquiry source: TL | AI | Incoming | B2B (default TL). */
+  /** Enquiry source: TL | AI | Incoming | B2B | Field Staff (default TL). */
   source?: string;
   enquiryNumber?: string;
   sourceLead?: string;
@@ -191,6 +195,10 @@ export interface Enquiry {
    *  Only submitted enquiries enter the management queue. */
   procurementSubmittedAt?: string;
   assignedAgentId: string;
+  /** Field-staff referral origin (source "Field Staff"); '' otherwise. */
+  fieldStaffId?: string;
+  /** Sales agent who logged a Field Staff referral (audit only). */
+  loggedByAgentId?: string;
   createdAt: string;
   updatedAt?: string;
   activities: Activity[];
@@ -232,7 +240,7 @@ export interface StoredData {
   agents: Agent[];
 }
 
-export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B"] as const;
+export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B", "Field Staff"] as const;
 
 const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 

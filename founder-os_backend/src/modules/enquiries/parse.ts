@@ -199,6 +199,7 @@ export function pickEnquiryFields(data: any): Partial<Enquiry> | null {
     contactEmail: "contactEmail", contactPhone: "contactPhone",
     title: "title", description: "description",
     priority: "priority", status: "status", assignedAgentId: "assignedAgentId",
+    fieldStaffId: "fieldStaffId",
     imageUrls: "imageUrls", activities: "activities",
   };
   const out: any = {};

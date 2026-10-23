@@ -272,6 +272,10 @@ model Telecaller {
   // eligible as a CLOSER (the 80% share of a close, picked by sales-head).
   // Off = the telecaller still generates leads (NeoDove) but can never close.
   assignEstimateFollowUps Boolean  @default(true)
+  // Staff type: 'telecaller' (dashboard-using sales agent) | 'field_staff'
+  // (never operates the dashboard; sales agents log their enquiries for them,
+  // and the enquiry/region/20% generator credit belongs to the field staff).
+  type               String   @default("telecaller")
   // Sales hierarchy (founder table, 2026-10-22): 'TL1' | 'TL2' — '' = unset.
   tlLevel            String   @default("")
   // Region this staff member works ('R1'–'R4'; '' = unmapped staff, shown
@@ -756,6 +760,13 @@ model Enquiry {
   priority       String  @default("medium")
   status         String  @default("new")
   assignedAgentId String
+  // Field-staff referral: the field staff whose lead this is (source
+  // "Field Staff"). Immutable origin — survives a later lead reassignment.
+  // assignedAgentId is set to the same staff id at creation.
+  fieldStaffId     String @default("")
+  // The sales agent who actually typed/logged the enquiry (audit only);
+  // '' for pre-existing rows and root test rows.
+  loggedByAgentId  String @default("")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   imageUrls      String?
@@ -781,6 +792,7 @@ model Enquiry {
   comments       EnquiryComment[]
 
   @@index([organizationId])
+  @@index([fieldStaffId])
 }
 
 model EnquiryComment {

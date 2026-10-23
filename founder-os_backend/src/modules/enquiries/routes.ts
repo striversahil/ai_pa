@@ -21,6 +21,7 @@ import {
   pickEnquiryFields,
 } from "./parse";
 import { normalizeEnquirySource, nextDailyNo, enquiryLabelText } from "./types";
+import { isFieldStaffSource, resolveFieldStaff } from "./attribution";
 import { decodeEnquiryCursor, encodeEnquiryCursor } from "./types";
 import {
   isRestrictedViewer,
@@ -277,7 +278,21 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
   // then display name); a provided agent still wins (e.g. root assigning).
   // No roster match = unassigned ("") — never the auth-session id, which
   // belongs to a different id space and could resolve to the wrong person.
-  const assignedAgentId = String(body.assignedAgentId || "");
+  const creatorAgentId = String(body.assignedAgentId || "");
+  const source = normalizeEnquirySource(body.source);
+  // Field Staff referral (attribution.ts): the enquiry belongs to the picked
+  // FIELD STAFF — Lead By, 20% generator credit and Estimate.region all derive
+  // from them. The sales agent who typed it is kept as loggedByAgentId (audit).
+  let assignedAgentId = creatorAgentId;
+  let fieldStaffId = "";
+  let loggedByAgentId = "";
+  if (isFieldStaffSource(source)) {
+    const resolved = await resolveFieldStaff(store, body.fieldStaffId);
+    if (!resolved.ok) return json(400, { error: resolved.error });
+    fieldStaffId = resolved.row.id;
+    assignedAgentId = resolved.row.id;
+    loggedByAgentId = creatorAgentId;
+  }
   // Daily enquiry number: atomic Setting counter, resets every IST day
   // (concurrent creates can never share a number — the old max+1 scan raced).
   // Root test enquiries skip the sequence (founder rule): Enquiry No is for
@@ -288,7 +303,6 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
   const dailyNo = me.isRoot
     ? null
     : await store.allocateDailyNo(now).catch(() => nextDailyNo([], now));
-  const source = normalizeEnquirySource(body.source);
   // No Title field in the form: a blank title becomes the enquiry number text.
   const title = String(body?.title ?? "").trim()
     || enquiryLabelText(dailyNo, now.toISOString(), source);
@@ -308,6 +322,8 @@ export async function enquiryCreate(store: EnquiryStore, me: MeResponse, body: a
     priority: String(body?.priority ?? "medium"),
     status: String(body?.status ?? "new"),
     assignedAgentId,
+    fieldStaffId,
+    loggedByAgentId,
     rateStatus: 'rate_pending',
     procurementSubmittedAt: "",
     sentRevisionAt: "",
@@ -454,6 +470,32 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
   const declaredSurface = String((body as any)?.surface ?? '').trim().toLowerCase();
   const actingProcurement = restricted || (privileged && declaredSurface === 'procurement');
   const storedForItems = await store.getEnquiry(id).catch(() => null);
+  // Field Staff attribution: revalidate only when the SOURCE changes or a
+  // different field staff is picked. Partial updates (status/rates/comments)
+  // never touch attribution, so historical rows stay editable even after the
+  // staff member is deleted/absent.
+  {
+    const incomingSource = (updates as any).source;
+    const storedSource = String((storedForItems as any)?.source ?? '');
+    const storedFieldStaffId = String((storedForItems as any)?.fieldStaffId ?? '');
+    const incomingFieldStaffId = String((updates as any).fieldStaffId ?? '');
+    const sourceChanged = incomingSource !== undefined && String(incomingSource) !== storedSource;
+    const staffChanged = !!incomingFieldStaffId && incomingFieldStaffId !== storedFieldStaffId;
+    if (sourceChanged || staffChanged) {
+      if (isFieldStaffSource(incomingSource ?? storedSource)) {
+        const resolved = await resolveFieldStaff(store, incomingFieldStaffId || storedFieldStaffId);
+        if (!resolved.ok) return json(400, { error: resolved.error });
+        (updates as any).fieldStaffId = resolved.row.id;
+        (updates as any).assignedAgentId = resolved.row.id;
+        if (!isFieldStaffSource(storedSource)) {
+          const logger = String((storedForItems as any)?.loggedByAgentId ?? (storedForItems as any)?.assignedAgentId ?? '');
+          if (logger && logger !== resolved.row.id) (updates as any).loggedByAgentId = logger;
+        }
+      } else if (sourceChanged) {
+        (updates as any).fieldStaffId = '';
+      }
+    }
+  }
   const storedItems: any[] = Array.isArray((storedForItems as any)?.items) ? (storedForItems as any).items : [];
   if (Array.isArray((updates as any).items)) {
     // Item lifecycles (rates/spec/thread per role) — see update.ts.

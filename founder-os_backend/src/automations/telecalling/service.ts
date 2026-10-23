@@ -560,6 +560,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   interface StaffRow {
     id: string;
     name: string;
+    type: string;
     region: string;
     tlLevel: TlLevel;
     closerEligible: boolean;
@@ -622,9 +623,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     staffRows.set(id, {
       id,
       name: String(t.name ?? ''),
+      type: String((t as any).type ?? 'telecaller'),
       region: String((t as any).region ?? ''),
       tlLevel: ((t as any).tlLevel ?? '') as TlLevel,
-      closerEligible: !!(t as any).assignEstimateFollowUps,
+      // Field staff generate leads only — never eligible as the 80% closer.
+      closerEligible: !!(t as any).assignEstimateFollowUps && String((t as any).type ?? 'telecaller') !== 'field_staff',
       wonGenerator: genIds.length,
       wonCloser: cloIds.length,
       won: new Set([...genIds, ...cloIds]).size,
@@ -974,6 +977,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       unmatchedSentCount: unmappedCount,
       unmappedSentCount: unmappedCount,
       telecallerCount: telecallers.length,
+      fieldStaffCount: (telecallers as any[]).filter((t) => String((t as any).type ?? 'telecaller') === 'field_staff').length,
       unmappedStaffCount: unmappedStaff.length,
       staff: agentList,
       agents: agentList,

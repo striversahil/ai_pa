@@ -28,6 +28,8 @@ function mapEnquiry(row: any): Enquiry | null {
     procurementSubmittedAt: String((row as any).procurementSubmittedAt ?? ""),
     sentRevisionAt: String((row as any).sentRevisionAt ?? ""),
     assignedAgentId: String(row.assignedAgentId ?? ""),
+    fieldStaffId: String((row as any).fieldStaffId ?? ""),
+    loggedByAgentId: String((row as any).loggedByAgentId ?? ""),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     imageUrls: row.imageUrls ? JSON.parse(row.imageUrls) : [],
@@ -113,6 +115,18 @@ export class PrismaEnquiryStore implements EnquiryStore {
       orderBy: { createdAt: "asc" },
     });
     return rows.map(mapComment).filter(Boolean) as EnquiryComment[];
+  }
+  async getStaffAttribution(id: string) {
+    const row: any = await this.prisma.telecaller.findUnique({ where: { id } }).catch(() => null);
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      name: String(row.name ?? ''),
+      region: String(row.region ?? ''),
+      type: String(row.type ?? 'telecaller'),
+      deleted: !!row.deleted,
+      absentSince: row.absentSince ? new Date(row.absentSince).toISOString() : null,
+    };
   }
   async getEnquiry(id: string) {
     const row = await this.prisma.enquiry.findUnique({ where: { id } });

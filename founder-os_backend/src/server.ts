@@ -285,7 +285,11 @@ app.get('/api/enquiries/agents', async (req, res) => {
   res.json(
     roster
       .filter((t: any) => !(t as any).absentSince)
-      .map((t: any) => ({ id: String(t.id), name: t.name, email: t.email ?? null, picture: null })),
+      .map((t: any) => ({
+        id: String(t.id), name: t.name, email: t.email ?? null,
+        type: String(t.type ?? 'telecaller'), region: String(t.region ?? ''), tlLevel: String(t.tlLevel ?? ''),
+        picture: null,
+      })),
   );
 });
 app.get('/api/enquiries/clients', async (req, res) => {

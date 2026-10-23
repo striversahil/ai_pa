@@ -3,7 +3,7 @@
 // Extracted from store.ts (no behavior change). Single home for the row
 // shape, line-item shape, comment shape, thread shape, and the daily-number
 // / label helpers shared by Sales → Procurement → Management.
-export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B"] as const;
+export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B", "Field Staff"] as const;
 
 export function normalizeEnquirySource(v: unknown): string {
   const s = String(v ?? "TL").trim();
@@ -157,6 +157,10 @@ export interface Enquiry {
    *  Cleared on the next mark-as-sent. '' = no open revision. */
   sentRevisionAt: string;
   assignedAgentId: string;
+  /** Field-staff referral origin (source "Field Staff"); '' otherwise. */
+  fieldStaffId?: string;
+  /** Sales agent who logged a Field Staff referral (audit only); '' otherwise. */
+  loggedByAgentId?: string;
   createdAt: string;
   updatedAt: string;
   imageUrls: string[];
@@ -213,6 +217,11 @@ export interface EnquiryStore {
   listComments(enquiryId: string): Promise<EnquiryComment[]>;
   addComment(data: Omit<EnquiryComment, "id" | "createdAt">): Promise<EnquiryComment>;
   listAllComments(): Promise<EnquiryComment[]>;
+  /** Sales-roster attribution lookup (Field Staff referral validation). */
+  getStaffAttribution(id: string): Promise<{
+    id: string; name: string; region: string; type: string;
+    deleted: boolean; absentSince: string | null;
+  } | null>;
 }
 
 // ── Cursor codec: opaque keyset token for queue pagination ───────────────

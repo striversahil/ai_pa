@@ -138,6 +138,7 @@ export async function creditCloserShare(estimateId: string, closerTelecallerId: 
     if (!genRow) return { ok: false, error: 'No generator credit on this estimate — cannot pick a closer' };
     const closer = await prisma.telecaller.findUnique({ where: { id: closerTelecallerId } });
     if (!closer) return { ok: false, error: 'Closer not found in the roster' };
+    if (String((closer as any).type ?? 'telecaller') === 'field_staff') return { ok: false, error: 'Field staff cannot be a closer — pick a telecaller from the same region' };
     if (!(closer as any).assignEstimateFollowUps) return { ok: false, error: 'Closer is not marked as a conversion specialist' };
     const estRegion = String((est as any).region ?? '');
     const closerRegion = String((closer as any).region ?? '');

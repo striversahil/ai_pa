@@ -413,6 +413,11 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         id: String(t.id),
         name: t.name,
         email: t.email ?? null,
+        // Sales-roster type/region: the enquiry form lists Field Staff from
+        // this active+present roster; rows badge field-staff leads.
+        type: String(t.type ?? 'telecaller'),
+        region: String(t.region ?? ''),
+        tlLevel: String(t.tlLevel ?? ''),
         picture: null,
       }));
     return c.json(agents);

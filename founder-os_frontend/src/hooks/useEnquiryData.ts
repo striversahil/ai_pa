@@ -123,6 +123,8 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
           color: AGENT_COLORS[i % AGENT_COLORS.length],
           status: 'active',
           email: a?.email ? String(a.email) : null,
+          type: a?.type === 'field_staff' ? 'field_staff' : 'telecaller',
+          region: a?.region ? String(a.region) : '',
         })));
       }
       if (clientsRes.ok) {

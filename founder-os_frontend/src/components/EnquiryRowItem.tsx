@@ -47,6 +47,14 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
             {enquiryLabel(enq)}
           </button>
           <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
+          {!hideIdentity && (enq.source === "Field Staff" || agent?.type === "field_staff") && (
+            <span
+              className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
+              title={`Field Staff referral — lead, region and 20% generator credit belong to ${agent?.name ?? 'the field staff'}`}
+            >
+              Field Staff{agent?.region ? ` · ${agent.region}` : ""}
+            </span>
+          )}
           {!hideIdentity && (
             <>
               <span className="text-xs font-semibold text-[var(--text-secondary)]">{enq.clientCompany}</span>

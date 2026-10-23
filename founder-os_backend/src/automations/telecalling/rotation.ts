@@ -14,7 +14,9 @@ import { istDate } from './util';
 // follow-ups receive assignments (new deals + EOD re-poaching). Everyone else
 // still generates leads but never holds estimates.
 export async function getFollowUpSpecialists(): Promise<Telecaller[]> {
-  return prisma.telecaller.findMany({ where: { assignEstimateFollowUps: true, deleted: false, absentSince: null }, orderBy: { order: 'asc' } });
+  const rows = await prisma.telecaller.findMany({ where: { assignEstimateFollowUps: true, deleted: false, absentSince: null }, orderBy: { order: 'asc' } });
+  // Field staff are lead generators, never conversion specialists/closers.
+  return (rows as any[]).filter((t) => String((t as any).type ?? 'telecaller') !== 'field_staff') as Telecaller[];
 }
 
 /**

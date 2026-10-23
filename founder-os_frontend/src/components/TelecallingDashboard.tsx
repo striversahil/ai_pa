@@ -45,6 +45,8 @@ interface LeaderRow {
   wonGenerator?: number;
   wonCloser?: number;
   tlLevel?: string;
+  /** Sales-roster type: 'telecaller' | 'field_staff'. */
+  type?: string;
   /** Conversion specialist (eligible to be picked as the 80% closer). */
   closerEligible?: boolean;
 }
@@ -699,6 +701,7 @@ interface RosterRow {
   activeAssigned: number;
   tlLevel?: string;
   region?: string;
+  type?: string;
   closerEligible?: boolean;
   linkedUser?: { id: string; email: string; name: string; isRoot: boolean } | null;
 }
@@ -774,6 +777,7 @@ function adaptLeaderRow(s: any, region: any, targets: any): LeaderRow {
     wonGenerator: Number(s?.wonGenerator ?? 0),
     wonCloser: Number(s?.wonCloser ?? 0),
     tlLevel: String(s?.tlLevel ?? ""),
+    type: String(s?.type ?? "telecaller"),
     closerEligible: !!s?.closerEligible,
   };
 }
@@ -1282,7 +1286,7 @@ export default function TelecallingDashboard() {
   };
 
   // Add/edit agent from the modal — contact + role only, never NeoDove mapping.
-  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; region: string; tlLevel: string }) => {
+  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; region: string; tlLevel: string; type: string }) => {
     if (!updates.name.trim()) return;
     setBusy(true);
     setRosterError(null);
@@ -1295,6 +1299,7 @@ export default function TelecallingDashboard() {
         assignEstimateFollowUps: updates.assignEstimateFollowUps,
         region: updates.region,
         tlLevel: updates.tlLevel,
+        type: updates.type,
       };
       const res = editTarget
         ? await fetch(`/api/telecallers/${editTarget.id}`, {
@@ -1845,7 +1850,7 @@ export default function TelecallingDashboard() {
                     <thead className="text-zinc-500 dark:text-zinc-400 text-xs uppercase">
                       <tr className="border-b border-zinc-200 dark:border-zinc-800">
                         <th className="text-left py-2 pr-4">#</th>
-                        <th className="text-left py-2 pr-4 min-w-[11rem]">Telecaller</th>
+                        <th className="text-left py-2 pr-4 min-w-[11rem]">Sales staff</th>
                         <th className="text-left py-2 pr-4">Region</th>
                         <th className="text-right py-2 pr-4">Leads</th>
                         <th className="text-right py-2 pr-4">Est. Won</th>
@@ -1875,6 +1880,9 @@ export default function TelecallingDashboard() {
                                   title={open ? "Hide region pipeline" : "Show region pipeline"}
                                 >
                                   {t.name}
+                                  {t.type === "field_staff" && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-sky-500/30 bg-sky-500/10 text-sky-500 dark:text-sky-400">Field</span>
+                                  )}
                                   <span className={`text-[10px] text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
                                 </button>
                               </td>
@@ -1887,8 +1895,8 @@ export default function TelecallingDashboard() {
                               <td className="py-2 pr-4 text-right text-emerald-400 font-mono whitespace-nowrap">
                                 {t.conversion.won}
                               </td>
-                              <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.callsConnected)}</td>
-                              <td className="py-2 pr-4 text-right font-mono text-indigo-300">{fmtTalk(t.generation.talkTimeSec)}</td>
+                              <td className="py-2 pr-4 text-right font-mono">{t.type === "field_staff" ? "—" : fmtNum(t.generation.callsConnected)}</td>
+                              <td className="py-2 pr-4 text-right font-mono text-indigo-300">{t.type === "field_staff" ? "—" : fmtTalk(t.generation.talkTimeSec)}</td>
                               {showRisk && (
                               <td className="py-2 pr-4 text-right font-mono whitespace-nowrap">
                                 {(t.risk?.atRisk ?? 0) + (t.risk?.zombie ?? 0) > 0 ? (
@@ -2562,7 +2570,7 @@ function PendingPicksSection({
         <div className="space-y-1.5">
           {pending.map((p) => {
             const region = p.region || "";
-            const eligible = rosterRows.filter((t) => t.assignEstimateFollowUps && (!region || !t.region || t.region === region));
+            const eligible = rosterRows.filter((t) => t.type !== "field_staff" && t.assignEstimateFollowUps && (!region || !t.region || t.region === region));
             return (
               <div key={p.estimateId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
                 <div className="min-w-0">
@@ -2823,10 +2831,10 @@ function RosterSection({
   return (
     <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-bold">Telecaller Roster</h3>
+        <h3 className="text-lg font-bold">Sales Roster</h3>
         <button onClick={onAdd} disabled={busy}
           className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
-          + Add agent
+          + Add staff
         </button>
       </div>
       {rosterError && (
@@ -2839,15 +2847,18 @@ function RosterSection({
           <div key={t.id} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-zinc-900 dark:text-white">{t.name}</div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-wrap justify-end">
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${t.type === "field_staff" ? "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400" : "border-zinc-400/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-300"}`}>
+                  {t.type === "field_staff" ? "Field Staff" : "Telecaller"}
+                </span>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${t.region ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-500 dark:text-indigo-300" : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}>
                   {t.region || "Unmapped"}
                 </span>
                 {t.tlLevel && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-semibold">{t.tlLevel}</span>
                 )}
-                <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.assignEstimateFollowUps ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
-                  {t.assignEstimateFollowUps ? "Closer" : "Generator"}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.type === "field_staff" ? "bg-sky-500/10 text-sky-600 dark:text-sky-400" : t.assignEstimateFollowUps ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
+                  {t.type === "field_staff" ? "Leads only" : t.assignEstimateFollowUps ? "Closer" : "Generator"}
                 </span>
               </div>
             </div>
@@ -2868,13 +2879,19 @@ function RosterSection({
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Open in region: {t.activeAssigned} · lifetime assigned: {t.totalAssigned}</div>
             <div className="flex gap-2 mt-3 flex-wrap">
               <button onClick={() => onEditModal(t)} className="flex-1 text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 py-1.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-700">Edit</button>
-              <button onClick={() => onToggleFollowUps(t.id, t.assignEstimateFollowUps)} className={`flex-1 text-xs rounded-lg py-1.5 font-semibold ${
-                t.assignEstimateFollowUps
-                  ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                  : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-              }`} title="Conversion specialists can be picked as the 80% closer; others only earn the 20% generator share">
-                {t.assignEstimateFollowUps ? "Not a closer" : "Make closer-eligible"}
-              </button>
+              {t.type !== "field_staff" ? (
+                <button onClick={() => onToggleFollowUps(t.id, t.assignEstimateFollowUps)} className={`flex-1 text-xs rounded-lg py-1.5 font-semibold ${
+                  t.assignEstimateFollowUps
+                    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                    : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                }`} title="Conversion specialists can be picked as the 80% closer; others only earn the 20% generator share">
+                  {t.assignEstimateFollowUps ? "Not a closer" : "Make closer-eligible"}
+                </button>
+              ) : (
+                <span className="flex-1 text-center text-[11px] rounded-lg bg-sky-500/5 text-sky-600 dark:text-sky-400 py-1.5 font-semibold" title="Field staff never operate the dashboard and never close — they only generate leads">
+                  Never a closer
+                </span>
+              )}
               <button
                 onClick={() => onDelete(t)}
                 disabled={busy}
@@ -2886,7 +2903,7 @@ function RosterSection({
             </div>
           </div>
         ))}
-        {rosterRows.length === 0 && <p className="text-sm text-zinc-500">No telecallers yet — add one below.</p>}
+        {rosterRows.length === 0 && <p className="text-sm text-zinc-500">No sales staff yet — add a telecaller or field staff below.</p>}
       </div>
 
       {/* Deleted agents — hidden from the roster/leaderboard, restorable */}
@@ -2946,7 +2963,7 @@ function RosterEditModal({
   target: RosterRow | null; // null = creating a new agent
   open: boolean;
   busy: boolean;
-  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; region: string; tlLevel: string }) => void;
+  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; region: string; tlLevel: string; type: string }) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
@@ -2956,6 +2973,7 @@ function RosterEditModal({
   const [followUps, setFollowUps] = useState(true);
   const [region, setRegion] = useState("");
   const [tlLevel, setTlLevel] = useState("");
+  const [staffType, setStaffType] = useState("telecaller");
 
   // Re-sync on open too: cancelling with dirty edits then re-opening the SAME
   // agent must not resurrect the abandoned values (target identity unchanged).
@@ -2969,9 +2987,10 @@ function RosterEditModal({
       setFollowUps(target.assignEstimateFollowUps);
       setRegion(target.region ?? "");
       setTlLevel(target.tlLevel ?? "");
+      setStaffType(target.type === "field_staff" ? "field_staff" : "telecaller");
     } else {
       setName(""); setEmail(""); setPhone(""); setWhatsapp(""); setFollowUps(true);
-      setRegion(""); setTlLevel("");
+      setRegion(""); setTlLevel(""); setStaffType("telecaller");
     }
   }, [target, open]);
 
@@ -2990,13 +3009,23 @@ function RosterEditModal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div>
-          <h4 className="font-bold text-zinc-900 dark:text-white">{isCreate ? "Add agent" : "Edit agent"}</h4>
+          <h4 className="font-bold text-zinc-900 dark:text-white">{isCreate ? "Add sales staff" : "Edit sales staff"}</h4>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            {isCreate ? "Create a roster entry with contact details." : "Update contact details and role. NeoDove mapping is read-only."}
+            {isCreate ? "Create a sales-roster entry — telecaller or field staff." : "Update contact details, type and role. NeoDove mapping is read-only."}
           </p>
         </div>
 
         <div className="space-y-3">
+          {field("Type", (
+            <select
+              value={staffType}
+              onChange={(e) => { const v = e.target.value; setStaffType(v); if (v === "field_staff") setFollowUps(false); }}
+              className={inputCls}
+            >
+              <option value="telecaller">Telecaller — uses the dashboard</option>
+              <option value="field_staff">Field Staff — leads logged by sales agents</option>
+            </select>
+          ))}
           {field("Name", <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Full name" />)}
           {field("Email", <input value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="Email" />)}
           {field("Phone", <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} placeholder="Phone" />)}
@@ -3018,10 +3047,16 @@ function RosterEditModal({
             ))}
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-            <input type="checkbox" checked={followUps} onChange={(e) => setFollowUps(e.target.checked)} className="accent-indigo-500" />
-            Conversion specialist (closer-eligible — can be picked for the 80% share)
-          </label>
+          {staffType === "field_staff" ? (
+            <p className="text-[11px] rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-sky-700 dark:text-sky-400">
+              Field staff never use the dashboard and never close. Sales agents log their enquiries with source <b>Field Staff</b>; the lead, region and 20% generator credit go to them. Set a region below so their estimates land in the right region.
+            </p>
+          ) : (
+            <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <input type="checkbox" checked={followUps} onChange={(e) => setFollowUps(e.target.checked)} className="accent-indigo-500" />
+              Conversion specialist (closer-eligible — can be picked for the 80% share)
+            </label>
+          )}
 
           {/* NeoDove mapping — read-only, managed by the auto-sync */}
           {!isCreate && (
@@ -3040,7 +3075,7 @@ function RosterEditModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave({ name, email, phone, whatsapp, assignEstimateFollowUps: followUps, region, tlLevel })}
+            onClick={() => onSave({ name, email, phone, whatsapp, assignEstimateFollowUps: staffType === "field_staff" ? false : followUps, region, tlLevel, type: staffType })}
             disabled={busy || !name.trim()}
             className="px-4 py-2 text-sm rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
             {busy ? "Saving…" : isCreate ? "Add" : "Save"}
@@ -3119,7 +3154,7 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
       // Section 1 — Performance (per-telecaller leaderboard)
       rows.push(["═══ PERFORMANCE (LEADERBOARD) ═══"]);
       rows.push([
-        "Rank", "Telecaller", "Follow-ups", "NeoDove user",
+        "Rank", "Sales staff", "Type", "Follow-ups", "NeoDove user",
         "Open (region)", "Won", "Conv %", "Pipeline ₹", "Closed ₹",
         "Calls Attempted", "Calls Connected", "Calls %", "Talk (min)",
         "Leads Generated", "Leads %", "Score",
@@ -3131,7 +3166,8 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
           rows.push([
             i + 1,
             r.name,
-            r.assignEstimateFollowUps ? "yes" : "no",
+            r.type === "field_staff" ? "Field Staff" : "Telecaller",
+            r.type === "field_staff" ? "n/a" : r.assignEstimateFollowUps ? "yes" : "no",
             r.neodoveUserName,
             r.conversion.assigned,
             r.conversion.won,
@@ -3152,12 +3188,13 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
 
       // Section 2 — Assignments (conversion summary)
       rows.push(["═══ ASSIGNMENTS (CONVERSION) ═══"]);
-      rows.push(["Telecaller", "Open (region)", "Won", "Conv %", "Pipeline ₹", "Closed ₹"]);
+      rows.push(["Sales staff", "Type", "Open (region)", "Won", "Conv %", "Pipeline ₹", "Closed ₹"]);
       data.leaderboard
         .filter((r) => wantedIds.has(r.id))
         .forEach((r) => {
           rows.push([
             r.name,
+            r.type === "field_staff" ? "Field Staff" : "Telecaller",
             r.conversion.assigned,
             r.conversion.won,
             r.conversion.conversionRate,

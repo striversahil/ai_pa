@@ -52,7 +52,7 @@ export default function FilterControls({
         >
           <option value="all">All Leads</option>
           {agents.map(a => (
-            <option key={a.id} value={a.id}>{a.name}</option>
+            <option key={a.id} value={a.id}>{a.name}{a.type === 'field_staff' ? ' · Field Staff' : ''}</option>
           ))}
         </select>
       </div>

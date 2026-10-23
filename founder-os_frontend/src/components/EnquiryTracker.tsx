@@ -169,6 +169,7 @@ export default function EnquiryTracker() {
           clientCompany: data.clientCompany, contactName: data.contactName, contactEmail: data.contactEmail,
           contactPhone: data.contactPhone, description: data.description,
           priority: data.priority, status: data.status, assignedAgentId: data.assignedAgentId,
+          fieldStaffId: data.fieldStaffId || "",
           additionalRequirements, activities, items: data.items || [],
         });
       } else {
@@ -176,7 +177,7 @@ export default function EnquiryTracker() {
           estNumber: data.estNumber, source: data.source || "TL", clientCompany: data.clientCompany, contactName: data.contactName,
           contactEmail: data.contactEmail, contactPhone: data.contactPhone, title: "",
           description: data.description, priority: data.priority, status: data.status,
-          assignedAgentId: data.assignedAgentId || "", imageUrls: data.imageUrls || [],
+          assignedAgentId: data.assignedAgentId || "", fieldStaffId: data.fieldStaffId || "", imageUrls: data.imageUrls || [],
           activities: data.activities || [], additionalRequirements, items: data.items || [],
           id: "", createdAt: "", updatedAt: "",
         } as any);

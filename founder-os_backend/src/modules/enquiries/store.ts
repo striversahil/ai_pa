@@ -107,6 +107,8 @@ export function mapEnquiry(row: any): Enquiry | null {
     procurementSubmittedAt: String((row as any).procurementSubmittedAt ?? ""),
     sentRevisionAt: String((row as any).sentRevisionAt ?? ""),
     assignedAgentId: String(row.assignedAgentId ?? ""),
+    fieldStaffId: String((row as any).fieldStaffId ?? ""),
+    loggedByAgentId: String((row as any).loggedByAgentId ?? ""),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     imageUrls: row.imageUrls ? JSON.parse(row.imageUrls) : [],
@@ -269,6 +271,10 @@ class MemoryEnquiryStore implements EnquiryStore {
     const slice = all.slice(0, lim + 1);
     return { rows: slice.slice(0, lim), hasMore: slice.length > lim };
   }
+  async getStaffAttribution() {
+    // Memory runtime has no roster — Field Staff referrals are rejected there.
+    return null;
+  }
   async getEnquiry(id: string) {
     return this.enquiries.find((e) => e.id === id) ?? null;
   }
@@ -396,6 +402,21 @@ class D1EnquiryStore implements EnquiryStore {
     const all = await this.listEnquiries().catch(() => [] as Enquiry[]);
     return nextDailyNo(all, now);
   }
+  async getStaffAttribution(id: string) {
+    const row: any = await this.db
+      .prepare("SELECT id, name, type, region, deleted, absentSince FROM Telecaller WHERE id = ?")
+      .bind(id)
+      .first();
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      name: String(row.name ?? ''),
+      region: String(row.region ?? ''),
+      type: String(row.type ?? 'telecaller'),
+      deleted: !!Number(row.deleted ?? 0),
+      absentSince: row.absentSince ? String(row.absentSince) : null,
+    };
+  }
   async getEnquiry(id: string) {
     const row = await this.db.prepare("SELECT * FROM Enquiry WHERE id = ?").bind(id).first();
     return mapEnquiry(row);
@@ -405,11 +426,12 @@ class D1EnquiryStore implements EnquiryStore {
     const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
     await this.db
       .prepare(
-        "INSERT INTO Enquiry (id, estNumber, organizationId, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, sentRevisionAt, assignedAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items, searchText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO Enquiry (id, estNumber, organizationId, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, sentRevisionAt, assignedAgentId, fieldStaffId, loggedByAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items, searchText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         e.id, e.estNumber, (e as any).organizationId ?? "", e.dailyNo, e.source, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
-        e.priority, e.status, e.rateStatus, e.procurementSubmittedAt, (e as any).sentRevisionAt ?? "", e.assignedAgentId, e.createdAt, e.updatedAt,
+        e.priority, e.status, e.rateStatus, e.procurementSubmittedAt, (e as any).sentRevisionAt ?? "", e.assignedAgentId,
+        (e as any).fieldStaffId ?? "", (e as any).loggedByAgentId ?? "", e.createdAt, e.updatedAt,
         JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []), (e as any).searchText ?? "",
       )
       .run();
@@ -421,12 +443,12 @@ class D1EnquiryStore implements EnquiryStore {
     const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
     await this.db
       .prepare(
-        "UPDATE Enquiry SET estNumber=?, organizationId=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, sentRevisionAt=?, assignedAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=?, searchText=? WHERE id=?",
+        "UPDATE Enquiry SET estNumber=?, organizationId=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, sentRevisionAt=?, assignedAgentId=?, fieldStaffId=?, loggedByAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=?, searchText=? WHERE id=?",
       )
       .bind(
         merged.estNumber, String((merged as any).organizationId ?? ""), merged.dailyNo, merged.source, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
         merged.description, merged.priority, merged.status, merged.rateStatus, merged.procurementSubmittedAt, String((merged as any).sentRevisionAt ?? ""), merged.assignedAgentId,
-        merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
+        String((merged as any).fieldStaffId ?? ""), String((merged as any).loggedByAgentId ?? ""), merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
         JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), (merged as any).searchText ?? "", id,
       )
       .run();

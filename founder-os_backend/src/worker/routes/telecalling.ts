@@ -95,6 +95,10 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     if (!body?.name) return c.json({ error: 'name required' }, 400);
+    if (body.type !== undefined && body.type !== '' && body.type !== 'telecaller' && body.type !== 'field_staff') {
+      return c.json({ error: "type must be 'telecaller' or 'field_staff'" }, 400);
+    }
+    const staffType = body.type === 'field_staff' ? 'field_staff' : 'telecaller';
     if (body.tlLevel !== undefined && body.tlLevel !== '' && !isValidTlLevel(body.tlLevel)) return c.json({ error: 'tlLevel must be TL1 or TL2 (or unset)' }, 400);
     if (body.region !== undefined && body.region !== '' && !isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4 (or unset)' }, 400);
     const tc = await prisma.telecaller.create({
@@ -105,7 +109,9 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
         whatsapp: body.whatsapp ?? null,
         tlLevel: body.tlLevel ? String(body.tlLevel) : '',
         region: body.region ? String(body.region) : '',
-        assignEstimateFollowUps: body.assignEstimateFollowUps ?? true,
+        type: staffType,
+        // Field staff never close — they only generate leads.
+        assignEstimateFollowUps: staffType === 'field_staff' ? false : (body.assignEstimateFollowUps ?? true),
         order: body.order ?? 0,
         neodoveUserId: body.neodoveUserId ?? null,
         neodoveUserName: body.neodoveUserName ?? null,
@@ -126,7 +132,13 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (body.email !== undefined) data.email = body.email;
     if (body.phone !== undefined) data.phone = body.phone;
     if (body.whatsapp !== undefined) data.whatsapp = body.whatsapp;
+    if (body.type !== undefined) {
+      if (body.type !== 'telecaller' && body.type !== 'field_staff') return c.json({ error: "type must be 'telecaller' or 'field_staff'" }, 400);
+      data.type = String(body.type);
+    }
     if (body.assignEstimateFollowUps !== undefined) data.assignEstimateFollowUps = body.assignEstimateFollowUps;
+    // Field staff never close — they only generate leads.
+    if (data.type === 'field_staff') data.assignEstimateFollowUps = false;
     if (body.order !== undefined) data.order = body.order;
     if (body.neodoveUserId !== undefined) data.neodoveUserId = body.neodoveUserId;
     if (body.neodoveUserName !== undefined) data.neodoveUserName = body.neodoveUserName;

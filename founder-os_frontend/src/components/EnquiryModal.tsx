@@ -13,6 +13,8 @@ interface EnquiryModalProps {
     onSave: (data: {
     estNumber: string;
     source: string;
+    /** Field-staff referral origin (required when source = "Field Staff"). */
+    fieldStaffId: string;
     clientCompany: string;
     contactName: string;
     contactEmail: string;
@@ -50,6 +52,12 @@ export default function EnquiryModal({
   // is preserved on edit and empty on create, submitted through untouched.
   const [formDescription, setFormDescription] = useState(() => editingEnquiry?.description || "");
   const [formSource, setFormSource] = useState<string>(() => editingEnquiry?.source || "TL");
+  const [formFieldStaffId, setFormFieldStaffId] = useState<string>(() => editingEnquiry?.fieldStaffId || "");
+  const [attribError, setAttribError] = useState<string | null>(null);
+  // Active field staff from the sales roster (the agents list is already
+  // filtered to not-deleted, not-absent staff by the backend).
+  const fieldStaffOptions = agents.filter((a) => a.type === 'field_staff');
+  const selectedFieldStaff = fieldStaffOptions.find((a) => a.id === formFieldStaffId) || null;
   const [formItems, setFormItems] = useState<EnquiryItem[]>(() => (editingEnquiry?.items || []).map((it) => ({ ...it, media: [...(it.media ?? [])] })));
   // B2B EST-No. Check & Assign: verify the Zoho estimate exists; if free,
   // assign it to this enquiry's Lead By agent (creator). Held estimates are
@@ -111,6 +119,13 @@ export default function EnquiryModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Field Staff referrals must name the staff member — the enquiry, its
+    // region and the 20% generator credit belong to them.
+    if (formSource === "Field Staff" && !formFieldStaffId) {
+      setAttribError("Select the field staff this enquiry came from.");
+      return;
+    }
+    setAttribError(null);
 
     // Unstructured intake: AI splits items + extracts lead fields afterwards.
     // Manual item boxes stay available on modify.
@@ -121,6 +136,7 @@ export default function EnquiryModal({
     onSave({
       estNumber: formEst.trim(),
       source: formSource,
+      fieldStaffId: formSource === "Field Staff" ? formFieldStaffId : "",
       clientCompany: formCompany,
       contactName: formContactName,
       contactEmail: formContactEmail,
@@ -271,7 +287,11 @@ export default function EnquiryModal({
               <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Source</label>
                 <select
                   value={formSource}
-                  onChange={(e) => setFormSource(e.target.value)}
+                  onChange={(e) => {
+                    setFormSource(e.target.value);
+                    setAttribError(null);
+                    if (e.target.value !== "Field Staff") setFormFieldStaffId("");
+                  }}
                   className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer text-[var(--text-primary)]"
                 >
                   {ENQUIRY_SOURCES.map((s) => (
@@ -279,6 +299,40 @@ export default function EnquiryModal({
                   ))}
                 </select>
               </div>
+
+            {formSource === "Field Staff" && (
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                  Field staff <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={formFieldStaffId}
+                  onChange={(e) => { setFormFieldStaffId(e.target.value); setAttribError(null); }}
+                  className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer text-[var(--text-primary)]"
+                >
+                  <option value="">Select the active field staff…</option>
+                  {fieldStaffOptions.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}{a.region ? ` · ${a.region}` : " · no region"}
+                    </option>
+                  ))}
+                </select>
+                {fieldStaffOptions.length === 0 ? (
+                  <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                    No active field staff in the Sales Roster — add one in the Controller tab first.
+                  </p>
+                ) : selectedFieldStaff && !selectedFieldStaff.region ? (
+                  <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                    {selectedFieldStaff.name} has no region — this enquiry will land in Unmapped until MIS maps them.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-[var(--text-tertiary)]">
+                    The lead, its region and the 20% generator credit belong to this field staff. You are recorded as the logger.
+                  </p>
+                )}
+                {attribError && <p className="text-[11px] font-semibold text-rose-500">{attribError}</p>}
+              </div>
+            )}
 
             {!isCreate && (
             <div className="space-y-2">

@@ -147,6 +147,8 @@ export function toEnquiry(raw: any): Enquiry {
     procurementSubmittedAt: raw.procurementSubmittedAt ? String(raw.procurementSubmittedAt) : undefined,
     sentRevisionAt: (raw as any).sentRevisionAt ? String((raw as any).sentRevisionAt) : undefined,
     assignedAgentId: String(raw.assignedAgentId ?? ''),
+    fieldStaffId: String((raw as any).fieldStaffId ?? ''),
+    loggedByAgentId: String((raw as any).loggedByAgentId ?? ''),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt || raw.createdAt,
     activities,
