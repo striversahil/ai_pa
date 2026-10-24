@@ -1,10 +1,10 @@
 // scoring.ts — event-ledger scoring (sales leaderboard source of truth).
 //
-// Region model (Phase-R split — replaces the individual-dealing model):
-// a close credits the ENQUIRY GENERATOR (Estimate.createdBy) 20% of the slab
-// automatically via recordConversionClose; the other 80% is credited to a
-// CLOSER picked by sales-head via creditCloserShare (kind='closer' row).
-// remarked/snatch penalties were part of the old held-estimate machinery and
+// Region model: a close credits the ENQUIRY GENERATOR (Estimate.createdBy)
+// with the FULL slab automatically via recordConversionClose (kind='generator').
+// The old 20/80 closer-pick split is retired — no manual closer step, no new
+// kind='closer' rows. Historic rows still read for the ledger/CSV.
+// Remarked/snatch penalties were part of the old held-estimate machinery and
 // are retired — no new negative rows are written; historic ones still read.
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
@@ -35,11 +35,6 @@ const CLOSE_HALVES = new Set([10, 15, 20, 40, 60, 80, 160]);
 export function isCloseDelta(delta: unknown): boolean {
   const n = Number(delta);
   return CLOSE_SLABS.includes(n) || CLOSE_HALVES.has(n);
-}
-export function splitClosePoints(total: unknown): { generator: number; closer: number } {
-  const slab = closePointsFor(total);
-  const generator = Math.round(slab * 0.2);
-  return { generator, closer: slab - generator };
 }
 // Legacy ledger deltas from the held-estimate era (kept readable for history;
 // the engines that wrote them are retired).
@@ -86,11 +81,10 @@ async function recordScoreEvent(telecallerId: string, estimateId: string, kind: 
 }
 
 /**
- * Credit the generator's 20% share of the close slab, written automatically
- * the moment an estimate converts. The closer's 80% is NOT written here — it
- * stays pending until sales-head picks a closer (creditCloserShare), so
- * unpicked closes can be surfaced for the pick.
- * Duplicate-guarded: a kind='generator' row per estimate gates re-entry.
+ * Credit the creator's FULL close slab, written automatically the moment an
+ * estimate converts. Closer picks were retired — no 80% hand-off remains.
+ * Duplicate-guarded: a kind='generator' row (or a positive legacy close row)
+ * per estimate gates re-entry.
  */
 export async function recordConversionClose(estimateId: string, opts?: { day?: string }): Promise<boolean> {
   try {
@@ -117,8 +111,8 @@ export async function recordConversionClose(estimateId: string, opts?: { day?: s
     if (alreadyCredited) return false;
     const day = opts?.day && DATE_RE.test(opts.day) ? opts.day : istDate();
     const total = Math.round(Number((est as any).total ?? 0) || 0);
-    const { generator: gPts, closer: cPts } = splitClosePoints((est as any).total);
-    await recordScoreEvent(String(generator), estimateId, 'generator', gPts, day, `Estimate converted ₹${total.toLocaleString('en-IN')} — ${gPts} points lead-generator share (closer share ${cPts} pending pick)`);
+    const pts = closePointsFor((est as any).total);
+    await recordScoreEvent(String(generator), estimateId, 'generator', pts, day, `Estimate converted ₹${total.toLocaleString('en-IN')} — ${pts} points close credit to lead creator`);
     return true;
   } catch (e: any) {
     logger.warn({ err: e?.message, estimateId }, 'recordConversionClose failed');
@@ -127,107 +121,9 @@ export async function recordConversionClose(estimateId: string, opts?: { day?: s
 }
 
 /**
- * Credit the closer's 80% share, written by sales-head's pick. Same region as
- * the estimate is enforced at the route (closer roster region must match the
- * estimate's region). Re-picking rewrites: the previous closer row for the
- * estimate is replaced. Points attach to the GENERATOR row's day (the close
- * day), not the pick day.
- */
-export async function creditCloserShare(estimateId: string, closerTelecallerId: string, pickedBy: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const est = await prisma.estimate.findUnique({
-      where: { estimateId },
-      select: { status: true, total: true, region: true },
-    });
-    if (!est) return { ok: false, error: 'Estimate not found' };
-    if (!(est.status === 'accepted' || est.status === 'confirmed')) return { ok: false, error: 'Estimate is not converted (accepted/confirmed)' };
-    const genRow = await prisma.telecallerScoreEvent.findFirst({
-      where: { estimateId, kind: 'generator' },
-    });
-    if (!genRow) return { ok: false, error: 'No generator credit on this estimate — cannot pick a closer' };
-    const closer = await prisma.telecaller.findUnique({ where: { id: closerTelecallerId } });
-    if (!closer) return { ok: false, error: 'Closer not found in the roster' };
-    if (String((closer as any).type ?? 'telecaller') === 'field_staff') return { ok: false, error: 'Field staff cannot be a closer — pick a telecaller from the same region' };
-    if (!(closer as any).assignEstimateFollowUps) return { ok: false, error: 'Closer is not marked as a conversion specialist' };
-    const estRegion = String((est as any).region ?? '');
-    const closerRegion = String((closer as any).region ?? '');
-    if (estRegion && closerRegion && estRegion !== closerRegion) {
-      return { ok: false, error: 'Closer must belong to the same region as the estimate' };
-    }
-    if (estRegion && !closerRegion) {
-      return { ok: false, error: 'Closer has no region on the roster — set their region first' };
-    }
-    // Re-pick support: drop any existing closer row for this estimate first.
-    const prev = await prisma.telecallerScoreEvent.findMany({
-      where: { estimateId, kind: 'closer' },
-      select: { id: true },
-    });
-    if ((prev as any[]).length > 0) {
-      await prisma.telecallerScoreEvent.deleteMany({
-        where: { id: { in: (prev as any[]).map((r) => String(r.id)) } },
-      });
-    }
-    const total = Math.round(Number((est as any).total ?? 0) || 0);
-    const { closer: cPts } = splitClosePoints((est as any).total);
-    const day = String(genRow.day ?? '') || istDate();
-    await recordScoreEvent(String(closerTelecallerId), estimateId, 'closer', cPts, day, `Close credited to ${(closer as any).name} (picked by ${pickedBy}) — ₹${total.toLocaleString('en-IN')}, ${cPts} points closer share`);
-    return { ok: true };
-  } catch (e: any) {
-    logger.warn({ err: e?.message, estimateId }, 'creditCloserShare failed');
-    return { ok: false, error: e?.message ?? 'creditCloserShare failed' };
-  }
-}
-
-/**
- * Converted estimates WITH a generator credit but WITHOUT a closer pick,
- * newest first. Sales-head picks a closer for each (80% share pending).
- */
-export async function pendingCloserPicks(limit: number = 50): Promise<Array<Record<string, unknown>>> {
-  try {
-    const genRows = await prisma.telecallerScoreEvent.findMany({
-      where: { kind: 'generator' },
-      select: { estimateId: true, day: true },
-    });
-    const byEstimate = new Map<string, string>();
-    for (const r of genRows as any[]) {
-      const id = String(r.estimateId ?? '');
-      if (id && !byEstimate.has(id)) byEstimate.set(id, String(r.day ?? ''));
-    }
-    const pickable = [...byEstimate.keys()];
-    if (pickable.length === 0) return [];
-    const estimates = await prisma.estimate.findMany({
-      where: { estimateId: { in: pickable }, status: { in: ['accepted', 'confirmed'] } },
-      select: { estimateId: true, estimateNumber: true, customerName: true, total: true, region: true, organizationId: true, lastSyncTime: true },
-    });
-    // Drop ones already picked.
-    const closerRows = await prisma.telecallerScoreEvent.findMany({
-      where: { estimateId: { in: (estimates as any[]).map((e) => String(e.estimateId)) }, kind: 'closer' },
-      select: { estimateId: true },
-    });
-    const picked = new Set((closerRows as any[]).map((r) => String(r.estimateId)));
-    const pending = (estimates as any[]).filter((e) => !picked.has(String(e.estimateId)))
-      .sort((a, b) => String(b.lastSyncTime ?? '').localeCompare(String(a.lastSyncTime ?? '')))
-      .slice(0, limit);
-    return pending.map((e) => ({
-      estimateId: e.estimateId,
-      estimateNumber: e.estimateNumber,
-      customerName: e.customerName,
-      total: Number(e.total ?? 0),
-      region: String(e.region ?? ''),
-      closeDay: byEstimate.get(String(e.estimateId)) ?? '',
-      organizationId: String(e.organizationId ?? ''),
-    }));
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'pendingCloserPicks failed');
-    return [];
-  }
-}
-
-/**
  * Converters map for the per-estimate export: estimateId → { name, day }.
- * Region model: the CLOSER (kind='closer' row) is "Converted By"; estimates
- * not yet picked fall back to the generator's name. Only converted estimates
- * ever have a close row.
+ * Historical kind='closer' rows still win "Converted By"; every estimate
+ * without one (all new closes) falls back to the creator/generator name.
  */
 export async function getConvertersMap(sinceDay: string = ''): Promise<Record<string, { name: string; day: string }>> {
   try {

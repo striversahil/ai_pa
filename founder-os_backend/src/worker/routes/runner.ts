@@ -928,9 +928,8 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Retired: bulk assignment + effort-sync (region model; 2026-10-22) ───────
   // Stubs only, so the GH workflows that still dispatch these (bulk-assign
   // manual tooling, every-15min effort-sync) keep answering 200 across the
-  // deploy window. No writes. The bulk-assign UI is gone; closer picks + region
-  // links (PUT /api/telecalling/closer-pick, PUT /api/estimates/:id/region)
-  // replace both mechanics.
+  // deploy window. No writes. The bulk-assign UI is gone; region links
+  // (PUT /api/estimates/:id/region) replace both mechanics.
   app.post('/api/runner/estimates/bulk-assign', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     return c.json({ ok: true, retired: true, message: 'Bulk assignment retired — region model (founder, 2026-10-22)' });

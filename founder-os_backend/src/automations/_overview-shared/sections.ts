@@ -84,13 +84,11 @@ function summarizeTelecalling(d: any) {
   const regions: any[] = Array.isArray(d.regions) ? d.regions : [];
   const points = regions.reduce((s, r) => s + num(r.points), 0);
   const unmapped = num(d?.unmapped?.count ?? 0);
-  const picks = Array.isArray(d.pendingPicks) ? d.pendingPicks.length : 0;
   const att: string[] = [];
   const red = num(counts.red), zombie = num(counts.zombie);
   if (red > 0) att.push(`${red} red-risk holdings need chase today`);
   if (zombie > 0) att.push(`${zombie} zombie estimates silent >3 days`);
   if (unmapped > 0) att.push(`${unmapped} unmapped estimates need a region link`);
-  if (picks > 0) att.push(`${picks} closes awaiting the 80% closer pick`);
   const won = num(kpi.won), closedValue = num(kpi.closedValue);
   return {
     headline: `${won} won · ${inr(closedValue)} closed · pipeline ${inr(kpi.pipelineValue)} · ${num(kpi.leadsGenerated)} leads`,

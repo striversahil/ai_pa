@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// routes/telecalling.ts — roster (tlLevel/region), closer picks, region set,
-// history reset, call tags, next steps.
+// routes/telecalling.ts — roster (tlLevel/region), region set, history
+// reset, call tags, next steps.
 //
 // Region model (extract, Phase-R): the roster carries each staff member's
-// hierarchy level + region; closer picks (80% share) and region fixes are
-// sales-head/MIS writes. The old assignment overrides, bulk moves, effort
+// hierarchy level + region; region fixes and roster writes are sales-head/MIS
+// writes. The old assignment overrides, bulk moves, effort
 // shields, absentee cover and penalty toggles are retired — estimates are
 // owned by regions, never individuals.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13,7 +13,6 @@ import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, authStore,
 import {
   setEstimateCallTag,
   invalidateRiskCache,
-  creditCloserShare,
   deleteCloseHistory,
   isValidRegion,
   isValidTlLevel,
@@ -170,29 +169,6 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
     notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true });
-  });
-
-  // ── Closer pick (sales-head / MIS): credit the 80% closer share ────────────
-  // When an estimate converts, the generator's 20% is automatic; the other 80%
-  // waits here for a manual pick. Re-picking rewrites the credit (re-picks to
-  // correct errors). The pick validates: converted estimate, generator credit
-  // present, closer is a conversion specialist and belongs to the estimate's
-  // region (or region unset on either side for legacy rows).
-  app.put('/api/telecalling/closer-pick', async (c) => {
-    if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root can pick closers' }, 403);
-    }
-    const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
-    const estimateId = String(body?.estimateId ?? '').trim();
-    const closerId = String(body?.closerId ?? '').trim();
-    if (!estimateId || !closerId) return c.json({ error: 'estimateId and closerId required' }, 400);
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-    const pickedBy = String(me?.user?.name ?? me?.user?.email ?? 'sales-head');
-    const result = await creditCloserShare(estimateId, closerId, pickedBy);
-    if (!result.ok) return c.json({ error: result.error }, 400);
-    notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json({ ok: true, estimateId, closerId });
   });
 
   // ── Region set (sales-head / MIS): link an unmapped/mis-aimed estimate ─────

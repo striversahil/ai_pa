@@ -5,11 +5,11 @@
  * not individuals. There is no dealing engine, no assignment rotation, no
  * cover/EOD machinery — staff hold and work estimates only in their own
  * region. Score model per close: the enquiry GENERATOR (Estimate.createdBy,
- * written by the mapping enquiry) banks 20% of the slab automatically
- * (recordConversionClose); the other 80% goes to a CLOSER picked manually by
- * sales-head (creditCloserShare) from the same region's conversion
- * specialists. This module provides runLeadConversion (roster sync + link
- * sweep) and computeTelecallingDashboardData (the full leaderboard payload).
+ * written by the mapping enquiry) banks the FULL slab automatically
+ * (recordConversionClose). Closer picks were retired (2026-10-24) — region
+ * points are computed directly from accepted estimates. This module provides
+ * runLeadConversion (roster sync + link sweep) and
+ * computeTelecallingDashboardData (the full leaderboard payload).
  */
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
@@ -25,8 +25,8 @@ import {
   type EstimateRisk, type RiskItem, type CachedRiskItem, type RiskCache,
 } from './risk';
 import {
-  CLOSE_SLABS, closePointsFor, isCloseDelta, splitClosePoints,
-  recordConversionClose, creditCloserShare, pendingCloserPicks,
+  CLOSE_SLABS, closePointsFor, isCloseDelta,
+  recordConversionClose,
   deleteCloseHistory, getEpochDate, EPOCH_SETTING_KEY,
   getConvertersMap, SNATCH_PENALTY, REMARK_PENALTY,
 } from './scoring';
@@ -607,10 +607,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     logger.warn({ err: e?.message }, 'unmapped accepted lookup failed');
   }
 
-  // ── Pending closer picks (sales-head pick-up queue) ────────────────────────
-  let pendingPicks: Array<Record<string, unknown>> = [];
-  try { pendingPicks = await pendingCloserPicks(50); } catch { /* non-fatal */ }
-
   // Lead Generation targets scale with the period's working days (6-day work
   // week, Mon–Sat) — a week target is one day × working days, never 1×.
   const workingDays = periodMode && periodRangeInfo ? workingDaysBetween(periodRangeInfo.from, periodRangeInfo.to) : 1;
@@ -1106,8 +1102,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       },
       // Accepted deals still outside any region (lead-source region unknown).
       unmappedAccepted,
-      // Awaiting a closer pick (80% share pending sales-head decision).
-      pendingPicks,
     } : {}),
     recent: scopedRecent,
     // MIS daily breakdown (only when ?daily=1 in period mode): per-day ×
@@ -1141,8 +1135,8 @@ export {
 } from './risk';
 export type { EstimateRisk, RiskItem, CachedRiskItem, RiskCache } from './risk';
 export {
-  CLOSE_SLABS, closePointsFor, isCloseDelta, splitClosePoints,
-  recordConversionClose, creditCloserShare, pendingCloserPicks,
+  CLOSE_SLABS, closePointsFor, isCloseDelta,
+  recordConversionClose,
   deleteCloseHistory, getEpochDate, EPOCH_SETTING_KEY,
   getConvertersMap, SNATCH_PENALTY, REMARK_PENALTY,
 } from './scoring';

@@ -45,6 +45,12 @@ export const DEFAULT_ROLES: AuthRole[] = [
     description: "Management information dashboards (Zoho estimates, etc.) + telecalling roster control + user/role assignment (no root access)",
     scopeKeys: ["mis", "zoho", USER_ADMIN_SCOPE],
   },
+  {
+    key: "sales-head",
+    label: "Sales Head",
+    description: "Sales leaderboard manager — full Controller access (region links, roster, history reset)",
+    scopeKeys: ["sales-head", "telecalling", "enquiry-tracker", "zoho", "payment-tracker"],
+  },
 ];
 
 export function getGoogleConfig(env: any): GoogleConfig | null {

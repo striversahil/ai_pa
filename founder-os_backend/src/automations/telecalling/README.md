@@ -40,16 +40,15 @@ route (stubbed `{retired:true}`), bulk assignment machinery +
   creator had a region land in the **unmapped bucket**;
   `PUT /api/estimates/:id/region` lets a manager link them.
 - **Staff**: `Telecaller.tlLevel` (TL1 leads ≥2 staff / TL2 reports to a TL1)
-  and `Telecaller.region`; `assignEstimateFollowUps` = conversion specialist
-  (only they can receive the 80% closer share — "closer-eligible").
-- **Close credit** on conversion (`scoring.ts`):
-  - 20% → generator (`Estimate.createdBy`), automatic `kind='generator'` row.
-  - 80% → closer — sales head picks from same-region specialists
-    (`creditCloserShare`); re-picks rewrite the 80% row. Unpicked closes sit
-    in `pendingCloserPicks`.
-  - Slabs unchanged: ₹0–1L 50 / ₹1–2.5L 75 / ₹2.5–5L 100 / ≥₹5L 200; halves
-    10/15/20/40 + 40/60/80/160. Penalty rows survive unshuffled:
-    −10 remark / −15 legacy snatch (readable via the epoch gate).
+  and `Telecaller.region`; `assignEstimateFollowUps` = follow-up specialist
+  (used by the follow-up rotation).
+- **Close credit** on conversion (`scoring.ts`): the FULL slab goes to the
+  generator (`Estimate.createdBy`) automatically in one `kind='generator'` row.
+  Closer picks were retired 2026-10-24 — no manual 80% hand-off and no
+  `pendingCloserPicks` queue.
+  - Slabs unchanged: ₹0–1L 50 / ₹1–2.5L 75 / ₹2.5–5L 100 / ≥₹5L 200.
+    Penalty rows survive unshuffled: −10 remark / −15 legacy snatch
+    (readable via the epoch gate).
 - **Region points are not the sum of members' ledger points.** Region cards
   price the **full accepted slab once per estimate**, grouped by
   `Estimate.region` (the lead creator's region), deduped by estimate id. The
@@ -72,7 +71,6 @@ epoch, conversion target, unmapped lead count), `kpi` (leads/calls/talk),
 `risk: { counts: { red, zombie }, atRisk[], valueAtRisk }`,
 `unmapped: { count, value, items[] }`,
 `unmappedAccepted: { count, value, points, items[] }` (managers only),
-`pendingPicks[]`,
 `regions[]` (R1–R4 cards), `staffRows[]` (per-telecaller conversion +
 generation + KRA + points, unmapped staff last), `recent[]` (today's
 converted estimates, viewer-region channeled), `unattributedLeads`.
@@ -88,7 +86,6 @@ Query params: `date=YYYY-MM-DD` (default today IST),
 
 - `GET/POST /api/telecallers`, `PUT/DELETE /api/telecallers/:id` — roster CRUD
   (tlLevel/region validation, MIS + sales-head write).
-- `PUT /api/telecalling/closer-pick` — { estimateId, closerId } (sales-head).
 - `PUT /api/estimates/:id/region` — link unmapped estimates (MIS+).
 - `POST /api/telecalling/reset-history` (`?dry=1`) — epoch purge.
 - `PUT /api/estimates/:id/call-tag` + `/next-step` — region-scoped writes.
@@ -97,5 +94,4 @@ Query params: `date=YYYY-MM-DD` (default today IST),
 
 Frontend: `founder-os_frontend/src/components/TelecallingDashboard.tsx`
 (regions / staff board / at-risk / manage; region drill via `?agent=`,
-closer-pick + unmapped link + roster + reset-history modals, daily +
-estimates CSV exports).
+unmapped link + roster + reset-history modals, daily + estimates CSV exports).

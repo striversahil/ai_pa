@@ -87,17 +87,6 @@ interface RegionInfo {
   staff: LeaderRow[];
 }
 
-/** Converted estimate awaiting the sales-head's 80% closer pick. */
-interface PendingPick {
-  estimateId: string;
-  estimateNumber?: string | null;
-  customerName?: string | null;
-  total?: number | null;
-  region?: string | null;
-  closeDay?: string | null;
-  organizationId?: string | null;
-}
-
 /** Open estimate with no region ('' — link it so region ownership works). */
 interface UnmappedItem {
   estimateId: string;
@@ -139,8 +128,6 @@ interface DashData {
   regions?: RegionInfo[];
   /** Roster staff with no region yet (MIS should map them). */
   unmappedStaff?: LeaderRow[];
-  /** Converted estimates awaiting the sales-head's closer pick (managers only). */
-  pendingPicks?: PendingPick[];
   /** Unmapped open estimates (managers only). */
   unmapped?: { count: number; value: number; items: UnmappedItem[] } | null;
   /** Accepted estimates with no lead region (managers only). */
@@ -723,8 +710,8 @@ interface RosterRow {
 type View = "dashboard" | "conversion" | "generation" | "controller";
 
 // ── Region payload → legacy UI adapter ───────────────────────────────────────
-// The backend is region-owned (20% generator automatic, 80% closer picked by
-// the sales head). This dashboard keeps its pre-region visual language, so the
+// The backend is region-owned (full close slab credited automatically to the
+// lead creator). This dashboard keeps its pre-region visual language, so the
 // payload is reshaped here into the shapes the JSX below already speaks —
 // adapter only, no business logic duplicated.
 function kraStatus(pct: number): TrafficLight {
@@ -864,7 +851,6 @@ function adaptDashData(d: any): DashData {
     },
     regions,
     unmappedStaff: (d?.unmappedStaff ?? []).map((s: any) => adaptLeaderRow(s, null, targets)),
-    pendingPicks: d?.pendingPicks ?? [],
     unmapped: d?.unmapped ?? null,
     unmappedAccepted: d?.unmappedAccepted ?? null,
     epoch: d?.meta?.epoch ?? null,
@@ -912,7 +898,7 @@ const TABS: { key: View; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "📊" },
   { key: "conversion", label: "Lead Conversion", icon: "📨" },
   { key: "generation", label: "Lead Generation", icon: "📞" },
-  // MIS-only controller tab (filtered out of the nav without the `mis` scope).
+  // MIS/sales-head controller tab (filtered out of the nav without either scope).
   { key: "controller", label: "Controller", icon: "🎛️" },
 ];
 
@@ -1378,13 +1364,12 @@ export default function TelecallingDashboard() {
   // Region cards drive the Lead Conversion tabs (R1–R4 + Unmapped for managers).
   const regionBoard = convDash.data?.regions ?? dash.data?.regions ?? [];
   const unmappedBlock = convDash.data?.unmapped ?? dash.data?.unmapped ?? null;
-  const pendingPicks = dash.data?.pendingPicks ?? [];
   // Est. Conv ₹ = ACCEPTED actuals in the selected period. Prefers the
   // server-side team total so it matches meta.conversionTarget.value exactly.
   const teamAccepted = kpi?.acceptedValue ?? activeBoard.reduce((s, r) => s + (r.conversion.acceptedValue ?? 0), 0);
   const conv = convTier(teamAccepted, dash.data?.meta?.conversionTarget ?? null);
-  // Region performance — dashboard period, regions own the estimates. The
-  // 20% generator + 80% closer credits roll up into the region totals.
+  // Region performance — dashboard period, regions own the estimates. Full
+  // close credits roll up into the region totals automatically.
   const dashRegions = dash.data?.regions ?? [];
   const regionSorted = [...dashRegions].sort((a, b) => b.points - a.points || b.won.value - a.won.value || b.open.value - a.open.value);
   const regionTopPoints = regionSorted[0]?.points ?? 0;
@@ -1709,13 +1694,13 @@ export default function TelecallingDashboard() {
                           <div className="grid grid-cols-2 gap-1.5">
                             <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-2 py-1.5 text-center">
                               <div className="text-base font-extrabold text-emerald-500 dark:text-emerald-400 font-mono">+50–200</div>
-                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🤝 Close · split 20/80</div>
-                              <div className="text-[9px] text-zinc-500">generator / closer</div>
+                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🤝 Close · full slab</div>
+                              <div className="text-[9px] text-zinc-500">credited to lead creator</div>
                             </div>
                             <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 px-2 py-1.5 text-center">
-                              <div className="text-base font-extrabold text-rose-500 dark:text-rose-400 font-mono">20 / 80</div>
-                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🎯 Generator / closer</div>
-                              <div className="text-[9px] text-zinc-500">auto · sales-head pick</div>
+                              <div className="text-base font-extrabold text-rose-500 dark:text-rose-400 font-mono">AUTO</div>
+                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🎯 Close credit</div>
+                              <div className="text-[9px] text-zinc-500">auto · no closer pick</div>
                             </div>
                             <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-2 py-1.5 text-center">
                               <div className="text-base font-extrabold text-amber-500 dark:text-amber-400 font-mono">+15</div>
@@ -1728,7 +1713,7 @@ export default function TelecallingDashboard() {
                           </div>
                           <div className="rounded-lg bg-zinc-500/5 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5 text-[10px] font-semibold text-zinc-600 dark:text-zinc-300 space-y-0.5">
                             <div>Close slabs: ₹0–1L +50 · ₹1–2.5L +75 · ₹2.5–5L +100 · ₹5L+ +200</div>
-                            <div>Generator (lead owner) gets 20% automatically · closer pick gets the other 80%</div>
+                            <div>Lead creator gets the full close slab automatically — no closer pick</div>
                             <div>Wins are region-owned · risk flags are informational (no EOD snatch)</div>
                           </div>
                         </div>
@@ -2294,25 +2279,17 @@ export default function TelecallingDashboard() {
             </section>
           )}
 
-          {/* Controller — MIS-only: closer picks, unmapped linking, history reset, roster */}
+          {/* Controller — MIS/sales-head: unmapped linking, history reset, roster */}
           {view === "controller" && (
             canManageRoster ? (
               <div className="space-y-6">
                 <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
                   <h3 className="text-lg font-bold mb-1">🎛️ Controller</h3>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-0">
-                    MIS-level control of the region sales model — closer picks (the 80% share),
-                    unmapped estimate linking, history reset and the staff roster.
+                    MIS/sales-head control of the region model — unmapped estimate
+                    linking, history reset and the staff roster.
                   </p>
                 </section>
-                <PendingPicksSection
-                  pending={pendingPicks}
-                  rosterRows={rosterRows}
-                  busy={busy}
-                  setBusy={setBusy}
-                  setError={setRosterError}
-                  refreshAll={refreshAll}
-                />
                 <UnmappedSection
                   unmapped={unmappedBlock}
                   unmappedAccepted={dash.data?.unmappedAccepted ?? convDash.data?.unmappedAccepted ?? null}
@@ -2355,7 +2332,7 @@ export default function TelecallingDashboard() {
               </div>
             ) : (
               <p className="text-xs text-zinc-500 dark:text-zinc-600 px-1">
-                🔒 Controller is restricted to MIS-level users.
+                🔒 Controller is restricted to MIS and Sales Head users.
               </p>
             )
           )}
@@ -2511,100 +2488,6 @@ export default function TelecallingDashboard() {
         </div>
       </div>
     </div>
-  );
-}
-
-/** Closer picks — the 80% share of every new close waits here for the sales
- *  head. The 20% generator credit is automatic (Estimate.createdBy). */
-function PendingPicksSection({
-  pending,
-  rosterRows,
-  busy,
-  setBusy,
-  setError,
-  refreshAll,
-}: {
-  pending: PendingPick[];
-  rosterRows: RosterRow[];
-  busy: boolean;
-  setBusy: (b: boolean) => void;
-  setError: (e: string | null) => void;
-  refreshAll: () => void;
-}) {
-  const [closerBy, setCloserBy] = useState<Record<string, string>>({});
-  const pick = async (estimateId: string) => {
-    const closerId = closerBy[estimateId];
-    if (!closerId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/telecalling/closer-pick", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ estimateId, closerId }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Pick failed (${res.status})`);
-      setCloserBy((prev) => { const { [estimateId]: _omit, ...rest } = prev; return rest; });
-      refreshAll();
-    } catch (e: any) {
-      setError(e?.message ?? "Closer pick failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div>
-          <h3 className="text-lg font-bold mb-1">🤝 Closer picks</h3>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            {pending.length > 0
-              ? "Converted estimates awaiting the 80% closer credit. The 20% generator share is already credited automatically."
-              : "No converted estimates are waiting for a closer pick."}
-          </p>
-        </div>
-        {pending.length > 0 && (
-          <span className="text-xs font-mono font-bold text-indigo-500 dark:text-indigo-300">{pending.length} pending</span>
-        )}
-      </div>
-      {pending.length > 0 && (
-        <div className="space-y-1.5">
-          {pending.map((p) => {
-            const region = p.region || "";
-            const eligible = rosterRows.filter((t) => t.type !== "field_staff" && t.assignEstimateFollowUps && (!region || !t.region || t.region === region));
-            return (
-              <div key={p.estimateId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{p.customerName ?? "—"}</div>
-                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">
-                    {p.estimateNumber ?? p.estimateId} · {region || "Unmapped"} · ₹{fmtNum(Number(p.total ?? 0))}
-                    {p.closeDay ? ` · closed ${p.closeDay}` : ""}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <select
-                    value={closerBy[p.estimateId] ?? ""}
-                    onChange={(e) => setCloserBy((prev) => ({ ...prev, [p.estimateId]: e.target.value }))}
-                    className="px-2 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
-                  >
-                    <option value="">Pick closer…</option>
-                    {eligible.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                  <button
-                    onClick={() => void pick(p.estimateId)}
-                    disabled={busy || !closerBy[p.estimateId]}
-                    className="text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 disabled:opacity-50"
-                  >
-                    Credit 80%
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
   );
 }
 
