@@ -15,7 +15,7 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import type { Telecaller } from '@prisma/client';
 import type { AutomationContext } from '../../modules/automation/types';
-import { getNeodoveAgentMap, getLatestNeodoveDay, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from '../neodove-telecaller-report';
+import { getNeodoveAgentMap, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from '../neodove-telecaller-report';
 import { isSystemGeneratedComment } from '../../shared/systemComment';
 import { cached } from '../../shared/cache';
 import {
@@ -390,24 +390,17 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // days). Idempotent — no-op once every agent is already present.
   await syncTelecallersFromNeodove();
 
-  // If the requested day has no NeoDove data yet, fall back to the latest stored
-  // NeoDove day so Lead Generation shows real numbers instead of all zeros.
-  let day = requestedDay;
+  // Always use the requested day/range. Never substitute an older NeoDove
+  // snapshot: doing that mixed yesterday's calls with today's enquiry leads
+  // (and mislabeled stale data as "Today"). If today's push is empty, calls
+  // legitimately read 0 until the next sync — leads stay live from enquiries.
+  const day = requestedDay;
   let neodoveMap: Record<string, any> = {};
-  let usingLatestAvailable = false;
   if (periodMode && periodRangeInfo) {
     // Period leaderboard: sum the stored daily NeoDove reports across the range.
     neodoveMap = await getNeodoveRangeMap(periodRangeInfo.from, periodRangeInfo.to);
   } else {
     neodoveMap = await getNeodoveAgentMap(requestedDay);
-    if (Object.keys(neodoveMap).length === 0) {
-      const latest = await getLatestNeodoveDay();
-      if (latest && latest !== requestedDay) {
-        day = latest;
-        neodoveMap = await getNeodoveAgentMap(latest);
-        usingLatestAvailable = true;
-      }
-    }
   }
 
   const telecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
@@ -951,7 +944,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         title: staffName ? `Sales Leaderboard — ${staffName}` : `Sales Leaderboard — ${def?.name ?? 'Unmapped'}`,
         day,
         requestedDay,
-        usingLatestAvailable,
         region: regionId,
         regionName: def?.name ?? 'Unmapped',
         agents: agentList,
@@ -1014,7 +1006,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       title: 'Sales Leaderboard',
       day,
       requestedDay,
-      usingLatestAvailable,
       period: periodMode && periodRangeInfo ? q.period : 'today',
       periodLabel: periodRangeInfo?.label ?? 'Today',
       periodFrom: periodRangeInfo?.from ?? null,

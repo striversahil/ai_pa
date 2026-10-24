@@ -110,7 +110,7 @@ interface UnmappedAcceptedItem {
 }
 
 interface DashData {
-  meta: { day: string; requestedDay?: string; usingLatestAvailable?: boolean; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null; canManage?: boolean; taxonomy?: { id: string; name: string; tl: string; states: string[] }[]; epoch?: string | null; viewer?: { staffId: string | null; name: string | null; region: string | null; tlLevel: string | null } | null };
+  meta: { day: string; requestedDay?: string; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null; canManage?: boolean; taxonomy?: { id: string; name: string; tl: string; states: string[] }[]; epoch?: string | null; viewer?: { staffId: string | null; name: string | null; region: string | null; tlLevel: string | null } | null };
   kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; acceptedValue?: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
   leaderboard: LeaderRow[];
   recent: any[];
@@ -675,7 +675,7 @@ function NextStepControl({ f, onSaved }: { f: FollowUp; onSaved: () => void }) {
 }
 
 interface AgentViewData {
-  meta: { analysis: string; title: string; day: string; requestedDay?: string; usingLatestAvailable?: boolean; agents?: { id: string; name: string; active: boolean }[]; generatedAt: string; error?: string; region?: string; regionName?: string };
+  meta: { analysis: string; title: string; day: string; requestedDay?: string; agents?: { id: string; name: string; active: boolean }[]; generatedAt: string; error?: string; region?: string; regionName?: string };
   agent: {
     id: string; name: string; active: boolean;
     conversion?: any; generation?: any;
@@ -1419,11 +1419,6 @@ export default function TelecallingDashboard() {
                 </h1>
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   Daily performance · Lead Conversion (estimates) + Lead Generation (enquiries, live)
-                  {dash.data?.meta?.usingLatestAvailable ? (
-                    <span className="ml-1 text-amber-400/90">
-                      (today's NeoDove push is empty — showing latest available day)
-                    </span>
-                  ) : null}
                 </p>
               </div>
             </div>
