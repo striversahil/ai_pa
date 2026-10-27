@@ -185,7 +185,7 @@ const TABS: { key: View; label: string; icon: string }[] = [
 // ── KPI card ──────────────────────────────────────────────────────────────────
 function Kpi({ label, value, sub, accent, title }: { label: string; value: string; sub?: string; accent?: string; title?: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4" title={title}>
+    <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4" title={title}>
       <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">{label}</span>
       <span className={`text-2xl font-extrabold ${accent || "text-white"}`}>{value}</span>
       {sub && <span className="text-[10px] text-zinc-500 block mt-0.5">{sub}</span>}
@@ -520,7 +520,7 @@ export default function CrmDashboard() {
 
   if (!data || (!data.fresh && !data.stale)) {
     return (
-      <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-8 text-center">
+      <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-8 text-center">
         <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-400" />
         <p className="mt-3 text-sm text-zinc-400">Waiting for first CRM snapshot (every 5 min)…</p>
         {crm.error ? <p className="mt-1 text-[11px] text-red-400">{String(crm.error)}</p> : null}
@@ -586,7 +586,7 @@ export default function CrmDashboard() {
               const Icon = pm.icon;
               const grp = stages[step] || { count: 0, value: 0 };
               return (
-                <div key={step} className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+                <div key={step} className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
                   <div className="flex items-center gap-2">
                     <Icon className={`w-4 h-4 ${pm.accent.split(" ")[0]}`} />
                     <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">{pm.label}</span>
@@ -599,7 +599,7 @@ export default function CrmDashboard() {
             })}
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">🔍 Find Order (all stages)</h3>
             <input
               value={orderSearch}
@@ -626,7 +626,7 @@ export default function CrmDashboard() {
             )}
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">👥 Salesperson Pipeline</h3>
             <DataTable
               columns={[
@@ -646,7 +646,7 @@ export default function CrmDashboard() {
             />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">✅ Recently Closed (paid / cancelled)</h3>
             <DataTable
               columns={[
@@ -665,7 +665,7 @@ export default function CrmDashboard() {
             />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">⚡ Recent Movements</h3>
             {(scores.recent || []).length === 0 ? (
               <p className="text-xs text-zinc-500 italic">No movements recorded yet.</p>
@@ -698,7 +698,7 @@ export default function CrmDashboard() {
             <Kpi label="Confirmed Today" value={String(todayCnt.crm || 0)} sub="events" accent="text-sky-400" />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">🏆 CRM Leaderboard (7d)</h3>
             <DataTable
               columns={[
@@ -716,7 +716,7 @@ export default function CrmDashboard() {
             />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">📋 Orders Awaiting Confirmation</h3>
             <DataTable
               columns={[
@@ -751,7 +751,7 @@ export default function CrmDashboard() {
             <Kpi label="Points This Week" value={signed(weekPts.accounts || 0)} accent="text-emerald-300" />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">📄 To Invoice</h3>
             <DataTable
               columns={[
@@ -774,7 +774,7 @@ export default function CrmDashboard() {
             />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">💳 Awaiting Payment</h3>
             <DataTable
               columns={[
@@ -809,7 +809,7 @@ export default function CrmDashboard() {
             <Kpi label="Shipped Today" value={String(todayCnt.dispatch || 0)} sub="events" accent="text-indigo-300" />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">🚚 Orders to Ship</h3>
             <DataTable
               columns={[
@@ -844,7 +844,7 @@ export default function CrmDashboard() {
             <Kpi label="Points Today" value={signed(todayPts.procurement || 0)} accent="text-sky-400" />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111726]/80 p-4">
+          <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-bold text-white mb-3">📦 Materials (from line items)</h3>
             {meta && meta.withLineItems === false && (
               <p className="text-[11px] text-amber-400 mb-3">⚠️ Zoho response did not include line items — materials may be empty.</p>

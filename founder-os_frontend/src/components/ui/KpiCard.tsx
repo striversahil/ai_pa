@@ -24,21 +24,21 @@ export function KpiCard({ title, value, icon, accent = "brand", delta, hint }: K
   return (
     <Card interactive className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">{title}</span>
-        <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${accentMap[accent]}`}>{icon}</div>
+        <span className="text-label uppercase tracking-wide text-[var(--text-secondary)]">{title}</span>
+        <div className={`flex h-10 w-10 items-center justify-center rounded-[var(--radius-sm)] ${accentMap[accent]}`}>{icon}</div>
       </div>
-      <div className="font-heading text-2xl font-extrabold tracking-tight text-[var(--text-primary)] md:text-3xl">
+      <div className="font-heading text-[2rem] font-bold leading-none tracking-tight text-[var(--text-primary)] tabular-nums">
         {value}
       </div>
       {delta ? (
-        <div className="flex items-center gap-1.5 text-[11px]">
-          <span className={`font-bold ${delta.positive ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}>
+        <div className="flex items-center gap-1.5 text-caption">
+          <span className={`font-semibold ${delta.positive ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}>
             {delta.positive ? "▲" : "▼"} {delta.value}
           </span>
-          {delta.note && <span className="text-[var(--text-tertiary)]">{delta.note}</span>}
+          {delta.note && <span className="text-[var(--text-secondary)]">{delta.note}</span>}
         </div>
       ) : hint ? (
-        <div className="text-[11px] text-[var(--text-tertiary)]">{hint}</div>
+        <div className="text-caption text-[var(--text-secondary)]">{hint}</div>
       ) : null}
     </Card>
   );

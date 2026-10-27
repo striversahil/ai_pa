@@ -423,7 +423,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         ) : null
                       ) : null}
                       {(it as any).notAvailable && (
-                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-200 text-[11px] font-extrabold">
+                        <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[var(--surface-soft)] border border-[var(--border-card)] text-[var(--text-primary)] text-[11px] font-extrabold">
                           Not available{(it as any).notAvailableReason ? ` — ${String((it as any).notAvailableReason).slice(0, 80)}` : ""}
                         </div>
                       )}
@@ -587,7 +587,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         </div>
                       )}
                       {(it as any).notAvailable && !redacted && (
-                        <div className="mt-1.5 rounded-lg border border-zinc-700 bg-zinc-800/40 p-2 text-[11px] leading-relaxed">
+                        <div className="mt-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)] p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Not available — flagged by procurement/management</p>
                           {(it as any).notAvailableReason && (
                             <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>

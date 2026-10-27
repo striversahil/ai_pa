@@ -79,7 +79,7 @@ function AppInner() {
   }, [navigate]);
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center text-zinc-400">Loading session…</div>;
+    return <div className="flex min-h-screen items-center justify-center text-label text-[var(--text-secondary)]">Loading session…</div>;
   }
   if (!me) return <LoginScreen />;
 
@@ -99,7 +99,7 @@ function AppInner() {
           {me.user.picture ? (
             <img src={me.user.picture} alt="" className="h-8 w-8 rounded-full" />
           ) : (
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-brand-indigo)] text-xs font-bold text-white">
               {(me.user.name || me.user.email || "U").charAt(0).toUpperCase()}
             </div>
           )}
@@ -135,8 +135,8 @@ function AppInner() {
           {viewDenied ? (
             <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
               <div className="text-5xl">🔒</div>
-              <h2 className="text-2xl font-bold">Access pending</h2>
-              <p className="max-w-md text-zinc-500">Your account doesn't have permission for this section yet. Ask the administrator to grant access.</p>
+              <h2 className="font-heading text-section text-[var(--text-primary)]">Access pending</h2>
+              <p className="max-w-md text-label text-[var(--text-secondary)]">Your account doesn't have permission for this section yet. Ask the administrator to grant access.</p>
             </div>
           ) : activeView === "admin" ? (
             <UserAdmin />

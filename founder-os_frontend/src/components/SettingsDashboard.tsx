@@ -52,7 +52,7 @@ export default function SettingsDashboard() {
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
         <div className="text-5xl">🔒</div>
         <h2 className="text-2xl font-bold">Root only</h2>
-        <p className="max-w-md text-zinc-500">Application settings are controlled by the root account.</p>
+        <p className="max-w-md text-[var(--text-tertiary)]">Application settings are controlled by the root account.</p>
       </div>
     );
   }

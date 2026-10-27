@@ -753,7 +753,7 @@ export default function WhatsAppDashboard() {
                 </div>
               )}
 
-              <div ref={chatContainerRef} onScroll={handleChatScroll} className="flex-1 p-4 overflow-y-auto space-y-4 bg-zinc-955/10 scrollbar-thin">
+              <div ref={chatContainerRef} onScroll={handleChatScroll} className="flex-1 p-4 overflow-y-auto space-y-4 bg-[var(--surface-sunken)] scrollbar-thin">
                 {hasMore && (
                   <div className="text-center">
                     <button

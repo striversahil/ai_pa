@@ -73,9 +73,9 @@ function Mascot({ mood }: { mood: "idle" | "happy" | "party" }) {
 function Cloud({ className, slow }: { className?: string; slow?: boolean }) {
   return (
     <div className={`absolute pointer-events-none ${slow ? "animate-cloud-drift-slow" : "animate-cloud-drift"} ${className ?? ""}`} aria-hidden="true">
-      <div className="relative h-6 w-20 rounded-full bg-white/[0.09]">
-        <div className="absolute -top-2.5 left-3 h-6 w-6 rounded-full bg-white/[0.09]" />
-        <div className="absolute -top-1.5 left-9 h-5 w-5 rounded-full bg-white/[0.09]" />
+      <div className="relative h-6 w-20 rounded-full bg-[var(--surface-soft)]">
+        <div className="absolute -top-2.5 left-3 h-6 w-6 rounded-full bg-[var(--surface-soft)]" />
+        <div className="absolute -top-1.5 left-9 h-5 w-5 rounded-full bg-[var(--surface-soft)]" />
       </div>
     </div>
   );
@@ -139,7 +139,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
   const chipBase = "px-3 py-1.5 text-[13px] font-semibold rounded-full border cursor-pointer disabled:cursor-default";
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-violet-500/25 bg-white/[0.03] px-4 py-3.5">
+    <div className="relative overflow-hidden rounded-2xl border border-violet-500/25 bg-[var(--surface-sunken)] px-4 py-3.5">
       {/* sky band with drifting clouds + twinkling stars */}
       <div className="absolute inset-x-0 top-0 h-24 bg-violet-500/[0.07] pointer-events-none" aria-hidden="true" />
       <Cloud className="top-2 left-6 opacity-80" />
@@ -175,7 +175,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
                 ? "bg-emerald-400 w-6"
                 : current
                   ? "bg-violet-400 w-6 animate-twinkle"
-                  : "bg-white/[0.12] w-2.5 hover:bg-white/[0.25]"}`}
+                  : "bg-[var(--surface-soft)] w-2.5 hover:bg-[var(--surface-soft)]"}`}
             />
           );
         })}
@@ -197,7 +197,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
                 onClick={() => set(active ? "" : opt)}
                 className={`${chipBase} transition-colors duration-200 ${active
                   ? "bg-violet-600 text-white border-transparent animate-chip-pop"
-                  : "bg-white/[0.04] text-[var(--text-secondary)] border-white/[0.09] hover:border-violet-500/40 hover:text-[var(--text-primary)]"}`}
+                  : "bg-[var(--surface-sunken)] text-[var(--text-secondary)] border-[var(--border-card)] hover:border-violet-500/40 hover:text-[var(--text-primary)]"}`}
               >
                 {active ? "✓ " : ""}{opt}
               </button>
@@ -218,7 +218,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
                 onClick={() => toggleMulti(opt)}
                 className={`${chipBase} transition-colors duration-200 ${active
                   ? "bg-violet-600 text-white border-transparent animate-chip-pop"
-                  : "bg-white/[0.04] text-[var(--text-secondary)] border-white/[0.09] hover:border-violet-500/40 hover:text-[var(--text-primary)]"}`}
+                  : "bg-[var(--surface-sunken)] text-[var(--text-secondary)] border-[var(--border-card)] hover:border-violet-500/40 hover:text-[var(--text-primary)]"}`}
               >
                 {active ? "✓ " : ""}{opt}
               </button>
@@ -234,7 +234,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); next(); } }}
           placeholder="Or invent your own pick… ✍️"
-          className="mt-2.5 w-full bg-white/[0.04] border border-white/[0.09] rounded-xl px-3.5 py-2.5 text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-violet-500/50 transition-colors"
+          className="mt-2.5 w-full bg-[var(--surface-sunken)] border border-[var(--border-card)] rounded-xl px-3.5 py-2.5 text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-violet-500/50 transition-colors"
         />
       ) : null}
 
@@ -246,7 +246,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
           onChange={(e) => set(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); next(); } }}
           placeholder={q.type === "options" ? "Or write your own…" : q.type === "number" ? "Type the number… 🔢" : "Type your answer… ✍️"}
-          className="mt-2.5 w-full bg-white/[0.04] border border-white/[0.09] rounded-xl px-3.5 py-2.5 text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-violet-500/50 transition-colors"
+          className="mt-2.5 w-full bg-[var(--surface-sunken)] border border-[var(--border-card)] rounded-xl px-3.5 py-2.5 text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-violet-500/50 transition-colors"
         />
       )}
       {q.type === "options" && (q.options ?? []).includes(answers[q.key] ?? "") && (
@@ -272,7 +272,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
           type="button"
           disabled={submitted}
           onClick={() => go(step - 1)}
-          className="px-4 py-2 text-[13px] font-bold rounded-full bg-white/[0.05] text-[var(--text-secondary)] hover:bg-white/[0.09] hover:text-[var(--text-primary)] cursor-pointer border-0 transition-colors duration-200"
+          className="px-4 py-2 text-[13px] font-bold rounded-full bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)] cursor-pointer border-0 transition-colors duration-200"
         >
           ← Back
         </button>
@@ -281,7 +281,7 @@ export default function SpecForm({ title, questions, onSubmit }: {
           type="button"
           disabled={submitted}
           onClick={() => next()}
-          className="px-4 py-2 text-[13px] font-bold rounded-full bg-white/[0.05] text-[var(--text-secondary)] hover:bg-white/[0.09] hover:text-[var(--text-primary)] cursor-pointer border-0 transition-colors duration-200"
+          className="px-4 py-2 text-[13px] font-bold rounded-full bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)] cursor-pointer border-0 transition-colors duration-200"
         >
           Skip →
         </button>

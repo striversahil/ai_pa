@@ -186,11 +186,11 @@ export default function LinkedinDashboard() {
     }
   };
 
-  if (batch.loading) return <div className="p-6 text-zinc-400">Loading today's drafts…</div>;
+  if (batch.loading) return <div className="p-6 text-[var(--text-secondary)]">Loading today's drafts…</div>;
   if (batch.error) return <div className="p-6 text-red-400">LinkedIn batch unavailable ({String((batch.error as Error)?.message ?? batch.error)}).</div>;
   if (!batch.data?.ready) {
     return (
-      <div className="p-6 text-zinc-400 space-y-3">
+      <div className="p-6 text-[var(--text-secondary)] space-y-3">
         <div>
           <CalendarDays className="inline mr-2" size={16} />
           No batch on {day ?? "today yet"} — the 03:00 IST runner generates 5 drafts daily.
@@ -201,7 +201,7 @@ export default function LinkedinDashboard() {
             <select
               value={day ?? ""}
               onChange={(e) => setDay(e.target.value || null)}
-              className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200"
+              className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded px-2 py-1 text-[var(--text-primary)]"
             >
               <option value="">Today</option>
               {dates.map((d) => (
@@ -217,13 +217,13 @@ export default function LinkedinDashboard() {
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm text-zinc-400">Batch {batch.data.date} — pick one to post:</span>
+        <span className="text-sm text-[var(--text-secondary)]">Batch {batch.data.date} — pick one to post:</span>
         {dates.length > 0 && (
           <select
             value={day ?? ""}
             onChange={(e) => { setDay(e.target.value || null); setActive(0); }}
             title="Browse every day's batch"
-            className="bg-zinc-900 border border-zinc-700 rounded-full px-2 py-1 text-xs text-zinc-200 cursor-pointer"
+            className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-full px-2 py-1 text-xs text-[var(--text-primary)] cursor-pointer"
           >
             <option value="">📅 Today</option>
             {dates.map((d) => (
@@ -253,12 +253,12 @@ export default function LinkedinDashboard() {
       </div>
       {regenMsg && <div className="text-xs text-amber-300/90">{regenMsg}</div>}
       <div className="flex items-center gap-2 flex-wrap text-xs">
-        <span className="text-zinc-400">＋ New draft on the fly:</span>
+        <span className="text-[var(--text-secondary)]">＋ New draft on the fly:</span>
         <input
           value={ideaId}
           onChange={(e) => setIdeaId(e.target.value.toUpperCase().replace(/[^P0-9]/g, "").slice(0, 4))}
           placeholder="P042 or blank = auto"
-          className="w-36 bg-zinc-900 border border-zinc-700 rounded-full px-3 py-1 text-zinc-200 placeholder:text-zinc-600"
+          className="w-36 bg-[var(--bg-card)] border border-[var(--border-card)] rounded-full px-3 py-1 text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
         />
         <button
           onClick={generateOne}
@@ -276,7 +276,7 @@ export default function LinkedinDashboard() {
             key={p.id}
             onClick={() => { setActive(i); setTab("final"); }}
             className={`px-3 py-1 text-xs rounded-full border transition-all cursor-pointer ${
-              i === active ? "border-indigo-400 bg-indigo-500/20 text-indigo-200" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+              i === active ? "border-indigo-400 bg-indigo-500/20 text-indigo-200" : "border-[var(--border-card)] text-[var(--text-secondary)] hover:border-[var(--color-zinc-400)]"
             }`}
           >
             {p.picked ? "✓ " : ""}{i + 1}. {p.topic.slice(0, 28)}
@@ -287,27 +287,27 @@ export default function LinkedinDashboard() {
 
       {post && (
         <div className="grid md:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
+          <div className="rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)]/60 p-4 space-y-3">
             <div className="flex gap-2 text-xs">
               {(["final", "research", "visual"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`px-2 py-0.5 rounded-full border cursor-pointer ${tab === t ? "border-indigo-400 text-indigo-200" : "border-zinc-700 text-zinc-500"}`}
+                  className={`px-2 py-0.5 rounded-full border cursor-pointer ${tab === t ? "border-indigo-400 text-indigo-200" : "border-[var(--border-card)] text-[var(--text-tertiary)]"}`}
                 >
                   {t === "final" ? "Post" : t === "research" ? "Research" : "Visual brief"}
                 </button>
               ))}
-              <span className="ml-auto text-zinc-500">Pillar {post.pillar} · {post.format} · {post.status}</span>
+              <span className="ml-auto text-[var(--text-tertiary)]">Pillar {post.pillar} · {post.format} · {post.status}</span>
             </div>
-            {tab === "final" && <pre className="whitespace-pre-wrap text-sm text-zinc-200 font-sans">{displayFinal(post.postFinal)}</pre>}
-            {tab === "research" && <pre className="whitespace-pre-wrap text-xs text-zinc-400 font-sans">{displayFinal(post.researchBrief)}</pre>}
-            {tab === "visual" && <pre className="whitespace-pre-wrap text-xs text-zinc-400 font-sans">{post.visualBrief}</pre>}
+            {tab === "final" && <pre className="whitespace-pre-wrap text-sm text-[var(--text-primary)] font-sans">{displayFinal(post.postFinal)}</pre>}
+            {tab === "research" && <pre className="whitespace-pre-wrap text-xs text-[var(--text-secondary)] font-sans">{displayFinal(post.researchBrief)}</pre>}
+            {tab === "visual" && <pre className="whitespace-pre-wrap text-xs text-[var(--text-secondary)] font-sans">{post.visualBrief}</pre>}
             {post.hashtags && <div className="text-xs text-sky-300">{post.hashtags}</div>}
             <div className="flex gap-2 flex-wrap pt-1">
               <button
                 onClick={() => { copyText(`${displayFinal(post.postFinal)}\n\n${post.hashtags}`); }}
-                className="px-3 py-1 text-xs rounded-full border border-zinc-700 text-zinc-300 hover:border-zinc-400 cursor-pointer"
+                className="px-3 py-1 text-xs rounded-full border border-[var(--border-card)] text-[var(--text-secondary)] hover:border-[var(--color-zinc-400)] cursor-pointer"
               >
                 <Copy className="inline mr-1" size={12} /> Copy post
               </button>
@@ -334,15 +334,15 @@ export default function LinkedinDashboard() {
                     href={post.linkedinUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="px-3 py-1 text-xs rounded-full border border-zinc-700 text-emerald-300 hover:border-emerald-500"
+                    className="px-3 py-1 text-xs rounded-full border border-[var(--border-card)] text-emerald-300 hover:border-emerald-500"
                   >
                     📮 Posted — view on LinkedIn ↗
                   </a>
                 ) : (
-                  <span className="px-3 py-1 text-xs rounded-full border border-zinc-700 text-zinc-500">📮 Posted</span>
+                  <span className="px-3 py-1 text-xs rounded-full border border-[var(--border-card)] text-[var(--text-tertiary)]">📮 Posted</span>
                 )
               )}
-              {postMsg && <div className="text-xs text-zinc-300 w-full">{postMsg}</div>}
+              {postMsg && <div className="text-xs text-[var(--text-secondary)] w-full">{postMsg}</div>}
               {post.status !== "posted" && (
                 <button
                   onClick={() => deleteDraft(post.id)}
@@ -356,17 +356,17 @@ export default function LinkedinDashboard() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col items-center justify-center min-h-[280px]">
+          <div className="rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)]/60 p-4 flex flex-col items-center justify-center min-h-[280px]">
             {post.hasImage && post.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={post.imageUrl} alt={`Visual for ${post.topic}`} className="rounded-lg max-w-full" />
             ) : (
-              <div className="text-zinc-500 text-sm flex items-center gap-2">
+              <div className="text-[var(--text-tertiary)] text-sm flex items-center gap-2">
                 {post.status === "draft" ? <RefreshCw className="animate-spin" size={14} /> : <ImageIcon size={14} />}
                 {post.status === "draft" ? "Visual generating…" : "No visual for this draft"}
               </div>
             )}
-            <div className="mt-3 text-[11px] text-zinc-500 flex items-center gap-1">
+            <div className="mt-3 text-[11px] text-[var(--text-tertiary)] flex items-center gap-1">
               <FlaskConical size={11} /> AI explainer visual — diagrams only, never machines or sites
             </div>
           </div>

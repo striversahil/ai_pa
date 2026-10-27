@@ -69,12 +69,12 @@ export default function ContextMenu({
       />
       <div
         ref={ref}
-        className="z-[131] overflow-y-auto rounded-lg border border-white/[0.06] bg-[var(--chat-float)] py-[6px] shadow-[0_8px_16px_rgba(0,0,0,0.24)]"
+        className="z-[131] overflow-y-auto rounded-lg border border-[var(--border-card)] bg-[var(--chat-float)] py-[6px] shadow-[0_8px_16px_rgba(0,0,0,0.24)]"
         style={{ ...pos, minWidth: 200, maxWidth: 260, maxHeight: `min(60vh, calc(100vh - ${MARGIN * 2}px))` }}
       >
         {items.map((item, i) => (
           <React.Fragment key={`${item.label}-${i}`}>
-            {item.divider && <div className="mx-2 my-[5px] h-px bg-white/[0.07]" />}
+            {item.divider && <div className="mx-2 my-[5px] h-px bg-[var(--surface-soft)]" />}
             <button
               disabled={item.disabled}
               onClick={() => { onClose(); item.onSelect(); }}

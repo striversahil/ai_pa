@@ -37,10 +37,10 @@ export function TabBar<K extends string>({
             disabled={t.disabled}
             title={t.title}
             aria-current={isActive ? "page" : undefined}
-            className={`flex items-center gap-2.5 rounded-xl px-4 py-2.5 text-left text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`flex items-center gap-2.5 rounded-[var(--radius-control)] px-4 py-2.5 text-left text-label font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               isActive
-                ? "bg-indigo-600 text-white shadow-sm"
-                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                ? "bg-[var(--color-brand-indigo)] text-white shadow-[var(--shadow-soft)]"
+                : "bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)]"
             }`}
           >
             {t.icon && <span className="text-base leading-none">{t.icon}</span>}

@@ -621,7 +621,7 @@ export default function ChatRoom() {
 
   if (!isApproved) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center text-zinc-500">
+      <div className="flex min-h-[60vh] items-center justify-center text-[var(--text-tertiary)]">
         Your account has no access yet. Ask the administrator to grant access.
       </div>
     );
@@ -1060,7 +1060,7 @@ export default function ChatRoom() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs animate-fade-in"
           onClick={() => setViewer(null)}>
           <button
-            className="absolute top-4 right-4 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-black/45 text-white transition-colors hover:text-zinc-400"
+            className="absolute top-4 right-4 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white transition-colors hover:text-white/70"
             onClick={() => setViewer(null)} type="button" title="Close">
             <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1068,18 +1068,18 @@ export default function ChatRoom() {
           </button>
           <div className="flex max-h-[92vh] max-w-[95vw] flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
             {viewer.type === "application/pdf" || viewer.type.startsWith("text/") ? (
-              <iframe src={viewer.url} title={viewer.name} className="h-[85vh] w-[90vw] rounded-lg border border-white/10 bg-white" />
+              <iframe src={viewer.url} title={viewer.name} className="h-[85vh] w-[90vw] rounded-lg border border-[var(--chat-border)] bg-white" />
             ) : viewer.type.startsWith("video/") ? (
               <video src={viewer.url} controls autoPlay className="max-h-[85vh] max-w-[90vw] rounded-lg" />
             ) : viewer.type.startsWith("audio/") ? (
-              <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-zinc-900 p-8">
+              <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--chat-border)] bg-[var(--chat-side)] p-8">
                 <audio src={viewer.url} controls autoPlay className="w-[60vw] max-w-md" />
               </div>
             ) : isPpt({ key: viewer.url, name: viewer.name, size: 0, type: viewer.type }) ? (
-              <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-zinc-900 p-10 text-center">
+              <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--chat-border)] bg-[var(--chat-side)] p-10 text-center">
                 <FileText className="h-12 w-12 text-amber-500" />
-                <p className="font-semibold text-white">{viewer.name}</p>
-                <p className="max-w-sm text-sm text-white/60">
+                <p className="font-semibold text-[var(--chat-text)]">{viewer.name}</p>
+                <p className="max-w-sm text-sm text-[var(--chat-muted)]">
                   PowerPoint preview isn&apos;t available on this platform yet — download the file to view it.
                 </p>
                 <a href={viewer.url} download={viewer.name}
@@ -1089,7 +1089,7 @@ export default function ChatRoom() {
               </div>
             ) : (
               <a href={viewer.url} download={viewer.name}
-                className="rounded-xl border border-white/10 bg-zinc-900 px-6 py-4 text-sm font-semibold text-white hover:bg-zinc-800">
+                className="rounded-xl border border-[var(--chat-border)] bg-[var(--chat-side)] px-6 py-4 text-sm font-semibold text-[var(--chat-text)] hover:bg-[var(--chat-hover)]">
                 Download {viewer.name}
               </a>
             )}

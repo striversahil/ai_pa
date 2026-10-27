@@ -79,7 +79,7 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
                 : sent
                 ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
                 : notAvailable
-                ? "bg-zinc-800 text-zinc-200 border-zinc-600"
+                ? "bg-[var(--surface-soft)] text-[var(--text-primary)] border-[var(--border-card)]"
                 : flagged
                 ? "bg-red-500/10 text-red-500 border-red-500/30"
                 : finalized
@@ -92,7 +92,7 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
             </span>
           )}
           {!hideIdentity && notAvailable && !sent && (
-            <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-zinc-800 text-zinc-200 border-zinc-600" title={(items.filter((it) => (it as any).notAvailable) as any[]).map((it: any) => `${it.name || "Item"}${it.notAvailableReason ? `: ${it.notAvailableReason}` : ""}`).join(" · ")}>
+            <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-[var(--surface-soft)] text-[var(--text-primary)] border-[var(--border-card)]" title={(items.filter((it) => (it as any).notAvailable) as any[]).map((it: any) => `${it.name || "Item"}${it.notAvailableReason ? `: ${it.notAvailableReason}` : ""}`).join(" · ")}>
               {items.filter((it) => (it as any).notAvailable).length} not available
             </span>
           )}

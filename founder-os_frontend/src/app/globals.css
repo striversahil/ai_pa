@@ -33,6 +33,40 @@
   --radius-xl: 1rem;
   --radius-2xl: 1.25rem;
 
+  /* ── Shape scale (design-system tokens) ──────────────────────────────────
+     One place for radii so cards, controls and chips never drift apart. */
+  --radius-card: 1.5rem;      /* 24px — large content cards */
+  --radius-card-lg: 2rem;     /* 32px — hero / page-level panels */
+  --radius-control: 0.875rem; /* 14px — buttons, inputs, selects */
+  --radius-sm: 0.625rem;      /* 10px — inline chips, tiny controls */
+  --radius-pill: 9999px;
+
+  /* ── Elevation scale ──────────────────────────────────────────────────── */
+  --shadow-soft: 0 4px 16px rgba(32, 40, 31, 0.06);
+  --shadow-raised: 0 2px 4px rgba(32, 40, 31, 0.04), 0 8px 24px rgba(32, 40, 31, 0.08);
+  --shadow-float: 0 12px 32px rgba(32, 40, 31, 0.14);
+
+  /* ── Typography roles (size / weight / tracking / leading) ─────────────── */
+  --text-page-title: 1.875rem;   /* 30px */
+  --text-page-title--line-height: 1.2;
+  --text-page-title--font-weight: 700;
+  --text-section: 1.375rem;      /* 22px */
+  --text-section--line-height: 1.3;
+  --text-section--font-weight: 600;
+  --text-card-title: 1.125rem;   /* 18px */
+  --text-card-title--line-height: 1.35;
+  --text-card-title--font-weight: 600;
+  --text-body: 1rem;             /* 16px */
+  --text-body--line-height: 1.55;
+  --text-label: 0.8125rem;       /* 13px */
+  --text-label--line-height: 1.35;
+  --text-label--font-weight: 600;
+  --text-caption: 0.75rem;       /* 12px */
+  --text-caption--line-height: 1.4;
+  --text-metric: 1.875rem;       /* 30px */
+  --text-metric--line-height: 1.1;
+  --text-metric--font-weight: 700;
+
   /* Unified neutral scale — zinc & slate resolve to the same modern cool-gray
      so every dashboard shares one cohesive palette. */
   --color-zinc-50: #f8fafc;
@@ -80,6 +114,7 @@
 
   --surface-raised: #ffffff;
   --surface-sunken: #f7f8fb;
+  --surface-soft: #f1f2f6;
   --ring-color: rgba(91, 94, 240, 0.45);
 }
 
@@ -96,6 +131,7 @@
 
   --surface-raised: #1b1f27;
   --surface-sunken: #101319;
+  --surface-soft: #1c2027;
   --ring-color: rgba(91, 94, 240, 0.55);
 }
 
@@ -384,6 +420,88 @@ html[data-app-theme="light"] {
   --ring-color: rgba(91, 94, 240, 0.45);
 }
 
+/* ── "Sage" — warm forest design language ───────────────────────────────────
+   Warm off-white canvas, forest-green accents, sage surfaces, generous radii.
+   This preset is intentionally LIGHT and never sets `.dark`, so every
+   `dark:`-prefixed utility in the app is inert while it is active.
+
+   The `--color-zinc-*` / `--color-slate-*` ramps are remapped to sage-tinted
+   warm neutrals rather than left at Tailwind's cool gray. That single remap
+   re-themes every raw `bg-zinc-*` / `text-slate-*` utility across the app
+   without editing component files — the ramps keep the standard
+   light→dark direction so unprefixed ("light side") classes stay correct. */
+html[data-app-theme="sage"] {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg-app: #f6f7f2;
+  --bg-card: #ffffff;
+  --bg-sidebar: #ffffff;
+  --bg-input: #eff2e9;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f8f9f5;
+  --surface-soft: #edf3ec;
+  --border-card: #e5e9e0;
+  --border-thread: #e5e9e0;
+
+  /* Text — --text-secondary is darkened from the reference #7C8779 to
+     #6b7566 so body copy clears WCAG AA (4.5:1) on the #f6f7f2 canvas. */
+  --text-primary: #20281f;
+  --text-secondary: #6b7566;
+  --text-tertiary: #8b9688;
+
+  --ring-color: rgba(54, 86, 51, 0.45);
+
+  /* Forest-green accent ramp (was indigo) */
+  --color-brand-indigo: #365633;
+  --color-indigo-300: #8fae8a;
+  --color-indigo-400: #6e9469;
+  --color-indigo-500: #4a7046;
+  --color-indigo-600: #365633;
+  --color-indigo-650: #2c472a;
+  --color-indigo-700: #243a22;
+
+  /* Semantic states — contrast-adjusted against the warm canvas */
+  --color-success: #14795c;
+  --color-warning: #9a6b0b;
+  --color-danger: #b8413a;
+  --color-info: #3b6ba5;
+  --color-sky: #2f7291;
+  --color-cyan: #0f6f78;
+  --color-violet: #6a4f96;
+  --color-purple: #6a4f96;
+
+  /* Warm neutral ramp — 50 lightest → 955 darkest (standard direction) */
+  --color-zinc-50: #f7f8f4;
+  --color-zinc-100: #eff2e9;
+  --color-zinc-200: #e5e9e0;
+  --color-zinc-300: #d3dacd;
+  --color-zinc-400: #a9b2a4;
+  --color-zinc-500: #6b7566;
+  --color-zinc-600: #576052;
+  --color-zinc-700: #454d42;
+  --color-zinc-750: #3a4238;
+  --color-zinc-800: #2f372e;
+  --color-zinc-850: #29302a;
+  --color-zinc-900: #20281f;
+  --color-zinc-950: #1a2119;
+  --color-zinc-955: #141a13;
+
+  --color-slate-50: #f7f8f4;
+  --color-slate-100: #eff2e9;
+  --color-slate-200: #e5e9e0;
+  --color-slate-300: #d3dacd;
+  --color-slate-400: #a9b2a4;
+  --color-slate-500: #6b7566;
+  --color-slate-600: #576052;
+  --color-slate-700: #454d42;
+  --color-slate-750: #3a4238;
+  --color-slate-800: #2f372e;
+  --color-slate-850: #29302a;
+  --color-slate-900: #20281f;
+  --color-slate-950: #1a2119;
+}
+
 * {
   border-color: var(--border-card);
 }
@@ -400,8 +518,12 @@ body {
   border-radius: 0.5rem;
 }
 
+/* Fields had `outline: none` with no replacement — keyboard users lost the
+   focus indicator entirely. Give them the same ring as links/buttons. */
 :where(input, select, textarea):focus-visible {
   outline: none;
+  border-color: var(--color-brand-indigo);
+  box-shadow: 0 0 0 3px var(--ring-color);
 }
 
 /* Interactive elements are pointer-affordant everywhere (Tailwind v4 preflight
@@ -628,6 +750,13 @@ label:has(input[type="radio"]) {
 @media (prefers-reduced-motion: reduce) {
   .fos-rise, .fos-sweep, .fos-pulse, .fos-loading-bar { animation: none !important; }
   .fos-board, .fos-board * { transition: none !important; }
+
+  /* Design-system motion: the skeleton shimmer is decorative, so freeze it at
+     a flat wash instead of a moving highlight. Functional transitions (theme
+     fade, hover colour) also collapse to instant changes. */
+  .skeleton::after { animation: none !important; display: none; }
+  .animate-scale-up, .animate-fade-in, .animate-slide-in-right,
+  .animate-shimmer-slow, .animate-glow-pulse, .animate-spin-slow { animation: none !important; }
 }
 
 /* Markdown (AI replies) */

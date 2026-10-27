@@ -621,7 +621,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   };
 
   return (
-    <div className="rounded-2xl border border-amber-500/20 bg-[#111726]/80 p-4 space-y-4">
+    <div className="rounded-2xl border border-amber-500/20 bg-[var(--bg-card)] p-4 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-bold text-white">💼 Rate Review — {enquiry.estNumber || "—"}</h3>
         <span className={`px-2 py-0.5 text-[10px] rounded-full font-extrabold uppercase tracking-wide border ${
@@ -640,7 +640,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         if (decided.length === 0) return null;
         return (
           <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            <div className="px-3 py-2.5 bg-zinc-800/20">
+            <div className="px-3 py-2.5 bg-[var(--surface-sunken)]">
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-300">
                 Closed — decision made ({decided.length})
               </span>
@@ -674,7 +674,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         <div className="flex flex-wrap gap-1.5">
                           {(it.media ?? []).map((m: any, mi: number) => {
                             const list = (it.media ?? []).filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
-                            return m.type === "video" ? <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" /> : m.type === "pdf" ? <a key={mi} href={m.url} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border border-zinc-700 bg-red-500/10 text-[10px] font-bold">PDF</a> : <img key={mi} src={m.url} alt={`Item ${i+1} media ${mi+1}`} className="w-12 h-12 rounded-lg object-cover border border-zinc-700 cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />;
+                            return m.type === "video" ? <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-[var(--border-card)] bg-black" /> : m.type === "pdf" ? <a key={mi} href={m.url} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border border-[var(--border-card)] bg-red-500/10 text-[10px] font-bold">PDF</a> : <img key={mi} src={m.url} alt={`Item ${i+1} media ${mi+1}`} className="w-12 h-12 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />;
                           })}
                         </div>
                       )}
@@ -709,14 +709,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             <div className="flex flex-wrap items-center gap-2">
               <input value={bulkPct} onChange={(e) => setBulkPct(e.target.value)} placeholder="Margin %"
                 inputMode="decimal"
-                className="w-24 px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40" />
+                className="w-24 px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40" />
               <button type="button" onClick={applyBulkMargin}
                 className="px-3 py-1.5 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 font-bold text-[11px] rounded-lg cursor-pointer border-0">
                 Apply margin
               </button>
               <input value={bulkTotal} onChange={(e) => setBulkTotal(e.target.value)} placeholder="Combined final ₹"
                 inputMode="decimal"
-                className="w-36 px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40" />
+                className="w-36 px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40" />
               <button type="button" onClick={applyBulkTotal}
                 className="px-3 py-1.5 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 font-bold text-[11px] rounded-lg cursor-pointer border-0">
                 Split final
@@ -733,7 +733,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             if (it.rateAvailable) return null; // rate already available — skips Management entirely
             if ((it as any).notAvailable) {
               return (
-                <div key={i} className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-3 space-y-2">
+                <div key={i} className="rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] p-3 space-y-2">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span className="text-xs font-extrabold text-white">
                       Item {i + 1}{it.name ? ` — ${it.name}` : ""}
@@ -741,14 +741,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     {it.qty && (
                       <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
                     )}
-                    <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-zinc-700 text-zinc-300 border-zinc-600">
+                    <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-[var(--bg-input)] text-[var(--text-secondary)] border-[var(--border-card)]">
                       Not available
                     </span>
                   </div>
                   {it.spec && (
                     <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                   )}
-                  <div className="rounded-lg border border-zinc-600 bg-black/20 p-2.5 text-[11px] leading-relaxed">
+                  <div className="rounded-lg border border-[var(--border-card)] bg-black/20 p-2.5 text-[11px] leading-relaxed">
                     <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Marked as not available — visible to sales</p>
                     {(it as any).notAvailableReason && (
                       <p className="mt-0.5 text-zinc-400 whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
@@ -759,7 +759,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   </div>
                   <FlagThread thread={it.thread ?? []} tone="dark" />
                   <button type="button" onClick={() => handleClearNotAvailable(i)} disabled={flagBusy}
-                    className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
+                    className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
                     ↩ Clear — available again
                   </button>
                 </div>
@@ -791,12 +791,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   </div>
                   <FlagThread thread={it.thread ?? []} tone="dark" />
                   {notAvailableOpen === i ? (
-                    <div className="space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+                    <div className="space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                       <input
                         value={notAvailableReason}
                         onChange={(e) => setNotAvailableReason(e.target.value)}
                         placeholder="Shared text for sales (e.g. Material not available — alternative suggested…)"
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-amber-500/40"
                       />
                       <div className="flex gap-2">
                         <button type="button" onClick={() => handleNotAvailable(i)} disabled={flagBusy}
@@ -816,7 +816,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         Approve — share with sales
                       </button>
                       <button type="button" onClick={() => handleRejectNotAvailable(i)} disabled={flagBusy}
-                        className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700 hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
+                        className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
                         Reject — keep in procurement
                       </button>
                     </div>
@@ -903,12 +903,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     {(it.media ?? []).map((m: any, mi: number) => {
                       const list = (it.media ?? []).filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
                       return m.type === "video" ? (
-                        <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" />
+                        <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
                       ) : m.type === "pdf" ? (
-                        <a key={mi} href={m.url} target="_blank" rel="noreferrer" className="px-2 py-1.5 rounded-lg border border-zinc-700 bg-red-500/10 text-[10px] font-bold">PDF</a>
+                        <a key={mi} href={m.url} target="_blank" rel="noreferrer" className="px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 text-[10px] font-bold">PDF</a>
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img key={mi} src={m.url} alt={`Item attachment ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-zinc-700 cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />
+                        <img key={mi} src={m.url} alt={`Item attachment ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />
                       );
                     })}
                   </div>
@@ -975,7 +975,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                                   setShareToggled((prev) => ({ ...prev, [k]: !(prev[k] ?? (r as any)?.sharedWithSales === true) }));
                                 }}
                                 title="Show this quote to sales as an alternate option beside the quoted rate"
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide border cursor-pointer ${(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "bg-sky-500/10 text-sky-300 border-sky-500/30" : "bg-transparent text-zinc-500 border-zinc-700 hover:text-zinc-300"}`}>
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide border cursor-pointer ${(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "bg-sky-500/10 text-sky-300 border-sky-500/30" : "bg-transparent text-zinc-500 border-[var(--border-card)] hover:text-[var(--text-secondary)]"}`}>
                                 {(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "Shared ✓" : "Share with sales"}
                               </button>
                             )}
@@ -1002,15 +1002,15 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                               {(r.references ?? []).map((m, mi) => {
                                 const list = (r.references ?? []).filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
                                 return m.type === "video" ? (
-                                  <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" />
+                                  <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
                                 ) : m.type === "pdf" ? (
                                   <a key={mi} href={m.url} download={m.name || `vendor-ref-${mi + 1}.pdf`} onClick={(e) => e.stopPropagation()}
-                                    className="px-2 py-1.5 rounded-lg border border-zinc-700 bg-red-500/10 hover:bg-red-500/20 transition-colors text-[10px] font-bold text-zinc-200 truncate max-w-[8rem]">
+                                    className="px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 hover:bg-red-500/20 transition-colors text-[10px] font-bold text-[var(--text-primary)] truncate max-w-[8rem]">
                                     {m.name || "PDF"}
                                   </a>
                                 ) : (
                                   // eslint-disable-next-line @next/next/no-img-element
-                                  <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-zinc-700 cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />
+                                  <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />
                                 );
                               })}
                             </span>
@@ -1028,7 +1028,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       onChange={(e) => setSalesNotes((prev) => ({ ...prev, [i]: e.target.value }))}
                       placeholder="Forwarded to sales when this vendor is selected — e.g. delivery terms, warranty, validity…"
                       rows={2}
-                      className="w-full px-2.5 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 resize-y"
+                      className="w-full px-2.5 py-2 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40 resize-y"
                     />
                     <p className="text-[10px] text-zinc-500">Procurement's draft shows here — edit before finalizing, sales sees only the selected vendor's note.</p>
                   </div>
@@ -1051,12 +1051,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                               <div className="flex flex-wrap gap-1.5">
                                 {refs.map((m: any, mi: number) => (
                                   m.type === "video" ? (
-                                    <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-zinc-700 bg-black" />
+                                    <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
                                   ) : m.type === "pdf" ? (
-                                    <a key={mi} href={m.url} download={m.name || `vendor-ref-${mi + 1}.pdf`} className="px-2 py-1.5 rounded-lg border border-zinc-700 bg-red-500/10 text-[10px] font-bold truncate max-w-[8rem]">Reference PDF</a>
+                                    <a key={mi} href={m.url} download={m.name || `vendor-ref-${mi + 1}.pdf`} className="px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 text-[10px] font-bold truncate max-w-[8rem]">Reference PDF</a>
                                   ) : (
                                     // eslint-disable-next-line @next/next/no-img-element
-                                    <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-zinc-700" />
+                                    <img key={mi} src={m.url} alt={`Vendor reference ${mi + 1}`} className="w-12 h-12 rounded-lg object-cover border border-[var(--border-card)]" />
                                   )
                                 ))}
                               </div>
@@ -1072,7 +1072,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           (clears the review instantly when new quotes arrived),
                           Revise unlocks the vendor list + margin to override
                           with another quote. One Save applies + re-stamps. */}
-                      <div className="inline-flex rounded-lg border border-zinc-700 overflow-hidden text-[11px] font-bold"
+                      <div className="inline-flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[11px] font-bold"
                         title="Keep confirms this rate — Revise unlocks the vendor list to override with another quote">
                         <button type="button" disabled={keepBusyIdx === i}
                           onClick={() => {
@@ -1097,11 +1097,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         onChange={(e) => setDiscountInputs((prev) => ({ ...prev, [i]: e.target.value }))}
                         placeholder="Disc. %"
                         inputMode="decimal"
-                        className="w-20 px-2 py-1 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        className="w-20 px-2 py-1 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                       />
                       <span className="text-[11px] font-bold text-zinc-400">% off</span>
                     </div>
-                    <div className="flex rounded-lg border border-zinc-700 overflow-hidden text-[11px] font-bold">
+                    <div className="flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[11px] font-bold">
                       <button type="button"
                         onClick={() => setModes((prev) => ({ ...prev, [i]: "percent" }))}
                         className={`px-2.5 py-1.5 cursor-pointer border-0 ${mode === "percent" ? "bg-indigo-600 text-white" : "bg-transparent text-zinc-400"}`}>
@@ -1111,7 +1111,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         onClick={() => { if (!multi) setModes((prev) => ({ ...prev, [i]: "final" })); }}
                         disabled={multi}
                         title={multi ? "Disabled: one margin % applies to every shared quote — a single Final ₹ can't price them respectively" : undefined}
-                        className={`px-2.5 py-1.5 border-0 ${multi ? "bg-transparent text-zinc-600 cursor-not-allowed opacity-50" : `cursor-pointer ${mode === "final" ? "bg-indigo-600 text-white" : "bg-transparent text-zinc-400"}`}`}>
+                        className={`px-2.5 py-1.5 border-0 ${multi ? "bg-transparent text-zinc-600 cursor-not-allowed opacity-50" : `cursor-pointer ${mode === "final" ? "bg-indigo-600 text-white" : "bg-transparent text-[var(--text-secondary)]"}`}`}>
                         Final ₹{multi ? " 🔒" : ""}
                       </button>
                     </div>
@@ -1122,7 +1122,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           onChange={(e) => setPctInputs((prev) => ({ ...prev, [i]: e.target.value }))}
                           placeholder="30"
                           inputMode="decimal"
-                          className="w-20 px-2 py-1 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                          className="w-20 px-2 py-1 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
                         />
                         <span className="text-[11px] font-bold text-zinc-400">%</span>
                       </div>
@@ -1132,7 +1132,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         onChange={(e) => setFinalInputs((prev) => ({ ...prev, [i]: e.target.value }))}
                         placeholder="Final price ₹"
                         inputMode="decimal"
-                        className="w-32 px-2 py-1 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        className="w-32 px-2 py-1 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
                       />
                     )}
                     {preview !== null && (
@@ -1187,7 +1187,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         value={reqNote}
                         onChange={(e) => setReqNote(e.target.value)}
                         placeholder="What is wrong / which vendor? (optional)"
-                        className="w-full px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        className="w-full px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
                       />
                       <div className="flex gap-2">
                         <button type="button" onClick={() => sendFlagNow(i)} disabled={flagBusy}
@@ -1224,16 +1224,16 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     </button>
                   )}
                   {remarkOpen === i ? (
-                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                       <input
                         value={remarks[i] ?? ""}
                         onChange={(e) => setRemarks((prev) => ({ ...prev, [i]: e.target.value }))}
                         placeholder="Remark for sales, saved with the rates (optional)…"
-                        className="w-full px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        className="w-full px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
                       />
                       <div className="flex gap-2">
                         <button type="button" onClick={() => setRemarkOpen(null)}
-                          className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                          className="px-3 py-1.5 bg-[var(--bg-input)] hover:bg-zinc-600 text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer border-0">
                           Done
                         </button>
                         <button type="button" onClick={() => { setRemarks((prev) => ({ ...prev, [i]: "" })); setRemarkOpen(null); }}
@@ -1244,21 +1244,21 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     </div>
                   ) : (
                     <button type="button" onClick={() => setRemarkOpen(i)}
-                      className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
+                      className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
                       Add remark{(remarks[i] ?? "").trim() ? " ✓" : ""}
                     </button>
                   )}
                   {notAvailableOpen === i ? (
-                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                       <input
                         value={notAvailableReason}
                         onChange={(e) => setNotAvailableReason(e.target.value)}
                         placeholder="Reason not available (visible to sales)…"
-                        className="w-full px-2 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/40"
+                        className="w-full px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-zinc-500/40"
                       />
                       <div className="flex gap-2">
                         <button type="button" onClick={() => handleNotAvailable(i)} disabled={flagBusy}
-                          className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-50">
+                          className="px-3 py-1.5 bg-[var(--bg-input)] hover:bg-zinc-600 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-50">
                           {flagBusy ? "Saving…" : "Mark not available"}
                         </button>
                         <button type="button" onClick={() => { setNotAvailableOpen(null); setNotAvailableReason(""); }}
@@ -1269,7 +1269,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     </div>
                   ) : (
                     <button type="button" onClick={() => { setNotAvailableOpen(i); setNotAvailableReason(""); }}
-                      className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
+                      className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
                       Not Available
                     </button>
                   )}

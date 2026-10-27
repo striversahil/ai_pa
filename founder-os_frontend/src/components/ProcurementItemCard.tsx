@@ -131,7 +131,7 @@ export default function ProcurementItemCard({
           </span>
         )}
         {(item as any).notAvailable && (
-          <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-zinc-800 text-zinc-300 border-zinc-600">
+          <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-[var(--surface-soft)] text-[var(--text-secondary)] border-[var(--border-card)]">
             Not available
           </span>
         )}
@@ -230,7 +230,7 @@ export default function ProcurementItemCard({
       )}
 
       {(item as any).notAvailable && (
-        <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-2.5 text-[11px] leading-relaxed">
+        <div className="rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)] p-2.5 text-[11px] leading-relaxed">
           <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Not available — visible to sales (approved by management)</p>
           {(item as any).notAvailableReason && (
             <p className="mt-0.5 text-zinc-400 whitespace-pre-wrap">{String((item as any).notAvailableReason)}</p>
@@ -420,7 +420,7 @@ export default function ProcurementItemCard({
           )}
           {!(item as any).notAvailable && !(item as any).notAvailableRequested && !flagged && !locked && !showAdd && !showFlag && onNotAvailable && (
             showNotAvailable ? (
-              <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-zinc-600 p-2">
+              <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                 <textarea
                   value={notAvailableReason}
                   onChange={(e) => setNotAvailableReason(e.target.value)}
@@ -430,7 +430,7 @@ export default function ProcurementItemCard({
                 />
                 <div className="flex gap-2">
                   <button type="button" onClick={submitNotAvailable}
-                    className="px-3 py-1.5 bg-zinc-700 text-white hover:bg-zinc-600 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                    className="px-3 py-1.5 bg-[var(--bg-input)] text-white hover:bg-zinc-600 font-bold text-[11px] rounded-lg cursor-pointer border-0">
                     Mark not available
                   </button>
                   <button type="button" onClick={() => { setShowNotAvailable(false); setNotAvailableReason(""); }}
@@ -441,7 +441,7 @@ export default function ProcurementItemCard({
               </div>
             ) : (
               <button type="button" onClick={() => setShowNotAvailable(true)}
-                className="px-2.5 py-1.5 bg-transparent border border-zinc-600 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 font-bold text-[11px] rounded-lg cursor-pointer">
+                className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer">
                 Not Available
               </button>
             )

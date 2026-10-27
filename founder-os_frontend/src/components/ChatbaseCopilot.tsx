@@ -115,7 +115,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                     alt=""
                     loading="lazy"
                     onClick={() => setLightbox({ images: urls, index: ui })}
-                    className="h-12 w-12 rounded-lg object-cover border border-white/10 cursor-zoom-in hover:opacity-90"
+                    className="h-12 w-12 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in hover:opacity-90"
                   />
                 ))}
               </div>
@@ -123,7 +123,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
             // Empty result: no usable price — text + (only here) procurement button.
             if (p.rows.length === 0) {
               return (
-                <div key={pi} className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden px-4 py-3">
+                <div key={pi} className="rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] overflow-hidden px-4 py-3">
                   <p className="font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
                   {(p.text) && <p className="mt-1.5 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text}</p>}
                   {mediaStrip(p.itemMedia)}
@@ -168,7 +168,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
               rows.reduce((m, { r }) => Math.min(m, Number(r.markedPrice) || Infinity), Infinity);
             const tableBest = bestOf(p.rows.map((r) => ({ r })));
             return (
-              <div key={pi} className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
+              <div key={pi} className="rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] overflow-hidden">
                 {mediaStrip(p.itemMedia)}
                 <details>
                   <summary className="px-4 pt-3 pb-2 font-bold text-[13px] text-[var(--text-primary)] cursor-pointer select-none list-none flex items-center gap-2">
@@ -189,7 +189,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                     )}
                     <table className="w-full text-[12px] leading-snug">
                       <thead>
-                        <tr className="text-left text-[10px] uppercase tracking-wider text-[var(--text-tertiary)] border-y border-white/[0.06]">
+                        <tr className="text-left text-[10px] uppercase tracking-wider text-[var(--text-tertiary)] border-y border-[var(--border-card)]">
                           <th className="px-4 py-1.5 font-bold">Variation</th>
                           <th className="px-2 py-1.5 font-bold text-right">Price</th>
                           <th className="px-2 py-1.5 font-bold text-right">Match</th>
@@ -207,7 +207,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                           const confOk = typeof r.confidence === "number" && Number.isFinite(r.confidence);
                           return (
                             <React.Fragment key={ri}>
-                              <tr className={`border-b border-white/[0.04] ${open ? "" : "last:border-0"} ${r.best ? "bg-emerald-500/[0.07]" : ""}`}>
+                              <tr className={`border-b border-[var(--border-card)] ${open ? "" : "last:border-0"} ${r.best ? "bg-emerald-500/[0.07]" : ""}`}>
                                 <td className="px-4 py-2 text-[var(--text-secondary)]">
                                   {r.best && <span className="mr-1.5 inline-block text-[10px] font-extrabold px-1.5 py-px rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 align-middle">BEST</span>}
                                   {r.tag === "Earlier" && <span className="mr-1.5 inline-block text-[10px] font-extrabold px-1.5 py-px rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 align-middle">Earlier</span>}
@@ -227,7 +227,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                     </button>
                                   )}
                                 </td>
-                                <td className="px-2 py-2 text-right font-extrabold text-white whitespace-nowrap">
+                                <td className="px-2 py-2 text-right font-extrabold text-[var(--text-primary)] whitespace-nowrap">
                                   ₹{Number(r.markedPrice).toLocaleString("en-IN")}{r.unit ? <span className="font-bold text-[var(--text-tertiary)]">/{r.unit}</span> : null}
                                 </td>
                                 <td className="px-2 py-2 text-right font-bold text-[var(--text-secondary)] whitespace-nowrap">{confOk ? `${(Number(r.confidence) * 100).toFixed(0)}%` : "actual"}</td>
@@ -251,7 +251,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                 )}
                               </tr>
                               {open && hasDetail && (
-                                <tr className="border-b border-white/[0.04] last:border-0 bg-white/[0.02]">
+                                <tr className="border-b border-[var(--border-card)] last:border-0 bg-[var(--surface-sunken)]">
                                   <td colSpan={colSpan} className="px-4 py-2">
                                     {r.imageUrl && (
                                       <img
@@ -259,7 +259,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                                         alt=""
                                         loading="lazy"
                                         onClick={() => setLightbox({ images: [r.imageUrl as string], index: 0 })}
-                                        className="mb-2 h-20 w-20 rounded-lg object-cover border border-white/10 cursor-zoom-in hover:opacity-90"
+                                        className="mb-2 h-20 w-20 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in hover:opacity-90"
                                       />
                                     )}
                                     {Array.isArray(r.specs) && r.specs.length > 0 && (
@@ -320,7 +320,7 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
                 <button
                   type="button"
                   onClick={() => api.send(`Quote with what we have for ${p.productName ?? "this item"} — skip remaining details`)}
-                  className="mt-2 px-4 py-2 text-[12px] font-bold rounded-full bg-white/[0.06] text-[var(--text-secondary)] hover:bg-white/[0.1] hover:text-[var(--text-primary)] cursor-pointer border border-white/10 transition-colors duration-200"
+                  className="mt-2 px-4 py-2 text-[12px] font-bold rounded-full bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)] cursor-pointer border border-[var(--border-card)] transition-colors duration-200"
                 >
                   Quote with what we have →
                 </button>
@@ -328,10 +328,10 @@ export default function ChatbaseCopilot({ enquiryId, open, onClose, onOpen, user
             );
           }
           return (
-            <div key={pi} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <div key={pi} className="rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] px-4 py-3">
               <p className="font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
               {p.kind === "price_quote" && typeof p.markedPrice === "number" && (
-                <p className="mt-1 text-[22px] font-extrabold text-white tracking-tight">
+                <p className="mt-1 text-[22px] font-extrabold text-[var(--text-primary)] tracking-tight">
                   ₹{p.markedPrice.toLocaleString("en-IN")}{p.unit ? <span className="text-[13px] font-bold text-[var(--text-secondary)]">/{p.unit}</span> : null}
                   {typeof p.confidence === "number" && Number.isFinite(p.confidence) && (
                     <span className={`ml-2 align-middle text-[11px] font-bold px-2 py-0.5 rounded-full border ${p.confidence < 0.6 ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"}`}>

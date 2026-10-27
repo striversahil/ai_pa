@@ -72,22 +72,22 @@ export default function CopilotChat({ config, open, onClose, onOpen, chrome = "f
               const key = mi * 100 + pi;
               const done = api.confirmed.has(key);
               return (
-                <div key={pi} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                <div key={pi} className="rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] px-4 py-3">
                   <p className="font-bold text-[13px] text-[var(--text-primary)]">{p.label}</p>
                   {(p.text || p.spec) && <p className="mt-1.5 text-[13px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{p.text || p.spec}</p>}
                   {Array.isArray(p.table?.rows) && p.table.rows.length > 0 && (
-                    <div className="mt-2 overflow-x-auto rounded-lg border border-white/10">
+                    <div className="mt-2 overflow-x-auto rounded-lg border border-[var(--border-card)]">
                       <table className="w-full text-[12px]">
                         <thead>
                           <tr>
                             {(p.table.columns ?? Object.keys(p.table.rows[0] ?? {})).map((c: string) => (
-                              <th key={c} className="px-2 py-1.5 text-left font-extrabold text-[var(--text-tertiary)] border-b border-white/10 whitespace-nowrap">{c}</th>
+                              <th key={c} className="px-2 py-1.5 text-left font-extrabold text-[var(--text-tertiary)] border-b border-[var(--border-card)] whitespace-nowrap">{c}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {p.table.rows.map((r: Record<string, string>, ri: number) => (
-                            <tr key={ri} className="border-b border-white/[0.04] last:border-0">
+                            <tr key={ri} className="border-b border-[var(--border-card)] last:border-0">
                               {(p.table!.columns ?? Object.keys(r)).map((c: string) => (
                                 <td key={c} className="px-2 py-1.5 text-[var(--text-secondary)] align-top">{String(r?.[c] ?? "—")}</td>
                               ))}

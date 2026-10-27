@@ -16,8 +16,8 @@ async function api(path: string, init?: RequestInit) {
   return j;
 }
 
-const card = "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3";
-const input = "w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600";
+const card = "rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)]/60 p-4 space-y-3";
+const input = "w-full bg-[var(--bg-app)] border border-[var(--border-card)] rounded-lg px-3 py-1.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]";
 const btn = "px-3 py-1.5 text-xs rounded-full border cursor-pointer disabled:opacity-50 transition-colors";
 
 export default function EmailDashboard() {
@@ -70,14 +70,14 @@ export default function EmailDashboard() {
 
   if (!me?.isRoot) {
     return (
-      <div className="p-6 text-center text-zinc-400 space-y-2">
+      <div className="p-6 text-center text-[var(--text-secondary)] space-y-2">
         <div className="text-4xl">🔒</div>
-        <div className="font-semibold text-zinc-200">Root only</div>
+        <div className="font-semibold text-[var(--text-primary)]">Root only</div>
         <div className="text-sm">The founder email service is available to the root user only.</div>
       </div>
     );
   }
-  if (loading) return <div className="p-6 text-zinc-400">Loading email service…</div>;
+  if (loading) return <div className="p-6 text-[var(--text-secondary)]">Loading email service…</div>;
 
   const run = async (key: string, fn: () => Promise<any>, okMsg: string) => {
     setBusy(key); setMsg("");
@@ -93,9 +93,9 @@ export default function EmailDashboard() {
     <div className="p-4 space-y-4 max-w-5xl">
       <div className="flex items-center gap-2">
         <Mail size={18} className="text-indigo-300" />
-        <h2 className="text-lg font-bold text-zinc-100">Email</h2>
-        <span className="text-xs text-zinc-500">Gmail send · drafts · scheduled &amp; cron mail — root only</span>
-        <button onClick={refresh} className={`${btn} ml-auto border-zinc-700 text-zinc-300 hover:border-zinc-400`}>
+        <h2 className="text-lg font-bold text-[var(--text-primary)]">Email</h2>
+        <span className="text-xs text-[var(--text-tertiary)]">Gmail send · drafts · scheduled &amp; cron mail — root only</span>
+        <button onClick={refresh} className={`${btn} ml-auto border-[var(--border-card)] text-[var(--text-secondary)] hover:border-[var(--color-zinc-400)]`}>
           <RefreshCw size={12} className="inline mr-1" /> Refresh
         </button>
       </div>
@@ -103,15 +103,15 @@ export default function EmailDashboard() {
 
       {/* ── Accounts ── */}
       <div className={card}>
-        <div className="text-sm font-semibold text-zinc-200">Connected accounts</div>
-        {accounts.length === 0 && <div className="text-xs text-zinc-500">No Gmail connected yet — connect one below.</div>}
+        <div className="text-sm font-semibold text-[var(--text-primary)]">Connected accounts</div>
+        {accounts.length === 0 && <div className="text-xs text-[var(--text-tertiary)]">No Gmail connected yet — connect one below.</div>}
         {accounts.map((a) => (
           <div key={a.id} className="flex items-center gap-2 text-sm flex-wrap">
             <span className={`px-2 py-0.5 text-xs rounded-full border ${a.connected ? "border-emerald-600 text-emerald-300" : "border-red-900 text-red-400"}`}>
               {a.connected ? "● connected" : "○ not connected"}
             </span>
-            <span className="text-zinc-200">{a.label}</span>
-            <span className="text-zinc-500 text-xs">{a.email}</span>
+            <span className="text-[var(--text-primary)]">{a.label}</span>
+            <span className="text-[var(--text-tertiary)] text-xs">{a.email}</span>
             {!a.connected && (
               <a
                 href={`/api/email/oauth/start?account=${encodeURIComponent(a.id)}`}
@@ -123,7 +123,7 @@ export default function EmailDashboard() {
             <button
               onClick={() => run(`dis-${a.id}`, () => api("/api/email/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: a.id }) }), "Disconnected.")}
               disabled={busy === `dis-${a.id}`}
-              className={`${btn} border-zinc-700 text-zinc-400 hover:border-red-700 hover:text-red-300`}
+              className={`${btn} border-[var(--border-card)] text-[var(--text-secondary)] hover:border-red-700 hover:text-red-300`}
             >
               Disconnect
             </button>
@@ -144,7 +144,7 @@ export default function EmailDashboard() {
 
       {/* ── Compose ── */}
       <div className={card}>
-        <div className="text-sm font-semibold text-zinc-200">Compose</div>
+        <div className="text-sm font-semibold text-[var(--text-primary)]">Compose</div>
         <div className="grid md:grid-cols-2 gap-2">
           <select value={acct} onChange={(e) => setAcct(e.target.value)} className={input}>
             {connected.length === 0 && <option value="">— connect an account first —</option>}
@@ -165,7 +165,7 @@ export default function EmailDashboard() {
           <button
             onClick={() => run("draft", () => api("/api/email/draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(compose) }), "Draft saved to Gmail ✓")}
             disabled={busy === "draft" || !acct || !to || !subject || !body}
-            className={`${btn} border-zinc-600 text-zinc-300 hover:border-zinc-400 disabled:opacity-50`}
+            className={`${btn} border-[var(--border-card)] text-[var(--text-secondary)] hover:border-[var(--color-zinc-400)] disabled:opacity-50`}
           >
             <FileText size={12} className="inline mr-1" /> {busy === "draft" ? "Saving…" : "Save as Gmail draft"}
           </button>
@@ -175,23 +175,23 @@ export default function EmailDashboard() {
       {/* ── Drafts ── */}
       <div className={card}>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-zinc-200">Gmail drafts</span>
-          <select value={draftAcct} onChange={(e) => setDraftAcct(e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200">
+          <span className="text-sm font-semibold text-[var(--text-primary)]">Gmail drafts</span>
+          <select value={draftAcct} onChange={(e) => setDraftAcct(e.target.value)} className="bg-[var(--bg-app)] border border-[var(--border-card)] rounded-lg px-2 py-1 text-xs text-[var(--text-primary)]">
             {connected.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
           </select>
           <button
             onClick={() => run("drafts", async () => { const d = await api(`/api/email/drafts?account=${encodeURIComponent(draftAcct)}`); setDrafts(d.drafts ?? []); }, `Loaded ${drafts.length} drafts.`)}
             disabled={busy === "drafts" || !draftAcct}
-            className={`${btn} border-zinc-700 text-zinc-300 hover:border-zinc-400 disabled:opacity-50`}
+            className={`${btn} border-[var(--border-card)] text-[var(--text-secondary)] hover:border-[var(--color-zinc-400)] disabled:opacity-50`}
           >
             Load
           </button>
         </div>
-        {drafts.length === 0 && <div className="text-xs text-zinc-500">No drafts loaded — pick an account and Load.</div>}
+        {drafts.length === 0 && <div className="text-xs text-[var(--text-tertiary)]">No drafts loaded — pick an account and Load.</div>}
         {drafts.map((d) => (
-          <div key={d.id} className="flex items-center gap-2 text-sm border-t border-zinc-800/60 pt-2 flex-wrap">
-            <span className="text-zinc-200 truncate max-w-md">{d.subject || "(no subject)"}</span>
-            <span className="text-zinc-500 text-xs truncate max-w-xs">{d.to} · {d.date}</span>
+          <div key={d.id} className="flex items-center gap-2 text-sm border-t border-[var(--border-card)]/60 pt-2 flex-wrap">
+            <span className="text-[var(--text-primary)] truncate max-w-md">{d.subject || "(no subject)"}</span>
+            <span className="text-[var(--text-tertiary)] text-xs truncate max-w-xs">{d.to} · {d.date}</span>
             <button
               onClick={() => run(`dd-${d.id}`, async () => { await api(`/api/email/draft?account=${encodeURIComponent(draftAcct)}&draftId=${encodeURIComponent(d.id)}`, { method: "DELETE" }); setDrafts((p) => p.filter((x) => x.id !== d.id)); }, "Draft deleted.")}
               disabled={busy === `dd-${d.id}`}
@@ -205,11 +205,11 @@ export default function EmailDashboard() {
 
       {/* ── Schedule / outbox ── */}
       <div className={card}>
-        <div className="text-sm font-semibold text-zinc-200">Schedule &amp; cron mail</div>
-        <div className="text-xs text-zinc-500">Uses the Compose box above. One-shot <span className="text-zinc-300">sendAt</span>, or daily repeat <span className="text-zinc-300">HH:MM IST</span> (the per-minute worker tick sends it and re-queues for tomorrow).</div>
+        <div className="text-sm font-semibold text-[var(--text-primary)]">Schedule &amp; cron mail</div>
+        <div className="text-xs text-[var(--text-tertiary)]">Uses the Compose box above. One-shot <span className="text-[var(--text-secondary)]">sendAt</span>, or daily repeat <span className="text-[var(--text-secondary)]">HH:MM IST</span> (the per-minute worker tick sends it and re-queues for tomorrow).</div>
         <div className="flex gap-2 flex-wrap items-end">
-          <label className="text-xs text-zinc-400">Send once at <input type="datetime-local" value={sendAt} onChange={(e) => { setSendAt(e.target.value); setDailyAt(""); }} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 ml-1" /></label>
-          <label className="text-xs text-zinc-400">Repeat daily <input value={dailyAt} onChange={(e) => { setDailyAt(e.target.value); setSendAt(""); }} placeholder="09:00" className="w-20 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 ml-1" /></label>
+          <label className="text-xs text-[var(--text-secondary)]">Send once at <input type="datetime-local" value={sendAt} onChange={(e) => { setSendAt(e.target.value); setDailyAt(""); }} className="bg-[var(--bg-app)] border border-[var(--border-card)] rounded-lg px-2 py-1 text-xs text-[var(--text-primary)] ml-1" /></label>
+          <label className="text-xs text-[var(--text-secondary)]">Repeat daily <input value={dailyAt} onChange={(e) => { setDailyAt(e.target.value); setSendAt(""); }} placeholder="09:00" className="w-20 bg-[var(--bg-app)] border border-[var(--border-card)] rounded-lg px-2 py-1 text-xs text-[var(--text-primary)] ml-1" /></label>
           <button
             onClick={() => run("sched", () => api("/api/email/schedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...compose, sendAt: sendAt ? new Date(sendAt).toISOString() : undefined, repeatDailyAt: dailyAt || undefined }) }), "Scheduled ✓ — the worker tick sends it.")}
             disabled={busy === "sched" || !acct || !to || !subject || !body || (!sendAt && !dailyAt)}
@@ -218,17 +218,17 @@ export default function EmailDashboard() {
             <Clock size={12} className="inline mr-1" /> {busy === "sched" ? "Queueing…" : "Queue mail"}
           </button>
         </div>
-        {outbox.length === 0 && <div className="text-xs text-zinc-500">Queue empty.</div>}
+        {outbox.length === 0 && <div className="text-xs text-[var(--text-tertiary)]">Queue empty.</div>}
         {outbox.map((o) => (
-          <div key={o.id} className="flex items-center gap-2 text-sm border-t border-zinc-800/60 pt-2 flex-wrap">
+          <div key={o.id} className="flex items-center gap-2 text-sm border-t border-[var(--border-card)]/60 pt-2 flex-wrap">
             <span className={`px-2 py-0.5 text-xs rounded-full border ${o.status === "queued" ? "border-amber-700 text-amber-300" : "border-red-900 text-red-400"}`}>{o.status}</span>
-            <span className="text-zinc-200 truncate max-w-md">{o.subject}</span>
-            <span className="text-zinc-500 text-xs">{o.to.join(", ").slice(0, 60)}{o.repeatDailyAt ? ` · daily ${o.repeatDailyAt} IST` : ` · due ${new Date(o.dueAt).toLocaleString("en-IN")}`}</span>
+            <span className="text-[var(--text-primary)] truncate max-w-md">{o.subject}</span>
+            <span className="text-[var(--text-tertiary)] text-xs">{o.to.join(", ").slice(0, 60)}{o.repeatDailyAt ? ` · daily ${o.repeatDailyAt} IST` : ` · due ${new Date(o.dueAt).toLocaleString("en-IN")}`}</span>
             {o.lastError && <span className="text-red-400/80 text-xs w-full">{o.lastError}</span>}
             <button
               onClick={() => run(`cx-${o.id}`, () => api(`/api/email/outbox/${encodeURIComponent(o.id)}`, { method: "DELETE" }), "Cancelled.")}
               disabled={busy === `cx-${o.id}`}
-              className={`${btn} ml-auto border-zinc-700 text-zinc-400 hover:border-red-700 hover:text-red-300`}
+              className={`${btn} ml-auto border-[var(--border-card)] text-[var(--text-secondary)] hover:border-red-700 hover:text-red-300`}
             >
               <XCircle size={12} className="inline mr-1" /> Cancel
             </button>
@@ -239,12 +239,12 @@ export default function EmailDashboard() {
       {/* ── Log ── */}
       {log.length > 0 && (
         <div className={card}>
-          <div className="text-sm font-semibold text-zinc-200">Recent sends</div>
+          <div className="text-sm font-semibold text-[var(--text-primary)]">Recent sends</div>
           {log.slice(0, 15).map((l) => (
-            <div key={l.id} className="flex items-center gap-2 text-xs border-t border-zinc-800/60 pt-1.5 flex-wrap">
+            <div key={l.id} className="flex items-center gap-2 text-xs border-t border-[var(--border-card)]/60 pt-1.5 flex-wrap">
               <span className={l.ok ? "text-emerald-400" : "text-red-400"}>{l.ok ? "✓" : "✗"}</span>
-              <span className="text-zinc-400">{l.action}</span>
-              <span className="text-zinc-200 truncate max-w-md">{l.subject}</span>
+              <span className="text-[var(--text-secondary)]">{l.action}</span>
+              <span className="text-[var(--text-primary)] truncate max-w-md">{l.subject}</span>
               {!l.ok && <span className="text-red-400/80 w-full">{l.error}</span>}
             </div>
           ))}

@@ -67,21 +67,21 @@ function renderRateCard(body: string): string | null {
   const chips: string[] = [];
   for (const s of rawSpecs) {
     if (typeof s === "string" && s.trim()) {
-      chips.push(`<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white/[0.06] text-white/80 border border-white/10">${str(s, 80)}</span>`);
+      chips.push(`<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[var(--surface-sunken)] text-[var(--text-secondary)] border border-[var(--border-card)]">${str(s, 80)}</span>`);
     } else if (s && typeof s === "object") {
       const o = s as any;
       const q = str(o.question ?? o.spec ?? o.label ?? o.name ?? o.key ?? "", 60);
       const v = str(o.value ?? o.val ?? "", 80);
-      if (q || v) chips.push(`<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white/[0.06] text-white/80 border border-white/10">${q ? `${q}: ` : ""}${v}</span>`);
+      if (q || v) chips.push(`<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[var(--surface-sunken)] text-[var(--text-secondary)] border border-[var(--border-card)]">${q ? `${q}: ` : ""}${v}</span>`);
     }
   }
   const inr = price.toLocaleString("en-IN");
-  return `<div class="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">`
-    + (product ? `<p class="font-bold text-[13px] text-white">${product}</p>` : "")
-    + `<p class="mt-1 text-[30px] leading-none font-extrabold text-white tabular-nums tracking-tight">₹${inr}`
-    + (unit ? `<span class="text-[14px] font-bold text-white/60">/${unit}</span>` : "") + `</p>`
+  return `<div class="rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] px-4 py-3">`
+    + (product ? `<p class="font-bold text-[13px] text-[var(--text-primary)]">${product}</p>` : "")
+    + `<p class="mt-1 text-[30px] leading-none font-extrabold text-[var(--text-primary)] tabular-nums tracking-tight">₹${inr}`
+    + (unit ? `<span class="text-[14px] font-bold text-[var(--text-secondary)]">/${unit}</span>` : "") + `</p>`
     + (chips.length ? `<div class="mt-2 flex flex-wrap gap-1.5">${chips.join("")}</div>` : "")
-    + (note ? `<p class="mt-2 text-[12px] leading-relaxed text-white/60">${note}</p>` : "")
+    + (note ? `<p class="mt-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">${note}</p>` : "")
     + `</div>`;
 }
 

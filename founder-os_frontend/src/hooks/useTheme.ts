@@ -1,9 +1,12 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 
-export type AppThemeId = 'classic' | 'midnight' | 'discord' | 'amoled' | 'nord' | 'light';
+export type AppThemeId = 'sage' | 'classic' | 'midnight' | 'discord' | 'amoled' | 'nord' | 'light';
+
+export const DEFAULT_THEME: AppThemeId = 'sage';
 
 export const APP_THEMES: { id: AppThemeId; label: string; swatch: string }[] = [
+  { id: 'sage', label: 'Sage Forest', swatch: '#f6f7f2' },
   { id: 'classic', label: 'Classic Dark', swatch: '#0a0c10' },
   { id: 'midnight', label: 'Midnight Blue', swatch: '#151d2e' },
   { id: 'discord', label: 'Discord Dark', swatch: '#313338' },
@@ -23,7 +26,9 @@ export const APP_ACCENTS: { name: string; value: string }[] = [
   { name: 'Pink', value: '#ec4899' },
 ];
 
-const THEME_KEY = 'app_theme_v1';
+const THEME_KEY = 'app_theme_v2';
+/** Presets that render on a light canvas (no `.dark` class). */
+export const LIGHT_THEMES: ReadonlySet<AppThemeId> = new Set<AppThemeId>(['sage', 'light']);
 const ACCENT_KEY = 'app_accent_v1';
 const ACCENT_VARS = [
   '--color-brand-indigo', '--color-indigo-300', '--color-indigo-400', '--color-indigo-500',
@@ -84,6 +89,11 @@ function readSavedTheme(): AppThemeId | null {
   try {
     const saved = localStorage.getItem(THEME_KEY) as AppThemeId | null;
     if (saved && APP_THEMES.some((t) => t.id === saved)) return saved;
+    // One-time migration from the v1 key: honour an explicit dark choice, but
+    // anyone who never picked (or was on the old default 'classic') lands on
+    // the new Sage default.
+    const legacyV1 = localStorage.getItem('app_theme_v1') as AppThemeId | null;
+    if (legacyV1 && legacyV1 !== 'classic' && APP_THEMES.some((t) => t.id === legacyV1)) return legacyV1;
     const legacy = localStorage.getItem('theme');
     if (legacy === 'light') return 'light';
     if (legacy === 'dark') return 'classic';
@@ -92,8 +102,13 @@ function readSavedTheme(): AppThemeId | null {
 }
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<AppThemeId>('classic');
+  const [theme, setThemeState] = useState<AppThemeId>(DEFAULT_THEME);
   const [accent, setAccentState] = useState<string | null>(null);
+  // Sticky flags so the persistence effects can't fire with the *default* value
+  // before the saved choice has been read — otherwise the first mount would
+  // write DEFAULT_THEME back to localStorage and clobber the user's theme.
+  const [hydrated, setHydrated] = useState(false);
+  const [accentHydrated, setAccentHydrated] = useState(false);
 
   useEffect(() => {
     const saved = readSavedTheme();
@@ -101,16 +116,20 @@ export function useTheme() {
     try {
       setAccentState(localStorage.getItem(ACCENT_KEY));
     } catch { /* ignore */ }
+    setHydrated(true);
+    setAccentHydrated(true);
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
     const root = document.documentElement;
     root.setAttribute('data-app-theme', theme);
-    root.classList.toggle('dark', theme !== 'light');
+    root.classList.toggle('dark', !LIGHT_THEMES.has(theme));
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
-  }, [theme]);
+  }, [theme, hydrated]);
 
   useEffect(() => {
+    if (!accentHydrated) return;
     const root = document.documentElement;
     if (accent) {
       const vars = accentCssVars(accent);
@@ -120,7 +139,7 @@ export function useTheme() {
       for (const k of ACCENT_VARS) root.style.removeProperty(k);
       try { localStorage.removeItem(ACCENT_KEY); } catch { /* ignore */ }
     }
-  }, [accent]);
+  }, [accent, accentHydrated]);
 
   const setTheme = useCallback((id: AppThemeId) => setThemeState(id), []);
 
@@ -133,5 +152,5 @@ export function useTheme() {
 
   const setAccent = useCallback((value: string | null) => setAccentState(value), []);
 
-  return { theme, setTheme, toggleTheme, accent, setAccent, isDark: theme !== 'light' };
+  return { theme, setTheme, toggleTheme, accent, setAccent, isDark: !LIGHT_THEMES.has(theme) };
 }

@@ -11,9 +11,11 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
 export function Card({ children, padded = true, interactive = false, className = "", ...rest }: CardProps) {
   return (
     <div
-      className={`rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] shadow-[var(--shadow-card)] ${
-        interactive ? "transition-all duration-200 hover:shadow-[var(--shadow-card-hover)] hover:-translate-y-0.5" : ""
-      } ${padded ? "p-5" : ""} ${className}`}
+      className={`rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] shadow-[var(--shadow-soft)] ${
+        interactive
+          ? "transition-shadow duration-200 hover:shadow-[var(--shadow-raised)]"
+          : ""
+      } ${padded ? "p-5 md:p-6" : ""} ${className}`}
       {...rest}
     >
       {children}
@@ -31,12 +33,12 @@ export function CardHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-4 flex items-start justify-between gap-3">
+    <div className="mb-5 flex items-start justify-between gap-3">
       <div className="min-w-0">
-        <h3 className="block font-heading text-base font-extrabold tracking-tight text-[var(--text-primary)] md:text-lg">
+        <h3 className="block font-heading text-card-title font-semibold tracking-tight text-[var(--text-primary)]">
           {title}
         </h3>
-        {subtitle && <p className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">{subtitle}</p>}
+        {subtitle && <p className="mt-1 text-caption text-[var(--text-secondary)]">{subtitle}</p>}
       </div>
       {action}
     </div>

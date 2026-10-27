@@ -16,7 +16,7 @@ export default function OverviewDashboard({ slug }: { slug: "samarth-overview" |
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-sm text-red-300">
         Overview failed to load: {String((overview.error as any)?.message ?? overview.error)}
-        <button onClick={overview.refresh} className="ml-3 px-3 py-1 text-xs font-bold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white border-0 cursor-pointer">Retry</button>
+        <button onClick={overview.refresh} className="ml-3 px-3 py-1 text-xs font-bold rounded-lg bg-[var(--surface-soft)] hover:bg-[var(--bg-input)] text-white border-0 cursor-pointer">Retry</button>
       </div>
     );
   }

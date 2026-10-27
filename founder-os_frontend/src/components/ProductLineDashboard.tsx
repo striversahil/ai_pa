@@ -532,7 +532,7 @@ export default function ProductLineDashboard() {
                           {Object.keys(selRate.attrValues ?? {}).length === 0 && !(selRate as any)?.notes && <p className="px-4 py-3 text-sm text-[var(--text-tertiary)]">No spec breakup recorded on this quote.</p>}
                           <dl>
                             {Object.entries(selRate.attrValues ?? {}).map(([k, v], idx) => (
-                              <div key={k} className="flex gap-3 px-4 py-2 border-b border-white/[0.04] last:border-0 border-b border-[var(--border-card)]/50 last:border-0">
+                              <div key={k} className="flex gap-3 px-4 py-2 border-b border-[var(--border-card)] last:border-0 border-b border-[var(--border-card)]/50 last:border-0">
                                 <dt className="w-2/5 flex-shrink-0 text-xs leading-relaxed text-[var(--text-secondary)]">{attrLabel(k, detail.guide)}</dt>
                                 <dd className="flex-1 text-[13px] font-bold text-[var(--text-primary)]">{v || "—"}</dd>
                               </div>

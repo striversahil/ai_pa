@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "Brindavan Udyog India",
   },
-  themeColor: "#6366f1",
+  themeColor: "#f6f7f2",
 };
 
 export const viewport: Viewport = {
@@ -28,12 +28,14 @@ export const viewport: Viewport = {
 };
 
 const THEME_BOOTSTRAP = `(function(){try{
-var t=localStorage.getItem('app_theme_v1');
+var t=localStorage.getItem('app_theme_v2');
+if(!t){var v1=localStorage.getItem('app_theme_v1');if(v1&&v1!=='classic')t=v1;}
 if(!t&&localStorage.getItem('theme')==='light')t='light';
-if(t!=='classic'&&t!=='light'&&t!=='discord'&&t!=='amoled'&&t!=='nord')t='classic';
+if(!t&&localStorage.getItem('theme')==='dark')t='classic';
+if(t!=='sage'&&t!=='light'&&t!=='classic'&&t!=='discord'&&t!=='amoled'&&t!=='nord'&&t!=='midnight')t='sage';
 var d=document.documentElement;
 d.setAttribute('data-app-theme',t);
-d.classList.toggle('dark',t!=='light');
+d.classList.toggle('dark',t!=='sage'&&t!=='light');
 var a=localStorage.getItem('app_accent_v1');
 if(a&&/^#[0-9a-fA-F]{6}$/.test(a)){
  var m=/^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(a);

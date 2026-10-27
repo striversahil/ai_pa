@@ -48,14 +48,14 @@ export default function KpiCards({
     <div className="space-y-4">
       {/* Top Main KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="group relative overflow-hidden rounded-3xl border border-white/10 bg-[#111726]/80 p-5 shadow-xl backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-indigo-500/40 hover:shadow-2xl hover:shadow-indigo-500/10">
-          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 to-violet-500" />
+        <div className="group relative overflow-hidden rounded-3xl border border-[var(--border-card)] bg-[var(--surface-sunken)] p-5 shadow-xl backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-indigo-500/40 hover:shadow-2xl hover:shadow-indigo-500/10">
+          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[var(--color-brand-indigo)] to-[var(--color-indigo-400)]" />
           <div className="flex items-start justify-between">
             <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block mb-1">
                 Active Sent Estimates
               </span>
-              <span className="text-3xl font-extrabold text-white block">
+              <span className="text-3xl font-extrabold text-[var(--text-primary)] block">
                 {totalCount}
               </span>
             </div>
@@ -65,14 +65,14 @@ export default function KpiCards({
           </div>
         </div>
 
-        <div className="group relative overflow-hidden rounded-3xl border border-white/10 bg-[#111726]/80 p-5 shadow-xl backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-emerald-500/40 hover:shadow-2xl hover:shadow-emerald-500/10">
+        <div className="group relative overflow-hidden rounded-3xl border border-[var(--border-card)] bg-[var(--surface-sunken)] p-5 shadow-xl backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-emerald-500/40 hover:shadow-2xl hover:shadow-emerald-500/10">
           <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-500" />
           <div className="flex items-start justify-between">
             <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block mb-1">
                 Cumulative Pipeline Value
               </span>
-              <span className="text-3xl font-extrabold text-white block">
+              <span className="text-3xl font-extrabold text-[var(--text-primary)] block">
                 ₹{totalValue.toLocaleString()}
               </span>
             </div>
@@ -82,11 +82,11 @@ export default function KpiCards({
           </div>
         </div>
 
-        <div className="group relative overflow-hidden rounded-3xl border border-white/10 bg-[#111726]/80 p-5 shadow-xl backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-rose-500/40 hover:shadow-2xl hover:shadow-rose-500/10">
+        <div className="group relative overflow-hidden rounded-3xl border border-[var(--border-card)] bg-[var(--surface-sunken)] p-5 shadow-xl backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-rose-500/40 hover:shadow-2xl hover:shadow-rose-500/10">
           <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-rose-500 to-orange-500" />
           <div className="flex items-start justify-between">
             <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block mb-1">
                 Unresponsive Leads
               </span>
               <span className="text-3xl font-extrabold text-rose-400 block">
@@ -112,7 +112,7 @@ export default function KpiCards({
           const tone = effectiveGood ? "good" : "bad";
           const ring = active
             ? ACTIVE_RING[tone]
-            : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10";
+            : "border-[var(--border-card)] bg-[var(--surface-sunken)] hover:border-[var(--border-card)] hover:bg-[var(--surface-soft)]";
 
           return (
             <button
@@ -125,7 +125,7 @@ export default function KpiCards({
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-lg font-extrabold text-white leading-none tabular-nums">
+                <span className="text-lg font-extrabold text-[var(--text-primary)] leading-none tabular-nums">
                   {effectiveCount}
                 </span>
                 {active && (
@@ -136,7 +136,7 @@ export default function KpiCards({
                   </span>
                 )}
               </div>
-              <span className="block text-[11px] text-zinc-300 font-bold mt-1.5 leading-tight truncate">
+              <span className="block text-[11px] text-[var(--text-secondary)] font-bold mt-1.5 leading-tight truncate">
                 {isInverted ? k.negLabel : k.label}
               </span>
               <span
@@ -145,7 +145,7 @@ export default function KpiCards({
                     ? effectiveGood
                       ? "text-emerald-400"
                       : "text-amber-400"
-                    : "text-zinc-500"
+                    : "text-[var(--text-tertiary)]"
                 }`}
               >
                 {active
