@@ -71,8 +71,8 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
       hasDashboard: withDashboard.has(r.slug),
       // Permission scope for the dashboard (rule.json `scope`, mirrored in the
       // registry; defaults to the slug so new dashboards work with zero edits).
-      // `scopes` carries legacy aliases for one dashboard (e.g. Payment Tracker
-      // is readable by sales via `payment-tracker` and accounts via `accounts`).
+      // `scopes` carries legacy aliases for one dashboard (e.g. Debtors Tracker
+      // is readable by sales via `debtors-tracker` and accounts via `accounts`).
       scope: AUTOMATION_SCOPES[r.slug] ?? r.slug,
       scopes: accessScopesFor(r.slug, AUTOMATION_SCOPES[r.slug] ?? r.slug),
       trigger: parseJson(r.triggerJson), condition: parseJson(r.conditionJson),
@@ -128,20 +128,22 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
 
   app.get('/api/automations/:slug/data', async (c) => {
     const { AutomationEngine } = deps();
+    // Legacy slug alias: old bookmarks/clients still resolve the dashboard.
+    const slug = c.req.param('slug') === 'payment-tracker' ? 'debtors-tracker' : c.req.param('slug');
     try {
-      if (!AutomationEngine.get(c.req.param('slug'))) await getEntryOrReload(c.req.param('slug'));
+      if (!AutomationEngine.get(slug)) await getEntryOrReload(slug);
       const query = { ...c.req.query() };
-      // Payment Tracker reads need `payment-tracker` or the legacy `accounts`
+      // Debtors Tracker reads need `debtors-tracker` or the legacy `accounts`
       // alias (the generic data route would otherwise serve it to any
       // signed-in user).
-      if (c.req.param('slug') === 'payment-tracker') {
+      if (slug === 'debtors-tracker') {
         try {
           const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
           if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
           const held = new Set(((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
-          const allowed = accessScopesFor('payment-tracker', 'payment-tracker').some((s) => held.has(s));
+          const allowed = accessScopesFor('debtors-tracker', 'debtors-tracker').some((s) => held.has(s));
           if (!me.isAdmin && !allowed) {
-            throw new AuthError('FORBIDDEN', "Requires 'payment-tracker' permission", 403);
+            throw new AuthError('FORBIDDEN', "Requires 'debtors-tracker' permission", 403);
           }
         } catch (e) {
           if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
@@ -154,9 +156,17 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
       // match first, then a loose name match ("muskan" → "Muskan",
       // "samar" → "Samarjeet"). Root/admin/MIS always see the full team view.
       if (c.req.param('slug') === 'telecalling') {
+        // Scoping is decided ONLY here, from the session. `?selfAgentId=` is
+        // never trusted from the client: the endpoint is auth-exempt (see
+        // AUTH_EXEMPT), so an anonymous caller could otherwise hand-pick any
+        // staff id and read that region's drill. Always start by dropping it.
+        delete query.selfAgentId;
         try {
           const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
           const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis') || (me?.scopes ?? []).includes('sales-head');
+          // Non-admin sales agents get their OWN roster id injected so the
+          // payload can scope `risk`/`recent` (and coerce drills) to them.
+          // Root/MIS/sales-head (and anonymous) stay unscoped = full team.
           if (me && !isAdmin) {
             const selfId = await resolveSelfTelecaller(c);
             if (selfId) query.selfAgentId = selfId;
@@ -211,7 +221,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
           }
         } catch { /* no session → unscoped */ }
       }
-      const data = await AutomationEngine.getData(c.req.param('slug'), query);
+      const data = await AutomationEngine.getData(slug, query);
       return c.json(data);
     } catch (e: any) {
       console.log(`automation data failed for '${c.req.param('slug')}':`, e?.message);

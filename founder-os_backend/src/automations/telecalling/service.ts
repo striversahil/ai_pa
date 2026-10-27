@@ -4,11 +4,17 @@
  * Founder decision (2026-10-22): estimates are owned by REGIONS (R1–R4),
  * not individuals. There is no dealing engine, no assignment rotation, no
  * cover/EOD machinery — staff hold and work estimates only in their own
- * region. Score model per close: the enquiry GENERATOR (Estimate.createdBy,
- * written by the mapping enquiry) banks the FULL slab automatically
- * (recordConversionClose). Closer picks were retired (2026-10-24) — region
- * points are computed directly from accepted estimates. This module provides
- * runLeadConversion (roster sync + link sweep) and
+ * region.
+ *
+ * Founder decision (2026-10-26): ONE leaderboard, ranked by region. Telecallers
+ * are children of their region, not a second board. Every region owes ₹1L of
+ * accepted value per working day, and a week's shortfall carries forward
+ * (targets.ts).
+ *
+ * Wins/₹/points are computed from ACCEPTED ESTIMATES on their acceptedAt day
+ * (accepted.ts) — the close-event ledger is still written for history and the
+ * per-estimate export, but a missing ledger row can no longer hide a sale.
+ * This module provides runLeadConversion (roster sync + link sweep) and
  * computeTelecallingDashboardData (the full leaderboard payload).
  */
 import { prisma } from '../../shared/prisma';
@@ -40,15 +46,24 @@ import {
 import { linkEnquiryEstimate, sweepEnquiryEstimateLinks, type EnquiryLinkResult } from './enquiry-links';
 import { REGIONS, TL_LEVELS, type RegionId, type TlLevel } from './regions';
 import { DATE_RE, IN_BATCH, istDate } from './util';
+import {
+  loadAcceptedSnapshot, loadCreatorIndex, groupAcceptedByWeek, roundAgg,
+  type AcceptedSnapshot, type AcceptedAgg, type AcceptedEstimate,
+} from './accepted';
+import {
+  buildRegionTargets, weekStartOf, DAILY_REGION_TARGET,
+  TARGET_START_KEY, DEFAULT_TARGET_START, type RegionTarget,
+} from './targets';
 
-// ── Accepted-value KPI targets ─────────────────────────────────────────────
-// "Won ₹" = total ₹ of ACCEPTED estimates closed in the selected period
-// (from the close-event ledger, valued at each estimate's total).
-// Daily thresholds (founder-set): ₹5L = target hit (celebrate), ₹10L = gold.
-// Period targets scale linearly by working days (Mon–Sat): a week holds up to
-// 6× the daily bar, a month ~26×, so every filter has a fair proportional goal.
-export const CONVERSION_TARGET_DAILY = 500_000;
-export const CONVERSION_GOLD_DAILY = 1_000_000;
+// ── Accepted-value targets ─────────────────────────────────────────────────
+// "Won ₹" = total ₹ of ACCEPTED estimates whose acceptance day (acceptedAt)
+// falls in the selected period. Wins no longer come from the close-event
+// ledger — see accepted.ts for why.
+//
+// Founder rule (2026-10-26): every REGION team owes ₹1,00,000 of accepted
+// value per working day (Mon–Sat), and week-to-week shortfalls carry forward.
+// The model lives in targets.ts (pure); there is no team-wide ₹5L/₹10L bar any
+// more — the team bar is simply the sum of the four region targets.
 
 /** Per-risk close-probability factor used for estimated-conversion projection. */
 export function toCloseMultiplier(risk: EstimateRisk): number {
@@ -74,6 +89,8 @@ const RISK_LIST_CAP = 25;
  *  under the UNATTRIBUTED_LEADS_KEY sentinel so they surface in meta instead
  *  of vanishing silently. Callers must skip the sentinel when attributing. */
 export const UNATTRIBUTED_LEADS_KEY = '|unattributed';
+/** Sentinel owner for accepted estimates with no creator (MIS daily export). */
+export const UNATTRIBUTED_CLOSE_KEY = '|unlinked';
 async function getEnquiryLeadCounts(from: string, to: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   try {
@@ -223,58 +240,70 @@ export async function computeTelecallingDaily(
   const telecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
   const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
 
-  type DayAgg = { won: number; closePoints: number; estIds: string[] };
+  type DayAgg = { won: number; closePoints: number; estIds: string[]; value: number };
   const agg = new Map<string, DayAgg>(); // `${day}|${owner}`
   const cell = (day: string, owner: string): DayAgg => {
     const k = `${day}|${owner}`;
     let c = agg.get(k);
-    if (!c) { c = { won: 0, closePoints: 0, estIds: [] }; agg.set(k, c); }
+    if (!c) { c = { won: 0, closePoints: 0, estIds: [], value: 0 }; agg.set(k, c); }
     return c;
   };
 
+  // Wins/₹ from accepted estimates on their acceptedAt day — the SAME source
+  // as the dashboard (accepted.ts). Reading the close ledger here used to make
+  // the MIS export under-report exactly like the board did.
   try {
-    const events = await prisma.telecallerScoreEvent.findMany({
-      where: { day: { gte: fromEff, lte: to } },
-      select: { telecallerId: true, kind: true, delta: true, estimateId: true, day: true },
-    });
-    for (const ev of events as any[]) {
-      const day = String(ev.day ?? '');
-      if (!day) continue;
-      if (String(ev.kind ?? '') === 'generator' || String(ev.kind ?? '') === 'closer'
-        || (String(ev.kind ?? '') === '' && isCloseDelta(ev.delta))) {
-        const c = cell(day, String(ev.telecallerId));
-        if (ev.estimateId && !c.estIds.includes(String(ev.estimateId))) {
-          c.won += 1;
-          c.estIds.push(String(ev.estimateId));
-          c.closePoints += Number(ev.delta) || 0;
-        }
-      }
-      // Legacy −10/−15 rows are not plotted by the region board's export.
+    const rows = (await prisma.estimate.findMany({
+      where: {
+        status: { in: ['accepted', 'confirmed'] },
+        OR: [
+          { acceptedAt: { gte: fromEff, lte: to } },
+          { acceptedAt: null, date: { gte: fromEff, lte: to } },
+        ],
+      },
+      select: { estimateId: true, estimateNumber: true, total: true, createdBy: true, acceptedAt: true, date: true },
+    })) as any[];
+    for (const r of rows) {
+      const day = String(r.acceptedAt ?? r.date ?? '').slice(0, 10);
+      if (!day || day < fromEff || day > to) continue;
+      // Unattributed closes stay visible under a sentinel row instead of
+      // vanishing (same principle as UNATTRIBUTED_LEADS_KEY).
+      const owner = String(r.createdBy ?? '').trim() || UNATTRIBUTED_CLOSE_KEY;
+      const c = cell(day, owner);
+      c.won += 1;
+      c.closePoints += closePointsFor(r.total);
+      c.value += Number(r.total ?? 0) || 0;
+      c.estIds.push(String(r.estimateNumber ?? r.estimateId ?? ''));
     }
   } catch (e: any) {
-    logger.warn({ err: e?.message }, 'daily: score events read failed');
+    logger.warn({ err: e?.message }, 'daily: accepted-estimate read failed');
   }
 
-  // Value + tags for closes (chunked for SQLite's bound limit).
-  const valueById = new Map<string, number>();
-  const numberById = new Map<string, string>();
-  try {
-    const ids = [...new Set([...agg.values()].flatMap((c) => c.estIds))];
-    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
-    for (let i = 0; i < ids.length; i += IN_BATCH) {
-      const chunk = ids.slice(i, i + IN_BATCH);
-      if (chunk.length === 0) continue;
-      const rows = await prisma.estimate.findMany({
-        where: { estimateId: { in: chunk } },
-        select: { estimateId: true, estimateNumber: true, total: true },
+  // Owner list = active roster (so zero-days still render) + any creator who
+  // closed in the window but is no longer active (Sales Head / departed staff).
+  type Owner = { id: string; name: string; region: string; neodoveUserName?: string | null; neodoveUserId?: string | null };
+  const owners: Owner[] = (telecallers as any[]).map((t) => ({
+    id: String(t.id),
+    name: String(t.name ?? ''),
+    region: String((t as any).region ?? ''),
+    neodoveUserName: (t as any).neodoveUserName,
+    neodoveUserId: (t as any).neodoveUserId,
+  }));
+  const knownOwners = new Set(owners.map((o) => o.id));
+  if ([...agg.keys()].some((k) => !knownOwners.has(k.slice(k.indexOf('|') + 1)))) {
+    const creatorIndex = await loadCreatorIndex();
+    for (const key of agg.keys()) {
+      const ownerId = key.slice(key.indexOf('|') + 1);
+      if (!ownerId || knownOwners.has(ownerId)) continue;
+      knownOwners.add(ownerId);
+      owners.push({
+        id: ownerId,
+        name: ownerId === UNATTRIBUTED_CLOSE_KEY
+          ? 'Unlinked close (no creator)'
+          : creatorIndex.nameById.get(ownerId) ?? ownerId,
+        region: ownerId === UNATTRIBUTED_CLOSE_KEY ? '' : creatorIndex.regionById.get(ownerId) ?? '',
       });
-      for (const r of rows as any[]) {
-        valueById.set(r.estimateId, Number(r.total ?? 0) || 0);
-        if (r.estimateNumber) numberById.set(r.estimateId, String(r.estimateNumber));
-      }
     }
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'daily: close-estimate lookup failed');
   }
 
   // NeoDove snapshots, one cached read per day.
@@ -293,34 +322,31 @@ export async function computeTelecallingDaily(
   const enquiryLeadsDaily = await getEnquiryLeadCounts(from, to).catch(() => new Map<string, number>());
   for (const d of dates) {
     const neoMap = neoByDay.get(d) ?? {};
-    for (const tc of telecallers as any[]) {
-      const id = String(tc.id);
+    for (const o of owners) {
+      const id = o.id;
       const c = agg.get(`${d}|${id}`);
-      const nd = (tc.neodoveUserName && neoMap[tc.neodoveUserName])
-        || (tc.neodoveUserId && neoMap[tc.neodoveUserId])
+      const nd = (o.neodoveUserName && neoMap[o.neodoveUserName])
+        || (o.neodoveUserId && neoMap[o.neodoveUserId])
         || undefined;
       const callsConnected = nd?.callsConnected ?? 0;
       // Enquiry-sourced (Sales Enquiries dashboard) — not NeoDove get-leads.
       const leadsGenerated = enquiryLeadsDaily.get(`${d}|${id}`) ?? 0;
-      const won = c?.won ?? 0;
-      const closePoints = c?.closePoints ?? 0;
-      const closedValue = Math.round((c?.estIds ?? []).reduce((s, eid) => s + (valueById.get(eid) ?? 0), 0));
       out.push({
         date: d,
         weekday: weekdayOf(d),
         telecallerId: id,
-        telecallerName: nameById.get(tc.id) ?? tc.name,
-        region: String((tc as any).region ?? ''),
-        won,
-        closedValue,
-        closedEstimates: (c?.estIds ?? []).map((eid) => numberById.get(eid) ?? eid).join(' | '),
+        telecallerName: o.name,
+        region: o.region,
+        won: c?.won ?? 0,
+        closedValue: Math.round(c?.value ?? 0),
+        closedEstimates: (c?.estIds ?? []).join(' | '),
         callsAttempted: nd?.callsAttempted ?? 0,
         callsConnected,
         callsNotConnected: nd?.callsNotConnected ?? 0,
         talkTimeMin: Math.round((nd?.talkTimeSec ?? 0) / 60),
         leadsGenerated,
         leadsConverted: nd?.leadsConverted ?? 0,
-        score: closePoints + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
+        score: (c?.closePoints ?? 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
       });
     }
   }
@@ -441,87 +467,31 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     }
   } catch { /* getEnquiryLeadCounts already warns — leads default 0 */ }
 
-  // ── Score ledger (generator/closer share rows + legacy rows) ───────────────
-  // Points and wins over the leaderboard window, gated by the epoch. Wins are
-  // per (staff, estimate): a generator row and a closer row for the same
-  // estimate credit two different people; re-picked rows were rewritten.
-  const pointsFrom = epoch && epoch > leadFrom ? epoch : leadFrom;
-  const wonGenIdsByTc = new Map<string, string[]>();
-  const wonCloserIdsByTc = new Map<string, string[]>();
-  const ptsByTc = new Map<string, { generatorPoints: number; closerPoints: number; total: number }>();
-  const pushId = (map: Map<string, string[]>, id: string, estId: string) => {
-    const arr = map.get(id) ?? [];
-    if (!arr.includes(estId)) { arr.push(estId); map.set(id, arr); }
-  };
-  const bumpPt = (id: string, key: 'generatorPoints' | 'closerPoints' | 'total', n: number) => {
-    const cur = ptsByTc.get(id) ?? { generatorPoints: 0, closerPoints: 0, total: 0 };
-    cur[key] += n;
-    ptsByTc.set(id, cur);
-  };
+  // ── Accepted wins (single source of truth) ────────────────────────────────
+  // Wins/₹/points come from ACCEPTED ESTIMATES on their acceptedAt day, NOT
+  // from the close-event ledger: a ledger row that never got written used to
+  // hide a real sale (22 of them in October 2026, ₹10.9L), and the ledger's
+  // day can disagree with the estimate's own month. The epoch still gates the
+  // window — a founder-approved reset means "start counting from that day".
+  const wonFrom = epoch && epoch > leadFrom ? epoch : leadFrom;
+  const wonTo = periodMode && periodRangeInfo ? periodRangeInfo.to : leadTo;
+  const creatorIndex = await loadCreatorIndex();
+  const wonSnapshot: AcceptedSnapshot = await loadAcceptedSnapshot(wonFrom, wonTo, { creatorIndex });
+
+  // Historic penalties (−10 remark / −15 snatch) are the only ledger rows that
+  // still move a staff score; positive close rows no longer define wins.
+  const penaltiesByTc = new Map<string, number>();
   try {
     const events = await prisma.telecallerScoreEvent.findMany({
-      where: { day: { gte: pointsFrom, ...(periodMode && periodRangeInfo ? { lte: periodRangeInfo.to } : { lte: leadTo }) } },
-      select: { telecallerId: true, kind: true, delta: true, estimateId: true },
+      where: { day: { gte: wonFrom, lte: wonTo }, delta: { lt: 0 } },
+      select: { telecallerId: true, delta: true },
     });
     for (const ev of events as any[]) {
       const id = String(ev.telecallerId);
-      const kind = String(ev.kind ?? '');
-      const delta = Number(ev.delta) || 0;
-      if (kind === 'generator' || kind === 'closer') {
-        if (ev.estimateId && delta > 0) {
-          pushId(kind === 'generator' ? wonGenIdsByTc : wonCloserIdsByTc, id, String(ev.estimateId));
-          bumpPt(id, kind === 'generator' ? 'generatorPoints' : 'closerPoints', delta);
-          bumpPt(id, 'total', delta);
-        }
-      } else if (kind === '' && isCloseDelta(delta) && delta > 0 && ev.estimateId) {
-        // Legacy full-slab close row.
-        pushId(wonGenIdsByTc, id, String(ev.estimateId));
-        bumpPt(id, 'generatorPoints', delta);
-        bumpPt(id, 'total', delta);
-      } else if (delta < 0) {
-        // Historic penalties (snatch/remark) still count once the epoch rule
-        // passes them through — they pre-date the purge, never new-written.
-        bumpPt(id, 'total', delta);
-      }
+      penaltiesByTc.set(id, (penaltiesByTc.get(id) ?? 0) + (Number(ev.delta) || 0));
     }
   } catch (e: any) {
-    logger.warn({ err: e?.message }, 'score events read failed — leaderboard points unavailable');
-  }
-
-  // Value every credited close estimate by its total (chunked for D1's limit).
-  // Missing rows (deleted estimates) count the win but value ₹0.
-  const allWonIds = [...new Set([...wonGenIdsByTc.values(), ...wonCloserIdsByTc.values()].flat())];
-  const valueByEstimate = new Map<string, number>();
-  const regionByEstimate = new Map<string, string>();
-  try {
-    // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
-    for (let i = 0; i < allWonIds.length; i += IN_BATCH) {
-      const chunk = allWonIds.slice(i, i + IN_BATCH);
-      if (chunk.length === 0) continue;
-      const rows = await prisma.estimate.findMany({
-        where: { estimateId: { in: chunk } },
-        select: { estimateId: true, total: true, region: true },
-      });
-      for (const r of rows as any[]) {
-        valueByEstimate.set(r.estimateId, Number((r as any).total ?? 0) || 0);
-        regionByEstimate.set(r.estimateId, String((r as any).region ?? ''));
-      }
-    }
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'close-estimate totals read failed — won ₹ falls back to 0');
-  }
-
-  // Region accepted points: full slab once per credited accepted estimate,
-  // attributed to the estimate's LEAD region (Estimate.region), not to the
-  // roster region of whoever happened to hold the 80% closer share. This is
-  // why a region's points can differ from the sum of its members' ledger
-  // points (pending closers, moved legacy halve, deleted actors).
-  const regionPointsById = new Map<string, number>();
-  for (const eid of allWonIds) {
-    const total = valueByEstimate.get(eid);
-    if (total === undefined) continue;
-    const region = regionByEstimate.get(eid) ?? '';
-    regionPointsById.set(region, (regionPointsById.get(region) ?? 0) + closePointsFor(total));
+    logger.warn({ err: e?.message }, 'legacy penalty read failed — scores ignore historic penalties');
   }
 
   // Live pipeline risk over the open `sent` estimates — served from the 15-min
@@ -559,46 +529,29 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     ? (sentOpen as any[]).filter((e) => !String(e.region ?? '')).reduce((s: number, e: any) => s + (Number(e.total ?? 0) || 0), 0)
     : 0;
 
-  // Accepted but not yet linked to a lead region — data-quality bucket for
-  // managers. These deals cannot land on a region card until linked; the 20%
-  // creator share may also be missing (no enquiry mapping).
-  const acceptedFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
-  const acceptedTo = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
-  let unmappedAccepted: {
-    count: number;
-    value: number;
-    points: number;
-    items: Array<Record<string, unknown>>;
-  } = { count: 0, value: 0, points: 0, items: [] };
+  // ── Region targets + weekly carry-forward ─────────────────────────────────
+  // Every region owes ₹1L of accepted value per working day; a week's shortfall
+  // carries into the next week. Computed over the ledger window, INDEPENDENT of
+  // the selected period filter — "where does my team stand" must not change
+  // depending on which tab you are looking at. Start day is a Setting (founder
+  // decision: retroactive from 2026-10-01).
+  let targetStart = DEFAULT_TARGET_START;
   try {
-    const rows = await prisma.estimate.findMany({
-      where: {
-        status: { in: ['accepted', 'confirmed'] },
-        region: '',
-        date: { gte: acceptedFrom, lte: acceptedTo },
-      },
-      select: { estimateId: true, estimateNumber: true, customerName: true, total: true, createdBy: true, status: true, date: true },
-      orderBy: { date: 'desc' },
-    });
-    const items = (rows as any[]) ?? [];
-    unmappedAccepted = {
-      count: items.length,
-      value: Math.round(items.reduce((sum, e) => sum + (Number(e.total ?? 0) || 0), 0)),
-      points: items.reduce((sum, e) => sum + closePointsFor(e.total), 0),
-      items: items.slice(0, 25).map((e) => ({
-        estimateId: e.estimateId,
-        estimateNumber: e.estimateNumber,
-        customerName: e.customerName,
-        total: Number(e.total ?? 0) || 0,
-        status: e.status,
-        date: e.date,
-        generatedBy: e.createdBy ? nameById.get(String(e.createdBy)) ?? null : null,
-        hasCreator: !!String(e.createdBy ?? ''),
-      })),
-    };
-  } catch (e: any) {
-    logger.warn({ err: e?.message }, 'unmapped accepted lookup failed');
-  }
+    const row: any = await prisma.setting.findUnique({ where: { key: TARGET_START_KEY } });
+    const v = String(row?.value ?? '').trim();
+    if (DATE_RE.test(v)) targetStart = v;
+  } catch { /* fall back to the default start */ }
+  const todayDay = istDate();
+  // Reuse the wins snapshot when it already spans the whole ledger window.
+  const targetSnapshot = wonFrom <= targetStart && todayDay <= wonTo
+    ? wonSnapshot
+    : await loadAcceptedSnapshot(targetStart, todayDay, { creatorIndex });
+  const targetByRegion: Map<string, RegionTarget> = buildRegionTargets({
+    regions: REGIONS.map((r) => r.id),
+    startDay: targetStart,
+    asOfDay: todayDay,
+    acceptedByWeek: groupAcceptedByWeek(targetSnapshot.rows, weekStartOf),
+  });
 
   // Lead Generation targets scale with the period's working days (6-day work
   // week, Mon–Sat) — a week target is one day × working days, never 1×.
@@ -634,8 +587,16 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     name: string;
     tl: TlLevel;
     states: string[];
+    /** Leaderboard position by target attainment (1 = best). */
+    rank: number;
     leadsGenerated: number;
     won: { count: number; value: number };
+    /** Same numbers as `won`, plus slab points (accepted-estimate source). */
+    accepted: AcceptedAgg;
+    /** The closed estimates behind `accepted`, newest first (capped). */
+    acceptedItems: AcceptedEstimate[];
+    /** Daily ₹1L target + weekly carry-forward ledger (targets.ts). */
+    target: RegionTarget | null;
     open: { count: number; value: number };
     callsAttempted: number;
     callsConnected: number;
@@ -664,10 +625,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const leadsInProgress = Number(nd?.leadsInProgress ?? 0) || 0;
     const leadsLost = Number(nd?.leadsLost ?? 0) || 0;
     const leadsGenerated = leadsByAgent.get(id) ?? 0;
-    const genIds = wonGenIdsByTc.get(id) ?? [];
-    const cloIds = wonCloserIdsByTc.get(id) ?? [];
-    const closedValue = Math.round([...genIds, ...cloIds].reduce((s, eid) => s + (valueByEstimate.get(eid) ?? 0), 0));
-    const pts = ptsByTc.get(id) ?? { generatorPoints: 0, closerPoints: 0, total: 0 };
+    // Wins/₹/points from accepted estimates this creator originated.
+    const acc: AcceptedAgg = wonSnapshot.byCreator.get(id) ?? { count: 0, value: 0, points: 0 };
+    const closedValue = Math.round(acc.value);
+    // Historic −10/−15 penalties still apply once the epoch rule passes them.
+    const points = Math.round(acc.points + (penaltiesByTc.get(id) ?? 0));
     staffRows.set(id, {
       id,
       name: String(t.name ?? ''),
@@ -676,13 +638,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       tlLevel: ((t as any).tlLevel ?? '') as TlLevel,
       // Field staff generate leads only — never eligible as the 80% closer.
       closerEligible: !!(t as any).assignEstimateFollowUps && String((t as any).type ?? 'telecaller') !== 'field_staff',
-      wonGenerator: genIds.length,
-      wonCloser: cloIds.length,
-      won: new Set([...genIds, ...cloIds]).size,
+      wonGenerator: acc.count,
+      wonCloser: 0,
+      won: acc.count,
       closedValue,
-      generatorPoints: pts.generatorPoints,
-      closerPoints: pts.closerPoints,
-      points: Math.round(pts.total),
+      generatorPoints: acc.points,
+      closerPoints: 0,
+      points,
       callsAttempted,
       callsConnected,
       callsNotConnected,
@@ -691,9 +653,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       leadsConverted,
       leadsInProgress,
       leadsLost,
-      // Composite score (tunable, the leaderboard norm): ledger points, a
-      // generated lead +15, a connected call +0.5.
-      score: Math.round(pts.total) + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
+      // Composite score (tunable, the leaderboard norm): accepted-slab points,
+      // a generated lead +15, a connected call +0.5.
+      score: points + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
     });
   }
 
@@ -701,11 +663,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   for (const def of REGIONS) {
     const members = (telecallers as any[]).filter((t) => String((t as any).region ?? '') === def.id)
       .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
-    // Region wins/points are attributed by the ESTIMATE's lead region, not
-    // by which staff member's ledger row carried the credit. Deduped by
-    // estimate id via allWonIds, so a 20/80 pair still counts one deal.
-    const regionWonIds = allWonIds.filter((eid) => regionByEstimate.get(eid) === def.id);
-    const regionWonValue = regionWonIds.reduce((s, eid) => s + (valueByEstimate.get(eid) ?? 0), 0);
+    // Region wins/points come from the ESTIMATE's lead region (a founder
+    // mapping or the creator's roster region — accepted.ts resolves both), so
+    // a region's total never depends on who happened to hold a ledger row.
+    const acc: AcceptedAgg = wonSnapshot.byRegion.get(def.id) ?? { count: 0, value: 0, points: 0 };
     const open = openByRegion.get(def.id) ?? { count: 0, value: 0 };
     const callsAttempted = members.reduce((s, m) => s + m.callsAttempted, 0);
     const callsConnected = members.reduce((s, m) => s + m.callsConnected, 0);
@@ -726,18 +687,30 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       name: def.name,
       tl: def.tl,
       states: def.states,
+      rank: 0,
       leadsGenerated,
-      won: { count: regionWonIds.length, value: Math.round(regionWonValue) },
+      won: { count: acc.count, value: Math.round(acc.value) },
+      accepted: acc,
+      acceptedItems: wonSnapshot.byRegionItems.get(def.id) ?? [],
+      target: targetByRegion.get(def.id) ?? null,
       open,
       callsAttempted,
       callsConnected,
       callsNotConnected,
       talkTimeSec,
-      points: regionPointsById.get(def.id) ?? 0,
+      points: acc.points,
       kra: { connectedTarget, connectedPct, connectedStatus, leadsTarget, leadsPct, leadsStatus },
       staff: members as unknown as Array<Record<string, unknown>>,
     });
   }
+  // One leaderboard, ranked REGIONWISE. Metric (founder decision 2026-10-26):
+  // target attainment since the ledger start — the share of everything a region
+  // owed (daily ₹1L + carried backlog) that it actually delivered. Ties fall
+  // back to accepted value. Ranks are stable for the whole week, so a huge
+  // Monday does not reshuffle the board every hour.
+  [...regions]
+    .sort((a, b) => (b.target?.attainmentPct ?? 0) - (a.target?.attainmentPct ?? 0) || b.won.value - a.won.value)
+    .forEach((r, i) => { r.rank = i + 1; });
   const unmappedStaff = (telecallers as any[]).filter((t) => !String((t as any).region ?? ''))
     .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
   for (const t of unmappedStaff) {
@@ -746,15 +719,54 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   }
 
   const openTotal = (sentOpen as any[]).reduce((s: number, e: any) => s + (Number(e.total ?? 0) || 0), 0);
-  const kpiWonIds = new Set<string>(allWonIds);
+  // KPI = the whole acceptance cohort in the window (regions + direct +
+  // unlinked), so this header always reconciles with Zoho. The region slice is
+  // broken out so nobody has to guess why the four region cards do not add up
+  // to it — that mismatch used to be a silent ₹17.79L (Oct 2026).
+  const regionWon = regions.reduce((s, r) => s + r.won.count, 0);
+  const regionValue = regions.reduce((s, r) => s + r.won.value, 0);
   const kpi = {
-    won: kpiWonIds.size,
-    closedValue: Math.round([...kpiWonIds].reduce((s, eid) => s + (valueByEstimate.get(eid) ?? 0), 0)),
+    won: wonSnapshot.count,
+    closedValue: Math.round(wonSnapshot.value),
+    regionWon,
+    regionValue,
+    directWon: wonSnapshot.direct.count,
+    directValue: Math.round(wonSnapshot.direct.value),
+    unlinkedWon: wonSnapshot.unlinked.count,
+    unlinkedValue: Math.round(wonSnapshot.unlinked.value),
     pipelineValue: Math.round(openTotal),
     leadsGenerated: [...leadsByAgent.values()].reduce((s, n) => s + n, 0),
     callsAttempted: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.callsAttempted ?? 0) || 0), 0),
     callsConnected: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.callsConnected ?? 0) || 0), 0),
     talkTimeSec: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.talkTimeSec ?? 0) || 0), 0),
+  };
+
+  // Team bar = the SUM of the four region targets. The old team-wide ₹5L/₹10L
+  // bar is retired (founder decision 2026-10-26): it contradicted 4 × ₹1L and
+  // left nobody sure which number they were being measured against.
+  const teamWeek = [...targetByRegion.values()][0]?.current ?? null;
+  const teamWeekTarget = regions.reduce((s, r) => s + (r.target?.weekTarget ?? 0), 0);
+  const teamWeekAccepted = regions.reduce((s, r) => s + (r.target?.weekAccepted ?? 0), 0);
+  const teamCarryIn = regions.reduce((s, r) => s + (r.target?.carryIn ?? 0), 0);
+  const teamDue = regions.reduce((s, r) => s + (r.target?.weekDue ?? 0), 0);
+  const teamPct = teamDue > 0 ? Math.round((teamWeekAccepted / teamDue) * 100) : 0;
+  const teamTarget = {
+    /** ₹ each region owes per working day. */
+    perRegionPerDay: DAILY_REGION_TARGET,
+    regions: REGIONS.length,
+    teamPerDay: DAILY_REGION_TARGET * REGIONS.length,
+    targetStart,
+    asOfDay: todayDay,
+    weekFrom: teamWeek?.weekStart ?? null,
+    weekTo: teamWeek?.weekEnd ?? null,
+    weekTarget: teamWeekTarget,
+    weekAccepted: teamWeekAccepted,
+    carryIn: teamCarryIn,
+    due: teamDue,
+    sinceStartTarget: regions.reduce((s, r) => s + (r.target?.sinceStart.target ?? 0), 0),
+    sinceStartAccepted: regions.reduce((s, r) => s + (r.target?.sinceStart.accepted ?? 0), 0),
+    pct: teamPct,
+    status: teamPct >= 100 ? 'ontrack' : teamPct >= 60 ? 'behind' : 'critical',
   };
 
   // Self-contained staff list so the dashboard can build dropdowns without a
@@ -784,8 +796,16 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   let drillStaff: any = null;
   let regionScope: string | undefined;
   if (selfAgentId) {
-    drillStaff = drillSelfStaff;
-    regionScope = String(drillSelfStaff?.region ?? '');
+    // A scoped agent may only ever drill into THEIR OWN region — but a PLAIN
+    // dashboard request (no ?region=, no ?agent=) must keep returning the full
+    // leaderboard payload. Setting regionScope on every self-scoped request used
+    // to short-circuit into the agent-drill response ({meta, agent, followUps}),
+    // so every non-root/non-MIS viewer got a payload with NO `regions`, NO
+    // `kpi` and NO `meta.teamTarget` — the dashboard rendered empty for them.
+    if (agentFilter || requestedRegion !== undefined) {
+      drillStaff = drillSelfStaff;
+      regionScope = String(drillSelfStaff?.region ?? '');
+    }
   } else if (agentFilter) {
     const tc = telecallers.find(
       (t: any) => String(t.id) === agentFilter || String(t.name ?? '') === agentFilter || (t.neodoveUserName ?? '') === agentFilter,
@@ -1029,26 +1049,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         connectedCallsPerDay: CONNECTED_CALLS_PER_DAY * workingDays,
         leadsPerAgentPerDay: LEADS_PER_AGENT_PER_DAY * workingDays,
       },
-      // Won-₹ goal for the "Won ₹" KPI, scaled by working days so every
-      // period filter has a fair proportional target:
-      // today = ₹5L / gold ₹10L; week (Mon–Sat) up to 6×; month ~26×, etc.
-      conversionTarget: {
-        perDay: CONVERSION_TARGET_DAILY,
-        goldPerDay: CONVERSION_GOLD_DAILY,
-        workingDays,
-        target: CONVERSION_TARGET_DAILY * workingDays,
-        gold: CONVERSION_GOLD_DAILY * workingDays,
-        value: kpi.closedValue,
-        pct: (() => {
-          const t = CONVERSION_TARGET_DAILY * workingDays;
-          return t > 0 ? Math.round((kpi.closedValue / t) * 100) : 0;
-        })(),
-        status: kpi.closedValue >= CONVERSION_GOLD_DAILY * workingDays
-          ? 'gold'
-          : kpi.closedValue >= CONVERSION_TARGET_DAILY * workingDays
-            ? 'hit'
-            : 'below',
-      },
+      // Won-₹ goal. There is ONE target model now: ₹1L per region per working
+      // day with weekly carry-forward (targets.ts). `teamTarget` is the sum of
+      // the four regions; `conversionTarget` (the retired ₹5L/₹10L bar) is
+      // gone on purpose — two competing bars made every number arguable.
+      teamTarget,
       workingDays,
       selfAgentId: selfAgentId ?? null,
       viewer: {
@@ -1091,9 +1096,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         value: Math.round(unmappedValue),
         items: unmappedSent,
       },
-      // Accepted deals still outside any region (lead-source region unknown).
-      unmappedAccepted,
     } : {}),
+    // Accepted value no region can claim — visible to EVERYONE, because these
+    // rows are the answer to "why don't the region cards add up to the total?".
+    // direct   = Sales Head / HQ. A real, permanent bucket, never a data bug.
+    // unlinked = no roster creator at all (needs an EST→region mapping).
+    direct: { ...roundAgg(wonSnapshot.direct), items: wonSnapshot.direct.items, label: 'Sales Head — Direct', kind: 'direct' },
+    unlinked: { ...roundAgg(wonSnapshot.unlinked), items: wonSnapshot.unlinked.items, label: 'Needs region mapping', kind: 'unlinked' },
     recent: scopedRecent,
     // MIS daily breakdown (only when ?daily=1 in period mode): per-day ×
     // per-staff closes w/ estimate tags, calls, leads. Absent otherwise so
@@ -1141,4 +1150,15 @@ export type { CallTag } from './call-tags';
 export { linkEnquiryEstimate, sweepEnquiryEstimateLinks, type EnquiryLinkResult } from './enquiry-links';
 export { REGIONS, TL_LEVELS, isValidRegion, isValidTlLevel } from './regions';
 export type { RegionId, TlLevel, RegionDef } from './regions';
+export {
+  loadAcceptedSnapshot, loadCreatorIndex, groupAcceptedByWeek, roundAgg,
+} from './accepted';
+export type {
+  AcceptedSnapshot, AcceptedEstimate, AcceptedBucket, AcceptedAgg, AcceptedBucketKind, CreatorIndex,
+} from './accepted';
+export {
+  buildRegionTargets, weekStartOf, weekEndOf, DAILY_REGION_TARGET,
+  WORKING_DAYS_PER_WEEK, TARGET_START_KEY, DEFAULT_TARGET_START,
+} from './targets';
+export type { RegionTarget, WeekLedgerRow, TargetStatus } from './targets';
 export { DATE_RE, IN_BATCH, istDate } from './util';

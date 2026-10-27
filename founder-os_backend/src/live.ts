@@ -41,8 +41,8 @@ export const LiveEvent = {
   DigitalMarketing: "digital-marketing",
   /** Human Resources task/expense writes (roster, delegated tasks, ledger). */
   HumanResources: "human-resources",
-  /** Payment Tracker paste-import writes (debtors ledger, collections ledger). */
-  Payments: "payments",
+  /** Debtors Tracker writes (paste imports, corrections, situation saves). */
+  Debtors: "debtors",
   /** Product Line master writes (products, guide questions, vendors). */
   ProductLine: "product-line",  /**
     * Agent call-disposition tag tap (Lead Conversion view). Deliberately NOT

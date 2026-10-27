@@ -11,6 +11,9 @@ Files:
 - `index.ts` — dashboard data provider (`GET /api/automations/human-resources/data`).
 - `service.ts` — roster, delegated tasks, expense ledger, dashboard aggregation.
 - `inventory.ts` — daily-item catalog, stock movement ledger, derived stock levels and optional stock-in expenses.
+- `hiring-positions.ts` — hiring kit: positions with any number of JD / SOP documents (D1 metadata).
+- `hiring-positions-parse.ts` — pure position-name/PDF validation shared with the route layer.
+- `employee-codes.ts` — `BUI-NNN` employee-code generator + unique-conflict retries.
 - `cache.ts` — dashboard cache key + invalidation.
 - `parse.ts` — pure date/time/money/input validators and task-overdue logic.
 - `types.ts` — shared row and input types.
@@ -31,6 +34,13 @@ Files:
 - **HumanResourcesInventoryTxn** — stock ledger row (`itemId, txnType opening|purchase|consumption|adjustment,
   quantity, txnDate, txnMonth, notes, expenseId, createdBy, deleted`). Stock-in can optionally
   create a linked expense.
+- **HumanResourcesHiringPosition** — one hiring-kit position/job title (`name`, normalised
+  `nameKey` unique). Positions can be imported from employee designations.
+- **HumanResourcesPositionDoc** — one JD or SOP document for a position
+  (`positionId, kind jd|sop, title, fileName, mime, size, kvKey, uploadedBy`). A position can
+  hold any number of each kind (plain index on `(positionId, kind)`, no unique constraint);
+  PDF bytes live in `CHAT_FILES` KV under `hrdocs/<uuid>.pdf`, served session-gated at
+  `/api/human-resources/position-docs/:id/file`. Removing a document deletes its KV object.
 
 ## Access
 
@@ -54,3 +64,9 @@ Files:
 - `GET /api/human-resources/inventory/items/:id/transactions`
 - `POST /api/human-resources/inventory/transactions` (purchase/consumption/adjustment by HR/MIS)
 - `DELETE /api/human-resources/inventory/transactions/:id` (HR/MIS)
+- `GET/POST /api/human-resources/hiring-positions` (HR/MIS)
+- `POST /api/human-resources/hiring-positions/import` (seed from employee designations)
+- `PATCH/DELETE /api/human-resources/hiring-positions/:id` (HR/MIS)
+- `POST /api/human-resources/hiring-positions/:id/docs` (multipart `kind` + PDF, appends a document)
+- `DELETE /api/human-resources/position-docs/:id` (deletes one document + its PDF)
+- `GET /api/human-resources/position-docs/:id/file` (inline PDF, HR/MIS session)

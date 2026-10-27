@@ -171,6 +171,47 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     return c.json({ ok: true });
   });
 
+  // ── Estimate region search (sales-head / MIS): find ANY active/past deal ───
+  // The Controller uses this to re-home an estimate by number/customer across
+  // sent, accepted (incl. confirmed) and declined — the region is authoritative
+  // for points/wins regardless of status.
+  app.get('/api/telecalling/estimates', async (c) => {
+    if (!(await requireSalesManager(c))) {
+      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    }
+    const q = String(c.req.query('q') ?? '').trim();
+    const statusRaw = String(c.req.query('status') ?? 'all').trim().toLowerCase();
+    const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50));
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (statusRaw === 'accepted') {
+      where.push("status IN ('accepted','confirmed')");
+    } else if (statusRaw === 'sent' || statusRaw === 'declined' || statusRaw === 'confirmed') {
+      where.push('status = ?');
+      params.push(statusRaw);
+    } else if (statusRaw !== 'all' && statusRaw !== '') {
+      return c.json({ error: 'status must be all, sent, accepted or declined' }, 400);
+    } else {
+      where.push("status IN ('sent','accepted','confirmed','declined')");
+    }
+    if (q) {
+      where.push('(estimateNumber LIKE ? OR customerName LIKE ?)');
+      params.push(`%${q}%`, `%${q}%`);
+    }
+    params.push(limit);
+    const sql = `SELECT estimateId, estimateNumber, customerName, total, status, region, createdBy, organizationId, date, lastSyncTime
+      FROM Estimate
+      WHERE ${where.join(' AND ')}
+      ORDER BY lastSyncTime DESC, estimateNumber DESC
+      LIMIT ?`;
+    try {
+      const { results } = await c.env.DB.prepare(sql).bind(...params).all();
+      return c.json({ items: results ?? [] });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'estimate search failed' }, 500);
+    }
+  });
+
   // ── Region set (sales-head / MIS): link an unmapped/mis-aimed estimate ─────
   // Estimates are stamped by the mapping enquiry; rows that synced before their
   // staff had a region (or any other gap) land in the Unmapped bucket and are

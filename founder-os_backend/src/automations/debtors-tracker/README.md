@@ -1,19 +1,22 @@
-# Payment Tracker
+# Debtors Tracker
 
-Pending-payments control desk shared by **sales (`payment-tracker` scope)** and
+Pending-payments control desk shared by **sales (`debtors-tracker` scope)** and
 **accounts (`accounts` scope)**. Deterministic — no LLM.
 
 ## Access model (founder decision)
 
 - **Reads + sales follow-up** (`GET data`, `PATCH invoice` follow-up fields):
-  any user holding `payment-tracker` OR the legacy `accounts` scope.
+  any user holding `debtors-tracker` OR the legacy `accounts` scope.
 - **Accounts-only writes** (imports, reset, deletes, customer contacts,
   reminder run): `accounts` scope (root/admin included).
 - The **Accounts tab** (paste/reset) renders only for accounts users; sales see
   Summary / Customer Ageing / Invoices / Collections / Reminders.
-- The automation is registered under its own `payment-tracker` scope and also
+- The automation is registered under its own `debtors-tracker` scope and also
   grants access to `accounts` holders (`AUTOMATION_ACCESS_SCOPES`); `accounts`
   remains a frontend implied scope for the sidebar.
+- **Legacy aliases**: the old `payment-tracker` scope and `/api/payment-tracker/*`
+  routes are still accepted, so existing bookmarks/clients keep working after
+  the rename.
 
 ## What it does
 
@@ -87,24 +90,24 @@ CSV/print); Invoices and Collections use the Excel-dense table variant.
 ## Endpoints
 
 Read (any tracker scope):
-- `GET  /api/payment-tracker/data` — KV-cached payload (summary, customers,
+- `GET  /api/debtors-tracker/data` — KV-cached payload (summary, customers,
   invoices, collections, reminders, meta).
-- `GET  /api/payment-tracker/customers/:customerKey/ledger` — full customer
+- `GET  /api/debtors-tracker/customers/:customerKey/ledger` — full customer
   statement, reconciled to the dashboards.
-- `GET  /api/automations/payment-tracker/data` — generic dashboard route.
+- `GET  /api/automations/debtors-tracker/data` — generic dashboard route.
 
 Accounts-only:
-- `POST /api/payment-tracker/preview` `{ text, kind }`
-- `POST /api/payment-tracker/import/debtors` `{ text }`
-- `POST /api/payment-tracker/import/collections` `{ text }`
-- `PUT  /api/payment-tracker/customers/contact`
-- `POST /api/payment-tracker/reminders/run`
-- `DELETE /api/payment-tracker/data` (wipes ledgers + reminder log; contacts
+- `POST /api/debtors-tracker/preview` `{ text, kind }`
+- `POST /api/debtors-tracker/import/debtors` `{ text }`
+- `POST /api/debtors-tracker/import/collections` `{ text }`
+- `PUT  /api/debtors-tracker/customers/contact`
+- `POST /api/debtors-tracker/reminders/run`
+- `DELETE /api/debtors-tracker/data` (wipes ledgers + reminder log; contacts
   survive)
-- `DELETE /api/payment-tracker/invoices/:id` / `collections/:id` (soft delete)
+- `DELETE /api/debtors-tracker/invoices/:id` / `collections/:id` (soft delete)
 
 Either tracker scope:
-- `PATCH /api/payment-tracker/invoices/:id` — accounts: all editable fields;
+- `PATCH /api/debtors-tracker/invoices/:id` — accounts: all editable fields;
   sales: `lastCallDate`, `callStatus`, `paymentStatus`, `remarks`.
 
 ## Cadence
@@ -129,6 +132,6 @@ customer/day. GH runner/weekly jobs are not involved.
 
 MIGRATIONS: `0069` base tracker · `0070` customer contacts · `0075`
 customer region · `0076` client contact/region seed.
-MIRROR: `founder-os_frontend/src/payment-tracker/{types,parse,api}.ts`
+MIRROR: `founder-os_frontend/src/debtors-tracker/{types,parse,api}.ts`
 (regenerate the parse mirror whenever backend `parse.ts` changes),
-`components/PaymentTrackerDashboard.tsx` and `components/payment-tracker/*`.
+`components/DebtorsTrackerDashboard.tsx` and `components/debtors-tracker/*`.

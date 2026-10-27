@@ -20,7 +20,8 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'accounts',
   'digital-marketing',
   'human-resources',
-  'payment-tracker',
+  'debtors-tracker',
+  'payment-tracker', // legacy slug alias
   'whatsapp-autopilot',
   'enquiry-tracker',
   'enquiry-procurement',

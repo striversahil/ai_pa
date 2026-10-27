@@ -1,5 +1,5 @@
 /**
- * Payment Tracker — pure ledger/ageing computation.
+ * Debtors Tracker — pure ledger/ageing computation.
  * Shared by the dashboard payload and the reminder dry-run so both always
  * agree on effective received money and ageing buckets.
  */
@@ -23,6 +23,8 @@ export type CustomerDue = {
   netDue: number;
   invoiceCount: number;
   oldestDueDate: string | null;
+  /** Latest invoice date across all of the customer's invoices. */
+  lastInvoiceDate: string | null;
 };
 
 export type LiveLedger = {
@@ -87,7 +89,7 @@ export function buildLiveInvoices(
       invoiceWeekStart: invoiceDate ? weekStart(invoiceDate) : null,
       dueWeekStart: anchor ? weekStart(anchor) : null,
       // Future-due (or unbucketed) invoices are NOT DUE; only past-due amounts age.
-      bucket: balance < -0.005 ? 'PAID' : (daysOverdue == null || daysOverdue <= 0 ? 'NOT_DUE' : bucketForDays(daysOverdue)),
+      bucket: balance <= 0.005 ? 'PAID' : (daysOverdue == null || daysOverdue <= 0 ? 'NOT_DUE' : bucketForDays(daysOverdue)),
       contactName: inv.contactName || '',
       contactPhone: inv.contactPhone || '',
       contactMail: inv.contactMail || '',
@@ -125,11 +127,14 @@ export function buildCustomerAgeing(
         totalReceivable: 0, notDue: 0, bucket0to30: 0, bucket31to60: 0,
         bucket61to90: 0, bucket91to180: 0, bucketAbove180: 0,
         grossDue: 0, advanceReceived: 0, netDue: 0, invoiceCount: 0,
-        oldestDueDate: null,
+        oldestDueDate: null, lastInvoiceDate: null,
       };
       map.set(key, row);
     }
     row.invoiceCount++;
+    if (inv.invoiceDate && (!row.lastInvoiceDate || inv.invoiceDate > row.lastInvoiceDate)) {
+      row.lastInvoiceDate = inv.invoiceDate;
+    }
     row.totalReceivable = round2(row.totalReceivable + inv.balance);
     if (inv.balance < -0.005) {
       row.advanceReceived = round2(row.advanceReceived + (-inv.balance));
@@ -161,7 +166,7 @@ export function buildCustomerAgeing(
         totalReceivable: 0, notDue: 0, bucket0to30: 0, bucket31to60: 0,
         bucket61to90: 0, bucket91to180: 0, bucketAbove180: 0,
         grossDue: 0, advanceReceived: 0, netDue: 0, invoiceCount: 0,
-        oldestDueDate: null,
+        oldestDueDate: null, lastInvoiceDate: null,
       };
       map.set(customerName, row);
     }

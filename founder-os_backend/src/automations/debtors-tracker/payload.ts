@@ -1,27 +1,28 @@
 /**
- * Payment Tracker — dashboard payload (KV-cached).
+ * Debtors Tracker — dashboard payload (KV-cached).
  * Joins the ledger/ageing computation with the customer contact master and the
- * reminder log. Every write path invalidates `PAYMENT_CACHE_PREFIX`.
+ * reminder log. Every write path invalidates `DEBTORS_CACHE_PREFIX`.
  */
 import { prisma } from '../../shared/prisma';
 import { cached } from '../../shared/cache';
-import { PAYMENT_CACHE_PREFIX, PAYMENT_TTL_MS } from './cache';
+import { DEBTORS_CACHE_PREFIX, DEBTORS_TTL_MS } from './cache';
 import { loadCustomerContacts } from './customers';
 import { customerKeyOf } from './customers';
 import { buildCustomerAgeing, buildLiveInvoices } from './ledger';
+import { buildReceiptAgeing } from './receipt-ageing';
 import { latestReminderByCustomer, loadRecentReminders, reminderConfigured, reminderMode } from './reminders';
 import { isAdvanceCollection, round2, todayIST } from './shared';
 import { normalizeInvoiceNo } from './types';
 import type {
   CustomerAgeingRow, LiveCollection, LiveInvoice, LiveReminder,
-  PaymentTrackerPayload, InvoiceNoConflict,
+  DebtorsTrackerPayload, InvoiceNoConflict,
 } from './types';
 
-export async function getPaymentTrackerData(): Promise<PaymentTrackerPayload> {
-  return cached(`${PAYMENT_CACHE_PREFIX}full`, PAYMENT_TTL_MS, computePayload) as Promise<PaymentTrackerPayload>;
+export async function getDebtorsTrackerData(): Promise<DebtorsTrackerPayload> {
+  return cached(`${DEBTORS_CACHE_PREFIX}full`, DEBTORS_TTL_MS, computePayload) as Promise<DebtorsTrackerPayload>;
 }
 
-async function computePayload(): Promise<PaymentTrackerPayload> {
+async function computePayload(): Promise<DebtorsTrackerPayload> {
   const today = todayIST();
   const [invoiceRows, collRows, contacts, reminders] = await Promise.all([
     prisma.debtorInvoice.findMany({ where: { deleted: false } }) as Promise<any[]>,
@@ -32,6 +33,7 @@ async function computePayload(): Promise<PaymentTrackerPayload> {
 
   const { liveInvoices, advanceByCustomer } = buildLiveInvoices(invoiceRows, collRows, today);
   const dues = buildCustomerAgeing(liveInvoices, advanceByCustomer);
+  const receiptAgeing = buildReceiptAgeing(invoiceRows, collRows, today);
 
   // Latest follow-up across all invoices, per customer (sales workflow).
   const followUp = new Map<string, { date: string; status: string }>();
@@ -58,6 +60,10 @@ async function computePayload(): Promise<PaymentTrackerPayload> {
       region: contact?.region || '',
       whatsappOptIn: !!contact?.whatsappOptIn,
       notes: contact?.notes || '',
+      situation: contact?.situation || '',
+      situationRemarks: contact?.situationRemarks || '',
+      situationUpdatedAt: contact?.situationUpdatedAt ?? null,
+      situationUpdatedBy: contact?.situationUpdatedBy || '',
       lastReminderAt: reminder ? String(reminder.createdAt ?? '') : null,
       lastReminderStatus: reminder ? String(reminder.status || '') : '',
       lastFollowUpDate: follow?.date ?? null,
@@ -140,6 +146,7 @@ async function computePayload(): Promise<PaymentTrackerPayload> {
     customers: customerRows,
     invoices: liveInvoices as LiveInvoice[],
     collections: liveCollections,
+    receiptAgeing,
     reminders: liveReminders,
     meta: {
       asOfIST: today,

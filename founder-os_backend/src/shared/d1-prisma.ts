@@ -117,6 +117,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   HumanResourcesSalarySlip: ['finalizedAt', 'paidAt', 'createdAt', 'updatedAt'],
   HumanResourcesInventoryItem: ['createdAt', 'updatedAt'],
   HumanResourcesInventoryTxn: ['createdAt'],
+  HumanResourcesHiringPosition: ['createdAt', 'updatedAt'],
+  HumanResourcesPositionDoc: ['createdAt', 'updatedAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
   ProductItem: ['createdAt', 'updatedAt'],
@@ -195,6 +197,8 @@ const ID_FIELDS: Record<string, string> = {
   HumanResourcesSalarySlip: 'id',
   HumanResourcesInventoryItem: 'id',
   HumanResourcesInventoryTxn: 'id',
+  HumanResourcesHiringPosition: 'id',
+  HumanResourcesPositionDoc: 'id',
   ProductItem: 'id',
   KypGuide: 'id',
   Vendor: 'id',
@@ -219,6 +223,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   PaymentCollection: ['dedupKey'],
   PaymentCustomer: ['customerKey'],
   PaymentReminder: ['dedupKey'],
+  HumanResourcesHiringPosition: ['nameKey'],
+  HumanResourcesPositionDoc: ['kvKey'],
   ProductItem: ['name'],
   Vendor: ['name'],
 };
@@ -337,6 +343,12 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   HumanResourcesInventoryTxn: {
     item: { model: 'HumanResourcesInventoryItem', fk: 'itemId', one: true },
+  },
+  HumanResourcesHiringPosition: {
+    docs: { model: 'HumanResourcesPositionDoc', fk: 'positionId' },
+  },
+  HumanResourcesPositionDoc: {
+    position: { model: 'HumanResourcesHiringPosition', fk: 'positionId', one: true },
   },
   ProductItem: {
     guide: { model: 'KypGuide', fk: 'productId' },
@@ -892,6 +904,8 @@ export class D1PrismaClient {
   get humanResourcesSalarySlip() { return this.model('HumanResourcesSalarySlip'); }
   get humanResourcesInventoryItem() { return this.model('HumanResourcesInventoryItem'); }
   get humanResourcesInventoryTxn() { return this.model('HumanResourcesInventoryTxn'); }
+  get humanResourcesHiringPosition() { return this.model('HumanResourcesHiringPosition'); }
+  get humanResourcesPositionDoc() { return this.model('HumanResourcesPositionDoc'); }
   // Product Line master (migration 0046).
   get productItem() { return this.model('ProductItem'); }
   get kypGuide() { return this.model('KypGuide'); }
@@ -899,7 +913,7 @@ export class D1PrismaClient {
   get vendorRate() { return this.model('VendorRate'); }
   // LinkedIn daily drafts (migration 0051).
   get linkedinPost() { return this.model('LinkedinPost'); }
-  // Payment Tracker (migration 0069).
+  // Debtors Tracker (migration 0069).
   get debtorInvoice() { return this.model('DebtorInvoice'); }
   get paymentCollection() { return this.model('PaymentCollection'); }
   get paymentCustomer() { return this.model('PaymentCustomer'); }

@@ -8,6 +8,7 @@ import {
 } from './parse';
 import type { HrScope, HrSelf } from './types';
 import { getInventorySnapshot } from './inventory';
+import { createWithEmployeeCode } from './employee-codes';
 import { DATA_TTL_MS, DATA_CACHE_PREFIX, invalidateHumanResourcesCache } from './cache';
 
 export { invalidateHumanResourcesCache };
@@ -213,7 +214,9 @@ export async function listMembers(includeDeleted = false) {
 
 export async function createMember(input: Record<string, any>) {
   const data = cleanMemberCreate(input);
-  const row = await prisma.humanResourcesMember.create({ data });
+  const row = await createWithEmployeeCode((employeeCode) =>
+    prisma.humanResourcesMember.create({ data: { ...data, employeeCode } }),
+  );
   await invalidateHumanResourcesCache();
   return row;
 }

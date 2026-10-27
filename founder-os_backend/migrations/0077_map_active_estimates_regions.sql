@@ -1,0 +1,123 @@
+-- Map the founder-provided region-wise active estimate list (region_estimates.json)
+-- to Estimate.region. Active enquiries/estimates in the list are all status='sent';
+-- estimates carry region ownership (Enquiry has no region column).
+-- Authoritative for these 55 rows: overrides earlier creator-roster inference where
+-- the founder's regional split differs (e.g. EST-023882 is R4 here, was R1).
+-- Generated from region_estimates.json (R1 13 / R2 9 / R3 21 / R4 12).
+
+UPDATE Estimate
+SET region = CASE estimateNumber
+  WHEN 'EST-023065' THEN 'R2'
+  WHEN 'EST-023572' THEN 'R1'
+  WHEN 'EST-023631' THEN 'R3'
+  WHEN 'EST-023645' THEN 'R3'
+  WHEN 'EST-023657' THEN 'R1'
+  WHEN 'EST-023663' THEN 'R3'
+  WHEN 'EST-023677' THEN 'R4'
+  WHEN 'EST-023691' THEN 'R1'
+  WHEN 'EST-023696' THEN 'R1'
+  WHEN 'EST-023712' THEN 'R4'
+  WHEN 'EST-023719' THEN 'R4'
+  WHEN 'EST-023722' THEN 'R3'
+  WHEN 'EST-023724' THEN 'R3'
+  WHEN 'EST-023748' THEN 'R2'
+  WHEN 'EST-023752' THEN 'R3'
+  WHEN 'EST-023753' THEN 'R4'
+  WHEN 'EST-023761' THEN 'R2'
+  WHEN 'EST-023762' THEN 'R1'
+  WHEN 'EST-023766' THEN 'R1'
+  WHEN 'EST-023771' THEN 'R3'
+  WHEN 'EST-023784' THEN 'R3'
+  WHEN 'EST-023792' THEN 'R3'
+  WHEN 'EST-023796' THEN 'R1'
+  WHEN 'EST-023802' THEN 'R3'
+  WHEN 'EST-023804' THEN 'R4'
+  WHEN 'EST-023806' THEN 'R3'
+  WHEN 'EST-023811' THEN 'R4'
+  WHEN 'EST-023812' THEN 'R3'
+  WHEN 'EST-023813' THEN 'R3'
+  WHEN 'EST-023818' THEN 'R2'
+  WHEN 'EST-023822' THEN 'R1'
+  WHEN 'EST-023823' THEN 'R4'
+  WHEN 'EST-023825' THEN 'R3'
+  WHEN 'EST-023827' THEN 'R4'
+  WHEN 'EST-023828' THEN 'R1'
+  WHEN 'EST-023835' THEN 'R3'
+  WHEN 'EST-023836' THEN 'R3'
+  WHEN 'EST-023840' THEN 'R3'
+  WHEN 'EST-023852' THEN 'R2'
+  WHEN 'EST-023853' THEN 'R4'
+  WHEN 'EST-023858' THEN 'R1'
+  WHEN 'EST-023859' THEN 'R1'
+  WHEN 'EST-023860' THEN 'R3'
+  WHEN 'EST-023861' THEN 'R2'
+  WHEN 'EST-023865' THEN 'R3'
+  WHEN 'EST-023866' THEN 'R2'
+  WHEN 'EST-023870' THEN 'R4'
+  WHEN 'EST-023872' THEN 'R3'
+  WHEN 'EST-023873' THEN 'R2'
+  WHEN 'EST-023874' THEN 'R3'
+  WHEN 'EST-023875' THEN 'R1'
+  WHEN 'EST-023877' THEN 'R2'
+  WHEN 'EST-023880' THEN 'R4'
+  WHEN 'EST-023882' THEN 'R4'
+  WHEN 'EST-023883' THEN 'R1'
+  ELSE region
+END
+WHERE estimateNumber IN (
+  'EST-023065',
+  'EST-023572',
+  'EST-023631',
+  'EST-023645',
+  'EST-023657',
+  'EST-023663',
+  'EST-023677',
+  'EST-023691',
+  'EST-023696',
+  'EST-023712',
+  'EST-023719',
+  'EST-023722',
+  'EST-023724',
+  'EST-023748',
+  'EST-023752',
+  'EST-023753',
+  'EST-023761',
+  'EST-023762',
+  'EST-023766',
+  'EST-023771',
+  'EST-023784',
+  'EST-023792',
+  'EST-023796',
+  'EST-023802',
+  'EST-023804',
+  'EST-023806',
+  'EST-023811',
+  'EST-023812',
+  'EST-023813',
+  'EST-023818',
+  'EST-023822',
+  'EST-023823',
+  'EST-023825',
+  'EST-023827',
+  'EST-023828',
+  'EST-023835',
+  'EST-023836',
+  'EST-023840',
+  'EST-023852',
+  'EST-023853',
+  'EST-023858',
+  'EST-023859',
+  'EST-023860',
+  'EST-023861',
+  'EST-023865',
+  'EST-023866',
+  'EST-023870',
+  'EST-023872',
+  'EST-023873',
+  'EST-023874',
+  'EST-023875',
+  'EST-023877',
+  'EST-023880',
+  'EST-023882',
+  'EST-023883'
+);

@@ -1,5 +1,5 @@
 /**
- * Payment Tracker — complete customer statement.
+ * Debtors Tracker — complete customer statement.
  *
  * The dashboard payload is intentionally capped (collections 2,000 rows) and
  * grouped for dashboards, not statements. This module reads the customer's
@@ -13,7 +13,7 @@
  */
 import { prisma } from '../../shared/prisma';
 import { customerKeyOf } from './customers';
-import { PaymentTrackerError } from './errors';
+import { DebtorsTrackerError } from './errors';
 import { buildLiveInvoices } from './ledger';
 import { isAdvanceCollection, round2, todayIST } from './shared';
 import type { CustomerLedger, CustomerLedgerEntry } from './types';
@@ -29,7 +29,7 @@ const dateOnly = (value: unknown): string | null => {
 
 export async function getCustomerLedger(customerKey: string): Promise<CustomerLedger> {
   const key = String(customerKey || '').trim().toLowerCase();
-  if (!key) throw new PaymentTrackerError('Customer key is required', 400);
+  if (!key) throw new DebtorsTrackerError('Customer key is required', 400);
 
   const [contact, invoiceRows, collectionRows] = await Promise.all([
     prisma.paymentCustomer.findFirst({ where: { customerKey: key } }),
@@ -40,7 +40,7 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
   const invoices = (invoiceRows as any[]).filter((row) => customerKeyOf(row.customerName) === key);
   const collections = (collectionRows as any[]).filter((row) => customerKeyOf(row.customerName) === key);
   if (!contact && invoices.length === 0 && collections.length === 0) {
-    throw new PaymentTrackerError('Customer not found', 404);
+    throw new DebtorsTrackerError('Customer not found', 404);
   }
 
   const customerName = String(

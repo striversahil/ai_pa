@@ -283,29 +283,56 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
         // organizationId is write-once identity: never overwrite a set value
         // with '' (legacy/unknown) — that would orphan namespaced rows.
         const org = typeof est.organizationId === 'string' && est.organizationId ? est.organizationId : undefined;
-        await prisma.estimate.upsert({
-          where: { estimateId: est.estimateId },
-          update: {
-            estimateNumber: est.estimateNumber,
-            customerName: est.customerName,
-            total: est.total,
-            date: est.date,
-            status: est.status,
-            skipMatching: est.skipMatching || 0,
-            ...(org ? { organizationId: org } : {}),
-          },
-          create: {
-            estimateId: est.estimateId,
-            estimateNumber: est.estimateNumber,
-            customerName: est.customerName,
-            total: est.total,
-            date: est.date,
-            status: est.status,
-            skipMatching: est.skipMatching || 0,
-            organizationId: org || '',
-            lastSyncTime: new Date(),
-          },
-        });
+        const existing: any = await prisma.estimate
+          .findUnique({ where: { estimateId: est.estimateId }, select: { status: true, acceptedAt: true } })
+          .catch(() => null);
+        if (!existing) {
+          // New row. `acceptedAt` mirrors what status-sync would have stamped;
+          // bulk-upsert is a metadata path, but a row can legitimately arrive
+          // already accepted (historical backfill), so stamp it here too.
+          const isClose = est.status === 'accepted' || est.status === 'confirmed';
+          await prisma.estimate.upsert({
+            where: { estimateId: est.estimateId },
+            update: {},
+            create: {
+              estimateId: est.estimateId,
+              estimateNumber: est.estimateNumber,
+              customerName: est.customerName,
+              total: est.total,
+              date: est.date,
+              status: est.status,
+              ...(isClose ? { acceptedAt: kolkataDateStr() } : {}),
+              skipMatching: est.skipMatching || 0,
+              organizationId: org || '',
+              lastSyncTime: new Date(),
+            },
+          });
+          if (isClose) {
+            try {
+              const { recordConversionClose } = await import('../../automations/telecalling/service');
+              await recordConversionClose(String(est.estimateId));
+            } catch { /* non-fatal — the board reads acceptedAt, not the ledger */ }
+          }
+        } else {
+          // EXISTING row: metadata only. Status is owned by applyStatusUpdates
+          // (stamps acceptedAt + credits the close). Silently writing status
+          // here was how accepted estimates ended up with no won-on day.
+          await prisma.estimate.update({
+            where: { estimateId: est.estimateId },
+            data: {
+              estimateNumber: est.estimateNumber,
+              customerName: est.customerName,
+              total: est.total,
+              date: est.date,
+              skipMatching: est.skipMatching || 0,
+              ...(org ? { organizationId: org } : {}),
+            },
+          });
+          if (est.status && String(est.status) !== String(existing.status ?? '')) {
+            const { applyStatusUpdates } = await import('../../modules/estimates/status-sync');
+            await applyStatusUpdates([{ estimateId: String(est.estimateId), status: String(est.status) }]);
+          }
+        }
         upserted++;
       }
     }

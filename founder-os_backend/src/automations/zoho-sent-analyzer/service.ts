@@ -867,10 +867,12 @@ export class SalesCopilotService implements AnalysisEngine {
             const currentStatus = detailJson.estimate?.status;
             if (currentStatus && currentStatus !== 'sent') {
               logger.info(`SalesCopilotService: Estimate ${est.estimateNumber} status updated to: ${currentStatus}`);
-              await prisma.estimate.update({
-                where: { estimateId: est.estimateId },
-                data: { status: currentStatus, lastSyncTime: new Date() }
-              });
+              // Route through the shared status-sync so the won-on day
+              // (acceptedAt) and the close credit are written exactly as the
+              // live runner path does. Writing status directly here left
+              // accepted estimates with no acceptedAt — invisible to the board.
+              const { applyStatusUpdates } = await import('../../modules/estimates/status-sync');
+              await applyStatusUpdates([{ estimateId: String(est.estimateId), status: String(currentStatus) }]);
 
               // Fetch comments for this now-closed estimate to analyze its final comments (e.g. why it was declined/accepted)
               let commentsJson: any = { comments: [] };

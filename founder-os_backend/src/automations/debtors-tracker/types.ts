@@ -1,6 +1,6 @@
 /**
- * Payment Tracker — domain types + identity helpers.
- * Automation: `payment-tracker` (see index.ts / rule.json).
+ * Debtors Tracker — domain types + identity helpers.
+ * Automation: `debtors-tracker` (see index.ts / rule.json).
  *
  * Design (locked with the founder):
  * - Debtor data arrives as Excel-clipboard pastes of the accounts ageing
@@ -109,14 +109,16 @@ export interface DebtorImportReport {
 export interface CollectionImportReport extends DebtorImportReport {
   /** Exact re-paste rows skipped because the receipt already exists. */
   duplicated: number;
+  /** Advance placeholders adopted or soft-deleted as the same real receipt. */
+  merged: number;
   matchedByInvoice: number;
   matchedByCustomer: number;
   advances: number;
   unmatched: number;
 }
 
-/** Live-updated dashboard payload — GET /api/payment-tracker/data. */
-export interface PaymentTrackerPayload {
+/** Live-updated dashboard payload — GET /api/debtors-tracker/data. */
+export interface DebtorsTrackerPayload {
   summary: {
     totalReceivable: number;
     notDue: number;
@@ -136,6 +138,8 @@ export interface PaymentTrackerPayload {
   customers: CustomerAgeingRow[];
   invoices: LiveInvoice[];
   collections: LiveCollection[];
+  /** Week/month receipts split by the invoice ageing bucket on receipt date. */
+  receiptAgeing: ReceiptAgeingSplit;
   /** Latest reminder attempts (dry-run now, live later). */
   reminders: LiveReminder[];
   meta: {
@@ -161,6 +165,11 @@ export interface CustomerAgeingRow {
   region: string;
   whatsappOptIn: boolean;
   notes: string;
+  /** CRM follow-up state ('' = unset) + free-text remarks. Sales-editable. */
+  situation: string;
+  situationRemarks: string;
+  situationUpdatedAt: string | null;
+  situationUpdatedBy: string;
   lastReminderAt: string | null;
   lastReminderStatus: string;
   /** Latest follow-up across the customer's invoices (sales workflow). */
@@ -177,6 +186,8 @@ export interface CustomerAgeingRow {
   advanceReceived: number;
   netDue: number;
   invoiceCount: number;
+  /** Latest invoice date across all of the customer's invoices (null = none dated). */
+  lastInvoiceDate: string | null;
 }
 
 export interface LiveInvoice {
@@ -220,6 +231,25 @@ export type Bucket = 'NOT_DUE' | 'D0' | 'D31' | 'D61' | 'D91' | 'D181';
 
 /** Buckets for GROSS due amounts (due invoices only, per founder's sheet). */
 export const BUCKETS: Bucket[] = ['D0', 'D31', 'D61', 'D91', 'D181'];
+
+export type ReceiptBucketKey = Bucket | 'ADVANCE';
+
+export interface ReceiptBucketCell {
+  amount: number;
+  count: number;
+}
+
+export interface ReceiptBucketWindow {
+  total: number;
+  count: number;
+  buckets: Record<ReceiptBucketKey, ReceiptBucketCell>;
+}
+
+/** Collections split by the invoice bucket they cleared on the receipt date. */
+export interface ReceiptAgeingSplit {
+  week: ReceiptBucketWindow;
+  month: ReceiptBucketWindow;
+}
 
 export interface LiveCollection {
   id: string;
@@ -269,7 +299,7 @@ export interface CustomerLedgerTotals {
   netReceivable: number;
 }
 
-/** GET /api/payment-tracker/customers/:customerKey/ledger */
+/** GET /api/debtors-tracker/customers/:customerKey/ledger */
 export interface CustomerLedger {
   customerKey: string;
   customerName: string;

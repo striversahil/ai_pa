@@ -184,6 +184,13 @@ model Estimate {
   // createdBy but '' region land in the Unmapped bucket until MIS/root/
   // sales-head links them (region-set endpoint).
   region                String          @default("")
+  // IST day (YYYY-MM-DD) this estimate BECAME accepted/confirmed — the
+  // leaderboard's authoritative "won on" date (migration 0082). Stamped by
+  // modules/estimates/status-sync.ts on every accepting transition, cleared
+  // when the estimate leaves a close status, never overwritten otherwise.
+  // Backfill: first close-credit day, else `date`. Period filters read THIS,
+  // not `date`, so a July estimate accepted in October stays July business.
+  acceptedAt            String?
   // MIS override: estimate is ALWAYS held by this one agent, never re-poached
   // at EOD even when red/zombie.
   lockedTelecallerId    String?
@@ -1465,6 +1472,38 @@ model HumanResourcesInventoryTxn {
   @@index([expenseId])
 }
 
+// Hiring kit: a position (job title) can hold any number of JD and SOP PDFs.
+// PDF bytes live in CHAT_FILES KV; rows here hold metadata only.
+model HumanResourcesHiringPosition {
+  id        String   @id @default(uuid())
+  name      String
+  nameKey   String   @unique // normalised name — prevents "Sales Exec" duplicates
+  createdBy String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+  docs      HumanResourcesPositionDoc[]
+
+  @@index([nameKey])
+}
+
+model HumanResourcesPositionDoc {
+  id         String   @id @default(uuid())
+  positionId String
+  position   HumanResourcesHiringPosition @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  kind       String   @default("jd") // jd | sop
+  title      String   @default("")
+  fileName   String
+  mime       String   @default("application/pdf")
+  size       Int      @default(0)
+  kvKey      String   @unique
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now())
+
+  @@index([positionId])
+  @@index([positionId, kind])
+}
+
 model LinkedinPost {
   id            String   @id @default(uuid())
   batchDate     String
@@ -1489,7 +1528,7 @@ model LinkedinPost {
   @@index([status])
 }
 
-// ── Payment Tracker (migration 0069) ─────────────────────────────────────────
+// ── Debtors Tracker (migration 0069) ─────────────────────────────────────────
 // Debtors ledger imported by pasting the accounts ageing sheet (Excel clipboard
 // TSV). One row per invoice; upsert key = (invoiceNo, customerName).
 model DebtorInvoice {
@@ -1554,7 +1593,7 @@ model PaymentCollection {
   @@index([resolvedInvoiceId])
 }
 
-// Customer contact master for the Payment Tracker. Keyed by the normalized
+// Customer contact master for the Debtors Tracker. Keyed by the normalized
 // customer name because the pasted accounting sheets carry no customer code.
 // Phone/email drive the daily WhatsApp reminder (accounts-only editing).
 model PaymentCustomer {
@@ -1568,6 +1607,11 @@ model PaymentCustomer {
   whatsappOptIn Boolean @default(false)
   optInAt      String?
   notes        String   @default("")
+  /** CRM follow-up state ('' = unset) + remarks. Sales + accounts editable. */
+  situation           String  @default("")
+  situationRemarks    String  @default("")
+  situationUpdatedAt  String?
+  situationUpdatedBy  String  @default("")
   updatedBy    String   @default("")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @default(now())

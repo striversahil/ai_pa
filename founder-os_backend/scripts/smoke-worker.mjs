@@ -48,6 +48,8 @@ const tests = [
   ['POST /api/runner/telecalling/effort-sync no-auth', '/api/runner/telecalling/effort-sync', { method: 'POST', headers: { Authorization: 'Bearer wrong' } }],
   ['POST /api/runner/telecalling/effort-sync auth', '/api/runner/telecalling/effort-sync', { method: 'POST', headers: { Authorization: 'Bearer test-secret' } }],
   ['GET /api/automations/accounts/data', '/api/automations/accounts/data'],
+  ['GET /api/human-resources/hiring-positions', '/api/human-resources/hiring-positions'],
+  ['GET /api/human-resources/position-docs/x/file', '/api/human-resources/position-docs/x/file'],
   ['GET /api/accounts/roster', '/api/accounts/roster'],
   ['GET /api/accounts/templates', '/api/accounts/templates'],
   ['GET /nope', '/nope'],

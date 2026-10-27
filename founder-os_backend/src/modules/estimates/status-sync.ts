@@ -1,12 +1,16 @@
 // status-sync.ts — Zoho status transitions, shared by Worker + Express.
 // Every move in any direction flows through applyStatusUpdates so
-// accepted/confirmed flips always credit the telecalling close ledger
+// accepted/confirmed flips always (a) stamp `Estimate.acceptedAt` — the
+// leaderboard's won-on day — and (b) credit the telecalling close ledger
 // (recordConversionClose is idempotent — safe on replays/duplicates).
+// Nothing else may write `Estimate.status`: bulk-upsert routes any real change
+// through here, and the legacy Express analyzer does too.
 // Declines carry no ledger entry (penalty retired) — status sync only.
 // Non-draft Zoho statuses (sent/accepted/declined/etc.) also auto-mark the
 // linked B2B Enquiry row as `rateStatus='sent'` so the Sales dashboard no
 // longer needs a manual "Mark as sent" button — Zoho is the source of truth.
 import { prisma } from '../../shared/prisma';
+import { istDate } from '../../automations/telecalling/util';
 
 export interface StatusTransition {
   estimateId: string;
@@ -23,15 +27,31 @@ export async function applyStatusUpdates(
   let enquiriesAutoSent = 0;
   for (const u of updates || []) {
     if (!u?.estimateId || !u?.status) continue;
+    const estimateId = String(u.estimateId);
     const nextStatus = String(u.status).trim();
-    await (prisma as any).estimate.update({
-      where: { estimateId: String(u.estimateId) },
-      data: { status: nextStatus, lastSyncTime: new Date() },
-    });
-    if (CLOSE_STATUSES.has(nextStatus.toLowerCase())) {
+    // acceptedAt is the leaderboard's "won on" day, so the transition has to
+    // know whether this is an ENTRY into a close status. Read the prior state
+    // (cheap: transitions are a handful per sync tick).
+    const prev: any = await (prisma as any).estimate
+      .findUnique({ where: { estimateId }, select: { status: true, acceptedAt: true } })
+      .catch(() => null);
+    const isClose = CLOSE_STATUSES.has(nextStatus.toLowerCase());
+    const wasClose = CLOSE_STATUSES.has(String(prev?.status ?? '').toLowerCase());
+    const data: Record<string, unknown> = { status: nextStatus, lastSyncTime: new Date() };
+    if (isClose) {
+      // Stamp on entry — and also when a close row somehow has no stamp yet
+      // (defensive). A replay of an already-accepted row never moves the day.
+      if (!wasClose || !prev?.acceptedAt) data.acceptedAt = istDate();
+    } else if (wasClose) {
+      // Left the close status (revision / reversal): drop the won-on day so a
+      // later re-acceptance stamps afresh instead of inheriting a stale date.
+      data.acceptedAt = null;
+    }
+    await (prisma as any).estimate.update({ where: { estimateId }, data });
+    if (isClose) {
       try {
         const { recordConversionClose } = await import('../../automations/telecalling/service');
-        if (await recordConversionClose(String(u.estimateId))) closesCredited++;
+        if (await recordConversionClose(estimateId)) closesCredited++;
       } catch (e: any) {
         console.warn({ err: e?.message, estimateId: u.estimateId }, 'status-sync: recordConversionClose failed');
       }

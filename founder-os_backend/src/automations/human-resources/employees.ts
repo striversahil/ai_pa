@@ -5,10 +5,9 @@ import { cleanEmployeeCreate, cleanEmployeePatch, cleanSalaryComponents } from '
 import { cleanSalaryPlan } from './templates-parse';
 import { resolveSalary, round2 } from './salary';
 import { templateComponentsForCopy } from './templates';
+import { createWithEmployeeCode } from './employee-codes';
 import { DATA_CACHE_PREFIX, DATA_TTL_MS, invalidateHumanResourcesCache } from './cache';
 import type { SalaryComponentInput } from './types';
-
-const EMPLOYEE_CODE_PREFIX = 'BUI-';
 
 function salaryOptions(row: any) {
   return {
@@ -148,41 +147,13 @@ export async function getEmployee(id: string) {
   return employeeJson(row, await componentsFor(id), await templateFor(row));
 }
 
-async function nextEmployeeCode(): Promise<string> {
-  const rows = await prisma.humanResourcesMember.findMany({
-    where: { employeeCode: { startsWith: EMPLOYEE_CODE_PREFIX } },
-    select: { employeeCode: true },
-  }) as any[];
-  let max = 0;
-  for (const row of rows) {
-    const match = /^BUI-(\d+)$/.exec(String(row.employeeCode ?? '').trim());
-    if (match) max = Math.max(max, Number(match[1]));
-  }
-  return `${EMPLOYEE_CODE_PREFIX}${String(max + 1).padStart(3, '0')}`;
-}
-
-function isEmployeeCodeConflict(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /unique|constraint/i.test(message) && /employeeCode/i.test(message);
-}
-
 export async function createEmployee(input: Record<string, any>) {
   const data = cleanEmployeeCreate(input);
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const employeeCode = await nextEmployeeCode();
-    try {
-      const row: any = await prisma.humanResourcesMember.create({ data: { ...data, employeeCode } });
-      await invalidateHumanResourcesCache();
-      return employeeJson(row, []);
-    } catch (error) {
-      if (!isEmployeeCodeConflict(error)) throw error;
-      lastError = error;
-    }
-  }
-  throw new HrError(
-    `could not generate a unique employee code${lastError instanceof Error ? `: ${lastError.message}` : ''}`,
+  const row: any = await createWithEmployeeCode((employeeCode) =>
+    prisma.humanResourcesMember.create({ data: { ...data, employeeCode } }),
   );
+  await invalidateHumanResourcesCache();
+  return employeeJson(row, []);
 }
 
 export async function updateEmployee(id: string, input: Record<string, any>) {

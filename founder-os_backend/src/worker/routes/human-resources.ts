@@ -28,6 +28,13 @@ import {
   getInventorySnapshot, listInventoryItems, listInventoryTransactions,
   recordInventoryTransaction, updateInventoryItem,
 } from '../../automations/human-resources/inventory';
+import {
+  createHiringPosition, createPositionDoc, deleteHiringPosition, deletePositionDoc, getPositionDoc,
+  importHiringPositions, listHiringPositions, renameHiringPosition,
+} from '../../automations/human-resources/hiring-positions';
+import {
+  defaultDocTitle, isHiringDocKind, isPdfUpload, MAX_HIRING_DOC_BYTES,
+} from '../../automations/human-resources/hiring-positions-parse';
 
 function actorLabel(me: any): string | null {
   return me?.user?.name ?? me?.user?.email ?? null;
@@ -504,5 +511,154 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
       notifyLive(c, { type: LiveEvent.HumanResources });
       return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Hiring kit: JD + SOP PDFs per position (many per role) ──────────────
+  // PDF bytes live in CHAT_FILES KV (`hrdocs/<uuid>.pdf`); D1 keeps metadata.
+  // Read/upload/delete are all HR/MIS-only (same `access()` gate as the rest
+  // of the HR dashboard) — no public document URLs.
+  app.get('/api/human-resources/hiring-positions', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    try {
+      return c.json({ positions: await listHiringPositions(), canManage: a.canManage });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.post('/api/human-resources/hiring-positions', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add positions' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const row = await createHiringPosition(body || {}, actorLabel(a.me));
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(row, 201);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.post('/api/human-resources/hiring-positions/import', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add positions' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const out = await importHiringPositions(body?.names, actorLabel(a.me));
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(out);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.patch('/api/human-resources/hiring-positions/:id', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can rename positions' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const row = await renameHiringPosition(c.req.param('id') ?? '', body || {});
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(row);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.delete('/api/human-resources/hiring-positions/:id', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can remove positions' }, 403);
+    try {
+      const { kvKeys } = await deleteHiringPosition(c.req.param('id') ?? '');
+      if (c.env.CHAT_FILES) {
+        for (const key of kvKeys) {
+          try { await c.env.CHAT_FILES.delete(key); } catch { /* bytes best-effort */ }
+        }
+      }
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json({ ok: true });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // Add a JD / SOP PDF to a position (a role can hold many of each).
+  app.post('/api/human-resources/hiring-positions/:id/docs', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can upload hiring documents' }, 403);
+    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+    let form: FormData;
+    try {
+      form = await c.req.formData();
+    } catch {
+      return c.json({ error: 'Expected multipart/form-data' }, 400);
+    }
+    const kind = String(form.get('kind') || 'jd').trim().toLowerCase();
+    if (!isHiringDocKind(kind)) return c.json({ error: "kind must be 'jd' or 'sop'" }, 400);
+    const file = form.get('file');
+    if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
+    if (!isPdfUpload(file.name, file.type)) return c.json({ error: 'Only PDF files are accepted' }, 400);
+    if (file.size > MAX_HIRING_DOC_BYTES) return c.json({ error: 'File too large (max 20MB)' }, 413);
+    if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
+    const title = String(form.get('title') || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+      || defaultDocTitle(file.name, kind);
+    const key = `hrdocs/${crypto.randomUUID()}.pdf`;
+    try {
+      await c.env.CHAT_FILES.put(key, await file.arrayBuffer(), {
+        metadata: { name: file.name, type: 'application/pdf' },
+      });
+    } catch {
+      return c.json({ error: 'Could not store the PDF — please retry' }, 502);
+    }
+    try {
+      const doc = await createPositionDoc({
+        positionId: c.req.param('id') ?? '',
+        kind,
+        title,
+        fileName: file.name.slice(0, 200),
+        mime: 'application/pdf',
+        size: file.size,
+        kvKey: key,
+        uploadedBy: String(actorLabel(a.me) ?? '').slice(0, 200),
+      });
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json({ ok: true, doc }, 201);
+    } catch (e) {
+      try { await c.env.CHAT_FILES.delete(key); } catch { /* orphan bytes best-effort */ }
+      return errorResponse(c, e);
+    }
+  });
+
+  app.delete('/api/human-resources/position-docs/:id', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can remove hiring documents' }, 403);
+    try {
+      const { kvKey } = await deletePositionDoc(c.req.param('id') ?? '');
+      if (kvKey && c.env.CHAT_FILES) {
+        try { await c.env.CHAT_FILES.delete(kvKey); } catch { /* best-effort */ }
+      }
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json({ ok: true });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // Serve the PDF inline (never exposes the raw KV key). Session-gated, so the
+  // dashboard's iframe viewer works while direct links stay private.
+  app.get('/api/human-resources/position-docs/:id/file', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+    const row = await getPositionDoc(c.req.param('id') ?? '').catch(() => null);
+    if (!row?.kvKey) return c.json({ error: 'Document not found' }, 404);
+    const obj = await c.env.CHAT_FILES.getWithMetadata(String(row.kvKey), 'arrayBuffer');
+    if (obj.value === null) return c.json({ error: 'Document file is missing' }, 404);
+    const headers = new Headers();
+    headers.set('Content-Type', 'application/pdf');
+    // Header values must be byte-safe: strip non-ASCII/quote characters so a
+    // unicode filename can never throw while serving the PDF.
+    const safeName = String(row.fileName || 'document.pdf')
+      .replace(/[^\x20-\x7E]/g, '_')
+      .replace(/["\\]/g, '') || 'document.pdf';
+    headers.set('Content-Disposition', `inline; filename="${safeName}"`);
+    headers.set('Cache-Control', 'private, max-age=300');
+    headers.set('X-Content-Type-Options', 'nosniff');
+    return new Response(obj.value, { headers });
   });
 }

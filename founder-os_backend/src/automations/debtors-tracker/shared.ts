@@ -1,8 +1,8 @@
 /**
- * Payment Tracker — pure shared helpers (dates, buckets, money rounding).
+ * Debtors Tracker — pure shared helpers (dates, buckets, money rounding).
  * No DB/framework imports so Worker, Express and tests can all use them.
  */
-import type { LiveInvoice } from './types';
+import type { Bucket } from './types';
 
 export const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -41,7 +41,7 @@ export function weekStart(iso: string): string | null {
   return new Date(t - back * 86_400_000).toISOString().slice(0, 10);
 }
 
-export function bucketForDays(days: number): LiveInvoice['bucket'] {
+export function bucketForDays(days: number): Bucket {
   if (days <= 30) return 'D0';
   if (days <= 60) return 'D31';
   if (days <= 90) return 'D61';
@@ -56,6 +56,11 @@ export function bucketForDays(days: number): LiveInvoice['bucket'] {
  */
 export function isAdvanceCollection(c: { invoiceNo?: string | null; matchStatus?: string | null }): boolean {
   return String(c.matchStatus || '') === 'advance' || /^advance$/i.test(String(c.invoiceNo || '').trim());
+}
+
+/** Dashboard binary split: remarks contain the word "advance". Mirror: frontend isAdvanceReceipt. */
+export function isAdvanceRemark(c: { remarks?: string | null }): boolean {
+  return /\badvance\b/i.test(String(c.remarks || ''));
 }
 
 /** Debtor text fields: newest paste wins when the cell is non-blank. */

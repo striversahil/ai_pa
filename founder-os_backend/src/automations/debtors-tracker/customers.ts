@@ -1,14 +1,15 @@
 /**
- * Payment Tracker — customer contact master.
+ * Debtors Tracker — customer contact master.
  *
  * Customers are derived from the invoice/receipt ledgers (no customer code in
  * the paste), so the identity key is the normalized customer name. Contacts are
  * stored once per customer and drive the daily WhatsApp reminder.
  */
 import { prisma } from '../../shared/prisma';
-import { PaymentTrackerError } from './errors';
-import { invalidatePaymentCache } from './cache';
+import { DebtorsTrackerError } from './errors';
+import { invalidateDebtorsCache } from './cache';
 import { normalizeCustomerKey, normalizeCustomerName } from './types';
+import { isValidCustomerSituationInput, normalizeCustomerSituation } from './situation';
 import { isValidRegion } from '../telecalling/regions';
 
 export type CustomerContact = {
@@ -21,6 +22,12 @@ export type CustomerContact = {
   whatsappOptIn: boolean;
   optInAt: string | null;
   notes: string;
+  /** CRM follow-up state ('' = unset). Editable by sales + accounts. */
+  situation: string;
+  /** Free-text CRM remarks for the situation. Editable by sales + accounts. */
+  situationRemarks: string;
+  situationUpdatedAt: string | null;
+  situationUpdatedBy: string;
   updatedBy: string;
 };
 
@@ -72,6 +79,10 @@ function contactView(row: any): CustomerContact {
     whatsappOptIn: !!row.whatsappOptIn,
     optInAt: row.optInAt ? String(row.optInAt) : null,
     notes: String(row.notes || ''),
+    situation: String((row as any).situation || ''),
+    situationRemarks: String((row as any).situationRemarks || ''),
+    situationUpdatedAt: (row as any).situationUpdatedAt ? String((row as any).situationUpdatedAt) : null,
+    situationUpdatedBy: String((row as any).situationUpdatedBy || ''),
     updatedBy: String(row.updatedBy || ''),
   };
 }
@@ -135,26 +146,26 @@ export async function updateCustomerContact(
   updatedBy: string,
 ): Promise<CustomerContact> {
   const key = String(customerKey || '').trim().toLowerCase();
-  if (!key) throw new PaymentTrackerError('Customer key is required', 400);
+  if (!key) throw new DebtorsTrackerError('Customer key is required', 400);
 
   const existing: any = await prisma.paymentCustomer.findFirst({ where: { customerKey: key } });
-  if (!existing) throw new PaymentTrackerError('Customer not found', 404);
+  if (!existing) throw new DebtorsTrackerError('Customer not found', 404);
 
   const data: Record<string, unknown> = { updatedBy: updatedBy || '', updatedAt: new Date() };
   let region: string | undefined;
 
   if ('phone' in patch) {
     const phone = normalizePhone(patch.phone);
-    if (!isValidPhone(phone)) throw new PaymentTrackerError('Enter a valid phone number (8–15 digits)', 400);
+    if (!isValidPhone(phone)) throw new DebtorsTrackerError('Enter a valid phone number (8–15 digits)', 400);
     data.phone = phone;
   }
   if ('email' in patch) {
     const email = normalizeEmail(patch.email).slice(0, 320);
-    if (!isValidEmail(email)) throw new PaymentTrackerError('Enter a valid email address', 400);
+    if (!isValidEmail(email)) throw new DebtorsTrackerError('Enter a valid email address', 400);
     data.email = email;
   }
   if ('region' in patch) {
-    if (!isValidRegionInput(patch.region)) throw new PaymentTrackerError('Region must be R1–R4 (or blank)', 400);
+    if (!isValidRegionInput(patch.region)) throw new DebtorsTrackerError('Region must be R1–R4 (or blank)', 400);
     region = normalizeRegion(patch.region);
     data.region = region;
   }
@@ -172,6 +183,43 @@ export async function updateCustomerContact(
       data: { region, updatedAt: new Date() },
     });
   }
-  await invalidatePaymentCache();
+  await invalidateDebtorsCache();
+  return contactView(updated);
+}
+
+/**
+ * CRM follow-up state: situation dropdown + free-text remarks.
+ * Sales (`debtors-tracker` scope) and accounts may both write this —
+ * unlike the contact master, which stays accounts-only.
+ */
+export async function updateCustomerSituation(
+  customerKey: string,
+  patch: Record<string, unknown>,
+  updatedBy: string,
+): Promise<CustomerContact> {
+  const key = String(customerKey || '').trim().toLowerCase();
+  if (!key) throw new DebtorsTrackerError('Customer key is required', 400);
+
+  const existing: any = await prisma.paymentCustomer.findFirst({ where: { customerKey: key } });
+  if (!existing) throw new DebtorsTrackerError('Customer not found', 404);
+
+  const data: Record<string, unknown> = { updatedBy: updatedBy || '', updatedAt: new Date() };
+  if ('situation' in patch) {
+    if (!isValidCustomerSituationInput(patch.situation)) {
+      throw new DebtorsTrackerError('Situation must be one of the dropdown options (or blank)', 400);
+    }
+    data.situation = normalizeCustomerSituation(patch.situation);
+  }
+  if ('situationRemarks' in patch) {
+    data.situationRemarks = String(patch.situationRemarks ?? '').slice(0, 2000);
+  }
+  if (!('situation' in patch) && !('situationRemarks' in patch)) {
+    throw new DebtorsTrackerError('Nothing to update (situation / situationRemarks)', 400);
+  }
+  data.situationUpdatedAt = new Date().toISOString();
+  data.situationUpdatedBy = updatedBy || '';
+
+  const updated: any = await prisma.paymentCustomer.update({ where: { customerKey: key }, data });
+  await invalidateDebtorsCache();
   return contactView(updated);
 }

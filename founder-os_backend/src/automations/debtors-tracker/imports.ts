@@ -1,5 +1,5 @@
 /**
- * Payment Tracker — paste imports, matching, manual corrections.
+ * Debtors Tracker — paste imports, matching, manual corrections.
  *
  * Idempotency rules (founder decision):
  * - Receivables are keyed by invoice no WITHIN a customer. The same invoice no
@@ -7,13 +7,17 @@
  *   or silently create a second receivable from the same paste row.
  * - Collections keep multiple part-payments; an optional receipt no. is the
  *   strongest dedupe key, else invoice no + date + amount + mode.
+ * - A receipt first pasted as "Advance" and later re-pasted against a real
+ *   invoice is adopted in place (same customer/date/amount/mode). Leftover
+ *   advance placeholders with exactly one real receipt are soft-deleted.
  * - Soft-deleted rows are restored on re-import instead of failing the unique
  *   index.
  */
 import { prisma } from '../../shared/prisma';
-import { invalidatePaymentCache } from './cache';
+import { invalidateDebtorsCache } from './cache';
 import { ensureCustomers, isValidRegionInput, normalizeRegion } from './customers';
-import { PaymentTrackerError } from './errors';
+import { advanceDuplicateIds, findAdvancePlaceholder, realInvoiceMatches } from './dedupe';
+import { DebtorsTrackerError } from './errors';
 import { parseCollectionsTsv, parseDebtorsTsv, parseIndianDate } from './parse';
 import { isAdvanceCollection, pickText, round2, todayIST } from './shared';
 import type {
@@ -74,7 +78,7 @@ async function bookUnmatched(
 export async function importDebtors(text: string, importedBy: string): Promise<DebtorImportReport> {
   const { rows, headerRowFound, skipped } = parseDebtorsTsv(text);
   if (rows.length === 0) {
-    throw new PaymentTrackerError(
+    throw new DebtorsTrackerError(
       headerRowFound
         ? 'No valid invoice rows in the pasted data (each row needs an invoice no + customer)'
         : 'Could not find the header row (needs "Customer Name" + "Invoice No." columns) — copy the sheet in Excel from the header row down',
@@ -254,7 +258,7 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
     email: r.contactMail,
     region: r.region,
   })), importedBy);
-  await invalidatePaymentCache();
+  await invalidateDebtorsCache();
 
   return {
     parsed: rows.length,
@@ -293,7 +297,7 @@ function pickInvoiceForCollection(
 export async function importCollections(text: string, importedBy: string): Promise<CollectionImportReport> {
   const { rows, headerRowFound, skipped } = parseCollectionsTsv(text);
   if (rows.length === 0) {
-    throw new PaymentTrackerError(
+    throw new DebtorsTrackerError(
       headerRowFound
         ? 'No valid collection rows in the pasted data (each row needs a customer + amount)'
         : 'Could not find the header row (needs "Customer Name" + "Amount Received" columns) — copy the collections sheet in Excel from the header row down',
@@ -349,6 +353,7 @@ export async function importCollections(text: string, importedBy: string): Promi
   let created = 0;
   let duplicated = 0;
   let restored = 0;
+  let merged = 0;
   let matchedByInvoice = 0;
   let matchedByCustomer = 0;
   let advances = 0;
@@ -358,12 +363,16 @@ export async function importCollections(text: string, importedBy: string): Promi
 
   for (const row of rows) {
     const key = collectionDedupKey(row);
-    const existing = existingByKey.get(key);
     if (seen.has(key)) { duplicated++; continue; }
     seen.add(key);
 
     const customerName = normalizeCustomerName(row.customerName);
     const invoiceNo = normalizeInvoiceNo(row.invoiceNo);
+    const amount = round2(row.amount);
+    const mode = row.mode || '';
+    const collectionDate = row.collectionDate ?? null;
+    const receiptNo = row.receiptNo || '';
+    const incoming = { customerName, invoiceNo, receiptNo, collectionDate, amount, mode };
     let matchStatus = 'none';
     let resolvedInvoiceId: string | null = null;
 
@@ -396,18 +405,36 @@ export async function importCollections(text: string, importedBy: string): Promi
       }
     }
 
+    // A placeholder is stale once the same money is already on a real invoice.
+    // Never create or restore a second Advance row for that receipt.
+    if (matchStatus === 'advance' && realInvoiceMatches(existingRows, incoming).length === 1) {
+      duplicated++;
+      continue;
+    }
+
+    let existing: any = existingByKey.get(key);
+    let adopted = false;
+    if (!existing && matchStatus !== 'advance') {
+      const placeholder = findAdvancePlaceholder(existingRows, incoming) as any;
+      if (placeholder) {
+        existing = placeholder;
+        adopted = true;
+      }
+    }
+
     if (existing) {
-      // Same receipt key: update mutable fields and restore if soft-deleted.
+      // Same receipt key (or adopted advance placeholder): update in place.
       const wasDeleted = !!existing.deleted;
+      const oldKey = String(existing.dedupKey || '');
       await prisma.paymentCollection.update({
         where: { id: String(existing.id) },
         data: {
           customerName,
           invoiceNo,
-          receiptNo: row.receiptNo || '',
-          collectionDate: row.collectionDate ?? null,
-          amount: round2(row.amount),
-          mode: row.mode || '',
+          receiptNo,
+          collectionDate,
+          amount,
+          mode,
           remarks: row.remarks || '',
           weekStart: row.weekStart || '',
           matchStatus,
@@ -417,19 +444,27 @@ export async function importCollections(text: string, importedBy: string): Promi
           deleted: false,
         },
       });
-      existing.deleted = false;
-      if (wasDeleted) restored++;
+      Object.assign(existing, {
+        customerName, invoiceNo, receiptNo, collectionDate, amount, mode,
+        remarks: row.remarks || '', weekStart: row.weekStart || '',
+        matchStatus, resolvedInvoiceId, dedupKey: key, deleted: false,
+      });
+      if (oldKey && oldKey !== key) existingByKey.delete(oldKey);
+      existingByKey.set(key, existing);
+      if (adopted) merged++;
+      else if (wasDeleted) restored++;
       else duplicated++;
     } else {
+      const id = crypto.randomUUID();
       await prisma.paymentCollection.create({
         data: {
-          id: crypto.randomUUID(),
+          id,
           customerName,
           invoiceNo,
-          receiptNo: row.receiptNo || '',
-          collectionDate: row.collectionDate ?? null,
-          amount: round2(row.amount),
-          mode: row.mode || '',
+          receiptNo,
+          collectionDate,
+          amount,
+          mode,
           remarks: row.remarks || '',
           weekStart: row.weekStart || '',
           matchStatus,
@@ -438,6 +473,15 @@ export async function importCollections(text: string, importedBy: string): Promi
           importedBy: importedBy || '',
         },
       });
+      const createdRow = {
+        id, customerName, invoiceNo, receiptNo, collectionDate, amount, mode,
+        remarks: row.remarks || '', weekStart: row.weekStart || '',
+        matchStatus, resolvedInvoiceId, dedupKey: key,
+        importedBy: importedBy || '', deleted: false,
+        createdAt: new Date().toISOString(),
+      };
+      existingRows.push(createdRow);
+      existingByKey.set(key, createdRow);
       created++;
     }
 
@@ -447,8 +491,17 @@ export async function importCollections(text: string, importedBy: string): Promi
     else unmatched++;
   }
 
+  // One pass over the final ledger: remove any leftover advance placeholders
+  // that now duplicate exactly one real-invoice receipt.
+  const activeAfter: any[] = await prisma.paymentCollection.findMany({ where: { deleted: false } }) as any[];
+  const duplicateIds = advanceDuplicateIds(activeAfter);
+  for (const id of duplicateIds) {
+    await prisma.paymentCollection.update({ where: { id }, data: { deleted: true } });
+  }
+  merged += duplicateIds.length;
+
   await ensureCustomers(rows.map((r) => ({ customerName: r.customerName })), importedBy);
-  await invalidatePaymentCache();
+  await invalidateDebtorsCache();
 
   return {
     parsed: rows.length,
@@ -456,7 +509,7 @@ export async function importCollections(text: string, importedBy: string): Promi
     skippedLines: skipped.length + duplicated,
     skipped,
     duplicated,
-    matchedByInvoice, matchedByCustomer, advances, unmatched,
+    matchedByInvoice, matchedByCustomer, advances, unmatched, merged,
   };
 }
 
@@ -484,7 +537,7 @@ export async function updateInvoiceFields(
   allowed: readonly string[] = INVOICE_EDITABLE_FIELDS,
 ): Promise<void> {
   const existing: any = await prisma.debtorInvoice.findFirst({ where: { id, deleted: false } });
-  if (!existing) throw new PaymentTrackerError('Invoice not found', 404);
+  if (!existing) throw new DebtorsTrackerError('Invoice not found', 404);
 
   const data: Record<string, unknown> = { updatedAt: new Date() };
   let region: string | undefined;
@@ -497,7 +550,7 @@ export async function updateInvoiceFields(
       continue;
     }
     if (field === 'region') {
-      if (!isValidRegionInput(patch[field])) throw new PaymentTrackerError('Region must be R1–R4 (or blank)', 400);
+      if (!isValidRegionInput(patch[field])) throw new DebtorsTrackerError('Region must be R1–R4 (or blank)', 400);
       region = normalizeRegion(patch[field]);
       data[field] = region;
       continue;
@@ -505,7 +558,7 @@ export async function updateInvoiceFields(
     data[field] = String(patch[field] ?? '').slice(0, 2000);
   }
   if (Object.keys(data).length <= 1) {
-    throw new PaymentTrackerError('No editable fields supplied', 400);
+    throw new DebtorsTrackerError('No editable fields supplied', 400);
   }
   await prisma.debtorInvoice.update({ where: { id }, data });
   if (region !== undefined) {
@@ -519,7 +572,7 @@ export async function updateInvoiceFields(
       data: { region, updatedAt: new Date() },
     });
   }
-  await invalidatePaymentCache();
+  await invalidateDebtorsCache();
 }
 
 
@@ -527,7 +580,7 @@ export async function updateInvoiceFields(
 /** Soft-delete a mis-imported invoice; its ledger collections go unmatched. */
 export async function deleteInvoice(id: string): Promise<void> {
   const existing: any = await prisma.debtorInvoice.findFirst({ where: { id, deleted: false } });
-  if (!existing) throw new PaymentTrackerError('Invoice not found', 404);
+  if (!existing) throw new DebtorsTrackerError('Invoice not found', 404);
 
   const booked: any[] = await prisma.paymentCollection.findMany({
     where: { resolvedInvoiceId: id, deleted: false },
@@ -542,25 +595,25 @@ export async function deleteInvoice(id: string): Promise<void> {
     where: { id },
     data: { deleted: true, updatedAt: new Date() },
   });
-  await invalidatePaymentCache();
+  await invalidateDebtorsCache();
 }
 
 export async function deleteCollection(id: string): Promise<void> {
   const existing: any = await prisma.paymentCollection.findFirst({ where: { id, deleted: false } });
-  if (!existing) throw new PaymentTrackerError('Collection not found', 404);
+  if (!existing) throw new DebtorsTrackerError('Collection not found', 404);
   await prisma.paymentCollection.update({
     where: { id },
     data: { deleted: true },
   });
-  await invalidatePaymentCache();
+  await invalidateDebtorsCache();
 }
 
 /** Wipe the tracker ledgers (contacts survive; reminders are derived). */
-export async function resetPaymentTracker(): Promise<{ invoices: number; collections: number; reminders: number }> {
+export async function resetDebtorsTracker(): Promise<{ invoices: number; collections: number; reminders: number }> {
   const reminders = await prisma.paymentReminder.deleteMany({});
   const collections = await prisma.paymentCollection.deleteMany({});
   const invoices = await prisma.debtorInvoice.deleteMany({});
-  await invalidatePaymentCache();
+  await invalidateDebtorsCache();
   return {
     invoices: Number((invoices as any)?.count) || 0,
     collections: Number((collections as any)?.count) || 0,

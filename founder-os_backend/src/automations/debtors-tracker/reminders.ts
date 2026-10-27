@@ -1,5 +1,5 @@
 /**
- * Payment Tracker — daily reminder dry-run.
+ * Debtors Tracker — daily reminder dry-run.
  *
  * Live business-initiated WhatsApp messages need an approved Meta template and
  * recorded opt-in, neither of which is provisioned yet. Until then this module
@@ -7,7 +7,7 @@
  * dashboard can show eligibility, contact gaps and message previews.
  */
 import { prisma } from '../../shared/prisma';
-import { invalidatePaymentCache } from './cache';
+import { invalidateDebtorsCache } from './cache';
 import { loadCustomerContacts } from './customers';
 import { buildCustomerAgeing, buildLiveInvoices } from './ledger';
 import { round2, todayIST } from './shared';
@@ -144,7 +144,7 @@ export async function runReminderDryRun(
     logged++;
   }
 
-  if (logged > 0) await invalidatePaymentCache();
+  if (logged > 0) await invalidateDebtorsCache();
 
   return { runDay, mode, configured, eligible, logged, skippedAlreadyLogged, skippedNoPhone };
 }

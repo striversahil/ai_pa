@@ -29,6 +29,7 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "mis", label: "MIS", description: "MIS-level control of the telecaller roster (assignment controller)" },
   { key: "telecalling", label: "Telecalling", description: "Telecalling performance dashboard" },
   { key: "sales-head", label: "Sales Head", description: "Sales leaderboard manager — closer picks, region links, roster, history reset" },
+  { key: "debtors-tracker", label: "Debtors Tracker", description: "Pending-receivables control desk: debtor ageing, collections ledger and reminder previews" },
   { key: "crm", label: "CRM", description: "CRM active sales orders pipeline" },
   { key: USER_ADMIN_SCOPE, label: "User Manager", description: "Admin panel: assign roles and edit role scopes (cannot touch root user or grant admin access)" },
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
@@ -49,7 +50,7 @@ export const DEFAULT_ROLES: AuthRole[] = [
     key: "sales-head",
     label: "Sales Head",
     description: "Sales leaderboard manager — full Controller access (region links, roster, history reset)",
-    scopeKeys: ["sales-head", "telecalling", "enquiry-tracker", "zoho", "payment-tracker"],
+    scopeKeys: ["sales-head", "telecalling", "enquiry-tracker", "zoho", "debtors-tracker"],
   },
 ];
 

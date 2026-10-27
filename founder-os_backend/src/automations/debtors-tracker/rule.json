@@ -1,9 +1,9 @@
 {
-  "name": "Payment Tracker",
+  "name": "Debtors Tracker",
   "description": "Pending-payments control desk: paste the debtors ageing sheet to import the invoice ledger, paste collections to keep the receipts ledger live; customer-wise ageing summary + top-level totals. Deterministic, no LLM.",
   "type": "handler",
   "trigger": {
     "type": "manual"
   },
-  "scope": "payment-tracker"
+  "scope": "debtors-tracker"
 }
