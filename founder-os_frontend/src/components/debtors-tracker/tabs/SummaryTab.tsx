@@ -1,8 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { LiveCollection, SummaryRow } from "@/payment-tracker/types";
-import { formatINR, hasBillReference, isAdvancePayment, shortDate } from "@/payment-tracker/types";
+import type { LiveCollection, ReceiptAgeingSplit, SummaryRow } from "@/debtors-tracker/types";
+import { formatCompactINR, formatINR, isAdvanceReceipt, shortDate } from "@/debtors-tracker/types";
+import ReceiptAgeingMini from "../ReceiptAgeingMini";
 import { Card, EmptyState, MiniStat } from "../ui";
 
 const BUCKETS = [
@@ -40,14 +41,6 @@ function mondayOf(iso: string): string {
   const back = (d.getUTCDay() + 6) % 7;
   d.setUTCDate(d.getUTCDate() - back);
   return d.toISOString().slice(0, 10);
-}
-
-function compactINR(n: number): string {
-  if (n <= 0) return "";
-  if (n >= 1e7) return `₹${(n / 1e7).toFixed(1)}Cr`;
-  if (n >= 1e5) return `₹${(n / 1e5).toFixed(1)}L`;
-  if (n >= 1e3) return `₹${Math.round(n / 1e3)}k`;
-  return `₹${Math.round(n)}`;
 }
 
 function sumAmounts(rows: LiveCollection[]): number {
@@ -122,31 +115,72 @@ function MetricCard({
   );
 }
 
-function AdvanceStat({
-  label, value, count,
+type AdvanceBucketKey = "previousWeek" | "previousMonth" | "advanceWeek" | "advanceMonth";
+
+const ADVANCE_TONES: Record<AdvanceBucketKey, { surface: string; label: string; dot: string; chip: string }> = {
+  previousWeek: {
+    surface: "bg-gradient-to-br from-sky-50/90 via-white to-white dark:from-sky-950/30 dark:via-zinc-900/30 dark:to-zinc-900/10",
+    label: "text-sky-700 dark:text-sky-300",
+    dot: "bg-sky-500",
+    chip: "bg-sky-500/10 text-sky-700 dark:bg-sky-400/10 dark:text-sky-300",
+  },
+  previousMonth: {
+    surface: "bg-gradient-to-br from-emerald-50/90 via-white to-white dark:from-emerald-950/30 dark:via-zinc-900/30 dark:to-zinc-900/10",
+    label: "text-emerald-700 dark:text-emerald-300",
+    dot: "bg-emerald-500",
+    chip: "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300",
+  },
+  advanceWeek: {
+    surface: "bg-gradient-to-br from-amber-50/90 via-white to-white dark:from-amber-950/25 dark:via-zinc-900/30 dark:to-zinc-900/10",
+    label: "text-amber-700 dark:text-amber-300",
+    dot: "bg-amber-500",
+    chip: "bg-amber-500/10 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300",
+  },
+  advanceMonth: {
+    surface: "bg-gradient-to-br from-violet-50/90 via-white to-white dark:from-violet-950/30 dark:via-zinc-900/30 dark:to-zinc-900/10",
+    label: "text-violet-700 dark:text-violet-300",
+    dot: "bg-violet-500",
+    chip: "bg-violet-500/10 text-violet-700 dark:bg-violet-400/10 dark:text-violet-300",
+  },
+};
+
+function AdvanceQuadrant({
+  bucket, category, period, value, count, className = "",
 }: {
-  label: string;
+  bucket: AdvanceBucketKey;
+  category: string;
+  period: string;
   value: number;
   count: number;
+  className?: string;
 }) {
+  const tone = ADVANCE_TONES[bucket];
   return (
-    <div className="relative overflow-hidden rounded-xl border border-sky-100 bg-sky-50/30 px-3 py-2.5 dark:border-sky-900/50 dark:bg-sky-950/15">
-      <div className="absolute inset-y-0 left-0 w-1 bg-sky-500" />
-      <div className="pl-2">
-        <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-sky-700/80 dark:text-sky-300/80">{label}</div>
-        <div className="mt-1 text-lg font-semibold leading-none tabular-nums tracking-tight text-sky-700 dark:text-sky-300">{formatINR(value)}</div>
-        <div className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">{count} receipt{count === 1 ? "" : "s"}</div>
+    <div className={`flex min-h-[118px] flex-col p-3.5 ${tone.surface} ${className}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className={`text-[9px] font-semibold uppercase leading-tight tracking-[0.13em] ${tone.label}`}>{category}</div>
+        <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${tone.dot}`} />
+      </div>
+      <div className="mt-auto pt-4 text-[20px] font-semibold leading-none tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
+        {formatINR(value)}
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px]">
+        <span className="text-zinc-500 dark:text-zinc-400">{period}</span>
+        <span className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 font-medium ${tone.chip}`}>
+          {count} receipt{count === 1 ? "" : "s"}
+        </span>
       </div>
     </div>
   );
 }
 
 export default function SummaryTab({
-  summary, collections, asOfIST,
+  summary, collections, asOfIST, receiptAgeing,
 }: {
   summary: SummaryRow;
   collections: LiveCollection[];
   asOfIST: string;
+  receiptAgeing?: ReceiptAgeingSplit | null;
 }) {
   const s = summary;
   const bucketTotal = BUCKETS.reduce((sum, b) => sum + Math.max(0, s[b.key]), 0);
@@ -161,28 +195,28 @@ export default function SummaryTab({
     return d >= sevenDayStart && d <= asOfIST;
   }));
   const advanceSplit = {
-    billWeek: { amount: 0, count: 0 },
-    billMonth: { amount: 0, count: 0 },
-    noBillWeek: { amount: 0, count: 0 },
-    noBillMonth: { amount: 0, count: 0 },
+    previousWeek: { amount: 0, count: 0 },
+    previousMonth: { amount: 0, count: 0 },
+    advanceWeek: { amount: 0, count: 0 },
+    advanceMonth: { amount: 0, count: 0 },
   };
   for (const c of collections) {
-    if (!isAdvancePayment(c)) continue;
     const day = c.collectionDate || "";
     const amount = Number(c.amount) || 0;
     const inWeek = day >= weekStart && day <= asOfIST;
     const inMonth = day.startsWith(monthPrefix);
-    if (hasBillReference(c)) {
-      if (inWeek) { advanceSplit.billWeek.amount += amount; advanceSplit.billWeek.count++; }
-      if (inMonth) { advanceSplit.billMonth.amount += amount; advanceSplit.billMonth.count++; }
+    if (isAdvanceReceipt(c)) {
+      if (inWeek) { advanceSplit.advanceWeek.amount += amount; advanceSplit.advanceWeek.count++; }
+      if (inMonth) { advanceSplit.advanceMonth.amount += amount; advanceSplit.advanceMonth.count++; }
     } else {
-      if (inWeek) { advanceSplit.noBillWeek.amount += amount; advanceSplit.noBillWeek.count++; }
-      if (inMonth) { advanceSplit.noBillMonth.amount += amount; advanceSplit.noBillMonth.count++; }
+      if (inWeek) { advanceSplit.previousWeek.amount += amount; advanceSplit.previousWeek.count++; }
+      if (inMonth) { advanceSplit.previousMonth.amount += amount; advanceSplit.previousMonth.count++; }
     }
   }
   const today = sumAmounts(collections.filter((c) => c.collectionDate === asOfIST));
   const unmatched = collections.filter((c) => c.matchStatus === "none").length;
-  const advances = collections.filter(isAdvancePayment).length;
+  const advanceCount = collections.filter(isAdvanceReceipt).length;
+  const previousCount = collections.length - advanceCount;
   const latestCollectionDate = collections.reduce((latest, c) => {
     const d = c.collectionDate || "";
     return d > latest ? d : latest;
@@ -197,24 +231,13 @@ export default function SummaryTab({
     const amount = Number(c.amount) || 0;
     cur.total += amount;
     cur.count += 1;
-    if (isAdvancePayment(c)) {
+    if (isAdvanceReceipt(c)) {
       cur.advance += amount;
     } else {
       cur.regular += amount;
     }
   }
   const maxDaily = Math.max(1, ...days.map((d) => daily.get(d)?.total || 0));
-
-  const modeTotals = new Map<string, { amount: number; count: number }>();
-  for (const c of collections) {
-    const mode = (c.mode || "Unspecified").trim() || "Unspecified";
-    if (!modeTotals.has(mode)) modeTotals.set(mode, { amount: 0, count: 0 });
-    const cur = modeTotals.get(mode)!;
-    cur.amount += Number(c.amount) || 0;
-    cur.count += 1;
-  }
-  const modes = [...modeTotals.entries()].sort((a, b) => b[1].amount - a[1].amount);
-  const maxMode = Math.max(1, ...modes.map(([, v]) => v.amount));
 
   return (
     <div className="space-y-10">
@@ -328,28 +351,8 @@ export default function SummaryTab({
           <MetricCard label="Collected this month" value={formatINR(thisMonth)} hint={new Date(`${asOfIST}T00:00:00Z`).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" })} emphasis />
           <MetricCard label="Last 7 days" value={formatINR(last7)} hint={last7 === 0 ? "No receipts in this window" : "By collection date"} />
           <MetricCard label="Collected today" value={formatINR(today)} hint={shortDate(asOfIST)} />
-          <MetricCard label="Unmatched / advances" value={`${unmatched} / ${advances}`} hint="Unmatched receipts / advance payment receipts" accent={unmatched > 0 ? "amber" : "zinc"} />
+          <MetricCard label="Unmatched / advances" value={`${unmatched} / ${advanceCount}`} hint="Unmatched receipts / advance receipts" accent={unmatched > 0 ? "amber" : "zinc"} />
         </div>
-
-        <Card className="overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800/70">
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Advance payments</h3>
-              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                Advance receipts split by bill linkage · month to date and Monday → today
-              </p>
-            </div>
-            <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-medium text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-300">
-              {advances} advance receipt{advances === 1 ? "" : "s"}
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
-            <AdvanceStat label="Against bill · This week" value={advanceSplit.billWeek.amount} count={advanceSplit.billWeek.count} />
-            <AdvanceStat label="Against bill · This month" value={advanceSplit.billMonth.amount} count={advanceSplit.billMonth.count} />
-            <AdvanceStat label="Without bill · This week" value={advanceSplit.noBillWeek.amount} count={advanceSplit.noBillWeek.count} />
-            <AdvanceStat label="Without bill · This month" value={advanceSplit.noBillMonth.amount} count={advanceSplit.noBillMonth.count} />
-          </div>
-        </Card>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
           <Card className="overflow-hidden">
@@ -357,17 +360,17 @@ export default function SummaryTab({
               <div>
                 <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Daily collections</h3>
                 <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                  Last 14 days by collection date · regular receipts vs client advances
+                  Last 14 days by collection date · against previous bill vs advances
                   {latestCollectionDate ? ` · latest receipt ${shortDate(latestCollectionDate)}` : ""}
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
                   <span className="inline-flex items-center gap-1.5">
                     <span className="h-2 w-2 rounded-sm bg-emerald-500" />
-                    Collections
+                    Against previous bill
                   </span>
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-sm bg-sky-500" />
-                    Client advances
+                    <span className="h-2 w-2 rounded-sm bg-violet-500" />
+                    Advances
                   </span>
                 </div>
               </div>
@@ -389,15 +392,16 @@ export default function SummaryTab({
                     const advance = v?.advance || 0;
                     const height = total > 0 ? Math.max(6, (total / maxDaily) * 100) : 1.5;
                     const advanceShare = total > 0 ? (advance / total) * 100 : 0;
+                    const regularShare = Math.max(0, 100 - advanceShare);
                     const active = day === asOfIST;
                     return (
                       <div
                         key={day}
                         className="flex min-w-[38px] flex-1 flex-col items-center justify-end gap-1.5 self-stretch"
-                        title={`${shortDate(day)}: ${formatINR(total, false)} total · ${formatINR(regular, false)} collections · ${formatINR(advance, false)} advances · ${v?.count || 0} receipt${(v?.count || 0) === 1 ? "" : "s"}`}
+                        title={`${shortDate(day)}: ${formatINR(total, false)} total · ${formatINR(regular, false)} previous bill · ${formatINR(advance, false)} advances · ${v?.count || 0} receipt${(v?.count || 0) === 1 ? "" : "s"}`}
                       >
                         <span className={`text-[9px] tabular-nums ${total > 0 ? "font-medium text-zinc-500 dark:text-zinc-400" : "text-transparent"}`}>
-                          {compactINR(total) || "0"}
+                          {formatCompactINR(total) || "0"}
                         </span>
                         <div className={`flex w-full flex-1 items-end rounded-lg px-1 ${active ? "bg-emerald-50/80 ring-1 ring-inset ring-emerald-200/70 dark:bg-emerald-950/20 dark:ring-emerald-900/50" : "bg-zinc-50/80 dark:bg-zinc-950/30"}`}>
                           <div className="w-full overflow-hidden rounded-t-md" style={{ height: `${height}%` }}>
@@ -405,11 +409,11 @@ export default function SummaryTab({
                               <div className="flex h-full w-full flex-col-reverse">
                                 <div
                                   className={`${active ? "bg-gradient-to-t from-emerald-600 to-emerald-400" : "bg-gradient-to-t from-emerald-600/80 to-emerald-400/80 hover:from-emerald-600 hover:to-emerald-400"} transition-colors`}
-                                  style={{ height: `${100 - advanceShare}%` }}
+                                  style={{ height: `${regularShare}%` }}
                                 />
                                 {advance > 0 && (
                                   <div
-                                    className={`${active ? "bg-gradient-to-t from-sky-600 to-sky-400" : "bg-gradient-to-t from-sky-600/85 to-sky-400/85 hover:from-sky-600 hover:to-sky-400"} transition-colors`}
+                                    className={`${active ? "bg-gradient-to-t from-violet-600 to-violet-400" : "bg-gradient-to-t from-violet-600/85 to-violet-400/85 hover:from-violet-600 hover:to-violet-400"} transition-colors`}
                                     style={{ height: `${advanceShare}%` }}
                                   />
                                 )}
@@ -431,38 +435,52 @@ export default function SummaryTab({
           </Card>
 
           <Card className="flex flex-col overflow-hidden">
-            <div className="border-b border-zinc-100 px-5 py-4 dark:border-zinc-800/70">
-              <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Collection mix</h3>
-              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Receipts grouped by payment mode</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800/70">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Advance vs previous bill</h3>
+                <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  Receipts with “advance” in the remarks vs collections against previous bills, this week and this month
+                </p>
+              </div>
+              <span className="whitespace-nowrap rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-medium text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-300">
+                {previousCount} previous bill · {advanceCount} advance{advanceCount === 1 ? "" : "s"}
+              </span>
             </div>
 
-            <div className="flex-1 space-y-4 p-5">
-              {modes.length === 0 ? (
-                <p className="text-xs text-zinc-400 dark:text-zinc-500">No payment modes recorded yet.</p>
-              ) : (
-                modes.map(([mode, v]) => (
-                  <div key={mode} className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2 text-[11px]">
-                      <span className="truncate font-medium text-zinc-600 dark:text-zinc-300">{mode}</span>
-                      <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">{formatINR(v.amount)} · {v.count}</span>
-                    </div>
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-sky-500/80 to-emerald-500/80"
-                        style={{ width: `${(Math.max(0, v.amount) / maxMode) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                ))
-              )}
+            <div className="grid flex-1 grid-cols-2 border-t border-zinc-200/80 dark:border-zinc-800">
+              <AdvanceQuadrant
+                bucket="previousWeek"
+                category="Against Previous Bill"
+                period="This week"
+                value={advanceSplit.previousWeek.amount}
+                count={advanceSplit.previousWeek.count}
+                className="border-b border-r border-zinc-200/80 dark:border-zinc-800"
+              />
+              <AdvanceQuadrant
+                bucket="previousMonth"
+                category="Against Previous Bill"
+                period="This month"
+                value={advanceSplit.previousMonth.amount}
+                count={advanceSplit.previousMonth.count}
+                className="border-b border-zinc-200/80 dark:border-zinc-800"
+              />
+              <AdvanceQuadrant
+                bucket="advanceWeek"
+                category="Advance"
+                period="This week"
+                value={advanceSplit.advanceWeek.amount}
+                count={advanceSplit.advanceWeek.count}
+                className="border-r border-zinc-200/80 dark:border-zinc-800"
+              />
+              <AdvanceQuadrant
+                bucket="advanceMonth"
+                category="Advance"
+                period="This month"
+                value={advanceSplit.advanceMonth.amount}
+                count={advanceSplit.advanceMonth.count}
+              />
             </div>
-
-            <div className="grid grid-cols-2 gap-4 border-t border-zinc-100 bg-zinc-50/60 px-5 py-4 dark:border-zinc-800/70 dark:bg-zinc-950/30">
-              <MiniStat label="Unmatched" value={String(unmatched)} />
-              <MiniStat label="Advances" value={String(advances)} />
-              <MiniStat label="This month" value={formatINR(thisMonth, false)} />
-              <MiniStat label="Today" value={formatINR(today, false)} />
-            </div>
+            <ReceiptAgeingMini split={receiptAgeing} />
           </Card>
         </div>
       </section>

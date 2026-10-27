@@ -3,11 +3,11 @@
 import { useMemo, useState } from "react";
 import {
   parseCollectionsTsv, parseDebtorsTsv, type DebtorRow, type CollectionRow,
-} from "@/payment-tracker/parse";
-import { formatINR } from "@/payment-tracker/types";
+} from "@/debtors-tracker/parse";
+import { formatINR } from "@/debtors-tracker/types";
 
 /**
- * Paste-import modal for the Payment Tracker (Excel copy → TSV → preview →
+ * Paste-import modal for the Debtors Tracker (Excel copy → TSV → preview →
  * confirm). Preview runs the FRONTEND parser (mirror of the backend parser)
  * so what you see is exactly what the import will upsert.
  */
@@ -52,7 +52,7 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch(`/api/payment-tracker/import/${kind}`, {
+      const res = await fetch(`/api/debtors-tracker/import/${kind}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -61,10 +61,11 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
       if (!res.ok) throw new Error(body?.error || `Import failed (${res.status})`);
       const r = body?.report ?? {};
       const restored = r.restored ? `, ${r.restored} restored` : "";
+      const merged = r.merged ? `, ${r.merged} advance duplicate${r.merged === 1 ? "" : "s"} merged` : "";
       const conflicts = r.conflicts?.length ? `, ${r.conflicts.length} invoice-no conflicts flagged (not merged)` : "";
       const msg = kind === "debtors"
         ? `Debtors imported — ${r.created ?? 0} new, ${r.updated ?? 0} updated${restored}${r.rebooked ? `, ${r.rebooked} collections re-booked` : ""}${conflicts}${r.skippedLines ? `, ${r.skippedLines} lines skipped` : ""}.`
-        : `Collections imported — ${r.created ?? 0} new, ${r.duplicated ?? 0} duplicates skipped${restored}, ${r.matchedByInvoice ?? 0} by invoice no, ${r.matchedByCustomer ?? 0} by customer fallback, ${r.advances ?? 0} customer advances, ${r.unmatched ?? 0} unmatched${conflicts}.`;
+        : `Collections imported — ${r.created ?? 0} new, ${r.duplicated ?? 0} duplicates skipped${merged}${restored}, ${r.matchedByInvoice ?? 0} by invoice no, ${r.matchedByCustomer ?? 0} by customer fallback, ${r.advances ?? 0} customer advances, ${r.unmatched ?? 0} unmatched${conflicts}.`;
       onDone(msg);
     } catch (e: any) {
       setErr(e?.message ?? "Import failed");

@@ -1,5 +1,5 @@
 /**
- * Payment Tracker — client statement export helpers.
+ * Debtors Tracker — client statement export helpers.
  *
  * Pure formatting + browser download/print. The modal owns fetching; this
  * module never mutates data.

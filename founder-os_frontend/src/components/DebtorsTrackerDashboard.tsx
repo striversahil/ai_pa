@@ -3,31 +3,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import type { CustomerAgeingRow, LiveInvoice, PaymentTrackerPayload } from "@/payment-tracker/types";
-import { deleteCollection, resetPaymentTracker, runReminderDryRun } from "@/payment-tracker/api";
+import type { CustomerAgeingRow, LiveInvoice, DebtorsTrackerPayload } from "@/debtors-tracker/types";
+import { deleteCollection, resetDebtorsTracker, runReminderDryRun } from "@/debtors-tracker/api";
 import { TabBar } from "@/components/ui/TabBar";
-import ImportModal, { type ImportKind } from "./payment-tracker/ImportModal";
-import InvoiceEditModal from "./payment-tracker/InvoiceEditModal";
-import CustomerContactModal from "./payment-tracker/CustomerContactModal";
-import CustomerLedgerModal from "./payment-tracker/CustomerLedgerModal";
-import AccountsTab from "./payment-tracker/tabs/AccountsTab";
-import SummaryTab from "./payment-tracker/tabs/SummaryTab";
-import AgeingTab from "./payment-tracker/tabs/AgeingTab";
-import InvoicesTab from "./payment-tracker/tabs/InvoicesTab";
-import CollectionsTab from "./payment-tracker/tabs/CollectionsTab";
-import RemindersTab from "./payment-tracker/tabs/RemindersTab";
-import { Card } from "./payment-tracker/ui";
+import ImportModal, { type ImportKind } from "./debtors-tracker/ImportModal";
+import InvoiceEditModal from "./debtors-tracker/InvoiceEditModal";
+import CustomerContactModal from "./debtors-tracker/CustomerContactModal";
+import CustomerSituationModal from "./debtors-tracker/CustomerSituationModal";
+import CustomerLedgerModal from "./debtors-tracker/CustomerLedgerModal";
+import AccountsTab from "./debtors-tracker/tabs/AccountsTab";
+import SummaryTab from "./debtors-tracker/tabs/SummaryTab";
+import AgeingTab from "./debtors-tracker/tabs/AgeingTab";
+import InvoicesTab from "./debtors-tracker/tabs/InvoicesTab";
+import CollectionsTab from "./debtors-tracker/tabs/CollectionsTab";
+import LedgerTab from "./debtors-tracker/tabs/LedgerTab";
+import RemindersTab from "./debtors-tracker/tabs/RemindersTab";
+import { Card } from "./debtors-tracker/ui";
 
-type View = "summary" | "ageing" | "invoices" | "collections" | "reminders" | "accounts";
+type View = "summary" | "ageing" | "invoices" | "collections" | "ledger" | "reminders" | "accounts";
 
-export default function PaymentTrackerDashboard() {
+export default function DebtorsTrackerDashboard() {
   const { me } = useAuth();
   const canAccounts = !!me && (me.isAdmin || me.scopes.includes("accounts"));
 
-  const dash = useLiveDashboard<PaymentTrackerPayload>(
-    () => fetch("/api/payment-tracker/data", { cache: "no-store" }).then(async (r) => {
+  const dash = useLiveDashboard<DebtorsTrackerPayload>(
+    () => fetch("/api/debtors-tracker/data", { cache: "no-store" }).then(async (r) => {
       if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `HTTP ${r.status}`);
-      return r.json() as Promise<PaymentTrackerPayload>;
+      return r.json() as Promise<DebtorsTrackerPayload>;
     }),
   );
 
@@ -35,6 +37,7 @@ export default function PaymentTrackerDashboard() {
   const [importKind, setImportKind] = useState<ImportKind | null>(null);
   const [editing, setEditing] = useState<LiveInvoice | null>(null);
   const [contact, setContact] = useState<CustomerAgeingRow | null>(null);
+  const [situation, setSituation] = useState<CustomerAgeingRow | null>(null);
   const [ledgerCustomer, setLedgerCustomer] = useState<CustomerAgeingRow | null>(null);
   const [resetting, setResetting] = useState(false);
   const [reminderRunning, setReminderRunning] = useState(false);
@@ -50,6 +53,7 @@ export default function PaymentTrackerDashboard() {
       { key: "ageing", label: "Customer Ageing", icon: "📅", count: data?.summary.customerCount },
       { key: "invoices", label: "Invoices", icon: "🧾", count: data?.summary.invoiceCount },
       { key: "collections", label: "Collections", icon: "💰", count: data?.summary.collectionCount },
+      { key: "ledger", label: "Ledger", icon: "📖", count: data?.summary.customerCount },
       { key: "reminders", label: "Reminders", icon: "📲", count: data?.reminders.filter((r) => r.runDay === data.meta.reminderRunDay).length },
     ];
     if (canAccounts) base.push({ key: "accounts", label: "Accounts", icon: "⚙️" });
@@ -77,11 +81,11 @@ export default function PaymentTrackerDashboard() {
   }, [data?.collections]);
 
   const reset = async () => {
-    if (!window.confirm("Wipe ALL payment tracker data (invoices + collections + reminder previews)? This cannot be undone.")) return;
+    if (!window.confirm("Wipe ALL debtors tracker data (invoices + collections + reminder previews)? This cannot be undone.")) return;
     setResetting(true);
     try {
-      await resetPaymentTracker();
-      setToast("Payment tracker data cleared. Customer contacts were kept.");
+      await resetDebtorsTracker();
+      setToast("Debtors tracker data cleared. Customer contacts were kept.");
       dash.refresh();
     } catch (e: any) {
       setToast(e?.message ?? "Reset failed");
@@ -126,7 +130,7 @@ export default function PaymentTrackerDashboard() {
     <div className="mx-auto w-full max-w-[1500px] space-y-5 px-4 py-6 text-zinc-900 md:px-8 dark:text-zinc-100">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Payment Tracker</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Debtors Tracker</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             Debtors, ageing, live collections and reminder previews for the accounts desk and sales follow-up.
           </p>
@@ -186,13 +190,14 @@ export default function PaymentTrackerDashboard() {
           resetting={resetting}
         />
       )}
-      {data && activeView === "summary" && <SummaryTab summary={data.summary} collections={data.collections} asOfIST={data.meta.asOfIST} />}
+      {data && activeView === "summary" && <SummaryTab summary={data.summary} collections={data.collections} receiptAgeing={data.receiptAgeing} asOfIST={data.meta.asOfIST} />}
       {data && activeView === "ageing" && (
         <AgeingTab
           customers={data.customers}
           canAccounts={canAccounts}
           onGoToAccounts={() => setView("accounts")}
           onEditContact={setContact}
+          onEditSituation={setSituation}
           onFollowUp={followUp}
           onViewLedger={setLedgerCustomer}
         />
@@ -207,6 +212,9 @@ export default function PaymentTrackerDashboard() {
           onGoToAccounts={() => setView("accounts")}
           canDelete={canAccounts}
         />
+      )}
+      {data && activeView === "ledger" && (
+        <LedgerTab customers={data.customers} />
       )}
       {data && activeView === "reminders" && (
         <RemindersTab
@@ -247,6 +255,17 @@ export default function PaymentTrackerDashboard() {
         onClose={() => setContact(null)}
         onSaved={(msg) => {
           setContact(null);
+          setToast(msg);
+          dash.refresh();
+        }}
+      />
+
+      <CustomerSituationModal
+        key={situation?.customerKey ?? "none"}
+        customer={situation}
+        onClose={() => setSituation(null)}
+        onSaved={(msg) => {
+          setSituation(null);
           setToast(msg);
           dash.refresh();
         }}

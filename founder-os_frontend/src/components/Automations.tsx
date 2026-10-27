@@ -28,7 +28,7 @@ const SamarthOverviewDashboard = dynamic(() => import("./SamarthOverviewDashboar
 const SahilOverviewDashboard = dynamic(() => import("./SahilOverviewDashboard"), { ssr: false });
 const LinkedinDashboard = dynamic(() => import("./LinkedinDashboard"), { ssr: false });
 const AiUsageDashboard = dynamic(() => import("./AiUsageDashboard"), { ssr: false });
-const PaymentTrackerDashboard = dynamic(() => import("./PaymentTrackerDashboard"), { ssr: false });
+const DebtorsTrackerDashboard = dynamic(() => import("./DebtorsTrackerDashboard"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -121,9 +121,11 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
 
   const { pinnedList, restList } = useMemo(() => {
     const bySlug = new Map((automations.data ?? []).map(a => [a.slug, a]));
+    // Legacy pins saved before the Payment Tracker → Debtors Tracker rename.
+    const pinnedSlugs = pinned.map(slug => (slug === "payment-tracker" ? "debtors-tracker" : slug));
     return {
-      pinnedList: pinned.map(slug => bySlug.get(slug)).filter(Boolean) as Automation[],
-      restList: (automations.data ?? []).filter(a => !pinned.includes(a.slug)),
+      pinnedList: pinnedSlugs.map(slug => bySlug.get(slug)).filter(Boolean) as Automation[],
+      restList: (automations.data ?? []).filter(a => !pinnedSlugs.includes(a.slug)),
     };
   }, [(automations.data ?? []), pinned]);
 
@@ -136,7 +138,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
     if (selected === "telecalling") return <TelecallingDashboard />;
     if (selected === "accounts") return <AccountsDashboard />;
-    if (selected === "payment-tracker") return <PaymentTrackerDashboard />;
+    if (selected === "debtors-tracker" || selected === "payment-tracker") return <DebtorsTrackerDashboard />;
     if (selected === "digital-marketing") return <DigitalMarketingDashboard />;
     if (selected === "human-resources") return <HumanResourcesDashboard />;
     if (selected === "whatsapp-autopilot") return <AutopilotDashboard />;

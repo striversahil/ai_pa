@@ -202,8 +202,8 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
             <div>
               <label className={label}>Employee code</label>
               <div className={`${field} flex items-center justify-between gap-2 bg-zinc-50 text-zinc-500 dark:bg-zinc-900`}>
-                <span className="font-semibold text-zinc-700 dark:text-zinc-300">{editing ? (employee?.employeeCode || "—") : "Generated on save"}</span>
-                <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">BUI-001</span>
+                <span className="font-semibold text-zinc-700 dark:text-zinc-300">{editing ? (employee?.employeeCode || "—") : "Auto-generated"}</span>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">{editing ? "Locked" : "BUI-###"}</span>
               </div>
             </div>
             <div><label className={label}>Designation</label><input value={form.designation} onChange={(e) => set("designation", e.target.value)} className={field} /></div>

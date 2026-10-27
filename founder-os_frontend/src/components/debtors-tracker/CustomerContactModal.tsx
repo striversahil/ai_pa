@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { CustomerAgeingRow } from "@/payment-tracker/types";
-import { formatINR } from "@/payment-tracker/types";
-import { saveCustomerContact } from "@/payment-tracker/api";
+import type { CustomerAgeingRow } from "@/debtors-tracker/types";
+import { formatINR } from "@/debtors-tracker/types";
+import { saveCustomerContact } from "@/debtors-tracker/api";
 import { REGIONS } from "@/telecalling/regions";
 
 /** Accounts-only customer contact master (phone/email/region + WhatsApp opt-in). */

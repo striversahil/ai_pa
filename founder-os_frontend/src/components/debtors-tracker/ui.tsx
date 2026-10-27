@@ -1,9 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { LiveInvoice } from "@/payment-tracker/types";
+import type { LiveInvoice } from "@/debtors-tracker/types";
 
-/** Shared presentational primitives for the Payment Tracker dashboard. */
+/** Shared presentational primitives for the Debtors Tracker dashboard. */
 
 export function Card({ className = "", children }: { className?: string; children: ReactNode }) {
   return (
@@ -144,6 +144,7 @@ export function bucketBadge(b: LiveInvoice["bucket"]): string {
     case "D61": return "bg-amber-500/10 text-amber-700 dark:text-amber-400";
     case "D91": return "bg-orange-500/10 text-orange-700 dark:text-orange-400";
     case "D181": return "bg-rose-500/10 text-rose-600 dark:text-rose-400";
+    case "PAID": return "bg-teal-500/10 text-teal-700 dark:text-teal-300";
     default: return "bg-zinc-400/10 text-zinc-500 dark:text-zinc-400";
   }
 }
@@ -162,6 +163,58 @@ export function matchLabel(status: string): string {
     : status === "customer" ? "By customer (oldest open)"
     : status === "advance" ? "Customer advance"
     : "Unmatched";
+}
+
+/** Draggable table header: press anywhere on the header and drop on another. */
+export function SortableTh({
+  id, label, align = "left", dragging, over, onDragStart, onDragOver, onDrop, onDragEnd, ariaLabel,
+}: {
+  id: string;
+  label?: ReactNode;
+  align?: "left" | "right";
+  dragging: boolean;
+  over: boolean;
+  onDragStart: (id: string) => void;
+  onDragOver: (id: string) => void;
+  onDrop: (id: string) => void;
+  onDragEnd: () => void;
+  ariaLabel?: string;
+}) {
+  const isRight = align === "right";
+  return (
+    <th
+      draggable
+      title="Drag to reorder column"
+      aria-label={ariaLabel}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", id);
+        onDragStart(id);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        onDragOver(id);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDrop(id);
+      }}
+      onDragEnd={onDragEnd}
+      className={`${isRight ? THCR : THC} cursor-grab select-none transition-[background-color,opacity] ${
+        dragging ? "opacity-40" : ""
+      } ${over && !dragging ? "!bg-indigo-50 dark:!bg-indigo-950/50" : ""}`}
+    >
+      <span className={`flex items-center gap-1 ${isRight ? "justify-end" : "justify-start"}`}>
+        <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-zinc-300 dark:text-zinc-600" fill="currentColor" aria-hidden="true">
+          <circle cx="6" cy="4" r="1" /><circle cx="10" cy="4" r="1" />
+          <circle cx="6" cy="8" r="1" /><circle cx="10" cy="8" r="1" />
+          <circle cx="6" cy="12" r="1" /><circle cx="10" cy="12" r="1" />
+        </svg>
+        {label}
+      </span>
+    </th>
+  );
 }
 
 /** Table shell with sticky header + horizontal scroll. `dense` = Excel-like. */

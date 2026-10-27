@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Lightbox from "@/components/Lightbox";
+import PdfViewer from "@/components/PdfViewer";
 
 export type SoAttachmentKind = "invoice" | "lr" | "pod" | "other";
 
@@ -242,34 +243,7 @@ export default function SoAttachments({
       )}
 
       {viewer && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs"
-          onClick={() => setViewer(null)}
-        >
-          <button
-            className="absolute top-4 right-4 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-black/45 text-white transition-colors hover:text-zinc-400"
-            onClick={() => setViewer(null)}
-            type="button"
-            title="Close"
-          >
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-          <div
-            className="flex max-h-[92vh] max-w-[95vw] flex-col items-center gap-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <iframe
-              src={viewer.url}
-              title={viewer.name}
-              className="h-[85vh] w-[90vw] rounded-lg border border-white/10 bg-white"
-            />
-            <span className="rounded-full bg-black/50 px-3 py-1 text-xs font-semibold text-white">
-              {viewer.name}
-            </span>
-          </div>
-        </div>
+        <PdfViewer url={viewer.url} name={viewer.name} onClose={() => setViewer(null)} />
       )}
     </div>
   );

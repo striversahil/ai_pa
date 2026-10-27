@@ -596,6 +596,40 @@ label:has(input[type="radio"]) {
   animation: shimmer-slow 2.2s linear infinite;
 }
 
+/* ── Telecalling podium board (fos-*) ────────────────────────────────────────
+   Subtle, mount-once motion: staggered rise for tiles/rows, a slow shimmer for
+   the rank-1 edge, a soft pulse for the critical accent, and an indeterminate
+   bar while a refetch is in flight. All of it is disabled for
+   `prefers-reduced-motion` (and the whole board opts out via `.fos-board`). */
+@keyframes fos-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fos-sweep {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+@keyframes fos-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes fos-loading {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(360%); }
+}
+.fos-rise {
+  animation: fos-rise 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+.fos-sweep { animation: fos-sweep 3.2s ease-in-out infinite; }
+.fos-pulse { animation: fos-pulse 4s ease-in-out infinite; }
+.fos-loading-bar { animation: fos-loading 1.2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fos-rise, .fos-sweep, .fos-pulse, .fos-loading-bar { animation: none !important; }
+  .fos-board, .fos-board * { transition: none !important; }
+}
+
 /* Markdown (AI replies) */
 .md-text {
   font-size: 12px;

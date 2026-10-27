@@ -5,6 +5,7 @@ import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import DelegationTab from "./human-resources/DelegationTab";
 import EmployeesTab from "./human-resources/EmployeesTab";
+import HiringKitTab from "./human-resources/HiringKitTab";
 import AttendanceTab from "./human-resources/AttendanceTab";
 import LeavesTab from "./human-resources/LeavesTab";
 import PayrollTab from "./human-resources/PayrollTab";
@@ -13,7 +14,7 @@ import InventoryTab from "./human-resources/InventoryTab";
 import type { HrDashboardData } from "@/hr/types";
 import { currentMonthIST, monthLabel, shiftMonth } from "@/hr/format";
 
-type HrView = "employees" | "delegation" | "attendance" | "leaves" | "payroll" | "expenses" | "inventory";
+type HrView = "employees" | "hiring-kit" | "delegation" | "attendance" | "leaves" | "payroll" | "expenses" | "inventory";
 
 type HrTab = { key: HrView; label: string; icon: string };
 
@@ -22,6 +23,7 @@ const GROUPS: { label: string; tabs: HrTab[] }[] = [
     label: "People",
     tabs: [
       { key: "employees", label: "Employees", icon: "◉" },
+      { key: "hiring-kit", label: "Hiring kit", icon: "▣" },
       { key: "attendance", label: "Attendance", icon: "◷" },
       { key: "leaves", label: "Leaves & holidays", icon: "◒" },
       { key: "payroll", label: "Payroll", icon: "₹" },
@@ -51,6 +53,7 @@ export default function HumanResourcesDashboard() {
   const data = dash.data;
   const counts: Record<HrView, number | null> = {
     employees: data ? data.employees.activeCount : null,
+    "hiring-kit": null,
     delegation: data ? data.meta.counts.open : null,
     attendance: null,
     leaves: null,
@@ -124,6 +127,13 @@ export default function HumanResourcesDashboard() {
             </div>
           )}
           {view === "employees" && <EmployeesTab />}
+          {view === "hiring-kit" && (
+            <HiringKitTab
+              designations={(data?.roster ?? [])
+                .map((member) => String(member.designation ?? "").trim())
+                .filter(Boolean)}
+            />
+          )}
           {data && view === "delegation" && <DelegationTab data={data} onRefresh={() => dash.refresh()} onManageEmployees={() => setView("employees")} />}
           {view === "attendance" && <AttendanceTab />}
           {view === "leaves" && <LeavesTab />}

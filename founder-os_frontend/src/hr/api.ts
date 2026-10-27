@@ -1,4 +1,4 @@
-import type { HrSalaryPreview, HrSalaryTemplate } from "./types";
+import type { HrHiringPosition, HrPositionDoc, HrSalaryPreview, HrSalaryTemplate, HiringDocKind } from "./types";
 
 export async function readError(res: Response): Promise<string> {
   try {
@@ -61,4 +61,59 @@ export async function reapplySalaryPlan(memberId: string): Promise<unknown> {
   const res = await jsonRequest(`/api/human-resources/members/${memberId}/salary-plan/reapply`, "POST", {});
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
+}
+
+// ── Hiring kit ──────────────────────────────────────────────────────────────
+
+export async function listHiringPositions(): Promise<{ positions: HrHiringPosition[]; canManage: boolean }> {
+  const res = await fetch("/api/human-resources/hiring-positions", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  const body = await res.json();
+  return {
+    positions: Array.isArray(body?.positions) ? body.positions : [],
+    canManage: !!body?.canManage,
+  };
+}
+
+export async function createHiringPosition(name: string): Promise<HrHiringPosition> {
+  const res = await jsonRequest("/api/human-resources/hiring-positions", "POST", { name });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function importHiringPositions(names: string[]): Promise<{ created: number; skipped: number; positions: HrHiringPosition[] }> {
+  const res = await jsonRequest("/api/human-resources/hiring-positions/import", "POST", { names });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function renameHiringPosition(id: string, name: string): Promise<HrHiringPosition> {
+  const res = await jsonRequest(`/api/human-resources/hiring-positions/${id}`, "PATCH", { name });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function deleteHiringPosition(id: string): Promise<void> {
+  const res = await jsonRequest(`/api/human-resources/hiring-positions/${id}`, "DELETE");
+  if (!res.ok) throw new Error(await readError(res));
+}
+
+/** Adds a JD/SOP PDF to a position (roles can hold several of each). */
+export async function uploadPositionDoc(positionId: string, kind: HiringDocKind, file: File, title?: string): Promise<HrPositionDoc> {
+  const fd = new FormData();
+  fd.append("kind", kind);
+  if (title && title.trim()) fd.append("title", title.trim());
+  fd.append("file", file);
+  const res = await fetch(`/api/human-resources/hiring-positions/${positionId}/docs`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  const body = await res.json();
+  return body?.doc as HrPositionDoc;
+}
+
+export async function deletePositionDoc(id: string): Promise<void> {
+  const res = await jsonRequest(`/api/human-resources/position-docs/${id}`, "DELETE");
+  if (!res.ok) throw new Error(await readError(res));
 }

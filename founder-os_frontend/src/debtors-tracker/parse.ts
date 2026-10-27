@@ -1,10 +1,10 @@
 /**
- * Payment Tracker — pure TSV paste parsers. NO framework/DB imports.
+ * Debtors Tracker — pure TSV paste parsers. NO framework/DB imports.
  * Excel's Excel-clipboard is tab-separated; values keep ₹ and Indian-digit
  * grouping; "—" (em dash) means blank; amounts in parentheses are negatives
  * (debit notes). Dates use mixed DD/Mon/YYYY, DD-Mon-YY forms.
  *
- * MIRROR: founder-os_backend/src/automations/payment-tracker/parse.ts —
+ * MIRROR: founder-os_backend/src/automations/debtors-tracker/parse.ts —
  * authoritative import parser. Keep the two parse functions + number/date
  * helpers semantically identical (preview here vs import there must agree).
  */

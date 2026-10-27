@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { CustomerAgeingRow, LiveReminder, PaymentTrackerPayload } from "@/payment-tracker/types";
-import { formatINR, shortDate } from "@/payment-tracker/types";
+import type { CustomerAgeingRow, LiveReminder, DebtorsTrackerPayload } from "@/debtors-tracker/types";
+import { formatINR, shortDate } from "@/debtors-tracker/types";
 import { Card, EmptyState, MiniStat, SearchInput, TD, TDR, TH, THR, TableShell } from "../ui";
 
 function statusStyle(status: string): string {
@@ -21,7 +21,7 @@ export default function RemindersTab({
 }: {
   reminders: LiveReminder[];
   customers: CustomerAgeingRow[];
-  meta: PaymentTrackerPayload["meta"];
+  meta: DebtorsTrackerPayload["meta"];
   canAccounts: boolean;
   onRun: () => void;
   running: boolean;

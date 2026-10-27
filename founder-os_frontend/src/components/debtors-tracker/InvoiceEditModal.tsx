@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { LiveInvoice } from "@/payment-tracker/types";
-import { formatINR } from "@/payment-tracker/types";
-import { patchInvoice, deleteInvoice, FOLLOW_UP_FIELDS, type InvoiceEditableField } from "@/payment-tracker/api";
+import type { LiveInvoice } from "@/debtors-tracker/types";
+import { formatINR } from "@/debtors-tracker/types";
+import { patchInvoice, deleteInvoice, FOLLOW_UP_FIELDS, type InvoiceEditableField } from "@/debtors-tracker/api";
 import { REGIONS } from "@/telecalling/regions";
 
 interface Props {

@@ -2,7 +2,7 @@
 
 /**
  * Shared horizontal tab bar used by automation dashboards (Accounts, Digital
- * Marketing, Telecalling, Payment Tracker). One visual contract: wrapping row
+ * Marketing, Telecalling, Debtors Tracker). One visual contract: wrapping row
  * of rounded pills, indigo active state, optional icon + count.
  */
 export type TabBarItem<K extends string = string> = {

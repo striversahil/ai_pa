@@ -405,6 +405,36 @@ export interface HrInventorySnapshot {
   summary: HrInventorySummary;
 }
 
+// ── Hiring kit (any number of JD / SOP PDFs per position) ───────────────────
+export const HIRING_DOC_KINDS = ["jd", "sop"] as const;
+export type HiringDocKind = (typeof HIRING_DOC_KINDS)[number];
+export const HIRING_DOC_LABEL: Record<HiringDocKind, string> = {
+  jd: "Job description",
+  sop: "SOP",
+};
+
+export interface HrPositionDoc {
+  id: string;
+  kind: HiringDocKind;
+  title: string;
+  fileName: string;
+  mime: string;
+  size: number;
+  uploadedBy: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  /** Auth-gated inline PDF URL (`/api/human-resources/position-docs/:id/file`). */
+  url: string;
+}
+
+export interface HrHiringPosition {
+  id: string;
+  name: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  docs: Record<HiringDocKind, HrPositionDoc[]>;
+}
+
 export interface HrDashboardData {
   meta: {
     today: string;

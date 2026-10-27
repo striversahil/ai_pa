@@ -38,7 +38,9 @@ function AppInner() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const { route, navigate } = useHashRoute();
-  const sub = route.view === "automations" ? route.sub : null;
+  const rawSub = route.view === "automations" ? route.sub : null;
+  // Legacy dashboard slug alias (Payment Tracker → Debtors Tracker).
+  const sub = rawSub === "payment-tracker" ? "debtors-tracker" : rawSub;
   const activeView: ViewType =
     (["briefing", "whatsapp", "automations", "chat", "admin", "email", "settings"] as ViewType[]).includes(route.view as ViewType)
       ? (route.view as ViewType)

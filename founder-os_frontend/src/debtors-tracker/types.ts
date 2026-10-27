@@ -1,8 +1,26 @@
-// Payment Tracker — frontend payload types + display helpers.
-// MIRROR: founder-os_backend/src/automations/payment-tracker/types.ts — keep
+// Debtors Tracker — frontend payload types + display helpers.
+// MIRROR: founder-os_backend/src/automations/debtors-tracker/types.ts — keep
 // shapes + bucket semantics identical (backend is authoritative).
 
 export type Bucket = "NOT_DUE" | "D0" | "D31" | "D61" | "D91" | "D181";
+
+export type ReceiptBucketKey = Bucket | "ADVANCE";
+
+export interface ReceiptBucketCell {
+  amount: number;
+  count: number;
+}
+
+export interface ReceiptBucketWindow {
+  total: number;
+  count: number;
+  buckets: Record<ReceiptBucketKey, ReceiptBucketCell>;
+}
+
+export interface ReceiptAgeingSplit {
+  week: ReceiptBucketWindow;
+  month: ReceiptBucketWindow;
+}
 
 export interface LiveInvoice {
   id: string;
@@ -50,6 +68,11 @@ export interface CustomerAgeingRow {
   region: string;
   whatsappOptIn: boolean;
   notes: string;
+  /** CRM follow-up state ('' = unset) + free-text remarks. Sales-editable. */
+  situation: string;
+  situationRemarks: string;
+  situationUpdatedAt: string | null;
+  situationUpdatedBy: string;
   lastReminderAt: string | null;
   lastReminderStatus: string;
   lastFollowUpDate: string | null;
@@ -65,6 +88,8 @@ export interface CustomerAgeingRow {
   advanceReceived: number;
   netDue: number;
   invoiceCount: number;
+  /** Latest invoice date across all of the customer's invoices (null = none dated). */
+  lastInvoiceDate: string | null;
 }
 
 export interface LiveCollection {
@@ -161,11 +186,12 @@ export interface InvoiceNoConflict {
   customers: string[];
 }
 
-export interface PaymentTrackerPayload {
+export interface DebtorsTrackerPayload {
   summary: SummaryRow;
   customers: CustomerAgeingRow[];
   invoices: LiveInvoice[];
   collections: LiveCollection[];
+  receiptAgeing: ReceiptAgeingSplit;
   reminders: LiveReminder[];
   meta: {
     asOfIST: string;
@@ -185,8 +211,34 @@ export const BUCKET_LABELS: Record<Bucket | "PAID", string> = {
   D61: "61–90 Days",
   D91: "91–180 Days",
   D181: "Above 180",
-  PAID: "Paid / Advance",
+  PAID: "Paid",
 };
+
+/** CRM situation dropdown for the Customer Ageing tab (mirror of backend situation.ts). */
+export const CUSTOMER_SITUATIONS = [
+  "NOT_ANSWERING",
+  "BUSY",
+  "CALLBACK",
+  "PROMISED_TO_PAY",
+  "DISPUTED",
+  "PAID_CLOSED",
+] as const;
+
+export type CustomerSituation = (typeof CUSTOMER_SITUATIONS)[number];
+
+export const CUSTOMER_SITUATION_LABELS: Record<CustomerSituation, string> = {
+  NOT_ANSWERING: "Not answering",
+  BUSY: "Busy",
+  CALLBACK: "Callback",
+  PROMISED_TO_PAY: "Promised to pay",
+  DISPUTED: "Disputed",
+  PAID_CLOSED: "Paid / Closed",
+};
+
+export function situationLabel(situation: string): string {
+  const key = String(situation || "").trim().toUpperCase();
+  return (CUSTOMER_SITUATION_LABELS as Record<string, string>)[key] ?? "";
+}
 
 const inrFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 
@@ -199,15 +251,18 @@ export function formatINR(n: number | null | undefined, dashZero = true): string
   return n < 0 ? `(₹\u00A0${s})` : `₹\u00A0${s}`;
 }
 
-/** Chart/type classification: the receipt remarks mention an advance. */
-export function isAdvancePayment(c: Pick<LiveCollection, "remarks">): boolean {
-  return /advance/i.test(String(c.remarks || ""));
+/** Compact ₹1.2L / ₹45k label for miniature charts. */
+export function formatCompactINR(n: number | null | undefined): string {
+  if (n == null || !isFinite(n) || n <= 0) return "";
+  if (n >= 1e7) return `₹${(n / 1e7).toFixed(1)}Cr`;
+  if (n >= 1e5) return `₹${(n / 1e5).toFixed(1)}L`;
+  if (n >= 1e3) return `₹${Math.round(n / 1e3)}k`;
+  return `₹${Math.round(n)}`;
 }
 
-/** True when an advance receipt carries a real bill/invoice reference. */
-export function hasBillReference(c: Pick<LiveCollection, "invoiceNo">): boolean {
-  const no = String(c.invoiceNo || "").trim();
-  return no !== "" && !/^advance\b/i.test(no);
+/** Dashboard classification only: remarks contain the word "advance". */
+export function isAdvanceReceipt(c: Pick<LiveCollection, "remarks">): boolean {
+  return /\badvance\b/i.test(String(c.remarks || ""));
 }
 
 export function formatDays(days: number | null): string {
@@ -224,7 +279,7 @@ export function shortDate(iso: string | null): string {
   return `${m[3]}/${months[Number(m[2]) - 1]}/${m[1].slice(2)}`;
 }
 
-/** MIRROR: backend src/automations/payment-tracker/types.ts */
+/** MIRROR: backend src/automations/debtors-tracker/types.ts */
 export function normalizeCustomerName(name: string): string {
   return String(name || "").replace(/\s+/g, " ").trim();
 }
