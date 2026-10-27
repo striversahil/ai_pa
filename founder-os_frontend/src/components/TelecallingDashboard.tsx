@@ -1631,58 +1631,6 @@ export default function TelecallingDashboard() {
                 unlinked={dash.data?.unlinked ?? null}
                 onOpenUnlinked={() => { setRegionFilter("UNMAPPED"); setView("conversion"); }}
               />
-
-              {/* Informational pre-warning over the open pipeline. Estimates stay
-                  region-owned — the dated next step protects the deal. */}
-              {dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
-                <section className={`${CARD} p-3 md:p-4`}>
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="font-heading text-sm font-bold text-rose-600 dark:text-rose-400">
-                      {selfAgentId ? "Your region — needs attention" : "At risk — needs attention"}
-                    </h3>
-                    <span className="text-xs text-[var(--text-tertiary)]">
-                      <span className="font-mono font-bold text-rose-600 dark:text-rose-400">{fmtLakh(dash.data.risk.valueAtRisk)}</span> at risk ·{" "}
-                      <span className="font-bold text-rose-600 dark:text-rose-400">{dash.data.risk.counts.red} red</span> ·{" "}
-                      <span className="font-bold text-rose-600 dark:text-rose-400">{dash.data.risk.counts.zombie} zombie</span>
-                    </span>
-                  </div>
-                  <div className="grid gap-1.5 md:grid-cols-2">
-                    {dash.data.risk.atRisk.map((r) => (
-                      <div
-                        key={r.estimateId}
-                        className="rounded-lg border border-rose-500/20 bg-[var(--bg-card)] px-2.5 py-1.5"
-                        title={r.snatchReason ?? r.reasoning ?? undefined}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="truncate text-[13px] font-semibold text-[var(--text-primary)]">{r.customerName || "—"}</div>
-                            <div className="truncate font-mono text-[11px] text-[var(--text-tertiary)]">
-                              {r.estimateNumber || r.estimateId} · {r.telecallerName || "—"}{" "}
-                              <OrgBadge orgId={(r as any).organizationId} orgs={teleOrgs} />
-                            </div>
-                          </div>
-                          <div className="shrink-0 space-y-0.5 text-right">
-                            <div className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400">{`₹${fmtNum(r.total)}`}</div>
-                            <div className="flex justify-end gap-1">
-                              <StaleChip compact staleHours={r.staleHours} />
-                              <SnatchChip compact risk={r.risk} />
-                            </div>
-                          </div>
-                        </div>
-                        {(r.snatchReason || r.reasoning) && (
-                          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-rose-600/80 dark:text-rose-400/70">
-                            {r.snatchReason ?? r.reasoning}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <p className="mt-2 text-[11px] text-[var(--text-tertiary)]">
-                    Red = the latest AI verdict found no meaningful update · Zombie = no comment for over 3 days. Estimates stay
-                    region-owned; use the dated next step to protect the deal.
-                  </p>
-                </section>
-              )}
             </div>
           )}
           {view === "conversion" && (

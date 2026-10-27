@@ -8,7 +8,7 @@
 
 import React from "react";
 import {
-  CalendarDays, Info, PhoneCall, RotateCcw, Sparkles, Target, Trophy, TriangleAlert, Users,
+  CalendarDays, Info, PhoneCall, RotateCcw, Sparkles, Target, Trophy, Users,
 } from "lucide-react";
 import type { BoardMeta } from "@/telecalling/view-types";
 import { fmtDate } from "@/telecalling/format";
@@ -100,7 +100,6 @@ export function BoardHeader({ meta, period, periods, onPeriod, loading = false, 
                   className="inline-flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300"
                   title="Enquiries with no roster match — MIS should fix attribution"
                 >
-                  <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
                   {unattributed} unattributed
                 </span>
               )}

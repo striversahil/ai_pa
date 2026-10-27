@@ -9,7 +9,7 @@
 // total. Activity (calls / leads / talk), risk pips and points only.
 
 import React from "react";
-import { ChevronDown, TriangleAlert, UserRound, Zap } from "lucide-react";
+import { ChevronDown, UserRound, Zap } from "lucide-react";
 import type { BoardStaff } from "@/telecalling/view-types";
 import { fmtNum, fmtTalk, initials } from "@/telecalling/format";
 import { TRAFFIC_TONE } from "@/telecalling/tone";
@@ -38,8 +38,6 @@ function MicroBar({ pct, tone }: { pct: number; tone: "green" | "amber" | "red" 
 }
 
 export function StaffRail({ staff, expandedId, onToggle, renderPipeline, regionId, regionName }: StaffRailProps) {
-  const atRisk = staff.reduce((n, s) => n + Number(s.risk?.atRisk ?? 0) + Number(s.risk?.zombie ?? 0), 0);
-
   if (staff.length === 0) {
     return (
       <div className="border-t border-[var(--border-card)] px-2.5 py-1.5 md:px-3">
@@ -57,17 +55,11 @@ export function StaffRail({ staff, expandedId, onToggle, renderPipeline, regionI
     <div className="border-t border-[var(--border-card)] px-2.5 py-1.5 md:px-3">
       <div className="mb-0.5 flex items-center justify-between gap-2 px-1">
         <span className={LABEL}>Telecallers · {staff.length}</span>
-        {atRisk > 0 && (
-          <span className={`${PILL} border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300`} title="Open estimates with no meaningful update, or silent for over 3 days">
-            <TriangleAlert className="h-3 w-3" aria-hidden="true" /> {atRisk} need attention
-          </span>
-        )}
       </div>
 
       <ul className="relative space-y-0.5 before:absolute before:bottom-2 before:left-[15px] before:top-2 before:w-px before:bg-[var(--border-card)]">
         {staff.map((s, i) => {
           const open = expandedId === s.id;
-          const riskCount = Number(s.risk?.atRisk ?? 0) + Number(s.risk?.zombie ?? 0);
           const isField = s.type === "field_staff";
 
           return (
@@ -93,12 +85,6 @@ export function StaffRail({ staff, expandedId, onToggle, renderPipeline, regionI
                   )}
                   {isField && (
                     <span className={`${PILL} border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300`}>Field</span>
-                  )}
-                  {riskCount > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-rose-600 dark:text-rose-400" title="Red (no meaningful update) / zombie (silent > 3 days)">
-                      <TriangleAlert className="h-3 w-3" aria-hidden="true" />
-                      {riskCount}
-                    </span>
                   )}
                 </span>
 

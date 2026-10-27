@@ -14,7 +14,7 @@
 
 import React from "react";
 import {
-  BookOpen, ChevronDown, Receipt, Target, TriangleAlert, Users,
+  BookOpen, ChevronDown, Receipt, Target, Users,
 } from "lucide-react";
 import type { BoardRegion, BoardStaff } from "@/telecalling/view-types";
 import type { TargetStatus } from "@/telecalling/targets";
@@ -82,7 +82,6 @@ export function PodiumRow({
   const weekAccepted = t?.weekAccepted ?? 0;
   const weekPct = weekDue > 0 ? Math.max(0, Math.min(100, (weekAccepted / weekDue) * 100)) : 0;
   const startDay = t?.weeks?.[0]?.weekStart ?? targetStart ?? "";
-  const riskCount = staff.reduce((n, s) => n + Number(s.risk?.atRisk ?? 0) + Number(s.risk?.zombie ?? 0), 0);
 
   return (
     <article
@@ -136,12 +135,6 @@ export function PodiumRow({
                 <Users className="h-2.5 w-2.5" aria-hidden="true" />
                 {staff.length}
               </span>
-              {riskCount > 0 && (
-                <span className="inline-flex items-center gap-0.5 font-bold text-rose-600 dark:text-rose-400" title="Open estimates with no meaningful update, or silent > 3 days">
-                  <TriangleAlert className="h-2.5 w-2.5" aria-hidden="true" />
-                  {riskCount}
-                </span>
-              )}
             </div>
           </div>
         </div>
