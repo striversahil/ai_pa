@@ -8,6 +8,17 @@ import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
 import { KNOWN_ORG_LABELS } from "./zoho/orgs";
 import { REGIONS, type RegionId } from "@/telecalling/regions";
+// Sales-leaderboard board pieces (region podium, KPI strip, holding pens).
+// Mirror: `src/telecalling/view-types.ts` documents the narrow shapes these
+// components render; adapters below feed them from the Worker payload.
+import { BoardHeader } from "@/components/telecalling/BoardHeader";
+import { MetricStrip } from "@/components/telecalling/MetricStrip";
+import { PodiumRow } from "@/components/telecalling/PodiumRow";
+import { HoldingPens } from "@/components/telecalling/HoldingPens";
+import { CARD } from "@/components/telecalling/surface";
+import type { BoardBucket, BoardRegion, BoardStaff } from "@/telecalling/view-types";
+import type { RegionTarget, TeamTarget } from "@/telecalling/targets";
+import { DAILY_REGION_TARGET } from "@/telecalling/targets";
 
 interface LeaderRow {
   id: string;
@@ -85,7 +96,18 @@ interface RegionInfo {
   points: number;
   kra: { connectedTarget: number; connectedPct: number; connectedStatus: "green" | "amber" | "red"; leadsTarget: number; leadsPct: number; leadsStatus: "green" | "amber" | "red" };
   staff: LeaderRow[];
+  /** Leaderboard position by target attainment (server-computed). */
+  rank?: number;
+  /** Same money as `won` plus slab points (accepted-estimate source). */
+  accepted?: { count: number; value: number; points: number };
+  /** The closed estimates behind `won`, newest acceptance first (capped). */
+  acceptedItems?: BoardClosedItemLite[];
+  /** ₹1L/day target + weekly carry-forward ledger (server-computed). */
+  target?: RegionTarget | null;
 }
+
+/** One accepted estimate behind a region's `Won` figure (BoardClosedItem). */
+type BoardClosedItemLite = NonNullable<BoardRegion["acceptedItems"]>[number];
 
 /** Open estimate with no region ('' — link it so region ownership works). */
 interface UnmappedItem {
@@ -110,8 +132,27 @@ interface UnmappedAcceptedItem {
 }
 
 interface DashData {
-  meta: { day: string; requestedDay?: string; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null; canManage?: boolean; taxonomy?: { id: string; name: string; tl: string; states: string[] }[]; epoch?: string | null; viewer?: { staffId: string | null; name: string | null; region: string | null; tlLevel: string | null } | null };
-  kpi: { assigned: number; won: number; conversionRate: number; pipelineValue: number; acceptedValue?: number; callsConnected: number; leadsGenerated: number; talkTimeSec: number };
+  meta: { day: string; requestedDay?: string; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null; canManage?: boolean; taxonomy?: { id: string; name: string; tl: string; states: string[] }[]; epoch?: string | null; viewer?: { staffId: string | null; name: string | null; region: string | null; tlLevel: string | null } | null; teamTarget?: TeamTarget | null; };
+  /** Winning-value buckets that can never win a region target (server-computed). */
+  direct?: BoardBucket | null;
+  unlinked?: BoardBucket | null;
+  kpi: {
+    assigned: number;
+    won: number;
+    conversionRate: number;
+    pipelineValue: number;
+    acceptedValue?: number;
+    callsConnected: number;
+    leadsGenerated: number;
+    talkTimeSec: number;
+    /** Reconciliation slices: regions vs. direct (Sales Head) vs. unlinked. */
+    regionWon?: number;
+    regionValue?: number;
+    directWon?: number;
+    directValue?: number;
+    unlinkedWon?: number;
+    unlinkedValue?: number;
+  };
   leaderboard: LeaderRow[];
   recent: any[];
   /** Per-day × per-agent MIS breakdown (only when fetched with ?daily=1). */
@@ -783,6 +824,45 @@ function adaptLeaderRow(s: any, region: any, targets: any): LeaderRow {
   };
 }
 
+/** Payload staff row → the narrow `BoardStaff` shape the podium renders.
+ *  The Worker flattens staff stats per region; the board wants the nested
+ *  conversion/generation view, so the split happens here (adapter only — every
+ *  number still comes from the server payload). */
+function adaptBoardStaff(s: any, region: any, riskByStaff: Map<string, number>): BoardStaff {
+  const connectedTarget = Number(region?.kra?.connectedTarget ?? 0);
+  const leadsTarget = Number(region?.kra?.leadsTarget ?? 0);
+  const callsConnected = Number(s?.callsConnected ?? 0);
+  const leadsGenerated = Number(s?.leadsGenerated ?? 0);
+  const connectedPct = connectedTarget > 0 ? Math.round((callsConnected / connectedTarget) * 100) : 0;
+  const leadsPct = leadsTarget > 0 ? Math.round((leadsGenerated / leadsTarget) * 100) : 0;
+  return {
+    id: String(s?.id ?? ""),
+    name: String(s?.name ?? ""),
+    tlLevel: String(s?.tlLevel ?? ""),
+    type: String(s?.type ?? "telecaller"),
+    score: Number(s?.score ?? 0),
+    region: String(s?.region ?? region?.id ?? ""),
+    regionName: String(region?.name ?? ""),
+    conversion: {
+      assigned: Number(region?.open?.count ?? 0),
+      won: Number(s?.won ?? 0),
+      acceptedValue: Number(s?.closedValue ?? 0),
+    },
+    generation: {
+      callsConnected,
+      leadsGenerated,
+      talkTimeSec: Number(s?.talkTimeSec ?? 0),
+      connectedTarget,
+      connectedPct,
+      connectedStatus: kraStatus(connectedPct),
+      leadsTarget,
+      leadsPct,
+      leadsStatus: kraStatus(leadsPct),
+    },
+    risk: { atRisk: riskByStaff.get(String(s?.id ?? "")) ?? 0, zombie: 0 },
+  };
+}
+
 function adaptDashData(d: any): DashData {
   const regions: RegionInfo[] = Array.isArray(d?.regions) ? d.regions : [];
   const targets = d?.meta?.targets ?? {};
@@ -830,6 +910,12 @@ function adaptDashData(d: any): DashData {
       callsConnected: Number(kpi.callsConnected ?? 0),
       leadsGenerated: Number(kpi.leadsGenerated ?? 0),
       talkTimeSec: Number(kpi.talkTimeSec ?? 0),
+      regionWon: Number(kpi.regionWon ?? 0),
+      regionValue: Number(kpi.regionValue ?? 0),
+      directWon: Number(kpi.directWon ?? 0),
+      directValue: Number(kpi.directValue ?? 0),
+      unlinkedWon: Number(kpi.unlinkedWon ?? 0),
+      unlinkedValue: Number(kpi.unlinkedValue ?? 0),
     },
     leaderboard,
     recent: d?.recent ?? [],
@@ -850,6 +936,8 @@ function adaptDashData(d: any): DashData {
       atRisk,
     },
     regions,
+    direct: d?.direct ?? null,
+    unlinked: d?.unlinked ?? null,
     unmappedStaff: (d?.unmappedStaff ?? []).map((s: any) => adaptLeaderRow(s, null, targets)),
     unmapped: d?.unmapped ?? null,
     unmappedAccepted: d?.unmappedAccepted ?? null,
@@ -1061,10 +1149,7 @@ export default function TelecallingDashboard() {
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rosterError, setRosterError] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<"score" | "won" | "callsConnected" | "leadsGenerated">("score");
   const [regionFilter, setRegionFilter] = useState<string | null>(null);
-  // Dashboard leaderboard scope: "ALL" | R1–R4 | "UNMAPPED".
-  const [regionPick, setRegionPick] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // Call-tag filters (Sheets-style): Not answering / Busy / Callback (+ due-by
   // date for callbacks). Pure client-side over the loaded follow-ups.
@@ -1353,38 +1438,92 @@ export default function TelecallingDashboard() {
   const showRisk = true;
 
   const kpi = dash.data?.kpi;
-  const board = [...(dash.data?.leaderboard ?? [])];
-  const activeBoard = board;
   // Lead Conversion board — driven by ITS OWN convDash/period, not the dashboard.
   const convBoard = [...(convDash.data?.leaderboard ?? [])];
-  const convActiveBoard = convBoard;
   // Lead Generation board — driven by its OWN genDash/period, not the leaderboard period.
   const genBoard = [...(genDash.data?.leaderboard ?? [])];
   const genActiveBoard = genBoard;
   // Region cards drive the Lead Conversion tabs (R1–R4 + Unmapped for managers).
   const regionBoard = convDash.data?.regions ?? dash.data?.regions ?? [];
   const unmappedBlock = convDash.data?.unmapped ?? dash.data?.unmapped ?? null;
-  // Est. Conv ₹ = ACCEPTED actuals in the selected period. Prefers the
-  // server-side team total so it matches meta.conversionTarget.value exactly.
-  const teamAccepted = kpi?.acceptedValue ?? activeBoard.reduce((s, r) => s + (r.conversion.acceptedValue ?? 0), 0);
-  const conv = convTier(teamAccepted, dash.data?.meta?.conversionTarget ?? null);
   // Region performance — dashboard period, regions own the estimates. Full
   // close credits roll up into the region totals automatically.
   const dashRegions = dash.data?.regions ?? [];
-  const regionSorted = [...dashRegions].sort((a, b) => b.points - a.points || b.won.value - a.won.value || b.open.value - a.open.value);
-  const regionTopPoints = regionSorted[0]?.points ?? 0;
-  const regionLeader = regionSorted[0]?.id ?? null;
-  // Individual performance — optionally scoped to one region (or Unmapped).
-  const scopedBoard = regionPick === "ALL" ? activeBoard : activeBoard.filter((r) => regionKey(r.region) === regionPick);
-  const sorted = [...scopedBoard].sort((a, b) => {
-    if (sortKey === "score") return b.score - a.score;
-    if (sortKey === "won") return b.conversion.won - a.conversion.won;
-    if (sortKey === "callsConnected") return b.generation.callsConnected - a.generation.callsConnected;
-    return b.generation.leadsGenerated - a.generation.leadsGenerated;
-  });
 
   const rosterRows: RosterRow[] = roster.data?.telecallers ?? [];
-  const leaderScore = sorted[0]?.score ?? 0;
+
+  // ── Sales-leaderboard board state (podium drawers) ─────────────────────
+  const [openWeeks, setOpenWeeks] = useState<string | null>(null);
+  const [closedOpen, setClosedOpen] = useState<string | null>(null);
+  const teamTarget = (dash.data?.meta?.teamTarget ?? null) as TeamTarget | null;
+  const riskByStaff = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of dash.data?.risk?.atRisk ?? []) {
+      const id = (r as any).telecallerId ? String((r as any).telecallerId) : "";
+      if (id) m.set(id, (m.get(id) ?? 0) + 1);
+    }
+    return m;
+  }, [dash.data?.risk]);
+  // Region cards → BoardRegion: the podium renders server numbers verbatim
+  // (rank, target ledger, accepted list), sorted by rank.
+  const boardRegions: BoardRegion[] = useMemo(
+    () => [...dashRegions]
+      .sort((a: any, b: any) => Number(a.rank ?? 99) - Number(b.rank ?? 99))
+      .map((r: any) => ({
+        id: String(r.id),
+        name: String(r.name ?? r.id),
+        tl: String(r.tl ?? ""),
+        states: r.states ?? [],
+        rank: Number(r.rank ?? 0),
+        won: r.won ?? { count: 0, value: 0 },
+        accepted: r.accepted,
+        acceptedItems: r.acceptedItems ?? [],
+        target: r.target ?? null,
+        open: r.open ?? { count: 0, value: 0 },
+        callsConnected: Number(r.callsConnected ?? 0),
+        leadsGenerated: Number(r.leadsGenerated ?? 0),
+        points: Number(r.points ?? 0),
+        kra: r.kra,
+        staff: [],
+      })),
+    [dashRegions],
+  );
+  const boardStaffByRegion = useMemo(() => {
+    const m = new Map<string, BoardStaff[]>();
+    for (const r of dashRegions as any[]) {
+      m.set(String(r.id), (r.staff ?? []).map((s: any) => adaptBoardStaff(s, r, riskByStaff)));
+    }
+    return m;
+  }, [dashRegions, riskByStaff]);
+  // Telecaller row → the region pipeline drawer (drill payload, already
+  // prefetched per region). Full list opens the Lead Conversion tab.
+  const renderPipeline = useCallback((s: BoardStaff) => {
+    const key = regionKey(s.region ?? "");
+    const view = agentViews.data?.[key];
+    if (!view) return <p className="text-[11px] text-[var(--text-tertiary)]">Loading {s.regionName || key} pipeline…</p>;
+    const rows = view.followUps ?? [];
+    if (rows.length === 0) return <p className="text-[11px] text-[var(--text-tertiary)]">No open estimates in {s.regionName || key}.</p>;
+    return (
+      <div className="space-y-1 py-1">
+        {rows.slice(0, 5).map((f) => (
+          <div key={f.estimateId} className="flex items-center gap-2 text-[11px]">
+            <span className="font-mono font-semibold text-[var(--text-secondary)]">{f.estimateNumber || f.estimateId}</span>
+            <span className="min-w-0 flex-1 truncate text-[var(--text-tertiary)]">{f.customerName || "—"}</span>
+            <span className="font-mono text-emerald-600 dark:text-emerald-400">{`₹${fmtNum(f.total ?? 0)}`}</span>
+            <StaleChip compact staleHours={f.staleHours} />
+            <SnatchChip compact risk={f.risk} />
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => { setRegionFilter(key); setView("conversion"); }}
+          className="text-[11px] font-semibold text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-300"
+        >
+          Open full pipeline ({rows.length})
+        </button>
+      </div>
+    );
+  }, [agentViews.data]);
 
   return (
     <div className="space-y-6">
@@ -1397,77 +1536,23 @@ export default function TelecallingDashboard() {
         onConfirm={() => { const id = confirmDelete?.id; setConfirmDelete(null); if (id) void deleteTelecaller(id); }}
         onCancel={() => setConfirmDelete(null)}
       />
-      {/* Header */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-zinc-50 via-white to-indigo-50/60 dark:from-zinc-900 dark:via-zinc-950 dark:to-indigo-950/40 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6">
-        {/* subtle decorative glow */}
-        <div className="pointer-events-none absolute -top-16 -right-16 w-56 h-56 rounded-full bg-indigo-500/10 dark:bg-indigo-500/15 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -left-10 w-48 h-48 rounded-full bg-emerald-500/5 dark:bg-emerald-500/10 blur-3xl" />
-
-        <div className="relative flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/25 shrink-0">
-                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
-                  <path d="M15 5a6 6 0 0 1 4 4" />
-                  <path d="M15 9a2 2 0 0 1 2 2" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white tracking-tight">
-                  Telecalling
-                </h1>
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Daily performance · Lead Conversion (estimates) + Lead Generation (enquiries, live)
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {(dash.loading || genDash.loading) && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-500 dark:text-indigo-300 shadow-sm" role="status" aria-live="polite">
-                <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
-                </svg>
-                Refreshing…
-              </span>
-            )}
-            {dash.data?.meta?.day ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-700 dark:text-zinc-300 shadow-sm">
-                <svg className="w-3.5 h-3.5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-                {dash.data.meta.day}
-              </span>
-            ) : null}
-            {dash.data?.meta?.activeCount !== undefined && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 shadow-sm">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                </span>
-                {dash.data.meta.activeCount} follow-up specialists
-              </span>
-            )}
-            {dash.data?.meta?.telecallerCount !== undefined && dash.data.meta.telecallerCount !== dash.data.meta.activeCount && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 shadow-sm">
-                {dash.data.meta.telecallerCount} total
-              </span>
-            )}
-            {(dash.data?.meta as any)?.unattributedLeads > 0 && (
-              <span title="Enquiries with no roster match — MIS should fix attribution" className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400 shadow-sm">
-                {(dash.data?.meta as any).unattributedLeads} unattributed leads
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
+      <BoardHeader
+        meta={{
+          day: dash.data?.meta?.day,
+          periodLabel: dash.data?.meta?.periodLabel,
+          periodFrom: dash.data?.meta?.periodFrom,
+          periodTo: dash.data?.meta?.periodTo,
+          workingDays: dash.data?.meta?.workingDays,
+          activeCount: dash.data?.meta?.activeCount,
+          telecallerCount: dash.data?.meta?.telecallerCount,
+          unattributedLeads: Number((dash.data?.meta as any)?.unattributedLeads ?? 0),
+        }}
+        period={period}
+        periods={PERIOD_OPTIONS}
+        onPeriod={(k) => setPeriod(k as typeof period)}
+        loading={dash.loading}
+        showControls={view === "dashboard"}
+      />
       <div className="flex flex-col gap-6">
         {/* Tabs (full-width horizontal row) */}
         <aside className="w-full shrink-0">
@@ -1481,573 +1566,125 @@ export default function TelecallingDashboard() {
         {/* Content (seamless switch — queries stay mounted) */}
         <div className="flex-1 min-w-0">
           {view === "dashboard" && (
-            <div className="space-y-6">
-              {kpi && (
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 relative">
-                  <style>{`@keyframes fosGoldShimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } } @keyframes fosGlowPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); } 50% { box-shadow: 0 0 18px 2px rgba(16,185,129,0.35); } } .fos-glow-pulse { animation: fosGlowPulse 2s ease-in-out infinite; } .fos-gold-text { background: linear-gradient(100deg, #b45309 20%, #fbbf24 40%, #fef3c7 50%, #fbbf24 60%, #b45309 80%); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: fosGoldShimmer 2.5s linear infinite; }`}</style>
-                  {dash.loading && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/50 dark:bg-zinc-950/50 backdrop-blur-[1px]" aria-hidden="true">
-                      <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
-                      </svg>
-                    </div>
-                  )}
-                  {[
-                    { label: "Est. Won", value: fmtNum(kpi.won), accent: "text-emerald-400" },
-                    { label: "Calls Connected", value: fmtNum(kpi.callsConnected), accent: "text-emerald-300" },
-                    { label: "Leads Generated", value: fmtNum(kpi.leadsGenerated), accent: "text-amber-300" },
-                    { label: "Talk Time", value: fmtTalk(kpi.talkTimeSec), accent: "text-indigo-300" },
-                  ].map((k) => (
-                    <div key={k.label} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-                      <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">{k.label}</div>
-                      <div className={`text-2xl font-extrabold mt-1 ${k.accent}`}>{k.value}</div>
-                    </div>
-                  ))}
-                  {/* Est. Conv ₹ — accepted actuals with target/gold celebration */}
-                  <div
-                    title={`Accepted estimates total in ${dash.data?.meta?.periodLabel ?? "this period"} — target ${fmtLakh(conv.target)} · gold ${fmtLakh(conv.gold)}`}
-                    className={`col-span-2 md:col-span-1 rounded-xl p-4 border ${conv.status === "gold"
-                      ? "bg-gradient-to-br from-amber-50 via-yellow-50 to-amber-100 dark:from-amber-950/60 dark:via-yellow-950/40 dark:to-amber-900/40 border-amber-400/60 dark:border-amber-400/50 fos-glow-pulse"
-                      : conv.status === "hit"
-                        ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-400/50 fos-glow-pulse"
-                        : "bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800"
-                      }`}
-                  >
-                    <div className="text-[10px] uppercase tracking-wider text-zinc-600 dark:text-zinc-500 font-bold">
-                      Est. Conv ₹ {conv.status === "gold" ? "👑" : conv.status === "hit" ? "🎉" : ""}
-                    </div>
-                    <div className={`text-2xl font-extrabold mt-1 ${conv.status === "gold" ? "fos-gold-text" : conv.status === "hit" ? "text-emerald-400 animate-pulse" : "text-indigo-300"}`}>
-                      {fmtNum(teamAccepted)}
-                    </div>
-                    <div className="text-[11px] mt-1 font-semibold text-zinc-500 dark:text-zinc-400">
-                      Target {fmtLakh(conv.target)} · Gold {fmtLakh(conv.gold)}
-                    </div>
-                  </div>
+            <div className="fos-board space-y-4">
+              {Boolean(dash.error) && !dash.loading && (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-300"
+                >
+                  <span>Leaderboard failed to load — {String((dash.error as any)?.message ?? dash.error)}</span>
+                  <button type="button" onClick={() => dash.refresh()} className="underline">retry</button>
                 </div>
               )}
 
-              {/* Region performance — the sales board's first cut: regions own
-                  the estimates, staff earn generator/closer credits inside them. */}
-              <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div>
-                    <h3 className="text-lg font-bold">🏅 Region performance — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      Ranked by accepted points. Each accepted deal's full slab counts once in the lead creator's region — individual 20/80 credits are separate.
+              <MetricStrip kpi={kpi} teamTarget={teamTarget} loading={dash.loading} />
+
+              {/* ONE leaderboard: regions ranked by attainment, telecallers as
+                  their always-open children. Money lives on the region line —
+                  per-agent ₹ would double-count the same accepted estimate. */}
+              <section className={`${CARD} p-0`}>
+                <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border-card)] px-4 py-3 md:px-5">
+                  <div className="min-w-0">
+                    <h2 className="font-heading text-sm font-bold tracking-tight text-[var(--text-primary)]">
+                      Region race · {dash.data?.meta?.periodLabel ?? "today"}
+                    </h2>
+                    <p className="mt-0.5 max-w-3xl text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+                      Every region team owes{" "}
+                      <span className="font-bold text-[var(--text-secondary)]">₹{fmtNum(DAILY_REGION_TARGET)}</span> of accepted
+                      estimate value per working day (Mon–Sat). A week&apos;s shortfall carries forward — never forgiven. Ranks
+                      read accepted ÷ owed since {teamTarget?.targetStart ? fmtDate(teamTarget.targetStart) : "the ledger start"}.
                     </p>
                   </div>
-                  <span className="text-[11px] font-mono text-zinc-500 dark:text-zinc-400">{dashRegions.length} regions</span>
+                  <span className="rounded-full border border-[var(--border-card)] bg-[var(--surface-sunken)] px-2 py-1 text-[10px] font-bold text-[var(--text-tertiary)]">
+                    wins &amp; ₹ follow the selected period
+                  </span>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-zinc-500 dark:text-zinc-400 text-xs uppercase">
-                      <tr className="border-b border-zinc-200 dark:border-zinc-800">
-                        <th className="text-left py-2 pr-3">#</th>
-                        <th className="text-left py-2 pr-4 min-w-[12rem]">Region</th>
-                        <th className="text-right py-2 pr-4">Staff</th>
-                        <th className="text-right py-2 pr-4">Won</th>
-                        <th className="text-right py-2 pr-4">Won ₹</th>
-                        <th className="text-right py-2 pr-4">Open ₹</th>
-                        <th className="text-right py-2 pr-4">Calls</th>
-                        <th className="text-right py-2 pr-4">Leads</th>
-                        <th className="text-right py-2 pr-4 whitespace-nowrap min-w-[9rem]">Points</th>
-                        <th className="text-right py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {regionSorted.map((r, i) => {
-                        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
-                        const pct = regionTopPoints > 0 ? Math.round((r.points / regionTopPoints) * 100) : 0;
-                        return (
-                          <tr key={r.id} className={`border-b border-zinc-100 dark:border-zinc-800/60 ${i === 0 ? "bg-amber-500/10" : ""}`}>
-                            <td className="py-2 pr-3 font-bold text-lg">{medal ?? i + 1}</td>
-                            <td className="py-2 pr-4">
-                              <button
-                                onClick={() => { setRegionFilter(r.id); setView("conversion"); }}
-                                className="text-left font-semibold text-zinc-900 dark:text-white hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
-                                title={`Open ${r.name} follow-ups`}
-                              >
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-500 dark:text-indigo-300">{r.id}</span>
-                                  {r.name}
-                                </span>
-                                <span className="block text-[11px] font-normal text-zinc-500 dark:text-zinc-400">{r.tl} · {r.states.slice(0, 3).join(", ")}{r.states.length > 3 ? "…" : ""}</span>
-                              </button>
-                            </td>
-                            <td className="py-2 pr-4 text-right font-mono text-zinc-600 dark:text-zinc-400">{r.staff.length}</td>
-                            <td className="py-2 pr-4 text-right font-mono text-emerald-400">{r.won.count}</td>
-                            <td className="py-2 pr-4 text-right font-mono text-emerald-400 whitespace-nowrap">₹{fmtNum(r.won.value)}</td>
-                            <td className="py-2 pr-4 text-right font-mono text-zinc-600 dark:text-zinc-300 whitespace-nowrap">₹{fmtNum(r.open.value)}</td>
-                            <td className="py-2 pr-4 text-right font-mono" title={`${r.callsConnected}/${r.kra.connectedTarget} connected calls`}>
-                              <span className={LIGHT_TEXT[r.kra.connectedStatus]}>{fmtNum(r.callsConnected)}</span>
-                            </td>
-                            <td className="py-2 pr-4 text-right font-mono" title={`${r.leadsGenerated}/${r.kra.leadsTarget} leads generated`}>
-                              <span className={LIGHT_TEXT[r.kra.leadsStatus]}>{fmtNum(r.leadsGenerated)}</span>
-                            </td>
-                            <td className="py-2 pr-4 text-right whitespace-nowrap">
-                              <div className="flex items-center justify-end gap-2">
-                                <span title="Full accepted slab for deals whose lead creator belongs to this region" className="font-extrabold text-indigo-300 font-mono">{fmtNum(r.points)}</span>
-                                {regionTopPoints > 0 && (
-                                  <span className="hidden sm:inline-block w-16 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden" title={`${pct}% of the leading region`}>
-                                    <span className={`block h-full rounded-full ${r.id === regionLeader ? "bg-amber-400" : "bg-indigo-400"}`} style={{ width: `${Math.max(6, pct)}%` }} />
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-2 text-right">
-                              <button
-                                onClick={() => { setRegionFilter(r.id); setView("conversion"); }}
-                                className="text-[11px] font-semibold rounded-lg border border-zinc-300 dark:border-zinc-700 px-2.5 py-1 hover:border-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
-                              >
-                                Follow-ups →
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {regionSorted.length === 0 && (
-                        <tr><td colSpan={10} className="py-4 text-center text-zinc-500">No regions loaded.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {(unmappedBlock?.count ?? 0) > 0 && (
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                    <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
-                      Unmapped: {unmappedBlock?.count ?? 0} open estimates · ₹{fmtNum(unmappedBlock?.value ?? 0)} outside any region
-                    </span>
-                    <button
-                      onClick={() => {
-                        if ((dash.data?.unmappedStaff?.length ?? 0) > 0) setRegionPick("UNMAPPED");
-                        else { setRegionFilter("UNMAPPED"); setView("conversion"); }
-                      }}
-                      className="text-[11px] font-bold text-amber-700 dark:text-amber-400 underline underline-offset-2"
-                    >
-                      {(dash.data?.unmappedStaff?.length ?? 0) > 0 ? "Show unmapped staff" : "Open unmapped estimates →"}
-                    </button>
-                  </div>
-                )}
-              </section>
 
-              {/* Leaderboard */}
-              {Boolean(dash.error) && !dash.loading && (
-                <QueryErrorBanner message={String((dash.error as any)?.message ?? dash.error)} onRetry={() => dash.refresh()} />
-              )}
-              <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div>
-                    <h3 className="text-lg font-bold">🏆 Individual leaderboard — {dash.data?.meta?.periodLabel ?? "Today"}</h3>
-                    {/* Scoring criteria — the composite score is the ranking norm. */}
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
-                      <span title="Close points by estimate value: ₹0–1L → +50 · ₹1L–2.5L → +75 · ₹2.5L–5L → +100 · ₹5L and above → +200" className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-400">
-                        Close <span className="font-mono">+50–200</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-bold text-amber-400">
-                        1 lead <span className="font-mono">+15</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 font-bold text-indigo-300">
-                        1 call <span className="font-mono">+0.5</span>
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {dash.data?.meta?.periodFrom && dash.data.meta.periodTo && (
-                      <div
-                        className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 shadow-sm"
-                        title={`${dash.data.meta.periodFrom} → ${dash.data.meta.periodTo}`}
-                      >
-                        <svg className="w-3.5 h-3.5 text-indigo-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                          <line x1="16" y1="2" x2="16" y2="6" />
-                          <line x1="8" y1="2" x2="8" y2="6" />
-                          <line x1="3" y1="10" x2="21" y2="10" />
-                        </svg>
-                        <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 font-mono">
-                          {fmtDate(dash.data.meta.periodFrom)} → {fmtDate(dash.data.meta.periodTo)}
-                        </span>
-                        {dash.data.meta.periodTo !== dash.data.meta.periodFrom && (
-                          <span className="inline-flex items-center rounded-full border border-indigo-500/30 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-bold text-indigo-500 dark:text-indigo-300">
-                            {dash.data.meta.workingDays ?? "—"} days
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {/* ⓘ rules — hover for the full game in simple English */}
-                    <div className="relative group inline-flex">
-                      <button
-                        type="button"
-                        aria-label="Game rules"
-                        title="Game rules"
-                        className="w-9 h-9 rounded-full border-2 border-indigo-400/60 bg-indigo-500/10 text-indigo-400 text-base font-bold leading-none inline-flex items-center justify-center hover:bg-indigo-500/20 hover:border-indigo-400 transition-colors"
-                      >
-                        i
-                      </button>
-                      <div className="absolute right-0 top-10 z-30 hidden group-hover:block w-80 md:w-96">
-                        <div className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 shadow-xl p-4 text-left text-[11px] leading-relaxed text-zinc-700 dark:text-zinc-300 space-y-2">
-                          <div className="text-sm font-bold text-zinc-900 dark:text-white">📖 Game Rules</div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-2 py-1.5 text-center">
-                              <div className="text-base font-extrabold text-emerald-500 dark:text-emerald-400 font-mono">+50–200</div>
-                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🤝 Close · full slab</div>
-                              <div className="text-[9px] text-zinc-500">credited to lead creator</div>
-                            </div>
-                            <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 px-2 py-1.5 text-center">
-                              <div className="text-base font-extrabold text-rose-500 dark:text-rose-400 font-mono">AUTO</div>
-                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">🎯 Close credit</div>
-                              <div className="text-[9px] text-zinc-500">auto · no closer pick</div>
-                            </div>
-                            <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-2 py-1.5 text-center">
-                              <div className="text-base font-extrabold text-amber-500 dark:text-amber-400 font-mono">+15</div>
-                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">✨ New lead</div>
-                            </div>
-                            <div className="rounded-lg border border-indigo-500/25 bg-indigo-500/5 px-2 py-1.5 text-center">
-                              <div className="text-base font-extrabold text-indigo-500 dark:text-indigo-400 font-mono">+0.5</div>
-                              <div className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">📞 Connected call</div>
-                            </div>
-                          </div>
-                          <div className="rounded-lg bg-zinc-500/5 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5 text-[10px] font-semibold text-zinc-600 dark:text-zinc-300 space-y-0.5">
-                            <div>Close slabs: ₹0–1L +50 · ₹1–2.5L +75 · ₹2.5–5L +100 · ₹5L+ +200</div>
-                            <div>Lead creator gets the full close slab automatically — no closer pick</div>
-                            <div>Wins are region-owned · risk flags are informational (no EOD snatch)</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <select
-                    value={sortKey}
-                    onChange={(e) => setSortKey(e.target.value as any)}
-                    className="px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 cursor-pointer focus:outline-none"
-                  >
-                    <option value="score">Rank by Composite Score</option>
-                    <option value="won">Rank by Estimates Won</option>
-                    <option value="callsConnected">Rank by Calls Connected</option>
-                    <option value="leadsGenerated">Rank by Leads Generated</option>
-                  </select>
-                </div>
-                </div>
-                {/* Period switcher (chase window) */}
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {PERIOD_OPTIONS.map((p) => (
-                    <button
-                      key={p.key}
-                      onClick={() => setPeriod(p.key)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
-                        period === p.key
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                          : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
-                      }`}
-                    >
-                      {p.label}
-                    </button>
+                <div className="space-y-3 p-3 md:p-4">
+                  {boardRegions.map((r, i) => (
+                    <PodiumRow
+                      key={`${r.id}-${period}`}
+                      region={r}
+                      index={i}
+                      staff={boardStaffByRegion.get(r.id) ?? []}
+                      expandedId={expandedId}
+                      onToggleStaff={(id) => setExpandedId((cur) => (cur === id ? null : id))}
+                      weeksOpen={openWeeks === r.id}
+                      onToggleWeeks={() => setOpenWeeks((cur) => (cur === r.id ? null : r.id))}
+                      closedOpen={closedOpen === r.id}
+                      onToggleClosed={() => setClosedOpen((cur) => (cur === r.id ? null : r.id))}
+                      onOpenRegion={() => { setRegionFilter(regionKey(r.id)); setView("conversion"); }}
+                      renderPipeline={renderPipeline}
+                      targetStart={teamTarget?.targetStart}
+                    />
                   ))}
-                </div>
-                {/* Individual scope — whole team or one region at a time */}
-                <div className="flex flex-wrap items-center gap-1.5 mb-3">
-                  <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 dark:text-zinc-400 mr-1">Individuals</span>
-                  <button
-                    onClick={() => setRegionPick("ALL")}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
-                      regionPick === "ALL"
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                        : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
-                    }`}
-                  >
-                    All regions
-                  </button>
-                  {dashRegions.map((r) => (
-                    <button
-                      key={r.id}
-                      onClick={() => setRegionPick(r.id)}
-                      title={r.name}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
-                        regionPick === r.id
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                          : "bg-white dark:bg-zinc-950 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400"
-                      }`}
-                    >
-                      {r.id}
-                    </button>
-                  ))}
-                  {((dash.data?.unmappedStaff?.length ?? 0) > 0 || (unmappedBlock?.count ?? 0) > 0) && (
-                    <button
-                      onClick={() => setRegionPick("UNMAPPED")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
-                        regionPick === "UNMAPPED"
-                          ? "bg-amber-600 text-white border-amber-600 shadow-sm"
-                          : "bg-white dark:bg-zinc-950 text-amber-600 dark:text-amber-400 border-amber-500/40 hover:border-amber-400"
-                      }`}
-                    >
-                      Unmapped
-                    </button>
+                  {boardRegions.length === 0 && (
+                    <p className="py-10 text-center text-sm text-[var(--text-tertiary)]">No regions loaded.</p>
                   )}
-                </div>
-                {/* Chase podium — top 3 with gaps (composite score ranking) */}
-                {sortKey === "score" && sorted.length >= 2 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
-                    {sorted.slice(0, 3).map((t, i) => {
-                      const medals = ["🥇", "🥈", "🥉"];
-                      const metric = t.score;
-                      const gap = i > 0 ? sorted[i - 1].score - metric : sorted[1] ? metric - sorted[1].score : 0;
-                      return (
-                        <div
-                          key={t.id}
-                          className={`rounded-xl border p-3 flex items-center gap-3 ${
-                            i === 0
-                              ? "border-amber-400/40 bg-amber-400/5"
-                              : i === 1
-                                ? "border-zinc-300/50 dark:border-zinc-600/40 bg-zinc-400/5"
-                                : "border-orange-400/30 bg-orange-400/5"
-                          }`}
-                        >
-                          <div className="text-2xl shrink-0">{medals[i]}</div>
-                          <div className="min-w-0 flex-1">
-                            <div className="font-bold text-sm text-zinc-900 dark:text-white truncate">{t.name}</div>
-                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                              {t.conversion.won} won · {fmtNum(t.generation.leadsGenerated)} leads · {fmtNum(t.generation.callsConnected)} calls
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <div className="font-extrabold font-mono text-indigo-300">{metric}</div>
-                            <div className={`text-[10px] font-bold ${i === 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                              {i === 0 ? `+${gap} ahead` : `${gap} to #${i}`}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <div className="overflow-x-auto relative">
-                  {dash.loading && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/40 dark:bg-zinc-950/40 backdrop-blur-[1px]" aria-hidden="true">
-                      <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
-                      </svg>
-                    </div>
-                  )}
-                  <table className="w-full text-sm">
-                    <thead className="text-zinc-500 dark:text-zinc-400 text-xs uppercase">
-                      <tr className="border-b border-zinc-200 dark:border-zinc-800">
-                        <th className="text-left py-2 pr-4">#</th>
-                        <th className="text-left py-2 pr-4 min-w-[11rem]">Sales staff</th>
-                        <th className="text-left py-2 pr-4">Region</th>
-                        <th className="text-right py-2 pr-4">Leads</th>
-                        <th className="text-right py-2 pr-4">Est. Won</th>
-                        <th className="text-right py-2 pr-4">Calls</th>
-                        <th className="text-right py-2 pr-4">Talk</th>
-                        {showRisk && <th className="text-right py-2 pr-4">Risk</th>}
-                        <th className="text-right py-2 pr-4 whitespace-nowrap min-w-[8rem]">Points</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sorted.map((t, i) => {
-                        const open = expandedId === t.id;
-                        const rk = regionKey(t.region);
-                        const view = getAgentView(rk);
-                        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
-                        const podium = i < 3;
-                        return (
-                          <Fragment key={t.id}>
-                            <tr className={`border-b border-zinc-100 dark:border-zinc-800/60 ${open ? "bg-indigo-50/40 dark:bg-indigo-500/5" : podium ? (i === 0 ? "bg-amber-500/10" : "bg-zinc-500/5") : ""}`}>
-                              <td className={`py-2 pr-4 font-bold text-lg ${podium ? "" : "text-zinc-500 dark:text-zinc-600"}`} title={podium ? `Rank #${i + 1} — projected closed value` : `Rank #${i + 1}`}>
-                                {medal ?? i + 1}
-                              </td>
-                              <td className="py-2 pr-4 min-w-[11rem]">
-                                <button
-                                  onClick={() => setExpandedId(open ? null : t.id)}
-                                  className="inline-flex items-center gap-1.5 font-semibold text-zinc-900 dark:text-white hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
-                                  title={open ? "Hide region pipeline" : "Show region pipeline"}
-                                >
-                                  {t.name}
-                                  {t.type === "field_staff" && (
-                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-sky-500/30 bg-sky-500/10 text-sky-500 dark:text-sky-400">Field</span>
-                                  )}
-                                  <span className={`text-[10px] text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
-                                </button>
-                              </td>
-                              <td className="py-2 pr-4">
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${t.region ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-500 dark:text-indigo-300" : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"}`} title={t.regionName ?? "Unmapped"}>
-                                  {t.region || "Unmapped"}
-                                </span>
-                              </td>
-                              <td className="py-2 pr-4 text-right font-mono">{fmtNum(t.generation.leadsGenerated)}</td>
-                              <td className="py-2 pr-4 text-right text-emerald-400 font-mono whitespace-nowrap">
-                                {t.conversion.won}
-                              </td>
-                              <td className="py-2 pr-4 text-right font-mono">{t.type === "field_staff" ? "—" : fmtNum(t.generation.callsConnected)}</td>
-                              <td className="py-2 pr-4 text-right font-mono text-indigo-300">{t.type === "field_staff" ? "—" : fmtTalk(t.generation.talkTimeSec)}</td>
-                              {showRisk && (
-                              <td className="py-2 pr-4 text-right font-mono whitespace-nowrap">
-                                {(t.risk?.atRisk ?? 0) + (t.risk?.zombie ?? 0) > 0 ? (
-                                  <span className="text-rose-400 font-bold" title="Open estimates red (no meaningful update) or zombie (silent > 3 days) — needs attention">
-                                    {t.risk?.atRisk ?? 0}⚠ / {t.risk?.zombie ?? 0}☠
-                                  </span>
-                                ) : (
-                                  <span className="text-emerald-400" title="No estimates at risk">✓</span>
-                                )}
-                              </td>
-                              )}
-                              <td className="py-2 pr-4 text-right whitespace-nowrap min-w-[12rem]">
-                                <div className="flex items-center justify-end gap-2">
-                                  <span className="font-extrabold text-indigo-300 font-mono">{t.score}</span>
-                                  {sortKey === "score" && leaderScore > 0 && (
-                                    <>
-                                      <span
-                                        className="hidden sm:inline-block w-12 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden"
-                                        title={`${Math.round((t.score / leaderScore) * 100)}% of the leader's score`}
-                                      >
-                                        <span
-                                          className={`block h-full rounded-full ${i === 0 ? "bg-amber-400" : "bg-indigo-400"}`}
-                                          style={{ width: `${Math.max(6, Math.round((t.score / leaderScore) * 100))}%` }}
-                                        />
-                                      </span>
-                                      {i > 0 && (() => {
-                                        const gap = sorted[i - 1].score - t.score;
-                                        const closes = Math.ceil(gap / 100);
-                                        const leads = Math.ceil(gap / 15);
-                                        const forecast =
-                                          gap <= 0
-                                            ? `Overtake now`
-                                            : closes <= 1
-                                              ? `1 close → #${i}`
-                                              : leads <= 4
-                                                ? `${leads} leads → #${i}`
-                                                : `${closes} closes → #${i}`;
-                                        return (
-                                          <span
-                                            className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold whitespace-nowrap"
-                                            title={`${gap} pts behind #${i} (score = 1 close ×100 · 1 lead ×15 · 1 call ×0.5). ${closes} closes or ${leads} leads would overtake them.`}
-                                          >
-                                            ⚡ {forecast}
-                                          </span>
-                                        );
-                                      })()}
-                                    </>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                            {open && (
-                              <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
-                                <td colSpan={9} className="py-2 pr-4">
-                                  <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3">
-                                    <div className="flex items-center justify-between mb-2">
-                                      <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
-                                        {t.name} — {t.regionName ?? "region"} pipeline
-                                        <span className="ml-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                                          ({view?.agent?.followUpCount ?? t.conversion.assigned})
-                                        </span>
-                                      </h4>
-                                      {view && (
-                                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                                          {view.agent.regionOpen?.count ?? 0} open · {view.agent.won ?? 0} won ·{" "}
-                                          {fmtNum(view.agent.regionOpen?.value ?? 0)} pipeline · {fmtNum(view.agent.points ?? 0)} pts
-                                        </span>
-                                      )}
-                                    </div>
-                                    {agentViews.loading && !view && <p className="text-xs text-zinc-500">Loading region pipeline…</p>}
-                                    {!agentViews.loading && !view && Boolean(agentViews.error) && (
-                                      <p className="text-xs text-rose-500">Couldn't load this agent's estimates — <button className="underline font-semibold" onClick={() => agentViews.refresh()}>retry</button>.</p>
-                                    )}
-                                    {!agentViews.loading && view && (view?.followUps?.length ?? 0) === 0 && (
-                                      <p className="text-xs text-zinc-500">No open estimates in this region.</p>
-                                    )}
-                                    <div className="grid gap-1.5 sm:grid-cols-2">
-                                      {(view?.followUps ?? []).map((f) => (
-                                        <div key={f.estimateId} className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 dark:border-zinc-800 px-2.5 py-1.5">
-                                          <div className="min-w-0">
-                                            <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{f.customerName ?? "—"}</div>
-                                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{f.estimateNumber ?? f.estimateId} <OrgBadge orgId={f.organizationId} orgs={teleOrgs} /></div>
-                        <LeadChips f={f} />
-                        <CallTagControl f={f} onSaved={() => void refreshOneAgent(rk)} onTag={applyTagOverride} />
-                        <NextStepControl f={f} onSaved={() => void refreshOneAgent(rk)} />
-                        {f.latestComment ? (
-                          <p
-                            className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug line-clamp-2"
-                            title={`${f.latestComment.commentedBy}${f.latestComment.dateFormatted ? ` · ${f.latestComment.dateFormatted}` : ""}\n${f.latestComment.text}`}
-                          >
-                            “{f.latestComment.text}”
-                            <span className="text-zinc-500 dark:text-zinc-400">
-                              {" "}— {f.latestComment.commentedBy}
-                              {f.latestComment.dateFormatted ? ` · ${f.latestComment.dateFormatted}` : ""}
-                            </span>
-                          </p>
-                        ) : (
-                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">No sales notes yet.</p>
-                        )}
-                                          </div>
-                                          <div className="text-right shrink-0">
-                                            <div className="text-[11px] text-zinc-600 dark:text-zinc-300">{f.status ?? "—"}</div>
-                                            <div className="text-[11px] font-mono text-emerald-400">₹{fmtNum(Number(f.total ?? 0))}</div>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
-                        );
-                      })}
-                      {sorted.length === 0 && (
-                        <tr><td colSpan={9} className="py-4 text-center text-zinc-500">{regionPick === "ALL" ? "No active telecallers yet." : regionPick === "UNMAPPED" ? "No unmapped staff." : `No staff mapped to ${regionPick}.`}</td></tr>
-                      )}
-                    </tbody>
-                  </table>
                 </div>
               </section>
 
-              {/* Founder pre-warning: open estimates that need a meaningful update.
-                  Informational only — region-owned, nothing is re-poached. */}
-              {showRisk && dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
-                <section className="bg-rose-500/5 border border-rose-500/30 rounded-xl p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <h3 className="text-lg font-bold text-rose-500 dark:text-rose-400">
-                      {selfAgentId ? "🔥 Your region — needs attention" : "🔥 At Risk — needs attention"}
+              {/* Accepted value no region can claim — real revenue that must
+                  reconcile, parked below the race on purpose. */}
+              <HoldingPens
+                direct={dash.data?.direct ?? null}
+                unlinked={dash.data?.unlinked ?? null}
+                onOpenUnlinked={() => { setRegionFilter("UNMAPPED"); setView("conversion"); }}
+              />
+
+              {/* Informational pre-warning over the open pipeline. Estimates stay
+                  region-owned — the dated next step protects the deal. */}
+              {dash.data?.risk && (dash.data.risk.counts.red > 0 || dash.data.risk.counts.zombie > 0) && (
+                <section className={`${CARD} p-3 md:p-4`}>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-heading text-sm font-bold text-rose-600 dark:text-rose-400">
+                      {selfAgentId ? "Your region — needs attention" : "At risk — needs attention"}
                     </h3>
-                    <span className="text-xs text-zinc-600 dark:text-zinc-400">
-                      <span className="font-mono font-bold text-rose-400">₹{fmtNum(dash.data.risk.valueAtRisk)}</span> at risk ·{" "}
-                      <span className="font-bold text-rose-400">{dash.data.risk.counts.red} red</span> ·{" "}
-                      <span className="font-bold text-rose-400">{dash.data.risk.counts.zombie} zombie</span>
+                    <span className="text-xs text-[var(--text-tertiary)]">
+                      <span className="font-mono font-bold text-rose-600 dark:text-rose-400">{fmtLakh(dash.data.risk.valueAtRisk)}</span> at risk ·{" "}
+                      <span className="font-bold text-rose-600 dark:text-rose-400">{dash.data.risk.counts.red} red</span> ·{" "}
+                      <span className="font-bold text-rose-600 dark:text-rose-400">{dash.data.risk.counts.zombie} zombie</span>
                     </span>
                   </div>
                   <div className="grid gap-1.5 md:grid-cols-2">
                     {dash.data.risk.atRisk.map((r) => (
-                      <div key={r.estimateId} className="rounded-md border border-rose-500/20 bg-white dark:bg-zinc-950 px-2.5 py-1.5" title={r.snatchReason ?? r.reasoning ?? undefined}>
+                      <div
+                        key={r.estimateId}
+                        className="rounded-lg border border-rose-500/20 bg-[var(--bg-card)] px-2.5 py-1.5"
+                        title={r.snatchReason ?? r.reasoning ?? undefined}
+                      >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{r.customerName ?? "—"}</div>
-                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">{r.estimateNumber ?? r.estimateId} · {r.telecallerName ?? "—"} <OrgBadge orgId={(r as any).organizationId} orgs={teleOrgs} /></div>
+                            <div className="truncate text-[13px] font-semibold text-[var(--text-primary)]">{r.customerName || "—"}</div>
+                            <div className="truncate font-mono text-[11px] text-[var(--text-tertiary)]">
+                              {r.estimateNumber || r.estimateId} · {r.telecallerName || "—"}{" "}
+                              <OrgBadge orgId={(r as any).organizationId} orgs={teleOrgs} />
+                            </div>
                           </div>
-                          <div className="text-right shrink-0 space-y-0.5">
-                            <div className="text-[11px] font-mono text-emerald-400">₹{fmtNum(Number(r.total ?? 0))}</div>
+                          <div className="shrink-0 space-y-0.5 text-right">
+                            <div className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400">{`₹${fmtNum(r.total)}`}</div>
                             <div className="flex justify-end gap-1">
                               <StaleChip compact staleHours={r.staleHours} />
-                              <SnatchChip compact risk={r.risk} snatchInHours={r.snatchInHours} />
+                              <SnatchChip compact risk={r.risk} />
                             </div>
                           </div>
                         </div>
                         {(r.snatchReason || r.reasoning) && (
-                          <p className="text-[11px] text-rose-600/80 dark:text-rose-400/70 mt-1 leading-snug line-clamp-2">
+                          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-rose-600/80 dark:text-rose-400/70">
                             {r.snatchReason ?? r.reasoning}
                           </p>
                         )}
                       </div>
                     ))}
                   </div>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-600 mt-2">
-                    Informational only — Red = latest AI verdict found no meaningful update · Zombie = no comment for over 3 days. Estimates stay region-owned; use the dated next step to protect the deal.
+                  <p className="mt-2 text-[11px] text-[var(--text-tertiary)]">
+                    Red = the latest AI verdict found no meaningful update · Zombie = no comment for over 3 days. Estimates stay
+                    region-owned; use the dated next step to protect the deal.
                   </p>
                 </section>
               )}
-
-              {/* Roster management has moved to the MIS-only Controller tab */}
             </div>
           )}
-
           {view === "conversion" && (
             <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
               <div className="mb-3">
