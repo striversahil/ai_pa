@@ -20,7 +20,7 @@ export default function FounderAssistant() {
     if (!md) return "";
     return md
       .replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-6 mb-4 text-zinc-900 dark:text-white">$1</h1>')
-      .replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold mt-5 mb-3 text-zinc-900 dark:text-white border-b border-white/10 pb-2">$1</h2>')
+      .replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold mt-5 mb-3 text-zinc-900 dark:text-white border-b border-[var(--border-card)] pb-2">$1</h2>')
       .replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-4 mb-2 text-indigo-300">$1</h3>')
       .replace(/^\- (.*$)/gim, '<li class="ml-4 list-disc text-zinc-700 dark:text-zinc-300 mb-1">$1</li>')
       .replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-900 dark:text-white font-semibold">$1</strong>')

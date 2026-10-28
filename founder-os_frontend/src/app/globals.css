@@ -115,7 +115,7 @@
   --surface-raised: #ffffff;
   --surface-sunken: #f7f8fb;
   --surface-soft: #f1f2f6;
-  --ring-color: rgba(91, 94, 240, 0.45);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 45%, transparent);
 }
 
 .dark {
@@ -132,12 +132,20 @@
   --surface-raised: #1b1f27;
   --surface-sunken: #101319;
   --surface-soft: #1c2027;
-  --ring-color: rgba(91, 94, 240, 0.55);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 55.00000000000001%, transparent);
 }
 
 /* ── App theme presets ──────────────────────────────────────────────────────
    Applied via html[data-app-theme]. Tailwind v4 utilities reference the
    --color-* variables, so overriding the palette here re-themes every screen. */
+
+/* Glass/overlay surfaces. Dark presets add light; light presets flip these to
+   ink-alpha (below) so panels don't wash out on white. */
+html[data-app-theme] {
+  --overlay-weak: rgba(255, 255, 255, 0.04);
+  --overlay-strong: rgba(255, 255, 255, 0.08);
+  --overlay-border: rgba(255, 255, 255, 0.10);
+}
 
 html[data-app-theme="classic"] {
   color-scheme: dark;
@@ -152,7 +160,7 @@ html[data-app-theme="classic"] {
   --bg-input: #1c2027;
   --surface-raised: #1b1f27;
   --surface-sunken: #101319;
-  --ring-color: rgba(91, 94, 240, 0.55);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 55.00000000000001%, transparent);
 
   --color-brand-indigo: #5b5ef0;
   --color-indigo-300: #a5b4fc;
@@ -205,7 +213,7 @@ html[data-app-theme="midnight"] {
   --bg-input: #1a2336;
   --surface-raised: #1a2336;
   --surface-sunken: #0f1626;
-  --ring-color: rgba(59, 130, 246, 0.45);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 45%, transparent);
 
   --color-brand-indigo: #3b82f6;
   --color-indigo-300: #93c5fd;
@@ -258,7 +266,7 @@ html[data-app-theme="discord"] {
   --bg-input: #383a40;
   --surface-raised: #2b2d31;
   --surface-sunken: #232428;
-  --ring-color: rgba(88, 101, 242, 0.5);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 50%, transparent);
 
   --color-brand-indigo: #5865f2;
   --color-indigo-300: #a5aef8;
@@ -306,12 +314,12 @@ html[data-app-theme="amoled"] {
   --border-card: #222222;
   --text-primary: #e8e8e8;
   --text-secondary: #9a9a9a;
-  --text-tertiary: #5c5c5c;
+  --text-tertiary: #6b6b6b;
   --border-thread: #222222;
   --bg-input: #141414;
   --surface-raised: #0f0f0f;
   --surface-sunken: #000000;
-  --ring-color: rgba(88, 101, 242, 0.55);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 55.00000000000001%, transparent);
 
   --color-brand-indigo: #5865f2;
   --color-indigo-300: #a5aef8;
@@ -364,7 +372,7 @@ html[data-app-theme="nord"] {
   --bg-input: #3b4252;
   --surface-raised: #3b4252;
   --surface-sunken: #292f3a;
-  --ring-color: rgba(136, 192, 208, 0.45);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 45%, transparent);
 
   --color-brand-indigo: #81a1c1;
   --color-indigo-300: #9cb8d6;
@@ -408,16 +416,34 @@ html[data-app-theme="light"] {
   color-scheme: light;
   --bg-app: #f4f5f8;
   --bg-card: #ffffff;
-  --bg-sidebar: #0e1014;
+  /* Light presets use a light rail: the Sidebar is fully tokenised (ink =
+     --text-*), so a dark rail would paint dark ink on near-black. */
+  --bg-sidebar: #ffffff;
   --border-card: #e3e6ec;
   --text-primary: #13151c;
   --text-secondary: #565d6b;
-  --text-tertiary: #8b92a1;
+  --text-tertiary: #767e8d;
   --border-thread: #e3e6ec;
   --bg-input: #f1f2f6;
   --surface-raised: #ffffff;
   --surface-sunken: #f7f8fb;
-  --ring-color: rgba(91, 94, 240, 0.45);
+  --surface-soft: #f1f2f6;
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 45%, transparent);
+
+  /* Accent ramp, light direction: 300/400 are text on white, so they go
+     DARKER than the accent. Mirrors RAMP_LIGHT in hooks/useTheme.ts. */
+  --color-brand-indigo: #5b5ef0;
+  --color-indigo-300: #3730a3;
+  --color-indigo-400: #4338ca;
+  --color-indigo-500: #4f46e5;
+  --color-indigo-600: #4338ca;
+  --color-indigo-650: #3730a3;
+  --color-indigo-700: #312e81;
+
+  /* Ink-alpha overlays so glass panels read on a light canvas. */
+  --overlay-weak: rgba(17, 20, 28, 0.035);
+  --overlay-strong: rgba(17, 20, 28, 0.07);
+  --overlay-border: rgba(17, 20, 28, 0.10);
 }
 
 /* ── "Sage" — warm forest design language ───────────────────────────────────
@@ -447,10 +473,15 @@ html[data-app-theme="sage"] {
   /* Text — --text-secondary is darkened from the reference #7C8779 to
      #6b7566 so body copy clears WCAG AA (4.5:1) on the #f6f7f2 canvas. */
   --text-primary: #20281f;
-  --text-secondary: #6b7566;
-  --text-tertiary: #8b9688;
+  --text-secondary: #66705f;
+  --text-tertiary: #78836f;
 
-  --ring-color: rgba(54, 86, 51, 0.45);
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 45%, transparent);
+
+  /* Warm ink overlays for glass panels on the sage canvas. */
+  --overlay-weak: rgba(32, 40, 31, 0.035);
+  --overlay-strong: rgba(32, 40, 31, 0.07);
+  --overlay-border: rgba(32, 40, 31, 0.10);
 
   /* Forest-green accent ramp (was indigo) */
   --color-brand-indigo: #365633;
@@ -501,6 +532,166 @@ html[data-app-theme="sage"] {
   --color-slate-900: #20281f;
   --color-slate-950: #1a2119;
 }
+
+/* ── Light presets: dark-tuned accents → light-safe twins ───────────────────
+   Light canvases legitimately inherit the light side of the neutral ramps, but
+   the ACCENT families are shared with the dark presets: `text-emerald-400` is
+   a dark-surface choice (~2:1 on white). Resolving the 300–500 steps to their
+   600/700 equivalents fixes every `text-*-300/400` usage in the app without
+   editing component files. 500 keeps enough chroma to still read as a fill;
+   600+ are untouched. Shared by every light preset so the mapping cannot
+   drift between them. */
+html[data-app-theme="sage"],
+html[data-app-theme="light"],
+html[data-app-theme="paper"] {
+  --color-emerald-300: #047857;
+  --color-emerald-400: #047857;
+  --color-emerald-500: #059669;
+  --color-green-300: #15803d;
+  --color-green-400: #15803d;
+  --color-green-500: #16a34a;
+  --color-teal-300: #0f766e;
+  --color-teal-400: #0f766e;
+  --color-teal-500: #0d9488;
+  --color-cyan-300: #0e7490;
+  --color-cyan-400: #0e7490;
+  --color-cyan-500: #0891b2;
+  --color-sky-300: #0369a1;
+  --color-sky-400: #0369a1;
+  --color-sky-500: #0284c7;
+  --color-blue-300: #1d4ed8;
+  --color-blue-400: #1d4ed8;
+  --color-blue-500: #2563eb;
+  --color-violet-300: #6d28d9;
+  --color-violet-400: #6d28d9;
+  --color-violet-500: #7c3aed;
+  --color-purple-300: #7e22ce;
+  --color-purple-400: #7e22ce;
+  --color-purple-500: #9333ea;
+  --color-fuchsia-300: #a21caf;
+  --color-fuchsia-400: #a21caf;
+  --color-fuchsia-500: #c026d3;
+  --color-pink-300: #be185d;
+  --color-pink-400: #be185d;
+  --color-pink-500: #db2777;
+  --color-rose-300: #be123c;
+  --color-rose-400: #be123c;
+  --color-rose-500: #e11d48;
+  --color-red-300: #b91c1c;
+  --color-red-400: #b91c1c;
+  --color-red-500: #dc2626;
+  --color-orange-300: #c2410c;
+  --color-orange-400: #c2410c;
+  --color-orange-500: #ea580c;
+  --color-amber-300: #b45309;
+  --color-amber-400: #b45309;
+  --color-amber-500: #d97706;
+  --color-yellow-300: #a16207;
+  --color-yellow-400: #a16207;
+  --color-yellow-500: #ca8a04;
+  --color-lime-300: #4d7c0f;
+  --color-lime-400: #4d7c0f;
+  --color-lime-500: #65a30d;
+}
+
+/* Semantic status tokens are defined once in @theme with dark-surface values;
+   the neutral light presets need their light-safe equivalents. Sage brings its
+   own warm set above. */
+html[data-app-theme="light"],
+html[data-app-theme="paper"] {
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #be123c;
+  --color-info: #1d4ed8;
+}
+
+/* Paper — warm light preset. Softer, warmer neutrals than Daylight; ink stays
+   near-black for long-form reading. */
+html[data-app-theme="paper"] {
+  color-scheme: light;
+  --bg-app: #f6f2ea;
+  --bg-card: #fffdf9;
+  --bg-sidebar: #fbf8f2;
+  --border-card: #e5ded1;
+  --text-primary: #1b1714;
+  --text-secondary: #564f47;
+  --text-tertiary: #7c7365;
+  --border-thread: #e5ded1;
+  --bg-input: #f1ebe1;
+  --surface-raised: #fffefb;
+  --surface-sunken: #f1ece2;
+  --surface-soft: #f4efe6;
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 45%, transparent);
+
+  --color-brand-indigo: #5b5ef0;
+  --color-indigo-300: #3730a3;
+  --color-indigo-400: #4338ca;
+  --color-indigo-500: #4f46e5;
+  --color-indigo-600: #4338ca;
+  --color-indigo-650: #3730a3;
+  --color-indigo-700: #312e81;
+
+  --overlay-weak: rgba(40, 30, 18, 0.035);
+  --overlay-strong: rgba(40, 30, 18, 0.07);
+  --overlay-border: rgba(40, 30, 18, 0.10);
+}
+
+/* Graphite — neutral mid-dark. Lighter than Classic and without its blue cast;
+   easier on glossy screens than pure black. */
+html[data-app-theme="graphite"] {
+  color-scheme: dark;
+  --bg-app: #1b1e23;
+  --bg-card: #23272e;
+  --bg-sidebar: #16181d;
+  --border-card: #343a44;
+  --text-primary: #e9ecf1;
+  --text-secondary: #aeb7c4;
+  --text-tertiary: #79828f;
+  --border-thread: #343a44;
+  --bg-input: #2a2f37;
+  --surface-raised: #272c33;
+  --surface-sunken: #171a1f;
+  --surface-soft: #2a2f37;
+  --ring-color: color-mix(in srgb, var(--color-brand-indigo) 55%, transparent);
+
+  --color-brand-indigo: #5b5ef0;
+  --color-indigo-300: #a5b4fc;
+  --color-indigo-400: #818cf8;
+  --color-indigo-500: #6366f1;
+  --color-indigo-600: #4f46e5;
+  --color-indigo-650: #4f46e5;
+  --color-indigo-700: #4338ca;
+
+  --color-zinc-50: #fafafa;
+  --color-zinc-100: #f4f4f5;
+  --color-zinc-200: #e4e4e7;
+  --color-zinc-300: #d4d4d8;
+  --color-zinc-400: #a1a1aa;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #52525b;
+  --color-zinc-700: #3f3f46;
+  --color-zinc-750: #34343a;
+  --color-zinc-800: #27272a;
+  --color-zinc-850: #1f1f23;
+  --color-zinc-900: #18181b;
+  --color-zinc-950: #111113;
+  --color-zinc-955: #0c0c0e;
+
+  --color-slate-50: #fafafa;
+  --color-slate-100: #f4f4f5;
+  --color-slate-200: #e4e4e7;
+  --color-slate-300: #d4d4d8;
+  --color-slate-400: #a1a1aa;
+  --color-slate-500: #71717a;
+  --color-slate-600: #52525b;
+  --color-slate-700: #3f3f46;
+  --color-slate-750: #34343a;
+  --color-slate-800: #27272a;
+  --color-slate-850: #1f1f23;
+  --color-slate-900: #18181b;
+  --color-slate-950: #111113;
+}
+
 
 * {
   border-color: var(--border-card);

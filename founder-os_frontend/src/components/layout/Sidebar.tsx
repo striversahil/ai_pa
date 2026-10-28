@@ -72,6 +72,8 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onS
   const visible = NAV_ITEMS.filter((i) => canView(i.view));
   const dashboards = useDashboardNav();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  // A saved accent outside the preset swatches → the custom chip is active.
+  const custom = !!accent && !APP_ACCENTS.some((a) => a.value.toLowerCase() === accent.toLowerCase());
   const [hovered, setHovered] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
   const expanded = hovered || focusWithin;
@@ -237,6 +239,24 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onS
                     </button>
                   );
                 })}
+                {/* Any hex is valid — the ramp is generated from it in the
+                    direction the active preset needs (see accentCssVars). */}
+                <label
+                  title={custom ? `Custom accent — ${accent}` : "Custom accent colour"}
+                  className={`relative flex h-6 w-6 items-center justify-center rounded-full border-2 transition-transform ${
+                    custom ? "scale-110 border-[var(--text-primary)]" : "border-[var(--border-card)] hover:scale-105"
+                  }`}
+                  style={{ background: "conic-gradient(from 0deg, #f43f5e, #f59e0b, #10b981, #0ea5e9, #8b5cf6, #f43f5e)" }}
+                >
+                  <input
+                    type="color"
+                    value={custom ? accent! : "#5b5ef0"}
+                    onChange={(e) => onSetAccent(e.target.value)}
+                    aria-label="Custom accent colour"
+                    className="absolute inset-0 h-full w-full cursor-pointer rounded-full opacity-0"
+                  />
+                  {custom && <Check className="h-3 w-3 text-white drop-shadow" />}
+                </label>
                 {accent && (
                   <button
                     onClick={() => onSetAccent(null)}
@@ -248,6 +268,9 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onS
                   </button>
                 )}
               </div>
+              {custom && (
+                <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">{accent}</p>
+              )}
             </div>
           )}
         </div>

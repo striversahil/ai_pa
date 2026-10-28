@@ -43,7 +43,7 @@ export default function CopilotView({ endpoints, view, open, onClose, onOpen, re
 
       {t.visible && (
         <div
-          className={`fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[clamp(340px,94vw,600px)] md:w-[clamp(520px,62vw,780px)] xl:w-[clamp(640px,48vw,920px)] h-[clamp(440px,74dvh,620px)] md:h-[clamp(520px,78dvh,800px)] xl:h-[clamp(560px,82dvh,920px)] rounded-2xl bg-[var(--bg-card)] border border-white/10 shadow-[0_24px_64px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden ${t.exiting ? 'animate-scale-down' : 'animate-scale-up'}`}
+          className={`fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[clamp(340px,94vw,600px)] md:w-[clamp(520px,62vw,780px)] xl:w-[clamp(640px,48vw,920px)] h-[clamp(440px,74dvh,620px)] md:h-[clamp(520px,78dvh,800px)] xl:h-[clamp(560px,82dvh,920px)] rounded-2xl bg-[var(--bg-card)] border border-[var(--overlay-border)] shadow-[0_24px_64px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden ${t.exiting ? 'animate-scale-down' : 'animate-scale-up'}`}
           role="dialog"
           aria-label={view.title}
           style={{ fontFamily: FONT }}

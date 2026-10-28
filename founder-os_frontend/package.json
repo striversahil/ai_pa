@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build --webpack && node scripts/postbuild.mjs",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "theme:check": "node scripts/theme-contrast.mjs"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",

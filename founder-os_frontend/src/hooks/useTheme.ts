@@ -1,39 +1,62 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+// useTheme — the single runtime owner of `data-app-theme`, `.dark` and the
+// accent ramp. Preset metadata lives in `src/theme/presets.ts`; the colours
+// live in `app/globals.css`. This hook only decides WHICH preset is active and
+// generates the accent ramp when the user picks a custom accent.
+//
+// Three things this file is responsible for getting right:
+//   1. Never persist the DEFAULT before the saved choice is read (the mount
+//      effect would clobber the user's theme with the default).
+//   2. Generate the accent ramp in the direction the ACTIVE preset needs —
+//      lighter tints on dark surfaces, darker ones on light surfaces. The old
+//      single-direction ramp made every custom accent unreadable on Sage.
+//   3. Apply accent changes before paint, so a custom accent cannot flash the
+//      preset's ramp on load.
 
-export type AppThemeId = 'sage' | 'classic' | 'midnight' | 'discord' | 'amoled' | 'nord' | 'light';
+import { useState, useEffect, useLayoutEffect, useCallback } from 'react';
+import {
+  APP_ACCENTS,
+  APP_THEMES,
+  DEFAULT_THEME,
+  LIGHT_THEMES,
+  isAppThemeId,
+  isLightTheme,
+  normalizeAccent,
+  type AppThemeId,
+} from '@/theme/presets';
 
-export const DEFAULT_THEME: AppThemeId = 'sage';
+// Re-exported for backwards compatibility — call sites import these from here.
+export { APP_ACCENTS, APP_THEMES, LIGHT_THEMES };
+export type { AppThemeId };
 
-export const APP_THEMES: { id: AppThemeId; label: string; swatch: string }[] = [
-  { id: 'sage', label: 'Sage Forest', swatch: '#f6f7f2' },
-  { id: 'classic', label: 'Classic Dark', swatch: '#0a0c10' },
-  { id: 'midnight', label: 'Midnight Blue', swatch: '#151d2e' },
-  { id: 'discord', label: 'Discord Dark', swatch: '#313338' },
-  { id: 'amoled', label: 'AMOLED Black', swatch: '#000000' },
-  { id: 'nord', label: 'Nord Frost', swatch: '#2e3440' },
-  { id: 'light', label: 'Daylight', swatch: '#f4f5f8' },
-];
-
-export const APP_ACCENTS: { name: string; value: string }[] = [
-  { name: 'Blue', value: '#3b82f6' },
-  { name: 'Blurple', value: '#5865f2' },
-  { name: 'Violet', value: '#8b5cf6' },
-  { name: 'Emerald', value: '#10b981' },
-  { name: 'Rose', value: '#f43f5e' },
-  { name: 'Amber', value: '#f59e0b' },
-  { name: 'Sky', value: '#0ea5e9' },
-  { name: 'Pink', value: '#ec4899' },
-];
+export { DEFAULT_THEME };
 
 const THEME_KEY = 'app_theme_v2';
-/** Presets that render on a light canvas (no `.dark` class). */
-export const LIGHT_THEMES: ReadonlySet<AppThemeId> = new Set<AppThemeId>(['sage', 'light']);
 const ACCENT_KEY = 'app_accent_v1';
+
+/**
+ * Accent ramp. Dark surfaces need *lighter* tints (300 → +24), light surfaces
+ * need *darker* ones (300 → −30) so `text-*-300/400` stays readable on white.
+ * 500/600 stay close to the accent in both modes — they are button fills.
+ */
+const RAMP_DARK = { 300: 24, 400: 14, 500: 6, 600: 0, 650: -6, 700: -12 } as const;
+const RAMP_LIGHT = { 300: -30, 400: -22, 500: -8, 600: 0, 650: -8, 700: -16 } as const;
+
+// `--ring-color` is derived from `--color-brand-indigo` in CSS (color-mix), so
+// the focus ring follows the accent in every preset without JS.
 const ACCENT_VARS = [
-  '--color-brand-indigo', '--color-indigo-300', '--color-indigo-400', '--color-indigo-500',
-  '--color-indigo-600', '--color-indigo-650', '--color-indigo-700', '--ring-color',
+  '--color-brand-indigo',
+  '--color-indigo-300',
+  '--color-indigo-400',
+  '--color-indigo-500',
+  '--color-indigo-600',
+  '--color-indigo-650',
+  '--color-indigo-700',
 ] as const;
+
+// SSR-safe layout effect: applies before paint on the client (no accent flash),
+// falls back to useEffect when there is no DOM.
+const useApplyEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 function hexToHsl(hex: string): [number, number, number] {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
@@ -64,36 +87,37 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${to(f(0))}${to(f(8))}${to(f(4))}`;
 }
 
-export function accentCssVars(accent: string): Record<string, string> {
+/**
+ * CSS variables for a custom accent. `light` flips the ramp direction, so the
+ * same hex stays readable on Sage/Daylight/Paper and on every dark preset.
+ * `--ring-color` is intentionally NOT set here — the CSS presets derive it
+ * from `--color-brand-indigo`, so the focus ring follows the accent in both
+ * modes without JS.
+ */
+export function accentCssVars(accent: string, light = false): Record<string, string> {
   const [h, s, l] = hexToHsl(accent);
+  const ramp = light ? RAMP_LIGHT : RAMP_DARK;
   const shade = (dl: number) => hslToHex(h, Math.max(45, s), l + dl);
   return {
     '--color-brand-indigo': accent,
-    '--color-indigo-300': shade(24),
-    '--color-indigo-400': shade(14),
-    '--color-indigo-500': shade(6),
-    '--color-indigo-600': accent,
-    '--color-indigo-650': shade(-6),
-    '--color-indigo-700': shade(-12),
-    '--ring-color': `rgba(${hslToRgbStr(accent)}, 0.45)`,
+    '--color-indigo-300': shade(ramp[300]),
+    '--color-indigo-400': shade(ramp[400]),
+    '--color-indigo-500': shade(ramp[500]),
+    '--color-indigo-600': shade(ramp[600]),
+    '--color-indigo-650': shade(ramp[650]),
+    '--color-indigo-700': shade(ramp[700]),
   };
-}
-
-function hslToRgbStr(hex: string): string {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
-  if (!m) return '91,94,240';
-  return `${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)}`;
 }
 
 function readSavedTheme(): AppThemeId | null {
   try {
-    const saved = localStorage.getItem(THEME_KEY) as AppThemeId | null;
-    if (saved && APP_THEMES.some((t) => t.id === saved)) return saved;
-    // One-time migration from the v1 key: honour an explicit dark choice, but
-    // anyone who never picked (or was on the old default 'classic') lands on
-    // the new Sage default.
-    const legacyV1 = localStorage.getItem('app_theme_v1') as AppThemeId | null;
-    if (legacyV1 && legacyV1 !== 'classic' && APP_THEMES.some((t) => t.id === legacyV1)) return legacyV1;
+    const saved = localStorage.getItem(THEME_KEY);
+    if (isAppThemeId(saved)) return saved;
+    // One-time migration from the v1 key: honour an explicit choice, but anyone
+    // who never picked (or was on the old default 'classic') lands on the new
+    // Sage default.
+    const legacyV1 = localStorage.getItem('app_theme_v1');
+    if (legacyV1 && legacyV1 !== 'classic' && isAppThemeId(legacyV1)) return legacyV1;
     const legacy = localStorage.getItem('theme');
     if (legacy === 'light') return 'light';
     if (legacy === 'dark') return 'classic';
@@ -105,8 +129,8 @@ export function useTheme() {
   const [theme, setThemeState] = useState<AppThemeId>(DEFAULT_THEME);
   const [accent, setAccentState] = useState<string | null>(null);
   // Sticky flags so the persistence effects can't fire with the *default* value
-  // before the saved choice has been read — otherwise the first mount would
-  // write DEFAULT_THEME back to localStorage and clobber the user's theme.
+  // before the saved choice has been read — otherwise the first mount writes
+  // DEFAULT_THEME back to localStorage and clobbers the user's theme.
   const [hydrated, setHydrated] = useState(false);
   const [accentHydrated, setAccentHydrated] = useState(false);
 
@@ -114,7 +138,7 @@ export function useTheme() {
     const saved = readSavedTheme();
     if (saved) setThemeState(saved);
     try {
-      setAccentState(localStorage.getItem(ACCENT_KEY));
+      setAccentState(normalizeAccent(localStorage.getItem(ACCENT_KEY)));
     } catch { /* ignore */ }
     setHydrated(true);
     setAccentHydrated(true);
@@ -124,22 +148,23 @@ export function useTheme() {
     if (!hydrated) return;
     const root = document.documentElement;
     root.setAttribute('data-app-theme', theme);
-    root.classList.toggle('dark', !LIGHT_THEMES.has(theme));
+    root.classList.toggle('dark', !isLightTheme(theme));
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
   }, [theme, hydrated]);
 
-  useEffect(() => {
+  const light = isLightTheme(theme);
+
+  useApplyEffect(() => {
     if (!accentHydrated) return;
     const root = document.documentElement;
     if (accent) {
-      const vars = accentCssVars(accent);
-      for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
+      for (const [k, v] of Object.entries(accentCssVars(accent, light))) root.style.setProperty(k, v);
       try { localStorage.setItem(ACCENT_KEY, accent); } catch { /* ignore */ }
     } else {
       for (const k of ACCENT_VARS) root.style.removeProperty(k);
       try { localStorage.removeItem(ACCENT_KEY); } catch { /* ignore */ }
     }
-  }, [accent, accentHydrated]);
+  }, [accent, accentHydrated, light]);
 
   const setTheme = useCallback((id: AppThemeId) => setThemeState(id), []);
 
@@ -150,7 +175,21 @@ export function useTheme() {
     });
   }, []);
 
-  const setAccent = useCallback((value: string | null) => setAccentState(value), []);
+  /**
+   * Accepts any `#rrggbb` (custom picker) or `null` to reset to the preset.
+   * Invalid input while typing is a no-op rather than a reset, so a half-typed
+   * hex in the picker never drops the accent.
+   */
+  const setAccent = useCallback((value: string | null) => {
+    setAccentState((prev) => (value === null ? null : normalizeAccent(value) ?? prev));
+  }, []);
 
-  return { theme, setTheme, toggleTheme, accent, setAccent, isDark: !LIGHT_THEMES.has(theme) };
+  return {
+    theme,
+    setTheme,
+    toggleTheme,
+    accent,
+    setAccent,
+    isDark: !light,
+  };
 }
