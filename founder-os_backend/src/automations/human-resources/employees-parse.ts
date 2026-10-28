@@ -29,6 +29,7 @@ function employeeFields(input: Record<string, any>): Omit<EmployeeInput, 'name'>
   return {
     employeeCode: nullableText(input.employeeCode, 40),
     email: nullableText(input.email, 200),
+    loginEmail: nullableText(input.loginEmail, 200),
     phone: nullableText(input.phone, 40),
     designation: nullableText(input.designation, 100),
     department: nullableText(input.department, 100),

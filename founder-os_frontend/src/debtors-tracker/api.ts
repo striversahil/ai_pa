@@ -4,7 +4,7 @@
  * founder-os_backend/src/worker/routes/debtors-tracker.ts (accounts scope).
  */
 
-import type { CustomerLedger } from "./types";
+import type { CustomerLedger, DebtorsTrackerPayload } from "./types";
 
 /** Fields the row editor may set (must match INVOICE_EDITABLE_FIELDS). */
 export const INVOICE_EDITABLE_FIELDS = [
@@ -36,6 +36,16 @@ async function request(url: string, init: RequestInit): Promise<void> {
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.error || `Request failed (${res.status})`);
   }
+}
+
+/** Full live dashboard payload (same endpoint the screen uses). */
+export async function getDebtorsTrackerData(): Promise<DebtorsTrackerPayload> {
+  const res = await fetch(`/api/debtors-tracker/data`, { cache: "no-store" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  return res.json() as Promise<DebtorsTrackerPayload>;
 }
 
 export async function patchInvoice(id: string, patch: InvoicePatch): Promise<void> {
@@ -101,4 +111,27 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
     throw new Error(body?.error || `Request failed (${res.status})`);
   }
   return res.json() as Promise<CustomerLedger>;
+}
+
+/**
+ * Log one receivables CSV download (the dashboard's Download as CSV button).
+ * Returns the new GLOBAL export count, which is stamped into the CSV "Count"
+ * column — inclusive of this download, so the first ever file shows 1.
+ * INSERT-only server-side (DebtorsExportEvent), so concurrent clicks cannot
+ * lose an increment.
+ */
+export async function recordReceivablesExport(rowCount: number): Promise<{ count: number }> {
+  const res = await fetch(`/api/debtors-tracker/exports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rowCount }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  const body = (await res.json().catch(() => ({}))) as { count?: unknown };
+  const count = Number(body?.count);
+  if (!Number.isFinite(count)) throw new Error("Export counter response was invalid");
+  return { count };
 }

@@ -9,16 +9,23 @@ import {
 import { jsonRequest, readError } from "@/hr/api";
 import { todayIST } from "@/hr/format";
 
-export default function TaskFormModal({ task, roster, onClose, onSaved }: {
+export default function TaskFormModal({ task, roster, mode = "manager", selfMemberId, onClose, onSaved }: {
   task?: HrTask | null;
   roster: HrMember[];
+  /** manager = HR assigning work; self = employee adding a task to their own list. */
+  mode?: "manager" | "self";
+  /** Roster member of the employee (self mode only — the server forces it anyway). */
+  selfMemberId?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const editing = !!task;
+  const self = mode === "self";
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const [assignedToId, setAssignedToId] = useState(task?.assignedToId ?? roster[0]?.id ?? "");
+  const [assignedToId, setAssignedToId] = useState(
+    self ? (selfMemberId ?? "") : (task?.assignedToId ?? roster[0]?.id ?? ""),
+  );
   const [dueDate, setDueDate] = useState(task?.dueDate ?? todayIST());
   const [dueTime, setDueTime] = useState(task?.dueTime ?? "");
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "normal");
@@ -29,22 +36,24 @@ export default function TaskFormModal({ task, roster, onClose, onSaved }: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) { setErr("Title is required"); return; }
-    if (!assignedToId) { setErr("Choose an assignee"); return; }
+    if (!self && !assignedToId) { setErr("Choose an assignee"); return; }
     setBusy(true);
     setErr(null);
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
         description: description.trim() || null,
-        assignedToId,
         dueDate,
         dueTime: dueTime || null,
         priority,
       };
+      // The delegation endpoint pins the assignee to the caller server-side.
+      if (!self) body.assignedToId = assignedToId;
       if (editing) body.status = status;
+      const base = self ? "/api/delegation/tasks" : "/api/human-resources/tasks";
       const res = editing
-        ? await jsonRequest(`/api/human-resources/tasks/${task!.id}`, "PATCH", body)
-        : await jsonRequest("/api/human-resources/tasks", "POST", body);
+        ? await jsonRequest(`${base}/${task!.id}`, "PATCH", body)
+        : await jsonRequest(base, "POST", body);
       if (!res.ok) throw new Error(await readError(res));
       onSaved();
       onClose();
@@ -60,8 +69,12 @@ export default function TaskFormModal({ task, roster, onClose, onSaved }: {
 
   return (
     <Modal
-      title={editing ? "Edit delegated task" : "Delegate a task"}
-      subtitle={editing ? task?.assignedToName ?? undefined : "Assign an HR task with a due date and time"}
+      title={self
+        ? (editing ? "Edit my task" : "Add my task")
+        : (editing ? "Edit delegated task" : "Delegate a task")}
+      subtitle={self
+        ? (editing ? "Update the details of your task" : "Add a task to your own list — HR can see it")
+        : (editing ? task?.assignedToName ?? undefined : "Assign an HR task with a due date and time")}
       onClose={onClose}
     >
       <form onSubmit={submit} className="space-y-3">
@@ -74,15 +87,17 @@ export default function TaskFormModal({ task, roster, onClose, onSaved }: {
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="Optional context, links or expected output" className={field} />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className={label}>Assign to</label>
-            <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className={field}>
-              {roster.length === 0 && <option value="">Add a team member first</option>}
-              {roster.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}{m.designation ? ` · ${m.designation}` : ""}</option>
-              ))}
-            </select>
-          </div>
+          {!self && (
+            <div>
+              <label className={label}>Assign to</label>
+              <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className={field}>
+                {roster.length === 0 && <option value="">Add a team member first</option>}
+                {roster.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}{m.designation ? ` · ${m.designation}` : ""}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className={label}>Priority</label>
             <select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)} className={field}>
@@ -109,7 +124,7 @@ export default function TaskFormModal({ task, roster, onClose, onSaved }: {
         {err && <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} disabled={busy} className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300 disabled:opacity-50">Cancel</button>
-          <button type="submit" disabled={busy || roster.length === 0} className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">{busy ? "Saving…" : editing ? "Save changes" : "Delegate task"}</button>
+          <button type="submit" disabled={busy || (!self && roster.length === 0)} className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">{busy ? "Saving…" : editing ? "Save changes" : self ? "Add task" : "Delegate task"}</button>
         </div>
       </form>
     </Modal>

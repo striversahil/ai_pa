@@ -140,7 +140,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "accounts") return <AccountsDashboard />;
     if (selected === "debtors-tracker" || selected === "payment-tracker") return <DebtorsTrackerDashboard />;
     if (selected === "digital-marketing") return <DigitalMarketingDashboard />;
-    if (selected === "human-resources") return <HumanResourcesDashboard />;
+    if (selected === "human-resources") return <HumanResourcesDashboard onNavigate={onNavigate} />;
     if (selected === "whatsapp-autopilot") return <AutopilotDashboard />;
     if (selected === "enquiry-tracker") return <EnquiryTracker />;
     if (selected === "enquiry-procurement") return <ProcurementQueue />;

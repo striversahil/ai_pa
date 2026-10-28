@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import type { CustomerAgeingRow, LiveInvoice, DebtorsTrackerPayload } from "@/debtors-tracker/types";
-import { deleteCollection, resetDebtorsTracker, runReminderDryRun } from "@/debtors-tracker/api";
+import { deleteCollection, getDebtorsTrackerData, recordReceivablesExport, resetDebtorsTracker, runReminderDryRun } from "@/debtors-tracker/api";
+import { buildOverdueReceivableRows, downloadOverdueReceivablesCsv } from "@/debtors-tracker/receivables-export";
 import { TabBar } from "@/components/ui/TabBar";
 import ImportModal, { type ImportKind } from "./debtors-tracker/ImportModal";
 import InvoiceEditModal from "./debtors-tracker/InvoiceEditModal";
@@ -26,12 +27,7 @@ export default function DebtorsTrackerDashboard() {
   const { me } = useAuth();
   const canAccounts = !!me && (me.isAdmin || me.scopes.includes("accounts"));
 
-  const dash = useLiveDashboard<DebtorsTrackerPayload>(
-    () => fetch("/api/debtors-tracker/data", { cache: "no-store" }).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `HTTP ${r.status}`);
-      return r.json() as Promise<DebtorsTrackerPayload>;
-    }),
-  );
+  const dash = useLiveDashboard<DebtorsTrackerPayload>(getDebtorsTrackerData);
 
   const [view, setView] = useState<View | null>(null);
   const [importKind, setImportKind] = useState<ImportKind | null>(null);
@@ -41,11 +37,20 @@ export default function DebtorsTrackerDashboard() {
   const [ledgerCustomer, setLedgerCustomer] = useState<CustomerAgeingRow | null>(null);
   const [resetting, setResetting] = useState(false);
   const [reminderRunning, setReminderRunning] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  /** Last confirmed global export number — fallback if the counter POST fails. */
+  const lastExportCount = useRef(0);
 
   const data = dash.data ?? null;
   const loading = dash.loading && !data;
   const errorMsg = dash.error ? String(dash.error) : null;
+
+  // Count shown on the header button; the click re-fetches before exporting.
+  const overdueRows = useMemo(
+    () => buildOverdueReceivableRows(data?.invoices ?? [], data?.customers ?? []),
+    [data?.invoices, data?.customers],
+  );
 
   const tabs = useMemo(() => {
     const base: { key: View; label: string; icon: string; count?: number }[] = [
@@ -126,6 +131,52 @@ export default function DebtorsTrackerDashboard() {
     }
   };
 
+  /**
+   * Downloads only clients with at least one live, past-due, unpaid bill.
+   * Re-fetches first so the CSV is current even if the tab missed an event;
+   * falls back to the live payload on screen if that refresh fails.
+   *
+   * The download is logged BEFORE the file is written, because the "Count"
+   * column must show this download's number (first ever file → 1).
+   */
+  const downloadOverdueCsv = async () => {
+    if (!data || exporting) return;
+    setExporting(true);
+    try {
+      let payload = data;
+      try {
+        payload = await getDebtorsTrackerData();
+      } catch {
+        // Keep the live payload already on screen.
+      }
+      const rows = buildOverdueReceivableRows(payload.invoices, payload.customers);
+      if (rows.length === 0) {
+        setToast("No overdue receivables to export.");
+        return;
+      }
+      let exportCount = lastExportCount.current;
+      let counted = true;
+      try {
+        const stats = await recordReceivablesExport(rows.length);
+        exportCount = stats.count;
+        lastExportCount.current = stats.count;
+      } catch {
+        counted = false;
+      }
+      downloadOverdueReceivablesCsv(rows, payload.meta.asOfIST, exportCount);
+      const clients = `${rows.length} client${rows.length === 1 ? "" : "s"}`;
+      setToast(
+        counted
+          ? `Downloaded ${clients} · export #${exportCount}.`
+          : `Downloaded ${clients}, but the export count could not be updated.`,
+      );
+    } catch (e: any) {
+      setToast(e?.message ?? "CSV export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 px-4 py-6 text-zinc-900 md:px-8 dark:text-zinc-100">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -135,15 +186,40 @@ export default function DebtorsTrackerDashboard() {
             Debtors, ageing, live collections and reminder previews for the accounts desk and sales follow-up.
           </p>
         </div>
-        {data && (
-          <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-            </span>
-            Live · as of {data.meta.asOfIST}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void downloadOverdueCsv()}
+            disabled={!data || overdueRows.length === 0 || exporting}
+            title={
+              !data
+                ? "Loading live receivables…"
+                : overdueRows.length === 0
+                  ? "No clients with overdue, unpaid bills"
+                  : `Download ${overdueRows.length} client${overdueRows.length === 1 ? "" : "s"} with overdue bills as CSV`
+            }
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-600 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" />
+            </svg>
+            {exporting ? "Preparing…" : "Download as CSV"}
+            {!exporting && overdueRows.length > 0 && (
+              <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">
+                {overdueRows.length}
+              </span>
+            )}
+          </button>
+          {data && (
+            <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              Live · as of {data.meta.asOfIST}
+            </div>
+          )}
+        </div>
       </header>
 
       <div className="w-full shrink-0">

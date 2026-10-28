@@ -16,6 +16,7 @@ import {
   importCollections, importDebtors, getDebtorsTrackerData, DebtorsTrackerError,
   updateInvoiceFields, deleteInvoice, deleteCollection, resetDebtorsTracker,
   INVOICE_EDITABLE_FIELDS, FOLLOW_UP_FIELDS, updateCustomerSituation, runReminderDryRun, updateCustomerContact, getCustomerLedger,
+  recordReceivablesExport,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
 
@@ -82,6 +83,23 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     } catch (e) { return scopeError(c, e); }
     try {
       return c.json(await getDebtorsTrackerData());
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Export log: global "Count" stamped into every receivables CSV row ──
+  // POST (not GET) because it increments; any tracker viewer may download.
+  app.post(`${prefix}/exports`, async (c) => {
+    try {
+      await requireTrackerRead(c);
+    } catch (e) { return scopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    const rowCount = Number((body as any)?.rowCount) || 0;
+    try {
+      const stats = await recordReceivablesExport({
+        actor: await actorName(c),
+        rowCount,
+      });
+      return c.json(stats);
     } catch (e) { return errorResponse(c, e); }
   });
 

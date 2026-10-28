@@ -105,6 +105,12 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
     // Team chat: available to every approved member (any granted scope/role).
     return me.scopes.length > 0 || me.roles.length > 0;
   }
+  if (viewOrSlug === "delegation") {
+    // The employee delegation board is for EVERY approved member — it is the
+    // one place a person sees their own tasks. The backend scopes the payload
+    // to the caller's own roster record, so no scope grant is required.
+    return me.scopes.length > 0 || me.roles.length > 0;
+  }
   if (viewOrSlug === "admin") {
     // Admin panel: full admins plus user-managers (e.g. MIS holders of the
     // user-admin scope). Root-only powers inside are gated separately.

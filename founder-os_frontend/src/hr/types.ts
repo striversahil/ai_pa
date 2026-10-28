@@ -3,6 +3,8 @@
 
 export type TaskStatus = "pending" | "in_progress" | "done";
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
+/** hr = delegated by HR/MIS; self = created by the employee. */
+export type TaskOrigin = "hr" | "self";
 export type ExpenseType = "fixed" | "variable" | "field_staff";
 export type PaymentMode = "cash" | "upi" | "bank" | "card" | "other";
 
@@ -140,6 +142,8 @@ export interface HrSalaryPreview {
 export interface HrEmployee extends HrMember {
   employeeCode: string | null;
   email: string | null;
+  /** Platform login for the delegation board (falls back to `email`). */
+  loginEmail: string | null;
   phone: string | null;
   department: string | null;
   photoUrl: string | null;
@@ -308,6 +312,9 @@ export interface HrTask {
   priority: TaskPriority;
   status: TaskStatus;
   remark: string | null;
+  /** hr = delegated by HR/MIS; self = the employee created it. */
+  origin?: TaskOrigin;
+  createdByMemberId?: string | null;
   createdBy: string | null;
   updatedBy: string | null;
   overdue: boolean;
@@ -461,4 +468,101 @@ export interface HrDashboardData {
     summary: HrExpenseSummary;
   };
   inventory: HrInventorySnapshot;
+}
+
+// ── Delegation board (employee self-service) ────────────────────────────────
+// Payload of GET /api/delegation/board — mirrors
+// founder-os_backend/src/automations/human-resources/delegation.ts.
+
+export type DelegationMatch = "loginEmail" | "email" | "name" | "as" | null;
+
+/** One append-only journal row: a remark or a status change on a task. */
+export interface HrTaskLog {
+  id: string;
+  taskId?: string;
+  logDate: string;
+  kind: "remark" | "status";
+  status: TaskStatus | null;
+  remark: string | null;
+  authorName: string | null;
+  createdAt: string | null;
+}
+
+/** A task as the delegation board returns it (task + inline recent journal). */
+export interface HrDelegationTask extends HrTask {
+  origin: TaskOrigin;
+  createdByMemberId: string | null;
+  recentLogs: HrTaskLog[];
+  /** Still open and due, with no journal entry today. */
+  needsUpdate: boolean;
+}
+
+export interface HrDelegationMember {
+  id: string;
+  name: string;
+  designation: string | null;
+  department: string | null;
+  employeeCode: string | null;
+  photoUrl: string | null;
+  order: number;
+  email?: string | null;
+  loginEmail?: string | null;
+  /** This roster member's email matches a platform login. */
+  linked?: boolean;
+  matchedBy?: DelegationMatch;
+}
+
+export interface HrDelegationCounts {
+  overdue: number;
+  today: number;
+  upcoming: number;
+  doneToday: number;
+  open: number;
+}
+
+/** Manager-only: one row per team member for the selected day. */
+export interface HrDelegationTeamRow {
+  memberId: string;
+  name: string;
+  designation: string | null;
+  photoUrl: string | null;
+  open: number;
+  dueOnDate: number;
+  overdue: number;
+  doneOnDate: number;
+  updates: number;
+  lastUpdateAt: string | null;
+}
+
+/** Manager-only: one journal entry from the day's activity feed. */
+export interface HrDelegationActivity {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  memberId: string | null;
+  memberName: string;
+  kind: "remark" | "status";
+  status: TaskStatus | null;
+  remark: string | null;
+  authorName: string | null;
+  logDate: string;
+  createdAt: string | null;
+}
+
+export interface HrDelegationBoard {
+  meta: {
+    date: string;
+    today: string;
+    isManager: boolean;
+    /** The signed-in user is linked to a roster member. */
+    linked: boolean;
+    self: (HrSelf & { matchedBy?: DelegationMatch; email?: string | null; loginEmail?: string | null }) | null;
+    counts: HrDelegationCounts;
+  };
+  tasks: HrDelegationTask[];
+  /** Manager-only extras. */
+  roster?: HrDelegationMember[];
+  team?: HrDelegationTeamRow[];
+  activity?: HrDelegationActivity[];
+  logins?: HrDelegationMember[];
 }

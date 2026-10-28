@@ -6,6 +6,8 @@ import {
   cleanTaskCreate, cleanTaskPatch, isTaskOverdue, isValidDate, istDateStr, istTimeStr, istMonthStr,
   normalizeMonth, taskSort,
 } from './parse';
+import { taskJson } from './task-json';
+import { appendTaskLog } from './task-logs';
 import type { HrScope, HrSelf } from './types';
 import { getInventorySnapshot } from './inventory';
 import { createWithEmployeeCode } from './employee-codes';
@@ -17,6 +19,14 @@ function normId(value: unknown): string {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+/** Split a free-text email cell ("a@x.com, b@y.com") into normalised tokens. */
+function emailTokens(value: unknown): string[] {
+  return String(value ?? '')
+    .split(/[,;/\s]+/)
+    .map((part) => normId(part))
+    .filter(Boolean);
+}
+
 export async function resolveSelfHumanResourcesMember(
   asId: unknown,
   me: { user?: { email?: string | null; name?: string | null } } | null,
@@ -26,15 +36,33 @@ export async function resolveSelfHumanResourcesMember(
   })) as any[];
   if (asId) {
     const hit = roster.find((r) => String(r.id) === String(asId));
-    if (hit) return { selfId: String(hit.id), selfName: String(hit.name), designation: hit.designation ?? null };
+    if (hit) {
+      return {
+        selfId: String(hit.id), selfName: String(hit.name),
+        designation: hit.designation ?? null, matchedBy: 'as',
+      };
+    }
   }
   if (!me) return null;
   const email = normId(me.user?.email);
   if (email) {
-    const hits = roster.filter((r) => r.email && normId(r.email) === email);
-    if (hits.length === 1) {
-      const h = hits[0];
-      return { selfId: String(h.id), selfName: String(h.name), designation: h.designation ?? null };
+    // 1. Explicit login email wins (may differ from the contact email).
+    const loginHits = roster.filter((r) => emailTokens(r.loginEmail).includes(email));
+    if (loginHits.length === 1) {
+      const h = loginHits[0];
+      return {
+        selfId: String(h.id), selfName: String(h.name),
+        designation: h.designation ?? null, matchedBy: 'loginEmail',
+      };
+    }
+    // 2. Contact email (a cell may hold several addresses).
+    const mailHits = roster.filter((r) => emailTokens(r.email).includes(email));
+    if (mailHits.length === 1) {
+      const h = mailHits[0];
+      return {
+        selfId: String(h.id), selfName: String(h.name),
+        designation: h.designation ?? null, matchedBy: 'email',
+      };
     }
   }
   const name = normId(me.user?.name);
@@ -45,31 +73,13 @@ export async function resolveSelfHumanResourcesMember(
     });
     if (hits.length === 1) {
       const h = hits[0];
-      return { selfId: String(h.id), selfName: String(h.name), designation: h.designation ?? null };
+      return {
+        selfId: String(h.id), selfName: String(h.name),
+        designation: h.designation ?? null, matchedBy: 'name',
+      };
     }
   }
   return null;
-}
-
-function taskJson(row: any, today: string, nowTime: string) {
-  return {
-    id: String(row.id),
-    title: row.title ?? '',
-    description: row.description ?? null,
-    assignedToId: row.assignedToId ?? null,
-    assignedToName: row.assignedTo?.name ?? null,
-    assignedToDesignation: row.assignedTo?.designation ?? null,
-    dueDate: row.dueDate ?? null,
-    dueTime: row.dueTime ?? null,
-    priority: row.priority ?? 'normal',
-    status: row.status ?? 'pending',
-    remark: row.remark ?? null,
-    createdBy: row.createdBy ?? null,
-    updatedBy: row.updatedBy ?? null,
-    overdue: isTaskOverdue(row, today, nowTime),
-    createdAt: row.createdAt ?? null,
-    updatedAt: row.updatedAt ?? null,
-  };
 }
 
 function expenseJson(row: any) {
@@ -272,6 +282,18 @@ export async function updateTask(
     where: { id },
     data: { ...patch, updatedBy: actor },
   });
+  // Journal the change so the employee timeline and HR's daily activity feed
+  // see updates made from the HR dashboard too (single history, one writer).
+  if (patch.status !== undefined || patch.remark !== undefined) {
+    await appendTaskLog({
+      taskId: String(id),
+      memberId: String(patch.assignedToId ?? current.assignedToId ?? '') || null,
+      kind: patch.status !== undefined ? 'status' : 'remark',
+      status: patch.status ?? null,
+      remark: patch.remark ?? null,
+      authorName: actor,
+    }).catch(() => null);
+  }
   await invalidateHumanResourcesCache();
   return row;
 }

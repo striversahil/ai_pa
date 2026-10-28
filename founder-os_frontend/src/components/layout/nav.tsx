@@ -1,8 +1,9 @@
 import type { LucideIcon } from "lucide-react";
-import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings } from "lucide-react";
+import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks } from "lucide-react";
 
 export type ViewType =
   | "briefing"
+  | "delegation"
   | "whatsapp"
   | "automations"
   | "chat"
@@ -20,6 +21,8 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
+  // Employee delegation board — every approved login, HR or not.
+  { view: "delegation", label: "Delegation", icon: ListChecks, mobile: true },
   { view: "chat", label: "Chat", icon: MessagesSquare, mobile: true },
   { view: "briefing", label: "Founder AI", icon: Sparkles, mobile: true },
   { view: "whatsapp", label: "WhatsApp", icon: MessageCircle, mobile: true },
@@ -41,6 +44,7 @@ export function navTargetPath(t: NavTarget): string {
   if (t.type === "dashboard") return `/automations/${t.slug}`;
   const paths: Record<ViewType, string> = {
     briefing: "/briefing",
+    delegation: "/delegation",
     whatsapp: "/whatsapp",
     automations: "/automations",
     chat: "/chat",

@@ -71,6 +71,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   PaymentCollection: ['deleted'],
   PaymentCustomer: ['whatsappOptIn'],
   PaymentReminder: [],
+  DebtorsExportEvent: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -119,6 +120,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   HumanResourcesInventoryTxn: ['createdAt'],
   HumanResourcesHiringPosition: ['createdAt', 'updatedAt'],
   HumanResourcesPositionDoc: ['createdAt', 'updatedAt'],
+  HumanResourcesTaskLog: ['createdAt'],
   Enquiry: ['createdAt', 'updatedAt'],
   EnquiryComment: ['createdAt'],
   ProductItem: ['createdAt', 'updatedAt'],
@@ -131,6 +133,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   PaymentCollection: ['createdAt'],
   PaymentCustomer: ['optInAt', 'createdAt', 'updatedAt'],
   PaymentReminder: ['createdAt'],
+  DebtorsExportEvent: ['createdAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -199,6 +202,7 @@ const ID_FIELDS: Record<string, string> = {
   HumanResourcesInventoryTxn: 'id',
   HumanResourcesHiringPosition: 'id',
   HumanResourcesPositionDoc: 'id',
+  HumanResourcesTaskLog: 'id',
   ProductItem: 'id',
   KypGuide: 'id',
   Vendor: 'id',
@@ -317,6 +321,10 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   HumanResourcesTask: {
     assignedTo: { model: 'HumanResourcesMember', fk: 'assignedToId', one: true },
+    logs: { model: 'HumanResourcesTaskLog', fk: 'taskId' },
+  },
+  HumanResourcesTaskLog: {
+    task: { model: 'HumanResourcesTask', fk: 'taskId', one: true },
   },
   HumanResourcesSalaryComponent: {
     member: { model: 'HumanResourcesMember', fk: 'memberId', one: true },
@@ -906,6 +914,7 @@ export class D1PrismaClient {
   get humanResourcesInventoryTxn() { return this.model('HumanResourcesInventoryTxn'); }
   get humanResourcesHiringPosition() { return this.model('HumanResourcesHiringPosition'); }
   get humanResourcesPositionDoc() { return this.model('HumanResourcesPositionDoc'); }
+  get humanResourcesTaskLog() { return this.model('HumanResourcesTaskLog'); }
   // Product Line master (migration 0046).
   get productItem() { return this.model('ProductItem'); }
   get kypGuide() { return this.model('KypGuide'); }
@@ -918,6 +927,8 @@ export class D1PrismaClient {
   get paymentCollection() { return this.model('PaymentCollection'); }
   get paymentCustomer() { return this.model('PaymentCustomer'); }
   get paymentReminder() { return this.model('PaymentReminder'); }
+  // Receivables CSV export log (migration 0084) — global "Count" column.
+  get debtorsExportEvent() { return this.model('DebtorsExportEvent'); }
 
   $on() {}
   $disconnect() {}

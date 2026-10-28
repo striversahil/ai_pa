@@ -465,6 +465,10 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     '/api/enquiries/files', // enquiry attachment store — the owning save broadcasts; a bare upload must not storm the list (would merge a media-stripped row over the just-hydrated photo)
     '/api/whatsapp/events', // SSE stream
     '/api/events',     // WebSocket upgrade
+    // CSV export counters are not dashboard data; a download must not make
+    // every open dashboard refetch the (cached) payload.
+    '/api/debtors-tracker/exports',
+    '/api/payment-tracker/exports',
   ];
   app.use('*', async (c, next) => {
     await next();

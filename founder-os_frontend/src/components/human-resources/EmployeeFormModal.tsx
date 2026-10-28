@@ -31,6 +31,7 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const [form, setForm] = useState({
     name: employee?.name ?? "",
     email: employee?.email ?? "",
+    loginEmail: employee?.loginEmail ?? "",
     phone: employee?.phone ?? "",
     designation: employee?.designation ?? "",
     department: employee?.department ?? "",
@@ -129,6 +130,7 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
         ...form,
         name: form.name.trim(),
         email: form.email.trim() || null,
+        loginEmail: form.loginEmail.trim() || null,
         phone: form.phone.trim() || null,
         designation: form.designation.trim() || null,
         department: form.department.trim() || null,
@@ -210,6 +212,10 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
             <div><label className={label}>Department</label><input value={form.department} onChange={(e) => set("department", e.target.value)} className={field} /></div>
             <div><label className={label}>Phone</label><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className={field} /></div>
             <div><label className={label}>Email</label><input value={form.email} onChange={(e) => set("email", e.target.value)} className={field} /></div>
+            <div>
+              <label className={label}>Login email (delegation board)</label>
+              <input value={form.loginEmail} onChange={(e) => set("loginEmail", e.target.value)} placeholder="Platform login, if different" className={field} />
+            </div>
             <div><label className={label}>Date of birth</label><input type="date" value={form.dateOfBirth} onChange={(e) => set("dateOfBirth", e.target.value)} className={field} /></div>
             <div><label className={label}>Address</label><input value={form.address} onChange={(e) => set("address", e.target.value)} className={field} /></div>
           </div>

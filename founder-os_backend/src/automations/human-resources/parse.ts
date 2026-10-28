@@ -170,6 +170,7 @@ export function cleanMemberCreate(input: Record<string, any>): MemberInput {
   return {
     name,
     email: nullableText(input.email, 200),
+    loginEmail: nullableText(input.loginEmail, 200),
     phone: nullableText(input.phone, 40),
     designation: nullableText(input.designation, 100),
     order: Number.isFinite(orderRaw) ? Math.max(0, Math.min(9999, Math.floor(orderRaw))) : 0,
@@ -184,6 +185,7 @@ export function cleanMemberPatch(input: Record<string, any>): Partial<MemberInpu
     out.name = name;
   }
   if (input.email !== undefined) out.email = nullableText(input.email, 200);
+  if (input.loginEmail !== undefined) out.loginEmail = nullableText(input.loginEmail, 200);
   if (input.phone !== undefined) out.phone = nullableText(input.phone, 40);
   if (input.designation !== undefined) out.designation = nullableText(input.designation, 100);
   if (input.order !== undefined) {

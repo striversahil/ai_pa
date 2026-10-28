@@ -19,6 +19,7 @@ const FounderAssistant = dynamic(() => import("../components/FounderAssistant"),
 const WhatsAppDashboard = dynamic(() => import("../components/WhatsAppDashboard"), { ssr: false });
 const Automations = dynamic(() => import("../components/Automations"), { ssr: false });
 const ChatRoom = dynamic(() => import("../components/ChatRoom"), { ssr: false });
+const DelegationView = dynamic(() => import("../components/delegation/DelegationView"), { ssr: false });
 const EmailDashboard = dynamic(() => import("../components/EmailDashboard"), { ssr: false });
 const SettingsDashboard = dynamic(() => import("../components/SettingsDashboard"), { ssr: false });
 
@@ -42,7 +43,7 @@ function AppInner() {
   // Legacy dashboard slug alias (Payment Tracker → Debtors Tracker).
   const sub = rawSub === "payment-tracker" ? "debtors-tracker" : rawSub;
   const activeView: ViewType =
-    (["briefing", "whatsapp", "automations", "chat", "admin", "email", "settings"] as ViewType[]).includes(route.view as ViewType)
+    (["briefing", "delegation", "whatsapp", "automations", "chat", "admin", "email", "settings"] as ViewType[]).includes(route.view as ViewType)
       ? (route.view as ViewType)
       : "automations";
 
@@ -143,6 +144,7 @@ function AppInner() {
           ) : (
           <>
           {activeView === "briefing" && <FounderAssistant />}
+          {activeView === "delegation" && <DelegationView />}
           {activeView === "whatsapp" && <WhatsAppDashboard />}
           {activeView === "chat" && <ChatRoom />}
           {activeView === "email" && <EmailDashboard />}

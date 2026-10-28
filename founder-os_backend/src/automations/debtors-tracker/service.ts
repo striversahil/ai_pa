@@ -31,3 +31,9 @@ export {
 } from './reminders';
 export { updateCustomerContact, updateCustomerSituation } from './customers';
 export { CUSTOMER_SITUATIONS, CUSTOMER_SITUATION_LABELS } from './situation';
+export {
+  getReceivablesExportCount,
+  recordReceivablesExport,
+  RECEIVABLES_EXPORT_SOURCE,
+} from './export-counter';
+export type { ReceivablesExportStats } from './export-counter';

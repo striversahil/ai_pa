@@ -39,7 +39,7 @@ const GROUPS: { label: string; tabs: HrTab[] }[] = [
   },
 ];
 
-export default function HumanResourcesDashboard() {
+export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (path: string) => void } = {}) {
   const { me } = useAuth();
   const [view, setView] = useState<HrView>("employees");
   const [month, setMonth] = useState(currentMonthIST());
@@ -134,7 +134,14 @@ export default function HumanResourcesDashboard() {
                 .filter(Boolean)}
             />
           )}
-          {data && view === "delegation" && <DelegationTab data={data} onRefresh={() => dash.refresh()} onManageEmployees={() => setView("employees")} />}
+          {data && view === "delegation" && (
+            <DelegationTab
+              data={data}
+              onRefresh={() => dash.refresh()}
+              onManageEmployees={() => setView("employees")}
+              onOpenBoard={onNavigate ? () => onNavigate("/delegation") : undefined}
+            />
+          )}
           {view === "attendance" && <AttendanceTab />}
           {view === "leaves" && <LeavesTab />}
           {view === "payroll" && <PayrollTab />}

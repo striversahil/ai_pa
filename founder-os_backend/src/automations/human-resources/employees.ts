@@ -50,6 +50,7 @@ export function employeeJson(row: any, components: any[] = [], template: any = n
     name: row.name ?? '',
     employeeCode: row.employeeCode ?? null,
     email: row.email ?? null,
+    loginEmail: row.loginEmail ?? null,
     phone: row.phone ?? null,
     designation: row.designation ?? null,
     department: row.department ?? null,

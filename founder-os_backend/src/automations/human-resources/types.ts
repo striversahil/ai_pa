@@ -19,6 +19,8 @@ export interface HrSelf {
   selfId: string;
   selfName: string;
   designation: string | null;
+  /** How the login was matched to the roster (email/loginEmail/name/as). */
+  matchedBy?: 'loginEmail' | 'email' | 'name' | 'as';
 }
 
 export interface HrScope {
@@ -60,6 +62,8 @@ export interface ExpenseInput {
 export interface MemberInput {
   name: string;
   email: string | null;
+  /** Platform login for the delegation board (falls back to `email`). */
+  loginEmail: string | null;
   phone: string | null;
   designation: string | null;
   order: number;
@@ -126,6 +130,8 @@ export interface EmployeeInput {
   name: string;
   employeeCode: string | null;
   email: string | null;
+  /** Platform login email (falls back to `email` when empty). */
+  loginEmail: string | null;
   phone: string | null;
   designation: string | null;
   department: string | null;

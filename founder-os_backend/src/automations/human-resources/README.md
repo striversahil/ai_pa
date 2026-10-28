@@ -9,7 +9,14 @@ recorded as a filter, not tied to a roster member).
 Files:
 
 - `index.ts` — dashboard data provider (`GET /api/automations/human-resources/data`).
-- `service.ts` — roster, delegated tasks, expense ledger, dashboard aggregation.
+- `service.ts` — roster, delegated tasks, expense ledger, dashboard aggregation,
+  `resolveSelfHumanResourcesMember` (login → roster matching).
+- `delegation.ts` — employee-facing board: scoped reads, self-created tasks, ownership
+  guards, manager extras (team day cards, activity feed, logins).
+- `delegation-parse.ts` — pure section/day/"needs an update today" rules
+  (mirrors `founder-os_frontend/src/hr/delegation.ts`).
+- `task-logs.ts` — append-only task journal writer + queries.
+- `task-json.ts` — shared HrTask / HrTaskLog JSON mappers (dashboard + board).
 - `inventory.ts` — daily-item catalog, stock movement ledger, derived stock levels and optional stock-in expenses.
 - `hiring-positions.ts` — hiring kit: positions with any number of JD / SOP documents (D1 metadata).
 - `hiring-positions-parse.ts` — pure position-name/PDF validation shared with the route layer.
@@ -49,6 +56,14 @@ Files:
   the roster, edit/delete any expense, add/edit inventory items, adjust stock and delete
   stock movements.
 - Stock quantity is never edited directly; it is derived from the movement ledger.
+- **Delegation board (`/delegation`) is for every approved login** — no `human-resources`
+  scope required. `GET /api/delegation/board` scopes itself server-side: a non-manager only
+  ever receives rows assigned to their own roster member (`linked=false` → empty board with
+  a "ask HR to link your login" hint). HR/MIS holders additionally get `roster`, `team`,
+  `activity` and `logins` in the same payload.
+- Employees may always change `status` + `remark` on their own tasks; content fields
+  (`title, description, dueDate, dueTime, priority`) only on `origin='self'` tasks they
+  created. Deleting is limited to self-created tasks. Re-assignment is manager-only.
 
 ## Endpoints
 
@@ -70,3 +85,9 @@ Files:
 - `POST /api/human-resources/hiring-positions/:id/docs` (multipart `kind` + PDF, appends a document)
 - `DELETE /api/human-resources/position-docs/:id` (deletes one document + its PDF)
 - `GET /api/human-resources/position-docs/:id/file` (inline PDF, HR/MIS session)
+- `GET /api/delegation/board?date=YYYY-MM-DD` (any signed-in user; self-scoped)
+- `POST /api/delegation/tasks` (employee self task, or HR assignment when `assignedToId` is sent by HR/MIS)
+- `PATCH /api/delegation/tasks/:id` (status/remark always; content on own self tasks)
+- `DELETE /api/delegation/tasks/:id` (own self tasks; HR/MIS any task)
+- `GET /api/delegation/tasks/:id/logs` (journal, self-scoped)
+- `PUT /api/delegation/members/:id/login-email` (HR/MIS — links a roster member to a login)

@@ -1203,6 +1203,9 @@ model HumanResourcesMember {
   id                    String   @id @default(uuid())
   name                  String
   email                 String?
+  // Explicit platform-login link (may differ from the contact email). Falls
+  // back to `email` when empty — see resolveSelfHumanResourcesMember.
+  loginEmail            String?
   phone                 String?
   designation           String?
   employeeCode          String?  @unique
@@ -1406,14 +1409,41 @@ model HumanResourcesTask {
   priority     String   @default("normal") // low | normal | high | urgent
   status       String   @default("pending") // pending | in_progress | done
   remark       String?
+  // hr = delegated by an HR/MIS user; self = created by the employee.
+  origin       String   @default("hr")
+  // Roster member who created a self task (null for HR-assigned tasks).
+  createdByMemberId String?
   createdBy    String?
   updatedBy    String?
   deleted      Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  logs         HumanResourcesTaskLog[]
 
   @@index([deleted, status, dueDate])
   @@index([assignedToId, dueDate])
+  @@index([origin])
+}
+
+// Append-only daily journal for a delegated task: every status change and every
+// remark becomes one row, tagged with the IST day it was written. The task row
+// keeps a mirror of the latest status/remark so older views stay correct.
+model HumanResourcesTaskLog {
+  id             String              @id @default(uuid())
+  taskId         String
+  task           HumanResourcesTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  memberId       String? // assignee at the time of writing (per-employee reporting)
+  logDate        String // YYYY-MM-DD IST
+  kind           String   @default("remark") // remark | status
+  status         String? // status after the change (kind=status)
+  remark         String?
+  authorName     String?
+  authorMemberId String?
+  createdAt      DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([memberId, logDate])
+  @@index([logDate])
 }
 
 model HumanResourcesExpense {
@@ -1643,5 +1673,18 @@ model PaymentReminder {
 
   @@index([customerKey])
   @@index([runDay])
+  @@index([createdAt])
+}
+
+// Debtors Tracker — one row per "Download as CSV" of the overdue receivables
+// export. The global count shown in every exported row is COUNT(*) over this
+// table: INSERT-only, so concurrent downloads can never lose an increment.
+model DebtorsExportEvent {
+  id        String   @id @default(uuid())
+  actor     String   @default("")
+  source    String   @default("receivables-csv")
+  rowCount  Int      @default(0)
+  createdAt DateTime @default(now())
+
   @@index([createdAt])
 }

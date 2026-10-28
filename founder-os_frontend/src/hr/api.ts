@@ -1,4 +1,7 @@
-import type { HrHiringPosition, HrPositionDoc, HrSalaryPreview, HrSalaryTemplate, HiringDocKind } from "./types";
+import type {
+  HrDelegationBoard, HrDelegationTask, HrHiringPosition, HrPositionDoc,
+  HrSalaryPreview, HrSalaryTemplate, HrTaskLog, HiringDocKind,
+} from "./types";
 
 export async function readError(res: Response): Promise<string> {
   try {
@@ -115,5 +118,46 @@ export async function uploadPositionDoc(positionId: string, kind: HiringDocKind,
 
 export async function deletePositionDoc(id: string): Promise<void> {
   const res = await jsonRequest(`/api/human-resources/position-docs/${id}`, "DELETE");
+  if (!res.ok) throw new Error(await readError(res));
+}
+
+// ── Delegation board (employee self-service) ────────────────────────────────
+// All reads/writes are session-scoped on the server: an employee only ever gets
+// their own tasks, HR/MIS users get the whole board.
+
+export async function fetchDelegationBoard(date?: string): Promise<HrDelegationBoard> {
+  const res = await fetch(`/api/delegation/board${date ? `?date=${encodeURIComponent(date)}` : ""}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function createDelegationTask(payload: Record<string, unknown>): Promise<HrDelegationTask> {
+  const res = await jsonRequest("/api/delegation/tasks", "POST", payload);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function updateDelegationTask(id: string, payload: Record<string, unknown>): Promise<HrDelegationTask> {
+  const res = await jsonRequest(`/api/delegation/tasks/${id}`, "PATCH", payload);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function deleteDelegationTask(id: string): Promise<void> {
+  const res = await jsonRequest(`/api/delegation/tasks/${id}`, "DELETE");
+  if (!res.ok) throw new Error(await readError(res));
+}
+
+export async function fetchTaskHistory(id: string): Promise<{ task: HrDelegationTask; logs: HrTaskLog[] }> {
+  const res = await fetch(`/api/delegation/tasks/${id}/logs`, { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+/** HR links (or unlinks) a roster member to a platform login. */
+export async function setMemberLoginEmail(memberId: string, loginEmail: string | null): Promise<void> {
+  const res = await jsonRequest(`/api/delegation/members/${memberId}/login-email`, "PUT", { loginEmail });
   if (!res.ok) throw new Error(await readError(res));
 }
