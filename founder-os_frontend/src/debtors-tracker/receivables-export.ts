@@ -9,6 +9,7 @@
  * D0/D31/D61/D91/D181 buckets are past due; `PAID` / `NOT_DUE` are not.
  */
 import type { CustomerAgeingRow, LiveInvoice } from "./types";
+import { situationLabel } from "./types";
 import { downloadCsv, type CsvValue } from "../lib/csv";
 
 const OVERDUE_BUCKETS = new Set<string>(["D0", "D31", "D61", "D91", "D181"]);
@@ -20,6 +21,8 @@ export interface OverdueReceivableRow {
   /** Sum of the open, past-due bill balances (gross, before customer advances). */
   totalOverdue: number;
   billCount: number;
+  /** Client-facing label of the CRM situation ("Promised to pay", "Unset", …). */
+  situation: string;
   /** Semicolon-separated, oldest due first. */
   billNumbers: string;
 }
@@ -67,6 +70,7 @@ export function buildOverdueReceivableRows(
   const groups = new Map<string, {
     name: string;
     phone: string;
+    situation: string;
     total: number;
     bills: LiveInvoice[];
   }>();
@@ -82,6 +86,7 @@ export function buildOverdueReceivableRows(
       group = {
         name,
         phone: String(contact?.phone || inv.contactPhone || "").trim(),
+        situation: situationLabel(contact?.situation || "") || "Unset",
         total: 0,
         bills: [],
       };
@@ -115,6 +120,7 @@ export function buildOverdueReceivableRows(
         whatsappNumber: whatsapp91(group.phone),
         totalOverdue: round2(group.total),
         billCount: bills.length,
+        situation: group.situation,
         billNumbers: numbers.join("; "),
       };
     })
@@ -148,6 +154,7 @@ export function overdueReceivablesCsvRows(
       "Total Overdue (INR)",
       "Pending Bill Count",
       "Count",
+      "Situation",
       "Pending Bill Numbers",
     ],
     ...rows.map((row) => [
@@ -156,6 +163,7 @@ export function overdueReceivablesCsvRows(
       formatInrIndian(row.totalOverdue),
       row.billCount,
       exportCount,
+      row.situation,
       row.billNumbers,
     ]),
   ];

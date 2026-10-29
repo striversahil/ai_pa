@@ -1,18 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { LiveCollection, ReceiptAgeingSplit, SummaryRow } from "@/debtors-tracker/types";
+import type { CustomerAgeingRow, LiveCollection, ReceiptAgeingSplit, SummaryRow } from "@/debtors-tracker/types";
 import { formatCompactINR, formatINR, isAdvanceReceipt, shortDate } from "@/debtors-tracker/types";
+import { AGEING_BUCKETS as BUCKETS } from "@/debtors-tracker/buckets";
 import ReceiptAgeingMini from "../ReceiptAgeingMini";
+import PromiseOverview from "../PromiseOverview";
 import { Card, EmptyState, MiniStat } from "../ui";
-
-const BUCKETS = [
-  { key: "bucket0to30", label: "0–30 Days", bar: "bg-emerald-500", dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400", tile: "border-emerald-100 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/15" },
-  { key: "bucket31to60", label: "31–60 Days", bar: "bg-lime-500", dot: "bg-lime-500", text: "text-lime-700 dark:text-lime-400", tile: "border-lime-100 bg-lime-50/40 dark:border-lime-900/40 dark:bg-lime-950/15" },
-  { key: "bucket61to90", label: "61–90 Days", bar: "bg-amber-500", dot: "bg-amber-500", text: "text-amber-700 dark:text-amber-400", tile: "border-amber-100 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/15" },
-  { key: "bucket91to180", label: "91–180 Days", bar: "bg-orange-500", dot: "bg-orange-500", text: "text-orange-700 dark:text-orange-400", tile: "border-orange-100 bg-orange-50/40 dark:border-orange-900/40 dark:bg-orange-950/15" },
-  { key: "bucketAbove180", label: "Above 180 Days", bar: "bg-rose-500", dot: "bg-rose-500", text: "text-rose-600 dark:text-rose-400", tile: "border-rose-100 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/15" },
-] as const;
 
 const ACCENTS = {
   zinc: { bar: "bg-zinc-700 dark:bg-zinc-300", dot: "bg-zinc-300 dark:bg-zinc-600", icon: "text-zinc-500 dark:text-zinc-400" },
@@ -175,10 +169,11 @@ function AdvanceQuadrant({
 }
 
 export default function SummaryTab({
-  summary, collections, asOfIST, receiptAgeing,
+  summary, collections, customers, asOfIST, receiptAgeing,
 }: {
   summary: SummaryRow;
   collections: LiveCollection[];
+  customers: CustomerAgeingRow[];
   asOfIST: string;
   receiptAgeing?: ReceiptAgeingSplit | null;
 }) {
@@ -323,6 +318,8 @@ export default function SummaryTab({
             </div>
           </div>
         </Card>
+
+        <PromiseOverview customers={customers} asOfIST={asOfIST} />
       </section>
 
       <section className="relative space-y-4 border-t border-zinc-200/80 pt-8 dark:border-zinc-800/80">

@@ -266,7 +266,15 @@ export default function DebtorsTrackerDashboard() {
           resetting={resetting}
         />
       )}
-      {data && activeView === "summary" && <SummaryTab summary={data.summary} collections={data.collections} receiptAgeing={data.receiptAgeing} asOfIST={data.meta.asOfIST} />}
+      {data && activeView === "summary" && (
+        <SummaryTab
+          summary={data.summary}
+          collections={data.collections}
+          customers={data.customers}
+          receiptAgeing={data.receiptAgeing}
+          asOfIST={data.meta.asOfIST}
+        />
+      )}
       {data && activeView === "ageing" && (
         <AgeingTab
           customers={data.customers}
