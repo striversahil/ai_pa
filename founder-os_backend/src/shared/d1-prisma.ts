@@ -72,6 +72,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   PaymentCustomer: ['whatsappOptIn'],
   PaymentReminder: [],
   DebtorsExportEvent: [],
+  PaymentCustomerRemark: ['deleted'],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -134,6 +135,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   PaymentCustomer: ['optInAt', 'createdAt', 'updatedAt'],
   PaymentReminder: ['createdAt'],
   DebtorsExportEvent: ['createdAt'],
+  PaymentCustomerRemark: ['createdAt', 'deletedAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -212,6 +214,8 @@ const ID_FIELDS: Record<string, string> = {
   PaymentCollection: 'id',
   PaymentCustomer: 'id',
   PaymentReminder: 'id',
+  DebtorsExportEvent: 'id',
+  PaymentCustomerRemark: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -927,6 +931,8 @@ export class D1PrismaClient {
   get paymentCollection() { return this.model('PaymentCollection'); }
   get paymentCustomer() { return this.model('PaymentCustomer'); }
   get paymentReminder() { return this.model('PaymentReminder'); }
+  // Dated CRM remark log (migration 0085) — append-only history.
+  get paymentCustomerRemark() { return this.model('PaymentCustomerRemark'); }
   // Receivables CSV export log (migration 0084) — global "Count" column.
   get debtorsExportEvent() { return this.model('DebtorsExportEvent'); }
 

@@ -31,6 +31,9 @@ export {
 } from './reminders';
 export { updateCustomerContact, updateCustomerSituation } from './customers';
 export { CUSTOMER_SITUATIONS, CUSTOMER_SITUATION_LABELS } from './situation';
+export { addCustomerRemark, deleteCustomerRemark, listCustomerRemarks } from './remarks';
+export type { CustomerRemark } from './remarks';
+export { PROMISE_PRESET_DAYS, MAX_PROMISE_DAYS } from './promise';
 export {
   getReceivablesExportCount,
   recordReceivablesExport,

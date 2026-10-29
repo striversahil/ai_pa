@@ -68,11 +68,19 @@ export interface CustomerAgeingRow {
   region: string;
   whatsappOptIn: boolean;
   notes: string;
-  /** CRM follow-up state ('' = unset) + free-text remarks. Sales-editable. */
+  /** CRM follow-up state ('' = unset) + latest remark mirror. Sales-editable. */
   situation: string;
   situationRemarks: string;
   situationUpdatedAt: string | null;
   situationUpdatedBy: string;
+  /** Current promised-to-pay date (IST) + picked day count. */
+  promisedDate: string | null;
+  promisedDays: number | null;
+  promisedAt: string | null;
+  promisedBy: string;
+  /** Dated CRM remark log (count + newest timestamp). */
+  remarkCount: number;
+  lastRemarkAt: string | null;
   lastReminderAt: string | null;
   lastReminderStatus: string;
   lastFollowUpDate: string | null;
@@ -144,6 +152,18 @@ export interface CustomerLedger {
   entries: CustomerLedgerEntry[];
   totals: CustomerLedgerTotals;
   unappliedReceiptIds: string[];
+}
+
+/** One dated CRM remark row (append-only history). */
+export interface CustomerRemark {
+  id: string;
+  customerKey: string;
+  customerName: string;
+  /** IST calendar day of the call (YYYY-MM-DD). */
+  day: string;
+  remark: string;
+  actor: string;
+  createdAt: string;
 }
 
 export interface SummaryRow {

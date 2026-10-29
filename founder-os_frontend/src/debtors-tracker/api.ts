@@ -4,7 +4,7 @@
  * founder-os_backend/src/worker/routes/debtors-tracker.ts (accounts scope).
  */
 
-import type { CustomerLedger, DebtorsTrackerPayload } from "./types";
+import type { CustomerLedger, CustomerRemark, DebtorsTrackerPayload } from "./types";
 
 /** Fields the row editor may set (must match INVOICE_EDITABLE_FIELDS). */
 export const INVOICE_EDITABLE_FIELDS = [
@@ -73,7 +73,7 @@ export async function resetDebtorsTracker(): Promise<void> {
   await request(`/api/debtors-tracker/data`, { method: "DELETE" });
 }
 
-/** Accounts only: store the customer's phone/email + WhatsApp opt-in. */
+/** Any tracker viewer may set phone/email/notes; accounts also set region + opt-in. */
 export async function saveCustomerContact(customerKey: string, patch: CustomerContactPatch): Promise<void> {
   await request(`/api/debtors-tracker/customers/contact`, {
     method: "PUT",
@@ -85,15 +85,60 @@ export async function saveCustomerContact(customerKey: string, patch: CustomerCo
 export type CustomerSituationPatch = {
   situation?: string;
   situationRemarks?: string;
+  /** Required when situation = PROMISED_TO_PAY (0 = today, max 365). */
+  promisedDays?: number | null;
+  /** Alternative to promisedDays; must be today or later. */
+  promisedDate?: string | null;
 };
 
-/** Sales or accounts: set the customer's situation dropdown + CRM remarks. */
+/** Sales or accounts: set the customer's situation + promised-to-pay date. */
 export async function saveCustomerSituation(customerKey: string, patch: CustomerSituationPatch): Promise<void> {
   await request(`/api/debtors-tracker/customers/situation`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ customerKey, ...patch }),
   });
+}
+
+/** Dated CRM remark history, newest first. */
+export async function listCustomerRemarks(customerKey: string): Promise<CustomerRemark[]> {
+  const res = await fetch(`/api/debtors-tracker/customers/${encodeURIComponent(customerKey)}/remarks`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  const body = (await res.json().catch(() => ({}))) as { remarks?: CustomerRemark[] };
+  return Array.isArray(body?.remarks) ? body.remarks : [];
+}
+
+/** Append one dated remark; mirrors the latest onto the customer preview. */
+export async function addCustomerRemark(
+  customerKey: string,
+  remark: string,
+  customerName = "",
+): Promise<CustomerRemark> {
+  const res = await fetch(`/api/debtors-tracker/customers/${encodeURIComponent(customerKey)}/remarks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remark, customerName }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  const body = (await res.json().catch(() => ({}))) as { remark?: CustomerRemark };
+  if (!body?.remark?.id) throw new Error("Remark response was invalid");
+  return body.remark;
+}
+
+/** Accounts only: soft-delete a wrong history entry. */
+export async function deleteCustomerRemark(customerKey: string, remarkId: string): Promise<void> {
+  await request(
+    `/api/debtors-tracker/customers/${encodeURIComponent(customerKey)}/remarks/${encodeURIComponent(remarkId)}`,
+    { method: "DELETE" },
+  );
 }
 
 /** Accounts only: log today's reminder dry-run previews. */

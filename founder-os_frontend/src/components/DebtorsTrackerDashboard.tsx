@@ -328,6 +328,7 @@ export default function DebtorsTrackerDashboard() {
       <CustomerContactModal
         key={contact?.customerKey ?? "none"}
         customer={contact}
+        canAccounts={canAccounts}
         onClose={() => setContact(null)}
         onSaved={(msg) => {
           setContact(null);
@@ -339,9 +340,10 @@ export default function DebtorsTrackerDashboard() {
       <CustomerSituationModal
         key={situation?.customerKey ?? "none"}
         customer={situation}
+        canAccounts={canAccounts}
         onClose={() => setSituation(null)}
         onSaved={(msg) => {
-          setSituation(null);
+          // Stays open so several daily remarks / promise edits can be added.
           setToast(msg);
           dash.refresh();
         }}

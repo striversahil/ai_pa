@@ -10,6 +10,10 @@ import { DebtorsTrackerError } from './errors';
 import { invalidateDebtorsCache } from './cache';
 import { normalizeCustomerKey, normalizeCustomerName } from './types';
 import { isValidCustomerSituationInput, normalizeCustomerSituation } from './situation';
+import {
+  MAX_PROMISE_DAYS, normalizePromiseDays, promiseDateFromDays, promiseDaysFromDate,
+} from './promise';
+import { isIsoDate, todayIST } from './shared';
 import { isValidRegion } from '../telecalling/regions';
 
 export type CustomerContact = {
@@ -28,6 +32,11 @@ export type CustomerContact = {
   situationRemarks: string;
   situationUpdatedAt: string | null;
   situationUpdatedBy: string;
+  /** Current promised-to-pay date (IST) — survives a situation change. */
+  promisedDate: string | null;
+  promisedDays: number | null;
+  promisedAt: string | null;
+  promisedBy: string;
   updatedBy: string;
 };
 
@@ -83,6 +92,12 @@ function contactView(row: any): CustomerContact {
     situationRemarks: String((row as any).situationRemarks || ''),
     situationUpdatedAt: (row as any).situationUpdatedAt ? String((row as any).situationUpdatedAt) : null,
     situationUpdatedBy: String((row as any).situationUpdatedBy || ''),
+    promisedDate: (row as any).promisedDate ? String((row as any).promisedDate) : null,
+    promisedDays: (row as any).promisedDays === null || (row as any).promisedDays === undefined
+      ? null
+      : Number((row as any).promisedDays),
+    promisedAt: (row as any).promisedAt ? String((row as any).promisedAt) : null,
+    promisedBy: String((row as any).promisedBy || ''),
     updatedBy: String(row.updatedBy || ''),
   };
 }
@@ -188,9 +203,16 @@ export async function updateCustomerContact(
 }
 
 /**
- * CRM follow-up state: situation dropdown + free-text remarks.
+ * CRM follow-up state: situation dropdown, promised-to-pay date and legacy
+ * free-text remarks.
  * Sales (`debtors-tracker` scope) and accounts may both write this —
- * unlike the contact master, which stays accounts-only.
+ * unlike region / WhatsApp opt-in, which stay accounts-only.
+ *
+ * Promise semantics (founder decision):
+ *   Promised to pay → days/date mandatory
+ *   Not answering / Busy / Callback / Disputed → promise STAYS (Last promise)
+ *   Paid / Closed → promise cleared
+ *   A newer promise replaces the previous one.
  */
 export async function updateCustomerSituation(
   customerKey: string,
@@ -203,21 +225,81 @@ export async function updateCustomerSituation(
   const existing: any = await prisma.paymentCustomer.findFirst({ where: { customerKey: key } });
   if (!existing) throw new DebtorsTrackerError('Customer not found', 404);
 
+  const hasSituation = 'situation' in patch;
+  const hasRemarks = 'situationRemarks' in patch;
+  const hasPromise = 'promisedDays' in patch || 'promisedDate' in patch;
+  if (!hasSituation && !hasRemarks && !hasPromise) {
+    throw new DebtorsTrackerError('Nothing to update (situation / promise / remarks)', 400);
+  }
+
   const data: Record<string, unknown> = { updatedBy: updatedBy || '', updatedAt: new Date() };
-  if ('situation' in patch) {
+  let situation = String(existing.situation || '');
+  if (hasSituation) {
     if (!isValidCustomerSituationInput(patch.situation)) {
       throw new DebtorsTrackerError('Situation must be one of the dropdown options (or blank)', 400);
     }
-    data.situation = normalizeCustomerSituation(patch.situation);
+    situation = normalizeCustomerSituation(patch.situation);
+    data.situation = situation;
   }
-  if ('situationRemarks' in patch) {
+  if (hasRemarks) {
     data.situationRemarks = String(patch.situationRemarks ?? '').slice(0, 2000);
   }
-  if (!('situation' in patch) && !('situationRemarks' in patch)) {
-    throw new DebtorsTrackerError('Nothing to update (situation / situationRemarks)', 400);
+  if (hasSituation || hasRemarks) {
+    data.situationUpdatedAt = new Date().toISOString();
+    data.situationUpdatedBy = updatedBy || '';
   }
-  data.situationUpdatedAt = new Date().toISOString();
-  data.situationUpdatedBy = updatedBy || '';
+
+  if (situation === 'PROMISED_TO_PAY') {
+    const today = todayIST();
+    const actor = updatedBy || '';
+    let days: number | null = null;
+    let date = '';
+    let keepExisting = false;
+
+    if ('promisedDays' in patch) {
+      days = normalizePromiseDays(patch.promisedDays);
+      if (days === null) {
+        throw new DebtorsTrackerError(`Enter promised days between 0 and ${MAX_PROMISE_DAYS}`, 400);
+      }
+      date = promiseDateFromDays(today, days);
+    } else if ('promisedDate' in patch) {
+      const rawDate = String(patch.promisedDate ?? '').trim();
+      if (!isIsoDate(rawDate)) {
+        throw new DebtorsTrackerError('Choose a valid promise date', 400);
+      }
+      days = promiseDaysFromDate(today, rawDate);
+      if (days === null) {
+        throw new DebtorsTrackerError(`Promise date must be today or within ${MAX_PROMISE_DAYS} days`, 400);
+      }
+      date = rawDate;
+    } else {
+      // Re-saving the dropdown without a new pick keeps an existing promise,
+      // even if that promise is already overdue.
+      const existingDate = String(existing.promisedDate || '');
+      if (!isIsoDate(existingDate)) {
+        throw new DebtorsTrackerError('Choose in how many days the client promised to pay', 400);
+      }
+      date = existingDate;
+      days = normalizePromiseDays(existing.promisedDays) ?? promiseDaysFromDate(today, existingDate);
+      keepExisting = true;
+    }
+
+    data.promisedDate = date;
+    data.promisedDays = days;
+    if (!keepExisting) {
+      data.promisedAt = new Date().toISOString();
+      data.promisedBy = actor;
+    }
+  } else if (hasSituation && situation === 'PAID_CLOSED') {
+    // Settled customers should not carry a stale promise into future imports.
+    data.promisedDate = null;
+    data.promisedDays = null;
+    data.promisedAt = null;
+    data.promisedBy = '';
+  } else if (hasPromise) {
+    throw new DebtorsTrackerError('Select Promised to pay before setting a promise date', 400);
+  }
+  // Any other situation keeps the stored promise (badge shows "Last promise").
 
   const updated: any = await prisma.paymentCustomer.update({ where: { customerKey: key }, data });
   await invalidateDebtorsCache();

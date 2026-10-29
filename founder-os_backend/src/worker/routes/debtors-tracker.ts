@@ -3,8 +3,10 @@
 // KV-cached dashboard payload). Worker-only: Express is frozen.
 //
 // Access (founder decision):
-//   read + sales follow-up edits → `debtors-tracker` OR the legacy `accounts`
-//   imports / reset / deletes / contacts / reminder run → `accounts` only
+//   read + sales follow-up edits + customer phone/email/notes + daily remarks
+//     → `debtors-tracker` OR the legacy `accounts`
+//   imports / reset / deletes / region / WhatsApp opt-in / reminder run
+//     → `accounts` only
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import {
@@ -16,7 +18,7 @@ import {
   importCollections, importDebtors, getDebtorsTrackerData, DebtorsTrackerError,
   updateInvoiceFields, deleteInvoice, deleteCollection, resetDebtorsTracker,
   INVOICE_EDITABLE_FIELDS, FOLLOW_UP_FIELDS, updateCustomerSituation, runReminderDryRun, updateCustomerContact, getCustomerLedger,
-  recordReceivablesExport,
+  recordReceivablesExport, addCustomerRemark, deleteCustomerRemark, listCustomerRemarks,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
 
@@ -207,15 +209,19 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     } catch (e) { return errorResponse(c, e); }
   });
 
-  // ── Customer contact master (accounts): phone/email/region + WhatsApp opt-in ──
+  // ── Customer contact master: phone/email/notes for sales; region + opt-in accounts ──
   app.put(`${prefix}/customers/contact`, async (c) => {
+    let me: any;
     try {
-      await requireAccountsScope(c);
+      me = await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
     const body = await c.req.json().catch(() => ({}));
     const key = String((body as any)?.customerKey ?? '');
     const patch: Record<string, unknown> = {};
-    for (const field of ['phone', 'email', 'region', 'notes', 'whatsappOptIn']) {
+    const allowed = hasAccounts(me)
+      ? ['phone', 'email', 'region', 'notes', 'whatsappOptIn']
+      : ['phone', 'email', 'notes'];
+    for (const field of allowed) {
       if (body && typeof body === 'object' && field in (body as any)) patch[field] = (body as any)[field];
     }
     try {
@@ -225,7 +231,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     } catch (e) { return errorResponse(c, e); }
   });
 
-  // ── CRM situation + remarks (sales or accounts): dropdown + free text ──
+  // ── CRM situation + promise + legacy remarks (sales or accounts) ──
   app.put(`${prefix}/customers/situation`, async (c) => {
     try {
       await requireTrackerRead(c);
@@ -233,13 +239,53 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     const body = await c.req.json().catch(() => ({}));
     const key = String((body as any)?.customerKey ?? '');
     const patch: Record<string, unknown> = {};
-    for (const field of ['situation', 'situationRemarks']) {
+    for (const field of ['situation', 'situationRemarks', 'promisedDays', 'promisedDate']) {
       if (body && typeof body === 'object' && field in (body as any)) patch[field] = (body as any)[field];
     }
     try {
       const contact = await updateCustomerSituation(key, patch, await actorName(c));
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, contact });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Dated CRM remarks: append-only (sales or accounts) ──
+  app.get(`${prefix}/customers/:customerKey/remarks`, async (c) => {
+    try {
+      await requireTrackerRead(c);
+    } catch (e) { return scopeError(c, e); }
+    try {
+      return c.json({ remarks: await listCustomerRemarks(c.req.param('customerKey'), 100) });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.post(`${prefix}/customers/:customerKey/remarks`, async (c) => {
+    try {
+      await requireTrackerRead(c);
+    } catch (e) { return scopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const remark = await addCustomerRemark({
+        customerKey: c.req.param('customerKey'),
+        customerName: String((body as any)?.customerName ?? ''),
+        remark: String((body as any)?.remark ?? ''),
+        actor: await actorName(c),
+      });
+      notifyLive(c, { type: LiveEvent.Debtors });
+      return c.json({ ok: true, remark });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // Accounts cleanup only: append-only means nobody edits history, but a wrong
+  // entry can be soft-deleted by accounts.
+  app.delete(`${prefix}/customers/:customerKey/remarks/:remarkId`, async (c) => {
+    try {
+      await requireAccountsScope(c);
+    } catch (e) { return scopeError(c, e); }
+    try {
+      await deleteCustomerRemark(c.req.param('remarkId'), await actorName(c));
+      notifyLive(c, { type: LiveEvent.Debtors });
+      return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }
   });
 

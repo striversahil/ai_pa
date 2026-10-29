@@ -1642,11 +1642,39 @@ model PaymentCustomer {
   situationRemarks    String  @default("")
   situationUpdatedAt  String?
   situationUpdatedBy  String  @default("")
+  /**
+   * Current promised-to-pay date (IST YYYY-MM-DD + the day count the agent
+   * picked). Persists when the situation moves to Not answering / Busy / etc.
+   * Cleared on Paid / Closed; a newer promise replaces it.
+   */
+  promisedDate        String?
+  promisedDays        Int?
+  promisedAt          String?
+  promisedBy          String  @default("")
   updatedBy    String   @default("")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @default(now())
 
   @@index([customerName])
+}
+
+// Dated, append-only CRM remark log for a customer (one row per call/day note).
+// PaymentCustomer.situationRemarks mirrors the latest row for compact previews.
+model PaymentCustomerRemark {
+  id           String   @id @default(uuid())
+  customerKey  String
+  customerName String   @default("")
+  /** IST date of the call (YYYY-MM-DD). */
+  day          String
+  remark       String
+  actor        String   @default("")
+  deleted      Boolean  @default(false)
+  deletedAt    DateTime?
+  deletedBy    String   @default("")
+  createdAt    DateTime @default(now())
+
+  @@index([customerKey, createdAt])
+  @@index([createdAt])
 }
 
 // Every reminder attempt. Dry-run rows record the exact aggregated message

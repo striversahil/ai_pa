@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { CustomerAgeingRow } from "@/debtors-tracker/types";
 import { BUCKET_LABELS, CUSTOMER_SITUATIONS, CUSTOMER_SITUATION_LABELS, formatINR, shortDate, situationLabel } from "@/debtors-tracker/types";
+import { formatPromiseDate, promiseStatus, promiseStatusLabel, todayIST } from "@/debtors-tracker/promise";
 import { Chip, EmptyState, TD, TDR, TH, THR, TableShell } from "../ui";
 
 const DUE_COLS = [
@@ -37,6 +38,39 @@ function SituationBadge({ situation }: { situation: string }) {
   );
 }
 
+/**
+ * Promise is deliberately independent of the situation: after "Promised to pay"
+ * a later "Not answering" call keeps the date as "Last promise" until a newer
+ * promise replaces it (or Paid / Closed clears it).
+ */
+function PromiseBadge({ row, today }: { row: CustomerAgeingRow; today: string }) {
+  const settled = row.netDue <= 0 || row.situation === "PAID_CLOSED";
+  if (settled) return null;
+  if (!row.promisedDate) {
+    if (row.situation !== "PROMISED_TO_PAY") return null;
+    return (
+      <span className="inline-block rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+        No promise date
+      </span>
+    );
+  }
+  const state = promiseStatus(row.promisedDate, today);
+  const cls = state === "overdue"
+    ? "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
+    : state === "today"
+      ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+      : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300";
+  const isCurrent = row.situation === "PROMISED_TO_PAY";
+  return (
+    <span
+      className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
+      title={`${isCurrent ? "Promised" : "Last promised"} ${formatPromiseDate(row.promisedDate)}${row.promisedBy ? ` · set by ${row.promisedBy}` : ""}`}
+    >
+      {isCurrent ? "Promise" : "Last promise"} {shortDate(row.promisedDate)} · {promiseStatusLabel(row.promisedDate, today)}
+    </span>
+  );
+}
+
 export default function AgeingTab({
   customers, onGoToAccounts, onEditContact, onEditSituation, onFollowUp, onViewLedger, canAccounts,
 }: {
@@ -52,6 +86,7 @@ export default function AgeingTab({
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [situationFilter, setSituationFilter] = useState<string>("ALL");
   const [groupBy, setGroupBy] = useState(false);
+  const today = useMemo(() => todayIST(), []);
 
   const changeSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -149,13 +184,15 @@ export default function AgeingTab({
           : <span className="text-zinc-400 dark:text-zinc-500">—</span>}
       </td>
       <td className={`${TD} max-w-[220px]`}>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <SituationBadge situation={r.situation || ""} />
+          <PromiseBadge row={r} today={today} />
           <button onClick={() => onEditSituation(r)} className="shrink-0 rounded px-1 py-0.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-500/10">Set</button>
         </div>
         {r.situationRemarks && (
-          <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={r.situationRemarks}>
-            {r.situationRemarks}
+          <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={`${r.situationRemarks}${r.remarkCount > 1 ? ` · ${r.remarkCount} remarks` : ""}`}>
+            {r.lastRemarkAt ? `${shortDate(r.lastRemarkAt)} · ` : ""}{r.situationRemarks}
+            {r.remarkCount > 1 ? ` · ${r.remarkCount} remarks` : ""}
           </div>
         )}
       </td>
@@ -170,9 +207,7 @@ export default function AgeingTab({
       <td className={`${TD} whitespace-nowrap text-right`}>
         <button onClick={() => onViewLedger(r)} className="rounded px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800">Ledger</button>
         <button onClick={() => onFollowUp(r.customerName)} className="ml-1 rounded px-2 py-1 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-500/10">Follow up</button>
-        {canAccounts && (
-          <button onClick={() => onEditContact(r)} className="ml-1 rounded px-2 py-1 text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800">Contact</button>
-        )}
+        <button onClick={() => onEditContact(r)} className="ml-1 rounded px-2 py-1 text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800">Contact</button>
       </td>
     </tr>
   );

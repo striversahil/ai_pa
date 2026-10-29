@@ -11,6 +11,7 @@ import { customerKeyOf } from './customers';
 import { buildCustomerAgeing, buildLiveInvoices } from './ledger';
 import { buildReceiptAgeing } from './receipt-ageing';
 import { latestReminderByCustomer, loadRecentReminders, reminderConfigured, reminderMode } from './reminders';
+import { loadRemarkIndex } from './remarks';
 import { isAdvanceCollection, round2, todayIST } from './shared';
 import { normalizeInvoiceNo } from './types';
 import type {
@@ -24,11 +25,12 @@ export async function getDebtorsTrackerData(): Promise<DebtorsTrackerPayload> {
 
 async function computePayload(): Promise<DebtorsTrackerPayload> {
   const today = todayIST();
-  const [invoiceRows, collRows, contacts, reminders] = await Promise.all([
+  const [invoiceRows, collRows, contacts, reminders, remarkIndex] = await Promise.all([
     prisma.debtorInvoice.findMany({ where: { deleted: false } }) as Promise<any[]>,
     prisma.paymentCollection.findMany({ where: { deleted: false } }) as Promise<any[]>,
     loadCustomerContacts(),
     loadRecentReminders(500),
+    loadRemarkIndex(),
   ]);
 
   const { liveInvoices, advanceByCustomer } = buildLiveInvoices(invoiceRows, collRows, today);
@@ -52,6 +54,7 @@ async function computePayload(): Promise<DebtorsTrackerPayload> {
     const contact = contacts.get(key);
     const reminder = latestReminder.get(key);
     const follow = followUp.get(row.customerName);
+    const remarkSummary = remarkIndex.get(key);
     return {
       ...row,
       customerKey: key,
@@ -61,9 +64,15 @@ async function computePayload(): Promise<DebtorsTrackerPayload> {
       whatsappOptIn: !!contact?.whatsappOptIn,
       notes: contact?.notes || '',
       situation: contact?.situation || '',
-      situationRemarks: contact?.situationRemarks || '',
+      situationRemarks: remarkSummary?.latest.remark || contact?.situationRemarks || '',
       situationUpdatedAt: contact?.situationUpdatedAt ?? null,
       situationUpdatedBy: contact?.situationUpdatedBy || '',
+      promisedDate: contact?.promisedDate ?? null,
+      promisedDays: contact?.promisedDays ?? null,
+      promisedAt: contact?.promisedAt ?? null,
+      promisedBy: contact?.promisedBy || '',
+      remarkCount: remarkSummary?.count ?? 0,
+      lastRemarkAt: remarkSummary?.latest.createdAt ?? null,
       lastReminderAt: reminder ? String(reminder.createdAt ?? '') : null,
       lastReminderStatus: reminder ? String(reminder.status || '') : '',
       lastFollowUpDate: follow?.date ?? null,

@@ -6,11 +6,12 @@ import { formatINR } from "@/debtors-tracker/types";
 import { saveCustomerContact } from "@/debtors-tracker/api";
 import { REGIONS } from "@/telecalling/regions";
 
-/** Accounts-only customer contact master (phone/email/region + WhatsApp opt-in). */
+/** Customer contact master: phone/email/notes for all tracker viewers; region + opt-in accounts only. */
 export default function CustomerContactModal({
-  customer, onClose, onSaved,
+  customer, canAccounts, onClose, onSaved,
 }: {
   customer: CustomerAgeingRow | null;
+  canAccounts: boolean;
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
@@ -31,9 +32,8 @@ export default function CustomerContactModal({
       await saveCustomerContact(customer.customerKey, {
         phone,
         email,
-        region,
-        whatsappOptIn: optIn,
         notes,
+        ...(canAccounts ? { region, whatsappOptIn: optIn } : {}),
       });
       onSaved(`Contact saved for ${customer.customerName}.`);
     } catch (e: any) {
@@ -61,8 +61,9 @@ export default function CustomerContactModal({
         </div>
 
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          One contact per customer (normalized name). Region applies to every invoice for the customer.
-          Used by the daily WhatsApp reminder dry-run; email is stored for reference only — nothing is emailed from this dashboard.
+          One contact per customer (normalized name). {canAccounts
+            ? "Region applies to every invoice for the customer. Used by the daily WhatsApp reminder dry-run; email is stored for reference only — nothing is emailed from this dashboard."
+            : "Fix the phone/email/notes so the follow-up team can reach the client. Region and WhatsApp opt-in are managed by accounts."}
         </p>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -86,28 +87,36 @@ export default function CustomerContactModal({
               className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-800 outline-none focus:border-sky-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
             />
           </label>
-          <label className="space-y-1 sm:col-span-2">
-            <span className="block text-xs text-zinc-500 dark:text-zinc-400">Region</span>
-            <select
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-800 outline-none focus:border-sky-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-            >
-              <option value="">Unassigned</option>
-              {REGIONS.map((r) => <option key={r.id} value={r.id}>{r.id} — {r.name}</option>)}
-            </select>
-          </label>
+          {canAccounts && (
+            <label className="space-y-1 sm:col-span-2">
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400">Region</span>
+              <select
+                value={region}
+                onChange={(e) => setRegion(e.target.value)}
+                className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-800 outline-none focus:border-sky-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+              >
+                <option value="">Unassigned</option>
+                {REGIONS.map((r) => <option key={r.id} value={r.id}>{r.id} — {r.name}</option>)}
+              </select>
+            </label>
+          )}
         </div>
 
-        <label className="flex items-start gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
-          <input type="checkbox" checked={optIn} onChange={(e) => setOptIn(e.target.checked)} className="mt-0.5" />
-          <span>
-            <span className="font-medium text-zinc-800 dark:text-zinc-200">WhatsApp opt-in recorded</span>
-            <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
-              Required before a live business-initiated reminder can be sent. Dry-run previews are logged regardless.
+        {canAccounts ? (
+          <label className="flex items-start gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+            <input type="checkbox" checked={optIn} onChange={(e) => setOptIn(e.target.checked)} className="mt-0.5" />
+            <span>
+              <span className="font-medium text-zinc-800 dark:text-zinc-200">WhatsApp opt-in recorded</span>
+              <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                Required before a live business-initiated reminder can be sent. Dry-run previews are logged regardless.
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+        ) : (
+          <p className="rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+            Region{region ? ` (${region})` : ""} and WhatsApp opt-in{optIn ? " (recorded)" : " (not recorded)"} are managed by accounts.
+          </p>
+        )}
 
         <label className="block space-y-1">
           <span className="block text-xs text-zinc-500 dark:text-zinc-400">Notes</span>
