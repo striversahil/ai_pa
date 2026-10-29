@@ -38,6 +38,35 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // Markup + discount decisions + finalize (+ its timestamp) are Management-only.
     const { selectedVendor, markup, finalRate, finalDiscountPercent, finalizedAt, ...rest } = it;
     const base: any = privileged ? it : rest;
+    // ── Media: explicit removal trail (mirror of `removedRates`) ──────────
+    // The stale-empty guard further down cannot tell "the user deleted the
+    // last photo" from "a queue payload arrived with media stripped", so an
+    // empty incoming list restores stored media — which made deleting the
+    // only image on an item a silent no-op. Intentional removal therefore
+    // travels in `removedMedia` ["type:url"], one marker per removal (twins
+    // keep their sibling). Applied AFTER the merge so a stale echo of the
+    // old row can never resurrect a deleted image. Procurement
+    // (restricted) can never remove stored media, so its trail is ignored.
+    const mediaRemoveQuota = new Map<string, number>();
+    for (const raw of Array.isArray((it as any).removedMedia) ? (it as any).removedMedia : []) {
+      const k = String(raw ?? '');
+      if (k) mediaRemoveQuota.set(k, (mediaRemoveQuota.get(k) ?? 0) + 1);
+    }
+    delete (base as any).removedMedia;
+    const applyMediaRemovals = (list: any[]): any[] => {
+      if (mediaRemoveQuota.size === 0) return list;
+      const used = new Map<string, number>();
+      return list.filter((m: any) => {
+        const k = `${m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image'}:${String(m?.url ?? '')}`;
+        const quota = mediaRemoveQuota.get(k) ?? 0;
+        const n = used.get(k) ?? 0;
+        if (quota > n) {
+          used.set(k, n + 1);
+          return false;
+        }
+        return true;
+      });
+    };
     // ── Rates union (all roles, all loops) ─────────────────────────────────
     // Writes ADD, never delete by omission. Vendor quotes are money: a stale
     // snapshot save (old tab, pre-refresh panel, raced PATCH) must not
@@ -371,6 +400,8 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // a strict non-empty subset of stored (user removed an image), respect
     // it; if incoming is empty while stored has data (stale read wiping a
     // recent reference), preserve stored; otherwise union stored + new.
+    // Explicit removals (`removedMedia`) are applied on top of the merge, so
+    // deleting the LAST image (incoming empty, stored non-empty) works too.
     if (!restricted) {
       const storedList = parseItemMedia(stored.media ?? []);
       const incomingList = parseItemMedia(base.media ?? []);
@@ -384,6 +415,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       } else {
         base.media = [...storedList, ...incomingList.filter((m: any) => !storedSet.has(`${m.type}:${m.url}`))];
       }
+      base.media = applyMediaRemovals(base.media as any[]);
       if ((base.media as any[]).length === 0) delete (base as any).media;
     }
     // Spec-dispute lifecycle (all writers):

@@ -166,9 +166,24 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     void addItemMedia(idx, e.dataTransfer.files);
   };
 
+  // Explicit delete (same contract as removeItemRate): a filtered media array
+  // alone cannot distinguish "last photo removed" from "queue payload arrived
+  // media-stripped", so the server restores stored media on an empty incoming
+  // list — deleting the only image was a silent no-op. The removed entry's
+  // identity travels in `removedMedia` ["type:url"] (one marker per removal,
+  // twins keep their sibling); the server applies it after the merge.
   const removeItemMedia = (idx: number, mediaIdx: number) => {
     if (!onUpdateItems) return;
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, media: (it.media ?? []).filter((_, j) => j !== mediaIdx) } : it)));
+    saveItems((prev) => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const gone: any = (it.media ?? [])[mediaIdx];
+      const key = gone ? `${gone.type === 'video' ? 'video' : gone.type === 'pdf' ? 'pdf' : 'image'}:${String(gone.url ?? '')}` : null;
+      return {
+        ...it,
+        media: (it.media ?? []).filter((_, j) => j !== mediaIdx),
+        ...(key ? { removedMedia: [...((it as any).removedMedia ?? []), key] } : {}),
+      };
+    }));
   };
 
   const startEdit = (idx: number) => {
