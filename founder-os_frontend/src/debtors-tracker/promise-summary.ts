@@ -44,6 +44,20 @@ export interface PromiseSituationSlice {
   clients: number;
 }
 
+/** One promised client, for the "who promised and when" drill-down. */
+export interface PromiseClient {
+  customerKey: string;
+  customerName: string;
+  amount: number;
+  promisedDate: string;
+  promisedDays: number | null;
+  situation: string;
+  situationLabel: string;
+  dueKey: PromiseDueKey;
+  /** Negative = days overdue, 0 = today, positive = days remaining. */
+  daysRemaining: number;
+}
+
 export interface PromiseSummary {
   /** Money promised by clients who still owe us (net due figure). */
   total: number;
@@ -53,6 +67,8 @@ export interface PromiseSummary {
   due: PromiseDueSlice[];
   /** Promised money by the client's current CRM situation. */
   situations: PromiseSituationSlice[];
+  /** Oldest promise date first, so overdue clients lead the drill-down. */
+  promisedClients: PromiseClient[];
   overdueAmount: number;
   overdueClients: number;
   /** Past-due money with no live promise — the collection gap. */
@@ -80,7 +96,8 @@ export function hasLivePromise(row: CustomerAgeingRow, today: string): boolean {
   return promiseStatus(row.promisedDate, today) !== "none";
 }
 
-function dueKey(date: string, today: string): PromiseDueKey | null {
+/** Which due-date bucket a promise falls into (null when the date is unusable). */
+export function promiseDueKey(date: string, today: string): PromiseDueKey | null {
   const days = promiseDaysRemaining(date, today);
   if (days === null) return null;
   if (days < 0) return "overdue";
@@ -116,6 +133,7 @@ export function buildPromiseSummary(customers: CustomerAgeingRow[], today: strin
     ]),
   );
   const situationTotals = new Map<string, PromiseSituationSlice>();
+  const promisedList: PromiseClient[] = [];
 
   let total = 0;
   let promisedClients = 0;
@@ -144,7 +162,8 @@ export function buildPromiseSummary(customers: CustomerAgeingRow[], today: strin
       }
     }
 
-    const key = dueKey(String(row.promisedDate), today);
+    const promiseDate = String(row.promisedDate);
+    const key = promiseDueKey(promiseDate, today);
     if (key) {
       const due = dueTotals.get(key)!;
       due.amount += net;
@@ -164,6 +183,20 @@ export function buildPromiseSummary(customers: CustomerAgeingRow[], today: strin
         clients: 1,
       });
     }
+
+    if (key) {
+      promisedList.push({
+        customerKey: String(row.customerKey || ""),
+        customerName: String(row.customerName || ""),
+        amount: net,
+        promisedDate: promiseDate,
+        promisedDays: row.promisedDays ?? null,
+        situation,
+        situationLabel: situationLabel(situation) || "Unset",
+        dueKey: key,
+        daysRemaining: promiseDaysRemaining(promiseDate, today) ?? 0,
+      });
+    }
   }
 
   const collectible = total + unpromisedDue;
@@ -175,6 +208,11 @@ export function buildPromiseSummary(customers: CustomerAgeingRow[], today: strin
     due: (Object.keys(DUE_LABELS) as PromiseDueKey[]).map((key) => dueTotals.get(key)!),
     situations: [...situationTotals.values()]
       .sort((a, b) => b.amount - a.amount || a.label.localeCompare(b.label)),
+    promisedClients: promisedList.sort(
+      (a, b) => a.promisedDate.localeCompare(b.promisedDate)
+        || b.amount - a.amount
+        || a.customerName.localeCompare(b.customerName),
+    ),
     overdueAmount: dueTotals.get("overdue")!.amount,
     overdueClients: dueTotals.get("overdue")!.clients,
     unpromisedDue,

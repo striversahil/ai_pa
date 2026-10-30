@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { CustomerAgeingRow } from "@/debtors-tracker/types";
 import { formatINR } from "@/debtors-tracker/types";
+import { formatPromiseDate, promiseStatusLabel } from "@/debtors-tracker/promise";
 import { AGEING_BUCKETS } from "@/debtors-tracker/buckets";
 import { buildPromiseSummary, type PromiseDueKey } from "@/debtors-tracker/promise-summary";
 import { Card, EmptyState, MiniStat } from "./ui";
@@ -174,6 +175,44 @@ export default function PromiseOverview({
                 );
               })}
             </div>
+
+            {/* Default-collapsed drill-down: who promised, how much and when. */}
+            <details className="group rounded-xl border border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/30">
+              <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 [&::-webkit-details-marker]:hidden">
+                <span>Who promised, and when</span>
+                <span className="flex items-center gap-2">
+                  <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] tabular-nums text-zinc-500 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-700">
+                    {stats.clients}
+                  </span>
+                  <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-zinc-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m5 8 5 5 5-5" />
+                  </svg>
+                </span>
+              </summary>
+              <ul className="max-h-60 space-y-0.5 overflow-y-auto border-t border-zinc-200/70 p-1.5 dark:border-zinc-800/70">
+                {stats.promisedClients.map((client) => {
+                  const tone = DUE_TONES[client.dueKey];
+                  return (
+                    <li
+                      key={client.customerKey || client.customerName}
+                      className="rounded-lg px-2 py-1.5 hover:bg-white dark:hover:bg-zinc-900/70"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-[11px] font-medium text-zinc-800 dark:text-zinc-100">{client.customerName}</span>
+                        <span className="shrink-0 text-[11px] font-semibold tabular-nums text-zinc-700 dark:text-zinc-300">{formatINR(client.amount)}</span>
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                        <span className="tabular-nums">{formatPromiseDate(client.promisedDate)}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 font-medium ${tone.chip}`}>
+                          {promiseStatusLabel(client.promisedDate, asOfIST)}
+                        </span>
+                        <span className="truncate opacity-80">· {client.situationLabel}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
           </section>
 
           {/* By current client situation */}
