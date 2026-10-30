@@ -377,13 +377,11 @@ export default function SummaryTab({
               </div>
             </div>
 
-            <div className="flex flex-1 flex-col p-5">
+            <div className="p-5">
               {collections.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center">
-                  <EmptyState title="No collections recorded yet" hint="Paste the receipts sheet from the Accounts tab to see the daily collection trend here." />
-                </div>
+                <EmptyState title="No collections recorded yet" hint="Paste the receipts sheet from the Accounts tab to see the daily collection trend here." />
               ) : (
-                <div className="flex min-h-48 flex-1 items-end gap-1.5 overflow-x-auto pb-1">
+                <div className="flex h-48 items-end gap-1.5 overflow-x-auto pb-1">
                   {days.map((day) => {
                     const v = daily.get(day);
                     const total = v?.total || 0;
@@ -431,6 +429,8 @@ export default function SummaryTab({
                 </div>
               )}
             </div>
+
+            <ReceiptAgeingMini split={receiptAgeing} />
           </Card>
 
           <Card className="flex flex-col overflow-hidden">
@@ -479,7 +479,6 @@ export default function SummaryTab({
                 count={advanceSplit.advanceMonth.count}
               />
             </div>
-            <ReceiptAgeingMini split={receiptAgeing} />
           </Card>
         </div>
       </section>

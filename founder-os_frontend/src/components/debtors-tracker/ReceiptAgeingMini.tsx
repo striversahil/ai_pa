@@ -74,14 +74,16 @@ function BucketRow({ label, bucketWindow }: { label: string; bucketWindow: Recei
 export default function ReceiptAgeingMini({ split }: { split?: ReceiptAgeingSplit | null }) {
   if (!split) return null;
   return (
-    <div className="border-t border-zinc-200/80 px-4 py-4 dark:border-zinc-800">
+    <div className="flex flex-1 flex-col border-t border-zinc-200/80 px-4 py-4 dark:border-zinc-800">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
         Received by ageing bucket
       </div>
       <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
         Invoice bucket on receipt date, before that receipt
       </p>
-      <div className="mt-3 space-y-3.5">
+      {/* Grows into any height the card gets from its neighbour, so the chart
+          below the daily bars fills the space instead of leaving a blank band. */}
+      <div className="mt-3 flex flex-1 flex-col justify-between gap-3.5">
         <BucketRow label="This week" bucketWindow={split.week} />
         <BucketRow label="This month" bucketWindow={split.month} />
       </div>
