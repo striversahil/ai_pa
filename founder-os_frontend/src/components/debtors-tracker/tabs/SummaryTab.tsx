@@ -352,7 +352,7 @@ export default function SummaryTab({
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-          <Card className="overflow-hidden">
+          <Card className="flex flex-col overflow-hidden">
             <div className="flex flex-wrap items-end justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800/70">
               <div>
                 <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Daily collections</h3>
@@ -377,11 +377,13 @@ export default function SummaryTab({
               </div>
             </div>
 
-            <div className="p-5">
+            <div className="flex flex-1 flex-col p-5">
               {collections.length === 0 ? (
-                <EmptyState title="No collections recorded yet" hint="Paste the receipts sheet from the Accounts tab to see the daily collection trend here." />
+                <div className="flex flex-1 items-center justify-center">
+                  <EmptyState title="No collections recorded yet" hint="Paste the receipts sheet from the Accounts tab to see the daily collection trend here." />
+                </div>
               ) : (
-                <div className="flex h-48 items-end gap-1.5 overflow-x-auto pb-1">
+                <div className="flex min-h-48 flex-1 items-end gap-1.5 overflow-x-auto pb-1">
                   {days.map((day) => {
                     const v = daily.get(day);
                     const total = v?.total || 0;
