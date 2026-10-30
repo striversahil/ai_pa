@@ -5,16 +5,23 @@ import type { CustomerAgeingRow } from "@/debtors-tracker/types";
 import { formatINR } from "@/debtors-tracker/types";
 import { formatPromiseDate, promiseStatusLabel } from "@/debtors-tracker/promise";
 import { AGEING_BUCKETS } from "@/debtors-tracker/buckets";
-import { buildPromiseSummary, type PromiseDueKey } from "@/debtors-tracker/promise-summary";
+import {
+  buildPromiseSummary,
+  promiseClientsInBucket,
+  promiseClientsInDue,
+  type PromiseClientEntry,
+  type PromiseDueKey,
+} from "@/debtors-tracker/promise-summary";
 import { Card, EmptyState, MiniStat } from "./ui";
 
 /**
  * Promised-to-pay money, broken down by ageing bucket, promise date and
  * current client situation.
  *
- * The promise total is the net due of every client who is still owed money
- * and has not been marked Paid / Closed, so an overdue promise keeps showing
- * here until a newer promise replaces it or the client settles.
+ * Every category is a default-collapsed dropdown: open one to see exactly
+ * which clients promised, when, and how much of their net due sits in that
+ * category. A promise survives a situation change; a newer promise replaces
+ * it and Paid / Closed clears it.
  */
 
 const DUE_TONES: Record<PromiseDueKey, { bar: string; text: string; chip: string }> = {
@@ -40,6 +47,13 @@ const DUE_TONES: Record<PromiseDueKey, { bar: string; text: string; chip: string
   },
 };
 
+const DUE_EMPTY: Record<PromiseDueKey, string> = {
+  overdue: "No promise is overdue.",
+  today: "Nothing promised for today.",
+  next7: "Nothing promised in the next 7 days.",
+  later: "No promises beyond 7 days.",
+};
+
 function pct(part: number, whole: number): number {
   if (!(whole > 0) || !isFinite(part)) return 0;
   return Math.max(0, Math.min(100, (part / whole) * 100));
@@ -47,6 +61,65 @@ function pct(part: number, whole: number): number {
 
 function clientLabel(n: number): string {
   return `${n} client${n === 1 ? "" : "s"}`;
+}
+
+function Chevron({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180 ${className}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m5 8 5 5 5-5" />
+    </svg>
+  );
+}
+
+/** One category's client list: who promised, when, and their money in it. */
+function PromiseClientList({
+  entries, asOfIST, emptyLabel,
+}: {
+  entries: PromiseClientEntry[];
+  asOfIST: string;
+  emptyLabel: string;
+}) {
+  if (entries.length === 0) {
+    return <p className="px-2 py-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">{emptyLabel}</p>;
+  }
+  return (
+    <ul className="space-y-0.5">
+      {entries.map(({ client, amount }) => {
+        const tone = DUE_TONES[client.dueKey];
+        return (
+          <li
+            key={client.customerKey || client.customerName}
+            className="rounded-lg px-2 py-1.5 hover:bg-white/80 dark:hover:bg-zinc-900/50"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-[11px] font-medium text-zinc-800 dark:text-zinc-100">
+                {client.customerName}
+              </span>
+              <span className="shrink-0 text-[11px] font-semibold tabular-nums text-zinc-700 dark:text-zinc-300">
+                {formatINR(amount)}
+              </span>
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+              <span className="tabular-nums">{formatPromiseDate(client.promisedDate)}</span>
+              <span className={`rounded-full px-1.5 py-0.5 font-medium ${tone.chip}`}>
+                {promiseStatusLabel(client.promisedDate, asOfIST)}
+              </span>
+              <span className="truncate opacity-80">{client.situationLabel}</span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 export default function PromiseOverview({
@@ -61,8 +134,9 @@ export default function PromiseOverview({
       <div>
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Promised to pay</h3>
         <p className="mt-0.5 max-w-xl text-xs text-zinc-500 dark:text-zinc-400">
-          Money clients have committed to pay, split by how overdue the bills are. A promise survives a
-          situation change; a newer promise replaces it and Paid / Closed clears it.
+          Money clients have committed to pay, split by how overdue the bills are. Open any category to
+          see which clients promised and when. A promise survives a situation change; a newer promise
+          replaces it and Paid / Closed clears it.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -118,101 +192,84 @@ export default function PromiseOverview({
           })}
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
           {AGEING_BUCKETS.map((b) => {
             const slice = stats.buckets.find((s) => s.key === b.key);
             const value = Math.max(0, slice?.amount || 0);
-            const clients = slice?.clients || 0;
+            const entries = promiseClientsInBucket(stats, b.key);
             return (
-              <div
-                key={b.key}
-                className={`rounded-xl border p-3 ${b.tile}`}
-                title={`${formatINR(value, false)} promised across ${clientLabel(clients)} with money in this bucket`}
-              >
-                <div className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-                  <span className={`h-1.5 w-1.5 rounded-full ${b.dot}`} />
-                  {b.label}
+              <details key={b.key} className={`group rounded-xl border ${b.tile}`}>
+                <summary
+                  className="cursor-pointer list-none p-3 [&::-webkit-details-marker]:hidden"
+                  title={`${formatINR(value, false)} promised across ${clientLabel(entries.length)} with money in this bucket`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                      <span className={`h-1.5 w-1.5 rounded-full ${b.dot}`} />
+                      {b.label}
+                    </span>
+                    <Chevron className="h-3 w-3" />
+                  </div>
+                  <div className={`mt-1.5 text-sm font-semibold tabular-nums ${b.text}`}>{formatINR(value)}</div>
+                  <div className="mt-0.5 flex items-center justify-between gap-1 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                    <span>{pct(value, stats.total).toFixed(1)}% of promised</span>
+                    <span>{entries.length > 0 ? clientLabel(entries.length) : "—"}</span>
+                  </div>
+                </summary>
+                <div className="max-h-56 overflow-y-auto border-t border-zinc-900/5 px-1.5 py-1.5 dark:border-white/10">
+                  <PromiseClientList
+                    entries={entries}
+                    asOfIST={asOfIST}
+                    emptyLabel="No promised money in this bucket."
+                  />
                 </div>
-                <div className={`mt-1.5 text-sm font-semibold tabular-nums ${b.text}`}>{formatINR(value)}</div>
-                <div className="mt-0.5 flex items-center justify-between gap-1 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
-                  <span>{pct(value, stats.total).toFixed(1)}% of promised</span>
-                  <span>{clients > 0 ? clientLabel(clients) : "—"}</span>
-                </div>
-              </div>
+              </details>
             );
           })}
         </div>
 
         <div className="grid gap-5 border-t border-zinc-100 pt-4 lg:grid-cols-2 dark:border-zinc-800/60">
-          {/* When the money is promised */}
+          {/* When the money is promised — one dropdown per timing category */}
           <section className="space-y-2">
             <div className="flex items-baseline justify-between gap-2">
               <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
                 When it is promised
               </h4>
-              <span className="text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">{clientLabel(stats.clients)}</span>
+              <span className="text-[10px] text-zinc-400 dark:text-zinc-500">open a category for clients</span>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               {stats.due.map((row) => {
                 const tone = DUE_TONES[row.key];
+                const entries = promiseClientsInDue(stats, row.key);
                 return (
-                  <div
-                    key={row.key}
-                    className="flex items-center gap-2.5"
-                    title={`${row.label}: ${formatINR(row.amount, false)} · ${clientLabel(row.clients)}`}
-                  >
-                    <span className="w-[104px] shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400">{row.label}</span>
-                    <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                      <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${pct(row.amount, stats.total)}%` }} />
+                  <details key={row.key} className="group">
+                    <summary
+                      className="flex cursor-pointer list-none items-center gap-2.5 rounded-lg px-1 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 [&::-webkit-details-marker]:hidden"
+                      title={`${row.label}: ${formatINR(row.amount, false)} · ${clientLabel(row.clients)}`}
+                    >
+                      <span className="w-[104px] shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400">{row.label}</span>
+                      <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                        <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${pct(row.amount, stats.total)}%` }} />
+                      </div>
+                      <span className={`w-[74px] shrink-0 text-right text-[11px] font-semibold tabular-nums ${row.amount > 0 ? tone.text : "text-zinc-300 dark:text-zinc-700"}`}>
+                        {formatINR(row.amount)}
+                      </span>
+                      <span className={`w-[52px] shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums ${row.clients > 0 ? tone.chip : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"}`}>
+                        {row.clients}
+                      </span>
+                      <Chevron className="h-3 w-3" />
+                    </summary>
+                    <div className="max-h-56 overflow-y-auto py-1 pl-1 pr-1">
+                      <PromiseClientList
+                        entries={entries}
+                        asOfIST={asOfIST}
+                        emptyLabel={DUE_EMPTY[row.key]}
+                      />
                     </div>
-                    <span className={`w-[74px] shrink-0 text-right text-[11px] font-semibold tabular-nums ${row.amount > 0 ? tone.text : "text-zinc-300 dark:text-zinc-700"}`}>
-                      {formatINR(row.amount)}
-                    </span>
-                    <span className={`w-[52px] shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums ${row.clients > 0 ? tone.chip : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"}`}>
-                      {row.clients}
-                    </span>
-                  </div>
+                  </details>
                 );
               })}
             </div>
-
-            {/* Default-collapsed drill-down: who promised, how much and when. */}
-            <details className="group rounded-xl border border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/30">
-              <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 [&::-webkit-details-marker]:hidden">
-                <span>Who promised, and when</span>
-                <span className="flex items-center gap-2">
-                  <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] tabular-nums text-zinc-500 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-700">
-                    {stats.clients}
-                  </span>
-                  <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-zinc-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="m5 8 5 5 5-5" />
-                  </svg>
-                </span>
-              </summary>
-              <ul className="max-h-60 space-y-0.5 overflow-y-auto border-t border-zinc-200/70 p-1.5 dark:border-zinc-800/70">
-                {stats.promisedClients.map((client) => {
-                  const tone = DUE_TONES[client.dueKey];
-                  return (
-                    <li
-                      key={client.customerKey || client.customerName}
-                      className="rounded-lg px-2 py-1.5 hover:bg-white dark:hover:bg-zinc-900/70"
-                    >
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-[11px] font-medium text-zinc-800 dark:text-zinc-100">{client.customerName}</span>
-                        <span className="shrink-0 text-[11px] font-semibold tabular-nums text-zinc-700 dark:text-zinc-300">{formatINR(client.amount)}</span>
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-zinc-500 dark:text-zinc-400">
-                        <span className="tabular-nums">{formatPromiseDate(client.promisedDate)}</span>
-                        <span className={`rounded-full px-1.5 py-0.5 font-medium ${tone.chip}`}>
-                          {promiseStatusLabel(client.promisedDate, asOfIST)}
-                        </span>
-                        <span className="truncate opacity-80">· {client.situationLabel}</span>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </details>
           </section>
 
           {/* By current client situation */}

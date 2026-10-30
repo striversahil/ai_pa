@@ -44,7 +44,7 @@ export interface PromiseSituationSlice {
   clients: number;
 }
 
-/** One promised client, for the "who promised and when" drill-down. */
+/** One promised client, for the per-category "who promised and when" lists. */
 export interface PromiseClient {
   customerKey: string;
   customerName: string;
@@ -56,6 +56,14 @@ export interface PromiseClient {
   dueKey: PromiseDueKey;
   /** Negative = days overdue, 0 = today, positive = days remaining. */
   daysRemaining: number;
+  /** Net due attributed to each ageing bucket (key omitted when zero). */
+  buckets: Partial<Record<AgeingBucketKey, number>>;
+}
+
+/** A client plus the money it contributes to one category. */
+export interface PromiseClientEntry {
+  client: PromiseClient;
+  amount: number;
 }
 
 export interface PromiseSummary {
@@ -153,12 +161,16 @@ export function buildPromiseSummary(customers: CustomerAgeingRow[], today: strin
     promisedClients += 1;
     total += net;
 
+    const bucketAmounts: Partial<Record<AgeingBucketKey, number>> = {};
     const slices = splitByBucket(row);
     if (slices) {
       for (const slice of slices) {
         const bucket = bucketTotals.get(slice.key)!;
         bucket.amount += slice.amount;
-        if (slice.amount > EPSILON) bucket.clients += 1;
+        if (slice.amount > EPSILON) {
+          bucket.clients += 1;
+          bucketAmounts[slice.key] = (bucketAmounts[slice.key] || 0) + slice.amount;
+        }
       }
     }
 
@@ -195,6 +207,7 @@ export function buildPromiseSummary(customers: CustomerAgeingRow[], today: strin
         situationLabel: situationLabel(situation) || "Unset",
         dueKey: key,
         daysRemaining: promiseDaysRemaining(promiseDate, today) ?? 0,
+        buckets: bucketAmounts,
       });
     }
   }
@@ -219,4 +232,27 @@ export function buildPromiseSummary(customers: CustomerAgeingRow[], today: strin
     unpromisedClients,
     promisedShare: collectible > EPSILON ? (total / collectible) * 100 : 0,
   };
+}
+
+/**
+ * Clients with promised money sitting in one ageing bucket, oldest promise
+ * first. `amount` is the slice of their net due attributed to that bucket.
+ */
+export function promiseClientsInBucket(
+  summary: PromiseSummary,
+  key: AgeingBucketKey,
+): PromiseClientEntry[] {
+  return summary.promisedClients
+    .map((client) => ({ client, amount: client.buckets[key] || 0 }))
+    .filter((entry) => entry.amount > EPSILON);
+}
+
+/** Clients whose promise date falls in one due window, oldest promise first. */
+export function promiseClientsInDue(
+  summary: PromiseSummary,
+  key: PromiseDueKey,
+): PromiseClientEntry[] {
+  return summary.promisedClients
+    .filter((client) => client.dueKey === key)
+    .map((client) => ({ client, amount: client.amount }));
 }
