@@ -13,6 +13,9 @@ import { REGIONS, type RegionId } from "@/telecalling/regions";
 // components render; adapters below feed them from the Worker payload.
 import { BoardHeader } from "@/components/telecalling/BoardHeader";
 import { MetricStrip } from "@/components/telecalling/MetricStrip";
+import NeoDoveCampaignSection from "@/components/telecalling/NeoDoveCampaignSection";
+import RehomeEstimateSection from "@/components/telecalling/RehomeEstimateSection";
+import SalesHolidaysSection from "@/components/telecalling/SalesHolidaysSection";
 import { PodiumRow } from "@/components/telecalling/PodiumRow";
 import { HoldingPens } from "@/components/telecalling/HoldingPens";
 import { CARD } from "@/components/telecalling/surface";
@@ -102,6 +105,10 @@ interface RegionInfo {
   accepted?: { count: number; value: number; points: number };
   /** The closed estimates behind `won`, newest acceptance first (capped). */
   acceptedItems?: BoardClosedItemLite[];
+  /** Estimates that BECAME declined inside the selected period. */
+  declined: { count: number; value: number };
+  /** The declined estimates behind `declined`, newest decline first (capped). */
+  declinedItems?: BoardClosedItemLite[];
   /** ₹1L/day target + weekly carry-forward ledger (server-computed). */
   target?: RegionTarget | null;
 }
@@ -109,12 +116,14 @@ interface RegionInfo {
 /** One accepted estimate behind a region's `Won` figure (BoardClosedItem). */
 type BoardClosedItemLite = NonNullable<BoardRegion["acceptedItems"]>[number];
 
-/** Open estimate with no region ('' — link it so region ownership works). */
+/** Estimate with no region ('' — link it so region ownership works). Any live
+ * status: sent, accepted, confirmed or declined. */
 interface UnmappedItem {
   estimateId: string;
   estimateNumber?: string | null;
   customerName?: string | null;
   total?: number | null;
+  status?: string | null;
   generatedBy?: string | null;
   organizationId?: string | null;
   lastSync?: string | null;
@@ -1097,9 +1106,15 @@ export default function TelecallingDashboard() {
     { key: "year", label: "This Year" },
     { key: "lastyear", label: "Last Year" },
   ];
-  // Roster is the assignment controller — visible/editable only with the
-  // `mis` scope (root/admin always allowed).
-  const canManageRoster = !!me && (me.isAdmin || me.scopes.includes("mis") || me.scopes.includes("sales-head"));
+  // Roster is the assignment controller. Viewing is MIS + sales-head; WRITES
+  // are sales-head/MIS writes too (founder decision: sales-head holds
+  // complete authority inside sales, same as MIS) — the backend enforces
+  // this (POST/PUT/DELETE require sales-manager). Accept the scope or the
+  // role itself so a sales-head role holder is not locked out by a missing
+  // scope grant.
+  const hasSalesManagerAccess = !!me && (me.isAdmin || me.scopes.includes("mis") || me.roles.includes("mis") || me.scopes.includes("sales-head") || me.roles.includes("sales-head"));
+  const canManageRoster = hasSalesManagerAccess;
+  const canEditRoster = hasSalesManagerAccess;
 
   const dash = useLiveQuery<DashData>(
     async () => {
@@ -1372,7 +1387,9 @@ export default function TelecallingDashboard() {
   };
 
   // Add/edit agent from the modal — contact + role only, never NeoDove mapping.
-  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; region: string; tlLevel: string; type: string }) => {
+  // The closer/follow-up flag is intentionally not edited here: the backend
+  // preserves the stored value on PUT and defaults new telecallers on POST.
+  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; tlLevel: string; type: string }) => {
     if (!updates.name.trim()) return;
     setBusy(true);
     setRosterError(null);
@@ -1382,7 +1399,6 @@ export default function TelecallingDashboard() {
         email: updates.email || null,
         phone: updates.phone || null,
         whatsapp: updates.whatsapp || null,
-        assignEstimateFollowUps: updates.assignEstimateFollowUps,
         region: updates.region,
         tlLevel: updates.tlLevel,
         type: updates.type,
@@ -1412,27 +1428,6 @@ export default function TelecallingDashboard() {
     }
   };
 
-  const toggleFollowUps = async (id: string, assignEstimateFollowUps: boolean) => {
-    setBusy(true);
-    setRosterError(null);
-    try {
-      const res = await fetch(`/api/telecallers/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignEstimateFollowUps: !assignEstimateFollowUps }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `Update failed (${res.status})`);
-      }
-      refreshAll();
-    } catch (e: any) {
-      setRosterError(e?.message ?? "Update failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   // Risk is informational in the region model (red/zombie + stale next step
   // surface as attention flags; nothing is re-poached at EOD anymore).
   const showRisk = true;
@@ -1455,6 +1450,8 @@ export default function TelecallingDashboard() {
   // ── Sales-leaderboard board state (podium drawers) ─────────────────────
   const [openWeeks, setOpenWeeks] = useState<string | null>(null);
   const [closedOpen, setClosedOpen] = useState<string | null>(null);
+  /** Region whose "what did we lose?" list is open (one drawer at a time). */
+  const [declinedOpen, setDeclinedOpen] = useState<string | null>(null);
   const teamTarget = (dash.data?.meta?.teamTarget ?? null) as TeamTarget | null;
   const riskByStaff = useMemo(() => {
     const m = new Map<string, number>();
@@ -1478,6 +1475,8 @@ export default function TelecallingDashboard() {
         won: r.won ?? { count: 0, value: 0 },
         accepted: r.accepted,
         acceptedItems: r.acceptedItems ?? [],
+        declined: r.declined ?? { count: 0, value: 0 },
+        declinedItems: r.declinedItems ?? [],
         target: r.target ?? null,
         open: r.open ?? { count: 0, value: 0 },
         callsConnected: Number(r.callsConnected ?? 0),
@@ -1495,36 +1494,6 @@ export default function TelecallingDashboard() {
     }
     return m;
   }, [dashRegions, riskByStaff]);
-  // Telecaller row → the region pipeline drawer (drill payload, already
-  // prefetched per region). Full list opens the Lead Conversion tab.
-  const renderPipeline = useCallback((s: BoardStaff) => {
-    const key = regionKey(s.region ?? "");
-    const view = agentViews.data?.[key];
-    if (!view) return <p className="text-[11px] text-[var(--text-tertiary)]">Loading {s.regionName || key} pipeline…</p>;
-    const rows = view.followUps ?? [];
-    if (rows.length === 0) return <p className="text-[11px] text-[var(--text-tertiary)]">No open estimates in {s.regionName || key}.</p>;
-    return (
-      <div className="space-y-1 py-1">
-        {rows.slice(0, 5).map((f) => (
-          <div key={f.estimateId} className="flex items-center gap-2 text-[11px]">
-            <span className="font-mono font-semibold text-[var(--text-secondary)]">{f.estimateNumber || f.estimateId}</span>
-            <span className="min-w-0 flex-1 truncate text-[var(--text-tertiary)]">{f.customerName || "—"}</span>
-            <span className="font-mono text-emerald-600 dark:text-emerald-400">{`₹${fmtNum(f.total ?? 0)}`}</span>
-            <StaleChip compact staleHours={f.staleHours} />
-            <SnatchChip compact risk={f.risk} />
-          </div>
-        ))}
-        <button
-          type="button"
-          onClick={() => { setRegionFilter(key); setView("conversion"); }}
-          className="text-[11px] font-semibold text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-300"
-        >
-          Open full pipeline ({rows.length})
-        </button>
-      </div>
-    );
-  }, [agentViews.data]);
-
   return (
     <div className="space-y-6">
       <ConfirmDialog
@@ -1607,14 +1576,19 @@ export default function TelecallingDashboard() {
                       region={r}
                       index={i}
                       staff={boardStaffByRegion.get(r.id) ?? []}
-                      expandedId={expandedId}
-                      onToggleStaff={(id) => setExpandedId((cur) => (cur === id ? null : id))}
                       weeksOpen={openWeeks === r.id}
                       onToggleWeeks={() => setOpenWeeks((cur) => (cur === r.id ? null : r.id))}
                       closedOpen={closedOpen === r.id}
-                      onToggleClosed={() => setClosedOpen((cur) => (cur === r.id ? null : r.id))}
+                      onToggleClosed={() => {
+                        setClosedOpen((cur) => (cur === r.id ? null : r.id));
+                        setDeclinedOpen(null);
+                      }}
+                      declinedOpen={declinedOpen === r.id}
+                      onToggleDeclined={() => {
+                        setDeclinedOpen((cur) => (cur === r.id ? null : r.id));
+                        setClosedOpen(null);
+                      }}
                       onOpenRegion={() => { setRegionFilter(regionKey(r.id)); setView("conversion"); }}
-                      renderPipeline={renderPipeline}
                       targetStart={teamTarget?.targetStart}
                     />
                   ))}
@@ -1853,7 +1827,7 @@ export default function TelecallingDashboard() {
                   so show the privileged linking queue instead of follow-ups. */}
               {regionFilter === "UNMAPPED" && (unmappedBlock?.count ?? 0) > 0 && (
                 <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                  {unmappedBlock?.count ?? 0} unmapped open estimates (₹{fmtNum(unmappedBlock?.value ?? 0)}). Link each one to a region in the Controller tab.
+                  {unmappedBlock?.count ?? 0} unmapped estimates (₹{fmtNum(unmappedBlock?.value ?? 0)}). Link each one to a region in the Controller tab.
                 </div>
               )}
             </section>
@@ -1878,6 +1852,14 @@ export default function TelecallingDashboard() {
                   setError={setRosterError}
                   refreshAll={refreshAll}
                 />
+                <NeoDoveCampaignSection canManage={canManageRoster} />
+                <RehomeEstimateSection
+                  busy={busy}
+                  setBusy={setBusy}
+                  setError={setRosterError}
+                  refreshAll={refreshAll}
+                />
+                <SalesHolidaysSection refreshAll={refreshAll} />
                 <HistoryResetSection
                   epoch={dash.data?.epoch ?? null}
                   busy={busy}
@@ -1890,9 +1872,9 @@ export default function TelecallingDashboard() {
                   rosterRows={rosterRows}
                   busy={busy}
                   rosterError={rosterError}
+                  readOnly={!canEditRoster}
                   onAdd={() => { setEditTarget(null); setRosterModalOpen(true); }}
                   onEditModal={(t) => { setEditTarget(t); setRosterModalOpen(true); }}
-                  onToggleFollowUps={toggleFollowUps}
                   onDelete={(t) => setConfirmDelete(t)}
                   onRestore={restoreTelecaller}
                   deletedRows={deletedRows}
@@ -2071,8 +2053,9 @@ export default function TelecallingDashboard() {
   );
 }
 
-/** Unmapped open estimates — link each to its region so region ownership,
- *  KRA and the leaderboard count it. */
+/** Unmapped estimates — link each to its region so region ownership, KRA
+ *  and the leaderboard count it. Includes every live status: an accepted or
+ *  declined row with no region earns nothing until it is linked. */
 function UnmappedSection({
   unmapped,
   unmappedAccepted,
@@ -2118,12 +2101,12 @@ function UnmappedSection({
           <h3 className="text-lg font-bold mb-1 text-amber-700 dark:text-amber-400">🧭 Unmapped estimates</h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             {items.length > 0
-              ? "Open estimates with no region — link each one so its region owns the deal."
-              : "Every open estimate has a region."}
+              ? "Estimates with no region — sent, accepted or declined — link each one so its region owns the deal."
+              : "Every estimate has a region."}
           </p>
         </div>
         <span className="text-xs text-zinc-600 dark:text-zinc-400">
-          <span className="font-mono font-bold text-amber-600 dark:text-amber-400">{unmapped?.count ?? 0}</span> open · ₹{fmtNum(unmapped?.value ?? 0)}
+          <span className="font-mono font-bold text-amber-600 dark:text-amber-400">{unmapped?.count ?? 0}</span> unmapped · ₹{fmtNum(unmapped?.value ?? 0)}
         </span>
       </div>
       {items.length > 0 && (
@@ -2134,6 +2117,7 @@ function UnmappedSection({
                 <div className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{it.customerName ?? "—"}</div>
                 <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">
                   {it.estimateNumber ?? it.estimateId} · ₹{fmtNum(Number(it.total ?? 0))}
+                  {it.status ? ` · ${it.status}` : ""}
                   {it.generatedBy ? ` · by ${it.generatedBy}` : ""}
                 </div>
               </div>
@@ -2332,9 +2316,9 @@ function RosterSection({
   rosterRows,
   busy,
   rosterError,
+  readOnly = false,
   onAdd,
   onEditModal,
-  onToggleFollowUps,
   onDelete,
   onRestore,
   deletedRows,
@@ -2344,9 +2328,10 @@ function RosterSection({
   rosterRows: RosterRow[];
   busy: boolean;
   rosterError: string | null;
+  /** Read-only hides Add/Edit/Delete/Restore. Closer status is display-only. */
+  readOnly?: boolean;
   onAdd: () => void;
   onEditModal: (t: RosterRow) => void;
-  onToggleFollowUps: (id: string, assignEstimateFollowUps: boolean) => void;
   onDelete: (t: RosterRow) => void;
   onRestore: (id: string) => void;
   deletedRows: RosterRow[];
@@ -2357,10 +2342,12 @@ function RosterSection({
     <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-lg font-bold">Sales Roster</h3>
-        <button onClick={onAdd} disabled={busy}
-          className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
-          + Add staff
-        </button>
+        {!readOnly && (
+          <button onClick={onAdd} disabled={busy}
+            className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-60">
+            + Add staff
+          </button>
+        )}
       </div>
       {rosterError && (
         <div className="mb-3 text-xs font-semibold text-rose-500 dark:text-rose-400 bg-rose-500/10 rounded-lg px-3 py-2">
@@ -2403,28 +2390,26 @@ function RosterSection({
             )}
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Open in region: {t.activeAssigned} · lifetime assigned: {t.totalAssigned}</div>
             <div className="flex gap-2 mt-3 flex-wrap">
-              <button onClick={() => onEditModal(t)} className="flex-1 text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 py-1.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-700">Edit</button>
+              {!readOnly && <button onClick={() => onEditModal(t)} className="flex-1 text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 py-1.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-700">Edit</button>}
               {t.type !== "field_staff" ? (
-                <button onClick={() => onToggleFollowUps(t.id, t.assignEstimateFollowUps)} className={`flex-1 text-xs rounded-lg py-1.5 font-semibold ${
-                  t.assignEstimateFollowUps
-                    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                    : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-                }`} title="Conversion specialists can be picked as the 80% closer; others only earn the 20% generator share">
-                  {t.assignEstimateFollowUps ? "Not a closer" : "Make closer-eligible"}
-                </button>
+                <span className="flex-1 text-center text-[11px] rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-500 py-1.5 font-semibold">
+                  {t.assignEstimateFollowUps ? "Closer" : "Generator"}
+                </span>
               ) : (
                 <span className="flex-1 text-center text-[11px] rounded-lg bg-sky-500/5 text-sky-600 dark:text-sky-400 py-1.5 font-semibold" title="Field staff never operate the dashboard and never close — they only generate leads">
                   Never a closer
                 </span>
               )}
-              <button
-                onClick={() => onDelete(t)}
-                disabled={busy}
-                className="inline-flex items-center justify-center rounded-lg bg-rose-500/10 text-rose-500 dark:text-rose-400 p-2 hover:bg-rose-500/20 disabled:opacity-40"
-                title="Delete agent — hidden everywhere, restorable from Deleted Agents"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {!readOnly && (
+                <button
+                  onClick={() => onDelete(t)}
+                  disabled={busy}
+                  className="inline-flex items-center justify-center rounded-lg bg-rose-500/10 text-rose-500 dark:text-rose-400 p-2 hover:bg-rose-500/20 disabled:opacity-40"
+                  title="Delete agent — hidden everywhere, restorable from Deleted Agents"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -2456,14 +2441,16 @@ function RosterSection({
                   <br />
                   Lifetime assigned: {t.totalAssigned}
                 </div>
-                <button
-                  onClick={() => onRestore(t.id)}
-                  disabled={busy}
-                  className="mt-3 w-full text-xs rounded-lg bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 py-2 font-semibold hover:bg-emerald-500/20 disabled:opacity-40"
-                  title="Restore as inactive — reactivate when ready"
-                >
-                  ♻ Restore (inactive)
-                </button>
+                {!readOnly && (
+                  <button
+                    onClick={() => onRestore(t.id)}
+                    disabled={busy}
+                    className="mt-3 w-full text-xs rounded-lg bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 py-2 font-semibold hover:bg-emerald-500/20 disabled:opacity-40"
+                    title="Restore as inactive — reactivate when ready"
+                  >
+                    ♻ Restore (inactive)
+                  </button>
+                )}
               </div>
             ))}
             {deletedRows.length === 0 && <p className="text-xs text-zinc-500 py-2">No deleted agents.</p>}
@@ -2488,14 +2475,13 @@ function RosterEditModal({
   target: RosterRow | null; // null = creating a new agent
   open: boolean;
   busy: boolean;
-  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; assignEstimateFollowUps: boolean; region: string; tlLevel: string; type: string }) => void;
+  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; tlLevel: string; type: string }) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
-  const [followUps, setFollowUps] = useState(true);
   const [region, setRegion] = useState("");
   const [tlLevel, setTlLevel] = useState("");
   const [staffType, setStaffType] = useState("telecaller");
@@ -2509,12 +2495,11 @@ function RosterEditModal({
       setEmail(target.email ?? "");
       setPhone(target.phone ?? "");
       setWhatsapp(target.whatsapp ?? "");
-      setFollowUps(target.assignEstimateFollowUps);
       setRegion(target.region ?? "");
       setTlLevel(target.tlLevel ?? "");
       setStaffType(target.type === "field_staff" ? "field_staff" : "telecaller");
     } else {
-      setName(""); setEmail(""); setPhone(""); setWhatsapp(""); setFollowUps(true);
+      setName(""); setEmail(""); setPhone(""); setWhatsapp("");
       setRegion(""); setTlLevel(""); setStaffType("telecaller");
     }
   }, [target, open]);
@@ -2544,7 +2529,7 @@ function RosterEditModal({
           {field("Type", (
             <select
               value={staffType}
-              onChange={(e) => { const v = e.target.value; setStaffType(v); if (v === "field_staff") setFollowUps(false); }}
+              onChange={(e) => { setStaffType(e.target.value); }}
               className={inputCls}
             >
               <option value="telecaller">Telecaller — uses the dashboard</option>
@@ -2572,15 +2557,10 @@ function RosterEditModal({
             ))}
           </div>
 
-          {staffType === "field_staff" ? (
+          {staffType === "field_staff" && (
             <p className="text-[11px] rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-sky-700 dark:text-sky-400">
               Field staff never use the dashboard and never close. Sales agents log their enquiries with source <b>Field Staff</b>; the lead, region and 20% generator credit go to them. Set a region below so their estimates land in the right region.
             </p>
-          ) : (
-            <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-              <input type="checkbox" checked={followUps} onChange={(e) => setFollowUps(e.target.checked)} className="accent-indigo-500" />
-              Conversion specialist (closer-eligible — can be picked for the 80% share)
-            </label>
           )}
 
           {/* NeoDove mapping — read-only, managed by the auto-sync */}
@@ -2600,7 +2580,7 @@ function RosterEditModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave({ name, email, phone, whatsapp, assignEstimateFollowUps: staffType === "field_staff" ? false : followUps, region, tlLevel, type: staffType })}
+            onClick={() => onSave({ name, email, phone, whatsapp, region, tlLevel, type: staffType })}
             disabled={busy || !name.trim()}
             className="px-4 py-2 text-sm rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
             {busy ? "Saving…" : isCreate ? "Add" : "Save"}

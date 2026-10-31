@@ -26,6 +26,8 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'enquiry-tracker',
   'enquiry-procurement',
   'enquiry-management',
+  'master-data',
+  'reporting-sheet',
   'crm',
   'product-line',
   'samarth-overview',

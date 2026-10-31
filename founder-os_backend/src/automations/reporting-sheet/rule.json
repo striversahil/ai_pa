@@ -1,0 +1,11 @@
+{
+  "id": "reporting-sheet",
+  "name": "Reporting Sheet",
+  "description": "Weekly management review: each department head enters their section (sales-head, CRM, digital marketing); root and MIS see everything. Numbers can be auto-filled from live dashboards, then confirmed or adjusted — the saved snapshot is frozen history.",
+  "type": "handler",
+  "trigger": {
+    "type": "manual"
+  },
+  "enabled": true,
+  "scope": "reporting-sheet"
+}

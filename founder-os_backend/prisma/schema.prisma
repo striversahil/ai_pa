@@ -191,6 +191,13 @@ model Estimate {
   // Backfill: first close-credit day, else `date`. Period filters read THIS,
   // not `date`, so a July estimate accepted in October stays July business.
   acceptedAt            String?
+  // IST day (YYYY-MM-DD) this estimate BECAME declined — the mirror of
+  // acceptedAt (migration 0086). Stamped by modules/estimates/status-sync.ts
+  // on entry into `declined`, cleared when the estimate leaves that status.
+  // Backfill: `date` (no status-history table exists). The leaderboard's
+  // Declined figure filters on THIS, so a July quote declined in October
+  // counts in October once tracking is live.
+  declinedAt            String?
   // MIS override: estimate is ALWAYS held by this one agent, never re-poached
   // at EOD even when red/zombie.
   lockedTelecallerId    String?
@@ -1217,8 +1224,12 @@ model HumanResourcesMember {
   active                Boolean  @default(true)
   dateOfBirth           String?
   address               String?
+  // Contact split: phone/email = OFFICE; the emergency* pair is now shown as
+  // PERSONAL CONTACT / PERSONAL EMAIL (labels only — columns are kept for the
+  // API contract); personalPhone is the new PERSONAL PHONE.
   emergencyContactName  String?
   emergencyContactPhone String?
+  personalPhone         String?
   pan                   String?
   aadhaarLast4          String?
   bankName              String?
@@ -1355,6 +1366,20 @@ model HumanResourcesHoliday {
   updatedAt DateTime @updatedAt
 
   @@index([date])
+}
+
+// National holidays excluded from the sales deficit (Sales Leaderboard).
+// One global date list: each region owes ₹1L per working day, so a holiday
+// knocks ₹1L off every region's target. Sunday rows are allowed but are a
+// ledger no-op (Sundays already accrue ₹0).
+model SalesHoliday {
+  day          String   @id // YYYY-MM-DD IST
+  label        String   @default("")
+  markedBy     String   @default("")
+  markedByName String   @default("")
+  createdAt    DateTime @default(now())
+
+  @@index([day])
 }
 
 model HumanResourcesSalarySlip {

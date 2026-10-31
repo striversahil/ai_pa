@@ -116,6 +116,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   HumanResourcesAttendance: ['createdAt', 'updatedAt'],
   HumanResourcesLeave: ['createdAt', 'updatedAt'],
   HumanResourcesHoliday: ['createdAt', 'updatedAt'],
+  SalesHoliday: ['createdAt'],
   HumanResourcesSalarySlip: ['finalizedAt', 'paidAt', 'createdAt', 'updatedAt'],
   HumanResourcesInventoryItem: ['createdAt', 'updatedAt'],
   HumanResourcesInventoryTxn: ['createdAt'],
@@ -199,6 +200,7 @@ const ID_FIELDS: Record<string, string> = {
   HumanResourcesAttendance: 'id',
   HumanResourcesLeave: 'id',
   HumanResourcesHoliday: 'id',
+  SalesHoliday: 'day',
   HumanResourcesSalarySlip: 'id',
   HumanResourcesInventoryItem: 'id',
   HumanResourcesInventoryTxn: 'id',
@@ -881,6 +883,7 @@ export class D1PrismaClient {
   get automationRun() { return this.model('AutomationRun'); }
   get priceQuote() { return this.model('PriceQuote'); }
   get setting() { return this.model('Setting'); }
+  get salesHoliday() { return this.model('SalesHoliday'); }
   get marketingCampaign() { return this.model('MarketingCampaign'); }
   get marketingLead() { return this.model('MarketingLead'); }
   get marketingCampaignRun() { return this.model('MarketingCampaignRun'); }

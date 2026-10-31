@@ -16,22 +16,31 @@ import {
   deleteCloseHistory,
   isValidRegion,
   isValidTlLevel,
+  listSalesHolidays,
+  markSalesHoliday,
+  unmarkSalesHoliday,
 } from '../../automations/telecalling/service';
 
-/** Root/MIS/sales-head gate for the region-model management writes. */
+/** Root/MIS/sales-head gate for the region-model management writes. Accepts
+ * the scope or the role itself, so a sales-head role holder is authorized even
+ * if the scope grant is missing from their session. */
 async function requireSalesManager(c: any): Promise<boolean> {
   try { await requireMisScope(c); return true; } catch { /* fall through */ }
   const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];
-  return scopes.includes('sales-head') || !!me.isAdmin;
+  const roles: string[] = me.roles ?? [];
+  return scopes.includes('sales-head') || roles.includes('sales-head') || !!me.isAdmin;
 }
 
 export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Telecaller roster (staff ↔ hierarchy ↔ region) ────────────────────────────
+  // READ is MIS + sales-head (running the roster is the sales-head's job);
+  // roster WRITES below are sales-head/MIS writes via requireSalesManager.
   app.get('/api/telecallers', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireMisScope(c); }
+    catch (e) { if (!(await requireSalesManager(c))) return misScopeError(c, e); }
     const { prisma } = deps();
     const showDeleted = c.req.query('deleted') === '1';
     const tcs = await prisma.telecaller.findMany({
@@ -90,7 +99,9 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.post('/api/telecallers', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    // Sales roster writes are sales-head/MIS writes (founder decision:
+    // sales-head holds complete authority inside sales, same as MIS).
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     if (!body?.name) return c.json({ error: 'name required' }, 400);
@@ -123,7 +134,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.put('/api/telecallers/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    // Sales roster writes are sales-head/MIS writes (see POST above).
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     const data: Record<string, unknown> = {};
@@ -160,7 +172,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.delete('/api/telecallers/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    // Sales roster writes are sales-head/MIS writes (see POST above).
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
     const { prisma } = deps();
     await prisma.telecaller.update({
       where: { id: c.req.param('id') },
@@ -257,29 +270,85 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     return c.json({ ok: true, ...result });
   });
 
+  // ── National holidays (sales-head / MIS): days with ₹0 target ────────────
+  // A holiday accrues no target like a Sunday, so it shrinks that week's due
+  // and the carry-out deficit. Past or future dates both allowed — the ledger
+  // recomputes from the start, so backdated marks retroactively reduce dues.
+  app.get('/api/telecalling/holidays', async (c) => {
+    if (!(await requireSalesManager(c))) {
+      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    }
+    try {
+      const holidays = await listSalesHolidays();
+      return c.json({ holidays });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to load holidays' }, 500);
+    }
+  });
+
+  app.post('/api/telecalling/holidays', async (c) => {
+    if (!(await requireSalesManager(c))) {
+      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    }
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const { holiday, created } = await markSalesHoliday({
+        day: body?.day,
+        label: body?.label,
+        markedBy: String((me as any)?.user?.id ?? ''),
+        markedByName: String((me as any)?.user?.name ?? (me as any)?.user?.email ?? ''),
+      });
+      try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true, created, holiday });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to mark holiday' }, (e?.status ?? 400) as any);
+    }
+  });
+
+  app.delete('/api/telecalling/holidays/:day', async (c) => {
+    if (!(await requireSalesManager(c))) {
+      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    }
+    try {
+      await unmarkSalesHoliday(c.req.param('day'));
+      try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to remove holiday' }, (e?.status ?? 400) as any);
+    }
+  });
+
   // ── Agent call-disposition tags (region follow-ups view) ─────────────────
   // The sales team tags each follow-up: NO_ANSWER (not picking up), BUSY, or
   // CALLBACK with a follow-up date (capped at +10 days IST, enforced in
-  // setEstimateCallTag). MIS may tag any estimate; signed-in sales staff may
-  // tag estimates in THEIR region (staff work their whole region now — no
-  // personal assignment).
+  // setEstimateCallTag). Sales managers (sales-head/MIS) may tag any estimate;
+  // signed-in sales staff may tag estimates in THEIR region (staff work their
+  // whole region now — no personal assignment).
   app.put('/api/estimates/:id/call-tag', async (c) => {
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     let actorTelecallerId: string | null = null;
-    let isMis = false;
+    let isManager = false;
     try {
       await requireMisScope(c);
-      isMis = true;
+      isManager = true;
     } catch {
-      const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
-      try {
-        actorTelecallerId = await resolveSelfTelecaller(c);
-      } catch { actorTelecallerId = null; }
-      if (!actorTelecallerId) return c.json({ error: 'only MIS or region staff can tag estimates' }, 403);
+      // Sales-head holds complete authority inside sales: same bypass as MIS.
+      if (await requireSalesManager(c)) {
+        isManager = true;
+      } else {
+        const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
+        try {
+          actorTelecallerId = await resolveSelfTelecaller(c);
+        } catch { actorTelecallerId = null; }
+        if (!actorTelecallerId) return c.json({ error: 'only sales managers or region staff can tag estimates' }, 403);
+      }
     }
     const estimateId = c.req.param('id');
-    if (!isMis) {
+    if (!isManager) {
       const current: any = await prisma.estimate.findUnique({
         where: { estimateId },
         select: { region: true },
@@ -295,7 +364,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       estimateId,
       tag: body.tag ?? null,
       callbackDate: body.callbackDate ?? null,
-      actorTelecallerId: isMis ? null : actorTelecallerId,
+      actorTelecallerId: isManager ? null : actorTelecallerId,
     });
     if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as any);
     const saved: any = result.estimate ?? {};
@@ -330,27 +399,32 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   // ── Dated next steps (region follow-ups view) ─────────────────────────────
-  // Staff or MIS sets a concrete customer commitment + date on a follow-up.
-  // While the date is today-or-future the estimate reads "on record" in the
-  // risk model; a past date reads red until chased. Same region-or-MIS
-  // scoping as call tags above.
+  // Staff or sales managers set a concrete customer commitment + date on a
+  // follow-up. While the date is today-or-future the estimate reads "on
+  // record" in the risk model; a past date reads red until chased. Same
+  // region-or-manager scoping as call tags above.
   app.put('/api/estimates/:id/next-step', async (c) => {
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
-    let isMis = false;
+    let isManager = false;
     let actorTelecallerId: string | null = null;
     try {
       await requireMisScope(c);
-      isMis = true;
+      isManager = true;
     } catch {
-      const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
-      try {
-        actorTelecallerId = await resolveSelfTelecaller(c);
-      } catch { actorTelecallerId = null; }
-      if (!actorTelecallerId) return c.json({ error: 'only MIS or region staff can set next steps' }, 403);
+      // Sales-head holds complete authority inside sales: same bypass as MIS.
+      if (await requireSalesManager(c)) {
+        isManager = true;
+      } else {
+        const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
+        try {
+          actorTelecallerId = await resolveSelfTelecaller(c);
+        } catch { actorTelecallerId = null; }
+        if (!actorTelecallerId) return c.json({ error: 'only sales managers or region staff can set next steps' }, 403);
+      }
     }
     const estimateId = c.req.param('id');
-    if (!isMis) {
+    if (!isManager) {
       const current: any = await prisma.estimate.findUnique({
         where: { estimateId },
         select: { region: true },

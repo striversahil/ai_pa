@@ -469,6 +469,10 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     // every open dashboard refetch the (cached) payload.
     '/api/debtors-tracker/exports',
     '/api/payment-tracker/exports',
+    // Campaign push chunks are a progress loop (one call per ~20 leads). The
+    // batch create/finish paths broadcast a typed event instead, so a large
+    // push doesn't fan out into a dashboard refetch per chunk.
+    '/api/neodove/campaign/',
   ];
   app.use('*', async (c, next) => {
     await next();

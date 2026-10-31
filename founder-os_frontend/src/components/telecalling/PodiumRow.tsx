@@ -25,22 +25,23 @@ import { useCountUp } from "@/telecalling/useCountUp";
 import { StaffRail } from "./StaffRail";
 import { WeekLedger } from "./WeekLedger";
 import { ClosedEstimates } from "./ClosedEstimates";
+import { DeclinedEstimates } from "./DeclinedEstimates";
 import { CARD, FOCUS, PILL } from "./surface";
 
 export interface PodiumRowProps {
   region: BoardRegion;
   index: number;
   staff: BoardStaff[];
-  expandedId: string | null;
-  onToggleStaff: (id: string) => void;
   weeksOpen: boolean;
   onToggleWeeks: () => void;
   /** Drawer listing the accepted estimates behind `Won`. */
   closedOpen: boolean;
   onToggleClosed: () => void;
+  /** Drawer listing the declined estimates behind `Declined`. */
+  declinedOpen: boolean;
+  onToggleDeclined: () => void;
   /** Drill into this region's conversion pipeline. */
   onOpenRegion: () => void;
-  renderPipeline: (staff: BoardStaff) => React.ReactNode;
   /** Ledger start day (from meta.teamTarget) for the "since" caption. */
   targetStart?: string;
 }
@@ -69,8 +70,8 @@ function Stat({ label, value, hint, tone }: { label: string; value: string; hint
 }
 
 export function PodiumRow({
-  region, index, staff, expandedId, onToggleStaff, weeksOpen, onToggleWeeks,
-  closedOpen, onToggleClosed, onOpenRegion, renderPipeline, targetStart,
+  region, index, staff, weeksOpen, onToggleWeeks, closedOpen, onToggleClosed,
+  declinedOpen, onToggleDeclined, onOpenRegion, targetStart,
 }: PodiumRowProps) {
   const t = region.target;
   const status: TargetStatus = t?.status ?? "critical";
@@ -231,7 +232,23 @@ export function PodiumRow({
             </div>
             <div className="truncate text-[9px] font-semibold leading-3 text-[var(--text-tertiary)]">{fmtLakh(region.won.value)}</div>
           </button>
-          <Stat label="Open" value={fmtLakh(region.open.value)} hint={`${region.open.count} est`} />
+          {/* Loss side of the same period — same door pattern as Won. */}
+          <button
+            type="button"
+            onClick={onToggleDeclined}
+            aria-expanded={declinedOpen}
+            className={`group min-w-0 rounded text-left ${FOCUS}`}
+            title={declinedOpen ? "Hide the declined estimates" : `Show the ${region.declined.count} declined estimates`}
+          >
+            <div className="flex items-center gap-0.5 text-[9px] font-bold uppercase leading-3 tracking-[0.07em] text-[var(--text-tertiary)]">
+              Declined
+              <ChevronDown className={`h-2.5 w-2.5 transition-transform duration-200 ${declinedOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+            </div>
+            <div className="truncate font-mono text-[12px] font-bold leading-4 text-rose-600 underline-offset-2 group-hover:underline dark:text-rose-400">
+              {region.declined.count}
+            </div>
+            <div className="truncate text-[9px] font-semibold leading-3 text-[var(--text-tertiary)]">{fmtLakh(region.declined.value)}</div>
+          </button>
           <Stat label="Points" value={fmtNum(region.points)} hint="slabs + effort" tone="text-indigo-600 dark:text-indigo-300" />
           <Stat label="Calls·leads" value={`${fmtNum(region.callsConnected)}·${fmtNum(region.leadsGenerated)}`} hint="connected·new" />
         </div>
@@ -279,6 +296,18 @@ export function PodiumRow({
         </div>
       )}
 
+      {/* ── Declined estimates (what the Declined number is made of) ───── */}
+      {declinedOpen && (
+        <div className="px-2.5 pb-2.5 md:px-3">
+          <DeclinedEstimates
+            items={region.declinedItems ?? []}
+            totalCount={region.declined.count}
+            totalValue={region.declined.value}
+            regionName={region.name}
+          />
+        </div>
+      )}
+
       {/* ── The ledger drawer ─────────────────────────────────────────── */}
       {weeksOpen && t && (
         <div className="px-2.5 pb-2.5 md:px-3">
@@ -289,9 +318,6 @@ export function PodiumRow({
       {/* ── Always-open telecaller children ───────────────────────────── */}
       <StaffRail
         staff={staff}
-        expandedId={expandedId}
-        onToggle={onToggleStaff}
-        renderPipeline={renderPipeline}
         regionId={region.id}
         regionName={region.name}
       />

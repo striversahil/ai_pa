@@ -65,14 +65,37 @@ export function weekEndOf(day: string): string {
 
 /** Working days (Mon–Sat) inclusive between two day strings. 0 when reversed. */
 export function workingDaysBetween(from: string, to: string): number {
+  return workingDaysBetweenExcluding(from, to, undefined);
+}
+
+/**
+ * Working days minus holidays. `holidays` is a set of YYYY-MM-DD strings —
+ * global dates (national holidays), not per-region. A Sunday that is also a
+ * holiday counts once (it is already non-working, so the holiday is a no-op
+ * for the ledger). Pass undefined/empty to get plain Mon–Sat behaviour.
+ */
+export function workingDaysBetweenExcluding(
+  from: string,
+  to: string,
+  holidays?: ReadonlySet<string>,
+): number {
   const a = dayMs(from);
   const b = dayMs(to);
   if (a === null || b === null || b < a) return 0;
   let days = 0;
   for (let t = a; t <= b; t += DAY_MS) {
-    if (new Date(t).getUTCDay() !== 0) days += 1;
+    if (new Date(t).getUTCDay() === 0) continue;
+    if (holidays?.has(fmt(t))) continue;
+    days += 1;
   }
   return days;
+}
+
+/** True when `day` (YYYY-MM-DD) is a Sunday — already a non-working day. */
+export function isSunday(day: string): boolean {
+  const t = dayMs(day);
+  if (t === null) return false;
+  return new Date(t).getUTCDay() === 0;
 }
 
 /** One week of a region's ledger. */
@@ -140,6 +163,11 @@ function statusOf(carryOut: number, pacePct: number): TargetStatus {
  * `acceptedByWeek` is keyed weekStart → region → accepted ₹ (the caller
  * groups accepted estimates by their `acceptedAt` day's week). Regions with no
  * rows simply show 0 accepted — the target still accrues.
+ *
+ * `holidays` is the global SalesHoliday day set: a holiday accrues ₹0 like a
+ * Sunday, so it shrinks that week's target and therefore the carry-out
+ * deficit. The ledger is recomputed from `startDay` on every call, so a
+ * backdated holiday retroactively reduces old dues by design.
  */
 export function buildRegionTargets(opts: {
   regions: readonly string[];
@@ -147,6 +175,7 @@ export function buildRegionTargets(opts: {
   asOfDay: string;
   dailyTarget?: number;
   acceptedByWeek: Map<string, Map<string, number>>;
+  holidays?: ReadonlySet<string>;
 }): Map<string, RegionTarget> {
   const daily = opts.dailyTarget ?? DAILY_REGION_TARGET;
   const out = new Map<string, RegionTarget>();
@@ -170,13 +199,15 @@ export function buildRegionTargets(opts: {
       const wsMs = dayMs(weekStart)!;
       const weekEnd = fmt(wsMs + 5 * DAY_MS);
       // Elapsed working days: never before the ledger start, never past today,
-      // never past Saturday.
+      // never past Saturday. Holidays accrue ₹0 like Sundays.
       const fromMs = Math.max(wsMs, startMs);
       const toMs = Math.min(wsMs + 5 * DAY_MS, asOfMs);
       let days = 0;
       if (toMs >= fromMs) {
         for (let t = fromMs; t <= toMs; t += DAY_MS) {
-          if (new Date(t).getUTCDay() !== 0) days += 1;
+          if (new Date(t).getUTCDay() === 0) continue;
+          if (opts.holidays?.has(fmt(t))) continue;
+          days += 1;
         }
       }
       const target = daily * days;

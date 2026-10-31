@@ -7,20 +7,21 @@
 // per-agent won count or ₹ — accepted value belongs to the REGION's estimates,
 // and personal money rows would read as double counting against the region
 // total. Activity (calls / leads / talk), risk pips and points only.
+//
+// Rows are STATIC on purpose (founder decision 2026-10-29): the per-telecaller
+// pipeline dropdown was removed — it repeated the region's open estimates
+// under every agent. The region pipeline is still one click away via the
+// region name / target button / Lead Conversion tab.
 
 import React from "react";
-import { ChevronDown, UserRound, Zap } from "lucide-react";
+import { UserRound, Zap } from "lucide-react";
 import type { BoardStaff } from "@/telecalling/view-types";
 import { fmtNum, fmtTalk, initials } from "@/telecalling/format";
 import { TRAFFIC_TONE } from "@/telecalling/tone";
-import { FOCUS, LABEL, PILL } from "./surface";
+import { LABEL, PILL } from "./surface";
 
 export interface StaffRailProps {
   staff: BoardStaff[];
-  expandedId: string | null;
-  onToggle: (id: string) => void;
-  /** Region pipeline drawer — supplied by the page (needs the drill payload). */
-  renderPipeline: (staff: BoardStaff) => React.ReactNode;
   /** Region id/name for the empty state copy. */
   regionId: string;
   regionName?: string;
@@ -37,7 +38,7 @@ function MicroBar({ pct, tone }: { pct: number; tone: "green" | "amber" | "red" 
   );
 }
 
-export function StaffRail({ staff, expandedId, onToggle, renderPipeline, regionId, regionName }: StaffRailProps) {
+export function StaffRail({ staff, regionId, regionName }: StaffRailProps) {
   if (staff.length === 0) {
     return (
       <div className="border-t border-[var(--border-card)] px-2.5 py-1.5 md:px-3">
@@ -59,19 +60,11 @@ export function StaffRail({ staff, expandedId, onToggle, renderPipeline, regionI
 
       <ul className="relative space-y-0.5 before:absolute before:bottom-2 before:left-[15px] before:top-2 before:w-px before:bg-[var(--border-card)]">
         {staff.map((s, i) => {
-          const open = expandedId === s.id;
           const isField = s.type === "field_staff";
 
           return (
             <li key={s.id} className="fos-rise" style={{ "--i": Math.min(i, 8) } as React.CSSProperties}>
-              <button
-                type="button"
-                onClick={() => onToggle(s.id)}
-                aria-expanded={open}
-                aria-controls={`pipeline-${s.id}`}
-                title={open ? "Hide region pipeline" : "Show region pipeline"}
-                className={`group flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-[var(--surface-sunken)] ${FOCUS} ${open ? "bg-[var(--surface-sunken)]" : ""}`}
-              >
+              <div className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left">
                 <span className="relative z-10 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[var(--border-card)] bg-[var(--bg-card)] text-[8px] font-extrabold text-indigo-600 dark:text-indigo-300">
                   {initials(s.name)}
                 </span>
@@ -109,17 +102,7 @@ export function StaffRail({ staff, expandedId, onToggle, renderPipeline, regionI
                     <Zap className="h-2.5 w-2.5" aria-hidden="true" />
                     {fmtNum(s.score)}
                   </span>
-                  <ChevronDown className={`h-3.5 w-3.5 text-[var(--text-tertiary)] transition-transform duration-200 ${open ? "rotate-180" : ""}`} aria-hidden="true" />
                 </span>
-              </button>
-
-              {/* Pipeline drawer — content supplied by the page (drill payload). */}
-              <div id={`pipeline-${s.id}`} className={`grid transition-all duration-200 ease-out ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
-                <div className="overflow-hidden">
-                  <div className="ml-[12px] border-l border-[var(--border-card)] pb-0.5 pl-2.5 pr-1 pt-0.5">
-                    {open ? renderPipeline(s) : null}
-                  </div>
-                </div>
               </div>
             </li>
           );

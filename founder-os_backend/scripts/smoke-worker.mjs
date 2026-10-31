@@ -57,6 +57,11 @@ const tests = [
   ['PUT /api/delegation/members/x/login-email no-auth -> 401', '/api/delegation/members/x/login-email', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginEmail: 'a@b.com' }) }],
   ['GET /api/accounts/roster', '/api/accounts/roster'],
   ['GET /api/accounts/templates', '/api/accounts/templates'],
+  ['GET /api/neodove/campaign/states no-auth -> 401', '/api/neodove/campaign/states?region=R1'],
+  ['GET /api/neodove/campaign/preview no-auth -> 401', '/api/neodove/campaign/preview?region=R1&state=Punjab'],
+  ['POST /api/neodove/campaign/push no-auth -> 401', '/api/neodove/campaign/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ region: 'R1', state: 'Punjab' }) }],
+  ['GET /api/neodove/campaign/batches no-auth -> 401', '/api/neodove/campaign/batches?region=R1'],
+  ['PUT /api/neodove/campaign/agents/R1_NEHA_VERMA/url no-auth -> 401', '/api/neodove/campaign/agents/R1_NEHA_VERMA/url', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: 'https://x.neodove.com/integration/custom/u/leads' }) }],
   ['GET /nope', '/nope'],
 ];
 

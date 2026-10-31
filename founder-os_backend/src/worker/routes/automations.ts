@@ -221,6 +221,38 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
           }
         } catch { /* no session → unscoped */ }
       }
+      // Customer master: the payload is the whole book (~2.6k rows with contact
+      // details), so it must not be readable by any signed-in user. Same rule
+      // as the write routes — dashboard grant, the sales board it embeds in, or
+      // sales leadership.
+      if (slug === 'master-data') {
+        try {
+          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+          const { canViewMaster } = await import('../../modules/master-data/editors');
+          if (!canViewMaster(me)) {
+            return c.json({ error: "Requires 'master-data' permission" }, 403);
+          }
+        } catch (e) {
+          if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
+          return c.json({ error: "Requires 'master-data' permission" }, 403);
+        }
+      }
+      // Reporting Sheet: viewer-filtered payload. The guard attaches the session
+      // so data() can narrow to the departments this viewer may open; anyone
+      // with no department and no viewer grant is rejected here, not inside.
+      if (slug === 'reporting-sheet') {
+        try {
+          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+          const { viewableDepartments } = await import('../../modules/reporting/access');
+          if (!me || viewableDepartments(me).length === 0) {
+            return c.json({ error: "Requires 'reporting-sheet' permission" }, 403);
+          }
+          (query as any).reportingMe = me;
+        } catch (e) {
+          if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
+          return c.json({ error: "Requires 'reporting-sheet' permission" }, 403);
+        }
+      }
       const data = await AutomationEngine.getData(slug, query);
       return c.json(data);
     } catch (e: any) {

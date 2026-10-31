@@ -53,7 +53,9 @@ import {
 import {
   buildRegionTargets, weekStartOf, DAILY_REGION_TARGET,
   TARGET_START_KEY, DEFAULT_TARGET_START, type RegionTarget,
+  workingDaysBetweenExcluding, isSunday,
 } from './targets';
+import { loadDeclinedSnapshot, type DeclinedAgg, type DeclinedEstimate } from './declined';
 
 // ── Accepted-value targets ─────────────────────────────────────────────────
 // "Won ₹" = total ₹ of ACCEPTED estimates whose acceptance day (acceptedAt)
@@ -477,6 +479,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const wonTo = periodMode && periodRangeInfo ? periodRangeInfo.to : leadTo;
   const creatorIndex = await loadCreatorIndex();
   const wonSnapshot: AcceptedSnapshot = await loadAcceptedSnapshot(wonFrom, wonTo, { creatorIndex });
+  // Declines use the PERIOD window (never the points epoch — a history reset
+  // only forgets credits, not what the team lost). Same creator index, same
+  // region attribution rule as wins (declined.ts).
+  const declinedSnapshot = await loadDeclinedSnapshot(leadFrom, wonTo, { creatorIndex });
 
   // Historic penalties (−10 remark / −15 snatch) are the only ledger rows that
   // still move a staff score; positive close rows no longer define wins.
@@ -505,29 +511,40 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     select: { estimateId: true, estimateNumber: true, customerName: true, total: true, region: true, organizationId: true, createdBy: true, lastSyncTime: true },
   });
   const openByRegion = new Map<string, { count: number; value: number }>();
-  const unmappedSent: Array<Record<string, unknown>> = [];
   for (const e of sentOpen as any[]) {
     const region = String(e.region ?? '');
     const cur = openByRegion.get(region) ?? { count: 0, value: 0 };
     cur.count += 1;
     cur.value += Number(e.total ?? 0) || 0;
     openByRegion.set(region, cur);
-    if (!region && unmappedSent.length < 25) {
-      unmappedSent.push({
-        estimateId: e.estimateId,
-        estimateNumber: e.estimateNumber,
-        customerName: e.customerName,
-        total: Number(e.total ?? 0) || 0,
-        generatedBy: e.createdBy ? nameById.get(String(e.createdBy)) ?? null : null,
-        organizationId: String(e.organizationId ?? ''),
-        lastSync: e.lastSyncTime ?? null,
-      });
-    }
   }
-  const unmappedCount = (sentOpen as any[]).filter((e) => !String(e.region ?? '')).length;
-  const unmappedValue = unmappedCount > 0
-    ? (sentOpen as any[]).filter((e) => !String(e.region ?? '')).reduce((s: number, e: any) => s + (Number(e.total ?? 0) || 0), 0)
-    : 0;
+
+  // ── Unmapped estimates (region '') across ALL live statuses ────────────────
+  // Founder rule (2026-11-01): an estimate with no region shows in the Unmapped
+  // queue even when it is already accepted or declined — region ownership
+  // applies regardless of status, and a no-region accepted row earns nothing
+  // until it is linked. Kept separate from the `sent`-only openByRegion above
+  // so region pipeline cards don't change shape.
+  const unmappedRows = await prisma.estimate.findMany({
+    where: { region: '', status: { in: ['sent', 'accepted', 'confirmed', 'declined'] } },
+    select: { estimateId: true, estimateNumber: true, customerName: true, total: true, status: true, organizationId: true, createdBy: true, lastSyncTime: true },
+    orderBy: { lastSyncTime: 'desc' },
+  });
+  const unmappedSent: Array<Record<string, unknown>> = [];
+  for (const e of (unmappedRows as any[]).slice(0, 50)) {
+    unmappedSent.push({
+      estimateId: e.estimateId,
+      estimateNumber: e.estimateNumber,
+      customerName: e.customerName,
+      total: Number(e.total ?? 0) || 0,
+      status: String(e.status ?? ''),
+      generatedBy: e.createdBy ? nameById.get(String(e.createdBy)) ?? null : null,
+      organizationId: String(e.organizationId ?? ''),
+      lastSync: e.lastSyncTime ?? null,
+    });
+  }
+  const unmappedCount = (unmappedRows as any[]).length;
+  const unmappedValue = (unmappedRows as any[]).reduce((s: number, e: any) => s + (Number(e.total ?? 0) || 0), 0);
 
   // ── Region targets + weekly carry-forward ─────────────────────────────────
   // Every region owes ₹1L of accepted value per working day; a week's shortfall
@@ -535,12 +552,25 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // the selected period filter — "where does my team stand" must not change
   // depending on which tab you are looking at. Start day is a Setting (founder
   // decision: retroactive from 2026-10-01).
+  //
+  // National holidays (SalesHoliday table, sales-head marked) accrue ₹0 like
+  // Sundays, so they shrink the week's target and the carry-out deficit. The
+  // ledger recomputes from the start on every call, so backdated holidays
+  // retroactively reduce old dues by design.
   let targetStart = DEFAULT_TARGET_START;
   try {
     const row: any = await prisma.setting.findUnique({ where: { key: TARGET_START_KEY } });
     const v = String(row?.value ?? '').trim();
     if (DATE_RE.test(v)) targetStart = v;
   } catch { /* fall back to the default start */ }
+  let holidays = new Set<string>();
+  try {
+    const rows: any[] = await (prisma as any).salesHoliday.findMany({ orderBy: { day: 'asc' } });
+    for (const r of rows ?? []) {
+      const day = String((r as any)?.day ?? '').trim();
+      if (DATE_RE.test(day)) holidays.add(day);
+    }
+  } catch { /* fresh DB without the table — behave as no holidays */ }
   const todayDay = istDate();
   // Reuse the wins snapshot when it already spans the whole ledger window.
   const targetSnapshot = wonFrom <= targetStart && todayDay <= wonTo
@@ -551,11 +581,15 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     startDay: targetStart,
     asOfDay: todayDay,
     acceptedByWeek: groupAcceptedByWeek(targetSnapshot.rows, weekStartOf),
+    holidays,
   });
 
   // Lead Generation targets scale with the period's working days (6-day work
-  // week, Mon–Sat) — a week target is one day × working days, never 1×.
-  const workingDays = periodMode && periodRangeInfo ? workingDaysBetween(periodRangeInfo.from, periodRangeInfo.to) : 1;
+  // week, Mon–Sat, minus national holidays) — a week target is one day ×
+  // working days, never 1×.
+  const workingDays = periodMode && periodRangeInfo
+    ? Math.max(1, workingDaysBetweenExcluding(periodRangeInfo.from, periodRangeInfo.to, holidays))
+    : 1;
 
   // ── Region + staff aggregation ──────────────────────────────────────────────
   interface StaffRow {
@@ -595,6 +629,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     accepted: AcceptedAgg;
     /** The closed estimates behind `accepted`, newest first (capped). */
     acceptedItems: AcceptedEstimate[];
+    /** Declines that BECAME declined inside the period (the board's Declined stat). */
+    declined: DeclinedAgg;
+    /** The declined estimates behind `declined`, newest first (capped). */
+    declinedItems: DeclinedEstimate[];
     /** Daily ₹1L target + weekly carry-forward ledger (targets.ts). */
     target: RegionTarget | null;
     open: { count: number; value: number };
@@ -668,6 +706,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     // a region's total never depends on who happened to hold a ledger row.
     const acc: AcceptedAgg = wonSnapshot.byRegion.get(def.id) ?? { count: 0, value: 0, points: 0 };
     const open = openByRegion.get(def.id) ?? { count: 0, value: 0 };
+    const declined = declinedSnapshot.byRegion.get(def.id) ?? { count: 0, value: 0 };
     const callsAttempted = members.reduce((s, m) => s + m.callsAttempted, 0);
     const callsConnected = members.reduce((s, m) => s + m.callsConnected, 0);
     const callsNotConnected = members.reduce((s, m) => s + m.callsNotConnected, 0);
@@ -692,6 +731,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       won: { count: acc.count, value: Math.round(acc.value) },
       accepted: acc,
       acceptedItems: wonSnapshot.byRegionItems.get(def.id) ?? [],
+      declined: { count: declined.count, value: Math.round(declined.value) },
+      declinedItems: declinedSnapshot.byRegionItems.get(def.id) ?? [],
       target: targetByRegion.get(def.id) ?? null,
       open,
       callsAttempted,
@@ -735,6 +776,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     unlinkedWon: wonSnapshot.unlinked.count,
     unlinkedValue: Math.round(wonSnapshot.unlinked.value),
     pipelineValue: Math.round(openTotal),
+    // Loss side of the same period (Declined stat + drawer). Additive only.
+    declined: declinedSnapshot.total.count,
+    declinedValue: Math.round(declinedSnapshot.total.value),
+    declinedUnattributed: declinedSnapshot.unattributed.count,
     leadsGenerated: [...leadsByAgent.values()].reduce((s, n) => s + n, 0),
     callsAttempted: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.callsAttempted ?? 0) || 0), 0),
     callsConnected: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.callsConnected ?? 0) || 0), 0),
@@ -1089,7 +1134,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     regions,
     // Staff working NO region (roster_tl/region unset) — actionable: map them.
     unmappedStaff,
-    // Unmapped open estimates (region '') — privileged only.
+    // Unmapped estimates (region '') across sent/accepted/confirmed/declined —
+    // privileged only.
     ...(canManage ? {
       unmapped: {
         count: unmappedCount,
@@ -1159,6 +1205,129 @@ export type {
 export {
   buildRegionTargets, weekStartOf, weekEndOf, DAILY_REGION_TARGET,
   WORKING_DAYS_PER_WEEK, TARGET_START_KEY, DEFAULT_TARGET_START,
+  workingDaysBetweenExcluding, isSunday,
 } from './targets';
 export type { RegionTarget, WeekLedgerRow, TargetStatus } from './targets';
 export { DATE_RE, IN_BATCH, istDate } from './util';
+
+// ── National holidays (sales deficit exclusion) ─────────────────────────────
+// Global day list: a holiday accrues ₹0 target like a Sunday. Sunday rows are
+// allowed but reported as no-ops. Past or future dates both allowed — the
+// ledger recomputes from the start, so backdated marks retroactively shrink
+// old dues by design.
+
+export interface SalesHoliday {
+  day: string;
+  label: string;
+  markedBy: string;
+  markedByName: string;
+  createdAt: string;
+  sundayNoOp: boolean;
+}
+
+export async function listSalesHolidays(): Promise<SalesHoliday[]> {
+  let rows: any[] = [];
+  try {
+    rows = await (prisma as any).salesHoliday.findMany({ orderBy: { day: 'asc' } });
+  } catch {
+    return [];
+  }
+  return (rows ?? []).map((r: any) => {
+    const day = String(r?.day ?? '');
+    return {
+      day,
+      label: String(r?.label ?? ''),
+      markedBy: String(r?.markedBy ?? ''),
+      markedByName: String(r?.markedByName ?? ''),
+      createdAt: String(r?.createdAt ?? ''),
+      sundayNoOp: isSunday(day),
+    };
+  });
+}
+
+export async function markSalesHoliday(input: {
+  day: unknown; label?: unknown; markedBy?: string; markedByName?: string;
+}): Promise<{ holiday: SalesHoliday; created: boolean }> {
+  const day = String(input.day ?? '').trim();
+  if (!DATE_RE.test(day)) {
+    const e: any = new Error('day must be YYYY-MM-DD');
+    e.status = 400;
+    throw e;
+  }
+  const t = Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)));
+  if (!Number.isFinite(t)) {
+    const e: any = new Error('day is not a real date');
+    e.status = 400;
+    throw e;
+  }
+  const label = String(input.label ?? '').trim().slice(0, 120);
+  const now = new Date().toISOString();
+  try {
+    const existing: any = await (prisma as any).salesHoliday.findUnique({ where: { day } });
+    if (existing) {
+      if (label && label !== String(existing.label ?? '')) {
+        const updated: any = await (prisma as any).salesHoliday.update({
+          where: { day }, data: { label },
+        });
+        return {
+          holiday: {
+            day, label: String(updated?.label ?? label),
+            markedBy: String(existing?.markedBy ?? input.markedBy ?? ''),
+            markedByName: String(existing?.markedByName ?? input.markedByName ?? ''),
+            createdAt: String(existing?.createdAt ?? now),
+            sundayNoOp: isSunday(day),
+          },
+          created: false,
+        };
+      }
+      return {
+        holiday: {
+          day, label: String(existing?.label ?? ''),
+          markedBy: String(existing?.markedBy ?? ''),
+          markedByName: String(existing?.markedByName ?? ''),
+          createdAt: String(existing?.createdAt ?? now),
+          sundayNoOp: isSunday(day),
+        },
+        created: false,
+      };
+    }
+    const created: any = await (prisma as any).salesHoliday.create({
+      data: {
+        day, label,
+        markedBy: String(input.markedBy ?? ''),
+        markedByName: String(input.markedByName ?? ''),
+        createdAt: now,
+      },
+    });
+    return {
+      holiday: {
+        day, label: String((created as any)?.label ?? label),
+        markedBy: String((created as any)?.markedBy ?? input.markedBy ?? ''),
+        markedByName: String((created as any)?.markedByName ?? input.markedByName ?? ''),
+        createdAt: String((created as any)?.createdAt ?? now),
+        sundayNoOp: isSunday(day),
+      },
+      created: true,
+    };
+  } catch (e: any) {
+    if (e?.status) throw e;
+    const err: any = new Error(e?.message || 'failed to mark holiday');
+    err.status = 500;
+    throw err;
+  }
+}
+
+export async function unmarkSalesHoliday(dayInput: unknown): Promise<{ ok: boolean }> {
+  const day = String(dayInput ?? '').trim();
+  if (!DATE_RE.test(day)) {
+    const e: any = new Error('day must be YYYY-MM-DD');
+    e.status = 400;
+    throw e;
+  }
+  try {
+    await (prisma as any).salesHoliday.delete({ where: { day } });
+  } catch {
+    // Idempotent: removing a non-marked day still succeeds.
+  }
+  return { ok: true };
+}

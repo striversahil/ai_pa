@@ -154,7 +154,9 @@ export interface HrEmployee extends HrMember {
   dateOfBirth: string | null;
   address: string | null;
   emergencyContactName: string | null;
+  /** Shown as "Personal Email" in the UI (column name is historical). */
   emergencyContactPhone: string | null;
+  personalPhone: string | null;
   pan: string | null;
   aadhaarLast4: string | null;
   bankName: string | null;

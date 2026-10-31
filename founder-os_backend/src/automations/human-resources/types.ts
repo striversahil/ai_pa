@@ -143,7 +143,9 @@ export interface EmployeeInput {
   dateOfBirth: string | null;
   address: string | null;
   emergencyContactName: string | null;
+  /** Reused column — surfaced in the UI as "Personal Email". */
   emergencyContactPhone: string | null;
+  personalPhone: string | null;
   pan: string | null;
   aadhaarLast4: string | null;
   bankName: string | null;

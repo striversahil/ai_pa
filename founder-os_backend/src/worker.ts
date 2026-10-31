@@ -39,6 +39,7 @@ import { registerEmailRoutes } from './worker/routes/email';
 import { registerDebtorsTrackerRoutes } from './worker/routes/debtors-tracker';
 import { registerMasterDataRoutes } from './worker/routes/master-data';
 import { registerReportingSheetRoutes } from './worker/routes/reporting-sheet';
+import { registerNeodoveCampaignRoutes } from './worker/routes/neodove-campaign';
 import { registerEventsRoute } from './worker/routes/events';
 import { scheduled } from './worker/cron';
 
@@ -71,6 +72,7 @@ registerEmailRoutes(app);
 registerDebtorsTrackerRoutes(app);
 registerMasterDataRoutes(app);
 registerReportingSheetRoutes(app);
+registerNeodoveCampaignRoutes(app);
 registerMarketingRoutes(app);
 registerEventsRoute(app);
 

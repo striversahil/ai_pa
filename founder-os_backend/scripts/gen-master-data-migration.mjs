@@ -1,0 +1,303 @@
+#!/usr/bin/env node
+// gen-master-data-migration.mjs — build migrations/0087_master_data.sql from
+// data/master_data.json (the founder's Zoho customer extract).
+//
+// Why a generator: the extract is re-issued periodically. Regenerating the SQL
+// keeps the durable seed and the JSON in lockstep, and the same normalisation is
+// applied here as at runtime — see the MIRROR note on normalizeCustomerType.
+//
+//   node scripts/gen-master-data-migration.mjs              # write the migration
+//   node scripts/gen-master-data-migration.mjs --split DIR  # write per-chunk files
+//
+// Run: node scripts/gen-master-data-migration.mjs
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(here, '..');
+const DATA = join(ROOT, 'data', 'master_data.json');
+const OUT = join(ROOT, 'migrations', '0087_master_data.sql');
+
+/** Rows per INSERT statement — keeps every statement far under D1's 100 KB cap. */
+const CHUNK = 40;
+
+// ── MIRROR: src/modules/master-data/parse.ts ────────────────────────────────
+// The worker re-normalises on every import; this copy exists so the generated
+// migration produces exactly the same derived columns. Keep the two in sync.
+function cleanText(v, max = 400) {
+  if (v === null || v === undefined) return '';
+  return String(v).replace(/\s+/g, ' ').trim().slice(0, max);
+}
+function cleanBlock(v, max = 2000) {
+  if (v === null || v === undefined) return '';
+  return String(v).replace(/\r\n/g, '\n').trim().slice(0, max);
+}
+function normalizePhone(v) {
+  const raw = String(v ?? '').trim();
+  if (!raw) return '';
+  const plus = raw.startsWith('+');
+  const digits = raw.replace(/[^\d]/g, '');
+  if (digits.length < 6) return '';
+  if (!plus && digits.length === 11 && digits.startsWith('0')) return `+91${digits.slice(1)}`;
+  return `${plus ? '+' : ''}${digits}`;
+}
+function normalizeEmail(v) {
+  const raw = String(v ?? '').trim().toLowerCase();
+  if (!raw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) return '';
+  return raw.slice(0, 200);
+}
+function normalizeGstin(v) {
+  const raw = String(v ?? '').replace(/\s+/g, '').toUpperCase();
+  return /^[0-9A-Z]{15}$/.test(raw) ? raw : '';
+}
+function normalizeDate(v) {
+  if (!v) return '';
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : '';
+}
+function toCount(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+function uniqueList(list) {
+  const seen = new Set();
+  return list.filter((v) => v && !seen.has(v) && seen.add(v));
+}
+function parseJsonList(raw) {
+  if (Array.isArray(raw)) return raw.map((x) => String(x ?? '').trim()).filter(Boolean);
+  return [];
+}
+const TYPE_FAMILIES = [
+  { base: 'Flour Mill', test: /\b(flour\s*mills?|flour|fm|rfm)\b/ },
+  { base: 'Maida Plant', test: /\bmaida\b/ },
+  { base: 'Chakki Mill', test: /\bchakki\b/ },
+];
+function normalizeCustomerType(raw) {
+  const text = cleanText(raw, 120).replace(/^[.\s]+/, '');
+  if (!text) return { base: 'Unspecified', tag: '' };
+  const lower = text.toLowerCase();
+  if (/manufacturer of/.test(lower)) return { base: 'Other', tag: '' };
+  const hit = TYPE_FAMILIES.find((f) => f.test.test(lower));
+  if (!hit) return { base: 'Other', tag: '' };
+  let rest = lower
+    .replace(/^[.\s]+/, '')
+    .replace(/\b(flour\s*mills?|flour|mills?|maida\s*plant|maida|chakki\s*mill|chakki|fm|rfm)\b/g, ' ')
+    .replace(/[.,&]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (rest.split(' ').length > 2) rest = '';
+  return { base: hit.base, tag: rest ? rest.toUpperCase().slice(0, 12) : '' };
+}
+function normalizeStatus(v) {
+  return cleanText(v, 20).toLowerCase().startsWith('inactive') ? 'Inactive' : 'Active';
+}
+
+// ── SQL helpers ─────────────────────────────────────────────────────────────
+const q = (v) => (v === null || v === undefined ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`);
+const n = (v) => String(Number(v) || 0);
+
+const COLUMNS = [
+  'id', 'zohoCustomerId', 'region', 'zone', 'subArea', 'state', 'pincode', 'displayName',
+  'companyName', 'customerType', 'customerTypeBase', 'customerTypeTag', 'status',
+  'contactPerson', 'designation', 'phonesJson', 'emailsJson', 'billingAddress', 'gstin',
+  'owner', 'pipelineStage', 'estimateCount', 'lastEstimateDate', 'salesOrderCount',
+  'lastSalesOrderDate', 'cityZoho', 'cityVerified', 'citySource', 'locationBasis',
+  'duplicateGroup', 'duplicateConfidence', 'suggestedAction', 'createdAt', 'updatedAt',
+];
+
+const UPDATE_SET = COLUMNS
+  .filter((c) => !['id', 'createdAt'].includes(c))
+  .map((c) => `${c} = excluded.${c}`)
+  .join(', ');
+
+const SCHEMA = `-- 0087_master_data.sql — Customer Master (the Zoho customer book).
+--
+-- Generated by scripts/gen-master-data-migration.mjs from data/master_data.json.
+-- Do not hand-edit the data block; regenerate instead.
+--
+-- Three tables:
+--   MasterRegion   R1–R4 zone/coverage/sales-person rows from the extract summary
+--   MasterCustomer one row per Zoho customer, keyed by zohoCustomerId (upsert-safe)
+--   MasterDataAudit insert-only log: imports, record edits, duplicate reviews,
+--                  editor appointments (who / what / when)
+--
+-- Re-running this file is safe: every insert upserts on the primary key and
+-- never touches local fields (notes, duplicateReview, reviewedBy/At).
+
+CREATE TABLE IF NOT EXISTS MasterRegion (
+  region       TEXT PRIMARY KEY,
+  zone         TEXT NOT NULL DEFAULT '',
+  coverage     TEXT NOT NULL DEFAULT '',
+  salesPerson  TEXT NOT NULL DEFAULT '',
+  allottedName TEXT NOT NULL DEFAULT '',
+  createdAt    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS MasterCustomer (
+  id                  TEXT PRIMARY KEY,
+  zohoCustomerId      TEXT NOT NULL UNIQUE,
+  region              TEXT NOT NULL DEFAULT '',
+  zone                TEXT NOT NULL DEFAULT '',
+  subArea             TEXT NOT NULL DEFAULT '',
+  state               TEXT NOT NULL DEFAULT '',
+  pincode             TEXT,
+  displayName         TEXT NOT NULL DEFAULT '',
+  companyName         TEXT NOT NULL DEFAULT '',
+  customerType        TEXT NOT NULL DEFAULT '',
+  customerTypeBase    TEXT NOT NULL DEFAULT '',
+  customerTypeTag     TEXT NOT NULL DEFAULT '',
+  status              TEXT NOT NULL DEFAULT 'Active',
+  contactPerson       TEXT,
+  designation         TEXT,
+  phonesJson          TEXT NOT NULL DEFAULT '[]',
+  emailsJson          TEXT NOT NULL DEFAULT '[]',
+  billingAddress      TEXT,
+  gstin               TEXT,
+  owner               TEXT,
+  pipelineStage       TEXT NOT NULL DEFAULT '',
+  estimateCount       INTEGER NOT NULL DEFAULT 0,
+  lastEstimateDate    TEXT,
+  salesOrderCount     INTEGER NOT NULL DEFAULT 0,
+  lastSalesOrderDate  TEXT,
+  cityZoho            TEXT,
+  cityVerified        TEXT,
+  citySource          TEXT,
+  locationBasis       TEXT,
+  duplicateGroup      TEXT,
+  duplicateConfidence TEXT,
+  suggestedAction     TEXT,
+  duplicateReview     TEXT NOT NULL DEFAULT 'open',
+  reviewedBy          TEXT NOT NULL DEFAULT '',
+  reviewedAt          TEXT,
+  notes               TEXT NOT NULL DEFAULT '',
+  createdAt           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_master_customer_zoho ON MasterCustomer(zohoCustomerId);
+CREATE INDEX IF NOT EXISTS idx_master_customer_region ON MasterCustomer(region);
+CREATE INDEX IF NOT EXISTS idx_master_customer_state ON MasterCustomer(state);
+CREATE INDEX IF NOT EXISTS idx_master_customer_status ON MasterCustomer(status);
+CREATE INDEX IF NOT EXISTS idx_master_customer_dup ON MasterCustomer(duplicateGroup);
+CREATE INDEX IF NOT EXISTS idx_master_customer_name ON MasterCustomer(displayName);
+
+CREATE TABLE IF NOT EXISTS MasterDataAudit (
+  id        TEXT PRIMARY KEY,
+  actorId   TEXT NOT NULL DEFAULT '',
+  actorName TEXT NOT NULL DEFAULT '',
+  action    TEXT NOT NULL,
+  entityId  TEXT NOT NULL DEFAULT '',
+  detail    TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_master_audit_created ON MasterDataAudit(createdAt);
+CREATE INDEX IF NOT EXISTS idx_master_audit_entity ON MasterDataAudit(entityId);
+`;
+
+function customerValues(raw, fallbackRegion) {
+  const type = normalizeCustomerType(raw['Customer Type']);
+  const zohoId = cleanText(raw['Customer ID (Zoho)'], 40);
+  if (!zohoId || !cleanText(raw['Display Name'], 200)) return null;
+  const iso = new Date().toISOString();
+  const phones = uniqueList(parseJsonList(raw['Valid Phones / Mobiles']).map(normalizePhone));
+  const emails = uniqueList(parseJsonList(raw['Valid Emails']).map(normalizeEmail));
+  return [
+    q(zohoId), q(zohoId),
+    q(cleanText(raw.Region, 8) || fallbackRegion || ''),
+    q(cleanText(raw.Zone, 40)),
+    q(cleanText(raw['Sub-Area'], 80)),
+    q(cleanText(raw.State, 80)),
+    q(cleanText(raw.Pincode, 12)),
+    q(cleanText(raw['Display Name'], 200)),
+    q(cleanText(raw['Company Name'], 200)),
+    q(cleanText(raw['Customer Type'], 120)),
+    q(type.base), q(type.tag),
+    q(normalizeStatus(raw.Status)),
+    q(cleanText(raw['Contact Person'], 120)),
+    q(cleanText(raw.Designation, 80)),
+    q(JSON.stringify(phones)), q(JSON.stringify(emails)),
+    q(cleanBlock(raw['Billing Address'], 600)),
+    q(normalizeGstin(raw.GSTIN)),
+    q(cleanText(raw.Owner, 40)),
+    q(cleanText(raw['Pipeline Stage'], 40)),
+    n(raw['# Estimates']),
+    normalizeDate(raw['Last Estimate Date']) ? q(normalizeDate(raw['Last Estimate Date'])) : 'NULL',
+    n(raw['# Sales Orders']),
+    normalizeDate(raw['Last Sales Order Date']) ? q(normalizeDate(raw['Last Sales Order Date'])) : 'NULL',
+    q(cleanText(raw['City (Zoho)'], 80)),
+    q(cleanText(raw['City (Verified)'], 80)),
+    q(cleanText(raw['City Source'], 120)),
+    q(cleanText(raw['Location Basis'], 40)),
+    q(cleanText(raw['Duplicate Group'], 20)),
+    q(cleanText(raw['Duplicate Confidence'], 20)),
+    q(cleanText(raw['Suggested Action'], 60)),
+    q(iso), q(iso),
+  ];
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  const splitIdx = args.indexOf('--split');
+  const splitDir = splitIdx >= 0 ? args[splitIdx + 1] : null;
+
+  const json = JSON.parse(readFileSync(DATA, 'utf8'));
+  const summary = Array.isArray(json.summary) ? json.summary : [];
+  const regions = Object.keys(json.regions ?? {});
+
+  const regionRows = summary
+    .map((r) =>
+      `(${q(cleanText(r.Region, 8))}, ${q(cleanText(r.Zone, 40))}, ${q(cleanBlock(r.Coverage, 500))}, ` +
+      `${q(cleanText(r['Sales Person'], 120))}, ${q(cleanText(r['Allotted Name'], 160))})`)
+    .filter((row) => !row.startsWith("('',"));
+
+  const statements = [];
+  if (regionRows.length) {
+    statements.push(
+      `INSERT INTO MasterRegion (region, zone, coverage, salesPerson, allottedName) VALUES\n` +
+      regionRows.join(',\n') +
+      `\nON CONFLICT(region) DO UPDATE SET zone = excluded.zone, coverage = excluded.coverage, ` +
+      `salesPerson = excluded.salesPerson, allottedName = excluded.allottedName;`,
+    );
+  }
+
+  let skipped = 0;
+  const values = [];
+  for (const [regionId, list] of Object.entries(json.regions ?? {})) {
+    if (!Array.isArray(list)) continue;
+    for (const raw of list) {
+      const row = customerValues(raw, regionId);
+      if (row) values.push(row);
+      else skipped++;
+    }
+  }
+
+  for (let i = 0; i < values.length; i += CHUNK) {
+    const chunk = values.slice(i, i + CHUNK);
+    statements.push(
+      `INSERT INTO MasterCustomer (${COLUMNS.join(', ')}) VALUES\n` +
+      chunk.map((v) => `(${v.join(', ')})`).join(',\n') +
+      `\nON CONFLICT(id) DO UPDATE SET ${UPDATE_SET};`,
+    );
+  }
+
+  if (splitDir) {
+    mkdirSync(splitDir, { recursive: true });
+    const files = [SCHEMA, ...statements.slice(0, 1), ...statements.slice(1)];
+    files.forEach((sql, idx) => {
+      const name = idx === 0 ? '0000_schema.sql' : `chunk_${String(idx).padStart(4, '0')}.sql`;
+      writeFileSync(join(splitDir, name), `${sql}\n`, 'utf8');
+    });
+    console.log(`wrote ${files.length} files to ${splitDir} (schema + ${statements.length} statements)`);
+  } else {
+    writeFileSync(OUT, `${SCHEMA}\n${statements.join('\n\n')}\n`, 'utf8');
+    const bytes = readFileSync(OUT).length;
+    console.log(`wrote ${OUT} (${(bytes / 1024).toFixed(0)} KB, ${values.length} customers, ${regions.length} regions, ${skipped} skipped)`);
+  }
+}
+
+main();

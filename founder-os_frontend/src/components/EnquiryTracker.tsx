@@ -1,9 +1,12 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
 import { useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
+import { masterCapabilities } from "@/master-data/permissions";
+import { TabBar } from "@/components/ui";
 import EnquiryList from "@/components/EnquiryList";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
@@ -68,6 +71,22 @@ export default function EnquiryTracker() {
   }, [isAdmin]);
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
+
+  // Customer Master toggle: the Zoho customer book lives beside the pipeline
+  // (same sales board). Lazy-mounted on first open — the board below keeps
+  // working exactly as before, defaulting to Enquiries.
+  const [section, setSection] = useState<"enquiries" | "master">("enquiries");
+  const [masterMounted, setMasterMounted] = useState(false);
+  const [masterTotal, setMasterTotal] = useState<number | null>(null);
+  const canViewMaster = masterCapabilities(me).canView;
+  const MasterDataView = React.useMemo(
+    () => dynamic(() => import("@/components/master-data/MasterDataView"), { ssr: false }),
+    [],
+  );
+  const showMaster = (key: "enquiries" | "master") => {
+    if (key === "master") setMasterMounted(true);
+    setSection(key);
+  };
 
   // List rows arrive WITHOUT item media bytes (payload size) — backfill the
   // full row (photos, threads) the moment it is opened, same pattern as the
@@ -267,11 +286,26 @@ export default function EnquiryTracker() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Daily Enquiries</h1>
+        {canViewMaster && (
+          <TabBar
+            items={[
+              { key: "enquiries", label: `Enquiries (${enquiries.length})` },
+              { key: "master", label: masterTotal != null ? `Customer Master (${masterTotal.toLocaleString("en-IN")})` : "Customer Master" },
+            ]}
+            active={section}
+            onChange={showMaster}
+            ariaLabel="Sales board sections"
+          />
+        )}
       </div>
 
-{selectedEnquiry ? (
+      {section === "master" && masterMounted ? (
+        <MasterDataView onStats={setMasterTotal} />
+      ) : (
+      <>
+      {selectedEnquiry ? (
         <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
           ratesMode="none"
           onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
@@ -317,6 +351,9 @@ export default function EnquiryTracker() {
           onSave={(d) => void handleSaveEnquiry(d)}
           isSaving={isSaving} saveError={saveError}
         />
+      )}
+
+      </>
       )}
 
       {rateToast && (

@@ -73,7 +73,7 @@ export default function EmployeesTab() {
       if (view === "active" && !e.active) return false;
       if (view === "inactive" && e.active) return false;
       if (!q) return true;
-      return [e.name, e.employeeCode, e.designation, e.department, e.phone, e.email]
+      return [e.name, e.employeeCode, e.designation, e.department, e.phone, e.email, e.personalPhone, e.emergencyContactName, e.emergencyContactPhone]
         .some((v) => String(v || "").toLowerCase().includes(q));
     });
   }, [employees, query, view]);

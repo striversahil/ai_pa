@@ -41,7 +41,10 @@ function employeeFields(input: Record<string, any>): Omit<EmployeeInput, 'name'>
     dateOfBirth: optionalDate(input.dateOfBirth, 'dateOfBirth'),
     address: nullableText(input.address, 1000),
     emergencyContactName: nullableText(input.emergencyContactName, 120),
-    emergencyContactPhone: nullableText(input.emergencyContactPhone, 40),
+    // Column kept as "emergencyContactPhone" for API compatibility; the UI shows
+    // it as Personal Email, so allow a full address.
+    emergencyContactPhone: nullableText(input.emergencyContactPhone, 200),
+    personalPhone: nullableText(input.personalPhone, 40),
     pan: nullableText(input.pan, 20),
     aadhaarLast4: aadhaar,
     bankName: nullableText(input.bankName, 120),

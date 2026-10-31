@@ -44,6 +44,7 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
     address: employee?.address ?? "",
     emergencyContactName: employee?.emergencyContactName ?? "",
     emergencyContactPhone: employee?.emergencyContactPhone ?? "",
+    personalPhone: employee?.personalPhone ?? "",
     pan: employee?.pan ?? "",
     aadhaarLast4: employee?.aadhaarLast4 ?? "",
     bankName: employee?.bankName ?? "",
@@ -141,6 +142,7 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
         address: form.address.trim() || null,
         emergencyContactName: form.emergencyContactName.trim() || null,
         emergencyContactPhone: form.emergencyContactPhone.trim() || null,
+        personalPhone: form.personalPhone.trim() || null,
         pan: form.pan.trim().toUpperCase() || null,
         aadhaarLast4: form.aadhaarLast4.trim() || null,
         bankName: form.bankName.trim() || null,
@@ -210,8 +212,8 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
             </div>
             <div><label className={label}>Designation</label><input value={form.designation} onChange={(e) => set("designation", e.target.value)} className={field} /></div>
             <div><label className={label}>Department</label><input value={form.department} onChange={(e) => set("department", e.target.value)} className={field} /></div>
-            <div><label className={label}>Phone</label><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className={field} /></div>
-            <div><label className={label}>Email</label><input value={form.email} onChange={(e) => set("email", e.target.value)} className={field} /></div>
+            <div><label className={label}>Office phone</label><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className={field} /></div>
+            <div><label className={label}>Office email</label><input value={form.email} onChange={(e) => set("email", e.target.value)} className={field} /></div>
             <div>
               <label className={label}>Login email (delegation board)</label>
               <input value={form.loginEmail} onChange={(e) => set("loginEmail", e.target.value)} placeholder="Platform login, if different" className={field} />
@@ -221,16 +223,20 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
           </div>
         </Section>
 
+        <Section title="Personal details">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div><label className={label}>Personal contact</label><input value={form.emergencyContactName} onChange={(e) => set("emergencyContactName", e.target.value)} placeholder="Name of personal contact" className={field} /></div>
+            <div><label className={label}>Personal email</label><input value={form.emergencyContactPhone} onChange={(e) => set("emergencyContactPhone", e.target.value)} placeholder="name@personal.com" className={field} /></div>
+            <div><label className={label}>Personal phone</label><input value={form.personalPhone} onChange={(e) => set("personalPhone", e.target.value)} placeholder="+91…" className={field} /></div>
+          </div>
+        </Section>
+
         <Section title="Employment">
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <div><label className={label}>Joining date</label><input type="date" value={form.joiningDate} onChange={(e) => set("joiningDate", e.target.value)} className={field} /></div>
             <div><label className={label}>Exit date</label><input type="date" value={form.exitDate} onChange={(e) => set("exitDate", e.target.value)} className={field} /></div>
             <div><label className={label}>Employment type</label><select value={form.employmentType} onChange={(e) => set("employmentType", e.target.value as EmploymentType)} className={field}>{EMPLOYMENT_TYPES.map((t) => <option key={t} value={t}>{EMPLOYMENT_TYPE_LABEL[t]}</option>)}</select></div>
             <label className="flex items-end gap-2 pb-2 text-sm font-semibold"><input type="checkbox" checked={form.active} onChange={(e) => set("active", e.target.checked)} /> Active employee</label>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div><label className={label}>Emergency contact</label><input value={form.emergencyContactName} onChange={(e) => set("emergencyContactName", e.target.value)} className={field} /></div>
-            <div><label className={label}>Emergency phone</label><input value={form.emergencyContactPhone} onChange={(e) => set("emergencyContactPhone", e.target.value)} className={field} /></div>
           </div>
         </Section>
 

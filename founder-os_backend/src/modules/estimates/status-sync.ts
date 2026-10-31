@@ -1,8 +1,9 @@
 // status-sync.ts — Zoho status transitions, shared by Worker + Express.
 // Every move in any direction flows through applyStatusUpdates so
 // accepted/confirmed flips always (a) stamp `Estimate.acceptedAt` — the
-// leaderboard's won-on day — and (b) credit the telecalling close ledger
-// (recordConversionClose is idempotent — safe on replays/duplicates).
+// leaderboard's won-on day — and declined flips always stamp `declinedAt`
+// (the lost-on day shown next to Won), and (b) credit the telecalling close
+// ledger (recordConversionClose is idempotent — safe on replays/duplicates).
 // Nothing else may write `Estimate.status`: bulk-upsert routes any real change
 // through here, and the legacy Express analyzer does too.
 // Declines carry no ledger entry (penalty retired) — status sync only.
@@ -18,6 +19,7 @@ export interface StatusTransition {
 }
 
 const CLOSE_STATUSES = new Set(['accepted', 'confirmed']);
+const DECLINE_STATUSES = new Set(['declined']);
 
 export async function applyStatusUpdates(
   updates: StatusTransition[],
@@ -29,14 +31,17 @@ export async function applyStatusUpdates(
     if (!u?.estimateId || !u?.status) continue;
     const estimateId = String(u.estimateId);
     const nextStatus = String(u.status).trim();
-    // acceptedAt is the leaderboard's "won on" day, so the transition has to
-    // know whether this is an ENTRY into a close status. Read the prior state
-    // (cheap: transitions are a handful per sync tick).
+    // acceptedAt is the leaderboard's "won on" day and declinedAt its "lost
+    // on" day, so the transition has to know whether this is an ENTRY into
+    // either status. Read the prior state (cheap: transitions are a handful
+    // per sync tick).
     const prev: any = await (prisma as any).estimate
-      .findUnique({ where: { estimateId }, select: { status: true, acceptedAt: true } })
+      .findUnique({ where: { estimateId }, select: { status: true, acceptedAt: true, declinedAt: true } })
       .catch(() => null);
     const isClose = CLOSE_STATUSES.has(nextStatus.toLowerCase());
     const wasClose = CLOSE_STATUSES.has(String(prev?.status ?? '').toLowerCase());
+    const isDeclined = DECLINE_STATUSES.has(nextStatus.toLowerCase());
+    const wasDeclined = DECLINE_STATUSES.has(String(prev?.status ?? '').toLowerCase());
     const data: Record<string, unknown> = { status: nextStatus, lastSyncTime: new Date() };
     if (isClose) {
       // Stamp on entry — and also when a close row somehow has no stamp yet
@@ -46,6 +51,14 @@ export async function applyStatusUpdates(
       // Left the close status (revision / reversal): drop the won-on day so a
       // later re-acceptance stamps afresh instead of inheriting a stale date.
       data.acceptedAt = null;
+    }
+    if (isDeclined) {
+      // Same rule for declines: stamp on entry (and repair a missing stamp),
+      // never move the day on a replay of an already-declined row.
+      if (!wasDeclined || !prev?.declinedAt) data.declinedAt = istDate();
+    } else if (wasDeclined) {
+      // Re-sent / revised / re-accepted: the decline day no longer applies.
+      data.declinedAt = null;
     }
     await (prisma as any).estimate.update({ where: { estimateId }, data });
     if (isClose) {

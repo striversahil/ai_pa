@@ -34,6 +34,8 @@ import * as samarthOverview from '../../automations/samarth-overview';
 import * as sahilOverview from '../../automations/sahil-overview';
 import * as linkedin from '../../automations/linkedin';
 import * as debtorsTracker from '../../automations/debtors-tracker';
+import * as masterData from '../../automations/master-data';
+import * as reportingSheet from '../../automations/reporting-sheet';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
@@ -61,6 +63,8 @@ const MODULES: Record<string, AutomationModule> = {
   'sahil-overview': sahilOverview as AutomationModule,
   'linkedin': linkedin as AutomationModule,
   'debtors-tracker': debtorsTracker as AutomationModule,
+  'master-data': masterData as AutomationModule,
+  'reporting-sheet': reportingSheet as AutomationModule,
 };
 
 const RULES: Record<string, Partial<AutomationDefinition>> = {
@@ -159,6 +163,12 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'ai-usage': {
     id: 'ai-usage', name: 'AI Usage', description: 'Copilot turns per member (20/hr cap), pool health and daily trend. Read-only, MIS-only.', type: 'handler', trigger: { type: 'manual' }, scope: 'mis', enabled: true,
+  },
+  'master-data': {
+    id: 'master-data', name: 'Customer Master', description: 'The Zoho customer book: region/zone, contact details, pipeline history, duplicate-review state. Reads are KV-cached; edits belong to the editors the sales-head appoints.', type: 'handler', trigger: { type: 'manual' }, scope: 'master-data', enabled: true,
+  },
+  'reporting-sheet': {
+    id: 'reporting-sheet', name: 'Reporting Sheet', description: 'Weekly management review: department heads enter their sections (sales, CRM & operations, digital marketing); root and MIS see everything. Auto-fill pulls live numbers, heads confirm or adjust.', type: 'handler', trigger: { type: 'manual' }, scope: 'reporting-sheet', enabled: true,
   },
 };
 

@@ -51,6 +51,14 @@ export const LiveEvent = {
    */
   Reporting: "reporting",
   /**
+   * Customer master writes (record edits, duplicate-group review, JSON
+   * re-import, editor appointments). Dashboards listening on this type refetch;
+   * the master table deliberately does NOT subscribe to the generic
+   * `data-changed` event — its payload is ~2.6k rows and must not reload every
+   * time an unrelated screen saves something.
+   */
+  MasterData: "master-data",
+  /**
     * Agent call-disposition tag tap (Lead Conversion view). Deliberately NOT
    * "telecalling": dashboards refetch wholesale on that type, and a tag save
    * would fan out into ~20 requests (leaderboard + generation + roster + every
@@ -59,6 +67,12 @@ export const LiveEvent = {
    * per tap. The post-cache tag overlay guarantees the next full read agrees.
    */
   TelecallingTag: "telecalling-tag",
+  /**
+   * NeoDove campaign lead pushes (Controller tab). Fires on batch create and
+   * on completion only — the chunk endpoint is opted out of auto-live so a
+   * 260-lead push cannot refetch every open dashboard 13 times.
+   */
+  NeodoveCampaign: "neodove-campaign",
   /**
    * Generic "data changed somewhere" event, emitted automatically by the
    * auto-live middleware for ANY mutating /api/* request whose handler did not

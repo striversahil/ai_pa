@@ -1,0 +1,11 @@
+{
+  "id": "master-data",
+  "name": "Customer Master",
+  "description": "The Zoho customer book: every customer with region/zone, contact details, pipeline history and duplicate-review state. Dashboard reads serve one KV-cached payload; writes are limited to editors the sales-head appoints.",
+  "type": "handler",
+  "trigger": {
+    "type": "manual"
+  },
+  "enabled": true,
+  "scope": "master-data"
+}

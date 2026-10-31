@@ -63,6 +63,7 @@ export function employeeJson(row: any, components: any[] = [], template: any = n
     address: row.address ?? null,
     emergencyContactName: row.emergencyContactName ?? null,
     emergencyContactPhone: row.emergencyContactPhone ?? null,
+    personalPhone: row.personalPhone ?? null,
     pan: row.pan ?? null,
     aadhaarLast4: row.aadhaarLast4 ?? null,
     bankName: row.bankName ?? null,

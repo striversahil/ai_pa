@@ -42,6 +42,8 @@ export interface BoardClosedItem {
   customerName?: string | null;
   total?: number | null;
   acceptedAt?: string | null;
+  /** IST day the estimate became declined (Declined drawer). */
+  declinedAt?: string | null;
   createdBy?: string | null;
   createdByName?: string | null;
   status?: string | null;
@@ -58,6 +60,10 @@ export interface BoardRegion {
   accepted?: { count: number; value: number; points: number };
   /** The closed estimates behind `won`, newest acceptance first (capped 60). */
   acceptedItems?: BoardClosedItem[];
+  /** Estimates that BECAME declined inside the period (server-computed). */
+  declined: { count: number; value: number };
+  /** The declined estimates behind `declined`, newest decline first (capped 60). */
+  declinedItems?: BoardClosedItem[];
   /** ₹1L/day target + weekly carry-forward ledger (server-computed). */
   target: RegionTarget | null;
   open: { count: number; value: number };

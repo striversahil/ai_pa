@@ -252,6 +252,24 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   const now = new Date(event.scheduledTime ?? Date.now());
   const min = now.getUTCMinutes();
 
+  // NeoDove campaign drain — finishes a lead push whose tab was closed mid-run.
+  // Not gated by quiet hours: the push was explicitly started by a manager and
+  // a stranded batch would otherwise sit `pending` until 09:00 IST. No-op
+  // unless NEODOVE_CAMPAIGN_LIVE is set; bounded to 3 batches × 20 leads.
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const { drainPendingPushes } = await import('../modules/neodove-campaign/service');
+        const r = await drainPendingPushes(env as any, 20);
+        if (r.processed > 0) {
+          console.log(`[cron] neodove-campaign drain: batches=${r.batches} leads=${r.processed}`);
+        }
+      } catch (e: any) {
+        console.error('[cron] neodove-campaign drain failed:', e?.message);
+      }
+    })(),
+  );
+
   // neodove-refresh every 5 min in ops hours (native D1 write). Paused in
   // quiet hours — NeoDove is a Zoho/NeoDove-backed analysis source.
   if (min % 5 === 0 && isOpsWindow(now)) {

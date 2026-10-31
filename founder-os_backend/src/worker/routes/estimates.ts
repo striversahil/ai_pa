@@ -287,10 +287,12 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
           .findUnique({ where: { estimateId: est.estimateId }, select: { status: true, acceptedAt: true } })
           .catch(() => null);
         if (!existing) {
-          // New row. `acceptedAt` mirrors what status-sync would have stamped;
-          // bulk-upsert is a metadata path, but a row can legitimately arrive
-          // already accepted (historical backfill), so stamp it here too.
+          // New row. `acceptedAt`/`declinedAt` mirror what status-sync would
+          // have stamped; bulk-upsert is a metadata path, but a row can
+          // legitimately arrive already accepted/declined (historical
+          // backfill), so stamp it here too.
           const isClose = est.status === 'accepted' || est.status === 'confirmed';
+          const isDeclined = String(est.status ?? '').toLowerCase() === 'declined';
           await prisma.estimate.upsert({
             where: { estimateId: est.estimateId },
             update: {},
@@ -302,6 +304,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
               date: est.date,
               status: est.status,
               ...(isClose ? { acceptedAt: kolkataDateStr() } : {}),
+              ...(isDeclined ? { declinedAt: kolkataDateStr() } : {}),
               skipMatching: est.skipMatching || 0,
               organizationId: org || '',
               lastSyncTime: new Date(),
