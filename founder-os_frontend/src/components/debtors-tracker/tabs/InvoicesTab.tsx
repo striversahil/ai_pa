@@ -32,7 +32,21 @@ export default function InvoicesTab({
   const [q, setQ] = useState("");
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<string>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const { order, move } = useColumnOrder("pt:invoice-columns:v1", DEFAULT_COLUMNS);
+
+  const changeSort = (key: string) => {
+    if (key === "edit") return;
+    if (key === sortKey) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+      return;
+    }
+    // Text-ish columns read better A→Z first; dates + money newest/largest first.
+    const textFirst = new Set(["customer", "invoice", "dueMonth", "bucket", "status", "owner", "place", "remarks"]);
+    setSortKey(key);
+    setSortDir(textFirst.has(key) ? "asc" : "desc");
+  };
 
   const counts = useMemo(() => {
     const m: Record<string, number> = { ALL: invoices.length };
@@ -42,7 +56,27 @@ export default function InvoicesTab({
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return invoices
+    const dir = sortDir === "asc" ? 1 : -1;
+    const strCmp = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    const dateCmp = (a: string | null, b: string | null) => {
+      if (!a && !b) return 0;
+      if (!a) return 1;
+      if (!b) return -1;
+      return a.localeCompare(b);
+    };
+    const numCmp = (a: number, b: number) => (a || 0) - (b || 0);
+    const overdueCmp = (a: number | null, b: number | null) => {
+      if (a == null && b == null) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      return a - b;
+    };
+    const BUCKET_ORDER = ["NOT_DUE", "D0", "D31", "D61", "D91", "D181", "PAID"] as const;
+    const bucketRank = (b: string) => {
+      const i = (BUCKET_ORDER as readonly string[]).indexOf(b);
+      return i === -1 ? BUCKET_ORDER.length : i;
+    };
+    const rows = invoices
       .filter((inv) => bucket === "ALL" || inv.bucket === bucket)
       .filter((inv) =>
         !needle ||
@@ -50,13 +84,32 @@ export default function InvoicesTab({
         String(inv.invoiceNo).toLowerCase().includes(needle) ||
         (inv.employee || "").toLowerCase().includes(needle) ||
         (inv.state || "").toLowerCase().includes(needle) ||
-        (inv.region || "").toLowerCase().includes(needle))
-      .sort((a, b) => {
-        const aDate = a.invoiceDate || a.dueDate || "";
-        const bDate = b.invoiceDate || b.dueDate || "";
-        return bDate.localeCompare(aDate) || b.balance - a.balance;
-      });
-  }, [invoices, bucket, q]);
+        (inv.region || "").toLowerCase().includes(needle));
+    return [...rows].sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "customer": cmp = strCmp(a.customerName, b.customerName); break;
+        case "invoice": cmp = strCmp(String(a.invoiceNo), String(b.invoiceNo)); break;
+        case "date": cmp = dateCmp(a.invoiceDate, b.invoiceDate); break;
+        case "due": cmp = dateCmp(a.dueDate, b.dueDate); break;
+        case "dueMonth": cmp = strCmp(a.dueMonth || "", b.dueMonth || ""); break;
+        case "amount": cmp = numCmp(a.invoiceAmount, b.invoiceAmount); break;
+        case "received": cmp = numCmp(a.effectiveReceived, b.effectiveReceived); break;
+        case "balance": cmp = numCmp(a.balance, b.balance); break;
+        case "overdue": cmp = overdueCmp(a.daysOverdue, b.daysOverdue); break;
+        case "bucket": cmp = bucketRank(a.bucket) - bucketRank(b.bucket); break;
+        case "status": cmp = strCmp([a.callStatus, a.paymentStatus].filter(Boolean).join(" · "), [b.callStatus, b.paymentStatus].filter(Boolean).join(" · ")); break;
+        case "owner": cmp = strCmp(a.employee || "", b.employee || ""); break;
+        case "place": cmp = strCmp([a.state, a.region].filter(Boolean).join(" / "), [b.state, b.region].filter(Boolean).join(" / ")); break;
+        case "remarks": cmp = strCmp([a.remarks, a.accountsRemarks].filter(Boolean).join(" · "), [b.remarks, b.accountsRemarks].filter(Boolean).join(" · ")); break;
+        default: cmp = 0;
+      }
+      if (cmp !== 0) return cmp * dir;
+      // Stable fallback: newest invoice first, then largest balance.
+      const fb = (b.invoiceDate || b.dueDate || "").localeCompare(a.invoiceDate || a.dueDate || "");
+      return fb !== 0 ? fb : b.balance - a.balance;
+    });
+  }, [invoices, bucket, q, sortKey, sortDir]);
 
   const columns: InvoiceColumn[] = [
     {
@@ -68,7 +121,7 @@ export default function InvoicesTab({
       render: (inv) => <td key="invoice" className={`${TDC} max-w-[140px] truncate font-mono`}>{inv.invoiceNo}</td>,
     },
     {
-      key: "date", label: "Date ↓",
+      key: "date", label: "Date",
       render: (inv) => <td key="date" className={`${TDC} whitespace-nowrap`}>{shortDate(inv.invoiceDate)}</td>,
     },
     {
@@ -146,7 +199,7 @@ export default function InvoicesTab({
         <div className="flex flex-wrap items-center gap-2">
           <SearchInput value={q} onChange={setQ} placeholder="Search customer, invoice, owner, state…" />
           <div className="flex-1" />
-          <span className="text-xs text-zinc-400 dark:text-zinc-500">Newest first · drag headers to reorder · {filtered.length} of {invoices.length}</span>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">Click a header to sort · drag headers to reorder · {filtered.length} of {invoices.length}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1">
           {BUCKET_CHIPS.map((b) => (
@@ -179,6 +232,9 @@ export default function InvoicesTab({
                     ariaLabel={col.ariaLabel}
                     dragging={dragKey === key}
                     over={overKey === key}
+                    sortActive={key !== "edit" && sortKey === key}
+                    sortDir={sortDir}
+                    onSort={key === "edit" ? undefined : changeSort}
                     onDragStart={setDragKey}
                     onDragOver={setOverKey}
                     onDrop={(to) => {

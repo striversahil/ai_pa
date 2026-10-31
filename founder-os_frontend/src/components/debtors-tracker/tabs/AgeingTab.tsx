@@ -14,8 +14,28 @@ const DUE_COLS = [
   { label: BUCKET_LABELS.D181, pick: (r: CustomerAgeingRow) => r.bucketAbove180 },
 ] as const;
 
-type SortKey = "grossDue" | "totalReceivable" | "netDue" | "lastInvoiceDate";
+type SortKey =
+  | "customerName"
+  | "contact"
+  | "lastFollowUpDate"
+  | "lastInvoiceDate"
+  | "situation"
+  | "totalReceivable"
+  | "notDue"
+  | "bucket0to30"
+  | "bucket31to60"
+  | "bucket61to90"
+  | "bucket91to180"
+  | "bucketAbove180"
+  | "grossDue"
+  | "advanceReceived"
+  | "netDue";
 type SortDir = "asc" | "desc";
+
+/** New columns default to asc for text, desc for dates/amounts. */
+function defaultDir(key: SortKey): SortDir {
+  return key === "customerName" || key === "contact" || key === "situation" ? "asc" : "desc";
+}
 
 const SITUATION_ORDER = ["", ...CUSTOMER_SITUATIONS];
 
@@ -94,8 +114,10 @@ export default function AgeingTab({
       return;
     }
     setSortKey(key);
-    setSortDir("desc");
+    setSortDir(defaultDir(key));
   };
+
+  const sortArrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "");
 
   const counts = useMemo(() => {
     const m = new Map<string, number>();
@@ -108,19 +130,47 @@ export default function AgeingTab({
       ? customers
       : customers.filter((r) => (r.situation || "") === situationFilter);
     const dir = sortDir === "asc" ? 1 : -1;
+    const nameTie = (a: CustomerAgeingRow, b: CustomerAgeingRow) => a.customerName.localeCompare(b.customerName);
+    // Empty dates always sink to the bottom, whichever direction is active.
+    const dateCmp = (av: string | null, bv: string | null) => {
+      if (!av && !bv) return 0;
+      if (!av) return 1;
+      if (!bv) return -1;
+      return av.localeCompare(bv);
+    };
     return [...rows].sort((a, b) => {
-      if (sortKey === "lastInvoiceDate") {
-        const av = a.lastInvoiceDate || "";
-        const bv = b.lastInvoiceDate || "";
-        // Undated customers stay at the bottom in both directions.
-        if (!av && !bv) return a.customerName.localeCompare(b.customerName);
-        if (!av) return 1;
-        if (!bv) return -1;
-        const cmp = av.localeCompare(bv);
-        return cmp !== 0 ? cmp * dir : a.customerName.localeCompare(b.customerName);
+      let cmp = 0;
+      switch (sortKey) {
+        case "customerName":
+          cmp = a.customerName.localeCompare(b.customerName);
+          break;
+        case "contact":
+          cmp = (a.phone || a.email || "").localeCompare(b.phone || b.email || "");
+          break;
+        case "lastFollowUpDate":
+          cmp = dateCmp(a.lastFollowUpDate, b.lastFollowUpDate);
+          break;
+        case "lastInvoiceDate":
+          cmp = dateCmp(a.lastInvoiceDate, b.lastInvoiceDate);
+          break;
+        case "situation":
+          cmp = (situationLabel(a.situation || "") || "Unset").localeCompare(situationLabel(b.situation || "") || "Unset");
+          break;
+        case "totalReceivable":
+        case "notDue":
+        case "bucket0to30":
+        case "bucket31to60":
+        case "bucket61to90":
+        case "bucket91to180":
+        case "bucketAbove180":
+        case "grossDue":
+        case "advanceReceived":
+        case "netDue":
+          cmp = (a[sortKey] as number) - (b[sortKey] as number);
+          break;
       }
-      const cmp = (a[sortKey] as number) - (b[sortKey] as number);
-      return cmp !== 0 ? cmp * dir : a.customerName.localeCompare(b.customerName);
+      if (cmp !== 0) return cmp * dir;
+      return nameTie(a, b);
     });
   }, [customers, situationFilter, sortKey, sortDir]);
 
@@ -223,7 +273,7 @@ export default function AgeingTab({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-zinc-500 dark:text-zinc-400" title="Click the active chip again to reverse the order">Sort by</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400" title="Click any column header to sort — click again to reverse">Sort by · or click a column header</span>
         {([
           ["grossDue", "Gross due"],
           ["totalReceivable", "Total receivable"],
@@ -269,19 +319,32 @@ export default function AgeingTab({
       ) : (
         <TableShell minWidth={1580}>
           <thead>
-            <tr>
+            <tr title="Click any column header to sort ↑ ↓ — click again to reverse">
               <th className={TH}>#</th>
-              <th className={TH}>Customer / Debtor</th>
-              <th className={TH}>Contact</th>
-              <th className={TH}>Last follow-up</th>
-              <th className={TH}>Last invoice date</th>
-              <th className={TH}>Situation / CRM remarks</th>
-              <th className={THR}>Total Receivable</th>
-              <th className={THR}>Not Due</th>
-              {DUE_COLS.map((c) => <th key={c.label} className={THR}>{c.label}</th>)}
-              <th className={THR}>Gross Due</th>
-              <th className={THR}>Advance</th>
-              <th className={THR}>Net Due</th>
+              <th className={`${TH} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("customerName")} title="Sort by customer">Customer / Debtor{sortArrow("customerName")}</th>
+              <th className={`${TH} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("contact")} title="Sort by contact">Contact{sortArrow("contact")}</th>
+              <th className={`${TH} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("lastFollowUpDate")} title="Sort by last follow-up">Last follow-up{sortArrow("lastFollowUpDate")}</th>
+              <th className={`${TH} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("lastInvoiceDate")} title="Sort by last invoice date">Last invoice date{sortArrow("lastInvoiceDate")}</th>
+              <th className={`${TH} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("situation")} title="Sort by situation">Situation / CRM remarks{sortArrow("situation")}</th>
+              <th className={`${THR} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("totalReceivable")} title="Sort by total receivable">Total Receivable{sortArrow("totalReceivable")}</th>
+              <th className={`${THR} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("notDue")} title="Sort by not due">Not Due{sortArrow("notDue")}</th>
+              {DUE_COLS.map((c) => {
+                const key = (
+                  c.label === BUCKET_LABELS.D0 ? "bucket0to30"
+                    : c.label === BUCKET_LABELS.D31 ? "bucket31to60"
+                    : c.label === BUCKET_LABELS.D61 ? "bucket61to90"
+                    : c.label === BUCKET_LABELS.D91 ? "bucket91to180"
+                    : "bucketAbove180"
+                ) as SortKey;
+                return (
+                  <th key={c.label} className={`${THR} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort(key)} title={`Sort by ${c.label}`}>
+                    {c.label}{sortArrow(key)}
+                  </th>
+                );
+              })}
+              <th className={`${THR} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("grossDue")} title="Sort by gross due">Gross Due{sortArrow("grossDue")}</th>
+              <th className={`${THR} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("advanceReceived")} title="Sort by advance">Advance{sortArrow("advanceReceived")}</th>
+              <th className={`${THR} cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-100`} onClick={() => changeSort("netDue")} title="Sort by net due">Net Due{sortArrow("netDue")}</th>
               <th className={TH} aria-label="Actions" />
             </tr>
           </thead>

@@ -165,9 +165,10 @@ export function matchLabel(status: string): string {
     : "Unmatched";
 }
 
-/** Draggable table header: press anywhere on the header and drop on another. */
+/** Draggable + sortable table header: drag to reorder, click label to sort. */
 export function SortableTh({
   id, label, align = "left", dragging, over, onDragStart, onDragOver, onDrop, onDragEnd, ariaLabel,
+  sortActive, sortDir, onSort, sortTitle,
 }: {
   id: string;
   label?: ReactNode;
@@ -179,13 +180,19 @@ export function SortableTh({
   onDrop: (id: string) => void;
   onDragEnd: () => void;
   ariaLabel?: string;
+  sortActive?: boolean;
+  sortDir?: "asc" | "desc";
+  onSort?: (id: string) => void;
+  sortTitle?: string;
 }) {
   const isRight = align === "right";
+  const sortable = !!onSort;
   return (
     <th
       draggable
-      title="Drag to reorder column"
+      title={sortTitle ?? (sortable ? "Click to sort · drag to reorder column" : "Drag to reorder column")}
       aria-label={ariaLabel}
+      aria-sort={sortActive ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", id);
@@ -201,9 +208,10 @@ export function SortableTh({
         onDrop(id);
       }}
       onDragEnd={onDragEnd}
-      className={`${isRight ? THCR : THC} cursor-grab select-none transition-[background-color,opacity] ${
+      onClick={() => onSort?.(id)}
+      className={`${isRight ? THCR : THC} ${sortable ? "cursor-pointer hover:!bg-zinc-100 dark:hover:!bg-zinc-800/70" : "cursor-grab"} select-none transition-[background-color,opacity] ${
         dragging ? "opacity-40" : ""
-      } ${over && !dragging ? "!bg-indigo-50 dark:!bg-indigo-950/50" : ""}`}
+      } ${over && !dragging ? "!bg-indigo-50 dark:!bg-indigo-950/50" : ""} ${sortActive ? "!text-indigo-600 dark:!text-indigo-400" : ""}`}
     >
       <span className={`flex items-center gap-1 ${isRight ? "justify-end" : "justify-start"}`}>
         <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-zinc-300 dark:text-zinc-600" fill="currentColor" aria-hidden="true">
@@ -212,6 +220,9 @@ export function SortableTh({
           <circle cx="6" cy="12" r="1" /><circle cx="10" cy="12" r="1" />
         </svg>
         {label}
+        {sortable && sortActive && (
+          <span className="text-[10px] leading-none" aria-hidden="true">{sortDir === "asc" ? "↑" : "↓"}</span>
+        )}
       </span>
     </th>
   );
