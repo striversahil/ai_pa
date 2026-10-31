@@ -37,6 +37,8 @@ import { registerDelegationRoutes } from './worker/routes/delegation';
 import { registerLinkedinRoutes } from './worker/routes/linkedin';
 import { registerEmailRoutes } from './worker/routes/email';
 import { registerDebtorsTrackerRoutes } from './worker/routes/debtors-tracker';
+import { registerMasterDataRoutes } from './worker/routes/master-data';
+import { registerReportingSheetRoutes } from './worker/routes/reporting-sheet';
 import { registerEventsRoute } from './worker/routes/events';
 import { scheduled } from './worker/cron';
 
@@ -67,6 +69,8 @@ registerDelegationRoutes(app);
 registerLinkedinRoutes(app);
 registerEmailRoutes(app);
 registerDebtorsTrackerRoutes(app);
+registerMasterDataRoutes(app);
+registerReportingSheetRoutes(app);
 registerMarketingRoutes(app);
 registerEventsRoute(app);
 

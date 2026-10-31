@@ -44,7 +44,13 @@ export const LiveEvent = {
   /** Debtors Tracker writes (paste imports, corrections, situation saves). */
   Debtors: "debtors",
   /** Product Line master writes (products, guide questions, vendors). */
-  ProductLine: "product-line",  /**
+  ProductLine: "product-line",
+  /**
+   * Reporting Sheet writes (one section save). Viewers refetch on this type;
+   * the payload is tiny (a few dozen rows), so no narrow subscription needed.
+   */
+  Reporting: "reporting",
+  /**
     * Agent call-disposition tag tap (Lead Conversion view). Deliberately NOT
    * "telecalling": dashboards refetch wholesale on that type, and a tag save
    * would fan out into ~20 requests (leaderboard + generation + roster + every
