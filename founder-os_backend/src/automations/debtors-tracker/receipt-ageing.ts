@@ -49,6 +49,23 @@ function bucketAtReceipt(invoice: any | undefined, collectionDate: string): Rece
   return bucketForDays(days);
 }
 
+/**
+ * The bucket a single receipt cleared at its own collection date — the exact
+ * rule the window totals use, exported so the payload can label each
+ * collection row for the dashboard drill-down. `null` when undated/unmatched
+ * beyond an advance.
+ */
+export function receiptBucketAt(
+  invoice: any | undefined,
+  collection: any,
+): ReceiptBucketKey | null {
+  const day = String(collection?.collectionDate || '');
+  if (!isIsoDate(day)) return null;
+  const advance =
+    isAdvanceRemark(collection) || isAdvanceCollection(collection) || !collection?.resolvedInvoiceId;
+  return advance ? 'ADVANCE' : bucketAtReceipt(invoice, day);
+}
+
 export function buildReceiptAgeing(
   invoiceRows: any[],
   collectionRows: any[],
@@ -76,10 +93,7 @@ export function buildReceiptAgeing(
     if (!inWeek && !inLastWeek && !inMonth) continue;
 
     const amount = round2(Number(c.amount) || 0);
-    const advance = isAdvanceRemark(c) || isAdvanceCollection(c) || !c.resolvedInvoiceId;
-    const bucket = advance
-      ? 'ADVANCE'
-      : bucketAtReceipt(invoices.get(String(c.resolvedInvoiceId)), day);
+    const bucket = receiptBucketAt(invoices.get(String(c.resolvedInvoiceId)), c) ?? 'ADVANCE';
 
     if (inWeek) addReceipt(split.week, bucket, amount);
     if (inLastWeek) addReceipt(split.lastWeek, bucket, amount);

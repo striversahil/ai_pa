@@ -430,7 +430,7 @@ export default function SummaryTab({
               )}
             </div>
 
-            <ReceiptAgeingMini split={receiptAgeing} />
+            <ReceiptAgeingMini split={receiptAgeing} collections={collections} />
           </Card>
 
           <Card className="flex flex-col overflow-hidden">

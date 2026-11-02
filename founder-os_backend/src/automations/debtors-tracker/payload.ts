@@ -9,7 +9,7 @@ import { DEBTORS_CACHE_PREFIX, DEBTORS_TTL_MS } from './cache';
 import { loadCustomerContacts } from './customers';
 import { customerKeyOf } from './customers';
 import { buildCustomerAgeing, buildLiveInvoices } from './ledger';
-import { buildReceiptAgeing } from './receipt-ageing';
+import { buildReceiptAgeing, receiptBucketAt } from './receipt-ageing';
 import { latestReminderByCustomer, loadRecentReminders, reminderConfigured, reminderMode } from './reminders';
 import { loadRemarkIndex } from './remarks';
 import { isAdvanceCollection, round2, todayIST } from './shared';
@@ -102,6 +102,9 @@ async function computePayload(): Promise<DebtorsTrackerPayload> {
   summary.above90Total = round2(summary.bucket91to180 + summary.bucketAbove180);
   summary.netDue = round2(summary.grossDue - summary.advanceReceived);
 
+  const invoiceById = new Map<string, any>();
+  for (const inv of invoiceRows) invoiceById.set(String(inv.id), inv);
+
   const liveCollections: LiveCollection[] = collRows
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     .slice(0, 2000)
@@ -116,6 +119,10 @@ async function computePayload(): Promise<DebtorsTrackerPayload> {
       remarks: c.remarks || '',
       matchStatus: isAdvanceCollection(c) ? 'advance' : (c.matchStatus || 'none'),
       resolvedInvoiceId: c.resolvedInvoiceId ? String(c.resolvedInvoiceId) : null,
+      receiptBucket: receiptBucketAt(
+        c.resolvedInvoiceId ? invoiceById.get(String(c.resolvedInvoiceId)) : undefined,
+        c,
+      ),
       createdAt: String(c.createdAt ?? ''),
     }));
 

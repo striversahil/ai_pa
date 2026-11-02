@@ -275,6 +275,8 @@ export interface LiveCollection {
   remarks: string;
   matchStatus: string;
   resolvedInvoiceId: string | null;
+  /** Ageing bucket this receipt cleared at its own date (null when undated). */
+  receiptBucket: ReceiptBucketKey | null;
   createdAt: string;
 }
 
