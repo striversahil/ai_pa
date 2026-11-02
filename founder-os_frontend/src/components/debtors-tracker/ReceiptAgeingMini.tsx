@@ -3,7 +3,7 @@
 import type {
   ReceiptAgeingSplit, ReceiptBucketKey, ReceiptBucketWindow,
 } from "@/debtors-tracker/types";
-import { formatCompactINR, formatINR } from "@/debtors-tracker/types";
+import { formatCompactINR, formatINR, shortDate } from "@/debtors-tracker/types";
 
 type Segment = {
   key: ReceiptBucketKey;
@@ -23,6 +23,12 @@ const SEGMENTS: Segment[] = [
   { key: "ADVANCE", label: "Advance / unapplied", short: "Advance", bar: "bg-violet-500", dot: "bg-violet-500" },
 ];
 
+function rangeLabel(w: ReceiptBucketWindow): string {
+  if (!w.from && !w.to) return "";
+  if (w.from === w.to) return shortDate(w.from);
+  return `${shortDate(w.from)} – ${shortDate(w.to)}`;
+}
+
 function BucketRow({ label, bucketWindow }: { label: string; bucketWindow: ReceiptBucketWindow }) {
   const active = SEGMENTS
     .map((segment) => ({ ...segment, ...bucketWindow.buckets[segment.key] }))
@@ -32,7 +38,12 @@ function BucketRow({ label, bucketWindow }: { label: string; bucketWindow: Recei
   return (
     <div>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-300">{label}</span>
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="whitespace-nowrap text-[10px] font-semibold text-zinc-600 dark:text-zinc-300">{label}</span>
+          <span className="truncate text-[9px] tabular-nums text-zinc-400 dark:text-zinc-500" title={rangeLabel(bucketWindow)}>
+            {rangeLabel(bucketWindow)}
+          </span>
+        </span>
         <span className="whitespace-nowrap text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
           {formatINR(total, false)}
           <span className="text-zinc-400 dark:text-zinc-500"> · {bucketWindow.count} receipt{bucketWindow.count === 1 ? "" : "s"}</span>
@@ -83,8 +94,10 @@ export default function ReceiptAgeingMini({ split }: { split?: ReceiptAgeingSpli
       </p>
       {/* Grows into any height the card gets from its neighbour, so the chart
           below the daily bars fills the space instead of leaving a blank band. */}
-      <div className="mt-3 flex flex-1 flex-col justify-between gap-3.5">
+      <div className="mt-3 flex flex-1 flex-col justify-between gap-3">
         <BucketRow label="This week" bucketWindow={split.week} />
+        {/* Absent while an older cached payload is still in flight. */}
+        {split.lastWeek && <BucketRow label="Last week" bucketWindow={split.lastWeek} />}
         <BucketRow label="This month" bucketWindow={split.month} />
       </div>
     </div>

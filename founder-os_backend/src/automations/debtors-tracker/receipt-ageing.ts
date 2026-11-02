@@ -17,10 +17,17 @@ const BUCKET_KEYS: ReceiptBucketKey[] = [
   'NOT_DUE', 'D0', 'D31', 'D61', 'D91', 'D181', 'ADVANCE',
 ];
 
-function emptyWindow(): ReceiptBucketWindow {
+function emptyWindow(from: string, to: string): ReceiptBucketWindow {
   const buckets = {} as ReceiptBucketWindow['buckets'];
   for (const key of BUCKET_KEYS) buckets[key] = { amount: 0, count: 0 };
-  return { total: 0, count: 0, buckets };
+  return { total: 0, count: 0, from, to, buckets };
+}
+
+/** Shift an ISO day by N days (UTC math, no timezone drift). */
+function shiftIso(iso: string, days: number): string {
+  const t = Date.parse(iso + 'T00:00:00Z');
+  if (!Number.isFinite(t)) return iso;
+  return new Date(t + days * 86_400_000).toISOString().slice(0, 10);
 }
 
 function addReceipt(window: ReceiptBucketWindow, bucket: ReceiptBucketKey, amount: number): void {
@@ -51,15 +58,22 @@ export function buildReceiptAgeing(
   for (const inv of invoiceRows) invoices.set(String(inv.id), inv);
 
   const weekStartIso = weekStart(asOf) ?? asOf;
+  const lastWeekStartIso = shiftIso(weekStartIso, -7);
+  const lastWeekEndIso = shiftIso(weekStartIso, -1);
   const monthPrefix = asOf.slice(0, 7);
-  const split: ReceiptAgeingSplit = { week: emptyWindow(), month: emptyWindow() };
+  const split: ReceiptAgeingSplit = {
+    week: emptyWindow(weekStartIso, asOf),
+    lastWeek: emptyWindow(lastWeekStartIso, lastWeekEndIso),
+    month: emptyWindow(`${monthPrefix}-01`, asOf),
+  };
 
   for (const c of collectionRows) {
     const day = String(c.collectionDate || '');
     if (!isIsoDate(day)) continue;
     const inWeek = day >= weekStartIso && day <= asOf;
+    const inLastWeek = day >= lastWeekStartIso && day <= lastWeekEndIso;
     const inMonth = day.startsWith(monthPrefix);
-    if (!inWeek && !inMonth) continue;
+    if (!inWeek && !inLastWeek && !inMonth) continue;
 
     const amount = round2(Number(c.amount) || 0);
     const advance = isAdvanceRemark(c) || isAdvanceCollection(c) || !c.resolvedInvoiceId;
@@ -68,6 +82,7 @@ export function buildReceiptAgeing(
       : bucketAtReceipt(invoices.get(String(c.resolvedInvoiceId)), day);
 
     if (inWeek) addReceipt(split.week, bucket, amount);
+    if (inLastWeek) addReceipt(split.lastWeek, bucket, amount);
     if (inMonth) addReceipt(split.month, bucket, amount);
   }
 

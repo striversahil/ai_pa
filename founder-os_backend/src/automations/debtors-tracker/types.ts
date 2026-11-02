@@ -250,12 +250,17 @@ export interface ReceiptBucketCell {
 export interface ReceiptBucketWindow {
   total: number;
   count: number;
+  /** Inclusive ISO date range this window covers (for the drill-down labels). */
+  from: string;
+  to: string;
   buckets: Record<ReceiptBucketKey, ReceiptBucketCell>;
 }
 
 /** Collections split by the invoice bucket they cleared on the receipt date. */
 export interface ReceiptAgeingSplit {
   week: ReceiptBucketWindow;
+  /** Previous Monday–Sunday, so the week just gone can be compared. */
+  lastWeek: ReceiptBucketWindow;
   month: ReceiptBucketWindow;
 }
 

@@ -14,11 +14,16 @@ export interface ReceiptBucketCell {
 export interface ReceiptBucketWindow {
   total: number;
   count: number;
+  /** Inclusive ISO date range this window covers. */
+  from: string;
+  to: string;
   buckets: Record<ReceiptBucketKey, ReceiptBucketCell>;
 }
 
 export interface ReceiptAgeingSplit {
   week: ReceiptBucketWindow;
+  /** Previous Monday–Sunday, so the week just gone can be compared. */
+  lastWeek: ReceiptBucketWindow;
   month: ReceiptBucketWindow;
 }
 
