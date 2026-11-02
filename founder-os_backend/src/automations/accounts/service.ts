@@ -4,6 +4,11 @@ import { cached, cacheDel } from '../../shared/cache';
 
 export const FREQUENCIES = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
 export const OWNER_ROLES = ['senior', 'junior', 'either'] as const;
+/** Payment-due categories (kind='payment' templates only). */
+export const PAYMENT_CATEGORIES = [
+  'Credit Card', 'Mobile Recharge', 'Utilities', 'Loan / EMI', 'Insurance',
+  'Rent', 'Software / Subscription', 'Tax / Compliance', 'Other',
+] as const;
 // Per-day workflow: pending → done, or pending → not_done (explicitly conceded
 // with a reason + owner). `inprogress` / `skipped` / `overdue` are legacy (old
 // UI offered inprogress; rollover once materialised overdue). Tasks never carry
@@ -433,7 +438,7 @@ async function computeDashboard(
   scope: { scope: LaneScope | null; isAdmin: boolean } | null = null,
 ) {
   await ensureInstances(dateStr);
-  const [roster, templates, logs] = await Promise.all([
+  const [roster, allTemplates, logs] = await Promise.all([
     prisma.accountant.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
     prisma.accountsTaskTemplate.findMany({ where: { active: true }, orderBy: { order: 'asc' } }),
     prisma.accountsTaskLog.findMany({
@@ -441,6 +446,9 @@ async function computeDashboard(
       include: { template: true, accountant: true },
     }),
   ]);
+  // Payment dues (kind='payment') live in the Payment dues tab, never in the
+  // task lanes — filter them here; getPaymentDues() serves them separately.
+  const templates = (allTemplates as any[]).filter((t) => String(t.kind || 'task') !== 'payment');
   const logIds = (logs as any[]).map((l) => String(l.id)).filter(Boolean);
   const attachments = logIds.length
     ? await (prisma as any).accountsTaskAttachment.findMany({
@@ -608,6 +616,9 @@ async function computeDashboard(
   }
   const overdueLogsScoped = (overdueLogs as any[])
     .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
+    // Payment dues never enter the task Incomplete tray — they live in the
+    // Payment dues tab (getPaymentDues), which has its own overdue bucket.
+    .filter((log: any) => String((log.template as any)?.kind || 'task') !== 'payment')
     // Range grace: unresolved rows inside a still-open window stay out of the
     // Incomplete tray until the window's last day passes.
     .filter((log: any) => {
@@ -706,6 +717,9 @@ async function computeDashboard(
   }
   const history = (historyLogsRaw as any[])
     .filter((log: any) => log?.template && (log.template as any).active !== false && inLane(log.template))
+    // Payment dues never enter the task History tab — paid cycles live in the
+    // Payment dues tab's Paid bucket.
+    .filter((log: any) => String((log.template as any)?.kind || 'task') !== 'payment')
     .filter((log: any) => {
       const t: any = log.template;
       if (!laneEnforced || !t?.isShared) return true;
@@ -775,6 +789,10 @@ async function computeDashboard(
     history,
     freqStats,
     unscheduled,
+    // Payment dues ride the same payload (no lane scoping — any viewer of the
+    // dashboard sees every due; the tab enforces nothing beyond dashboard
+    // access, and writes are separately gated per route).
+    payments: await getPaymentDues(dateStr),
     team: { ...team, incompleteToday: (team as any).overdueToday },
   };
 }
@@ -1068,6 +1086,31 @@ function cleanTemplateInput(input: Record<string, any>, partial = false) {
   if (input.sheetStatus !== undefined) data.sheetStatus = input.sheetStatus ? String(input.sheetStatus).slice(0, 50) : null;
   if (input.active !== undefined) data.active = !!input.active;
   if (input.order !== undefined) data.order = Number(input.order);
+  // ── Payment dues (kind='payment' templates; task rows ignore these) ──────
+  if (input.kind !== undefined) {
+    if (!['task', 'payment'].includes(String(input.kind))) throw new Error('kind must be task|payment');
+    data.kind = String(input.kind);
+  }
+  if (input.biller !== undefined) data.biller = input.biller ? String(input.biller).slice(0, 200) : null;
+  if (input.category !== undefined) {
+    if (input.category !== null && !(PAYMENT_CATEGORIES as readonly string[]).includes(String(input.category))) {
+      throw new Error(`category must be ${PAYMENT_CATEGORIES.join(' | ')}`);
+    }
+    data.category = input.category ? String(input.category) : null;
+  }
+  if (input.amount !== undefined) {
+    if (input.amount === null || input.amount === '') data.amount = null;
+    else {
+      const n = Number(input.amount);
+      if (!Number.isFinite(n) || n < 0) throw new Error('amount must be a number ≥ 0');
+      data.amount = Math.round(n * 100) / 100;
+    }
+  }
+  if (input.remindDays !== undefined) {
+    const days = String(input.remindDays).split(',').map((s) => Math.floor(Number(s.trim())))
+      .filter((n) => Number.isFinite(n) && n >= 0 && n <= 60);
+    data.remindDays = [...new Set(days)].sort((a, b) => b - a).join(',') || '7,3,1';
+  }
   return data;
 }
 
@@ -1111,11 +1154,30 @@ export async function logTask(
   let remark: string | null = input.remark !== undefined
     ? (input.remark ? String(input.remark).slice(0, 2000) : null)
     : (current.remark ?? null);
+  // ── Payment proof (paidAmount + paidRef ride the same log row) ────────────
+  // Marking a due paid carries its own paper trail, so a bare amount+ref is a
+  // complete record: when no remark is given, the reference becomes the audit
+  // line instead of rejecting the save.
+  let paidAmount: number | null | undefined;
+  if (input.paidAmount !== undefined) {
+    if (input.paidAmount === null || input.paidAmount === '') paidAmount = null;
+    else {
+      const n = Number(input.paidAmount);
+      if (!Number.isFinite(n) || n < 0) throw new Error('paidAmount must be a number ≥ 0');
+      paidAmount = Math.round(n * 100) / 100;
+    }
+  }
+  const paidRef = input.paidRef !== undefined
+    ? (input.paidRef ? String(input.paidRef).slice(0, 200) : null)
+    : undefined;
   if (status !== String(current.status) && !remark?.trim()) {
-    if (String(current.remark || '').trim()) remark = current.remark; // preserve recorded reason
+    if (paidRef?.trim()) remark = `Paid · ${paidRef.trim()}`;
+    else if (String(current.remark || '').trim()) remark = current.remark; // preserve recorded reason
     else throw new Error('A remark (reason) is required to change status');
   }
   const data: Record<string, any> = { status, remark, updatedBy: actor };
+  if (paidAmount !== undefined) data.paidAmount = paidAmount;
+  if (paidRef !== undefined) data.paidRef = paidRef;
   const selfId = identity?.selfId ? String(identity.selfId) : null;
   if (selfId) {
     // Inferred identity wins. Marking done credits the signed-in (or
@@ -1159,6 +1221,185 @@ export async function logTask(
   const row = await prisma.accountsTaskLog.update({ where: { id: logId }, data });
   await invalidateAccountsCache();
   return row;
+}
+
+// ── Payment dues (kind='payment' templates — the Payment dues tab) ───────────
+// A payment template is a recurring bill (credit card, recharge, …). Each
+// billing cycle is a log instance; marking paid = done + amount + reference.
+// Buckets are fixed-schedule: overdue (past due, unpaid) · due within 7 days
+// (with 7/3/1-day remind flags) · upcoming · recently paid.
+export type PaymentBucket = 'overdue' | 'week' | 'upcoming' | 'paid';
+
+export interface PaymentDueRow {
+  templateId: string;
+  title: string;
+  biller: string;
+  category: string;
+  amount: number | null;
+  frequency: string;
+  ownerRole: string;
+  dueDay: number | null;
+  dueMonth: number | null;
+  remindDays: number[];
+  logId: string | null;
+  dueDate: string;
+  status: string;
+  paidAmount: number | null;
+  paidRef: string | null;
+  remark: string | null;
+  doneBy: string | null;
+  updatedAt: string | null;
+  bucket: PaymentBucket;
+  daysOverdue: number;
+  daysUntil: number;
+  remind: boolean;
+}
+
+function parseRemindDays(raw: unknown): number[] {
+  const days = String(raw ?? '7,3,1')
+    .split(',')
+    .map((s) => Math.floor(Number(s.trim())))
+    .filter((n) => Number.isFinite(n) && n >= 0 && n <= 60);
+  const uniq = [...new Set(days)].sort((a, b) => b - a);
+  return uniq.length ? uniq : [7, 3, 1];
+}
+
+function toPaymentRow(t: any, log: any, dueDate: string, today: string): PaymentDueRow {
+  const done = !!log && String(log.status) === 'done';
+  const dd = dueDate.slice(0, 10);
+  const daysUntil = diffDays(today, dd);
+  const remindDays = parseRemindDays((t as any).remindDays);
+  const bucket: PaymentBucket = done
+    ? 'paid'
+    : dd < today
+      ? 'overdue'
+      : daysUntil <= 7
+        ? 'week'
+        : 'upcoming';
+  return {
+    templateId: String(t.id),
+    title: String(t.title ?? ''),
+    biller: String((t as any).biller ?? ''),
+    category: String((t as any).category ?? 'Other'),
+    amount: (t as any).amount === null || (t as any).amount === undefined ? null : Number((t as any).amount),
+    frequency: String(t.frequency ?? 'monthly'),
+    ownerRole: String(t.ownerRole ?? 'either'),
+    dueDay: (t as any).dueDay ?? null,
+    dueMonth: (t as any).dueMonth ?? null,
+    remindDays,
+    logId: log ? String(log.id) : null,
+    dueDate: dd,
+    status: log ? String(log.status) : 'pending',
+    paidAmount: log?.paidAmount === null || log?.paidAmount === undefined ? null : Number(log.paidAmount),
+    paidRef: log?.paidRef ? String(log.paidRef) : null,
+    remark: log?.remark ? String(log.remark) : null,
+    doneBy: log?.doneBy ? String(log.doneBy) : null,
+    updatedAt: log?.updatedAt ? String(log.updatedAt) : null,
+    bucket,
+    daysOverdue: !done && dd < today ? diffDays(dd, today) : 0,
+    daysUntil,
+    remind: !done && dd >= today && remindDays.includes(daysUntil),
+  };
+}
+
+export async function getPaymentDues(dateStr: string): Promise<PaymentDueRow[]> {
+  const templates = (
+    (await prisma.accountsTaskTemplate.findMany({
+      where: { active: true },
+      orderBy: { order: 'asc' },
+    })) as any[]
+  ).filter((t) => String(t.kind || 'task') === 'payment');
+  if (!templates.length) return [];
+  const ids = templates.map((t) => String(t.id));
+  const logs = await (prisma as any).accountsTaskLog
+    .findMany({
+      where: { templateId: { in: ids }, dueDate: { gte: addDays(dateStr, -120) } },
+      orderBy: { dueDate: 'desc' },
+    })
+    .catch(() => []);
+  const byTemplate = new Map<string, any[]>();
+  for (const l of logs as any[]) {
+    const k = String((l as any).templateId);
+    if (!byTemplate.has(k)) byTemplate.set(k, []);
+    byTemplate.get(k)!.push(l);
+  }
+  const rows: PaymentDueRow[] = [];
+  for (const t of templates) {
+    const id = String(t.id);
+    const tlogs = [...(byTemplate.get(id) ?? [])].sort((a, b) =>
+      String(a.dueDate).localeCompare(String(b.dueDate)),
+    );
+    const open = tlogs.filter((l) => String(l.status) !== 'done');
+    const horizon = addDays(dateStr, 30);
+    // Unresolved cycles in window (overdue + due-soon + near upcoming).
+    for (const l of open) {
+      const dd = String(l.dueDate).slice(0, 10);
+      if (dd > horizon) continue;
+      rows.push(toPaymentRow(t, l, dd, dateStr));
+    }
+    // Next upcoming cycle (no instance yet — projected, paid on demand).
+    const covered = new Set(open.map((l) => String(l.dueDate).slice(0, 10)));
+    for (let i = 0; i <= 60; i++) {
+      const d = addDays(dateStr, i);
+      if (covered.has(d)) continue;
+      if (isDueOn(t, d)) {
+        rows.push(toPaymentRow(t, null, d, dateStr));
+        break;
+      }
+    }
+    // Last paid cycle (recent history for the Paid bucket).
+    const paid = tlogs
+      .filter((l) => String(l.status) === 'done')
+      .sort((a, b) => String(b.dueDate).localeCompare(String(a.dueDate)));
+    if (paid.length && String(paid[0].dueDate).slice(0, 10) >= addDays(dateStr, -90)) {
+      rows.push(toPaymentRow(t, paid[0], String(paid[0].dueDate).slice(0, 10), dateStr));
+    }
+  }
+  return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
+}
+
+/** Get-or-create the log instance for a payment cycle (pays projected dues). */
+export async function ensurePaymentInstance(templateId: string, dueDate: string): Promise<any> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error('dueDate must be YYYY-MM-DD');
+  const t: any = await prisma.accountsTaskTemplate.findUnique({ where: { id: templateId } });
+  if (!t || (t as any).active === false) throw new Error('payment due not found');
+  if (String((t as any).kind || 'task') !== 'payment') throw new Error('not a payment due');
+  const existing = (await prisma.accountsTaskLog.findMany({ where: { templateId, dueDate } })) as any[];
+  const hit = existing.find((r) => String(r.slot ?? SLOT_MAIN) === SLOT_MAIN);
+  if (hit) return hit;
+  try {
+    return await prisma.accountsTaskLog.create({
+      data: { templateId, dueDate, slot: SLOT_MAIN, status: 'pending' },
+    });
+  } catch {
+    // Unique race — re-read.
+    const retry = (await prisma.accountsTaskLog.findMany({ where: { templateId, dueDate } })) as any[];
+    const r2 = retry.find((r) => String(r.slot ?? SLOT_MAIN) === SLOT_MAIN);
+    if (!r2) throw new Error('could not create payment instance');
+    return r2;
+  }
+}
+
+/** Mark a payment cycle paid (amount + reference). Works on projected dues —
+ *  the instance is created on demand, then logged through the same path as
+ *  every other status change (identity credit, audit remark, cache bust). */
+export async function payDue(
+  templateId: string,
+  dueDate: string,
+  input: Record<string, any>,
+  actor: string | null,
+  identity: { selfId: string; selfName: string } | null = null,
+) {
+  if (input.paidAmount === undefined || input.paidAmount === null || input.paidAmount === '') {
+    throw new Error('paidAmount is required to mark paid');
+  }
+  const inst: any = await ensurePaymentInstance(templateId, dueDate);
+  return logTask(
+    String(inst.id),
+    { status: 'done', paidAmount: input.paidAmount, paidRef: input.paidRef, remark: input.remark },
+    actor,
+    identity,
+  );
 }
 
 // ── Proof attachments (bytes in CHAT_FILES KV; rows here) ────────────────────

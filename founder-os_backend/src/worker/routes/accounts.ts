@@ -11,7 +11,7 @@ import {
   listAccountants, createAccountant, updateAccountant,
   listTemplates, createTemplate, updateTemplate, logTask, getAccountsExport,
   createAttachmentRecord, getAttachment, deleteAttachmentRecord, toAttachmentJson,
-  resolveSelfAccountant,
+  resolveSelfAccountant, payDue,
 } from '../../automations/accounts/service';
 
 async function actorName(c: any): Promise<string | null> {
@@ -91,6 +91,91 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     await updateTemplate(c.req.param('id'), { active: false });
     notifyLive(c, { type: LiveEvent.Accounts });
     return c.json({ ok: true });
+  });
+
+  // ── Payment dues (Worker-only; Express is frozen — no mirror) ─────────────
+  // Founder rule: ANY accountant manages dues (add/edit/remove), not just
+  // MIS. Task templates stay MIS-only above; these endpoints force
+  // kind='payment' and refuse task rows both ways.
+  async function paymentGate(c: any) {
+    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    if (!me) throw new Error('Authentication required');
+    const scopes = ((me as any)?.scopes ?? []) as string[];
+    if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts')) return me;
+    throw new Error("Requires 'accounts' permission");
+  }
+
+  app.post('/api/accounts/payments', async (c) => {
+    try { await paymentGate(c); } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const row = await createTemplate({ ...(body || {}), kind: 'payment' });
+      notifyLive(c, { type: LiveEvent.Accounts });
+      return c.json(row, 201);
+    } catch (e: any) { return c.json({ error: e?.message ?? 'create failed' }, 400); }
+  });
+
+  app.put('/api/accounts/payments/:id', async (c) => {
+    try { await paymentGate(c); } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const existing: any = await listTemplates(true).then((ts) => ts.find((t: any) => String(t.id) === c.req.param('id')));
+      if (!existing) return c.json({ error: 'payment due not found' }, 404);
+      if (String(existing.kind || 'task') !== 'payment') return c.json({ error: 'not a payment due' }, 400);
+      if (body && body.kind !== undefined && String(body.kind) !== 'payment') {
+        return c.json({ error: 'kind cannot be changed' }, 400);
+      }
+      const row = await updateTemplate(c.req.param('id'), { ...(body || {}), kind: 'payment' });
+      notifyLive(c, { type: LiveEvent.Accounts });
+      return c.json(row);
+    } catch (e: any) { return c.json({ error: e?.message ?? 'update failed' }, 400); }
+  });
+
+  app.delete('/api/accounts/payments/:id', async (c) => {
+    try { await paymentGate(c); } catch (e: any) {
+      const msg = String((e as any)?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    try {
+      const existing: any = await listTemplates(true).then((ts) => ts.find((t: any) => String(t.id) === c.req.param('id')));
+      if (!existing) return c.json({ error: 'payment due not found' }, 404);
+      if (String(existing.kind || 'task') !== 'payment') return c.json({ error: 'not a payment due' }, 400);
+      await updateTemplate(c.req.param('id'), { active: false });
+      notifyLive(c, { type: LiveEvent.Accounts });
+      return c.json({ ok: true });
+    } catch (e: any) { return c.json({ error: e?.message ?? 'delete failed' }, 400); }
+  });
+
+  // Mark a billing cycle paid (amount + reference). Creates the cycle
+  // instance on demand, so projected (future) dues pay in one call.
+  // Identity credit mirrors the taskbar log route below.
+  app.post('/api/accounts/payments/pay', async (c) => {
+    let me: any;
+    try { me = await paymentGate(c); } catch (e: any) {
+      const msg = String((e as any)?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const self = await resolveSelfAccountant(
+        (body as any)?.as ?? c.req.query('as') ?? null, me as any,
+      ).catch(() => null);
+      const row = await payDue(
+        String(body?.templateId || ''),
+        String(body?.dueDate || '').slice(0, 10),
+        { paidAmount: body?.paidAmount, paidRef: body?.paidRef, remark: body?.remark },
+        (me as any)?.user?.name ?? (me as any)?.user?.email ?? null,
+        self ? { selfId: self.selfId, selfName: self.selfName } : null,
+      );
+      notifyLive(c, { type: LiveEvent.Accounts });
+      return c.json(row);
+    } catch (e: any) { return c.json({ error: e?.message ?? 'pay failed' }, 400); }
   });
 
   // ── MIS export: date-range full ledger (pending/inprogress/done + remarks + file links) ──

@@ -4,6 +4,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { useLiveDashboard, useOptimisticMutation, patchRowInLists, mapRowInLists } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
+import PaymentDues, { type PaymentDueRow } from "@/components/accounts/PaymentDues";
 
 interface FileItem {
   id: string;
@@ -128,6 +129,7 @@ interface DashData {
   history?: TaskItem[];
   freqStats?: FreqStat[];
   unscheduled?: UnscheduledItem[];
+  payments?: PaymentDueRow[];
   team?: TeamData | null;
 }
 
@@ -458,7 +460,7 @@ function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today }: {
   );
 }
 
-type AccountsView = "dashboard" | "tasks" | "incomplete" | "history" | "senior" | "junior" | "my" | "controller";
+type AccountsView = "dashboard" | "tasks" | "incomplete" | "history" | "senior" | "junior" | "my" | "dues" | "controller";
 
 // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
 // (MIS/root see every lane; others see Dashboard + their own "My Tasks").
@@ -602,12 +604,14 @@ export default function AccountsDashboard() {
         { key: "tasks", label: "All Tasks", icon: "📋" },
         { key: "senior", label: "Senior", icon: "👔" },
         { key: "junior", label: "Junior", icon: "🧾" },
+        { key: "dues", label: "Payment dues", icon: "💳" },
         { key: "controller", label: "Controller", icon: "🎛️" },
       ]
       : selfRole
         ? [
           { key: "dashboard", label: "Dashboard", icon: "📊" },
           { key: "my", label: "My Tasks", icon: selfRole === "senior" ? "👔" : "🧾" },
+          { key: "dues", label: "Payment dues", icon: "💳" },
         ]
         : [
           { key: "dashboard", label: "Dashboard", icon: "📊" },
@@ -825,6 +829,7 @@ export default function AccountsDashboard() {
       )}
 
       {data && view === "controller" && (canMIS ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to MIS-level users.</div>)}
+      {data && view === "dues" && <PaymentDues dues={data.payments ?? []} onRefresh={() => dash.refresh()} />}
         </div>
       </div>
     </div>
