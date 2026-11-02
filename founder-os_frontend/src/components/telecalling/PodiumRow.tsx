@@ -44,6 +44,8 @@ export interface PodiumRowProps {
   onOpenRegion: () => void;
   /** Ledger start day (from meta.teamTarget) for the "since" caption. */
   targetStart?: string;
+  /** Working days in the selected period (Mon–Sat) — drives the staff avg/day readout. */
+  workingDays?: number;
 }
 
 /** Metal treatment for the top three ranks; neutral ring below that. */
@@ -71,7 +73,7 @@ function Stat({ label, value, hint, tone }: { label: string; value: string; hint
 
 export function PodiumRow({
   region, index, staff, weeksOpen, onToggleWeeks, closedOpen, onToggleClosed,
-  declinedOpen, onToggleDeclined, onOpenRegion, targetStart,
+  declinedOpen, onToggleDeclined, onOpenRegion, targetStart, workingDays,
 }: PodiumRowProps) {
   const t = region.target;
   const status: TargetStatus = t?.status ?? "critical";
@@ -320,6 +322,7 @@ export function PodiumRow({
         staff={staff}
         regionId={region.id}
         regionName={region.name}
+        workingDays={workingDays}
       />
     </article>
   );

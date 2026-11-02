@@ -25,6 +25,8 @@ export interface StaffRailProps {
   /** Region id/name for the empty state copy. */
   regionId: string;
   regionName?: string;
+  /** Working days in the selected period (Mon–Sat) — drives the avg/day readout. */
+  workingDays?: number;
 }
 
 function MicroBar({ pct, tone }: { pct: number; tone: "green" | "amber" | "red" }) {
@@ -38,7 +40,7 @@ function MicroBar({ pct, tone }: { pct: number; tone: "green" | "amber" | "red" 
   );
 }
 
-export function StaffRail({ staff, regionId, regionName }: StaffRailProps) {
+export function StaffRail({ staff, regionId, regionName, workingDays = 1 }: StaffRailProps) {
   if (staff.length === 0) {
     return (
       <div className="border-t border-[var(--border-card)] px-2.5 py-1.5 md:px-3">
@@ -85,6 +87,11 @@ export function StaffRail({ staff, regionId, regionName }: StaffRailProps) {
                   <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-[var(--text-secondary)]" title={`${s.generation.callsConnected} connected of ${s.generation.connectedTarget} target`}>
                     {fmtNum(s.generation.callsConnected)}
                     <span className="text-[9px] font-bold text-[var(--text-tertiary)]">calls</span>
+                    {workingDays > 1 && (
+                      <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-300" title={`Avg per working day over ${workingDays} working days (Mon–Sat)`}>
+                        · {(s.generation.callsConnected / workingDays).toFixed(1)}/d
+                      </span>
+                    )}
                     <MicroBar pct={s.generation.connectedPct} tone={s.generation.connectedStatus} />
                   </span>
                   <span className="hidden items-center gap-1 font-mono text-[11px] font-semibold text-[var(--text-secondary)] md:inline-flex" title={`${s.generation.leadsGenerated} leads of ${s.generation.leadsTarget} target`}>

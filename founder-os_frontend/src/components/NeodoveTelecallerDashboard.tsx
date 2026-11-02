@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
+import { useAuth } from "@/auth/AuthContext";
 
 type TrafficLight = "green" | "amber" | "red";
 
@@ -184,6 +185,10 @@ export default function NeodoveTelecallerDashboard() {
   const [data, setData] = useState<DataResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillLog, setBackfillLog] = useState<string[]>([]);
+  const { me } = useAuth();
+  const canBackfill = !!me?.isAdmin || (me?.scopes ?? []).includes("mis");
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [preset, setPreset] = useState<PresetKey>("today");
@@ -220,6 +225,31 @@ export default function NeodoveTelecallerDashboard() {
   useEffect(() => {
     load(true);
   }, [load, range]);
+
+  // Repair tool for a dead NeoDove token window: replays one missing snapshot
+  // day per request (oldest first), oldest → today, until none remain. Each
+  // call runs the same refresh the 5-min cron uses, so caches invalidate and
+  // every week view picks the days up immediately.
+  const backfill = useCallback(async () => {
+    setBackfilling(true);
+    setBackfillLog([]);
+    try {
+      for (let i = 0; i < 15; i++) {
+        const res = await fetch("/api/neodove/backfill", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+        if (body?.date) {
+          setBackfillLog((log) => [...log, `${body.date}: ${body.ok ? `✓ ${body.stored} rows` : `✗ ${body.error || "failed"}`} (${body.remaining} left)`]);
+        }
+        if (body?.done || !body?.ok) break;
+      }
+    } catch (e: any) {
+      setBackfillLog((log) => [...log, `✗ ${e?.message || "backfill failed"}`]);
+    } finally {
+      setBackfilling(false);
+      load(true);
+    }
+  }, [load]);
 
   useEffect(() => {
     const t = setInterval(() => load(), REFRESH_MS);
@@ -298,8 +328,24 @@ export default function NeodoveTelecallerDashboard() {
             >
               {refreshing ? "Refreshing…" : "↻ Refresh now"}
             </button>
+            {canBackfill && (
+              <button
+                onClick={() => void backfill()}
+                disabled={backfilling}
+                title="Replay missing daily snapshots (oldest first) — repair after a dead NeoDove token window"
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 transition-all duration-200 cursor-pointer disabled:opacity-50"
+              >
+                {backfilling ? "Backfilling…" : "⛏ Backfill missing days"}
+              </button>
+            )}
           </div>
         </div>
+        {backfillLog.length > 0 && (
+          <div className="mt-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950 px-3 py-2 text-[11px] font-mono text-zinc-700 dark:text-zinc-300">
+            {backfillLog.map((line, i) => <p key={i}>{line}</p>)}
+            {!backfilling && <p className="mt-1 text-zinc-500">Done — check the week view against the expected totals.</p>}
+          </div>
+        )}
         <p className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-500">
           Benchmarks per agent/day: <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {benchmarks.connectedCallsPerDay} connected calls</span> ·{" "}
           <span className="text-zinc-700 dark:text-zinc-300 font-semibold">≥ {benchmarks.leadsPerAgentPerDay} leads</span> (in-progress + converted)

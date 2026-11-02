@@ -1590,6 +1590,7 @@ export default function TelecallingDashboard() {
                       }}
                       onOpenRegion={() => { setRegionFilter(regionKey(r.id)); setView("conversion"); }}
                       targetStart={teamTarget?.targetStart}
+                      workingDays={dash.data?.meta?.workingDays}
                     />
                   ))}
                   {boardRegions.length === 0 && (

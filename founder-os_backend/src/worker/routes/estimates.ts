@@ -124,6 +124,43 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     }
   });
 
+  // ── NeoDove snapshot backfill (manager repair tool) ────────────────────────
+  // The 5-min cron writes one `neodove_user_report:<date>` snapshot per day.
+  // When the NeoDove token dies (401), days go missing and every week view
+  // sums to nothing. This replays ONE missing day per call through the same
+  // refreshNeodoveReport() the cron uses (report + leads + cache
+  // invalidation), oldest first; the dashboard button loops it until
+  // `remaining` hits 0, so no single request outruns worker limits.
+  app.post('/api/neodove/backfill', async (c) => {
+    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try {
+      const shift = (ymd: string, n: number): string => {
+        const [y, m, d] = ymd.split('-').map(Number);
+        const t = new Date(Date.UTC(y, m - 1, d + n));
+        return t.toISOString().slice(0, 10);
+      };
+      const body = await c.req.json().catch(() => ({}));
+      const { getLatestNeodoveDay } = await import('../../automations/neodove-telecaller-report/index');
+      const today = kolkataDateStr();
+      const latest = await getLatestNeodoveDay().catch(() => null);
+      const validDay = (v: unknown): string | null =>
+        typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+      let end = validDay(body?.to) ?? today;
+      if (end > today) end = today;
+      let start = validDay(body?.from) ?? (latest ? shift(latest, 1) : shift(today, -13));
+      if (start > end) return c.json({ ok: true, done: true, remaining: 0, date: null });
+      const result = await refreshNeodoveReport(start);
+      let remaining = 0;
+      for (let d = shift(start, 1); d <= end; d = shift(d, 1)) remaining++;
+      return c.json({
+        ok: result.ok, date: start, stored: result.stored ?? 0,
+        error: (result as any).error ?? null, remaining, done: result.ok && remaining === 0,
+      });
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message || String(e) }, 500);
+    }
+  });
+
   app.post('/api/runner/neodove/report', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
