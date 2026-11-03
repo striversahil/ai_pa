@@ -98,16 +98,21 @@ export default function OrderPanel({
   order,
   initialMode,
   canWrite,
+  promiseOnly = false,
   onClose,
   onChanged,
 }: {
   order: CrmOrder;
   initialMode: PanelMode;
   canWrite: boolean;
+  /** Sales view: dates + delay reasons only. Dispatch/reschedule/address edits
+   *  stay with the dispatch floor (`canWrite` alone is not enough). */
+  promiseOnly?: boolean;
   onClose: () => void;
   onChanged: () => void;
 }) {
   const today = istToday();
+  const floorWrite = canWrite && !promiseOnly;
   const [mode, setMode] = useState<PanelMode>(initialMode);
   const items = order.items || [];
   const [attachments, setAttachments] = useState<any[]>([]);
@@ -233,15 +238,13 @@ export default function OrderPanel({
   const submit = async () => {
     if (!check.ok) return;
     if (mode === "schedule") {
-      await actions.schedule(
-        order.id,
-        pickedItems.map((it) => ({
-          itemId: it.id,
-          date: dates[it.id] || null,
-          reason: reasons[it.id] || null,
-        })),
-        soReason || null,
-      );
+      const items = pickedItems.map((it) => ({
+        itemId: it.id,
+        date: dates[it.id] || null,
+        reason: reasons[it.id] || null,
+      }));
+      if (promiseOnly) await actions.promise(order.id, items, soReason || null);
+      else await actions.schedule(order.id, items, soReason || null);
       return;
     }
     if (mode === "dispatch") {
@@ -263,7 +266,9 @@ export default function OrderPanel({
   const primary =
     mode === "schedule"
       ? anyDated
-        ? "Schedule selected items"
+        ? promiseOnly
+          ? "Confirm dispatch dates"
+          : "Schedule selected items"
         : "Record order-level delay"
       : mode === "dispatch"
         ? "Mark dispatched"
@@ -309,11 +314,13 @@ export default function OrderPanel({
             {(
               [
                 ["view", "Items", Package],
-                ["schedule", "Schedule", CalendarClock],
+                ["schedule", promiseOnly ? "Dispatch dates" : "Schedule", CalendarClock],
                 ["dispatch", "Dispatch", Truck],
                 ["reschedule", "Reschedule", ArrowRight],
               ] as Array<[PanelMode, string, any]>
-            ).map(([key, label, Icon]) => {
+            )
+              .filter(([key]) => !promiseOnly || key === "view" || key === "schedule")
+              .map(([key, label, Icon]) => {
               const disabled =
                 key !== "view" &&
                 (!canWrite ||
@@ -368,8 +375,8 @@ export default function OrderPanel({
                 {order.paymentTerms || <span className="font-normal italic text-zinc-400">Not in the Zoho terms…</span>}
               </p>
             </div>
-            <AddressCard label="Billing address" value={addrOverride?.billing ?? order.billingAddress} editedBy={addrOverride?.billingBy ?? order.billingAddressEditedBy} canEdit={canWrite} saving={addrSaving} onSave={(t) => saveAddress("billing", t)} />
-            <AddressCard label="Shipping address" value={addrOverride?.shipping ?? order.shippingAddress} editedBy={addrOverride?.shippingBy ?? order.shippingAddressEditedBy} canEdit={canWrite} saving={addrSaving} onSave={(t) => saveAddress("shipping", t)} />
+            <AddressCard label="Billing address" value={addrOverride?.billing ?? order.billingAddress} editedBy={addrOverride?.billingBy ?? order.billingAddressEditedBy} canEdit={floorWrite} saving={addrSaving} onSave={(t) => saveAddress("billing", t)} />
+            <AddressCard label="Shipping address" value={addrOverride?.shipping ?? order.shippingAddress} editedBy={addrOverride?.shippingBy ?? order.shippingAddressEditedBy} canEdit={floorWrite} saving={addrSaving} onSave={(t) => saveAddress("shipping", t)} />
           </div>
           {order.sourceState === "deleted_source" && (
             <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
@@ -380,7 +387,7 @@ export default function OrderPanel({
                   stays on the floor until someone confirms — confirming deletes it here and keeps the audit trail.
                 </p>
               </div>
-              {canWrite && (
+              {canWrite && !promiseOnly && (
                 <button
                   onClick={async () => {
                     const done = await actions.confirmRemoval(order.id);
@@ -402,7 +409,9 @@ export default function OrderPanel({
           {mode !== "view" && (
             <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
               {mode === "schedule" &&
-                "Pick the items going out and the tentative dispatch date for each. Anything you cannot date needs a reason — leave every item undated to keep the whole order unscheduled with one order-level reason."}
+                (promiseOnly
+                  ? "Set the tentative dispatch date for each item — this is the promise the dispatch floor works to. Anything you cannot date needs a reason."
+                  : "Pick the items going out and the tentative dispatch date for each. Anything you cannot date needs a reason — leave every item undated to keep the whole order unscheduled with one order-level reason.")}
               {mode === "dispatch" &&
                 "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch."}
               {mode === "reschedule" &&
@@ -537,7 +546,7 @@ export default function OrderPanel({
           {mode === "view" && (
             <div className="mt-5">
               <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">SO documents</h3>
-              <SoAttachments so={order.soNumber} attachments={attachments} canManage={canWrite} onChanged={loadAttachments} />
+              <SoAttachments so={order.soNumber} attachments={attachments} canManage={floorWrite} onChanged={loadAttachments} />
             </div>
           )}
 

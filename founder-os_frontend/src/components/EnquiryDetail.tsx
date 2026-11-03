@@ -7,6 +7,7 @@ import SpecificationsSection from "./SpecificationsSection";
 import Modal from "./Modal";
 import ItemBoxList, { blankItem } from "./ItemBoxList";
 import { companiesDiffer } from "@/enquiry/company";
+import { isOpenSpecFlag } from "@/enquiry/queue";
 
 interface EnquiryDetailProps {
   selectedEnquiry: Enquiry;
@@ -103,7 +104,8 @@ export default function EnquiryDetail({
   const intake = useIntake(selectedEnquiry.id, (selectedEnquiry as any).updatedAt);
   // Per-enquiry partial tag: management decided some (not all) loop items
   // while the enquiry is still open. Committed enquiries need no tag.
-  const rateLoopItems = (selectedEnquiry.items ?? []).filter((it) => !it.specIssue && !it.rateAvailable);
+  // Resolved flags rejoin the loop (audit trail only).
+  const rateLoopItems = (selectedEnquiry.items ?? []).filter((it) => !isOpenSpecFlag(it) && !it.rateAvailable);
   const decidedRateItems = rateLoopItems.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
   const showPartialTag = !effectiveSent && sentState !== "finalized" && decidedRateItems > 0;
 

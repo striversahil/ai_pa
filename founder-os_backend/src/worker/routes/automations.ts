@@ -5,6 +5,7 @@ import type { Hono } from 'hono';
 import { deps, getEntryOrReload, DASHBOARD_SLUGS, getMe, authStore, readSessionCookie, requireScope, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import { AUTOMATION_SCOPES, accessScopesFor } from '../../modules/automation/registry-worker';
+import { resolveRosterMatch } from '../../modules/telecalling/self';
 
 function parseJson(value: string | null | undefined): unknown {
   if (!value) return null;
@@ -26,34 +27,14 @@ export async function resolveSelfTelecaller(c: any): Promise<string | null> {
   const { prisma } = deps();
   const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
   if (!me) return null;
-  const meEmail = me.user?.email ? String(me.user.email).toLowerCase().trim() : '';
-  const meName = me.user?.name ? String(me.user.name).toLowerCase().replace(/\s+/g, '') : '';
 
   const tcs = await prisma.telecaller.findMany({ where: { deleted: false } });
   if (tcs.length === 0) return null;
 
-  // 1. Exact email match.
-  if (meEmail) {
-    const byEmail = tcs.find((t: any) => t.email && String(t.email).toLowerCase().trim() === meEmail);
-    if (byEmail) return byEmail.id;
-  }
-
-  // 2. Loose name match against active agents only.
-  if (meName) {
-    const norm = (n: string) => String(n).toLowerCase().replace(/\s+/g, '');
-    const candidates = tcs.map((t: any) => ({ id: t.id, name: norm(t.name) }));
-    // full-equal
-    const exact = candidates.find((c) => c.name === meName);
-    if (exact) return exact.id;
-    // prefix: signed-in name prefixes a roster name
-    const prefix = candidates.filter((c) => c.name.startsWith(meName) && meName.length >= 3);
-    if (prefix.length === 1) return prefix[0].id;
-    // short form: a roster name starts with the signed-in name
-    const short = candidates.filter((c) => meName.startsWith(c.name) && c.name.length >= 3);
-    if (short.length === 1) return short[0].id;
-  }
-
-  return null;
+  // Pure match (exact email → exact name → unique prefix → unique short form).
+  // Extracted so the CRM/sales dispatch route resolves the SAME agent identity.
+  const hit = resolveRosterMatch(tcs as any[], me);
+  return hit ? String((hit as any).id) : null;
 }
 
 export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): void {

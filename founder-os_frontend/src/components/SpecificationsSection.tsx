@@ -7,6 +7,7 @@ import AiProcessingLoader from "./AiProcessingLoader";
 import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS, type IntakeSuggestion } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import FlagThread from "./FlagThread";
+import { isOpenSpecFlag } from "@/enquiry/queue";
 import { filesToUploadedMedia, dragHasFiles } from "../lib/imageFiles";
 
 /** ~10MB per file (stored as data-URI on the item; server re-checks). */
@@ -566,10 +567,10 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {(it as any).kypComplete === false && (!intake || (intake.suggestions ?? []).filter((s: any) => Number(s.itemIndex) === idx).length === 0) && (
                         <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">Complete the spec above to see price — lookup is gated on completeness.</p>
                       )}
-                      {!redacted && !it.specIssue && (it.thread ?? []).length > 0 && (
+                      {!redacted && !isOpenSpecFlag(it) && (it.thread ?? []).length > 0 && (
                         <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                       )}
-                       {it.specIssue && !redacted && !it.rateAvailable && !(it as any).notAvailable && (
+                       {isOpenSpecFlag(it) && !redacted && !it.rateAvailable && !(it as any).notAvailable && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
@@ -614,8 +615,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {/* Flagged AND already quoted (flags never delete quotes): none of the
                           branches above render the trail, but the reply box below still
                           shows — so history would vanish exactly when the back-and-forth
-                          matters most. Render it here. */}
-                      {!redacted && !!it.specIssue && !!(it as any).rateAvailable && (it.thread ?? []).length > 0 && (
+                          matters most. Render it here. Open-flag only: resolved flags
+                          already render their trail above (no double render). */}
+                      {!redacted && isOpenSpecFlag(it) && !!(it as any).rateAvailable && (it.thread ?? []).length > 0 && (
                         <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}

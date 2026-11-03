@@ -13,6 +13,34 @@ export interface ViewOrder {
   lifecycle: Lifecycle;
   sourceState: 'active' | 'deleted_source';
   items: readonly ItemLike[];
+  /** Zoho statuses — only the sales bucket predicates read these. Optional so
+   *  the existing item-level tabs keep working with a bare shape. */
+  status?: string;
+  orderStatus?: string;
+  paidStatus?: string;
+}
+
+const lower = (v: unknown) => String(v ?? '').trim().toLowerCase();
+
+/** Payment finished? The sales buckets are "still owed" vs "paid in full".
+ *  `paid_status === 'paid'` is the signal; a closed order with no payment flag
+ *  (Zoho's draft/closed rows carry '') counts as finished too — nothing is
+ *  outstanding on it. A partially-paid closed order stays INCOMPLETE. */
+export function isPaymentComplete(order: Pick<ViewOrder, 'status' | 'orderStatus' | 'paidStatus'>): boolean {
+  const paid = lower(order.paidStatus);
+  const orderStatus = lower(order.orderStatus);
+  if (paid === 'paid') return true;
+  if (paid === 'partially_paid') return false;
+  return orderStatus === 'closed';
+}
+
+/** Which sales bucket the order sits in. Cancelled / void / source-deleted
+ *  belong to neither — the sales view never renders them. */
+export function salesBucket(order: ViewOrder): 'incomplete' | 'completed' | null {
+  if (order.sourceState !== 'active') return null;
+  const status = lower(order.status);
+  if (status === 'cancelled' || status === 'void' || order.lifecycle === 'cancelled') return null;
+  return isPaymentComplete(order) ? 'completed' : 'incomplete';
 }
 
 /**
@@ -55,6 +83,12 @@ export function orderMatchesView(order: ViewOrder, view: View, today: string): b
       return live && someItem('dispatched');
     case 'all':
       return order.sourceState === 'active';
+    // Unified Sales → Dispatch buckets. Incomplete keeps the whole pipeline
+    // (undated, dated, dispatched-not-paid); Completed is fully paid only.
+    case 'incomplete':
+      return salesBucket(order) === 'incomplete';
+    case 'completed':
+      return salesBucket(order) === 'completed';
     default:
       return false;
   }

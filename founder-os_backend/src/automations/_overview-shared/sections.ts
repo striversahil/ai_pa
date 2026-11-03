@@ -179,12 +179,12 @@ export const SECTIONS: SectionDef[] = [
   { key: 'crm', title: 'CRM — Sales Orders', slugs: ['crm'], linkSlug: 'crm', build: (r) => section('crm', 'CRM — Sales Orders', r.crm?.data, r.crm?.error, summarizeCrm) },
   { key: 'telecalling', title: 'Sales Leaderboard', slugs: ['telecalling'], linkSlug: 'telecalling', build: (r) => section('telecalling', 'Sales Leaderboard', r.telecalling?.data, r.telecalling?.error, summarizeTelecalling) },
   {
-    key: 'enquiries', title: 'Enquiries', slugs: ['enquiry-tracker', 'enquiry-procurement', 'enquiry-management'], linkSlug: 'enquiry-tracker',
+    key: 'enquiries', title: 'Enquiries', slugs: ['enquiry-procurement', 'enquiry-management'], linkSlug: 'sales',
     build: (r) => {
-      const err = r['enquiry-tracker']?.error ?? r['enquiry-procurement']?.error ?? r['enquiry-management']?.error;
-      const anyData = r['enquiry-tracker']?.data ?? r['enquiry-procurement']?.data ?? r['enquiry-management']?.data;
-      return section('enquiry-tracker', 'Enquiries', anyData, err && !anyData ? err : null, () =>
-        summarizeEnquiries({ tracker: r['enquiry-tracker']?.data, procurement: r['enquiry-procurement']?.data, management: r['enquiry-management']?.data }));
+      const err = r['enquiry-procurement']?.error ?? r['enquiry-management']?.error;
+      const anyData = r['enquiry-procurement']?.data ?? r['enquiry-management']?.data;
+      return section('sales', 'Enquiries', anyData, err && !anyData ? err : null, () =>
+        summarizeEnquiries({ tracker: null, procurement: r['enquiry-procurement']?.data, management: r['enquiry-management']?.data }));
     },
   },
   { key: 'accounts', title: 'Accounts', slugs: ['accounts'], linkSlug: 'accounts', build: (r) => section('accounts', 'Accounts', r.accounts?.data, r.accounts?.error, (d) => summarizeTaskbar(d, 'accounts')) },

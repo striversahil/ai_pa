@@ -338,6 +338,18 @@ export async function computeTelecallingDaily(
   // Enquiry-sourced leads (replaces NeoDove get-leads): one count map for the
   // whole range, looked up per (day, agent) cell below.
   const enquiryLeadsDaily = await getEnquiryLeadCounts(from, to).catch(() => new Map<string, number>());
+  // TEMPORARY manual-call override: same mode flag as the dashboard.
+  let manualByDay = new Map<string, Record<string, unknown>>();
+  try {
+    const { getManualCallsMode, listManualCallRows } = await import('./manual-calls');
+    if (await getManualCallsMode() === 'manual') {
+      const rows = await listManualCallRows(from, to);
+      for (const r of rows as any[]) {
+        const k = `${String(r.day ?? '')}|${String(r.telecallerId ?? '')}`;
+        manualByDay.set(k, r as Record<string, unknown>);
+      }
+    }
+  } catch { /* pre-migration → NeoDove as before */ }
   for (const d of dates) {
     const neoMap = neoByDay.get(d) ?? {};
     for (const o of owners) {
@@ -348,7 +360,8 @@ export async function computeTelecallingDaily(
         // must never credit a stranger's calls — see the ndByTc note above).
         || (!o.neodoveUserName && o.neodoveUserId && neoMap[o.neodoveUserId])
         || undefined;
-      const callsConnected = nd?.callsConnected ?? 0;
+      const manualRow = manualByDay.get(`${d}|${id}`);
+      const callsConnected = manualRow ? Number((manualRow as any).connectedCalls ?? 0) || 0 : nd?.callsConnected ?? 0;
       // Enquiry-sourced (Sales Enquiries dashboard) — not NeoDove get-leads.
       const leadsGenerated = enquiryLeadsDaily.get(`${d}|${id}`) ?? 0;
       out.push({
@@ -360,9 +373,9 @@ export async function computeTelecallingDaily(
         won: c?.won ?? 0,
         closedValue: Math.round(c?.value ?? 0),
         closedEstimates: (c?.estIds ?? []).join(' | '),
-        callsAttempted: nd?.callsAttempted ?? 0,
+        callsAttempted: manualRow ? callsConnected : nd?.callsAttempted ?? 0,
         callsConnected,
-        callsNotConnected: nd?.callsNotConnected ?? 0,
+        callsNotConnected: manualRow ? 0 : nd?.callsNotConnected ?? 0,
         talkTimeMin: Math.round((nd?.talkTimeSec ?? 0) / 60),
         leadsGenerated,
         leadsConverted: nd?.leadsConverted ?? 0,
@@ -474,6 +487,28 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       || null;
     ndByTc.set(String(t.id), nd ?? {});
   }
+
+  // TEMPORARY manual-call override (founder 2026-11-04): while Setting
+  // `manual_calls_mode` = 'manual', connected calls come from the hand-counted
+  // ManualCallLog rows (screenshot proof) instead of NeoDove. Attempted is set
+  // = connected (no attempted split is collected manually); talk/other NeoDove
+  // fields ride through unchanged.
+  let callsSource: 'manual' | 'neodove' = 'neodove';
+  try {
+    const { getManualCallsMode, getManualCallsSum } = await import('./manual-calls');
+    if (await getManualCallsMode() === 'manual') {
+      callsSource = 'manual';
+      const leadFrom0 = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
+      const leadTo0 = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
+      const manualSum = await getManualCallsSum(leadFrom0, leadTo0);
+      for (const t of telecallers as any[]) {
+        const id = String((t as any).id ?? '');
+        const m = manualSum.get(id) ?? 0;
+        const prev = ndByTc.get(id) ?? {};
+        ndByTc.set(id, { ...prev, callsConnected: m, callsAttempted: m, callsNotConnected: 0 });
+      }
+    }
+  } catch { /* manual table missing (pre-migration) → NeoDove as before */ }
 
   // Enquiry-sourced leads (Sales Enquiries dashboard — replaces NeoDove
   // get-leads): per-agent enquiry-creation totals over the leaderboard window.
@@ -1218,6 +1253,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       title: 'Sales Leaderboard',
       day,
       requestedDay,
+      // TEMPORARY: which source the connected-call column reads (manual log vs
+      // NeoDove). The Call Log tab owns the toggle.
+      callsSource,
       period: periodMode && periodRangeInfo ? q.period : 'today',
       periodLabel: periodRangeInfo?.label ?? 'Today',
       periodFrom: periodRangeInfo?.from ?? null,

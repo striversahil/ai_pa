@@ -92,6 +92,9 @@ export interface CrmOrderRow {
   salesperson: string;
   /** Zoho reference number — in practice the EST number (EST-024014). */
   referenceNumber: string;
+  /** Sales region owning this order (R1–R4). Derived every sync tick from the
+   *  estimate behind `referenceNumber`; '' = unmapped. Never hand-edited. */
+  region: string;
   billingAddress: string;
   shippingAddress: string;
   /** Set when a human edits the address on the floor — the sync then leaves it alone. */
@@ -145,8 +148,22 @@ export const VIEWS = [
   'dispatched',
   'source-deleted',
   'all',
+  // Unified Sales → Dispatch buckets (region-owned view).
+  'incomplete',
+  'completed',
 ] as const;
 export type View = (typeof VIEWS)[number];
+
+/** The sales-facing split: everything still owed vs fully paid.
+ *  Incomplete runs the whole pipeline — unscheduled → scheduled → dispatched —
+ *  until the payment process completes. Cancelled / source-deleted belong to
+ *  neither bucket. */
+export const SALES_BUCKETS = ['incomplete', 'completed'] as const;
+export type SalesBucket = (typeof SALES_BUCKETS)[number];
+
+export function normalizeSalesBucket(v: unknown): SalesBucket {
+  return String(v ?? '').trim() === 'completed' ? 'completed' : 'incomplete';
+}
 
 export function normalizeView(v: unknown): View {
   const s = String(v ?? '').trim();

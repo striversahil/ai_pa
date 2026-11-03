@@ -387,6 +387,234 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
   });
 
+  // ── Manual connected-call log (TEMPORARY, founder 2026-11-04) ──────────
+  // Backfill while NeoDove is unreliable: hand-counted connected calls per
+  // agent per day + screenshot proof. The leaderboard reads these rows instead
+  // of NeoDove while Setting `manual_calls_mode` = 'manual' (toggle below).
+  // Delete this block + manual-calls.ts + the Call Log tab when NeoDove is
+  // trusted again.
+  app.get('/api/telecalling/manual-calls/mode', async (c) => {
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    if (!me) return c.json({ error: 'authentication required' }, 401);
+    try {
+      const { getManualCallsMode } = await import('../../automations/telecalling/manual-calls');
+      return c.json({ mode: await getManualCallsMode() });
+    } catch (e: any) {
+      return c.json({ mode: 'neodove', error: e?.message ?? null });
+    }
+  });
+
+  app.put('/api/telecalling/manual-calls/mode', async (c) => {
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const { setManualCallsMode } = await import('../../automations/telecalling/manual-calls');
+      const mode = await setManualCallsMode(body?.mode);
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true, mode });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to save mode' }, 400);
+    }
+  });
+
+  app.get('/api/telecalling/manual-calls', async (c) => {
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    if (!me) return c.json({ error: 'authentication required' }, 401);
+    const { prisma } = deps();
+    const dayQ = String(c.req.query('day') ?? '').trim();
+    const fromQ = String(c.req.query('from') ?? '').trim();
+    const toQ = String(c.req.query('to') ?? '').trim();
+    const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const day = DAY_RE.test(dayQ) ? dayQ : new Date().toISOString().slice(0, 10);
+    const from = DAY_RE.test(fromQ) ? fromQ : day;
+    const to = DAY_RE.test(toQ) ? toQ : day;
+    try {
+      const { getManualCallsMode, listManualCallRows } = await import('../../automations/telecalling/manual-calls');
+      const mode = await getManualCallsMode();
+      const agents: any[] = await prisma.telecaller.findMany({
+        where: { deleted: false },
+        orderBy: { order: 'asc' },
+        select: { id: true, name: true, region: true, type: true },
+      });
+      const rows = await listManualCallRows(from, to);
+      return c.json({ mode, day, from, to, agents, entries: rows });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to load manual calls' }, 500);
+    }
+  });
+
+  app.post('/api/telecalling/manual-calls', async (c) => {
+    const { prisma } = deps();
+    const body = await c.req.json().catch(() => ({}));
+    const telecallerId = String(body?.telecallerId ?? '').trim();
+    const day = String(body?.day ?? '').trim();
+    const connected = Math.floor(Number(body?.connectedCalls ?? NaN));
+    const note = String(body?.note ?? '').slice(0, 500);
+    if (!telecallerId) return c.json({ error: 'telecallerId required' }, 400);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return c.json({ error: 'day must be YYYY-MM-DD' }, 400);
+    if (!Number.isFinite(connected) || connected < 0 || connected > 10000) {
+      return c.json({ error: 'connectedCalls must be 0–10000' }, 400);
+    }
+    // Managers may log any agent; a signed-in agent may log her OWN row.
+    let isManager = false;
+    try { await requireMisScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
+    if (!isManager) {
+      try {
+        const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
+        const selfId = await resolveSelfTelecaller(c);
+        if (!selfId || selfId !== telecallerId) return c.json({ error: 'you can only log your own calls' }, 403);
+      } catch { return c.json({ error: 'only sales managers or the agent herself can log calls' }, 403); }
+    }
+    const tc: any = await prisma.telecaller.findUnique({ where: { id: telecallerId } }).catch(() => null);
+    if (!tc || (tc as any).deleted) return c.json({ error: 'agent not found' }, 404);
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const now = new Date();
+    try {
+      const row: any = await (prisma as any).manualCallLog.upsert({
+        where: { telecallerId_day: { telecallerId, day } },
+        update: { connectedCalls: connected, note, updatedAt: now },
+        create: {
+          telecallerId, day, connectedCalls: connected, note,
+          createdBy: String((me as any)?.user?.id ?? ''),
+          createdByName: String((me as any)?.user?.name ?? (me as any)?.user?.email ?? ''),
+          createdAt: now, updatedAt: now,
+        },
+      });
+      try {
+        const { invalidateManualCallsCache } = await import('../../automations/telecalling/manual-calls');
+        await invalidateManualCallsCache();
+      } catch { /* non-fatal */ }
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true, entry: row });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'save failed' }, 400);
+    }
+  });
+
+  app.delete('/api/telecalling/manual-calls', async (c) => {
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    const { prisma } = deps();
+    const telecallerId = String(c.req.query('telecallerId') ?? '').trim();
+    const day = String(c.req.query('day') ?? '').trim();
+    if (!telecallerId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return c.json({ error: 'telecallerId + day required' }, 400);
+    try {
+      const row: any = await (prisma as any).manualCallLog.findUnique({
+        where: { telecallerId_day: { telecallerId, day } },
+      }).catch(() => null);
+      if (row?.screenshotKvKey && c.env.CHAT_FILES) {
+        try { await c.env.CHAT_FILES.delete(String(row.screenshotKvKey)); } catch { /* bytes best-effort */ }
+      }
+      await (prisma as any).manualCallLog.delete({ where: { telecallerId_day: { telecallerId, day } } }).catch(() => null);
+      try {
+        const { invalidateManualCallsCache } = await import('../../automations/telecalling/manual-calls');
+        await invalidateManualCallsCache();
+      } catch { /* non-fatal */ }
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'delete failed' }, 400);
+    }
+  });
+
+  // Screenshot proof upload (multipart `file` + `telecallerId` + `day` fields).
+  // Bytes live in CHAT_FILES KV (`manualcalls/...`); the row holds metadata.
+  app.post('/api/telecalling/manual-calls/file', async (c) => {
+    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+    let form: FormData;
+    try { form = await c.req.formData(); } catch { return c.json({ error: 'Expected multipart/form-data' }, 400); }
+    const file = form.get('file');
+    const telecallerId = String(form.get('telecallerId') ?? '').trim();
+    const day = String(form.get('day') ?? '').trim();
+    if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
+    if (!telecallerId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return c.json({ error: 'telecallerId + day required' }, 400);
+    const mime = file.type || 'application/octet-stream';
+    if (!mime.startsWith('image/') && mime !== 'application/pdf') {
+      return c.json({ error: 'Only image or PDF screenshots can be attached' }, 400);
+    }
+    if (file.size > 20 * 1024 * 1024) return c.json({ error: 'File too large (max 20MB)' }, 413);
+    if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
+    let isManager = false;
+    try { await requireMisScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
+    if (!isManager) {
+      try {
+        const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
+        const selfId = await resolveSelfTelecaller(c);
+        if (!selfId || selfId !== telecallerId) return c.json({ error: 'you can only attach your own proof' }, 403);
+      } catch { return c.json({ error: 'only sales managers or the agent herself can attach proof' }, 403); }
+    }
+    const { prisma } = deps();
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const ext = (file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+    const key = `manualcalls/${day}/${String(telecallerId).replace(/[^A-Za-z0-9_-]/g, '_')}/${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
+    try {
+      await c.env.CHAT_FILES.put(key, await file.arrayBuffer(), {
+        metadata: { name: file.name, type: mime, day, agent: telecallerId },
+      });
+    } catch (e: any) {
+      return c.json({ error: 'upload failed' }, 500);
+    }
+    try {
+      const now = new Date();
+      const prev: any = await (prisma as any).manualCallLog.findUnique({
+        where: { telecallerId_day: { telecallerId, day } },
+      }).catch(() => null);
+      if (prev?.screenshotKvKey && c.env.CHAT_FILES) {
+        try { await c.env.CHAT_FILES.delete(String(prev.screenshotKvKey)); } catch { /* orphan best-effort */ }
+      }
+      const row: any = prev
+        ? await (prisma as any).manualCallLog.update({
+            where: { telecallerId_day: { telecallerId, day } },
+            data: {
+              screenshotKvKey: key, screenshotName: file.name.slice(0, 200),
+              screenshotMime: mime, screenshotSize: file.size, updatedAt: now,
+            },
+          })
+        : await (prisma as any).manualCallLog.create({
+            data: {
+              telecallerId, day, connectedCalls: 0,
+              screenshotKvKey: key, screenshotName: file.name.slice(0, 200),
+              screenshotMime: mime, screenshotSize: file.size,
+              createdBy: String((me as any)?.user?.id ?? ''),
+              createdByName: String((me as any)?.user?.name ?? (me as any)?.user?.email ?? ''),
+              createdAt: now, updatedAt: now,
+            },
+          });
+      try {
+        const { invalidateManualCallsCache } = await import('../../automations/telecalling/manual-calls');
+        await invalidateManualCallsCache();
+      } catch { /* non-fatal */ }
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true, entry: row }, 201);
+    } catch (e: any) {
+      try { await c.env.CHAT_FILES.delete(key); } catch { /* orphan bytes best-effort */ }
+      return c.json({ error: e?.message ?? 'attach failed' }, 400);
+    }
+  });
+
+  // Serve screenshot bytes (never exposes raw KV keys).
+  app.get('/api/telecalling/manual-calls/file', async (c) => {
+    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    if (!me) return c.json({ error: 'authentication required' }, 401);
+    const { prisma } = deps();
+    const telecallerId = String(c.req.query('telecallerId') ?? '').trim();
+    const day = String(c.req.query('day') ?? '').trim();
+    if (!telecallerId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return c.json({ error: 'telecallerId + day required' }, 400);
+    const row: any = await (prisma as any).manualCallLog.findUnique({
+      where: { telecallerId_day: { telecallerId, day } },
+    }).catch(() => null);
+    if (!row?.screenshotKvKey) return c.json({ error: 'No screenshot for this entry' }, 404);
+    const obj = await c.env.CHAT_FILES.getWithMetadata(String(row.screenshotKvKey), 'arrayBuffer');
+    if (obj.value === null) return c.json({ error: 'File not found' }, 404);
+    const type = String(row.screenshotMime || 'application/octet-stream');
+    const headers = new Headers();
+    headers.set('Content-Type', type);
+    headers.set('Cache-Control', 'public, max-age=3600');
+    if (!/^image\/|^application\/pdf$/.test(type)) {
+      headers.set('Content-Disposition', `attachment; filename="${String(row.screenshotName || 'proof').replace(/["\\]/g, '')}"`);
+    }
+    return new Response(obj.value, { headers });
+  });
   // ── Agent call-disposition tags (region follow-ups view) ─────────────────
   // The sales team tags each follow-up: NO_ANSWER (not picking up), BUSY, or
   // CALLBACK with a follow-up date (capped at +10 days IST, enforced in

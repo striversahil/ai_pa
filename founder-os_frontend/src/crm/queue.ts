@@ -12,6 +12,31 @@ export interface ViewOrder {
   lifecycle: Lifecycle;
   sourceState: "active" | "deleted_source";
   items: readonly ItemLike[];
+  /** Zoho statuses — only the sales bucket predicates read these. */
+  status?: string;
+  orderStatus?: string;
+  paidStatus?: string;
+}
+
+const lower = (v: unknown) => String(v ?? "").trim().toLowerCase();
+
+/** Payment finished? `paid_status === 'paid'` is the signal; a closed order
+ *  with no payment flag counts as finished too. A partially-paid closed order
+ *  stays INCOMPLETE. Mirror: backend crm/queues.ts. */
+export function isPaymentComplete(order: Pick<ViewOrder, "status" | "orderStatus" | "paidStatus">): boolean {
+  const paid = lower(order.paidStatus);
+  const orderStatus = lower(order.orderStatus);
+  if (paid === "paid") return true;
+  if (paid === "partially_paid") return false;
+  return orderStatus === "closed";
+}
+
+/** Which sales bucket the order sits in (null = neither: cancelled/deleted). */
+export function salesBucket(order: ViewOrder): "incomplete" | "completed" | null {
+  if (order.sourceState !== "active") return null;
+  const status = lower(order.status);
+  if (status === "cancelled" || status === "void" || order.lifecycle === "cancelled") return null;
+  return isPaymentComplete(order) ? "completed" : "incomplete";
 }
 
 export function orderMatchesView(order: ViewOrder, view: View, today: string): boolean {
@@ -39,6 +64,12 @@ export function orderMatchesView(order: ViewOrder, view: View, today: string): b
       return live && someItem("dispatched");
     case "all":
       return order.sourceState === "active";
+    // Unified Sales → Dispatch buckets. Incomplete keeps the whole pipeline
+    // (undated, dated, dispatched-not-paid); Completed is fully paid only.
+    case "incomplete":
+      return salesBucket(order) === "incomplete";
+    case "completed":
+      return salesBucket(order) === "completed";
     default:
       return false;
   }

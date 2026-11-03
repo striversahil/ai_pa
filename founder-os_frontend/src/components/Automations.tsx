@@ -13,12 +13,10 @@ const SheetAnalysisDashboard = dynamic(() => import("./SheetAnalysisDashboard"),
 const WaEngineDashboard = dynamic(() => import("./WaEngineDashboard"), { ssr: false });
 const WhatsAppMarketingDashboard = dynamic(() => import("./WhatsAppMarketingDashboard"), { ssr: false });
 const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDashboard"), { ssr: false });
-const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
 const AccountsDashboard = dynamic(() => import("./AccountsDashboard"), { ssr: false });
 const DigitalMarketingDashboard = dynamic(() => import("./DigitalMarketingDashboard"), { ssr: false });
 const HumanResourcesDashboard = dynamic(() => import("./HumanResourcesDashboard"), { ssr: false });
 const AutopilotDashboard = dynamic(() => import("./AutopilotDashboard"), { ssr: false });
-const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false });
 const ProcurementQueue = dynamic(() => import("./ProcurementQueue"), { ssr: false });
 const ManagementReview = dynamic(() => import("./ManagementReview"), { ssr: false });
 const CrmDashboard = dynamic(() => import("./CrmDashboard"), { ssr: false });
@@ -29,7 +27,7 @@ const LinkedinDashboard = dynamic(() => import("./LinkedinDashboard"), { ssr: fa
 const AiUsageDashboard = dynamic(() => import("./AiUsageDashboard"), { ssr: false });
 const ReportingSheetView = dynamic(() => import("./reporting/ReportingSheetView"), { ssr: false });
 const DebtorsTrackerDashboard = dynamic(() => import("./DebtorsTrackerDashboard"), { ssr: false });
-const MasterDataView = dynamic(() => import("./master-data/MasterDataView"), { ssr: false });
+const SalesWorkspace = dynamic(() => import("./SalesWorkspace"), { ssr: false });
 
 type AutomationTrigger = {
   type?: string;
@@ -122,13 +120,18 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
 
   const { pinnedList, restList } = useMemo(() => {
     const bySlug = new Map((automations.data ?? []).map(a => [a.slug, a]));
-    // Legacy pins saved before the Payment Tracker → Debtors Tracker rename.
-    const pinnedSlugs = pinned.map(slug => (slug === "payment-tracker" ? "debtors-tracker" : slug));
+    // Legacy pins saved before the Payment Tracker → Debtors Tracker rename,
+    // and before the four sales dashboards merged into the Sales workspace.
+    const pinnedSlugs = [...new Set(pinned.map(slug => {
+      if (slug === "payment-tracker") return "debtors-tracker";
+      if (slug === "telecalling" || slug === "enquiry-tracker" || slug === "master-data") return "sales";
+      return slug;
+    }))];
     return {
       pinnedList: pinnedSlugs.map(slug => bySlug.get(slug)).filter(Boolean) as Automation[],
       restList: (automations.data ?? []).filter(a => !pinnedSlugs.includes(a.slug)),
     };
-  }, [(automations.data ?? []), pinned]);
+  }, [(automations.data ?? []), pinned, isRoot, me?.isAdmin]);
 
   const renderDashboard = () => {
     if (selected === "zoho-sent-analyzer") return <ZohoEstimates />;
@@ -136,13 +139,14 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "wa-engine-monitor") return <WaEngineDashboard />;
     if (selected === "whatsapp-marketing") return <WhatsAppMarketingDashboard />;
     if (selected === "neodove-telecaller-report") return <NeodoveTelecallerDashboard />;
-    if (selected === "telecalling") return <TelecallingDashboard />;
+    if (selected === "sales") return <SalesWorkspace />;
+    // Absorbed into the Sales workspace — old links land on the unified view.
+    if (selected === "telecalling" || selected === "enquiry-tracker" || selected === "master-data") return <SalesWorkspace />;
     if (selected === "accounts") return <AccountsDashboard />;
     if (selected === "debtors-tracker" || selected === "payment-tracker") return <DebtorsTrackerDashboard />;
     if (selected === "digital-marketing") return <DigitalMarketingDashboard />;
     if (selected === "human-resources") return <HumanResourcesDashboard onNavigate={onNavigate} />;
     if (selected === "whatsapp-autopilot") return <AutopilotDashboard />;
-    if (selected === "enquiry-tracker") return <EnquiryTracker />;
     if (selected === "enquiry-procurement") return <ProcurementQueue />;
     if (selected === "enquiry-management") return <ManagementReview />;
     if (selected === "crm") return <CrmDashboard />;
@@ -152,7 +156,6 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "linkedin") return <LinkedinDashboard />;
     if (selected === "ai-usage") return <AiUsageDashboard />;
     if (selected === "reporting-sheet") return <ReportingSheetView />;
-    if (selected === "master-data") return <MasterDataView />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;

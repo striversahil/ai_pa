@@ -17,11 +17,11 @@ import {
   Table2,
   Bot,
   PackageCheck,
-  ClipboardList,
   ClipboardCheck,
   Crown,
   Palette,
   Check,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 export type { ViewType } from "./nav";
@@ -34,9 +34,8 @@ const DASH_ICONS: Record<string, LucideIcon> = {
   "whatsapp-marketing": Megaphone,
   "whatsapp-autopilot": Bot,
   "sheet-analysis": Table2,
-  telecalling: PhoneCall,
+  sales: TrendingUp,
   crm: PackageCheck,
-  "enquiry-tracker": ClipboardList,
   "enquiry-procurement": ClipboardCheck,
   "enquiry-management": Crown,
   "telecalling-agent-analysis": Table2,

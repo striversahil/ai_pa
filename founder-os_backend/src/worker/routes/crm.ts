@@ -1,16 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// routes/crm.ts — dispatch floor API (schedule → dispatch → source deletion).
+// routes/crm.ts — dispatch floor + unified Sales → Dispatch API.
 //
 // Thin orchestrators only: validation + state transitions live in
 // src/modules/crm/scheduling.ts, persistence in src/modules/crm/store.ts.
 //
 // Authz (founder decision):
-//   READ   — `crm` or `dispatch` scope (MIS/root always)
-//   WRITE  — `dispatch` scope only (MIS/root always) — scheduling, rescheduling
-//            and dispatching are the floor's job, not the desk reader's.
+//   READ    — `crm` / `dispatch` (the desk) + `telecalling` (the sales team, via
+//             the unified Sales workspace) + MIS/root/sales-head.
+//   FLOOR   — schedule/reschedule/dispatch/addresses/confirm: `dispatch` scope
+//             only (MIS/root always). Dispatching is the floor's job.
+//   PROMISE — tentative dates + delay reasons: the floor AND sales agents, but
+//             an agent may only touch orders in their OWN region (server-enforced
+//             from the session, never from a client-supplied region).
+//
+// Region scoping: every read applies `region` server-side. Root/MIS/sales-head
+// see all regions (and an explicit chip filter); an agent is hard-locked to the
+// region on their Telecaller roster row. No roster row ⇒ no orders.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, getMe, isApproved, readSessionCookie, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
+import { authStore, deps, getMe, isApproved, readSessionCookie, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
 import {
   CrmError,
   confirmSourceDeletion,
@@ -18,58 +26,140 @@ import {
   dispatchSummary,
   getOrder,
   listOrders,
+  orderRegion,
   rescheduleOrder,
   scheduleOrder,
   updateAddresses,
 } from '../../modules/crm/store';
 import { normalizeView } from '../../modules/crm/types';
+import { normalizeRegionFilter } from '../../modules/crm/region';
+import { resolveRosterMatch } from '../../modules/telecalling/self';
 
 interface Viewer {
+  id: string;
   scopes: string[];
   roles: string[];
   isAdmin: boolean;
   name: string;
+  /** Telecaller roster row of the signed-in user (agents only). */
+  staffId: string | null;
+  /** Roster region (R1–R4; '' = not mapped). Managers keep ''. */
+  region: string;
+  /** Full-floor authority + all-region visibility: root/MIS/sales-head/crm/dispatch. */
+  isManager: boolean;
+  /** May set tentative dates/delay reasons (floor + sales agents). */
+  canPromise: boolean;
+  /** May execute floor transitions (schedule/dispatch/addresses/removal). */
+  canWriteFloor: boolean;
 }
+
+const lower = (v: unknown) => String(v ?? '').toLowerCase();
 
 async function viewer(c: any): Promise<Viewer | null> {
   try {
     const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
     if (!me || !isApproved(me)) return null;
+    const scopes = (Array.isArray(me.scopes) ? me.scopes : []).map(lower);
+    const roles = (Array.isArray(me.roles) ? me.roles : []).map(lower);
+    const isAdmin = !!me.isAdmin || !!me.isRoot;
+    const isManager =
+      isAdmin ||
+      scopes.includes('mis') ||
+      scopes.includes('sales-head') ||
+      roles.includes('sales-head') ||
+      scopes.includes('crm') ||
+      scopes.includes('dispatch');
+    const canWriteFloor = isAdmin || scopes.includes('dispatch') || scopes.includes('mis');
+    const canPromise = canWriteFloor || scopes.includes('telecalling') || scopes.includes('sales-head') || roles.includes('sales-head');
+
+    let staffId: string | null = null;
+    let region = '';
+    if (!isManager) {
+      // Sales agent identity = the roster row matched to the session. The
+      // region comes from the SERVER row, never from the request.
+      const { prisma } = deps();
+      const tcs = (await prisma.telecaller.findMany({ where: { deleted: false } })) as any[];
+      const hit = resolveRosterMatch(tcs, me);
+      if (hit) {
+        staffId = String((hit as any).id ?? '') || null;
+        region = String((hit as any).region ?? '').trim();
+      }
+    }
+
     return {
-      scopes: Array.isArray(me.scopes) ? me.scopes : [],
-      roles: Array.isArray(me.roles) ? me.roles : [],
-      isAdmin: !!me.isAdmin || !!me.isRoot,
-      // getMe() returns { user, scopes, roles, isAdmin } — the name lives on
-      // `user`. Reading `me.name` silently recorded an empty actor on every
-      // schedule/dispatch in the audit trail.
+      id: String(me.user?.id ?? ''),
+      scopes,
+      roles,
+      isAdmin,
       name: String(me.user?.name || me.user?.email || ''),
+      staffId,
+      region,
+      isManager,
+      canPromise,
+      canWriteFloor,
     };
   } catch {
     return null;
   }
 }
 
-/** MIS scope wins outright; otherwise fall back to the session scopes. */
+function denial(c: any, message: string, status = 403) {
+  return c.json({ error: message }, status as any);
+}
+
+/** Read access: the dispatch desk, sales agents, and sales leadership. */
 async function requireRead(c: any): Promise<Viewer | Response> {
   try {
+    // `mis` scope grants everything — fast, explicit path.
     await requireMisScope(c);
-    const v = await viewer(c);
-    return v || { scopes: [], roles: [], isAdmin: true, name: 'MIS' };
   } catch (e) {
     const v = await viewer(c);
     if (!v) return misScopeError(c, e);
-    const allowed = v.isAdmin || v.scopes.includes('crm') || v.scopes.includes('dispatch') || v.scopes.includes('mis');
-    if (!allowed) return c.json({ error: 'CRM read access required (crm or dispatch scope).' }, 403);
+    if (!v.isManager && !v.scopes.includes('telecalling')) {
+      return denial(c, 'CRM read access required (crm, dispatch or telecalling scope).');
+    }
     return v;
   }
+  // MIS passed — still return the full viewer so region chips + write flags work.
+  const v = await viewer(c);
+  return v || {
+    id: '', scopes: ['mis'], roles: [], isAdmin: true, name: 'MIS',
+    staffId: null, region: '', isManager: true, canPromise: true, canWriteFloor: true,
+  };
 }
 
-/** Scheduling and dispatch require the `dispatch` scope (or MIS/root). */
+/** Floor transitions require the `dispatch` scope (or MIS/root). */
 async function requireDispatchWrite(c: any): Promise<Viewer | Response> {
   const v = await viewer(c);
   if (!v) return c.json({ error: 'Sign-in required.' }, 401);
-  if (v.isAdmin || v.scopes.includes('dispatch') || v.scopes.includes('mis')) return v;
-  return c.json({ error: 'Dispatch access required — ask root for the dispatch scope.' }, 403);
+  if (v.canWriteFloor) return v;
+  return denial(c, 'Dispatch access required — ask root for the dispatch scope.');
+}
+
+/** Promise dates: floor OR sales agent (own region, enforced by the caller). */
+async function requirePromiseWrite(c: any): Promise<Viewer | Response> {
+  const v = await viewer(c);
+  if (!v) return c.json({ error: 'Sign-in required.' }, 401);
+  if (v.canPromise) return v;
+  return denial(c, 'Sales or dispatch access required to set dispatch dates.');
+}
+
+/** The region a read actually applies. `__none__` matches nothing — an agent
+ *  with no roster region must never fall back to another region's orders. */
+function scopedRegion(c: any, v: Viewer): string {
+  if (v.isManager) return normalizeRegionFilter(c.req.query('region'));
+  return v.region || '__none__';
+}
+
+function viewerMeta(v: Viewer) {
+  return {
+    staffId: v.staffId,
+    name: v.name,
+    region: v.region,
+    isManager: v.isManager,
+    canWrite: v.canWriteFloor,
+    canPromise: v.canPromise,
+  };
 }
 
 function fail(c: any, e: unknown) {
@@ -85,20 +175,30 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const view = normalizeView(c.req.query('view'));
     const q = String(c.req.query('q') || '');
     const limit = Number(c.req.query('limit') || 500);
+    const region = scopedRegion(c, v);
     try {
-      const orders = await listOrders({ view, q, limit });
-      return c.json({ view, orders, count: orders.length });
+      const orders = await listOrders({ view, q, limit, region });
+      return c.json({ view, orders, count: orders.length, region, viewer: viewerMeta(v) });
     } catch (e) {
       return fail(c, e);
     }
   });
 
-  // ── Headline counters (tab badges) ──────────────────────────────────────────
+  // ── Headline counters (tab badges + region chips) ───────────────────────────
   app.get('/api/crm/summary', async (c) => {
     const v = await requireRead(c);
     if (v instanceof Response) return v;
+    const region = scopedRegion(c, v);
     try {
-      return c.json({ counts: await dispatchSummary() });
+      const counts = await dispatchSummary(undefined, region);
+      // The region facet feeds the manager chips. An agent is locked to one
+      // region (or none at all), so exposing every region's pipeline here would
+      // leak the rest of the company's order book — keep only their own slice.
+      if (!v.isManager) {
+        const own = v.region || '';
+        counts.regions = own && counts.regions?.[own] ? { [own]: counts.regions[own] } : {};
+      }
+      return c.json({ counts, region, viewer: viewerMeta(v) });
     } catch (e) {
       return fail(c, e);
     }
@@ -111,13 +211,17 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     try {
       const order = await getOrder(c.req.param('id'));
       if (!order) return c.json({ error: 'Sales order not found.' }, 404);
-      return c.json({ order });
+      // Agents may only open their OWN region's orders (never another region's).
+      if (!v.isManager && String(order.region ?? '') !== v.region) {
+        return c.json({ error: 'Sales order not found.' }, 404);
+      }
+      return c.json({ order, viewer: viewerMeta(v) });
     } catch (e) {
       return fail(c, e);
     }
   });
 
-  // ── Schedule / partially schedule ───────────────────────────────────────────
+  // ── Schedule / partially schedule (floor) ───────────────────────────────────
   app.post('/api/crm/orders/:id/schedule', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
@@ -135,6 +239,43 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
         actor: v.name,
       });
       notifyLive(c, { type: 'crm', action: 'scheduled', so: res.order?.soNumber });
+      return c.json({ ok: true, lifecycle: res.lifecycle, order: res.order });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Promise dates (sales agent or floor; own region only) ───────────────────
+  // Same lifecycle as a schedule: dates move an item to `scheduled`, an undated
+  // selection records the delay reason. The ONLY extra rule is the region gate.
+  app.patch('/api/crm/orders/:id/promise', async (c) => {
+    const v = await requirePromiseWrite(c);
+    if (v instanceof Response) return v;
+    const idOrSo = c.req.param('id');
+    try {
+      if (!v.isManager) {
+        if (!v.region) {
+          return denial(c, 'No sales region is mapped to your login — ask the sales-head to map you on the roster.');
+        }
+        const region = await orderRegion(idOrSo);
+        if (region === null) return c.json({ error: 'Sales order not found.' }, 404);
+        if (region !== v.region) {
+          return denial(c, 'This sales order belongs to another region.');
+        }
+      }
+      const body = await c.req.json().catch(() => ({}));
+      const entries = Array.isArray(body?.items) ? body.items : [];
+      const res = await scheduleOrder({
+        idOrSo,
+        entries: entries.map((e: any) => ({
+          itemId: String(e?.itemId ?? e?.id ?? ''),
+          date: e?.date === undefined || e?.date === null || e?.date === '' ? null : String(e.date),
+          reason: e?.reason === undefined || e?.reason === null ? null : String(e.reason),
+        })),
+        soReason: body?.soReason ? String(body.soReason) : null,
+        actor: v.name,
+      });
+      notifyLive(c, { type: 'crm', action: 'promised', so: res.order?.soNumber, region: v.region });
       return c.json({ ok: true, lifecycle: res.lifecycle, order: res.order });
     } catch (e) {
       return fail(c, e);

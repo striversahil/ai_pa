@@ -21,6 +21,10 @@ export const VIEW_SCOPE: Record<string, string> = {
   "whatsapp-marketing": "whatsapp-marketing",
   "sheet-analysis": "sheet-analysis",
   "telecalling": "telecalling",
+  // Unified Sales workspace (leaderboard + enquiries + customer master +
+  // dispatch). The automation carries the `telecalling` scope — the separate
+  // `sales` scope key is the agent-identity grant, not a dashboard grant.
+  "sales": "telecalling",
   "debtors-tracker": "debtors-tracker",
   "payment-tracker": "debtors-tracker", // legacy slug alias
   "whatsapp-autopilot": "autopilot",

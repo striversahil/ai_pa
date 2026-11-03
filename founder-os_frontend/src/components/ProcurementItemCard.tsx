@@ -5,6 +5,7 @@ import ItemRateForm from "@/components/ItemRateForm";
 import FlagThread from "@/components/FlagThread";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { historyDateChip } from "@/types";
+import { isOpenSpecFlag } from "@/enquiry/queue";
 import { filesToUploadedMedia, dragHasFiles } from "@/lib/imageFiles";
 
 interface ProcurementItemCardProps {
@@ -58,7 +59,9 @@ export default function ProcurementItemCard({
   };
 
   const rates = item.rates ?? [];
-  const flagged = !!item.specIssue;
+  // Hold banner/chip follow the OPEN flag only — a resolved flag is audit
+  // trail (text stays in the thread), never a hold.
+  const flagged = isOpenSpecFlag(item);
   const alternateRequested = !!String((item as any)?.variationRequest ?? "").trim();
   const locked = item.finalRate !== undefined && item.finalRate !== null;
   const media = item.media ?? [];

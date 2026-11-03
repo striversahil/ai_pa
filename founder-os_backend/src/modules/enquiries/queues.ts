@@ -207,15 +207,17 @@ export function ratesCoverage(e: Pick<Enquiry, "items">): { total: number; rated
 
 /** Needs action: the actionable subset of open threads — someone must move:
  *  spec fix (sales), pending ask (procurement must answer), or not-available
- *  request (management must approve). Mirrors frontend queue.ts. */
+ *  request (management must approve). A RESOLVED flag is audit trail, never
+ *  action — mirrors frontend queue.ts. */
 export function needsActionThread(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => !!it?.specIssue || hasPendingProcurementThread({ items: [it] } as any) || !!String((it as any)?.notAvailableRequested ?? "").trim());
+  return ((e as any).items ?? []).some((it: any) => isOpenSpecFlag(it) || hasPendingProcurementThread({ items: [it] } as any) || !!String((it as any)?.notAvailableRequested ?? "").trim());
 }
 
-/** Open thread from either side: survives concluded/zoho filters until resolved (bilateral). */
+/** Open thread from either side: survives concluded/zoho filters until resolved (bilateral).
+ *  Resolved flag text lingers (audit) but is NOT open — mirrors frontend. */
 export function hasOpenThread(e: Pick<Enquiry, "items">): boolean {
   return ((e as any).items ?? []).some((it: any) =>
-    !!it?.specIssue ||
+    isOpenSpecFlag(it) ||
     !!String(it?.variationRequest ?? "").trim() ||
     !!String(it?.notAvailableRequested ?? "").trim() ||
     !!String(it?.ratesRequested ?? "").trim() ||

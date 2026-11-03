@@ -10,7 +10,6 @@ import type { AutomationDefinition, AutomationModule } from './types';
 import { AutomationEngine } from './engine';
 
 import * as dataRetention from '../../automations/data-retention';
-import * as enquiryTracker from '../../automations/enquiry-tracker';
 import * as dppPricesDashboard from '../../automations/dpp-prices-dashboard';
 import * as morningQueueDrain from '../../automations/morning-queue-drain';
 import * as neodoveTelecallerReport from '../../automations/neodove-telecaller-report';
@@ -38,7 +37,6 @@ import * as reportingSheet from '../../automations/reporting-sheet';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
-  'enquiry-tracker': enquiryTracker as AutomationModule,
   'dpp-prices-dashboard': dppPricesDashboard as AutomationModule,
   'morning-queue-drain': morningQueueDrain as AutomationModule,
   'neodove-telecaller-report': neodoveTelecallerReport as AutomationModule,
@@ -68,9 +66,6 @@ const MODULES: Record<string, AutomationModule> = {
 const RULES: Record<string, Partial<AutomationDefinition>> = {
   'data-retention': {
     id: 'data-retention', name: 'Data Retention Cleanup', description: 'Daily at 3:00 AM, delete WhatsApp messages older than 90 days.', type: 'handler', trigger: { type: 'schedule', cron: '0 3 * * *' }, enabled: true,
-  },
-  'enquiry-tracker': {
-    id: 'enquiry-tracker', name: 'Sales Enquiries', description: 'Live sales pipeline: daily enquiries + threaded comments, persisted and pushed to open dashboards.', type: 'handler', trigger: { type: 'manual' }, scope: 'enquiry-tracker', enabled: true,
   },
   'enquiry-procurement': {
     id: 'enquiry-procurement', name: 'Sourcing Queue (Pre-Sale Vendor Rates)', description: 'Pending-only vendor-rate queue: items awaiting rates, client PII hidden. No daily pipeline — just what needs rates now.', type: 'handler', trigger: { type: 'manual' }, scope: 'procurement', enabled: true,
@@ -125,6 +120,12 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'telecalling': {
     id: 'telecalling', name: 'Sales Leaderboard', description: 'Region-based sales leaderboard: R1-R4 ownership, NeoDove call KPIs, 20/80 close-credit split (generator automatic / 80% closer pick), conversion target and risk model.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'telecalling', enabled: true,
+  },
+  'sales': {
+    // Unified sales workspace: mounts the leaderboard / enquiries / customer
+    // master panels plus the region-owned dispatch view. No module of its own —
+    // the panels call their existing APIs.
+    id: 'sales', name: 'Sales', description: 'Unified sales workspace — leaderboard, enquiries, customer master and region-owned dispatch under one roof.', type: 'handler', trigger: { type: 'manual' }, scope: 'telecalling', enabled: true,
   },
   'accounts': {
     id: 'accounts', name: 'Accounts', description: 'Recurring accounts taskbar: daily/monthly/yearly compliance tasks with senior/junior logging, remarks, and MIS controller.', type: 'handler', trigger: { type: 'schedule', cron: '30 3 * * *' }, scope: 'accounts', enabled: true,

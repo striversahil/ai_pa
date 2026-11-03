@@ -22,8 +22,16 @@ export const VIEWS = [
   "dispatched",
   "source-deleted",
   "all",
+  // Unified Sales → Dispatch buckets (region-owned view).
+  "incomplete",
+  "completed",
 ] as const;
 export type View = (typeof VIEWS)[number];
+
+/** The sales-facing split: still owed vs paid in full. Cancelled and
+ *  source-deleted orders belong to neither. */
+export const SALES_BUCKETS = ["incomplete", "completed"] as const;
+export type SalesBucket = (typeof SALES_BUCKETS)[number];
 
 export interface CrmItem {
   id: string;
@@ -75,6 +83,9 @@ export interface CrmOrder {
   salesperson: string;
   /** Zoho reference — in practice the EST number (EST-024014). */
   referenceNumber: string;
+  /** Sales region owning this order (R1–R4; '' = unmapped). Derived from the
+   *  estimate behind `referenceNumber` on every sync tick. */
+  region: string;
   /** From the Zoho detail call; empty until the detail pass reaches the order. */
   billingAddress: string;
   shippingAddress: string;
@@ -115,6 +126,26 @@ export interface CrmSummary {
   tabUnscheduled: number;
   tabScheduled: number;
   tabDispatched: number;
+  /** Unified Sales → Dispatch buckets (after the viewer's region filter). */
+  incomplete?: number;
+  completed?: number;
+  /** Per-region facet counts — always global, never narrowed by the filter.
+   *  Key '' = unmapped. */
+  regions?: Record<string, { incomplete: number; completed: number; total: number }>;
+}
+
+/** Server-resolved viewer contract for the Sales → Dispatch panel. */
+export interface CrmViewerMeta {
+  staffId: string | null;
+  name: string;
+  /** Roster region ('' = not mapped). Managers get ''. */
+  region: string;
+  /** Root/MIS/sales-head/crm/dispatch — sees every region. */
+  isManager: boolean;
+  /** Floor transitions (schedule/dispatch/addresses/removal). */
+  canWrite: boolean;
+  /** Tentative dates + delay reasons (floor + sales agents, own region). */
+  canPromise: boolean;
 }
 
 export const VIEW_LABELS: Record<View, string> = {
@@ -124,6 +155,8 @@ export const VIEW_LABELS: Record<View, string> = {
   dispatched: "Dispatched",
   "source-deleted": "Source Deleted",
   all: "All SOs",
+  incomplete: "Incomplete",
+  completed: "Completed",
 };
 
 /** Colour identity per lifecycle — the floor must be readable at a glance. */

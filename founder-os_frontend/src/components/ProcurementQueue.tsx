@@ -58,7 +58,7 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
   // a quoted-but-flagged item misreads as "Needs rates".
   const loopItems = items.filter((it) => !it.rateAvailable && !(it as any).notAvailable && !(it as any).notAvailableRequested && !it.internalRates);
   const flagged = loopItems.filter((it) => isOpenSpecFlag(it)).length;
-  const requested = loopItems.filter((it) => it.ratesRequested && !it.specIssue).length;
+  const requested = loopItems.filter((it) => it.ratesRequested && !isOpenSpecFlag(it)).length;
   const alternates = items.filter((it) => String((it as any)?.variationRequest ?? "").trim()).length;
   if (alternates > 0) {
     return (

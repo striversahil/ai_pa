@@ -20,8 +20,9 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   // Open sent-revision: the row loops again (not terminal) — chip reads revision, not sent.
   const revising = !!String((enq as any)?.sentRevisionAt ?? '').trim();
   const sent = !revising && ((enq.rateStatus ?? "") === "sent" || isZohoSent);
-  // Rate available / not available overrides the hold — kept hidden in D1 (update.ts:239), UI must not show Fix Spec for it; sent is terminal (even flagged rows show Marked as Sent)
-  const flagged = items.some((it) => it.specIssue && !it.rateAvailable && !(it as any).notAvailable && !(it as any).internalRates);
+  // Rate available / not available overrides the hold — kept hidden in D1 (update.ts:239), UI must not show Fix Spec for it; sent is terminal (even flagged rows show Marked as Sent).
+  // Resolved flags are audit trail only — the chip follows the OPEN flag.
+  const flagged = items.some((it) => it.specIssue && !(it as any).threadResolved && !it.rateAvailable && !(it as any).notAvailable && !(it as any).internalRates);
   const notAvailable = items.some((it) => (it as any).notAvailable);
   const hasPartialRates = !finalized && !sent && items.some((it) => it.finalRate !== undefined && it.finalRate !== null);
   // Overdue: not sent and older than 24h → chip in red (card stays neutral)

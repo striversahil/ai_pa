@@ -82,6 +82,10 @@ export default function CrmDashboard() {
       dispatched: counts?.tabDispatched ?? 0,
       "source-deleted": counts?.deletedSource ?? 0,
       all: counts?.total ?? 0,
+      // Unified Sales buckets are not tabs here, but the View-keyed map stays
+      // exhaustive so adding a view can never silently drop a badge.
+      incomplete: counts?.incomplete ?? 0,
+      completed: counts?.completed ?? 0,
     }),
     [counts],
   );

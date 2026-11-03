@@ -74,6 +74,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   PaymentReminder: [],
   DebtorsExportEvent: [],
   PaymentCustomerRemark: ['deleted'],
+  ManualCallLog: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -139,6 +140,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   PaymentReminder: ['createdAt'],
   DebtorsExportEvent: ['createdAt'],
   PaymentCustomerRemark: ['createdAt', 'deletedAt'],
+  ManualCallLog: ['createdAt', 'updatedAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -227,6 +229,7 @@ const ID_FIELDS: Record<string, string> = {
   PaymentReminder: 'id',
   DebtorsExportEvent: 'id',
   PaymentCustomerRemark: 'id',
+  ManualCallLog: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -246,6 +249,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   HumanResourcesPositionDoc: ['kvKey'],
   ProductItem: ['name'],
   Vendor: ['name'],
+  ManualCallLog: ['telecallerId', 'day'],
 };
 
 const FLOAT_FIELDS: Record<string, string[]> = {
@@ -956,8 +960,9 @@ export class D1PrismaClient {
   get paymentReminder() { return this.model('PaymentReminder'); }
   // Dated CRM remark log (migration 0085) — append-only history.
   get paymentCustomerRemark() { return this.model('PaymentCustomerRemark'); }
-  // Receivables CSV export log (migration 0084) — global "Count" column.
   get debtorsExportEvent() { return this.model('DebtorsExportEvent'); }
+  // Manual connected-call log (TEMPORARY migration 0102).
+  get manualCallLog() { return this.model('ManualCallLog'); }
 
   $on() {}
   $disconnect() {}

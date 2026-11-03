@@ -21,7 +21,14 @@ import {
   type RescheduleEntry,
   type ScheduleEntry,
 } from './scheduling';
-import { orderFlags, orderMatchesView, type ViewOrder } from './queues';
+import { orderFlags, orderMatchesView, salesBucket, type ViewOrder } from './queues';
+import {
+  buildEstimateRegionIndex,
+  normalizeRegionFilter,
+  regionMatches,
+  resolveOrderRegion,
+  type EstimateRegionIndex,
+} from './region';
 import {
   CANCELLED_STATUSES,
   istToday,
@@ -89,6 +96,7 @@ export function toOrderView(row: any, items: CrmItemRow[]): CrmOrderRow {
     status: str(row?.status),
     salesperson: str(row?.salesperson),
     referenceNumber: str(row?.referenceNumber),
+    region: str(row?.region),
     billingAddress: str(row?.billingAddress),
     shippingAddress: str(row?.shippingAddress),
     billingAddressEditedAt: iso(row?.billingAddressEditedAt),
@@ -140,6 +148,8 @@ export interface ListArgs {
   q?: string;
   today?: string;
   limit?: number;
+  /** 'all' (default) | region id | 'unmapped'. */
+  region?: string;
 }
 
 /**
@@ -163,8 +173,10 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   const orders = rows.map((r) => withFlags(toOrderView(r, itemsBySo.get(str(r.id)) || []), today));
 
   const q = str(args.q).trim().toLowerCase();
+  const region = normalizeRegionFilter(args.region);
   const filtered = orders.filter((o) => {
     if (o.sourceState === 'deleted_source' && view !== 'source-deleted') return false;
+    if (!regionMatches(o.region, region)) return false;
     if (!matchesView(o, view, today)) return false;
     if (!q) return true;
     return (
@@ -195,6 +207,16 @@ function matchesView(o: CrmOrderRow, view: View, today: string): boolean {
   // queues.ts is the single source of truth — the frontend mirror asserts
   // parity in scripts/guards/crm-lifecycle.test.mjs.
   return orderMatchesView(o as ViewOrder, view, today);
+}
+
+/** Region of one order — the authz check for an agent's promise-date write.
+ *  Cheap single-column read; null when the order does not exist. */
+export async function orderRegion(idOrSo: string): Promise<string | null> {
+  const row: any =
+    (await prisma.crmSalesOrder.findFirst({ where: { id: idOrSo }, select: { region: true } })) ||
+    (await prisma.crmSalesOrder.findFirst({ where: { soNumber: idOrSo }, select: { region: true } }));
+  if (!row) return null;
+  return str(row.region);
 }
 
 /** Full order (with items + audit trail) by row id or SO number. */
@@ -819,6 +841,29 @@ function lineKeyFor(li: any, index: number): string {
   return `L${index}`;
 }
 
+/** One batched estimate read per sync tick: referenceNumber → region. Chunked
+ *  because D1 caps bound parameters per statement. */
+const REGION_LOOKUP_BATCH = 40;
+async function loadEstimateRegionIndex(refs: string[]): Promise<EstimateRegionIndex> {
+  const unique = [...new Set(refs.map((r) => str(r).trim()).filter(Boolean))];
+  if (!unique.length) return new Map();
+  const rows: any[] = [];
+  for (let i = 0; i < unique.length; i += REGION_LOOKUP_BATCH) {
+    const chunk = unique.slice(i, i + REGION_LOOKUP_BATCH);
+    try {
+      const found = await prisma.estimate.findMany({
+        where: { estimateNumber: { in: chunk } },
+        select: { estimateNumber: true, organizationId: true, region: true, date: true, lastSyncTime: true },
+      });
+      rows.push(...((found as any[]) || []));
+    } catch (e: any) {
+      // Region is a view-layer split — a lookup fault must never fail the tick.
+      logger.warn({ err: e?.message }, 'crm sync: estimate region lookup failed');
+    }
+  }
+  return buildEstimateRegionIndex(rows);
+}
+
 /**
  * Upsert one tick of Zoho rows into D1.
  *
@@ -843,6 +888,7 @@ export async function syncOrders(args: {
   const existingRows = (await prisma.crmSalesOrder.findMany({ take: 4000 })) as any[];
   const byKey = new Map<string, any>();
   for (const r of existingRows) byKey.set(soKey(str(r.org), str(r.soNumber)), r);
+  const regionIndex = await loadEstimateRegionIndex(orders.map((o) => str(o.ref)));
 
   const result: SyncResult = {
     created: 0,
@@ -926,6 +972,7 @@ export async function syncOrders(args: {
         status: str(o.status).toLowerCase() || 'open',
         salesperson: str(o.salesperson),
         referenceNumber: str(o.ref).slice(0, 120),
+        region: resolveOrderRegion(regionIndex, o.ref, org),
         billingAddress: str(o.billingAddress).slice(0, 600),
         shippingAddress: str(o.shippingAddress).slice(0, 600),
         paymentTerms: str(o.paymentTerms).slice(0, 120),
@@ -979,7 +1026,12 @@ export async function syncOrders(args: {
     if (payTerms && payTerms !== str(existing.paymentTerms)) payPatch.paymentTerms = payTerms;
     const addrChanged = Object.entries(addrPatch).some(([k, v]) => str((existing as any)[k]) !== v);
     const payChanged = Object.entries(payPatch).some(([k, v]) => str((existing as any)[k]) !== v);
-    if (str(existing.fingerprint) === fp && !healedNow && !addrChanged && !payChanged) {
+    // Region is DERIVED: re-resolve every tick so a Controller re-home (which
+    // rewrites Estimate.region) lands here without any extra wiring.
+    const nextRef = str(o.ref).slice(0, 120) || str(existing.referenceNumber);
+    const nextRegion = resolveOrderRegion(regionIndex, nextRef, org);
+    const regionChanged = str(existing.region) !== nextRegion;
+    if (str(existing.fingerprint) === fp && !healedNow && !addrChanged && !payChanged && !regionChanged) {
       result.unchanged++;
       if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
       continue;
@@ -999,7 +1051,8 @@ export async function syncOrders(args: {
         paidStatus: str(o.paidStatus).toLowerCase(),
         status: str(o.status).toLowerCase() || str(existing.status),
         salesperson: str(o.salesperson) || str(existing.salesperson),
-        referenceNumber: str(o.ref).slice(0, 120) || str(existing.referenceNumber),
+        referenceNumber: nextRef,
+        region: nextRegion,
         ...addrPatch,
         ...payPatch,
         createdDate: createdDate || str(existing.createdDate),
@@ -1156,7 +1209,7 @@ export async function syncOrders(args: {
 const ORDER_COLS = [
   'id', 'org', 'soNumber', 'zohoId', 'customerName', 'customerId', 'value', 'currency',
   'orderStatus', 'invoicedStatus', 'shippedStatus', 'paidStatus', 'status', 'salesperson',
-  'referenceNumber', 'billingAddress', 'shippingAddress', 'createdDate', 'lifecycle', 'sourceState', 'soDelayReason',
+  'referenceNumber', 'region', 'billingAddress', 'shippingAddress', 'createdDate', 'lifecycle', 'sourceState', 'soDelayReason',
   'fingerprint', 'missCount', 'firstSeenAt', 'lastSeenAt', 'deletedDetectedAt',
   'createdAt', 'updatedAt',
 ] as const;
@@ -1351,11 +1404,19 @@ async function recomputeLifecyclesById(ids: string[]): Promise<void> {
   }
 }
 
-/** Dashboard headline counters (cheap — the floor is open orders only). */
-export async function dispatchSummary(today = istToday()): Promise<Record<string, number>> {
+/** Dashboard headline counters (cheap — the floor is open orders only).
+ *
+ *  `regionFilter` narrows the headline counters; `regions` always carries the
+ *  per-region incomplete/completed split so the Sales → Dispatch chips can show
+ *  every region's workload in one pass. */
+export async function dispatchSummary(
+  today = istToday(),
+  regionFilter: unknown = 'all',
+): Promise<Record<string, any>> {
   const rows = (await prisma.crmSalesOrder.findMany({ take: 4000 })) as any[];
   const itemsBySo = await itemsForOrders(rows.map((r) => str(r.id)));
-  const counts: Record<string, number> = {
+  const region = normalizeRegionFilter(regionFilter);
+  const counts: Record<string, any> = {
     total: 0,
     unscheduled: 0,
     partiallyScheduled: 0,
@@ -1366,14 +1427,38 @@ export async function dispatchSummary(today = istToday()): Promise<Record<string
     deletedSource: 0,
     floorToday: 0,
     overdue: 0,
+    // Unified Sales → Dispatch buckets.
+    incomplete: 0,
+    completed: 0,
     // Tab totals — item-level membership (an order can sit in several tabs),
     // so the badges always equal what the list actually renders.
     tabUnscheduled: 0,
     tabScheduled: 0,
     tabDispatched: 0,
   };
+  const regions: Record<string, { incomplete: number; completed: number; total: number }> = {};
+  const bucketOf = (r: any, items: any[]) => {
+    const shape = {
+      lifecycle: str(r.lifecycle),
+      sourceState: str(r.sourceState) === 'deleted_source' ? 'deleted_source' : 'active',
+      items,
+      status: str(r.status),
+      orderStatus: str(r.orderStatus),
+      paidStatus: str(r.paidStatus),
+    } as unknown as ViewOrder;
+    return salesBucket(shape);
+  };
   for (const r of rows) {
     const items = itemsBySo.get(str(r.id)) || [];
+    const bucket = bucketOf(r, items);
+    // Region facet counts are global (never narrowed by the viewer's filter).
+    if (bucket) {
+      const key = str(r.region) || '';
+      const slot = (regions[key] ||= { incomplete: 0, completed: 0, total: 0 });
+      slot[bucket]++;
+      slot.total++;
+    }
+    if (!regionMatches(str(r.region), region)) continue;
     if (str(r.sourceState) === 'deleted_source') {
       counts.deletedSource++;
       continue;
@@ -1386,6 +1471,7 @@ export async function dispatchSummary(today = istToday()): Promise<Record<string
     else if (lifecycle === 'partially_dispatched') counts.partiallyDispatched++;
     else if (lifecycle === 'dispatched') counts.dispatched++;
     else if (lifecycle === 'cancelled') counts.cancelled++;
+    if (bucket) counts[bucket]++;
     if (lifecycle !== 'cancelled') {
       if (items.some((it) => it.dispatchState === 'scheduled' && it.tentativeDispatchDate === today)) counts.floorToday++;
       if (items.some((it) => isOverdueItem(it as ItemLike, today))) counts.overdue++;
@@ -1395,5 +1481,6 @@ export async function dispatchSummary(today = istToday()): Promise<Record<string
     if (orderMatchesView(shape, 'scheduled', today)) counts.tabScheduled++;
     if (orderMatchesView(shape, 'dispatched', today)) counts.tabDispatched++;
   }
+  counts.regions = regions;
   return counts;
 }

@@ -201,15 +201,17 @@ export function ratesCoverage(e: Pick<Enquiry, "items">): { total: number; rated
   };
 }
 
-/** Open thread from either side: survives concluded/zoho filters until resolved (bilateral). Mirror backend queues.ts */
+/** Open thread from either side: survives concluded/zoho filters until resolved (bilateral). Mirror backend queues.ts.
+ *  Resolved flag text lingers (audit) but is NOT open. */
 export function hasOpenThread(e: Pick<Enquiry, "items">): boolean {
-  return (e.items ?? []).some((it: any) => !!it?.specIssue || !!String(it?.variationRequest ?? "").trim() || !!String((it as any)?.notAvailableRequested ?? "").trim() || !!String((it as any)?.ratesRequested ?? "").trim() || (Array.isArray(it?.thread) && it.thread.length > 0 && !it?.threadResolved));
+  return (e.items ?? []).some((it: any) => isOpenSpecFlag(it) || !!String(it?.variationRequest ?? "").trim() || !!String((it as any)?.notAvailableRequested ?? "").trim() || !!String((it as any)?.ratesRequested ?? "").trim() || (Array.isArray(it?.thread) && it.thread.length > 0 && !it?.threadResolved));
 }
 /** Needs action: the actionable subset of open threads — someone must move:
  *  spec fix (sales), pending ask (procurement must answer), or not-available
- *  request (management must approve). Mirror backend queues.ts. */
+ *  request (management must approve). A RESOLVED flag is audit trail, never
+ *  action. Mirror backend. */
 export function needsActionThread(e: Pick<Enquiry, "items">): boolean {
-  return (e.items ?? []).some((it: any) => !!it?.specIssue || hasPendingProcurementThread({ items: [it] } as any) || !!String((it as any)?.notAvailableRequested ?? "").trim());
+  return (e.items ?? []).some((it: any) => isOpenSpecFlag(it) || hasPendingProcurementThread({ items: [it] } as any) || !!String((it as any)?.notAvailableRequested ?? "").trim());
 }
 export function isOpenThreadEnquiry(e: Pick<Enquiry, "items">): boolean { return hasOpenThread(e); }
 /** Procurement needs to answer: only sales ask (variation/request/flag), not generic remark/fix. */

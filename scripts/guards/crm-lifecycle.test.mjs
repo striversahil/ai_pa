@@ -16,6 +16,7 @@ import { BACKEND_DIR, FRONTEND_SRC, bundleToFile } from './_bundle.mjs';
 const be = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'crm', 'scheduling.ts')));
 const fe = await import(bundleToFile(join(FRONTEND_SRC, 'crm', 'lifecycle.ts'), { alias: { '@': FRONTEND_SRC } }));
 const beTypes = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'crm', 'types.ts')));
+const feTypes = await import(bundleToFile(join(FRONTEND_SRC, 'crm', 'types.ts'), { alias: { '@': FRONTEND_SRC } }));
 const beQ = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'crm', 'queues.ts')));
 const feQ = await import(bundleToFile(join(FRONTEND_SRC, 'crm', 'queue.ts'), { alias: { '@': FRONTEND_SRC } }));
 
@@ -55,7 +56,7 @@ const ORDERS = [
   { status: 'open', orderStatus: 'closed' },
 ];
 
-const VIEWS = ['dispatch-floor', 'unscheduled', 'scheduled', 'dispatched', 'source-deleted', 'all'];
+const VIEWS = ['dispatch-floor', 'unscheduled', 'scheduled', 'dispatched', 'source-deleted', 'all', 'incomplete', 'completed'];
 const SOURCES = ['active', 'deleted_source'];
 
 const parse = (fn) => {
@@ -232,6 +233,59 @@ describe('crm lifecycle mirror', () => {
 
   it('REASON_MIN matches on both sides', () => {
     assert.equal(fe.REASON_MIN, beTypes.REASON_MIN);
+  });
+
+  it('view contract matches (unified Sales buckets included)', () => {
+    assert.deepEqual([...feTypes.VIEWS], [...beTypes.VIEWS]);
+    assert.deepEqual([...feTypes.SALES_BUCKETS], [...beTypes.SALES_BUCKETS]);
+  });
+
+  it('sales buckets split on the payment boundary, identically', () => {
+    // Zoho status combinations the floor actually receives. The split must be
+    // "still owed" vs "paid in full": closed-with-nothing-outstanding counts
+    // as completed, a partially-paid closed order does NOT.
+    const payments = [
+      { status: 'open', orderStatus: 'draft', paidStatus: '' },
+      { status: 'open', orderStatus: 'open', paidStatus: '' },
+      { status: 'open', orderStatus: 'invoiced', paidStatus: '' },
+      { status: 'open', orderStatus: 'invoiced', paidStatus: 'partially_paid' },
+      { status: 'open', orderStatus: 'closed', paidStatus: 'partially_paid' },
+      { status: 'open', orderStatus: 'closed', paidStatus: '' },
+      { status: 'open', orderStatus: 'closed', paidStatus: 'paid' },
+      { status: 'open', orderStatus: 'draft', paidStatus: 'paid' },
+      { status: 'cancelled', orderStatus: 'closed', paidStatus: 'paid' },
+      { status: 'void', orderStatus: 'closed', paidStatus: 'paid' },
+    ];
+    for (const payment of payments) {
+      for (const sourceState of SOURCES) {
+        const shape = {
+          lifecycle: payment.status === 'cancelled' ? 'cancelled' : 'dispatched',
+          sourceState,
+          items: ITEM_SETS.allDispatched,
+          ...payment,
+        };
+        const label = `${JSON.stringify(payment)}/${sourceState}`;
+        assert.equal(feQ.isPaymentComplete(shape), beQ.isPaymentComplete(shape), `isPaymentComplete ${label}`);
+        assert.equal(feQ.salesBucket(shape), beQ.salesBucket(shape), `salesBucket ${label}`);
+        for (const view of ['incomplete', 'completed']) {
+          assert.equal(
+            feQ.orderMatchesView(shape, view, TODAY),
+            beQ.orderMatchesView(shape, view, TODAY),
+            `orderMatchesView ${view} ${label}`,
+          );
+        }
+      }
+    }
+    // Cancelled/void/source-deleted belong to NEITHER bucket.
+    const gone = { lifecycle: 'cancelled', sourceState: 'active', items: ITEM_SETS.allUnscheduled, status: 'cancelled', orderStatus: '', paidStatus: '' };
+    const deleted = { lifecycle: 'dispatched', sourceState: 'deleted_source', items: ITEM_SETS.allDispatched, status: 'open', orderStatus: '', paidStatus: '' };
+    for (const shape of [gone, deleted]) {
+      for (const q of [beQ, feQ]) {
+        assert.equal(q.salesBucket(shape), null);
+        assert.equal(q.orderMatchesView(shape, 'incomplete', TODAY), false);
+        assert.equal(q.orderMatchesView(shape, 'completed', TODAY), false);
+      }
+    }
   });
 
   it('empty input is rejected identically, never thrown', () => {

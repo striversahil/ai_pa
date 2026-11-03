@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { parseMoneyInput, parseSignedMoneyInput, historyDateChip } from "@/types";
 import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
-import { itemHasUnreviewedQuotes } from "@/enquiry/queue";
+import { itemHasUnreviewedQuotes, isOpenSpecFlag } from "@/enquiry/queue";
 import FlagThread from "@/components/FlagThread";
 import ItemRateForm from "@/components/ItemRateForm";
 import Lightbox from "@/components/Lightbox";
@@ -93,8 +93,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         const k = (it.rates ?? []).findIndex((r) => r.vendor === it.selectedVendor);
         if (k >= 0) s[i] = k;
       }
-      // Auto-select when only one vendor rate exists — faster processing, no extra click
-      else if (!it.specIssue && !it.rateAvailable && (it.rates ?? []).length === 1) s[i] = 0;
+      // Auto-select when only one vendor rate exists — faster processing, no extra click.
+      // Resolved flags don't block (audit trail only).
+      else if (!isOpenSpecFlag(it) && !it.rateAvailable && (it.rates ?? []).length === 1) s[i] = 0;
       // Markup % was stored over discounted base; reverse with same base.
       const rate = (it.rates ?? []).find((r) => r.vendor === (it.selectedVendor ?? ""))?.rate;
       const disc = (it as any).finalDiscountPercent;
@@ -136,10 +137,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const revisingLocked = locked && Object.values(revise).some(Boolean);
   // Late-added items on a committed enquiry were never decided (no finalRate)
   // — they must stay editable + savable even while the rest of the row is
-  // locked. Without this the panel is a dead end: Save disabled, no Revise
-  // button on never-committed items (Enquiry No 5 case).
+  // locked. Resolved flags don't block (audit trail only).
   const hasUndecidedInLocked =
-    locked && items.some((it) => !it.specIssue && !it.rateAvailable && !(it as any).notAvailable && (it.finalRate === undefined || it.finalRate === null));
+    locked && items.some((it) => !isOpenSpecFlag(it) && !it.rateAvailable && !(it as any).notAvailable && (it.finalRate === undefined || it.finalRate === null));
   const canSaveLocked = revisingLocked || hasUndecidedInLocked;
 
   // Live auto-select single-rate items (procurement just added the only quote while the panel is open)
@@ -149,7 +149,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     let changed = false;
     items.forEach((it, i) => {
       if (sel[i] !== undefined || it.selectedVendor) return;
-      if (it.specIssue || it.rateAvailable || (it as any).notAvailable) return;
+      if (isOpenSpecFlag(it) || it.rateAvailable || (it as any).notAvailable) return;
       if ((it.rates ?? []).length === 1) {
         patch[i] = 0;
         changed = true;
@@ -159,7 +159,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   }, [items, locked, sel]);
   // Rate-available / not-available items skip the loop entirely: never shown, never touched,
   // never counted here (same rule as the pending queue predicate).
-  const actionableCount = items.filter((it) => !it.specIssue && !it.rateAvailable && !(it as any).notAvailable).length;
+  // Resolved flags count as actionable (audit trail only).
+  const actionableCount = items.filter((it) => !isOpenSpecFlag(it) && !it.rateAvailable && !(it as any).notAvailable).length;
 
   // Selected rate ROW for item i: explicit index first, else the stored
   // vendor name's first match (backwards compatible). Every consumer
@@ -546,7 +547,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
 
   const checkedIdx = items
     .map((it, i) => ({ it, i }))
-    .filter(({ it, i }) => checked[i] && !it.specIssue && !it.rateAvailable && !(it as any).notAvailable)
+    .filter(({ it, i }) => checked[i] && !isOpenSpecFlag(it) && !it.rateAvailable && !(it as any).notAvailable)
     .map(({ i }) => i);
 
   const applyBulkMargin = () => {
@@ -691,9 +692,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         <p className="text-xs text-[var(--text-tertiary)] italic">No items on this enquiry yet.</p>
       ) : (
         <div className="space-y-3">
-          {items.some((it) => it.specIssue) && (
+          {items.some((it) => isOpenSpecFlag(it)) && (
             <p className="text-[11px] font-semibold text-amber-400/90">
-              {items.filter((it) => it.specIssue).length} item{items.filter((it) => it.specIssue).length === 1 ? "" : "s"} flagged — intimating Sales, vendor rates remain actionable below.
+              {items.filter((it) => isOpenSpecFlag(it)).length} item{items.filter((it) => isOpenSpecFlag(it)).length === 1 ? "" : "s"} flagged — intimating Sales, vendor rates remain actionable below.
             </p>
           )}
           {items.some((it) => it.rateAvailable) && (
@@ -824,8 +825,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 </div>
               );
             }
-            // Flagged intimates only — vendor rates stay visible and actionable (per founder: specIssue with rates shows in Management)
-            const flaggedBanner = it.specIssue && !sent ? (
+            // Flagged intimates only — vendor rates stay visible and actionable (per founder: specIssue with rates shows in Management).
+            // Resolved flags show no banner (audit trail lives in the thread below).
+            const flaggedBanner = isOpenSpecFlag(it) && !sent ? (
               <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2.5 text-[11px] leading-relaxed">
                 <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Procurement flagged incorrect spec — intimating only</p>
                 <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>

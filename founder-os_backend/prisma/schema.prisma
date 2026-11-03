@@ -1777,6 +1777,10 @@ model CrmSalesOrder {
   status          String   @default("open") // open | closed | cancelled | void
   salesperson     String   @default("")
   referenceNumber String   @default("") // the Zoho reference — carries the EST number (EST-024014)
+  // Sales region owning this order (R1–R4; '' = unmapped). DERIVED on every
+  // sync tick from referenceNumber → Estimate.region (org-preferring), so the
+  // Controller's re-home propagates automatically. Never hand-edited.
+  region          String   @default("")
   // Client addresses come from the Zoho detail call (list responses omit them).
   // A human edit sets the matching EditedAt/By marker — the sync never
   // overwrites a locally edited address (local wins permanently).
@@ -1805,6 +1809,7 @@ model CrmSalesOrder {
   @@unique([org, soNumber])
   @@index([lifecycle])
   @@index([sourceState])
+  @@index([region])
 }
 
 model CrmSoItem {
@@ -1850,4 +1855,28 @@ model CrmScheduleEvent {
   @@index([soId])
   @@index([kind])
   @@index([day])
+}
+
+// ── Manual connected-call log (TEMPORARY, founder 2026-11-03) ───────────────
+// Backfill while NeoDove is unreliable: one row per (agent, IST day) with the
+// hand-counted connected calls + screenshot proof in CHAT_FILES KV. Remove
+// this model + routes + tab when NeoDove is trusted again.
+model ManualCallLog {
+  id               String   @id @default(uuid())
+  telecallerId     String
+  day              String // YYYY-MM-DD IST
+  connectedCalls   Int      @default(0)
+  note             String   @default("")
+  screenshotKvKey  String   @default("")
+  screenshotName   String   @default("")
+  screenshotMime   String   @default("")
+  screenshotSize   Int      @default(0)
+  createdBy        String   @default("")
+  createdByName    String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([telecallerId, day])
+  @@index([day])
+  @@index([telecallerId])
 }

@@ -7,18 +7,18 @@
 // so the panel never shows a stale lifecycle.
 import { useCallback, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
-import { crmApi, type ListResponse, type ScheduleItemInput } from "./api";
-import type { CrmOrder, CrmSummary, View } from "./types";
+import { crmApi, type ListResponse, type ScheduleItemInput, type SummaryResponse } from "./api";
+import type { CrmOrder, View } from "./types";
 
-export function useCrmOrders(view: View, q: string) {
+export function useCrmOrders(view: View, q: string, region = "") {
   return useLiveDashboard<ListResponse>(
-    () => crmApi.list(view, q),
-    { deps: [view, q], pollMs: 180_000 },
+    () => crmApi.list(view, q, region),
+    { deps: [view, q, region], pollMs: 180_000 },
   );
 }
 
-export function useCrmSummary() {
-  return useLiveDashboard<{ counts: CrmSummary }>(() => crmApi.summary(), { pollMs: 180_000 });
+export function useCrmSummary(region = "") {
+  return useLiveDashboard<SummaryResponse>(() => crmApi.summary(region), { deps: [region], pollMs: 180_000 });
 }
 
 /** IST calendar day (YYYY-MM-DD) — the floor runs on IST, never UTC. */
@@ -68,6 +68,13 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
     [run],
   );
 
+  /** Promise dates — sales agents (own region) + floor. */
+  const promise = useCallback(
+    (id: string, items: ScheduleItemInput[], soReason?: string | null) =>
+      run(() => crmApi.promise(id, items, soReason)),
+    [run],
+  );
+
   const reschedule = useCallback(
     (id: string, items: Array<{ itemId: string; date: string }>, reason: string) =>
       run(() => crmApi.reschedule(id, items, reason)),
@@ -101,5 +108,5 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
     [run],
   );
 
-  return { ...state, schedule, reschedule, dispatch, confirmRemoval, updateAddresses };
+  return { ...state, schedule, promise, reschedule, dispatch, confirmRemoval, updateAddresses };
 }
