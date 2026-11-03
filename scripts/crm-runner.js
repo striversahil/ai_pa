@@ -163,7 +163,11 @@ async function postFloorSync(args) {
   try {
     const body = await buildDispatchFloorPayload(args);
     if (!body) return;
-    const res = await workerRequest(API.crmOrdersSync, { method: 'POST', body });
+    console.log(`crm-runner: floor sync — posting ${body.orders.length} in-window order(s)`);
+    // Inserting a fresh window is the one heavy call of the day; give it room
+    // instead of the default 90s (which aborted mid-insert and left the floor
+    // half-populated).
+    const res = await workerRequest(API.crmOrdersSync, { method: 'POST', body, timeoutMs: 240000 });
     if (res?.created || res?.updated || res?.flagged || res?.missIncremented) {
       console.log(
         `crm-runner: floor sync — ${res.created || 0} new, ${res.updated || 0} updated, ` +

@@ -922,19 +922,101 @@ export async function syncOrders(args: {
   return result;
 }
 
-/** Chunked bulk insert (D1 caps bound parameters per statement). */
+/** Column order is fixed so the raw INSERT is identical on every chunk. */
+const ORDER_COLS = [
+  'id', 'org', 'soNumber', 'zohoId', 'customerName', 'customerId', 'value', 'currency',
+  'orderStatus', 'invoicedStatus', 'shippedStatus', 'paidStatus', 'status', 'salesperson',
+  'referenceNumber', 'createdDate', 'lifecycle', 'sourceState', 'soDelayReason',
+  'fingerprint', 'missCount', 'firstSeenAt', 'lastSeenAt', 'deletedDetectedAt',
+  'createdAt', 'updatedAt',
+] as const;
+
+function sqlValue(v: any): any {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  return v;
+}
+
+/**
+ * Bulk insert new orders.
+ *
+ * D1 caps bound parameters per statement (~100), so rows are packed 3 per
+ * INSERT; and because the Worker's D1 client exposes `batch()` (one network
+ * round trip for many statements), the statements themselves go out in
+ * chunks. A per-row INSERT loop was costing ~1s per 10 orders and blew the
+ * runner's 90s request budget.
+ */
 async function insertOrders(rows: any[]): Promise<number> {
-  const cols = Object.keys(rows[0] || {});
-  if (!cols.length) return 0;
+  if (!rows.length) return 0;
+  const cols = ORDER_COLS as readonly string[];
   const perStatement = Math.max(1, Math.floor(90 / cols.length));
+  const statements: { sql: string; params: any[] }[] = [];
+  const colList = cols.map((c) => `"${c}"`).join(', ');
+
+  for (let i = 0; i < rows.length; i += perStatement) {
+    const chunk = rows.slice(i, i + perStatement);
+    const tuples: string[] = [];
+    const params: any[] = [];
+    for (const r of chunk) {
+      tuples.push(`(${cols.map(() => '?').join(', ')})`);
+      for (const c of cols) params.push(sqlValue(r[c]));
+    }
+    statements.push({
+      sql: `INSERT OR IGNORE INTO "CrmSalesOrder" (${colList}) VALUES ${tuples.join(', ')}`,
+      params,
+    });
+  }
+
+  const batch = (prisma as any).batch;
+  if (typeof batch !== 'function') {
+    // Express/Postgres runtime — no D1 batch, plain per-chunk inserts.
+    let written = 0;
+    for (let i = 0; i < rows.length; i += perStatement) {
+      try {
+        const res = await prisma.crmSalesOrder.createMany({ data: rows.slice(i, i + perStatement) });
+        written += res?.count ?? 0;
+      } catch (e: any) {
+        logger.warn({ err: e?.message }, 'crm sync: order insert failed');
+      }
+    }
+    return written;
+  }
+
+  // D1 batch: 50 statements per round trip (150 orders) — comfortably inside
+  // D1's per-batch statement limit.
+  const BATCH = 50;
+  let written = 0;
+  for (let i = 0; i < statements.length; i += BATCH) {
+    const slice = statements.slice(i, i + BATCH);
+    try {
+      const results = await batch.call(prisma, slice);
+      for (const r of results || []) written += Number(r?.meta?.changes ?? 0);
+    } catch (e: any) {
+      logger.warn({ err: e?.message, statements: slice.length }, 'crm sync: order batch insert failed');
+    }
+  }
+  return written;
+}
+
+const ITEM_COLS = [
+  'id', 'soId', 'lineKey', 'name', 'sku', 'description', 'qty', 'unit', 'rate',
+  'itemTotal', 'dispatchState', 'tentativeDispatchDate', 'delayReason',
+  'dispatchedQty', 'dispatchedAt', 'scheduledBy', 'scheduledAt', 'createdAt', 'updatedAt',
+] as const;
+
+/** Bulk-insert items for an order that has none yet (the new-order path). */
+async function insertItems(rows: any[]): Promise<number> {
+  if (!rows.length) return 0;
+  const perStatement = Math.max(1, Math.floor(90 / (ITEM_COLS as readonly string[]).length));
   let written = 0;
   for (let i = 0; i < rows.length; i += perStatement) {
     const chunk = rows.slice(i, i + perStatement);
     try {
-      const res = await prisma.crmSalesOrder.createMany({ data: chunk });
+      const res = await prisma.crmSoItem.createMany({ data: chunk });
       written += res?.count ?? chunk.length;
     } catch (e: any) {
-      logger.warn({ err: e?.message, rows: chunk.length }, 'crm sync: order batch insert failed');
+      logger.warn({ err: e?.message }, 'crm sync: item insert failed');
     }
   }
   return written;
@@ -947,6 +1029,7 @@ async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
   let written = 0;
   const seenKeys = new Set<string>();
 
+  const pending: any[] = [];
   for (let i = 0; i < rawItems.length; i++) {
     const li = rawItems[i] || {};
     const lineKey = lineKeyFor(li, i);
@@ -970,25 +1053,24 @@ async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
       // NEVER clobber local scheduling state — only the Zoho-side fields.
       await prisma.crmSoItem.update({ where: { id: str(found.id) }, data: payload });
     } else {
-      await prisma.crmSoItem.create({
-        data: {
-          id: crypto.randomUUID(),
-          soId,
-          lineKey,
-          ...payload,
-          dispatchState: 'unscheduled',
-          tentativeDispatchDate: null,
-          delayReason: null,
-          dispatchedQty: 0,
-          dispatchedAt: null,
-          scheduledBy: null,
-          scheduledAt: null,
-          createdAt: now,
-        },
+      pending.push({
+        id: crypto.randomUUID(),
+        soId,
+        lineKey,
+        ...payload,
+        dispatchState: 'unscheduled',
+        tentativeDispatchDate: null,
+        delayReason: null,
+        dispatchedQty: 0,
+        dispatchedAt: null,
+        scheduledBy: null,
+        scheduledAt: null,
+        createdAt: now,
       });
     }
     written++;
   }
+  if (pending.length) await insertItems(pending);
   return written;
 }
 
