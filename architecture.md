@@ -218,7 +218,6 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 |-------------------|------|---------------------|---------|
 | `data-retention` | handler | `0 3 * * *` | Delete WhatsApp messages > 90 days |
 | `dpp-prices-dashboard` | rule (event+scan) | `*` (fallback) | Parse DPP price messages → `PriceQuote` |
-| `enterprise-operations-analytics` | handler | `*/30 * * * *` | 18-point supply-chain analytics dashboard |
 | `eod-summary` | handler | `0 19 * * *` (7 PM IST) | End-of-day summary |
 | `morning-queue-drain` | handler | `*` | Send due deferred WhatsApp messages (Redis) |
 | `neodove-telecaller-report` | handler | `*/5` (native in-worker) | Per-agent NeoDove call perf (native refresh writes TODAY; GH runner kept as fallback) |
@@ -589,7 +588,8 @@ founder-os_frontend/src/
     ├── TelecallingDashboard           # leaderboard + At-Risk + Lead Conversion/Generation
     ├── EnquiryTracker + Enquiry{List,Detail,Modal,RowItem}  # live sales pipeline
     ├── NeodoveTelecallerDashboard, WaEngineDashboard, DppPricesDashboard
-    ├── EnterpriseOperationsDashboard, WhatsAppMarketingDashboard
+    ├── CrmDashboard                   # active sales orders pipeline (CRM/Accounts/Dispatch/Procurement desks)
+    ├── WhatsAppMarketingDashboard
     ├── AutopilotDashboard, WhatsAppDashboard
     ├── SheetAnalysisDashboard         # generic fallback for data()-only automations
     └── FounderAssistant               # AI chat (Brain RAG)
@@ -745,7 +745,6 @@ events out to every component via an in-process event bus — no per-dashboard s
 - `ZohoEstimates` → `estimates` / `baseline` / `automation`
 - `NeodoveTelecallerDashboard` → `neodove`
 - `DppPricesDashboard` → `automation: dpp-prices-dashboard`
-- `EnterpriseOperationsDashboard` → `automation: enterprise-operations-analytics`
 - `WaEngineDashboard` → `automation: wa-engine-monitor`
 - `WhatsAppMarketingDashboard` → `automation: whatsapp-marketing`
 - `SheetAnalysisDashboard` → `automation: <its slug>`
@@ -834,7 +833,7 @@ are persisted in an **HttpOnly cookie valid for 30 days**.
   has no categories until root grants them. Views the user lacks show an "Access pending"
   panel rather than a redirect loop.
 - **Category/role-based permissions:** a *category* (e.g. `enquiries`, `whatsapp`,
-  `automations`, `zoho`, `dpp`, `wa-engine`, `neodove`, `enterprise-ops`, `whatsapp-marketing`,
+  `automations`, `zoho`, `dpp`, `wa-engine`, `neodove`, `crm`, `whatsapp-marketing`,
   `sheet-analysis`, `founder-ai`, `brain`) maps to one or more UI views. A user holding a
   category can open every view that requires it. This is the "role" abstraction — root forms
   categories and assigns them per user from the Admin UI.

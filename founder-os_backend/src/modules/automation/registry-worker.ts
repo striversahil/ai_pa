@@ -12,7 +12,6 @@ import { AutomationEngine } from './engine';
 import * as dataRetention from '../../automations/data-retention';
 import * as enquiryTracker from '../../automations/enquiry-tracker';
 import * as dppPricesDashboard from '../../automations/dpp-prices-dashboard';
-import * as enterpriseOpsAnalytics from '../../automations/enterprise-operations-analytics';
 import * as morningQueueDrain from '../../automations/morning-queue-drain';
 import * as neodoveTelecallerReport from '../../automations/neodove-telecaller-report';
 import * as notificationBatcher from '../../automations/notification-batcher';
@@ -41,7 +40,6 @@ const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
   'enquiry-tracker': enquiryTracker as AutomationModule,
   'dpp-prices-dashboard': dppPricesDashboard as AutomationModule,
-  'enterprise-operations-analytics': enterpriseOpsAnalytics as AutomationModule,
   'morning-queue-drain': morningQueueDrain as AutomationModule,
   'neodove-telecaller-report': neodoveTelecallerReport as AutomationModule,
   'notification-batcher': notificationBatcher as AutomationModule,
@@ -85,9 +83,6 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     trigger: { type: 'event_plus_scan', event: 'whatsapp.message.inbound', fallbackCron: '* * * * *' },
     condition: { all: [{ field: 'chatId', op: 'eq', value: '{{config.dppChatId}}' }] }, dedupField: 'wahaMessageId',
     actions: [{ type: 'custom:storePrices' }], config: { dppChatId: '' }, scope: 'dpp', enabled: true,
-  },
-  'enterprise-operations-analytics': {
-    id: 'enterprise-operations-analytics', name: 'Enterprise Operations & Order Analytics', description: '18-Point Complete Enterprise Supply Chain Analysis dashboard.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'enterprise-ops', enabled: true,
   },
   'eod-summary': {
     id: 'eod-summary', name: 'Evening EOD Summary', description: 'Daily at 7:00 PM IST, generate and save the end-of-day summary.', type: 'handler', trigger: { type: 'schedule', cron: '0 19 * * *' }, enabled: true,

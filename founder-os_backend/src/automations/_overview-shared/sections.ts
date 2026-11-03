@@ -166,22 +166,6 @@ function summarizeNeodove(d: any) {
   };
 }
 
-function summarizeEnterpriseOps(d: any) {
-  const s = d.summary ?? {};
-  const critical: any[] = Array.isArray(d.critical_orders) ? d.critical_orders : [];
-  const att = critical.slice(0, 3).map((c) => `${String(c.so_number ?? '')} ${String(c.customer ?? '')} — ${String(c.issue ?? '').slice(0, 90)}`);
-  return {
-    headline: `${num(s.total_orders)} orders · ${inr(s.total_order_value)} · health ${num(s.overall_health_score)}`,
-    kpis: [
-      { label: 'Orders', value: String(num(s.total_orders)) },
-      { label: 'Value', value: inr(s.total_order_value) },
-      { label: 'Health', value: String(num(s.overall_health_score)) },
-      { label: 'Critical', value: String(critical.length) },
-    ],
-    attention: att,
-  };
-}
-
 export interface SectionDef {
   key: string;
   title: string;
@@ -206,7 +190,6 @@ export const SECTIONS: SectionDef[] = [
   { key: 'accounts', title: 'Accounts', slugs: ['accounts'], linkSlug: 'accounts', build: (r) => section('accounts', 'Accounts', r.accounts?.data, r.accounts?.error, (d) => summarizeTaskbar(d, 'accounts')) },
   { key: 'digital', title: 'Digital Marketing', slugs: ['digital-marketing'], linkSlug: 'digital-marketing', build: (r) => section('digital-marketing', 'Digital Marketing', r['digital-marketing']?.data, r['digital-marketing']?.error, (d) => summarizeTaskbar(d, 'marketing')) },
   { key: 'neodove', title: 'NeoDove Calls', slugs: ['neodove-telecaller-report'], linkSlug: 'neodove-telecaller-report', build: (r) => section('neodove-telecaller-report', 'NeoDove Calls', r['neodove-telecaller-report']?.data, r['neodove-telecaller-report']?.error, summarizeNeodove) },
-  { key: 'enterprise', title: 'Enterprise Ops', slugs: ['enterprise-operations-analytics'], linkSlug: 'enterprise-operations-analytics', build: (r) => section('enterprise-operations-analytics', 'Enterprise Ops', r['enterprise-operations-analytics']?.data, r['enterprise-operations-analytics']?.error, summarizeEnterpriseOps) },
 ];
 
 export const ALL_SOURCE_SLUGS: string[] = [...new Set(SECTIONS.flatMap((s) => s.slugs))];

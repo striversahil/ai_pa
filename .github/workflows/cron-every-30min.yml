@@ -43,9 +43,6 @@ jobs:
   light-triggers:
     runs-on: ubuntu-latest
     steps:
-      - name: enterprise-operations-analytics
-        run: |
-          curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/enterprise-operations-analytics?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true
       - name: telecalling-agent-analysis
         run: |
           curl -fsS -X POST "${{ secrets.WORKER_URL }}/api/trigger/telecalling-agent-analysis?async=1" -H "Authorization: Bearer ${{ secrets.SHARED_SECRET }}" || true

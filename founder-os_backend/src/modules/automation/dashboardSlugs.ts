@@ -10,7 +10,6 @@
  */
 export const DASHBOARD_SLUGS = new Set<string>([
   // explicitly-rendered dashboards
-  'enterprise-operations-analytics',
   'zoho-sent-analyzer',
   'dpp-prices-dashboard',
   'wa-engine-monitor',

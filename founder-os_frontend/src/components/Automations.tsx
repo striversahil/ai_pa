@@ -12,7 +12,6 @@ const DppPricesDashboard = dynamic(() => import("./DppPricesDashboard"), { ssr: 
 const SheetAnalysisDashboard = dynamic(() => import("./SheetAnalysisDashboard"), { ssr: false });
 const WaEngineDashboard = dynamic(() => import("./WaEngineDashboard"), { ssr: false });
 const WhatsAppMarketingDashboard = dynamic(() => import("./WhatsAppMarketingDashboard"), { ssr: false });
-const EnterpriseOperationsDashboard = dynamic(() => import("./EnterpriseOperationsDashboard"), { ssr: false });
 const NeodoveTelecallerDashboard = dynamic(() => import("./NeodoveTelecallerDashboard"), { ssr: false });
 const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
 const AccountsDashboard = dynamic(() => import("./AccountsDashboard"), { ssr: false });
@@ -132,7 +131,6 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
   }, [(automations.data ?? []), pinned]);
 
   const renderDashboard = () => {
-    if (selected === "enterprise-operations-analytics") return <EnterpriseOperationsDashboard />;
     if (selected === "zoho-sent-analyzer") return <ZohoEstimates />;
     if (selected === "dpp-prices-dashboard") return <DppPricesDashboard />;
     if (selected === "wa-engine-monitor") return <WaEngineDashboard />;
