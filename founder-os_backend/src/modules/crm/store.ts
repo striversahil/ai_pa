@@ -855,9 +855,12 @@ export async function syncOrders(args: {
     if (seen.has(key)) continue;
     if (str(row.sourceState) !== 'active') continue;
     // A row older than the floor window may simply be outside the scan — never
-    // let the deletion detector flag history.
+    // let the deletion detector flag history. An UNPARSEABLE created date is
+    // equally untrustworthy: refuse to flag rather than risk deleting a live
+    // order because a formatted date slipped into an ISO column.
     const rowCreated = str(row.createdDate).slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(rowCreated) && rowCreated < cutoff) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rowCreated)) continue;
+    if (rowCreated < cutoff) continue;
     const soNumber = str(row.soNumber);
     const org = str(row.org);
     const verifiedPresent = verifyPresent.has(key) || verifyPresent.has(soNumber);
