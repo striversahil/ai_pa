@@ -253,6 +253,11 @@ function OrderCard({
             {order.customerName || "—"}
             <span className="text-zinc-400"> · </span>
             {order.salesperson || "Unassigned"}
+            {order.createdDate ? (
+              <>
+                <span className="text-zinc-400"> · </span>SO {dayLabel(order.createdDate)}
+              </>
+            ) : null}
             {order.referenceNumber ? (
               <>
                 <span className="text-zinc-400"> · </span>ref {order.referenceNumber}

@@ -297,6 +297,11 @@ function SalesOrderCard({
             {order.customerName || "—"}
             <span className="text-[var(--text-tertiary)]"> · </span>
             {order.salesperson || "Unassigned"}
+            {order.createdDate ? (
+              <>
+                <span className="text-[var(--text-tertiary)]"> · </span>SO {dayLabel(order.createdDate)}
+              </>
+            ) : null}
             {order.referenceNumber ? (
               <>
                 <span className="text-[var(--text-tertiary)]"> · </span>EST {order.referenceNumber}

@@ -45,11 +45,40 @@ export type PanelMode = "view" | "schedule" | "dispatch" | "reschedule";
 const inr = (n: number | null | undefined) =>
   `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
-const dayLabel = (d: string | null) => {
+const dayLabel = (d: string | null | undefined) => {
   if (!d) return "—";
-  const dt = new Date(`${d}T00:00:00`);
-  if (isNaN(dt.getTime())) return d;
+  const dt = new Date(`${String(d).slice(0, 10)}T00:00:00`);
+  if (isNaN(dt.getTime())) return String(d);
   return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+};
+
+/** Full calendar label ("Tue, 03 Nov 2026"). The dispatch window spans 30 days
+ *  and the panel is open on orders from both ends of it, so the SO date has to
+ *  read exactly — day + month alone is ambiguous across a year boundary. */
+const fullDayLabel = (d: string | null | undefined) => {
+  if (!d) return "—";
+  const dt = new Date(`${String(d).slice(0, 10)}T00:00:00`);
+  if (isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+/** How old the SO is on the floor: "today", "yesterday", "9 days ago". */
+const ageLabel = (d: string | null | undefined, today: string) => {
+  const raw = String(d || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw) || !today) return "";
+  const a = new Date(`${raw}T00:00:00Z`).getTime();
+  const b = new Date(`${today}T00:00:00Z`).getTime();
+  if (isNaN(a) || isNaN(b)) return "";
+  const days = Math.round((b - a) / 86400000);
+  if (days === 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days > 1) return `${days} days ago`;
+  return `in ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"}`;
 };
 
 /** One address block; Zoho keeps billing and shipping separately on the SO.
@@ -297,6 +326,7 @@ export default function OrderPanel({
               </div>
               <p className="mt-1 truncate text-sm text-zinc-500 dark:text-zinc-400">
                 {order.customerName || "—"} · {inr(order.value)} · {order.salesperson || "Unassigned"}
+                {order.createdDate ? ` · SO ${dayLabel(order.createdDate)}` : ""}
                 {order.referenceNumber ? ` · EST ${order.referenceNumber}` : ""}
               </p>
             </div>
@@ -361,13 +391,24 @@ export default function OrderPanel({
               Address save failed: {addrError}
             </div>
           )}
-          <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            {/* Which date this SO is — the Zoho creation date, read exactly and
+                with its age, so the desk always knows what day it is working. */}
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">SO date</p>
+              <p className="mt-0.5 text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                {fullDayLabel(order.createdDate)}
+              </p>
+              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                {ageLabel(order.createdDate, today) || "—"}
+              </p>
+            </div>
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">EST no.</p>
               <p className="mt-0.5 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-100">
                 {order.referenceNumber || "—"}
               </p>
-              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">SO date {dayLabel(order.createdDate)}</p>
+              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">{order.region ? `Region ${order.region}` : "Region unmapped"}</p>
             </div>
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Payment terms</p>
