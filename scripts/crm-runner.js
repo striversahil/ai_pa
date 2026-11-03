@@ -152,6 +152,27 @@ function orderDate(so) {
  * guess. Orders the worker lists as active but that are already in this scan
  * are simply reported `present`.
  */
+/**
+ * Post the dispatch-floor sync (migration 0097) and log a compact summary.
+ * Never throws: the KV snapshot path is the one that must stay unbroken until
+ * the cutover, and the next tick retries anything missed here.
+ */
+async function postFloorSync(args) {
+  try {
+    const body = await buildDispatchFloorPayload(args);
+    if (!body) return;
+    const res = await workerRequest(API.crmOrdersSync, { method: 'POST', body });
+    if (res?.created || res?.updated || res?.flagged || res?.missIncremented) {
+      console.log(
+        `crm-runner: floor sync — ${res.created || 0} new, ${res.updated || 0} updated, ` +
+          `${res.flagged || 0} flagged deleted, ${res.missIncremented || 0} missing, ${res.itemsUpserted || 0} items`,
+      );
+    }
+  } catch (e) {
+    console.log(`crm-runner: floor sync failed (next tick retries): ${e && e.message}`);
+  }
+}
+
 async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo }) {
   if (!Array.isArray(index) || index.length === 0) return null;
 
@@ -535,6 +556,10 @@ async function main() {
             }
           }
         }
+        // The pipeline did not move, but the floor still needs its rows
+        // refreshed (new SOs land here, and last-seen drives the deletion
+        // detector). Cheap: unchanged orders skip their write entirely.
+        await postFloorSync({ date: today, index, stages, closed, activeBySo });
         return;
       }
       if (fp?.sigs && typeof fp.sigs === 'object') prevSigs = fp.sigs;
@@ -645,32 +670,7 @@ async function main() {
 
   await workerRequest(API.crmSnapshot, { method: 'POST', body: snapshot });
 
-  // ── Dispatch-floor sync (migration 0097) ──────────────────────────────────
-  // The CRM dashboard now runs on D1 ROWS (CrmSalesOrder + CrmSoItem), not the
-  // KV blob above: rows are what make per-item scheduling, an audit trail and
-  // "deleted at source" detection possible. Same tick, second sink — the KV
-  // snapshot keeps serving the old dashboard until the cutover deletes it.
-  // A failure here must never fail the tick (the blob path already succeeded).
-  try {
-    const syncBody = await buildDispatchFloorPayload({
-      date: today,
-      index,
-      stages,
-      closed,
-      activeBySo,
-    });
-    if (syncBody) {
-      const res = await workerRequest(API.crmOrdersSync, { method: 'POST', body: syncBody });
-      if (res?.created || res?.updated || res?.flagged || res?.missIncremented) {
-        console.log(
-          `crm-runner: floor sync — ${res.created || 0} new, ${res.updated || 0} updated, ` +
-            `${res.flagged || 0} flagged deleted, ${res.missIncremented || 0} missing, ${res.itemsUpserted || 0} items`,
-        );
-      }
-    }
-  } catch (e) {
-    console.log(`crm-runner: floor sync failed (next tick retries): ${e.message}`);
-  }
+  await postFloorSync({ date: today, index, stages, closed, activeBySo });
 
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)

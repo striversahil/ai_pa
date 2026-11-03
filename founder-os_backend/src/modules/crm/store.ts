@@ -645,12 +645,28 @@ export interface SyncVerify {
 export interface SyncResult {
   created: number;
   updated: number;
+  unchanged: number;
   skipped: number;
   itemsUpserted: number;
   missIncremented: number;
   flagged: number;
   healed: number;
   missing: Array<{ so: string; org: string; zohoId: string }>;
+}
+
+/**
+ * The floor only tracks RECENT orders. Zoho Books holds years of history and
+ * thousands of legacy open orders — syncing all of them would make the floor
+ * unusable and the line-item fetch (one Zoho call per order, rate limited)
+ * would never catch up. Anything older stays in Zoho; the floor is the
+ * current flow.
+ */
+const FLOOR_WINDOW_DAYS = 30;
+
+function dayAdd(day: string, delta: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
 }
 
 /** Zoho `complete` predicate — mirrors the runner's pendingStep() === 'complete'. */
@@ -690,6 +706,7 @@ export async function syncOrders(args: {
   const verifyPresent = new Set((args.verify?.present || []).map((k) => String(k)));
   const verifyGone = new Set((args.verify?.gone || []).map((k) => String(k)));
 
+  const cutoff = dayAdd(day, -FLOOR_WINDOW_DAYS);
   const existingRows = (await prisma.crmSalesOrder.findMany({ take: 4000 })) as any[];
   const byKey = new Map<string, any>();
   for (const r of existingRows) byKey.set(soKey(str(r.org), str(r.soNumber)), r);
@@ -697,6 +714,7 @@ export async function syncOrders(args: {
   const result: SyncResult = {
     created: 0,
     updated: 0,
+    unchanged: 0,
     skipped: 0,
     itemsUpserted: 0,
     missIncremented: 0,
@@ -718,9 +736,15 @@ export async function syncOrders(args: {
     const existing = byKey.get(key);
     const cancelled = ['cancelled', 'void'].includes(str(o.status).toLowerCase());
 
+    const createdDate = str(o.createdDate || o.createdTime).slice(0, 10);
     if (!existing) {
       if (isCompleteInZoho(o) && !cancelled) {
         // Never on the floor — do not create history rows for closed orders.
+        result.skipped++;
+        continue;
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(createdDate) && createdDate < cutoff) {
+        // Older than the floor window — Zoho keeps it, the floor does not.
         result.skipped++;
         continue;
       }
@@ -742,7 +766,7 @@ export async function syncOrders(args: {
           status: str(o.status).toLowerCase() || 'open',
           salesperson: str(o.salesperson),
           referenceNumber: str(o.ref).slice(0, 120),
-          createdDate: str(o.createdDate || o.createdTime).slice(0, 10),
+          createdDate,
           lifecycle: cancelled ? 'cancelled' : 'unscheduled',
           sourceState: 'active',
           soDelayReason: null,
@@ -767,9 +791,28 @@ export async function syncOrders(args: {
       continue;
     }
 
+    // Steady-state ticks must be nearly free: if nothing Zoho-side moved,
+    // skip the write entirely (the row is already `seen`, which is all the
+    // deletion detector needs).
+    const fp = [
+      str(o.status).toLowerCase(),
+      str(o.orderStatus).toLowerCase(),
+      str(o.invoicedStatus).toLowerCase(),
+      str(o.shippedStatus).toLowerCase(),
+      str(o.paidStatus).toLowerCase(),
+      String(num(o.total)),
+      str(o.customer),
+      str(o.salesperson),
+      createdDate || str(existing.createdDate),
+    ].join('|');
+    if (str(existing.fingerprint) === fp && str(existing.sourceState) === 'active') {
+      result.unchanged++;
+      continue;
+    }
     await prisma.crmSalesOrder.update({
       where: { id: str(existing.id) },
       data: {
+        fingerprint: fp,
         zohoId: str(o.zohoId) || str(existing.zohoId),
         customerName: str(o.customer) || str(existing.customerName),
         customerId: str(o.customerId) || str(existing.customerId),
@@ -782,7 +825,7 @@ export async function syncOrders(args: {
         status: str(o.status).toLowerCase() || str(existing.status),
         salesperson: str(o.salesperson) || str(existing.salesperson),
         referenceNumber: str(o.ref).slice(0, 120) || str(existing.referenceNumber),
-        createdDate: str(o.createdDate || o.createdTime).slice(0, 10) || str(existing.createdDate),
+        createdDate: createdDate || str(existing.createdDate),
         sourceState: 'active',
         missCount: 0,
         deletedDetectedAt: null,
@@ -801,6 +844,10 @@ export async function syncOrders(args: {
   for (const [key, row] of byKey) {
     if (seen.has(key)) continue;
     if (str(row.sourceState) !== 'active') continue;
+    // A row older than the floor window may simply be outside the scan — never
+    // let the deletion detector flag history.
+    const rowCreated = str(row.createdDate).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rowCreated) && rowCreated < cutoff) continue;
     const soNumber = str(row.soNumber);
     const org = str(row.org);
     const verifiedPresent = verifyPresent.has(key) || verifyPresent.has(soNumber);
