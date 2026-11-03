@@ -453,9 +453,12 @@ async function main() {
     }
     return o;
   };
-  // Per-tick detail budget (12 rows × 10–15s gaps ≈ 2.5 min). Each detail call
-  // is one Zoho request — the budget is what keeps us under the rate limit.
-  const ITEM_BUDGET = 12;
+  // Per-tick detail budget. Each detail call is one Zoho request and Zoho Books
+  // allows ~100 requests/min per org; the cron jobs run in a serial group, so
+  // this runner is the only Zoho pinger while it runs. 40 rows × 2–4s gaps
+  // ≈ 2 min of paging, well inside the limit while still clearing a cold-start
+  // backlog (a 30-day window can carry ~120 orders) in a couple of ticks.
+  const ITEM_BUDGET = 40;
 
   // What the floor already tracks: drives the item backfill queue AND the
   // by-id re-verification that makes a deletion definitive.
@@ -493,13 +496,13 @@ async function main() {
         console.log(`crm-runner: detail fetch failed for ${entry.so}: ${e.message}`);
       }
     }
-    await sleep(10000 + Math.random() * 5000); // 10–15s gap — never burst Zoho
+    await sleep(2000 + Math.random() * 2000); // 2–4s gap — paced, never burst Zoho
   }
   const detailMs = Date.now() - t0;
   if (detailCircuitOpen) console.log('crm-runner: detail circuit open — remaining rows skip items this tick');
   if (detailErrors > 0) console.log(`crm-runner: ${detailErrors} detail fetch(es) failed (retried next tick)`);
   const deferred = Math.max(0, queue.length - due.length);
-  if (deferred > 0) console.log(`crm-runner: ${deferred} order(s) still without items (budget ${ITEM_BUDGET}/tick)`);
+  if (deferred > 0) console.log(`crm-runner: ${deferred} order(s) still without items (budget ${ITEM_BUDGET}/tick ≈ ${Math.ceil(deferred / ITEM_BUDGET)} more tick(s))`);
 
   // The ONE sink: D1 rows. The runner only fetches; the Worker decides what to
   // insert, update, score or flag.

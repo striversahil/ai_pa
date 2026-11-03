@@ -60,9 +60,10 @@ backend `modules/crm/scheduling.ts` ↔ frontend `src/crm/lifecycle.ts`
 
 The floor is bounded to 30 days (`FLOOR_WINDOW_DAYS`, mirrored in the runner) —
 Zoho reports 5,000+ open SOs going back years, and the per-order item fetch
-(rate limited) could never catch up on the backlog. Line items land ~12
-orders/tick and accumulate; older floor orders show "No line items captured
-yet" until the fetcher reaches them.
+(rate limited) could never catch up on the backlog. Line items cost one Zoho
+call per order, so they land on a per-tick budget (40 orders, 2–4s apart) and
+accumulate newest-first; a floor order shows "No line items captured yet"
+until the fetcher reaches it (a 30-day cold start clears in ~2 ticks).
 
 ## Points (DepartmentScoreEvent)
 
