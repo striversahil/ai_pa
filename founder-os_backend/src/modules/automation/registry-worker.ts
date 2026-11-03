@@ -139,7 +139,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'whatsapp-autopilot', name: 'WhatsApp Autopilot', description: 'Structured business layer under WhatsApp: message lineage, per-chat task queue, LLM state transitions. Core loop runs on GH Actions (shadow mode — nothing sends).', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, scope: 'autopilot', enabled: true,
   },
   'crm': {
-    id: 'crm', name: 'CRM — Active Sales Orders', description: 'Pipeline of open Zoho Books sales orders grouped by the next pending process step (Confirm → Invoice → Ship → Payment). Fetched by the GH runner, served from KV.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, scope: 'crm', enabled: true,
+    id: 'crm', name: 'CRM — Dispatch Floor', description: 'Sales orders synced from Zoho Books into D1 rows. Schedule each line item for a dispatch date, dispatch on the day, reschedule with a mandatory reason, and confirm orders Zoho stopped returning.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, scope: 'crm', enabled: true,
   },
   'product-line': {
     id: 'product-line', name: 'Product Line', description: 'Product master (KYP sheet as data): products, guide questions, vendors and quote facts. MIS-editable.', type: 'handler', trigger: { type: 'manual' }, scope: 'product-line', enabled: true,

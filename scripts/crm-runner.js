@@ -1,32 +1,31 @@
 #!/usr/bin/env node
 /**
- * crm-runner.js — CRM: Active Sales Orders pipeline (department edition).
+ * crm-runner.js — CRM dispatch floor sync (Zoho Books → D1 rows).
  *
- * Pages Zoho Books /api/v3/salesorders (Status.All), computes each OPEN order's
- * next pending process step, and POSTs a department-grouped snapshot to
- * /api/runner/crm/snapshot (KV-cached on the Worker). The Worker diffs the new
- * snapshot against the previous one and credits/debits DepartmentScoreEvent
- * points (confirm → invoice → ship → payment → paid, plus new orders and
- * cancellations) — the same event-ledger game the telecalling leaderboard plays.
+ * Pages Zoho Books /api/v3/salesorders (Status.All), then POSTs the IN-WINDOW
+ * slice to /api/runner/crm/orders/sync. The Worker owns every rule: new open
+ * orders become `unscheduled` rows on the dispatch floor, status moves score
+ * the department ledger, items are upserted, and orders Zoho stops returning
+ * are flagged "deleted at source" for a human to confirm.
  *
- * Lifecycle / "process after that needs to be done":
- *   status=draft (not yet confirmed)         → "confirm"   (CRM desk)
- *   confirmed, not fully invoiced            → "invoice"   (Accounts desk)
- *   invoiced, not shipped                    → "ship"      (Dispatch desk)
- *   shipped, not fully paid                  → "payment"   (Accounts desk)
- *   fully paid / closed / cancelled / void   → "complete"  (excluded from active)
+ * Zoho is READ-ONLY — nothing here (or in the Worker) writes back to Books.
+ *
+ * Two jobs per tick:
+ *   1. scan   — page the SO list, build the in-window payload (FLOOR_WINDOW_DAYS)
+ *   2. items  — fetch line-item details for a small budget of floor orders that
+ *               still have none (one Zoho call each, 10–15s apart). Items
+ *               accumulate across ticks instead of bursting the rate limit.
  *
  * Efficiency: orders are sorted newest-first, so once a full page contains
- * nothing relevant (no active orders AND nothing created within the scan
- * window) the scan stops instead of paging through years of closed history.
+ * nothing relevant (no active orders AND nothing inside the scan window) the
+ * scan stops instead of paging through years of closed history.
  *
  * Reuses runner-lib.js (workerRequest) and the shared sync core
  * (founder-os_backend/src/shared/sync-core/) for Zoho credentials, HTTP retry
- * policies, dates, org keys, and endpoint paths.
+ * policies, dates and org keys.
  *
  * Env: WORKER_URL, SHARED_SECRET (both from GH secrets).
  */
-const crypto = require('crypto');
 const { workerRequest } = require('./runner-lib');
 const CORE = '../founder-os_backend/src/shared/sync-core/';
 const { API, ZOHO_STATUSES, CRM } = require(CORE + 'contract');
@@ -86,12 +85,6 @@ async function fetchOrderItems(salesorderId, org) {
   }
 }
 
-function itemsSig(items) {
-  const count = items.length;
-  const sum = items.reduce((s, li) => s + (parseFloat(li.item_total) || 0), 0);
-  return `${count}:${Math.round(sum * 100) / 100}`;
-}
-
 const EXCLUDED_STATUSES = new Set(ZOHO_STATUSES.SO_EXCLUDED);
 const STAGES = CRM.STAGES;
 // Orders older than this (created) are irrelevant history — scan stops.
@@ -112,7 +105,6 @@ function dayBefore(day, n) {
 // Per-stage order detail cap (full rows); counts always reflect all orders.
 const DETAIL_CAP = 400;
 const CLOSED_CAP = 400;
-const MATERIALS_CAP = 300;
 
 /**
  * Determine the next pending process step for a sales order.
@@ -190,7 +182,7 @@ async function postFloorSync(args) {
  * definitive instead of a guess. Orders the worker lists as active but that are
  * already in this scan are simply reported `present`.
  */
-async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo }) {
+async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo, itemsByKey, localOrders }) {
   if (!Array.isArray(index) || index.length === 0) return null;
 
   // soKey → Zoho detail row (has customer/ref/items for the display-capped set).
@@ -219,7 +211,14 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
     const hit = activeBySo.get(entry.org + ':' + entry.so);
     const detail = displayByKey.get(key) || null;
     const closedRow = closedByKey.get(key) || null;
-    const items = Array.isArray(detail?.items) && detail.items.length > 0 ? detail.items : undefined;
+    // Items captured THIS tick (detail budget) or carried on the display row.
+    const fetched = itemsByKey?.get(key);
+    const items =
+      Array.isArray(fetched) && fetched.length > 0
+        ? fetched
+        : Array.isArray(detail?.items) && detail.items.length > 0
+          ? detail.items
+          : undefined;
     orders.push({
       so: entry.so,
       org: entry.org || '',
@@ -248,8 +247,7 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
   // didn't reach it (never flag a live order on a paging hiccup).
   const verify = { present: [], gone: [] };
   try {
-    const state = await workerRequest(API.crmState);
-    const locals = Array.isArray(state?.orders) ? state.orders : [];
+    const locals = Array.isArray(localOrders) ? localOrders : [];
     const missing = locals
       .map((o) => ({ ...o, key: `${o.org || ''}:${o.so}` }))
       .filter((o) => o.so && !seen.has(o.key));
@@ -317,52 +315,6 @@ function orderRow(so, today, org) {
 }
 
 // ── Aggregators ──────────────────────────────────────────────────────────────
-/** Aggregated material requirements across active orders (procurement view). */
-function addMaterial(map, items) {
-  for (const li of items) {
-    const key = li.sku || li.name || '';
-    if (!key) continue;
-    const entry = map.get(key) || { item: li.name || key, sku: li.sku || '', qty: 0, orders: 0, value: 0 };
-    entry.qty += li.qty;
-    entry.value += (parseFloat(li.item_total) || 0);
-    entry.orders += 1;
-    map.set(key, entry);
-  }
-}
-
-/** Roll order → salesperson pipeline rollup. */
-function addSalesperson(map, so, step, total) {
-  const name = so.salesperson_name || 'Unassigned';
-  const entry = map.get(name) || { name, openOrders: 0, pipelineValue: 0, byStage: { confirm: 0, invoice: 0, ship: 0, payment: 0 } };
-  entry.openOrders += 1;
-  entry.pipelineValue += total;
-  if (entry.byStage[step] !== undefined) entry.byStage[step] += 1;
-  map.set(name, entry);
-}
-
-// ── Manual overrides (CrmOrderAction layer) ──────────────────────────────────
-// Operators advance/cancel orders from the dashboard; the latest action per SO
-// (within the lookback window) overrides Zoho's raw status before pendingStep().
-const OVERRIDE_LOOKBACK_DAYS = 7;
-const VALID_OVERRIDE_STAGES = new Set(['confirm', 'invoice', 'ship', 'payment', 'complete']);
-
-async function fetchOverrides() {
-  const since = istDateString(new Date(Date.now() - OVERRIDE_LOOKBACK_DAYS * 86400000));
-  try {
-    const res = await workerRequest(`${API.crmActions}?since=${since}`);
-    const map = new Map();
-    for (const a of res.actions || []) {
-      if (!a?.soNumber || !VALID_OVERRIDE_STAGES.has(String(a.toStage))) continue;
-      map.set(String(a.soNumber), String(a.toStage)); // latest row wins (worker returns oldest-first)
-    }
-    if (map.size > 0) console.log(`crm-runner: loaded ${map.size} manual override(s) since ${since}`);
-    return map;
-  } catch (e) {
-    console.log(`crm-runner: override fetch failed (continuing without overrides): ${e.message}`);
-    return new Map();
-  }
-}
-
 /** Zoho created_time → IST calendar day (YYYY-MM-DD), '' when unparseable. */
 function createdDayIso(so) {
   const raw = so && so.created_time;
@@ -377,12 +329,10 @@ async function main() {
   console.log('crm-runner: fetching sales orders from Zoho Books');
   const today = istDateString(new Date());
   const fetchedAt = new Date().toISOString();
-  const overrides = await fetchOverrides();
 
   const stages = {};
   for (const s of STAGES) stages[s] = { count: 0, value: 0, orders: [] };
   const closed = []; // paid/closed/cancelled orders — diff source for paid/cancel points
-  const salespersonMap = new Map();
   // Full lightweight index (UNCAPPED) — the Worker's diff source of truth so
   // per-stage display caps (DETAIL_CAP) never hide points movements.
   const index = [];
@@ -392,8 +342,6 @@ async function main() {
   let totalValue = 0;
   let pages = 0;
   let scanned = 0;
-  let withItems = 0;
-  let overridden = 0;
 
   // Page through SOs per org (Status.All, newest first). Stop per org when a
   // page has nothing relevant: no active orders AND nothing created inside the
@@ -416,11 +364,7 @@ async function main() {
       scanned++;
       const rawStep = pendingStep(so);
       const soNum = so.salesorder_number || '';
-      let step = rawStep;
-      if (soNum && overrides.has(soNum) && rawStep !== 'complete') {
-        step = overrides.get(soNum);
-        overridden++;
-      }
+      const step = rawStep;
       const row = orderRow(so, today, org);
       const od = orderDate(so);
       const recent = od ? ((Date.now() - od.getTime()) / 86400000) <= SCAN_WINDOW_DAYS : true;
@@ -436,7 +380,6 @@ async function main() {
         createdDay: createdDayIso(so),
         salesperson: row.salesperson || '',
         total: row.total,
-        itemsSig: '',
       };
       index.push(entry);
 
@@ -447,7 +390,6 @@ async function main() {
         stages[step].count++;
         stages[step].value += row.total;
         if (stages[step].orders.length < DETAIL_CAP) stages[step].orders.push(row);
-        addSalesperson(salespersonMap, so, step, row.total);
         // Line items come from the detail endpoint (the list response never
         // includes them) — fetched in phase 2, but ONLY for display-capped
         // rows (what the dashboard can actually render/click). Ancient backlog
@@ -485,17 +427,10 @@ async function main() {
   }
   if (skippedOrgs.length) console.log(`crm-runner: skipped orgs this tick: ${skippedOrgs.join(', ')}`);
   } catch (e) {
-    console.log(`crm-runner: Zoho list fetch failed (${e.message}) — preservative heartbeat, then fail`);
-    try {
-        const fp = await workerRequest(API.crmFingerprint);
-        if (fp?.fingerprint) {
-          // No fetchedAt: the stored last-pull time stays honest for the badge.
-          await workerRequest(API.crmHeartbeat, { method: 'POST', body: { date: fp.date, fingerprint: fp.fingerprint } });
-        console.log('crm-runner: preservative heartbeat sent — last-known snapshot retained');
-      }
-    } catch (e2) {
-      console.log(`crm-runner: preservative heartbeat failed: ${e2.message}`);
-    }
+    // The floor keeps serving its D1 rows; a failed scan simply means the miss
+    // counters do not advance this tick (and nothing is ever flagged from a
+    // partial scan). Fail the job so the workflow surfaces the Zoho error.
+    console.log(`crm-runner: Zoho list fetch failed (${e.message}) — floor rows left untouched`);
     process.exit(1);
   }
 
@@ -505,22 +440,11 @@ async function main() {
     stages[s].value = Math.round(stages[s].value * 100) / 100;
   }
 
-  // Phase 1 — order-level fingerprint from the list scan alone. Unchanged →
-  // heartbeat and exit WITHOUT any per-SO detail calls (idle ticks stay cheap).
-  // CRM_FORCE=1 bypasses the gate. Keys org-scoped (sync-core crmOrgScope) so
-  // identical SO numbers in two orgs never collapse into one entry.
-  const orderFp = crypto.createHash('sha1')
-    .update(index.map((e) => [orgScope(e.so, e.org), e.stage, e.paidStatus, e.status, e.total].join('|')).sort().join('\n'))
-    .digest('hex');
-
-  // Display-field slimming for detail items (raw Zoho items carry ~80 keys
-  // each and would bloat the KV snapshot by megabytes). Shared by the Phase 2
-  // POST path and the heartbeat background-fill below.
+  // Line-item slimming: raw Zoho items carry ~80 keys each; keep display scalars
+  // only (objects/arrays in these fields break React rendering downstream).
   const SLIM_KEYS = ['line_item_id', 'item_id', 'name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
   const slimItem = (li) => {
     const o = {};
-    // Keep display scalars only — Zoho occasionally returns objects/arrays
-    // for these fields, which break React rendering downstream.
     for (const k of SLIM_KEYS) {
       const v = li[k];
       if (v === undefined || v === '' || v === null) continue;
@@ -529,186 +453,65 @@ async function main() {
     }
     return o;
   };
-  // Per-tick detail budget (12 rows × 10–15s gaps ≈ 2.5 min, inside the 5-min
-  // window). Applies to Phase 2 POST ticks AND heartbeat fill ticks alike.
+  // Per-tick detail budget (12 rows × 10–15s gaps ≈ 2.5 min). Each detail call
+  // is one Zoho request — the budget is what keeps us under the rate limit.
   const ITEM_BUDGET = 12;
 
-  // Previous per-SO [stage, itemsSig] (display rows only) — drives delta-fetch.
-  let prevSigs = {};
-  if (!process.env.CRM_FORCE) {
-    try {
-      const fp = await workerRequest(API.crmFingerprint);
-      // Stored fingerprints include the items signature suffix after the first
-      // detail run — compare against the order-level prefix for the shortcut.
-      const storedOrderFp = String(fp?.fingerprint || '').split('+')[0];
-      if (storedOrderFp === orderFp && fp?.date === today) {
-        // No change — refresh the snapshot TTL + fetchedAt so the dashboard
-        // stays fresh without a full POST, ledger diff, or live broadcast.
-        await workerRequest(API.crmHeartbeat, { method: 'POST', body: { date: today, fingerprint: fp.fingerprint, fetchedAt, totalActive, totalValue } });
-        console.log(`crm-runner: no change (fp ${orderFp.slice(0, 8)}), heartbeat sent — ${totalActive} active SOs`);
-        // Background fill: the pipeline is quiet, so spend the idle tick
-        // fetching line items for display rows that still lack them (up to
-        // budget) and merge them via /api/runner/crm/items. Without this,
-        // item coverage froze at whatever the last POST tick fetched and
-        // most dropdowns stayed at "No line-item detail".
-        const missing = [];
-        for (const s of STAGES) {
-          for (const row of stages[s].orders) {
-            const hit = activeBySo.get(orgScope(row.so, row.org));
-            if (!hit) continue;
-            // Fallback to the bare key for snapshots written pre-multi-org.
-            const prev = prevSigs[orgScope(row.so, row.org)] ?? prevSigs[row.so];
-            if (Array.isArray(prev) && prev[0] === s && prev[1]) continue; // already has items
-            missing.push(hit);
-            if (missing.length >= ITEM_BUDGET) break;
-          }
-          if (missing.length >= ITEM_BUDGET) break;
-        }
-        if (missing.length > 0) {
-          const merged = [];
-          for (const { id, row, entry } of missing) {
-            try {
-              const items = (await fetchOrderItems(id, row.org)).map(slimItem);
-              row.items = items;
-              row.lineCount = items.length;
-              entry.itemsSig = itemsSig(items);
-              merged.push({ so: row.so, org: row.org, items, lineCount: items.length, itemsSig: entry.itemsSig });
-            } catch (e) {
-              if (e?.message && !String(e.message).includes('circuit open')) {
-                console.log(`crm-runner: fill fetch failed for ${row.so}: ${e.message}`);
-              }
-            }
-            await sleep(10000 + Math.random() * 5000);
-          }
-          if (merged.length > 0) {
-            try {
-              const res = await workerRequest(API.crmItems, { method: 'POST', body: { date: today, items: merged } });
-              console.log(`crm-runner: background fill merged items for ${res?.merged ?? merged.length} SO(s)`);
-            } catch (e) {
-              console.log(`crm-runner: items merge failed (retry next tick): ${e.message}`);
-            }
-          }
-        }
-        // The pipeline did not move, but the floor still needs its rows
-        // refreshed (new SOs land here, and last-seen drives the deletion
-        // detector). Cheap: unchanged orders skip their write entirely.
-        await postFloorSync({ date: today, index, stages, closed, activeBySo });
-        return;
-      }
-      if (fp?.sigs && typeof fp.sigs === 'object') prevSigs = fp.sigs;
-    } catch (e) {
-      console.log(`crm-runner: fingerprint check failed (continuing with POST): ${e.message}`);
-    }
+  // What the floor already tracks: drives the item backfill queue AND the
+  // by-id re-verification that makes a deletion definitive.
+  let localOrders = [];
+  try {
+    const state = await workerRequest(API.crmState);
+    localOrders = Array.isArray(state?.orders) ? state.orders : [];
+  } catch (e) {
+    console.log(`crm-runner: floor state unavailable (${e.message}) — items may be refetched`);
   }
+  const itemsKnown = new Set(
+    localOrders.filter((o) => Number(o.itemCount) > 0).map((o) => `${o.org || ''}:${o.so}`),
+  );
 
-  // Phase 2 — pipeline moved (or forced): fetch FULL line items, but ONLY for
-  // display-capped rows (every clickable row gets items; backlog beyond the
-  // cap stays item-less). Items are slimmed to display fields — raw Zoho items
-  // carry ~80 keys each and would bloat the KV snapshot by megabytes.
-  const materialMap = new Map();
-  // Delta-fetch: a display row hits Zoho ONLY when it is new, moved stage, or
-  // was never captured (empty sig). Unchanged rows reuse the previous sig —
-  // the Worker backfills their items from the stored snapshot.
-  const queue = [];
-  let skipped = 0;
-  for (const s of STAGES) {
-    for (const row of stages[s].orders) {
-      const hit = activeBySo.get(orgScope(row.so, row.org));
-      if (!hit) continue;
-      // Fallback to the bare key for snapshots written pre-multi-org.
-      const prev = prevSigs[orgScope(row.so, row.org)] ?? prevSigs[row.so];
-      const prevStage = Array.isArray(prev) ? prev[0] : null;
-      const prevSig = Array.isArray(prev) ? prev[1] : '';
-      // Priority: brand-new rows first (createdToday / unseen), then moved or
-      // never-captured rows. Stages scan newest-first, so unshift new rows to
-      // the front — a single new SO is always fetched on its first tick.
-      if (prevStage === s && prevSig) {
-        hit.entry.itemsSig = prevSig; // worker backfills items
-        skipped++;
-      } else if (hit.entry.createdToday || !prev) {
-        queue.unshift(hit);
-      } else {
-        queue.push(hit);
-      }
-    }
-  }
-  // One-by-one with 10–15s gaps (never a burst → never 429). A per-tick
-  // budget keeps the tick inside the 5-min window; leftovers ride the next
-  // ticks and items ACCUMULATE via worker backfill, so the full set fills in
-  // progressively (~12 rows/tick ≈ 40 ticks for a cold start).
+  // Line items, round 2: only IN-WINDOW orders the floor has no items for yet,
+  // newest first (the index is already newest-first). Items accumulate across
+  // ticks until every floor order has been captured once.
+  const cutoff = dayBefore(today, FLOOR_WINDOW_DAYS);
+  const inWindow = (e) => !!e?.so && (!e.createdDay || e.createdDay >= cutoff);
+  const queue = index
+    .filter((e) => inWindow(e) && e.stage !== 'complete' && !itemsKnown.has(`${e.org || ''}:${e.so}`))
+    .map((e) => ({ entry: e, hit: activeBySo.get(`${e.org || ''}:${e.so}`) }))
+    .filter((q) => q.hit && q.hit.id);
   const due = queue.slice(0, ITEM_BUDGET);
-  const deferred = queue.length - due.length;
+  const itemsByKey = new Map();
   const t0 = Date.now();
   let detailErrors = 0;
-  for (const { id, row, entry } of due) {
+  for (const { entry, hit } of due) {
     try {
-      const items = (await fetchOrderItems(id, row.org)).map(slimItem);
-      row.items = items;
-      row.lineCount = items.length;
-      entry.itemsSig = itemsSig(items);
+      const items = (await fetchOrderItems(hit.id, entry.org)).map(slimItem);
+      itemsByKey.set(`${entry.org || ''}:${entry.so}`, items);
     } catch (e) {
       detailErrors++;
       if (e?.message && !String(e.message).includes('circuit open')) {
-        console.log(`crm-runner: detail fetch failed for ${row.so}: ${e.message}`);
+        console.log(`crm-runner: detail fetch failed for ${entry.so}: ${e.message}`);
       }
     }
-    await sleep(10000 + Math.random() * 5000); // 10–15s gap before the next hit
+    await sleep(10000 + Math.random() * 5000); // 10–15s gap — never burst Zoho
   }
   const detailMs = Date.now() - t0;
   if (detailCircuitOpen) console.log('crm-runner: detail circuit open — remaining rows skip items this tick');
-  for (const { row } of due) {
-    const items = Array.isArray(row.items) ? row.items : [];
-    if (items.length > 0) {
-      withItems++;
-      addMaterial(materialMap, items.slice(0, 50).map((li) => ({
-        name: li.name || li.description || '',
-        sku: li.sku || li.item_code || '',
-        qty: parseFloat(li.quantity) || 0,
-        item_total: parseFloat(li.item_total) || 0,
-      })));
-    }
-  }
-  if (detailErrors > 0) console.log(`crm-runner: ${detailErrors} detail fetch(es) failed (rows left without items)`);
-  if (deferred > 0) console.log(`crm-runner: ${deferred} row(s) deferred to upcoming ticks (budget ${ITEM_BUDGET}/tick)`);
+  if (detailErrors > 0) console.log(`crm-runner: ${detailErrors} detail fetch(es) failed (retried next tick)`);
+  const deferred = Math.max(0, queue.length - due.length);
+  if (deferred > 0) console.log(`crm-runner: ${deferred} order(s) still without items (budget ${ITEM_BUDGET}/tick)`);
 
-  const materials = [...materialMap.values()]
-    .sort((a, b) => b.qty - a.qty)
-    .slice(0, MATERIALS_CAP)
-    .map((m) => ({ ...m, qty: Math.round(m.qty * 100) / 100, value: Math.round(m.value * 100) / 100 }));
-
-  const salespeople = [...salespersonMap.values()]
-    .sort((a, b) => b.pipelineValue - a.pipelineValue)
-    .map((s) => ({ ...s, pipelineValue: Math.round(s.pipelineValue * 100) / 100 }));
-
-  // Full fingerprint: order-level state + per-order item signatures, so an
-  // item edit also triggers a snapshot POST (but never a heartbeat skip).
-  // Org-scoped keys throughout (see orderFp above).
-  const fingerprint = `${orderFp}+${crypto.createHash('sha1')
-    .update(index.map((e) => `${orgScope(e.so, e.org)}=${e.itemsSig}`).sort().join('\n'))
-    .digest('hex').slice(0, 12)}`;
-
-  const snapshot = {
-    date: today,
-    fetchedAt,
-    fingerprint,
-    totalActive,
-    totalValue,
-    stages,
-    closed,
-    materials,
-    salespeople,
-    index,
-    meta: { pages, scanned, withLineItems: withItems, overridden },
-  };
-
-  await workerRequest(API.crmSnapshot, { method: 'POST', body: snapshot });
-
-  await postFloorSync({ date: today, index, stages, closed, activeBySo });
+  // The ONE sink: D1 rows. The runner only fetches; the Worker decides what to
+  // insert, update, score or flag.
+  await postFloorSync({ date: today, index, stages, closed, activeBySo, itemsByKey, localOrders });
 
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)
     .join('  ');
-  console.log(`crm-runner: ${pages} page(s), ${scanned} scanned, ${totalActive} active SOs (₹${totalValue.toLocaleString()}), ${due.length} detail fetch(es) + ${skipped} backfilled + ${deferred} deferred in ${Math.round(detailMs / 100) / 10}s, ${withItems} with items — ${summary}`);
+  console.log(
+    `crm-runner: ${pages} page(s), ${scanned} scanned, ${totalActive} active SOs (₹${totalValue.toLocaleString()}), ` +
+      `${due.length} detail fetch(es) + ${deferred} queued in ${Math.round(detailMs / 100) / 10}s — ${summary}`,
+  );
 }
 
 if (require.main === module) {

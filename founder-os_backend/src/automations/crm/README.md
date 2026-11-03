@@ -1,162 +1,95 @@
-# crm — Department Control Room + Points System
+# crm — Dispatch Floor
 
-Department-split, points-driven CRM dashboard. Shows OPEN Zoho Books sales
-orders grouped by the next pending process step, with a **DepartmentScoreEvent**
-points ledger (mirrors `TelecallerScoreEvent` in telecalling). The Worker never
-calls Zoho — the GH Actions runner fetches + computes, the Worker diffs
-snapshots to score points, and `data()` serves the cached snapshot + ledger.
+Sales orders synced from **Zoho Books into D1 rows**, scheduled and dispatched
+by the dispatch desk. Zoho stays **read-only** — nothing here writes back.
+
+The old department control room (Overview / CRM Desk / Accounts / Dispatch /
+Procurement tabs over a KV snapshot) is retired. Scheduling needs per-item
+state and an audit trail, and a KV blob can only be diffed wholesale.
 
 Files:
 
-- `index.ts` — `handler()` is a no-op log (triggered via
-  `POST /api/trigger/crm` but all work lives in the runner + snapshot route);
-  `data()` reads the KV snapshot + aggregates the score ledger for
-  `GET /api/automations/crm/data`.
-- `rule.json` — handler, `schedule: */15 * * * *`, scope **`zoho`**.
+- `index.ts` — `handler()` is a no-op log (`POST /api/trigger/crm`; the real
+  work is `scripts/crm-runner.js` + the floor sync route). `data()` serves the
+  floor straight from D1 via `modules/crm/store` (legacy automation-registry
+  surface).
+- `rule.json` — handler, `schedule: */15 * * * *`, scope **`crm`**.
 
-## 1. What it does
+## Data model (migration 0097)
 
-Presents a department control room with horizontal tabs
-(**Overview | CRM Desk | Accounts | Dispatch | Procurement**):
+| Table | Role |
+|---|---|
+| `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
+| `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative dispatch date, dispatch state, delay reason, dispatched qty |
+| `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal` |
 
-| Tab | Content |
-|-----|---------|
-| **Overview** | KPI strip (active SOs, pipeline value, points-today per dept), 4 pipeline stage cards, recent movements feed |
-| **CRM Desk** | KPIs (pending confirm, points today/week), CRM leaderboard (7d), orders awaiting confirmation |
-| **Accounts** | KPIs, two tables — To Invoice + Awaiting Payment |
-| **Dispatch** | KPIs, orders to ship |
-| **Procurement** | KPIs (distinct materials, total qty, open orders), materials table — post-sale SO line items, labelled **SO Materials** in the UI to distinguish it from the pre-sale Sourcing Queue (`enquiry-procurement`) |
+## Lifecycle (derived from items, never set by hand)
 
-### Stage → desk ownership
+```
+unscheduled → partially_scheduled → scheduled → partially_dispatched → dispatched
+                     ↘ reschedule (mandatory reason) when a committed date slips
+cancelled   ← Zoho said cancelled/void (out of the queues, kept for audit)
+```
 
-| Step | Meaning | Desk |
-|------|---------|------|
-| **confirm** | Default: draft / anything open that matches no later stage | CRM Desk |
-| **invoice** | `order_status` confirmed/approved but not invoiced | Accounts |
-| **ship** | `invoiced_status` invoiced/partial but not shipped | Dispatch |
-| **payment** | `shipped_status` shipped/partial but not paid | Accounts (collections) |
-| *(excluded)* | `paid_status=paid` or `order_status=closed` or cancelled/void → `complete`, dropped from active pipeline | — |
+- A **new** order lands `unscheduled` (red) — nothing ships until it is dated.
+- Scheduling some items → `partially_scheduled`; every item dated → `scheduled`.
+- An item whose committed date passed and is still undispatched is **overdue**;
+  the floor forces the reschedule dialog (comprehensive reason) before moving on.
+- Dispatching some items → `partially_dispatched`; all → `dispatched`.
 
-### Points system (DepartmentScoreEvent ledger)
+Rules live once per side and are asserted equal by
+`scripts/guards/crm-lifecycle.test.mjs`:
+backend `modules/crm/scheduling.ts` ↔ frontend `src/crm/lifecycle.ts`
+(queue predicates: `modules/crm/queues.ts` ↔ `src/crm/queue.ts`).
 
-| Movement | Points | Dept | Actor |
-|---|---|---|---|
-| New SO created today | +25 | crm | salesperson |
-| Left `confirm` stage (order confirmed) | +50 | crm | salesperson |
-| (same event) Material allocated | +25 | procurement | — |
-| Left `invoice` stage (invoice raised) | +50 | accounts | — |
-| Left `ship` stage (shipped) | +50 | dispatch | salesperson |
-| Closed as paid (payment received) | +100 | accounts | — |
-| Closed cancelled/void | −20 | dept owning the stage it was in | salesperson |
+## Sync (runner → D1)
 
-Backward stage jumps score nothing. The Worker diffs each new snapshot against
-the previous KV snapshot (so→stage map) and writes ledger rows via
-`prisma.departmentScoreEvent.createMany`.
+`scripts/crm-runner.js` pages Zoho and POSTs
+`/api/runner/crm/orders/sync` (Bearer `SHARED_SECRET`):
 
-## 2. Trigger
+| Situation | Result |
+|---|---|
+| new OPEN order inside `FLOOR_WINDOW_DAYS` | inserted at `unscheduled` |
+| existing order | Zoho fields refreshed; **local scheduling never clobbered** |
+| brand-new COMPLETE order | skipped (it was never on the floor) |
+| unchanged order (per-order fingerprint) | write skipped |
+| absent from the scan | `missCount++` → flagged `deleted_source` at 2 |
+| re-verified 404 by id | flagged immediately (definitive) |
+| flagged order reappears | self-heals to `active` |
+| human confirms a deletion | row + items purged, audit event kept |
 
-- **Type:** `handler` · **Cron:** `*/5 * * * *` (GH `cron-every-5min.yml`
-  → `workflow_dispatch` → runner; worker `/api/trigger/crm` only logs).
-  5-min cadence = new sales orders surface (and score +25) within ~5 min of
-  creation in Zoho.
-- **Condition:** none — runs unconditionally on schedule.
-- **Actions:** the snapshot route (`POST /api/runner/crm/snapshot`) writes
-  `DepartmentScoreEvent` rows + busts the `crm:data` cache key.
+The floor is bounded to 30 days (`FLOOR_WINDOW_DAYS`, mirrored in the runner) —
+Zoho reports 5,000+ open SOs going back years, and the per-order item fetch
+(rate limited) could never catch up on the backlog. Line items land ~12
+orders/tick and accumulate; older floor orders show "No line items captured
+yet" until the fetcher reaches them.
 
-## 3. Source / integration
+## Points (DepartmentScoreEvent)
 
-- **Zoho Books** `/api/v3/salesorders` (`filter_by=Status.All`,
-  `per_page=200`, newest first, up to 30 pages, early stop when a page has no
-  active orders AND nothing created within 120 days), fetched by GH runner
-   `scripts/crm-runner.js` using the shared sync core
-   (`founder-os_backend/src/shared/sync-core/` — same curl credentials, HTTP
-   policies, org identities, and endpoint contracts as the estimates
-   sync) to read `founder-os_backend/zoho_sent/sent_estimates.txt`.
-- The runner works in **two phases**. Phase 1 pages the SO list (which never
-  includes `line_items`), computes `pendingStep()` per order (after applying
-  manual `CrmOrderAction` overrides), and checks the order-level fingerprint —
-  unchanged → heartbeat, zero further Zoho calls. Phase 2 (pipeline moved)
-  fetches FULL line items per **display-capped row only** via
-  `GET /api/v3/salesorders/:id` (concurrency 3 + pacing + 30s cap, one 429
-  backoff + retry, then a circuit-breaker fails the rest soft for the tick),
-  slims items to display fields (`name/description/sku/item_code/quantity/
-  unit/rate/item_total`), and aggregates real procurement materials from them.
-  Display rows are capped at 400 per stage via `DETAIL_CAP` (closed 400 via
-  `CLOSED_CAP`, materials 300 via `MATERIALS_CAP**); values rounded to 2
-  decimals. POSTs `{date (IST), fetchedAt, fingerprint, totalActive,
-  totalValue, stages, closed, materials, salespeople, index, meta}` to
-  `/api/runner/crm/snapshot` (KV-cached on the Worker). `index` entries carry
-  `itemsSig`, so the final fingerprint (`orderFp+itemsHash`) also triggers a
-  POST on item-only edits. Clicking a dashboard row expands its line items.
-- Scale note (Sep 2026): ~5k open SOs sit in `confirm` (ancient drafts inside
-  the 120-day window) — only display rows pay the detail-call cost; points use
-  the uncapped index either way.
-- `data()` reads KV `crm:salesorders_snapshot` (45-min TTL) and returns it
-  **only when `snapshot.date === today (IST)`** (`{…, fresh:true}`).
-  When no fresh snapshot exists (Zoho outage / runner failing), `data()` falls
-  back to the last-known snapshot kept 7 days in KV and serves it with
-  `{fresh:false, stale:true, staleSince}` — the dashboard shows a "last-known"
-  banner instead of zeroing out. Only when nothing exists within 7 days does
-  it return the empty `{totalActive:0, …, fresh:false, stale:false}` "waiting
-  for first snapshot" state. The points ledger always reads live D1, so scores
-  never go stale. Snapshot/heartbeat/items-merge writes all use the 7-day KV
-  TTL; freshness is decided by the 45-min read + date gate, never by KV expiry.
-- `data()` also aggregates the score ledger in parallel: today's points (by
-  dept), 7-day points, CRM leaderboard (7d, by actor: points/events/
-  created/confirmed), and a recent 50-event feed.
+Scored inside `syncOrders()` from **status moves since the last tick** — the
+same rules the retired KV snapshot diff used:
 
-## 4. Config / dedup
+| Movement | Credit |
+|---|---|
+| new SO created today | CRM +25 |
+| left confirm | CRM +50, Procurement +25 (material allocated) |
+| left invoice | Accounts +50 |
+| left ship | Dispatch +50 — **suppressed** if the floor already scored it |
+| closed paid | Accounts +100 (all remaining stages implied) |
+| cancelled / void | −20 to the desk holding the order |
 
-None (read-only dashboard + append-only points ledger).
+The dispatch floor credits **+50 full / +25 partial once per SO** when the desk
+marks items dispatched; `hasDispatchCredit()` matches both the bare `soNumber`
+(local credit) and the org-scoped `org:so` (Zoho credit), so one shipment can
+never score twice.
 
-## 5. Runbook / troubleshooting
+## API
 
-- Log prefix: `crm-runner:` (GH Actions run logs). Success line:
-  `N page(s), M active SOs (₹V) — confirm:a  invoice:b  ship:c  payment:d`.
-- Verify: open the CRM dashboard → KPI strip shows active SO counts + value
-  with `fresh:true` (check the payload, not just the numbers).
-- If empty/zeros with `fresh:false, stale:false`: the runner hasn't posted in
-  7+ days — check the `cron-every-5min.yml` run for `crm-runner` errors;
-   verify `founder-os_backend/zoho_sent/sent_estimates.txt` cookies are fresh; confirm
-  `WORKER_URL`/`SHARED_SECRET` GH secrets. (The Zoho "Sales Orders Today"
-  tile refreshes on the same 5-min workflow via `SO_ONLY=1`; the full
-  estimates sync still runs every 15 min.) `fresh:false, stale:true` is the
-  expected outage state: last-known pipeline + "Zoho sync is down" banner,
-  scores still live. A Zoho list failure sends a preservative heartbeat (no
-  `fetchedAt` bump, so the badge stays honest) and exits non-zero to alert.
-- **Migration:** `0021_department_score_events.sql` MUST be applied to remote
-  D1 before the points ledger works (the snapshot route writes
-  `DepartmentScoreEvent` rows; without the table the writes fail best-effort
-  and the ledger stays empty).
-- Snapshot KV key is `crm:salesorders_snapshot` (written with a 7-day KV TTL
-  for outage survival; freshness is decided by the 45-min read + `date` gate
-  in `data()` — TTL expiry alone doesn't cause zeros, a missing 7-day copy does).
-- Data cache key is `crm:data` (60-s TTL, busted on every runner refresh).
-- **No-change fast path:** the runner hashes the full pipeline state
-  (`index` rows) and checks `GET /api/runner/crm/fingerprint` first. Unchanged
-  → `POST /api/runner/crm/heartbeat` (refreshes KV TTL + `fetchedAt`, no ledger
-  diff, no cache bust, no broadcast) instead of a full snapshot POST, so idle
-  ticks never refetch open tabs. `CRM_FORCE=1` bypasses the gate.
-- **Delta-fetch (rate-limit safety):** the fingerprint endpoint also returns
-  `sigs` (`{so: [stage, itemsSig]}` for stored display rows). The runner fetches
-  Zoho details ONLY for rows that are new, moved stage, or never captured —
-  one new SO costs exactly 1 detail call, not ~500. Skipped rows reuse their
-  previous `itemsSig`; the snapshot route backfills their items from the stored
-  snapshot (sig-match) and recomputes procurement materials server-side from
-  the final rows, so delta ticks lose nothing. Item-only edits change the
-  fingerprint suffix and still trigger a full POST.
-- **Full-index diff:** points are diffed on the runner's uncapped lightweight
-  `index` (every SO), NOT the 400-capped display rows — counts and points stay
-  correct at scale. The snapshot route only broadcasts + busts `crm:data` when
-  ledger events were written or totals changed.
-- **Manual actions (wired):** MIS operators advance/cancel orders from the
-  dashboard tables (`POST /api/crm/actions`, MIS scope, actor from session →
-  `CrmOrderAction` rows). The runner fetches the last 7 days of actions
-  (`GET /api/runner/crm/actions`) and applies the latest per SO on top of
-  Zoho's raw status before `pendingStep()`, so points score automatically.
-- Gotchas: scope is `crm` (grant crm to see CRM); per-stage order lists
-  truncate at 400 for display (counts + points use the full index); handler
-  endpoint does nothing by design; if the Procurement tab is empty, check
-  `meta.withLineItems` — Zoho's list response may not include line items
-  (the runner records whether it did).
+`GET /api/crm/orders?view=&q=` · `GET /api/crm/summary` ·
+`GET /api/crm/orders/:id` (with audit trail) ·
+`POST /api/crm/orders/:id/{schedule,reschedule,dispatch,confirm-source-deletion}`.
 
+Read = `crm` or `dispatch` scope; writes = `dispatch` (MIS/root always).
+Frontend `IMPLIED_SCOPES.dispatch = ["crm"]` so a dispatch holder can open the
+floor. Every mutation is auto-broadcast (`data-changed`) — the dashboard refetches
+without manual refresh.

@@ -220,14 +220,35 @@ export async function getOrder(idOrSo: string): Promise<(CrmOrderRow & { events:
   };
 }
 
-/** Runner-side working set: what the worker already knows about. */
+/**
+ * Runner-side working set: what the worker already knows about.
+ *
+ * `itemCount` is what drives the runner's backfill queue — orders with items
+ * are never re-fetched from Zoho, so the per-tick detail budget is always spent
+ * on rows the floor still shows without line items.
+ */
 export async function syncState(): Promise<{
-  orders: Array<{ so: string; org: string; zohoId: string; lifecycle: string; sourceState: string }>;
+  orders: Array<{
+    so: string;
+    org: string;
+    zohoId: string;
+    lifecycle: string;
+    sourceState: string;
+    createdDate: string;
+    itemCount: number;
+  }>;
 }> {
   const rows = (await prisma.crmSalesOrder.findMany({
     where: { sourceState: 'active' },
     take: 3000,
   })) as any[];
+  // One cheap pass over item rows (a few hundred) instead of a JOIN per order.
+  const itemRows = (await prisma.crmSoItem.findMany({ take: 5000 })) as any[];
+  const counts = new Map<string, number>();
+  for (const it of itemRows) {
+    const id = str(it.soId);
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
   return {
     orders: rows.map((r) => ({
       so: str(r.soNumber),
@@ -235,6 +256,8 @@ export async function syncState(): Promise<{
       zohoId: str(r.zohoId),
       lifecycle: str(r.lifecycle),
       sourceState: str(r.sourceState),
+      createdDate: str(r.createdDate).slice(0, 10),
+      itemCount: counts.get(str(r.id)) || 0,
     })),
   };
 }
@@ -655,6 +678,56 @@ export interface SyncResult {
   missing: Array<{ so: string; org: string; zohoId: string }>;
 }
 
+// ── Department scoring (the CRM ↔ Accounts ↔ Procurement points game) ───────
+//
+// These credits used to be produced by diffing the KV snapshot inside
+// /api/runner/crm/snapshot. That route is retired, so the SAME rules now run
+// against the D1 row's previous Zoho statuses during sync — one ledger, one
+// source of truth, no blob:
+//
+//   new SO created today      → CRM +25
+//   left the confirm stage    → CRM +50 and Procurement +25 (material allocated)
+//   left the invoice stage    → Accounts +50
+//   left the ship stage       → Dispatch +50 (suppressed if the floor scored it)
+//   closed as paid            → Accounts +100 (plus every stage completion)
+//   closed cancelled/void     → −20 to the dept owning the stage it reached
+const SCORE_STAGES = ['confirm', 'invoice', 'ship', 'payment'] as const;
+type ScoreStage = (typeof SCORE_STAGES)[number];
+
+const STAGE_DEPT: Record<ScoreStage, string> = {
+  confirm: 'crm',
+  invoice: 'accounts',
+  ship: 'dispatch',
+  payment: 'accounts',
+};
+
+const STAGE_COMPLETION: Record<ScoreStage, Array<[string, number, string]>> = {
+  confirm: [
+    ['crm', 50, 'Sales order confirmed'],
+    ['procurement', 25, 'Material allocated — cleared confirm'],
+  ],
+  invoice: [['accounts', 50, 'Invoice raised']],
+  ship: [['dispatch', 50, 'Order shipped']],
+  payment: [['accounts', 100, 'Payment received']],
+};
+
+/** Furthest pipeline stage an order has reached, from its Zoho statuses. */
+function orderStage(o: {
+  status?: string;
+  orderStatus?: string;
+  invoicedStatus?: string;
+  shippedStatus?: string;
+  paidStatus?: string;
+}): ScoreStage | 'complete' {
+  const status = str(o.status).toLowerCase();
+  if (status === 'cancelled' || status === 'void') return 'complete';
+  if (str(o.paidStatus).toLowerCase() === 'paid') return 'complete';
+  if (str(o.shippedStatus).toLowerCase() === 'shipped') return 'payment';
+  if (str(o.invoicedStatus).toLowerCase() === 'invoiced') return 'ship';
+  if (str(o.orderStatus).toLowerCase() === 'confirmed') return 'invoice';
+  return 'confirm';
+}
+
 /**
  * The floor only tracks RECENT orders. Zoho Books holds years of history and
  * thousands of legacy open orders — syncing all of them would make the floor
@@ -726,6 +799,31 @@ export async function syncOrders(args: {
 
   const seen = new Set<string>();
   const toCreate: any[] = [];
+  // Stage-completion credits for orders that advanced this tick.
+  const stageCredits: Array<{ dept: string; soNumber: string; points: number; reason: string; actor: string | null }> = [];
+  const awardStages = (
+    fromIdx: number,
+    toIdx: number,
+    soNumber: string,
+    salesperson: string | null,
+    shipAlreadyCredited: boolean,
+  ) => {
+    for (let i = Math.max(0, fromIdx); i <= toIdx && i < SCORE_STAGES.length; i++) {
+      const stage = SCORE_STAGES[i];
+      // One shipment never scores twice: skip the Zoho ship credit when the
+      // dispatch floor already credited the order locally.
+      if (stage === 'ship' && shipAlreadyCredited) continue;
+      for (const [dept, points, reason] of STAGE_COMPLETION[stage] || []) {
+        stageCredits.push({
+          dept,
+          soNumber,
+          points,
+          reason,
+          actor: dept === 'crm' || dept === 'dispatch' ? salesperson : null,
+        });
+      }
+    }
+  };
   const newOrderCredits: Array<{ soNumber: string; salesperson: string | null; day: string }> = [];
   const withItems: Array<{ soId: string; items: any[] }> = [];
   const now = new Date();
@@ -836,6 +934,46 @@ export async function syncOrders(args: {
     });
     result.updated++;
     if (healedNow) result.healed++;
+
+    // ── Department points for pipeline movement ────────────────────────────
+    // Only orders we already track are scored (a first sighting is never
+    // back-credited — a cold start must not flood the ledger).
+    if (!healedNow) {
+      const prevStage = orderStage({
+        status: str(existing.status),
+        orderStatus: str(existing.orderStatus),
+        invoicedStatus: str(existing.invoicedStatus),
+        shippedStatus: str(existing.shippedStatus),
+        paidStatus: str(existing.paidStatus),
+      });
+      const nextStage = orderStage(o as any);
+      const cancelledNow = CANCELLED_STATUSES.has(str(o.status).toLowerCase());
+      const wasCancelled = CANCELLED_STATUSES.has(str(existing.status).toLowerCase());
+      if (cancelledNow && !wasCancelled) {
+        // Order pulled out of the pipeline — the desk holding it takes the hit.
+        stageCredits.push({
+          dept: STAGE_DEPT[prevStage as ScoreStage] || 'crm',
+          soNumber,
+          points: -20,
+          reason: `Order cancelled (was in ${prevStage})`,
+          actor: str(o.salesperson) || null,
+        });
+      } else if (!cancelledNow) {
+        const prevIdx = SCORE_STAGES.indexOf(prevStage as ScoreStage);
+        const nextIdx = SCORE_STAGES.indexOf(nextStage as ScoreStage);
+        if (prevStage === 'complete') {
+          // Reopened after closing — nothing to credit, never a double score.
+        } else if (nextStage === 'complete') {
+          // Closed paid: every remaining stage completion is implied.
+          const shipDone = await hasDispatchCredit(soNumber);
+          awardStages(prevIdx < 0 ? 0 : prevIdx, SCORE_STAGES.length - 1, soNumber, str(o.salesperson) || null, shipDone);
+        } else if (nextIdx > prevIdx) {
+          const shipDone = await hasDispatchCredit(soNumber);
+          awardStages(prevIdx < 0 ? 0 : prevIdx, nextIdx - 1, soNumber, str(o.salesperson) || null, shipDone);
+        }
+        // A regression (credit note / manual revert) scores nothing.
+      }
+    }
     if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
   }
 
@@ -897,21 +1035,32 @@ export async function syncOrders(args: {
     result.missing.push({ so: soNumber, org, zohoId: str(row.zohoId) });
   }
 
-  if (newOrderCredits.length) {
+  // Stage completions detected above (status moves since the last tick).
+  const scoreEvents: any[] = stageCredits.map((c) => ({
+    id: crypto.randomUUID(),
+    dept: c.dept,
+    soNumber: c.soNumber,
+    points: c.points,
+    reason: c.reason,
+    actor: c.actor,
+    day,
+  }));
+  for (const c of newOrderCredits) {
+    scoreEvents.push({
+      id: crypto.randomUUID(),
+      dept: 'crm',
+      soNumber: c.soNumber,
+      points: 25,
+      reason: 'New sales order created',
+      actor: c.salesperson,
+      day: c.day,
+    });
+  }
+  if (scoreEvents.length) {
     try {
-      await prisma.departmentScoreEvent.createMany({
-        data: newOrderCredits.map((c) => ({
-          id: crypto.randomUUID(),
-          dept: 'crm',
-          soNumber: c.soNumber,
-          points: 25,
-          reason: 'New sales order created',
-          actor: c.salesperson,
-          day: c.day,
-        })),
-      });
+      await prisma.departmentScoreEvent.createMany({ data: scoreEvents });
     } catch (e: any) {
-      logger.warn({ err: e?.message }, 'crm sync: new-order points write failed');
+      logger.warn({ err: e?.message, events: scoreEvents.length }, 'crm sync: points write failed');
     }
   }
 

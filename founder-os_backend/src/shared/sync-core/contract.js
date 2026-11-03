@@ -19,11 +19,6 @@ const API = Object.freeze({
   zohoClassification: '/api/runner/zoho/classification',
   leadDetails: '/api/runner/estimates/lead-details',
   salesOrdersToday: '/api/runner/zoho/salesorders-today',
-  crmSnapshot: '/api/runner/crm/snapshot',
-  crmFingerprint: '/api/runner/crm/fingerprint',
-  crmHeartbeat: '/api/runner/crm/heartbeat',
-  crmItems: '/api/runner/crm/items',
-  crmActions: '/api/runner/crm/actions',
   // Dispatch-floor sync (migration 0097): SO rows + items into D1.
   crmState: '/api/runner/crm/state',
   crmOrdersSync: '/api/runner/crm/orders/sync',

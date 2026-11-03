@@ -292,6 +292,38 @@ thin — heavy AI is performed by GH Actions runners that call `/api/runner/*`.
 | POST | `/api/runner/brain/context` | Upsert brain context rows |
 | POST | `/api/runner/estimates/baseline` | Freeze today's baseline |
 | POST | `/api/runner/neodove/report` | Upsert NeoDove report |
+| GET | `/api/runner/crm/state` | Floor working set (SO rows, item counts) — drives the item backfill + deletion re-verify |
+| POST | `/api/runner/crm/orders/sync` | **The only writer of CRM rows**: insert/update/self-heal orders, upsert items, flag `deleted_source`, score stage moves |
+
+### 3.2a CRM dispatch floor (D1 rows, not a KV blob)
+The CRM dashboard is a **scheduling floor**, not a read-only pipeline view. Zoho Books
+stays **read-only**; the floor lives in D1 (migration `0097`):
+
+| Table | Role |
+|---|---|
+| `CrmSalesOrder` | one row per `org + soNumber` — Zoho fields, derived `lifecycle`, `sourceState` (`active`/`deleted_source`), miss counter |
+| `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative date, dispatch state, delay reason, dispatched qty |
+| `CrmScheduleEvent` | append-only audit of every promise, slip and dispatch |
+
+Lifecycle (derived from items, never set by hand):
+`unscheduled → partially_scheduled → scheduled → partially_dispatched → dispatched`, plus
+`cancelled` for Zoho `cancelled`/`void` (out of the queues, kept for audit). A committed
+date that passes undispatched makes the item **overdue**, and the floor forces the
+reschedule dialog (comprehensive reason) before it can move on.
+
+Rules exist once per runtime — backend `modules/crm/scheduling.ts` + `queues.ts`,
+frontend `src/crm/lifecycle.ts` + `queue.ts` — and `scripts/guards/crm-lifecycle.test.mjs`
+fails on any disagreement (state machine, overdue verdict, tab membership, validation).
+
+Sync: `scripts/crm-runner.js` pages Zoho and POSTs only the **in-window** slice
+(`FLOOR_WINDOW_DAYS = 30`, mirrored in the store — Zoho reports 5,000+ open SOs and the
+rate-limited per-order item fetch could never catch up on the backlog). Per-order
+fingerprints skip unchanged writes; a row missing from the scan gets `missCount++` and is
+flagged `deleted_source` at 2 (immediately on a re-verified 404), self-healing if it
+reappears; a human confirms the removal and the row is purged with the audit kept.
+Department points are scored from the status moves during sync — **dispatch +50 full /
++25 partial once per SO**, with the Zoho ship credit suppressed when the floor already
+scored it so one shipment never scores twice.
 
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
@@ -421,7 +453,7 @@ EventHub `telecalling` events).
 |----------|---------------|------|
 | `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI), `whatsapp-autopilot-runner.js` (shadow), light-trigger curls (wa-engine-monitor, morning-queue-drain, orphaned-message-recovery, outbound-intent-recovery, sla-monitor, whatsapp-marketing, notification-batcher) — never pings Zoho |
 | `cron-every-10min.yml` | `*/10` | `neodove-report-runner.js` (today, intraday overwrite — GH egress fallback; primary population is the native in-worker refresh every 5 min) |
-| `cron-every-15min.yml` | `*/15` | `effort-sync-runner.js` (NeoDove call-log snapshots for the telecalling snatch shield), `crm-runner.js` (sales-orders snapshot), `zoho-sent-runner.js` (full sync + AI: All-status 2-page fetch, transitions, gated AI — see `scripts/zoho-sync/README.md`; `force` dispatch reprocesses all eligible) — serial group, one Zoho pinger at a time |
+| `cron-every-15min.yml` | `*/15` | `effort-sync-runner.js` (NeoDove call-log snapshots for the telecalling snatch shield), `crm-runner.js` (dispatch-floor sync: Zoho orders → D1 rows), `zoho-sent-runner.js` (full sync + AI: All-status 2-page fetch, transitions, gated AI — see `scripts/zoho-sync/README.md`; `force` dispatch reprocesses all eligible) — serial group, one Zoho pinger at a time |
 | `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |
 | `cron-daily-ist.yml` | `30 19` (baseline-freeze 01:00 IST), `30 21` (data-retention 03:00 IST) | baseline-freeze (curl), data-retention (curl), `morning-brief-runner.js`, `eod-summary-runner.js`, `neodove-report-runner.js` (yesterday + N-day backfill) |
 
@@ -588,7 +620,7 @@ founder-os_frontend/src/
     ├── TelecallingDashboard           # leaderboard + At-Risk + Lead Conversion/Generation
     ├── EnquiryTracker + Enquiry{List,Detail,Modal,RowItem}  # live sales pipeline
     ├── NeodoveTelecallerDashboard, WaEngineDashboard, DppPricesDashboard
-    ├── CrmDashboard                   # active sales orders pipeline (CRM/Accounts/Dispatch/Procurement desks)
+    ├── CrmDashboard                   # dispatch floor (schedule → dispatch → reschedule; D1 rows)
     ├── WhatsAppMarketingDashboard
     ├── AutopilotDashboard, WhatsAppDashboard
     ├── SheetAnalysisDashboard         # generic fallback for data()-only automations

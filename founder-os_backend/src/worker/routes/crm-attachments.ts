@@ -14,9 +14,7 @@ import {
   notifyLive, broadcastLive, LiveEvent, MAX_ATTACHMENT_BYTES, deps,
   type Bindings,
 } from '../context';
-import { cacheDel } from '../../shared/cache';
 
-const CRM_DATA_CACHE_KEY = 'crm:data';
 const VALID_KINDS = new Set(['invoice', 'lr', 'pod', 'other']);
 
 function isAllowedMime(mime: string): boolean {
@@ -79,7 +77,6 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
         createdAt: new Date(),
       },
     });
-    try { await cacheDel(CRM_DATA_CACHE_KEY); } catch { /* best-effort */ }
     broadcastLive(c, LiveEvent.Crm, { soNumber, attachmentsChanged: true });
     return c.json({ ok: true, attachment: toJson(row) }, 201);
   });
@@ -133,7 +130,6 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
       if (c.env.CHAT_FILES && row.kvKey) await c.env.CHAT_FILES.delete(String(row.kvKey));
     } catch { /* bytes best-effort — row delete still proceeds */ }
     await prisma.soAttachment.delete({ where: { id: String(row.id) } }).catch(() => {});
-    try { await cacheDel(CRM_DATA_CACHE_KEY); } catch { /* best-effort */ }
     notifyLive(c, { type: LiveEvent.Crm, soNumber: String(row.soNumber || ''), attachmentsChanged: true });
     return c.json({ ok: true });
   });
