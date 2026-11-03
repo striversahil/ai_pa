@@ -38,6 +38,7 @@ import {
 import { istToday, useCrmAction } from "./hooks";
 import { crmApi } from "./api";
 import { api } from "@/api/client";
+import { REGIONS } from "@/telecalling/regions";
 import SoAttachments from "@/components/SoAttachments";
 
 export type PanelMode = "view" | "schedule" | "dispatch" | "reschedule";
@@ -45,17 +46,17 @@ export type PanelMode = "view" | "schedule" | "dispatch" | "reschedule";
 const inr = (n: number | null | undefined) =>
   `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
-const dayLabel = (d: string | null | undefined) => {
+/** "26 Oct 2026" — every date in this panel carries its year. The dispatch
+ *  window is 30 days wide, so day+month alone reads ambiguous at a glance. */
+const dateLabel = (d: string | null | undefined) => {
   if (!d) return "—";
   const dt = new Date(`${String(d).slice(0, 10)}T00:00:00`);
   if (isNaN(dt.getTime())) return String(d);
-  return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 };
 
-/** Full calendar label ("Tue, 03 Nov 2026"). The dispatch window spans 30 days
- *  and the panel is open on orders from both ends of it, so the SO date has to
- *  read exactly — day + month alone is ambiguous across a year boundary. */
-const fullDayLabel = (d: string | null | undefined) => {
+/** "Tue, 26 Oct 2026" — the header's order date gets the weekday too. */
+const fullDateLabel = (d: string | null | undefined) => {
   if (!d) return "—";
   const dt = new Date(`${String(d).slice(0, 10)}T00:00:00`);
   if (isNaN(dt.getTime())) return String(d);
@@ -66,6 +67,15 @@ const fullDayLabel = (d: string | null | undefined) => {
     year: "numeric",
   });
 };
+
+/** "R2 · North-Central & Himalayan Belt" — code first, name for humans. */
+const regionName = (id: string) =>
+  (REGIONS.find((r) => r.id === id)?.name ?? "").replace(/\s*Region$/, "");
+
+/** The little separator between identity facts. */
+function Dot() {
+  return <span className="text-zinc-300 dark:text-zinc-600">·</span>;
+}
 
 /** How old the SO is on the floor: "today", "yesterday", "9 days ago". */
 const ageLabel = (d: string | null | undefined, today: string) => {
@@ -96,7 +106,7 @@ function AddressCard({ label, value, editedBy, canEdit, onSave, saving }: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+    <div className="rounded-xl border border-zinc-200 px-3.5 py-2.5 dark:border-zinc-800">
       <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
         <span>{label}</span>
         <span className="flex items-center gap-1.5 normal-case">
@@ -119,6 +129,18 @@ function AddressCard({ label, value, editedBy, canEdit, onSave, saving }: {
       ) : (
         <p className="mt-0.5 text-xs italic text-zinc-400 dark:text-zinc-500">Waiting for the Zoho detail sync…</p>
       )}
+    </div>
+  );
+}
+
+/** One label/value line of the order details — muted label left, value right. */
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4 px-3.5 py-2">
+      <dt className="shrink-0 pt-px text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        {label}
+      </dt>
+      <dd className="min-w-0 text-right text-xs text-zinc-700 dark:text-zinc-200">{children}</dd>
     </div>
   );
 }
@@ -316,7 +338,9 @@ export default function OrderPanel({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-lg font-semibold tracking-tight">{order.soNumber}</h2>
+                <h2 className="min-w-0 truncate text-base font-semibold tracking-tight">
+                  {order.customerName || order.soNumber}
+                </h2>
                 <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.chip}`}>{meta.label}</span>
                 {order.sourceState === "deleted_source" && (
                   <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
@@ -324,11 +348,19 @@ export default function OrderPanel({
                   </span>
                 )}
               </div>
-              <p className="mt-1 truncate text-sm text-zinc-500 dark:text-zinc-400">
-                {order.customerName || "—"} · {inr(order.value)} · {order.salesperson || "Unassigned"}
-                {order.createdDate ? ` · SO ${dayLabel(order.createdDate)}` : ""}
-                {order.referenceNumber ? ` · EST ${order.referenceNumber}` : ""}
-              </p>
+              {/* Identity line — each fact gets its own space instead of one
+                  long dot-separated run-on. */}
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-200">{order.soNumber}</span>
+                {order.referenceNumber && (
+                  <>
+                    <Dot />
+                    <span className="font-mono">{order.referenceNumber}</span>
+                  </>
+                )}
+                <Dot />
+                <span>{order.region ? `${order.region} · ${regionName(order.region)}` : "Region unmapped"}</span>
+              </div>
             </div>
             <button
               onClick={onClose}
@@ -391,40 +423,35 @@ export default function OrderPanel({
               Address save failed: {addrError}
             </div>
           )}
-          <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-            {/* Which date this SO is — the Zoho creation date, read exactly and
-                with its age, so the desk always knows what day it is working. */}
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">SO date</p>
-              <p className="mt-0.5 text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-                {fullDayLabel(order.createdDate)}
-              </p>
-              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">
-                {ageLabel(order.createdDate, today) || "—"}
-              </p>
-            </div>
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">EST no.</p>
-              <p className="mt-0.5 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-                {order.referenceNumber || "—"}
-              </p>
-              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">{order.region ? `Region ${order.region}` : "Region unmapped"}</p>
-            </div>
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Payment terms</p>
-              <p className="mt-0.5 text-xs font-semibold leading-relaxed text-zinc-800 dark:text-zinc-100">
-                {order.paymentTerms || <span className="font-normal italic text-zinc-400">Not in the Zoho terms…</span>}
-              </p>
-            </div>
-            <AddressCard label="Billing address" value={addrOverride?.billing ?? order.billingAddress} editedBy={addrOverride?.billingBy ?? order.billingAddressEditedBy} canEdit={floorWrite} saving={addrSaving} onSave={(t) => saveAddress("billing", t)} />
-            <AddressCard label="Shipping address" value={addrOverride?.shipping ?? order.shippingAddress} editedBy={addrOverride?.shippingBy ?? order.shippingAddressEditedBy} canEdit={floorWrite} saving={addrSaving} onSave={(t) => saveAddress("shipping", t)} />
+          <div className="mb-4 grid gap-3 lg:grid-cols-2">
+            {/* Order details — a plain label/value list. Minimal, but every
+                fact the desk needs before touching a date is right here. */}
+            <section className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+              <dl className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
+                <DetailRow label="Order date">
+                  <span className="font-medium text-zinc-800 dark:text-zinc-100">{fullDateLabel(order.createdDate)}</span>
+                  <span className="ml-2 text-[11px] text-zinc-400">{ageLabel(order.createdDate, today)}</span>
+                </DetailRow>
+                <DetailRow label="Order value">
+                  <span className="font-semibold tabular-nums">{inr(order.value)}</span>
+                </DetailRow>
+                <DetailRow label="Salesperson">{order.salesperson || "Unassigned"}</DetailRow>
+                <DetailRow label="Payment terms">
+                  {order.paymentTerms || <span className="italic text-zinc-400">Not in the Zoho terms</span>}
+                </DetailRow>
+              </dl>
+            </section>
+            <section className="space-y-3">
+              <AddressCard label="Billing address" value={addrOverride?.billing ?? order.billingAddress} editedBy={addrOverride?.billingBy ?? order.billingAddressEditedBy} canEdit={floorWrite} saving={addrSaving} onSave={(t) => saveAddress("billing", t)} />
+              <AddressCard label="Shipping address" value={addrOverride?.shipping ?? order.shippingAddress} editedBy={addrOverride?.shippingBy ?? order.shippingAddressEditedBy} canEdit={floorWrite} saving={addrSaving} onSave={(t) => saveAddress("shipping", t)} />
+            </section>
           </div>
           {order.sourceState === "deleted_source" && (
             <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <p>
-                  Zoho stopped returning this order{order.deletedDetectedAt ? ` on ${dayLabel(order.deletedDetectedAt.slice(0, 10))}` : ""}. It
+                  Zoho stopped returning this order{order.deletedDetectedAt ? ` on ${dateLabel(order.deletedDetectedAt.slice(0, 10))}` : ""}. It
                   stays on the floor until someone confirms — confirming deletes it here and keeps the audit trail.
                 </p>
               </div>
@@ -505,7 +532,7 @@ export default function OrderPanel({
                         <ItemStateChip item={it} overdue={overdue} due={due} />
                       </td>
                       <td className="px-2 py-2 text-zinc-600 dark:text-zinc-300">
-                        {dayLabel(it.tentativeDispatchDate)}
+                        {dateLabel(it.tentativeDispatchDate)}
                         {it.delayReason && (
                           <div className="mt-0.5 max-w-[180px] text-[10px] text-amber-600 dark:text-amber-400">{it.delayReason}</div>
                         )}
@@ -600,7 +627,9 @@ export default function OrderPanel({
                     <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
                     <span>
                       <b>{e.kind.replace(/_/g, " ")}</b>
-                      {e.fromDate || e.toDate ? ` · ${e.fromDate ?? "—"} → ${e.toDate ?? "—"}` : ""}
+                      {e.fromDate || e.toDate
+                        ? ` · ${e.fromDate ? dateLabel(e.fromDate) : "—"} → ${e.toDate ? dateLabel(e.toDate) : "—"}`
+                        : ""}
                       {e.qty ? ` · qty ${e.qty}` : ""}
                       {e.actor ? ` · ${e.actor}` : ""}
                       {e.reason ? <span className="block text-[10px] text-zinc-500">{e.reason}</span> : null}

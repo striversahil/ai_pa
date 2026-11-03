@@ -37,11 +37,12 @@ import { isOverdueItem } from "@/crm/lifecycle";
 const inr = (n: number | null | undefined) =>
   `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
+/** "26 Oct 2026" — dates on the cards carry their year, like the SO panel. */
 const dayLabel = (d: string | null | undefined) => {
   if (!d) return "—";
   const dt = new Date(`${String(d).slice(0, 10)}T00:00:00`);
   if (isNaN(dt.getTime())) return String(d);
-  return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 };
 
 const daysBetween = (from: string, to: string) => {
