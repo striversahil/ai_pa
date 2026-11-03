@@ -278,45 +278,37 @@ function SalesOrderCard({
   return (
     <div className={`${CARD} p-3.5`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold tracking-tight text-[var(--text-primary)]">{order.soNumber}</span>
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.chip}`}>{meta.label}</span>
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${payment.cls}`}>{payment.label}</span>
-            {showRegion && (
-              <span className="rounded-full border border-[var(--border-card)] bg-[var(--surface-sunken)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
-                {order.region || "Unmapped"}
-              </span>
-            )}
-            {order.overdue && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                <AlertTriangle className="h-3 w-3" /> Overdue
-              </span>
-            )}
-          </div>
-          <div className="mt-1 truncate text-xs text-[var(--text-secondary)]">
-            {order.customerName || "—"}
-            <span className="text-[var(--text-tertiary)]"> · </span>
-            {order.salesperson || "Unassigned"}
-            {order.createdDate ? (
-              <>
-                <span className="text-[var(--text-tertiary)]"> · </span>SO {dayLabel(order.createdDate)}
-              </>
-            ) : null}
-            {order.referenceNumber ? (
-              <>
-                <span className="text-[var(--text-tertiary)]"> · </span>EST {order.referenceNumber}
-              </>
-            ) : null}
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-sm font-semibold tracking-tight text-[var(--text-primary)]">{order.soNumber}</span>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.chip}`}>{meta.label}</span>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${payment.cls}`}>{payment.label}</span>
+          {showRegion && (
+            <span className="rounded-full border border-[var(--border-card)] bg-[var(--surface-sunken)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
+              {order.region || "Unmapped"}
+            </span>
+          )}
+          {order.overdue && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+              <AlertTriangle className="h-3 w-3" /> Overdue
+            </span>
+          )}
         </div>
         <div className="text-right">
           <div className={`${NUM} text-sm`}>{inr(order.value)}</div>
           <div className="text-[10px] text-[var(--text-tertiary)]">
             {items.length} item{items.length === 1 ? "" : "s"}
-            {committed ? ` · promised ${dayLabel(committed)}` : ""}
           </div>
         </div>
+      </div>
+
+      {/* Client on its own line, then one labelled cell per fact. */}
+      <div className="mt-1.5 truncate text-sm font-medium text-[var(--text-primary)]">{order.customerName || "—"}</div>
+
+      <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-[var(--border-card)] pt-2.5 sm:grid-cols-4">
+        <Fact label="SO date" value={dayLabel(order.createdDate)} />
+        <Fact label="EST no." value={order.referenceNumber || "—"} mono />
+        <Fact label="Salesperson" value={order.salesperson || "Unassigned"} />
+        <Fact label="Region" value={order.region || "Unmapped"} />
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-secondary)]">
@@ -325,6 +317,9 @@ function SalesOrderCard({
         {order.dueToday ? (
           <span className={`${PILL} border-indigo-500/25 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400`}>{order.dueToday} out today</span>
         ) : null}
+        <span className={`${PILL} border-[var(--border-card)] bg-[var(--surface-sunken)] text-[var(--text-secondary)]`}>
+          {committed ? `promised ${dayLabel(committed)}` : "no date yet"}
+        </span>
         {order.soDelayReason && (
           <span className="truncate text-amber-600 dark:text-amber-400" title={order.soDelayReason}>
             {order.soDelayReason}
@@ -353,6 +348,21 @@ function SalesOrderCard({
         >
           Open <ChevronRight className="h-3 w-3" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** One labelled fact on a card: muted label above the value. */
+function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[9px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">{label}</div>
+      <div
+        className={`mt-0.5 truncate text-[11px] font-medium text-[var(--text-primary)] ${mono ? "font-mono" : ""}`}
+        title={value}
+      >
+        {value}
       </div>
     </div>
   );

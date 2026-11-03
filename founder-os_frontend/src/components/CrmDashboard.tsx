@@ -235,50 +235,47 @@ function OrderCard({
       }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold tracking-tight">{order.soNumber}</span>
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.chip}`}>{meta.label}</span>
-            {order.overdue && (
-              <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                {overdueItems.length} item{overdueItems.length === 1 ? "" : "s"} overdue{overdueDays ? ` · ${overdueDays}d` : ""}
-              </span>
-            )}
-            {order.sourceState === "deleted_source" && (
-              <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                Deleted at source
-              </span>
-            )}
-          </div>
-          <div className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-300">
-            {order.customerName || "—"}
-            <span className="text-zinc-400"> · </span>
-            {order.salesperson || "Unassigned"}
-            {order.createdDate ? (
-              <>
-                <span className="text-zinc-400"> · </span>SO {dayLabel(order.createdDate)}
-              </>
-            ) : null}
-            {order.referenceNumber ? (
-              <>
-                <span className="text-zinc-400"> · </span>ref {order.referenceNumber}
-              </>
-            ) : null}
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-sm font-semibold tracking-tight">{order.soNumber}</span>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.chip}`}>{meta.label}</span>
+          {order.overdue && (
+            <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+              {overdueItems.length} item{overdueItems.length === 1 ? "" : "s"} overdue{overdueDays ? ` · ${overdueDays}d` : ""}
+            </span>
+          )}
+          {order.sourceState === "deleted_source" && (
+            <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+              Deleted at source
+            </span>
+          )}
         </div>
         <div className="text-right">
           <div className="text-sm font-semibold tabular-nums">{inr(order.value)}</div>
           <div className="text-[10px] text-zinc-500">
             {items.length} item{items.length === 1 ? "" : "s"}
-            {committed ? ` · committed ${dayLabel(committed)}` : ""}
           </div>
         </div>
       </div>
+
+      {/* Client — the one thing a person scans for, so it gets its own line. */}
+      <div className="mt-1.5 truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+        {order.customerName || "—"}
+      </div>
+
+      {/* The facts, each with its own label — no dot-separated run-on. */}
+      <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-zinc-100 pt-2.5 sm:grid-cols-4 dark:border-zinc-800">
+        <Fact label="SO date" value={dayLabel(order.createdDate)} />
+        <Fact label="EST no." value={order.referenceNumber || "—"} mono />
+        <Fact label="Salesperson" value={order.salesperson || "Unassigned"} />
+        <Fact label="Region" value={order.region || "Unmapped"} />
+      </div>
+
       <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
         <Pill tone="sky" label={`${scheduled}/${items.length} scheduled`} />
         <Pill tone="emerald" label={`${dispatched}/${items.length} dispatched`} />
         {blocked > 0 && <Pill tone="amber" label={`${blocked} blocked`} />}
         {order.dueToday ? <Pill tone="indigo" label={`${order.dueToday} out today`} /> : null}
+        <Pill tone="zinc" label={committed ? `committed ${dayLabel(committed)}` : "no date yet"} />
         {order.soDelayReason && (
           <span className="truncate text-amber-600 dark:text-amber-400" title={order.soDelayReason}>
             {order.soDelayReason}
@@ -306,12 +303,28 @@ function OrderCard({
   );
 }
 
-function Pill({ tone, label }: { tone: "sky" | "emerald" | "amber" | "indigo"; label: string }) {
+/** One labelled fact on a card: muted label above the value. */
+function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</div>
+      <div
+        className={`mt-0.5 truncate text-[11px] font-medium text-zinc-700 dark:text-zinc-200 ${mono ? "font-mono" : ""}`}
+        title={value}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function Pill({ tone, label }: { tone: "sky" | "emerald" | "amber" | "indigo" | "zinc"; label: string }) {
   const tones = {
     sky: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
     emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
     amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
     indigo: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+    zinc: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
   } as const;
   return <span className={`rounded-full px-2 py-0.5 font-semibold ${tones[tone]}`}>{label}</span>;
 }
