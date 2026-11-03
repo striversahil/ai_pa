@@ -20,7 +20,6 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
-  ChevronRight,
   Package,
   RefreshCw,
   Search,
@@ -279,7 +278,14 @@ function SalesOrderCard({
     <div className={`${CARD} p-3.5`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-sm font-semibold tracking-tight text-[var(--text-primary)]">{order.soNumber}</span>
+          <button
+            type="button"
+            onClick={() => onOpen(order, "view")}
+            className="cursor-pointer border-0 bg-transparent p-0 font-mono text-sm font-semibold tracking-tight text-[var(--text-primary)] underline-offset-2 hover:text-indigo-600 hover:underline dark:hover:text-indigo-400"
+            title="Open the full SO detail"
+          >
+            {order.soNumber}
+          </button>
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.chip}`}>{meta.label}</span>
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${payment.cls}`}>{payment.label}</span>
           {showRegion && (
@@ -301,8 +307,16 @@ function SalesOrderCard({
         </div>
       </div>
 
-      {/* Client on its own line, then one labelled cell per fact. */}
-      <div className="mt-1.5 truncate text-sm font-medium text-[var(--text-primary)]">{order.customerName || "—"}</div>
+      {/* Client on its own line — clicking it (like the SO number) opens the
+          full detail. */}
+      <button
+        type="button"
+        onClick={() => onOpen(order, "view")}
+        className="mt-1.5 block w-full cursor-pointer truncate border-0 bg-transparent p-0 text-left text-sm font-medium text-[var(--text-primary)] underline-offset-2 hover:text-indigo-600 hover:underline dark:hover:text-indigo-400"
+        title="Open the full SO detail"
+      >
+        {order.customerName || "—"}
+      </button>
 
       <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-[var(--border-card)] pt-2.5 sm:grid-cols-4">
         <Fact label="SO date" value={dayLabel(order.createdDate)} />
@@ -342,12 +356,6 @@ function SalesOrderCard({
             <Wallet className="h-3 w-3" /> awaiting payment
           </span>
         )}
-        <button
-          onClick={() => onOpen(order, "view")}
-          className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--text-tertiary)] transition-colors hover:text-indigo-600 dark:hover:text-indigo-400"
-        >
-          Open <ChevronRight className="h-3 w-3" />
-        </button>
       </div>
     </div>
   );

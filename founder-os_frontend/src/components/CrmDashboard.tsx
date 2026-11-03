@@ -19,7 +19,6 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
-  ChevronRight,
   Clock,
   Package,
   RefreshCw,
@@ -236,7 +235,14 @@ function OrderCard({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-sm font-semibold tracking-tight">{order.soNumber}</span>
+          <button
+            type="button"
+            onClick={() => onOpen(order, "view")}
+            className="cursor-pointer border-0 bg-transparent p-0 font-mono text-sm font-semibold tracking-tight text-zinc-900 underline-offset-2 hover:text-indigo-600 hover:underline dark:text-zinc-100 dark:hover:text-indigo-400"
+            title="Open the full SO detail"
+          >
+            {order.soNumber}
+          </button>
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.chip}`}>{meta.label}</span>
           {order.overdue && (
             <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
@@ -257,10 +263,16 @@ function OrderCard({
         </div>
       </div>
 
-      {/* Client — the one thing a person scans for, so it gets its own line. */}
-      <div className="mt-1.5 truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+      {/* Client — the one thing a person scans for, so it gets its own line,
+          and clicking it (like the SO number) opens the full detail. */}
+      <button
+        type="button"
+        onClick={() => onOpen(order, "view")}
+        className="mt-1.5 block w-full cursor-pointer truncate border-0 bg-transparent p-0 text-left text-sm font-medium text-zinc-800 underline-offset-2 hover:text-indigo-600 hover:underline dark:text-zinc-100 dark:hover:text-indigo-400"
+        title="Open the full SO detail"
+      >
         {order.customerName || "—"}
-      </div>
+      </button>
 
       {/* The facts, each with its own label — no dot-separated run-on. */}
       <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-zinc-100 pt-2.5 sm:grid-cols-4 dark:border-zinc-800">
@@ -292,12 +304,6 @@ function OrderCard({
         {order.sourceState === "deleted_source" && (
           <ActionButton icon={Trash2} label="Review & confirm" onClick={() => onOpen(order, "view")} danger />
         )}
-        <button
-          onClick={() => onOpen(order, "view")}
-          className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-indigo-600 dark:hover:text-indigo-400"
-        >
-          Open <ChevronRight className="h-3 w-3" />
-        </button>
       </div>
     </div>
   );
