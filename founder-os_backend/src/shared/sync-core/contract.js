@@ -24,6 +24,9 @@ const API = Object.freeze({
   crmHeartbeat: '/api/runner/crm/heartbeat',
   crmItems: '/api/runner/crm/items',
   crmActions: '/api/runner/crm/actions',
+  // Dispatch-floor sync (migration 0097): SO rows + items into D1.
+  crmState: '/api/runner/crm/state',
+  crmOrdersSync: '/api/runner/crm/orders/sync',
   neodoveReportLive: '/api/automations/neodove-telecaller-report/data',
   neodoveReportLatest: '/api/neodove/report',
   linkedinToday: '/api/linkedin/today',

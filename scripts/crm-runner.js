@@ -141,6 +141,96 @@ function orderDate(so) {
 }
 
 /** Compact order row for the dashboard tables (full per-stage detail). */
+/**
+ * Build the dispatch-floor sync payload (migration 0097).
+ *
+ * Sends every order the scan touched this tick, enriched with line items where
+ * the detail pass already fetched them. The Worker decides what to insert,
+ * update, or flag — but IT cannot know which of its active rows are absent
+ * from Zoho, so the runner also re-verifies those by id (few rows, one call
+ * each) and reports `verify.gone`, making a deletion definitive instead of a
+ * guess. Orders the worker lists as active but that are already in this scan
+ * are simply reported `present`.
+ */
+async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo }) {
+  if (!Array.isArray(index) || index.length === 0) return null;
+
+  // soKey → Zoho detail row (has customer/ref/items for the display-capped set).
+  const displayByKey = new Map();
+  for (const s of STAGES) {
+    for (const row of stages[s]?.orders || []) {
+      displayByKey.set(`${row.org}:${row.so}`, row);
+    }
+  }
+  const closedByKey = new Map();
+  for (const row of closed || []) closedByKey.set(`${row.org}:${row.so}`, row);
+
+  const orders = [];
+  const seen = new Set();
+  for (const entry of index) {
+    if (!entry?.so) continue;
+    const key = `${entry.org || ''}:${entry.so}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const hit = activeBySo.get(entry.org + ':' + entry.so);
+    const detail = displayByKey.get(key) || null;
+    const closedRow = closedByKey.get(key) || null;
+    const items = Array.isArray(detail?.items) && detail.items.length > 0 ? detail.items : undefined;
+    orders.push({
+      so: entry.so,
+      org: entry.org || '',
+      zohoId: hit?.id || '',
+      customer: detail?.customer || closedRow?.customer || '',
+      total: Number(entry.total ?? detail?.total ?? closedRow?.total ?? 0),
+      status: entry.status || closedRow?.status || detail?.status || '',
+      orderStatus: detail?.orderStatus || closedRow?.orderStatus || '',
+      invoicedStatus: detail?.invoicedStatus || '',
+      shippedStatus: detail?.shippedStatus || '',
+      paidStatus: entry.paidStatus || closedRow?.paidStatus || detail?.paidStatus || '',
+      salesperson: entry.salesperson || closedRow?.salesperson || detail?.salesperson || '',
+      ref: detail?.ref || '',
+      // Only createdTime is ISO — closed rows carry a display date. An empty
+      // value means "keep whatever the row already has" (never overwrite with
+      // a formatted string).
+      createdDate: String(detail?.createdTime || '').slice(0, 10),
+      createdTime: detail?.createdTime || '',
+      items,
+    });
+  }
+  if (orders.length === 0) return null;
+
+  // Which of the Worker's active rows are missing from this scan? Verify those
+  // by id — a 404 is a definitive deletion, a hit means our scan window simply
+  // didn't reach it (never flag a live order on a paging hiccup).
+  const verify = { present: [], gone: [] };
+  try {
+    const state = await workerRequest(API.crmState);
+    const locals = Array.isArray(state?.orders) ? state.orders : [];
+    const missing = locals
+      .map((o) => ({ ...o, key: `${o.org || ''}:${o.so}` }))
+      .filter((o) => o.so && !seen.has(o.key));
+    for (const m of missing.slice(0, 15)) {
+      if (!m.zohoId) continue;
+      try {
+        await zohoFetch(buildSalesOrderDetailUrl(m.zohoId, m.org));
+        verify.present.push(m.key);
+      } catch (e) {
+        if (/Zoho (400|404) /.test(String(e.message || ''))) verify.gone.push(m.key);
+        // Rate limits / connection drops: say nothing — the miss counter and
+        // the next tick decide. Never flag on an ambiguous answer.
+      }
+      await sleep(2000);
+    }
+    if (verify.gone.length) {
+      console.log(`crm-runner: ${verify.gone.length} order(s) confirmed deleted at source`);
+    }
+  } catch (e) {
+    console.log(`crm-runner: verify passed skipped (${e.message})`);
+  }
+
+  return { date, orders, verify };
+}
+
 function orderRow(so, today, org) {
   const createdTime = so.created_time_formatted || so.created_time || '';
   let age = null;
@@ -372,7 +462,7 @@ async function main() {
   // Display-field slimming for detail items (raw Zoho items carry ~80 keys
   // each and would bloat the KV snapshot by megabytes). Shared by the Phase 2
   // POST path and the heartbeat background-fill below.
-  const SLIM_KEYS = ['name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
+  const SLIM_KEYS = ['line_item_id', 'item_id', 'name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
   const slimItem = (li) => {
     const o = {};
     // Keep display scalars only — Zoho occasionally returns objects/arrays
@@ -554,6 +644,33 @@ async function main() {
   };
 
   await workerRequest(API.crmSnapshot, { method: 'POST', body: snapshot });
+
+  // ── Dispatch-floor sync (migration 0097) ──────────────────────────────────
+  // The CRM dashboard now runs on D1 ROWS (CrmSalesOrder + CrmSoItem), not the
+  // KV blob above: rows are what make per-item scheduling, an audit trail and
+  // "deleted at source" detection possible. Same tick, second sink — the KV
+  // snapshot keeps serving the old dashboard until the cutover deletes it.
+  // A failure here must never fail the tick (the blob path already succeeded).
+  try {
+    const syncBody = await buildDispatchFloorPayload({
+      date: today,
+      index,
+      stages,
+      closed,
+      activeBySo,
+    });
+    if (syncBody) {
+      const res = await workerRequest(API.crmOrdersSync, { method: 'POST', body: syncBody });
+      if (res?.created || res?.updated || res?.flagged || res?.missIncremented) {
+        console.log(
+          `crm-runner: floor sync — ${res.created || 0} new, ${res.updated || 0} updated, ` +
+            `${res.flagged || 0} flagged deleted, ${res.missIncremented || 0} missing, ${res.itemsUpserted || 0} items`,
+        );
+      }
+    }
+  } catch (e) {
+    console.log(`crm-runner: floor sync failed (next tick retries): ${e.message}`);
+  }
 
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)

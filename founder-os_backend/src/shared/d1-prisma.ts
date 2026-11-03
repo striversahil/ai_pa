@@ -140,6 +140,9 @@ const DATE_FIELDS: Record<string, string[]> = {
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
+  CrmSalesOrder: ['firstSeenAt', 'lastSeenAt', 'deletedDetectedAt', 'createdAt', 'updatedAt'],
+  CrmSoItem: ['dispatchedAt', 'scheduledAt', 'createdAt', 'updatedAt'],
+  CrmScheduleEvent: ['createdAt'],
   WaTask: ['lastInboundAt', 'lastOutboundAt', 'waitingSince', 'waitTimeoutAt', 'followUpDueAt', 'createdAt', 'updatedAt'],
   MessageLineage: ['createdAt'],
   WaTaskHistory: ['occurredAt'],
@@ -177,6 +180,9 @@ const ID_FIELDS: Record<string, string> = {
   SoAttachment: 'id',
   DepartmentScoreEvent: 'id',
   CrmOrderAction: 'id',
+  CrmSalesOrder: 'id',
+  CrmSoItem: 'id',
+  CrmScheduleEvent: 'id',
   TelecallerScoreEvent: 'id',
   WaTask: 'id',
   MessageLineage: 'id',
@@ -259,6 +265,12 @@ const FLOAT_FIELDS: Record<string, string[]> = {
 };
 
 const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?: boolean }>> = {
+  CrmSalesOrder: {
+    items: { model: 'CrmSoItem', fk: 'soId' },
+    events: { model: 'CrmScheduleEvent', fk: 'soId' },
+  },
+  CrmSoItem: { order: { model: 'CrmSalesOrder', fk: 'soId', one: true } },
+  CrmScheduleEvent: { order: { model: 'CrmSalesOrder', fk: 'soId', one: true } },
   Estimate: {
     comments: { model: 'Comment', fk: 'estimateId' },
     classification: { model: 'Classification', fk: 'estimateId', one: true },
@@ -875,6 +887,10 @@ export class D1PrismaClient {
   // silently failed on the Worker; restored here).
   get departmentScoreEvent() { return this.model('DepartmentScoreEvent'); }
   get crmOrderAction() { return this.model('CrmOrderAction'); }
+  // CRM order workflow (migration 0097): SO rows, line items, audit.
+  get crmSalesOrder() { return this.model('CrmSalesOrder'); }
+  get crmSoItem() { return this.model('CrmSoItem'); }
+  get crmScheduleEvent() { return this.model('CrmScheduleEvent'); }
   get comment() { return this.model('Comment'); }
   get classification() { return this.model('Classification'); }
   get auditLog() { return this.model('AuditLog'); }

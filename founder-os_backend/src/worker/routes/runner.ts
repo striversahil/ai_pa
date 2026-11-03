@@ -354,6 +354,21 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
       }
     }
     const day = body.date;
+    // One shipment must never score twice: if the dispatch floor already
+    // credited this SO when it was marked dispatched locally, the Zoho
+    // "Order shipped" transition is silent. Ledger keys are org-scoped here
+    // (`org:so`) and bare in the local credit, so both forms are indexed.
+    const localDispatchCredited = new Set<string>();
+    try {
+      const rows = (await prisma.departmentScoreEvent.findMany({ where: { dept: 'dispatch' } })) as any[];
+      for (const r of rows) {
+        const k = String(r.soNumber || '');
+        if (!k) continue;
+        localDispatchCredited.add(k);
+        const idx = k.indexOf(':');
+        if (idx >= 0) localDispatchCredited.add(k.slice(idx + 1));
+      }
+    } catch { /* dedupe is best-effort — never block the snapshot */ }
     const events: { dept: string; soNumber: string; points: number; reason: string; actor: string | null; day: string }[] = [];
     const credit = (dept: string, so: string, points: number, reason: string, actor?: string | null) =>
       events.push({ dept, soNumber: so, points, reason, actor: actor || null, day });
@@ -362,6 +377,8 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const awardStageCompletions = (fromIdx: number, toIdxInclusive: number, so: string, salesperson: string | null) => {
       for (let i = fromIdx; i <= toIdxInclusive; i++) {
         const stage = CRM_STAGES[i];
+        // Skip the Zoho ship credit when the floor already scored it.
+        if (stage === 'ship' && localDispatchCredited.has(so)) continue;
         for (const [dept, points, reason] of STAGE_COMPLETION[stage] || []) {
           credit(dept, so, points, reason, dept === 'crm' || dept === 'dispatch' ? salesperson : null);
         }

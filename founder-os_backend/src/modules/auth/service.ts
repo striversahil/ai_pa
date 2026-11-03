@@ -30,6 +30,7 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "sales-head", label: "Sales Head", description: "Sales leaderboard manager — closer picks, region links, roster, history reset" },
   { key: "debtors-tracker", label: "Debtors Tracker", description: "Pending-receivables control desk: debtor ageing, collections ledger and reminder previews" },
   { key: "crm", label: "CRM", description: "CRM active sales orders pipeline" },
+  { key: "dispatch", label: "Dispatch Floor", description: "Schedule and dispatch sales orders — the dispatch floor (schedule, reschedule, dispatch, confirm source deletions)" },
   { key: USER_ADMIN_SCOPE, label: "User Manager", description: "Admin panel: assign roles and edit role scopes (cannot touch root user or grant admin access)" },
   { key: "enquiry-tracker", label: "Enquiry Tracker", description: "Enquiry tracking board" },
   { key: "master-data", label: "Customer Master", description: "The Zoho customer book — region/zone, contacts, pipeline history and duplicate review" },

@@ -1,0 +1,219 @@
+// crm-lifecycle.test.mjs — Guard: backend ↔ frontend dispatch-floor contract.
+//
+// The floor's rules exist twice on purpose (one copy per runtime):
+//   backend  → src/modules/crm/scheduling.ts   + queues.ts
+//   frontend → src/crm/lifecycle.ts           + queue.ts
+// Both sides are bundled here and run over the same fixture corpus. Any
+// disagreement — derived lifecycle, overdue verdict, tab membership, or the
+// validation result of a schedule/reschedule/dispatch call — fails the guard.
+//
+// Run: `node --test "scripts/guards/*.test.mjs"`
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import { BACKEND_DIR, FRONTEND_SRC, bundleToFile } from './_bundle.mjs';
+
+const be = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'crm', 'scheduling.ts')));
+const fe = await import(bundleToFile(join(FRONTEND_SRC, 'crm', 'lifecycle.ts'), { alias: { '@': FRONTEND_SRC } }));
+const beTypes = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'crm', 'types.ts')));
+const beQ = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'crm', 'queues.ts')));
+const feQ = await import(bundleToFile(join(FRONTEND_SRC, 'crm', 'queue.ts'), { alias: { '@': FRONTEND_SRC } }));
+
+const TODAY = '2026-11-03';
+
+// ── Fixtures: every branch of the state machine ────────────────────────────
+const item = (over = {}) => ({
+  id: 'i1',
+  dispatchState: 'unscheduled',
+  tentativeDispatchDate: null,
+  delayReason: null,
+  qty: 10,
+  dispatchedQty: 0,
+  ...over,
+});
+
+const ITEM_SETS = {
+  empty: [],
+  allUnscheduled: [item({ id: 'a' }), item({ id: 'b' })],
+  allScheduled: [item({ id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: TODAY }), item({ id: 'b', dispatchState: 'scheduled', tentativeDispatchDate: '2026-11-05' })],
+  partial: [item({ id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: TODAY }), item({ id: 'b', delayReason: 'vendor delayed the steel' })],
+  scheduledWithoutDate: [item({ id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: null })],
+  allDispatched: [item({ id: 'a', dispatchState: 'dispatched', tentativeDispatchDate: TODAY, dispatchedQty: 10 }), item({ id: 'b', dispatchState: 'dispatched', tentativeDispatchDate: '2026-11-01', dispatchedQty: 5 })],
+  halfDispatched: [item({ id: 'a', dispatchState: 'dispatched', tentativeDispatchDate: TODAY, dispatchedQty: 10 }), item({ id: 'b', dispatchState: 'scheduled', tentativeDispatchDate: '2026-11-01' })],
+  overdue: [item({ id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: '2026-10-30' })],
+  overdueAndToday: [item({ id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: '2026-10-30' }), item({ id: 'b', dispatchState: 'scheduled', tentativeDispatchDate: TODAY })],
+  cancelled: [item({ id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: TODAY })],
+};
+
+const ORDERS = [
+  null,
+  {},
+  { status: 'open' },
+  { status: 'cancelled' },
+  { status: 'void' },
+  { status: 'OPEN' },
+  { status: 'open', orderStatus: 'closed' },
+];
+
+const VIEWS = ['dispatch-floor', 'unscheduled', 'scheduled', 'dispatched', 'source-deleted', 'all'];
+const SOURCES = ['active', 'deleted_source'];
+
+const parse = (fn) => {
+  try {
+    return { ok: true, value: fn() };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+};
+
+const lifecycleFixtures = () => {
+  const out = [];
+  for (const [name, items] of Object.entries(ITEM_SETS)) {
+    for (const order of ORDERS) out.push({ name, items, order });
+  }
+  return out;
+};
+
+describe('crm lifecycle mirror', () => {
+  it('deriveLifecycle agrees on every fixture', () => {
+    for (const f of lifecycleFixtures()) {
+      const a = be.deriveLifecycle(f.items, f.order);
+      const b = fe.deriveLifecycle(f.items, f.order);
+      assert.equal(b, a, `deriveLifecycle diverged for ${f.name} / ${JSON.stringify(f.order)}: ${a} vs ${b}`);
+    }
+  });
+
+  it('isCancelledOrder agrees', () => {
+    for (const order of ORDERS) {
+      assert.equal(fe.isCancelledOrder(order), be.isCancelledOrder(order), `isCancelledOrder ${JSON.stringify(order)}`);
+    }
+  });
+
+  it('overdue / due-today helpers agree', () => {
+    for (const [name, items] of Object.entries(ITEM_SETS)) {
+      assert.equal(fe.isOrderOverdue(items, TODAY), be.isOrderOverdue(items, TODAY), `isOrderOverdue ${name}`);
+      assert.equal(fe.countDueToday(items, TODAY), be.countDueToday(items, TODAY), `countDueToday ${name}`);
+      for (const it of items) {
+        assert.equal(fe.isOverdueItem(it, TODAY), be.isOverdueItem(it, TODAY), `isOverdueItem ${name}`);
+        assert.equal(fe.isDueTodayItem(it, TODAY), be.isDueTodayItem(it, TODAY), `isDueTodayItem ${name}`);
+      }
+    }
+  });
+
+  it('tab membership agrees for every view × source state', () => {
+    for (const [name, items] of Object.entries(ITEM_SETS)) {
+      for (const order of ORDERS) {
+        const lifecycle = be.deriveLifecycle(items, order);
+        for (const sourceState of SOURCES) {
+          const shape = { lifecycle, sourceState, items };
+          for (const view of VIEWS) {
+            assert.equal(
+              feQ.orderMatchesView(shape, view, TODAY),
+              beQ.orderMatchesView(shape, view, TODAY),
+              `orderMatchesView ${name}/${sourceState}/${view}`,
+            );
+          }
+          const a = beQ.orderFlags(shape, TODAY);
+          const b = feQ.orderFlags(shape, TODAY);
+          assert.deepEqual(b, a, `orderFlags ${name}/${sourceState}`);
+        }
+        assert.equal(
+          feQ.earliestCommittedDate(items),
+          beQ.earliestCommittedDate(items),
+          `earliestCommittedDate ${name}`,
+        );
+      }
+    }
+  });
+
+  it('validateSchedule agrees (including the mandatory-reason branches)', () => {
+    const cases = [
+      { items: ITEM_SETS.allUnscheduled, entries: [] },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a', date: TODAY }, { itemId: 'b', date: TODAY }] },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a', date: TODAY }] },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a', date: TODAY }], soReason: 'vendor delayed the material' },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a', date: '2026-10-01' }], soReason: 'vendor delayed the material' },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a', date: 'nope' }] },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'zzz', date: TODAY }] },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a' }], soReason: 'short' },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a' }], soReason: 'waiting on the vendor delivery' },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a', date: TODAY }, { itemId: 'b', reason: 'not enough stock' }] },
+      { items: ITEM_SETS.allDispatched, entries: [{ itemId: 'a', date: TODAY }] },
+      { items: ITEM_SETS.partial, entries: [{ itemId: 'b', date: TODAY }] },
+    ];
+    for (const c of cases) {
+      const a = be.validateSchedule({ today: TODAY, ...c });
+      const b = fe.validateSchedule({ today: TODAY, ...c });
+      assert.deepEqual(b, a, `validateSchedule ${JSON.stringify(c)}`);
+    }
+  });
+
+  it('validateReschedule agrees', () => {
+    const cases = [
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', date: '2026-11-06' }], reason: '' },
+      { items: ITEM_SETS.allScheduled, entries: [], reason: 'vendor delayed the material' },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', date: '2026-10-01' }], reason: 'vendor delayed the material' },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', date: '2026-11-06' }], reason: 'vendor delayed the material' },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a', date: '2026-11-06' }], reason: 'vendor delayed the material' },
+      { items: ITEM_SETS.allDispatched, entries: [{ itemId: 'a', date: '2026-11-06' }], reason: 'vendor delayed the material' },
+    ];
+    for (const c of cases) {
+      const a = be.validateReschedule({ today: TODAY, ...c });
+      const b = fe.validateReschedule({ today: TODAY, ...c });
+      assert.deepEqual(b, a, `validateReschedule ${JSON.stringify(c)}`);
+    }
+  });
+
+  it('validateDispatch agrees', () => {
+    const cases = [
+      { items: ITEM_SETS.allScheduled, entries: [] },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }] },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 3 }] },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 0 }] },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 99 }] },
+      { items: ITEM_SETS.halfDispatched, entries: [{ itemId: 'a' }] },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a' }] },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'nope' }] },
+    ];
+    for (const c of cases) {
+      const a = be.validateDispatch(c);
+      const b = fe.validateDispatch(c);
+      assert.deepEqual(b, a, `validateDispatch ${JSON.stringify(c)}`);
+    }
+  });
+
+  it('resolveDispatchQty agrees', () => {
+    for (const [name, items] of Object.entries(ITEM_SETS)) {
+      for (const entry of [undefined, { itemId: 'a' }, { itemId: 'a', qty: 0 }, { itemId: 'a', qty: 4 }, { itemId: 'a', qty: 500 }, { itemId: 'a', qty: -2 }]) {
+        const it = items[0];
+        assert.equal(
+          fe.resolveDispatchQty(it, entry),
+          be.resolveDispatchQty(it, entry),
+          `resolveDispatchQty ${name} ${JSON.stringify(entry)}`,
+        );
+      }
+    }
+  });
+
+  it('REASON_MIN matches on both sides', () => {
+    assert.equal(fe.REASON_MIN, beTypes.REASON_MIN);
+  });
+
+  it('empty input is rejected identically, never thrown', () => {
+    const cases = [
+      ['validateSchedule', { today: TODAY, items: [], entries: [], soReason: null }],
+      ['validateDispatch', { items: [], entries: [] }],
+      ['validateReschedule', { today: TODAY, items: [], entries: [], reason: 'vendor delayed the material' }],
+    ];
+    for (const [fn, args] of cases) {
+      const a = parse(() => be[fn](args));
+      const b = parse(() => fe[fn](args));
+      assert.deepEqual(b, a, `${fn} empty-input behaviour diverged`);
+      assert.ok(!a.ok || a.value.ok === false, `${fn} should reject empty input`);
+    }
+    // deriveLifecycle must survive an empty/garbage item list on both sides.
+    for (const input of [[], null, undefined]) {
+      assert.equal(fe.deriveLifecycle(input), be.deriveLifecycle(input), `deriveLifecycle(${String(input)})`);
+    }
+  });
+});

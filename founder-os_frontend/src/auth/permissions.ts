@@ -43,6 +43,10 @@ export const USER_ADMIN_SCOPE = "user-admin";
 // someone "sales access" shows them an empty sidebar with no way in.
 export const IMPLIED_SCOPES: Record<string, string[]> = {
   sales: ["enquiry-tracker"],
+  // The dispatch floor IS the CRM dashboard: a `dispatch` holder schedules and
+  // dispatches sales orders, so they must be able to open it. `crm` (read)
+  // does not imply `dispatch` — the reverse is what's needed.
+  dispatch: ["crm"],
   // Accounts holders keep read access to the Debtors Tracker after it moved to
   // its own scope (accounts remains the write/import authority).
   accounts: ["debtors-tracker"],
@@ -72,6 +76,7 @@ export const DASHBOARD_SCOPES = [
   "human-resources",
   "enquiry-tracker",
   "crm",
+  "dispatch",
   "sales",
   "procurement",
   "samarth",

@@ -1741,3 +1741,86 @@ model DebtorsExportEvent {
 
   @@index([createdAt])
 }
+
+// ── CRM order workflow (migration 0097) ──────────────────────────────────────
+// The dispatch floor: SOs sync from Zoho into rows, line items carry the
+// tentative dispatch date, and every promise/slip is appended to the audit.
+// Zoho Books stays read-only — nothing here writes back.
+model CrmSalesOrder {
+  id              String   @id @default(uuid())
+  org             String   @default("")
+  soNumber        String
+  zohoId          String   @default("")
+  customerName    String   @default("")
+  customerId      String   @default("")
+  value           Float    @default(0)
+  currency        String   @default("INR")
+  orderStatus     String   @default("")
+  invoicedStatus  String   @default("")
+  shippedStatus   String   @default("")
+  paidStatus      String   @default("")
+  status          String   @default("open") // open | closed | cancelled | void
+  salesperson     String   @default("")
+  referenceNumber String   @default("")
+  createdDate     String   @default("") // YYYY-MM-DD IST
+  // unscheduled | partially_scheduled | scheduled | partially_dispatched | dispatched | cancelled
+  lifecycle       String   @default("unscheduled")
+  sourceState     String   @default("active") // active | deleted_source
+  soDelayReason   String?
+  fingerprint     String   @default("")
+  missCount       Int      @default(0)
+  firstSeenAt     DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+  deletedDetectedAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([org, soNumber])
+  @@index([lifecycle])
+  @@index([sourceState])
+}
+
+model CrmSoItem {
+  id                    String   @id @default(uuid())
+  soId                  String
+  lineKey               String
+  name                  String   @default("")
+  sku                   String   @default("")
+  description           String   @default("")
+  qty                   Float    @default(0)
+  unit                  String   @default("")
+  rate                  Float    @default(0)
+  itemTotal             Float    @default(0)
+  dispatchState         String   @default("unscheduled") // unscheduled | scheduled | dispatched
+  tentativeDispatchDate String? // YYYY-MM-DD
+  delayReason           String?
+  dispatchedQty         Float    @default(0)
+  dispatchedAt          DateTime?
+  scheduledBy           String?
+  scheduledAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([soId, lineKey])
+  @@index([dispatchState])
+  @@index([tentativeDispatchDate])
+}
+
+model CrmScheduleEvent {
+  id        String   @id @default(uuid())
+  soId      String
+  soNumber  String   @default("")
+  itemId    String?
+  kind      String // schedule | reschedule | delay | dispatch | partial_dispatch | source_deleted | confirmed_removal
+  fromDate  String?
+  toDate    String?
+  reason    String?
+  actor     String   @default("")
+  qty       Float?
+  day       String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([soId])
+  @@index([kind])
+  @@index([day])
+}
