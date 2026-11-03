@@ -51,6 +51,21 @@ const dayLabel = (d: string | null) => {
   return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 };
 
+/** One address block; Zoho keeps billing and shipping separately on the SO. */
+function AddressCard({ label, value }: { label: string; value?: string | null }) {
+  const text = String(value || "").trim();
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</p>
+      {text ? (
+        <p className="mt-0.5 whitespace-pre-line text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{text}</p>
+      ) : (
+        <p className="mt-0.5 text-xs italic text-zinc-400 dark:text-zinc-500">Waiting for the Zoho detail sync…</p>
+      )}
+    </div>
+  );
+}
+
 export default function OrderPanel({
   order,
   initialMode,
@@ -225,7 +240,7 @@ export default function OrderPanel({
               </div>
               <p className="mt-1 truncate text-sm text-zinc-500 dark:text-zinc-400">
                 {order.customerName || "—"} · {inr(order.value)} · {order.salesperson || "Unassigned"}
-                {order.referenceNumber ? ` · ref ${order.referenceNumber}` : ""}
+                {order.referenceNumber ? ` · EST ${order.referenceNumber}` : ""}
               </p>
             </div>
             <button
@@ -276,6 +291,20 @@ export default function OrderPanel({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {/* Client & reference — EST no. comes from Zoho's reference_number,
+              the addresses from the per-order detail call (list pages omit
+              them, so they fill in as the detail budget reaches this SO). */}
+          <div className="mb-4 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">EST no.</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                {order.referenceNumber || "—"}
+              </p>
+              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">SO date {dayLabel(order.createdDate)}</p>
+            </div>
+            <AddressCard label="Billing address" value={order.billingAddress} />
+            <AddressCard label="Shipping address" value={order.shippingAddress} />
+          </div>
           {order.sourceState === "deleted_source" && (
             <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
               <div className="flex items-start gap-2">

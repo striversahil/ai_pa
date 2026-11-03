@@ -89,7 +89,10 @@ export interface CrmOrderRow {
   paidStatus: string;
   status: string;
   salesperson: string;
+  /** Zoho reference number — in practice the EST number (EST-024014). */
   referenceNumber: string;
+  billingAddress: string;
+  shippingAddress: string;
   createdDate: string;
   lifecycle: Lifecycle;
   sourceState: 'active' | 'deleted_source';

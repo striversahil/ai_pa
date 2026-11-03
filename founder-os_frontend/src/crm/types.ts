@@ -73,7 +73,11 @@ export interface CrmOrder {
   paidStatus: string;
   status: string;
   salesperson: string;
+  /** Zoho reference — in practice the EST number (EST-024014). */
   referenceNumber: string;
+  /** From the Zoho detail call; empty until the detail pass reaches the order. */
+  billingAddress: string;
+  shippingAddress: string;
   createdDate: string;
   lifecycle: Lifecycle;
   sourceState: "active" | "deleted_source";
@@ -100,6 +104,10 @@ export interface CrmSummary {
   deletedSource: number;
   floorToday: number;
   overdue: number;
+  /** Tab totals — item-level membership, so an SO can be counted twice. */
+  tabUnscheduled: number;
+  tabScheduled: number;
+  tabDispatched: number;
 }
 
 export const VIEW_LABELS: Record<View, string> = {

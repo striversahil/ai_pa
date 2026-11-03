@@ -74,9 +74,12 @@ export default function CrmDashboard() {
   const badges = useMemo<Record<View, number>>(
     () => ({
       "dispatch-floor": (counts?.floorToday ?? 0) + (counts?.overdue ?? 0),
-      unscheduled: (counts?.unscheduled ?? 0) + (counts?.partiallyScheduled ?? 0),
-      scheduled: counts?.scheduled ?? 0,
-      dispatched: (counts?.partiallyDispatched ?? 0) + (counts?.dispatched ?? 0),
+      // Tab membership is per ITEM (see crm/queue.ts), so these come from the
+      // server's tab totals — never from the lifecycle buckets, which would
+      // hide a partially dispatched order that still has undated items.
+      unscheduled: counts?.tabUnscheduled ?? 0,
+      scheduled: counts?.tabScheduled ?? 0,
+      dispatched: counts?.tabDispatched ?? 0,
       "source-deleted": counts?.deletedSource ?? 0,
       all: counts?.total ?? 0,
     }),

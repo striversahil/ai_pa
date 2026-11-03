@@ -126,6 +126,41 @@ describe('crm lifecycle mirror', () => {
     }
   });
 
+  it('tabs are per ITEM, not per lifecycle bucket', () => {
+    // One dispatched, one dated, one undated → open in all three tabs. This is
+    // the case that used to hide work: the order's lifecycle reads
+    // "partially_dispatched" while an undated item was still waiting.
+    const mixed = {
+      lifecycle: 'partially_dispatched',
+      sourceState: 'active',
+      items: [
+        { id: 'a', dispatchState: 'dispatched', tentativeDispatchDate: '2026-11-01', dispatchedQty: 5, qty: 5, delayReason: null },
+        { id: 'b', dispatchState: 'scheduled', tentativeDispatchDate: '2026-11-06', dispatchedQty: 0, qty: 5, delayReason: null },
+        { id: 'c', dispatchState: 'unscheduled', tentativeDispatchDate: null, dispatchedQty: 0, qty: 5, delayReason: null },
+      ],
+    };
+    for (const q of [beQ, feQ]) {
+      assert.equal(q.orderMatchesView(mixed, 'unscheduled', TODAY), true, 'unscheduled');
+      assert.equal(q.orderMatchesView(mixed, 'scheduled', TODAY), true, 'scheduled');
+      assert.equal(q.orderMatchesView(mixed, 'dispatched', TODAY), true, 'dispatched');
+    }
+    // No items captured yet ⇒ unscheduled (nothing ships undated), and nothing
+    // pretends to be scheduled or dispatched.
+    const bare = { lifecycle: 'unscheduled', sourceState: 'active', items: [] };
+    for (const q of [beQ, feQ]) {
+      assert.equal(q.orderMatchesView(bare, 'unscheduled', TODAY), true, 'bare unscheduled');
+      assert.equal(q.orderMatchesView(bare, 'scheduled', TODAY), false, 'bare scheduled');
+      assert.equal(q.orderMatchesView(bare, 'dispatched', TODAY), false, 'bare dispatched');
+    }
+    // Cancelled is out of every working tab.
+    const cancelled = { lifecycle: 'cancelled', sourceState: 'active', items: [item({ id: 'a' })] };
+    for (const q of [beQ, feQ]) {
+      for (const v of ['unscheduled', 'scheduled', 'dispatched', 'dispatch-floor']) {
+        assert.equal(q.orderMatchesView(cancelled, v, TODAY), false, `cancelled/${v}`);
+      }
+    }
+  });
+
   it('validateSchedule agrees (including the mandatory-reason branches)', () => {
     const cases = [
       { items: ITEM_SETS.allUnscheduled, entries: [] },

@@ -89,6 +89,8 @@ export function toOrderView(row: any, items: CrmItemRow[]): CrmOrderRow {
     status: str(row?.status),
     salesperson: str(row?.salesperson),
     referenceNumber: str(row?.referenceNumber),
+    billingAddress: str(row?.billingAddress),
+    shippingAddress: str(row?.shippingAddress),
     createdDate: str(row?.createdDate),
     lifecycle: (str(row?.lifecycle) || 'unscheduled') as Lifecycle,
     sourceState: str(row?.sourceState) === 'deleted_source' ? 'deleted_source' : 'active',
@@ -168,24 +170,20 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
     );
   });
 
-  // Floor: overdue first, then soonest committed date. Everything else: newest
-  // Zoho creation date (the list is already ordered that way).
-  if (view === 'dispatch-floor') {
-    filtered.sort((a, b) => {
-      const ka = floorKey(a);
-      const kb = floorKey(b);
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
-  }
+  // Every tab reads newest-first: most recent SO at the top, tie-broken by SO
+  // number descending (same-day orders). Overdue / due-today work is badged on
+  // the card and counted in the KPIs, so it no longer reorders the list — the
+  // desk works one rolling, newest-first stack.
+  filtered.sort(sortNewestFirst);
   return filtered.slice(0, limit);
 }
 
-function floorKey(o: CrmOrderRow): string {
-  const items = (o.items || []).filter((it) => it.dispatchState === 'scheduled' && it.tentativeDispatchDate);
-  const today = istToday();
-  const overdue = items.some((it) => isOverdueItem(it as ItemLike, today));
-  const dates = items.map((it) => String(it.tentativeDispatchDate)).sort();
-  return `${overdue ? '0' : '1'}:${dates[0] || ''}:${o.soNumber}`;
+/** Newest Zoho creation date first; same day → highest SO number first. */
+export function sortNewestFirst(a: CrmOrderRow, b: CrmOrderRow): number {
+  const da = a.createdDate || '';
+  const db = b.createdDate || '';
+  if (da !== db) return da < db ? 1 : -1;
+  return a.soNumber < b.soNumber ? 1 : a.soNumber > b.soNumber ? -1 : 0;
 }
 
 function matchesView(o: CrmOrderRow, view: View, today: string): boolean {
@@ -236,6 +234,8 @@ export async function syncState(): Promise<{
     sourceState: string;
     createdDate: string;
     itemCount: number;
+    /** True once the detail pass captured the client addresses. */
+    hasAddress: boolean;
   }>;
 }> {
   const rows = (await prisma.crmSalesOrder.findMany({
@@ -258,6 +258,7 @@ export async function syncState(): Promise<{
       sourceState: str(r.sourceState),
       createdDate: str(r.createdDate).slice(0, 10),
       itemCount: counts.get(str(r.id)) || 0,
+      hasAddress: !!(str(r.billingAddress) || str(r.shippingAddress)),
     })),
   };
 }
@@ -653,6 +654,9 @@ export interface SyncedOrder {
   paidStatus?: string;
   salesperson?: string;
   ref?: string;
+  /** Detail-pass only (the Zoho list response omits addresses). */
+  billingAddress?: string;
+  shippingAddress?: string;
   createdDate?: string;
   createdTime?: string;
   /** Full line items — present only when the runner fetched this order's detail. */
@@ -867,6 +871,8 @@ export async function syncOrders(args: {
         status: str(o.status).toLowerCase() || 'open',
         salesperson: str(o.salesperson),
         referenceNumber: str(o.ref).slice(0, 120),
+        billingAddress: str(o.billingAddress).slice(0, 600),
+        shippingAddress: str(o.shippingAddress).slice(0, 600),
         createdDate,
         lifecycle: cancelled ? 'cancelled' : 'unscheduled',
         sourceState: 'active',
@@ -903,7 +909,15 @@ export async function syncOrders(args: {
       createdDate || str(existing.createdDate),
     ].join('|');
     const healedNow = str(existing.sourceState) === 'deleted_source';
-    if (str(existing.fingerprint) === fp && !healedNow) {
+    // Addresses only arrive with the detail pass (one Zoho call per order), so
+    // a list-only tick sends none — an empty value must never overwrite a real
+    // address, and a late address must still be written when the rest of the
+    // row is unchanged.
+    const addrPatch: Record<string, string> = {};
+    if (str(o.billingAddress)) addrPatch.billingAddress = str(o.billingAddress).slice(0, 600);
+    if (str(o.shippingAddress)) addrPatch.shippingAddress = str(o.shippingAddress).slice(0, 600);
+    const addrChanged = Object.entries(addrPatch).some(([k, v]) => str((existing as any)[k]) !== v);
+    if (str(existing.fingerprint) === fp && !healedNow && !addrChanged) {
       result.unchanged++;
       if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
       continue;
@@ -924,6 +938,7 @@ export async function syncOrders(args: {
         status: str(o.status).toLowerCase() || str(existing.status),
         salesperson: str(o.salesperson) || str(existing.salesperson),
         referenceNumber: str(o.ref).slice(0, 120) || str(existing.referenceNumber),
+        ...addrPatch,
         createdDate: createdDate || str(existing.createdDate),
         sourceState: 'active',
         missCount: 0,
@@ -1078,7 +1093,7 @@ export async function syncOrders(args: {
 const ORDER_COLS = [
   'id', 'org', 'soNumber', 'zohoId', 'customerName', 'customerId', 'value', 'currency',
   'orderStatus', 'invoicedStatus', 'shippedStatus', 'paidStatus', 'status', 'salesperson',
-  'referenceNumber', 'createdDate', 'lifecycle', 'sourceState', 'soDelayReason',
+  'referenceNumber', 'billingAddress', 'shippingAddress', 'createdDate', 'lifecycle', 'sourceState', 'soDelayReason',
   'fingerprint', 'missCount', 'firstSeenAt', 'lastSeenAt', 'deletedDetectedAt',
   'createdAt', 'updatedAt',
 ] as const;
@@ -1174,6 +1189,26 @@ async function insertItems(rows: any[]): Promise<number> {
   return written;
 }
 
+/**
+ * Standing charges that Zoho emits as a line item on EVERY sales order but
+ * that the desk neither dates nor ships ("Packaging & Forwarding"). They are
+ * dropped at the door so the item list is only real, dispatchable goods.
+ * MIRROR: scripts/crm-runner.js `isChargeLine` (kept in sync by hand — the
+ * runner filters them out of the payload, the store refuses them anyway).
+ */
+const CHARGE_LINES = new Set([
+  'packaging & forwarding',
+  'packaging and forwarding',
+  'packaging & forwarding charges',
+  'packaging and forwarding charges',
+]);
+const normalizeLine = (v: unknown) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+export function isChargeLine(...names: Array<string | null | undefined>): boolean {
+  // Exact (normalized) match only — "Packing Straps" is a real item and must
+  // not be swallowed by a loose /packing/ prefix.
+  return names.some((n) => CHARGE_LINES.has(normalizeLine(n)));
+}
+
 async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
   const existing = (await prisma.crmSoItem.findMany({ where: { soId } })) as any[];
   const byKey = new Map(existing.map((r) => [str(r.lineKey), r]));
@@ -1184,6 +1219,7 @@ async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
   const pending: any[] = [];
   for (let i = 0; i < rawItems.length; i++) {
     const li = rawItems[i] || {};
+    if (isChargeLine(li.name, li.description)) continue; // standing charge, not an item
     const lineKey = lineKeyFor(li, i);
     if (seenKeys.has(lineKey)) continue;
     seenKeys.add(lineKey);
@@ -1267,6 +1303,11 @@ export async function dispatchSummary(today = istToday()): Promise<Record<string
     deletedSource: 0,
     floorToday: 0,
     overdue: 0,
+    // Tab totals — item-level membership (an order can sit in several tabs),
+    // so the badges always equal what the list actually renders.
+    tabUnscheduled: 0,
+    tabScheduled: 0,
+    tabDispatched: 0,
   };
   for (const r of rows) {
     const items = itemsBySo.get(str(r.id)) || [];
@@ -1286,6 +1327,10 @@ export async function dispatchSummary(today = istToday()): Promise<Record<string
       if (items.some((it) => it.dispatchState === 'scheduled' && it.tentativeDispatchDate === today)) counts.floorToday++;
       if (items.some((it) => isOverdueItem(it as ItemLike, today))) counts.overdue++;
     }
+    const shape = { lifecycle, sourceState: 'active', items } as unknown as ViewOrder;
+    if (orderMatchesView(shape, 'unscheduled', today)) counts.tabUnscheduled++;
+    if (orderMatchesView(shape, 'scheduled', today)) counts.tabScheduled++;
+    if (orderMatchesView(shape, 'dispatched', today)) counts.tabDispatched++;
   }
   return counts;
 }

@@ -55,17 +55,50 @@ function buildSalesOrderDetailUrl(salesorderId, org) {
   return `https://books.zoho.com/api/v3/salesorders/${salesorderId}?organization_id=${org || orgId}`;
 }
 
-// Full line items for one SO via the detail endpoint (the list endpoint never
-// includes line_items). One 429 backoff + retry; a second consecutive 429
-// OPENS the circuit — remaining rows skip items this tick (fail fast, no
-// 495×45s sleep storm) and retry on the next tick.
+/**
+ * Zoho address value → display text. The API returns an object per address
+ * (`billing_address` / `shipping_address`); some responses carry a
+ * pre-formatted string instead, so both shapes are handled.
+ */
+function formatAddress(addr) {
+  if (!addr) return '';
+  if (typeof addr === 'string') return addr.trim();
+  const parts = [addr.address, addr.street2, addr.city, addr.state, addr.zip, addr.country]
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+  const phone = String(addr.phone || '').trim();
+  if (phone) parts.push(`Ph: ${phone}`);
+  return parts.join('\n');
+}
+
+// Standing charges Zoho emits on every SO but that are never dated or shipped.
+// MIRROR: backend modules/crm/store.ts `isChargeLine` (the store refuses them
+// anyway — this only keeps them out of the payload).
+const CHARGE_LINES = new Set([
+  'packaging & forwarding',
+  'packaging and forwarding',
+  'packaging & forwarding charges',
+  'packaging and forwarding charges',
+]);
+const isChargeLine = (li) =>
+  CHARGE_LINES.has(String(li?.name || li?.description || '').trim().toLowerCase().replace(/\s+/g, ' '));
+
+// Full line items + client addresses for one SO via the detail endpoint (the
+// list endpoint never includes line_items or addresses). One 429 backoff +
+// retry; a second consecutive 429 OPENS the circuit — remaining rows skip this
+// tick (fail fast, no 495×45s sleep storm) and retry on the next tick.
 let detailCircuitOpen = false;
-async function fetchOrderItems(salesorderId, org) {
+async function fetchOrderDetail(salesorderId, org) {
   if (detailCircuitOpen) throw new Error('detail circuit open (rate-limited earlier this tick)');
   const once = async () => {
     const json = await zohoFetch(buildSalesOrderDetailUrl(salesorderId, org));
-    const items = json?.salesorder?.line_items;
-    return Array.isArray(items) ? items.slice(0, 200) : [];
+    const so = json?.salesorder || {};
+    const raw = Array.isArray(so.line_items) ? so.line_items.slice(0, 200) : [];
+    return {
+      items: raw,
+      billingAddress: formatAddress(so.billing_address) || String(so.billing_address_formatted || '').trim(),
+      shippingAddress: formatAddress(so.shipping_address) || String(so.shipping_address_formatted || '').trim(),
+    };
   };
   try {
     return await once();
@@ -182,7 +215,7 @@ async function postFloorSync(args) {
  * definitive instead of a guess. Orders the worker lists as active but that are
  * already in this scan are simply reported `present`.
  */
-async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo, itemsByKey, localOrders }) {
+async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo, itemsByKey, addressesByKey, localOrders }) {
   if (!Array.isArray(index) || index.length === 0) return null;
 
   // soKey → Zoho detail row (has customer/ref/items for the display-capped set).
@@ -213,11 +246,12 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
     const closedRow = closedByKey.get(key) || null;
     // Items captured THIS tick (detail budget) or carried on the display row.
     const fetched = itemsByKey?.get(key);
+    const addr = addressesByKey?.get(key) || null;
     const items =
       Array.isArray(fetched) && fetched.length > 0
         ? fetched
         : Array.isArray(detail?.items) && detail.items.length > 0
-          ? detail.items
+          ? detail.items.filter((li) => !isChargeLine(li))
           : undefined;
     orders.push({
       so: entry.so,
@@ -232,6 +266,8 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
       paidStatus: entry.paidStatus || closedRow?.paidStatus || detail?.paidStatus || '',
       salesperson: entry.salesperson || closedRow?.salesperson || detail?.salesperson || '',
       ref: detail?.ref || '',
+      billingAddress: addr?.billingAddress || '',
+      shippingAddress: addr?.shippingAddress || '',
       // Only ISO values may reach this field — closed rows carry a display
       // date, and an empty value means "keep whatever the row already has"
       // (never overwrite a real date with a formatted string).
@@ -453,12 +489,13 @@ async function main() {
     }
     return o;
   };
-  // Per-tick detail budget. Each detail call is one Zoho request and Zoho Books
-  // allows ~100 requests/min per org; the cron jobs run in a serial group, so
-  // this runner is the only Zoho pinger while it runs. 40 rows × 2–4s gaps
-  // ≈ 2 min of paging, well inside the limit while still clearing a cold-start
-  // backlog (a 30-day window can carry ~120 orders) in a couple of ticks.
-  const ITEM_BUDGET = 40;
+  // Per-tick detail budget. Each detail call is ONE Zoho request (it returns
+  // both the line items and the client addresses) and Zoho Books allows
+  // ~100 requests/min per org; the cron jobs run in a serial group, so this
+  // runner is the only Zoho pinger while it runs. 80 rows × ~2s ≈ 3 min,
+  // comfortably inside the 20-minute job timeout and the rate limit, and it
+  // clears a 30-day cold start (~120 orders) in two ticks.
+  const ITEM_BUDGET = 80;
 
   // What the floor already tracks: drives the item backfill queue AND the
   // by-id re-verification that makes a deletion definitive.
@@ -469,34 +506,46 @@ async function main() {
   } catch (e) {
     console.log(`crm-runner: floor state unavailable (${e.message}) — items may be refetched`);
   }
-  const itemsKnown = new Set(
-    localOrders.filter((o) => Number(o.itemCount) > 0).map((o) => `${o.org || ''}:${o.so}`),
+  // A row is "detail-complete" when it has line items AND the client addresses
+  // (both arrive from the same Zoho detail call).
+  const detailKnown = new Set(
+    localOrders
+      .filter((o) => Number(o.itemCount) > 0 && o.hasAddress)
+      .map((o) => `${o.org || ''}:${o.so}`),
   );
 
-  // Line items, round 2: only IN-WINDOW orders the floor has no items for yet,
-  // newest first (the index is already newest-first). Items accumulate across
-  // ticks until every floor order has been captured once.
+  // Line items + addresses, round 2: only IN-WINDOW orders the floor has not
+  // captured in full yet, newest first (the index is already newest-first).
+  // Detail accumulates across ticks until every floor order is complete.
   const cutoff = dayBefore(today, FLOOR_WINDOW_DAYS);
   const inWindow = (e) => !!e?.so && (!e.createdDay || e.createdDay >= cutoff);
   const queue = index
-    .filter((e) => inWindow(e) && e.stage !== 'complete' && !itemsKnown.has(`${e.org || ''}:${e.so}`))
+    .filter((e) => inWindow(e) && e.stage !== 'complete' && !detailKnown.has(`${e.org || ''}:${e.so}`))
     .map((e) => ({ entry: e, hit: activeBySo.get(`${e.org || ''}:${e.so}`) }))
     .filter((q) => q.hit && q.hit.id);
   const due = queue.slice(0, ITEM_BUDGET);
   const itemsByKey = new Map();
+  const addressesByKey = new Map();
   const t0 = Date.now();
   let detailErrors = 0;
   for (const { entry, hit } of due) {
     try {
-      const items = (await fetchOrderItems(hit.id, entry.org)).map(slimItem);
-      itemsByKey.set(`${entry.org || ''}:${entry.so}`, items);
+      const detail = await fetchOrderDetail(hit.id, entry.org);
+      const key = `${entry.org || ''}:${entry.so}`;
+      itemsByKey.set(key, detail.items.filter((li) => !isChargeLine(li)).map(slimItem));
+      if (detail.billingAddress || detail.shippingAddress) {
+        addressesByKey.set(key, {
+          billingAddress: detail.billingAddress,
+          shippingAddress: detail.shippingAddress,
+        });
+      }
     } catch (e) {
       detailErrors++;
       if (e?.message && !String(e.message).includes('circuit open')) {
         console.log(`crm-runner: detail fetch failed for ${entry.so}: ${e.message}`);
       }
     }
-    await sleep(2000 + Math.random() * 2000); // 2–4s gap — paced, never burst Zoho
+    await sleep(1200 + Math.random() * 1300); // ~1.2–2.5s gap — paced, never burst Zoho
   }
   const detailMs = Date.now() - t0;
   if (detailCircuitOpen) console.log('crm-runner: detail circuit open — remaining rows skip items this tick');
@@ -506,7 +555,7 @@ async function main() {
 
   // The ONE sink: D1 rows. The runner only fetches; the Worker decides what to
   // insert, update, score or flag.
-  await postFloorSync({ date: today, index, stages, closed, activeBySo, itemsByKey, localOrders });
+  await postFloorSync({ date: today, index, stages, closed, activeBySo, itemsByKey, addressesByKey, localOrders });
 
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)

@@ -16,27 +16,27 @@ export interface ViewOrder {
 
 export function orderMatchesView(order: ViewOrder, view: View, today: string): boolean {
   const items = order.items || [];
+  // Membership is per ITEM, not per lifecycle bucket: an order with one
+  // dispatched, one dated and one undated item is still open in all three
+  // states, so it shows in Unscheduled, Scheduled and Dispatched alike.
+  const live = order.sourceState === "active" && order.lifecycle !== "cancelled";
+  const someItem = (state: "unscheduled" | "scheduled" | "dispatched") =>
+    items.some((it) => it.dispatchState === state);
   switch (view) {
     case "source-deleted":
       return order.sourceState === "deleted_source";
     case "dispatch-floor": {
-      if (order.sourceState !== "active") return false;
-      if (order.lifecycle === "cancelled") return false;
+      if (!live) return false;
       if (order.lifecycle === "dispatched") return false;
       return countDueToday(items, today) > 0 || isOrderOverdue(items, today);
     }
     case "unscheduled":
-      return (
-        order.sourceState === "active" &&
-        (order.lifecycle === "unscheduled" || order.lifecycle === "partially_scheduled")
-      );
+      // No items captured yet counts as unscheduled — nothing ships undated.
+      return live && (items.length === 0 || someItem("unscheduled"));
     case "scheduled":
-      return order.sourceState === "active" && order.lifecycle === "scheduled";
+      return live && someItem("scheduled");
     case "dispatched":
-      return (
-        order.sourceState === "active" &&
-        (order.lifecycle === "dispatched" || order.lifecycle === "partially_dispatched")
-      );
+      return live && someItem("dispatched");
     case "all":
       return order.sourceState === "active";
     default:
