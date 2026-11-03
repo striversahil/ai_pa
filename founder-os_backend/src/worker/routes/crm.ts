@@ -20,6 +20,7 @@ import {
   listOrders,
   rescheduleOrder,
   scheduleOrder,
+  updateAddresses,
 } from '../../modules/crm/store';
 import { normalizeView } from '../../modules/crm/types';
 
@@ -193,6 +194,27 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const res = await confirmSourceDeletion({ idOrSo: c.req.param('id'), actor: v.name });
       notifyLive(c, { type: 'crm', action: 'removed', so: res.soNumber });
       return c.json({ ok: true, ...res });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Correct the client addresses (floor edit — dispatch/MIS only) ───────────
+  // The edit sets the edited marker, so the Zoho sync leaves that address
+  // alone afterwards. Nothing is written back to Zoho Books (read-only).
+  app.put('/api/crm/orders/:id/addresses', async (c) => {
+    const v = await requireDispatchWrite(c);
+    if (v instanceof Response) return v;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const res = await updateAddresses({
+        idOrSo: c.req.param('id'),
+        billingAddress: body?.billingAddress === undefined ? undefined : String(body.billingAddress ?? ''),
+        shippingAddress: body?.shippingAddress === undefined ? undefined : String(body.shippingAddress ?? ''),
+        actor: v.name,
+      });
+      notifyLive(c, { type: 'crm', action: 'addresses_updated', so: res.order?.soNumber });
+      return c.json({ ok: true, order: res.order });
     } catch (e) {
       return fail(c, e);
     }

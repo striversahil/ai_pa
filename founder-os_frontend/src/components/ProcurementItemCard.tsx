@@ -231,11 +231,11 @@ export default function ProcurementItemCard({
 
       {(item as any).notAvailable && (
         <div className="rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)] p-2.5 text-[11px] leading-relaxed">
-          <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Not available — visible to sales (approved by management)</p>
+          <p className="font-extrabold text-[var(--text-secondary)] uppercase tracking-wide text-[10px]">Not available — visible to sales (approved by management)</p>
           {(item as any).notAvailableReason && (
-            <p className="mt-0.5 text-zinc-400 whitespace-pre-wrap">{String((item as any).notAvailableReason)}</p>
+            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((item as any).notAvailableReason)}</p>
           )}
-          <p className="mt-1 text-zinc-500">
+          <p className="mt-1 text-[var(--text-tertiary)]">
             Marked {historyDateChip((item as any).notAvailableAt) || "recently"} · Sales sees this as not available.
           </p>
         </div>
@@ -243,11 +243,11 @@ export default function ProcurementItemCard({
 
       {(item as any).notAvailableRequested && !(item as any).notAvailable && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] leading-relaxed">
-          <p className="font-extrabold text-amber-600 uppercase tracking-wide text-[10px]">Not available requested — awaiting management approval</p>
+          <p className="font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wide text-[10px]">Not available requested — awaiting management approval</p>
           {(item as any).notAvailableRequested && (
-            <p className="mt-0.5 text-zinc-600 whitespace-pre-wrap">{String((item as any).notAvailableRequested)}</p>
+            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((item as any).notAvailableRequested)}</p>
           )}
-          <p className="mt-1 text-zinc-500">
+          <p className="mt-1 text-[var(--text-tertiary)]">
             Requested {historyDateChip((item as any).notAvailableRequestedAt) || "recently"} · Management will review.
           </p>
           {!readOnly && onClearNotAvailable && (
@@ -430,7 +430,7 @@ export default function ProcurementItemCard({
                 />
                 <div className="flex gap-2">
                   <button type="button" onClick={submitNotAvailable}
-                    className="px-3 py-1.5 bg-[var(--bg-input)] text-white hover:bg-zinc-600 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                    className="px-3 py-1.5 bg-zinc-600 hover:bg-zinc-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0">
                     Mark not available
                   </button>
                   <button type="button" onClick={() => { setShowNotAvailable(false); setNotAvailableReason(""); }}

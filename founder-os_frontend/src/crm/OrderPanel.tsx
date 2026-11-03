@@ -36,6 +36,7 @@ import {
   validateSchedule,
 } from "./lifecycle";
 import { istToday, useCrmAction } from "./hooks";
+import { crmApi } from "./api";
 import { api } from "@/api/client";
 import SoAttachments from "@/components/SoAttachments";
 
@@ -51,13 +52,40 @@ const dayLabel = (d: string | null) => {
   return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 };
 
-/** One address block; Zoho keeps billing and shipping separately on the SO. */
-function AddressCard({ label, value }: { label: string; value?: string | null }) {
+/** One address block; Zoho keeps billing and shipping separately on the SO.
+ *  A floor user with write access can correct either — the edit sets an
+ *  edited marker and the Zoho sync leaves that address alone afterwards. */
+function AddressCard({ label, value, editedBy, canEdit, onSave, saving }: {
+  label: string;
+  value?: string | null;
+  editedBy?: string | null;
+  canEdit: boolean;
+  onSave: (text: string) => void;
+  saving: boolean;
+}) {
   const text = String(value || "").trim();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
   return (
     <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</p>
-      {text ? (
+      <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <span>{label}</span>
+        <span className="flex items-center gap-1.5 normal-case">
+          {editedBy && <span className="rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-bold text-amber-600 dark:text-amber-400" title={`Corrected on the floor by ${editedBy} — the Zoho sync leaves this address alone`}>edited locally</span>}
+          {canEdit && !editing && (
+            <button onClick={() => { setDraft(text); setEditing(true); }} className="cursor-pointer border-0 bg-transparent p-0 text-[10px] font-bold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400" title="Correct this address">Edit</button>
+          )}
+        </span>
+      </p>
+      {editing ? (
+        <div className="mt-1.5 space-y-1.5">
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} placeholder="Corrected address…" className="w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950" />
+          <div className="flex gap-1.5">
+            <button disabled={saving} onClick={() => { onSave(draft.trim()); setEditing(false); }} className="rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-indigo-500 disabled:opacity-50 cursor-pointer border-0">Save</button>
+            <button disabled={saving} onClick={() => setEditing(false)} className="rounded-lg border border-zinc-300 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 cursor-pointer">Cancel</button>
+          </div>
+        </div>
+      ) : text ? (
         <p className="mt-0.5 whitespace-pre-line text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{text}</p>
       ) : (
         <p className="mt-0.5 text-xs italic text-zinc-400 dark:text-zinc-500">Waiting for the Zoho detail sync…</p>
@@ -124,6 +152,30 @@ export default function OrderPanel({
   const [soReason, setSoReason] = useState(order.soDelayReason || "");
   const [moveReason, setMoveReason] = useState("");
   const [qty, setQty] = useState<Record<string, string>>({});
+  // Floor address corrections overlay the server row until the parent
+  // refreshes (the panel stays open — unlike schedule/dispatch, an address
+  // fix is not a mode that ends).
+  const [addrOverride, setAddrOverride] = useState<{ billing?: string | null; billingBy?: string | null; shipping?: string | null; shippingBy?: string | null } | null>(null);
+  const [addrSaving, setAddrSaving] = useState(false);
+  const [addrError, setAddrError] = useState<string | null>(null);
+
+  const saveAddress = async (which: "billing" | "shipping", text: string) => {
+    setAddrSaving(true);
+    setAddrError(null);
+    try {
+      const res = await crmApi.updateAddresses(order.id, which === "billing" ? { billingAddress: text } : { shippingAddress: text });
+      const o = res.order;
+      setAddrOverride({
+        billing: o.billingAddress, billingBy: o.billingAddressEditedBy,
+        shipping: o.shippingAddress, shippingBy: o.shippingAddressEditedBy,
+      });
+      onChanged();
+    } catch (e: any) {
+      setAddrError(String(e?.message || e));
+    } finally {
+      setAddrSaving(false);
+    }
+  };
 
   const actions = useCrmAction(() => {
     onChanged();
@@ -292,9 +344,17 @@ export default function OrderPanel({
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {/* Client & reference — EST no. comes from Zoho's reference_number,
-              the addresses from the per-order detail call (list pages omit
-              them, so they fill in as the detail budget reaches this SO). */}
-          <div className="mb-4 grid gap-2 sm:grid-cols-3">
+              payment terms are the extracted `terms` Payment line, and the
+              addresses come from the per-order detail call (list pages omit
+              them, so they fill in as the detail budget reaches this SO).
+              Addresses are floor-editable; an edited one shows its marker and
+              the Zoho sync leaves it alone afterwards. */}
+          {addrError && (
+            <div className="mb-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-xs text-rose-700 dark:text-rose-300">
+              Address save failed: {addrError}
+            </div>
+          )}
+          <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">EST no.</p>
               <p className="mt-0.5 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-100">
@@ -302,8 +362,14 @@ export default function OrderPanel({
               </p>
               <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">SO date {dayLabel(order.createdDate)}</p>
             </div>
-            <AddressCard label="Billing address" value={order.billingAddress} />
-            <AddressCard label="Shipping address" value={order.shippingAddress} />
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Payment terms</p>
+              <p className="mt-0.5 text-xs font-semibold leading-relaxed text-zinc-800 dark:text-zinc-100">
+                {order.paymentTerms || <span className="font-normal italic text-zinc-400">Not in the Zoho terms…</span>}
+              </p>
+            </div>
+            <AddressCard label="Billing address" value={addrOverride?.billing ?? order.billingAddress} editedBy={addrOverride?.billingBy ?? order.billingAddressEditedBy} canEdit={canWrite} saving={addrSaving} onSave={(t) => saveAddress("billing", t)} />
+            <AddressCard label="Shipping address" value={addrOverride?.shipping ?? order.shippingAddress} editedBy={addrOverride?.shippingBy ?? order.shippingAddressEditedBy} canEdit={canWrite} saving={addrSaving} onSave={(t) => saveAddress("shipping", t)} />
           </div>
           {order.sourceState === "deleted_source" && (
             <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">

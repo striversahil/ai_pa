@@ -142,7 +142,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
-  CrmSalesOrder: ['firstSeenAt', 'lastSeenAt', 'deletedDetectedAt', 'createdAt', 'updatedAt'],
+  CrmSalesOrder: ['firstSeenAt', 'lastSeenAt', 'deletedDetectedAt', 'billingAddressEditedAt', 'shippingAddressEditedAt', 'createdAt', 'updatedAt'],
   CrmSoItem: ['dispatchedAt', 'scheduledAt', 'createdAt', 'updatedAt'],
   CrmScheduleEvent: ['createdAt'],
   WaTask: ['lastInboundAt', 'lastOutboundAt', 'waitingSince', 'waitTimeoutAt', 'followUpDueAt', 'createdAt', 'updatedAt'],

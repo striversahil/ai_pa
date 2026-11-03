@@ -623,7 +623,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   return (
     <div className="rounded-2xl border border-amber-500/20 bg-[var(--bg-card)] p-4 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold text-white">💼 Rate Review — {enquiry.estNumber || "—"}</h3>
+        <h3 className="text-sm font-bold text-[var(--text-primary)]">💼 Rate Review — {enquiry.estNumber || "—"}</h3>
         <span className={`px-2 py-0.5 text-[10px] rounded-full font-extrabold uppercase tracking-wide border ${
           finalized
             ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
@@ -639,13 +639,13 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
           .filter(({ it }) => it.finalRate !== undefined && it.finalRate !== null);
         if (decided.length === 0) return null;
         return (
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+          <div className="rounded-xl border border-[var(--border-card)] overflow-hidden">
             <div className="px-3 py-2.5 bg-[var(--surface-sunken)]">
-              <span className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-300">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
                 Closed — decision made ({decided.length})
               </span>
             </div>
-              <ul className="border-t border-zinc-800 divide-y divide-zinc-800/60">
+              <ul className="border-t border-[var(--border-card)] divide-y divide-[var(--border-card)]">
                 {decided.map(({ it, i }) => {
                   const selRow = typeof (it as any).selectedRateIdx === "number"
                     ? (it.rates ?? [])[(it as any).selectedRateIdx]
@@ -654,22 +654,22 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   return (
                     <li key={i} className="px-3 py-2 space-y-1 text-[11px]">
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                        <span className="font-extrabold text-zinc-200">
+                        <span className="font-extrabold text-[var(--text-primary)]">
                           Item {i + 1}{it.name ? ` — ${it.name}` : ""}
                         </span>
-                        {it.qty && <span className="text-zinc-500 font-semibold">× {it.qty}</span>}
-                        <span className="ml-auto font-mono text-zinc-400">
+                        {it.qty && <span className="text-[var(--text-tertiary)] font-semibold">× {it.qty}</span>}
+                        <span className="ml-auto font-mono text-[var(--text-secondary)]">
                           {it.selectedVendor ? `${it.selectedVendor} · ` : ""}{vRate !== undefined ? `₹${Number(vRate).toLocaleString("en-IN")} → ` : ""}
                           <span className="font-extrabold text-emerald-400">₹{Number(it.finalRate).toLocaleString("en-IN")}</span>
                         </span>
                         {(it as any).finalDiscountPercent ? (
-                          <span className="text-zinc-500">{String((it as any).finalDiscountPercent)}% off</span>
+                          <span className="text-[var(--text-tertiary)]">{String((it as any).finalDiscountPercent)}% off</span>
                         ) : null}
                         {it.finalizedAt && (
-                          <span className="text-zinc-600">{historyDateChip(it.finalizedAt)}</span>
+                          <span className="text-[var(--text-tertiary)]">{historyDateChip(it.finalizedAt)}</span>
                         )}
                       </div>
-                      {it.spec && <p className="text-zinc-400 whitespace-pre-wrap leading-relaxed">{it.spec}</p>}
+                      {it.spec && <p className="text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{it.spec}</p>}
                       {(it.media ?? []).length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
                           {(it.media ?? []).map((m: any, mi: number) => {
@@ -678,7 +678,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           })}
                         </div>
                       )}
-                      <FlagThread thread={it.thread ?? []} tone="dark" />
+                      <FlagThread thread={it.thread ?? []} tone="auto" />
                     </li>
                   );
                 })}
@@ -688,7 +688,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       })()}
 
       {items.length === 0 ? (
-        <p className="text-xs text-zinc-500 italic">No items on this enquiry yet.</p>
+        <p className="text-xs text-[var(--text-tertiary)] italic">No items on this enquiry yet.</p>
       ) : (
         <div className="space-y-3">
           {items.some((it) => it.specIssue) && (
@@ -697,14 +697,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             </p>
           )}
           {items.some((it) => it.rateAvailable) && (
-            <p className="text-[11px] font-semibold text-zinc-500">
+            <p className="text-[11px] font-semibold text-[var(--text-tertiary)]">
               {items.filter((it) => it.rateAvailable).length} item{items.filter((it) => it.rateAvailable).length === 1 ? "" : "s"} with available rates — skipped (no decision needed).
             </p>
           )}
           <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 p-2.5 space-y-2">
             <p className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">Bulk — {checkedIdx.length} selected</p>
             {locked ? (
-              <p className="text-[11px] text-zinc-500">Locked — decisions are committed.</p>
+              <p className="text-[11px] text-[var(--text-tertiary)]">Locked — decisions are committed.</p>
             ) : (
             <div className="flex flex-wrap items-center gap-2">
               <input value={bulkPct} onChange={(e) => setBulkPct(e.target.value)} placeholder="Margin %"
@@ -735,31 +735,31 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               return (
                 <div key={i} className="rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] p-3 space-y-2">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-xs font-extrabold text-white">
+                    <span className="text-xs font-extrabold text-[var(--text-primary)]">
                       Item {i + 1}{it.name ? ` — ${it.name}` : ""}
                     </span>
                     {it.qty && (
-                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)] font-semibold">Qty: {it.qty}</span>
                     )}
                     <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-[var(--bg-input)] text-[var(--text-secondary)] border-[var(--border-card)]">
                       Not available
                     </span>
                   </div>
                   {it.spec && (
-                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                    <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                   )}
-                  <div className="rounded-lg border border-[var(--border-card)] bg-black/20 p-2.5 text-[11px] leading-relaxed">
-                    <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Marked as not available — visible to sales</p>
+                  <div className="rounded-lg border border-[var(--border-card)] bg-[var(--bg-input)]/40 p-2.5 text-[11px] leading-relaxed">
+                    <p className="font-extrabold text-[var(--text-secondary)] uppercase tracking-wide text-[10px]">Marked as not available — visible to sales</p>
                     {(it as any).notAvailableReason && (
-                      <p className="mt-0.5 text-zinc-400 whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
+                      <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
                     )}
-                    <p className="mt-1 text-zinc-500">
+                    <p className="mt-1 text-[var(--text-tertiary)]">
                       Marked {historyDateChip((it as any).notAvailableAt) || "recently"} · Sales sees this as not available.
                     </p>
                   </div>
-                  <FlagThread thread={it.thread ?? []} tone="dark" />
+                  <FlagThread thread={it.thread ?? []} tone="auto" />
                   <button type="button" onClick={() => handleClearNotAvailable(i)} disabled={flagBusy}
-                    className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
+                    className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
                     ↩ Clear — available again
                   </button>
                 </div>
@@ -769,27 +769,27 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               return (
                 <div key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-xs font-extrabold text-white">
+                    <span className="text-xs font-extrabold text-[var(--text-primary)]">
                       Item {i + 1}{it.name ? ` — ${it.name}` : ""}
                     </span>
                     {it.qty && (
-                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)] font-semibold">Qty: {it.qty}</span>
                     )}
                     <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-400 border-amber-500/30">
                       Not available requested
                     </span>
                   </div>
                   {it.spec && (
-                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                    <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                   )}
-                  <div className="rounded-lg border border-amber-500/30 bg-black/20 p-2.5 text-[11px] leading-relaxed">
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] leading-relaxed">
                     <p className="font-extrabold text-amber-400 uppercase tracking-wide text-[10px]">Procurement says not available</p>
-                    <p className="mt-0.5 text-zinc-300 whitespace-pre-wrap">{String((it as any).notAvailableRequested)}</p>
-                    <p className="mt-1 text-zinc-500">
+                    <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableRequested)}</p>
+                    <p className="mt-1 text-[var(--text-tertiary)]">
                       Requested {historyDateChip((it as any).notAvailableRequestedAt) || "recently"} · Approve to show sales.
                     </p>
                   </div>
-                  <FlagThread thread={it.thread ?? []} tone="dark" />
+                  <FlagThread thread={it.thread ?? []} tone="auto" />
                   {notAvailableOpen === i ? (
                     <div className="space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                       <input
@@ -804,7 +804,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           {flagBusy ? "Approving…" : "Approve — share with sales"}
                         </button>
                         <button type="button" onClick={() => { setNotAvailableOpen(null); setNotAvailableReason(""); }}
-                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
                           Cancel
                         </button>
                       </div>
@@ -816,7 +816,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         Approve — share with sales
                       </button>
                       <button type="button" onClick={() => handleRejectNotAvailable(i)} disabled={flagBusy}
-                        className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
+                        className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
                         Reject — keep in procurement
                       </button>
                     </div>
@@ -826,10 +826,10 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             }
             // Flagged intimates only — vendor rates stay visible and actionable (per founder: specIssue with rates shows in Management)
             const flaggedBanner = it.specIssue && !sent ? (
-              <div className="rounded-lg border border-red-500/30 bg-black/20 p-2.5 text-[11px] leading-relaxed">
+              <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2.5 text-[11px] leading-relaxed">
                 <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Procurement flagged incorrect spec — intimating only</p>
-                <p className="mt-0.5 text-zinc-300 whitespace-pre-wrap">{it.specIssue}</p>
-                <p className="mt-1 text-zinc-500">Flagged {historyDateChip(it.specFlaggedAt) || "recently"} · shown read-only banner, rates remain actionable.</p>
+                <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
+                <p className="mt-1 text-[var(--text-tertiary)]">Flagged {historyDateChip(it.specFlaggedAt) || "recently"} · shown read-only banner, rates remain actionable.</p>
               </div>
             ) : null;
             // Legacy internal rows with no rate yet: enter the sourced rate
@@ -839,25 +839,25 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               return (
                 <div key={i} className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-xs font-extrabold text-white">
+                    <span className="text-xs font-extrabold text-[var(--text-primary)]">
                       Item {i + 1}{it.name ? ` — ${it.name}` : ""}
                     </span>
                     {it.qty && (
-                      <span className="text-[11px] text-zinc-400 font-semibold">Qty: {it.qty}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)] font-semibold">Qty: {it.qty}</span>
                     )}
                     <span className="ml-auto px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-violet-500/10 text-violet-400 border-violet-500/30">
                       Internal — management
                     </span>
                   </div>
                   {it.spec && (
-                    <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                    <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                   )}
-                  <FlagThread thread={it.thread ?? []} tone="dark" />
+                  <FlagThread thread={it.thread ?? []} tone="auto" />
                   <ItemRateForm
                     submitLabel="Add internal rate"
                     onAdd={(rate) => void addInternalRate(i, rate)}
                   />
-                  <p className="text-[10px] text-zinc-500">Rate sourced by management — markup and finalize continue below once added.</p>
+                  <p className="text-[10px] text-[var(--text-tertiary)]">Rate sourced by management — markup and finalize continue below once added.</p>
                   <button type="button" onClick={() => toggleInternal(i, false)}
                     className="px-2 py-1 bg-transparent border-0 text-[11px] font-bold text-violet-400 hover:text-violet-300 cursor-pointer">
                     ← Return to procurement instead
@@ -877,7 +877,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             const wasRounded = !!computed && computed.unrounded !== computed.finalRate;
             const isItemLocked = it.finalRate !== undefined && it.finalRate !== null && !revise[i];
             return (
-              <div key={i} className="rounded-xl border border-zinc-800 p-3 space-y-2">
+              <div key={i} className="rounded-xl border border-[var(--border-card)] p-3 space-y-2">
                 <div className="flex items-baseline justify-between gap-2">
                   <label className="flex items-center gap-2 min-w-0 cursor-pointer">
                     {!isItemLocked && (
@@ -885,17 +885,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       onChange={() => setChecked((prev) => ({ ...prev, [i]: !prev[i] }))}
                       className="accent-indigo-500 h-3.5 w-3.5 flex-shrink-0" />
                     )}
-                    <span className="text-xs font-extrabold text-white truncate">Item {i + 1}{it.name ? ` — ${it.name}` : ""}</span>
+                    <span className="text-xs font-extrabold text-[var(--text-primary)] truncate">Item {i + 1}{it.name ? ` — ${it.name}` : ""}</span>
                   {it.internalRates && (
                     <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-violet-500/10 text-violet-400 border-violet-500/30 flex-shrink-0">
                       Internal
                     </span>
                   )}
                   </label>
-                  {it.qty && <span className="text-[11px] text-zinc-400 font-semibold flex-shrink-0">Qty: {it.qty}</span>}
+                  {it.qty && <span className="text-[11px] text-[var(--text-secondary)] font-semibold flex-shrink-0">Qty: {it.qty}</span>}
                 </div>
                 {it.spec && (
-                  <p className="text-xs text-zinc-300 font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
+                  <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                 )}
                 {flaggedBanner}
                 {(it.media ?? []).length > 0 && (
@@ -913,7 +913,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     })}
                   </div>
                 )}
-                <FlagThread thread={it.thread ?? []} tone="dark" />
+                <FlagThread thread={it.thread ?? []} tone="auto" />
                 {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && (
                   <p className="text-[11px] font-extrabold text-sky-400">
                     🎯 Client expects ₹{Number((it as any).expectedRate).toLocaleString("en-IN")}
@@ -922,14 +922,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 )}
                 {rates.length === 0 ? (
                   <div className="space-y-2">
-                    <p className="text-[11px] text-zinc-500 italic">No vendor rates yet — add one here to finalize directly.</p>
+                    <p className="text-[11px] text-[var(--text-tertiary)] italic">No vendor rates yet — add one here to finalize directly.</p>
                     {!isItemLocked && (
                       <ItemRateForm
                         submitLabel="Add rate & finalize"
                         onAdd={(rate) => void addInternalRate(i, rate)}
                       />
                     )}
-                    <p className="text-[10px] text-zinc-500">Adds a vendor rate as your final source — use the sales-note field below (shown after adding) for the original sales note forwarded to the client.</p>
+                    <p className="text-[10px] text-[var(--text-tertiary)]">Adds a vendor rate as your final source — use the sales-note field below (shown after adding) for the original sales note forwarded to the client.</p>
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -955,11 +955,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         />
                         <span className="flex-1 min-w-0">
                           <span className="flex items-center gap-2 flex-wrap">
-                            <span className="text-zinc-200 font-semibold">{r.vendor}</span>
+                            <span className="text-[var(--text-primary)] font-semibold">{r.vendor}</span>
                             {r.specSame === false && (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30">Spec differs</span>
                             )}
-                            <span className="font-mono text-zinc-400">₹{Number(r.rate).toLocaleString("en-IN")}</span>
+                            <span className="font-mono text-[var(--text-secondary)]">₹{Number(r.rate).toLocaleString("en-IN")}</span>
                             {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && Number(r.rate) <= Number((it as any).expectedRate) && (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">✓ within target</span>
                             )}
@@ -975,7 +975,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                                   setShareToggled((prev) => ({ ...prev, [k]: !(prev[k] ?? (r as any)?.sharedWithSales === true) }));
                                 }}
                                 title="Show this quote to sales as an alternate option beside the quoted rate"
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide border cursor-pointer ${(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "bg-sky-500/10 text-sky-300 border-sky-500/30" : "bg-transparent text-zinc-500 border-[var(--border-card)] hover:text-[var(--text-secondary)]"}`}>
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide border cursor-pointer ${(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "bg-sky-500/10 text-sky-300 border-sky-500/30" : "bg-transparent text-[var(--text-tertiary)] border-[var(--border-card)] hover:text-[var(--text-secondary)]"}`}>
                                 {(shareToggled[shareKey(i, r)] ?? (r as any)?.sharedWithSales === true) ? "Shared ✓" : "Share with sales"}
                               </button>
                             )}
@@ -986,11 +986,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                             )}
                  {(!locked || revise[i] || it.finalRate === undefined || it.finalRate === null) && (
                                <button type="button" onClick={() => dropRate(i, rj)} title="Remove incorrect rate"
-                                className="text-zinc-600 hover:text-red-400 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">×</button>
+                                className="text-[var(--text-tertiary)] hover:text-red-400 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">×</button>
                             )}
                           </span>
                           {r.description && (
-                            <span className="block text-zinc-500 whitespace-pre-wrap leading-relaxed mt-0.5">{r.description}</span>
+                            <span className="block text-[var(--text-tertiary)] whitespace-pre-wrap leading-relaxed mt-0.5">{r.description}</span>
                           )}
                           {r.specSame === false && r.specDiff && (
                             <span className="block text-amber-400/90 whitespace-pre-wrap leading-relaxed mt-0.5">
@@ -1022,7 +1022,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 )}
                 {ri !== undefined && !isItemLocked && (
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Note for sales (forwarded with final rate)</label>
+                    <label className="block text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Note for sales (forwarded with final rate)</label>
                     <textarea
                       value={salesNotes[i] ?? (rates[ri] as any)?.salesNote ?? ""}
                       onChange={(e) => setSalesNotes((prev) => ({ ...prev, [i]: e.target.value }))}
@@ -1030,7 +1030,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       rows={2}
                       className="w-full px-2.5 py-2 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40 resize-y"
                     />
-                    <p className="text-[10px] text-zinc-500">Procurement's draft shows here — edit before finalizing, sales sees only the selected vendor's note.</p>
+                    <p className="text-[10px] text-[var(--text-tertiary)]">Procurement's draft shows here — edit before finalizing, sales sees only the selected vendor's note.</p>
                   </div>
                 )}
                 <div className="space-y-1.5">
@@ -1046,7 +1046,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         const refs: any[] = sr?.references ?? [];
                         return (
                           <>
-                            {n && <p className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed">{n}</p>}
+                            {n && <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{n}</p>}
                             {refs.length > 0 && (
                               <div className="flex flex-wrap gap-1.5">
                                 {refs.map((m: any, mi: number) => (
@@ -1064,7 +1064,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           </>
                         );
                       })()}
-                      <p className="text-[10px] text-zinc-500">Committed — sales sees this rate.{(it as any).finalDiscountPercent ? ` Discount ${String((it as any).finalDiscountPercent)}% applied.` : ""}</p>
+                      <p className="text-[10px] text-[var(--text-tertiary)]">Committed — sales sees this rate.{(it as any).finalDiscountPercent ? ` Discount ${String((it as any).finalDiscountPercent)}% applied.` : ""}</p>
                       {itemHasUnreviewedQuotes(it as any) && !revise[i] && (
                         <p className="text-[11px] font-bold text-amber-400">↓ New vendor quotes since this decision — Keep holds this rate, Revise switches to another.</p>
                       )}
@@ -1079,11 +1079,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                             if (itemHasUnreviewedQuotes(it as any)) { confirmKeep(i); return; }
                             setRevise((prev) => ({ ...prev, [i]: false }));
                           }}
-                          className={`px-2.5 py-1.5 cursor-pointer border-0 disabled:opacity-60 ${!revise[i] ? "bg-emerald-600 text-white" : "bg-transparent text-zinc-400"}`}>
+                          className={`px-2.5 py-1.5 cursor-pointer border-0 disabled:opacity-60 ${!revise[i] ? "bg-emerald-600 text-white" : "bg-transparent text-[var(--text-tertiary)]"}`}>
                           {keepBusyIdx === i ? "Keeping…" : `Keep ₹${Number(it.finalRate).toLocaleString("en-IN")}`}
                         </button>
                         <button type="button" onClick={() => setRevise((prev) => ({ ...prev, [i]: true }))}
-                          className={`px-2.5 py-1.5 cursor-pointer border-0 ${revise[i] ? "bg-indigo-600 text-white" : "bg-transparent text-zinc-400"}`}>
+                          className={`px-2.5 py-1.5 cursor-pointer border-0 ${revise[i] ? "bg-indigo-600 text-white" : "bg-transparent text-[var(--text-tertiary)]"}`}>
                           Revise
                         </button>
                       </div>
@@ -1099,19 +1099,19 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         inputMode="decimal"
                         className="w-20 px-2 py-1 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                       />
-                      <span className="text-[11px] font-bold text-zinc-400">% off</span>
+                      <span className="text-[11px] font-bold text-[var(--text-tertiary)]">% off</span>
                     </div>
                     <div className="flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[11px] font-bold">
                       <button type="button"
                         onClick={() => setModes((prev) => ({ ...prev, [i]: "percent" }))}
-                        className={`px-2.5 py-1.5 cursor-pointer border-0 ${mode === "percent" ? "bg-indigo-600 text-white" : "bg-transparent text-zinc-400"}`}>
+                        className={`px-2.5 py-1.5 cursor-pointer border-0 ${mode === "percent" ? "bg-indigo-600 text-white" : "bg-transparent text-[var(--text-tertiary)]"}`}>
                         % Markup
                       </button>
                       <button type="button"
                         onClick={() => { if (!multi) setModes((prev) => ({ ...prev, [i]: "final" })); }}
                         disabled={multi}
                         title={multi ? "Disabled: one margin % applies to every shared quote — a single Final ₹ can't price them respectively" : undefined}
-                        className={`px-2.5 py-1.5 border-0 ${multi ? "bg-transparent text-zinc-600 cursor-not-allowed opacity-50" : `cursor-pointer ${mode === "final" ? "bg-indigo-600 text-white" : "bg-transparent text-[var(--text-secondary)]"}`}`}>
+                        className={`px-2.5 py-1.5 border-0 ${multi ? "bg-transparent text-[var(--text-tertiary)] cursor-not-allowed opacity-50" : `cursor-pointer ${mode === "final" ? "bg-indigo-600 text-white" : "bg-transparent text-[var(--text-secondary)]"}`}`}>
                         Final ₹{multi ? " 🔒" : ""}
                       </button>
                     </div>
@@ -1124,7 +1124,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           inputMode="decimal"
                           className="w-20 px-2 py-1 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
                         />
-                        <span className="text-[11px] font-bold text-zinc-400">%</span>
+                        <span className="text-[11px] font-bold text-[var(--text-tertiary)]">%</span>
                       </div>
                     ) : (
                       <input
@@ -1150,12 +1150,12 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           <p className="text-[10px] text-emerald-400/80">{fmtINR(rate)} − {disc}% = {fmtINR(discBase)} discounted base</p>
                         )}
                         {mode === "percent" && discBase !== undefined && preview !== null && computed && (
-                          <p className="text-[10px] text-zinc-500">
+                          <p className="text-[10px] text-[var(--text-tertiary)]">
                             {fmtINR(discBase)} + {fmtINR(computed.markup)} markup{disc > 0 ? " (after discount)" : ""}
                           </p>
                         )}
                         {mode === "final" && discBase !== undefined && preview !== null && computed && (
-                          <p className="text-[10px] text-zinc-500">
+                          <p className="text-[10px] text-[var(--text-tertiary)]">
                             Markup derived: {fmtINR(computed.markup)} over {fmtINR(discBase)}{disc > 0 ? " (discounted)" : ""}
                           </p>
                         )}
@@ -1163,7 +1163,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     );
                   })()}
                   {(finalized || sent) && it.finalRate !== undefined && it.finalRate !== null && (
-                    <span className="block text-[11px] text-zinc-500">Locked at {fmtINR(it.finalRate)}</span>
+                    <span className="block text-[11px] text-[var(--text-tertiary)]">Locked at {fmtINR(it.finalRate)}</span>
                   )}
                   {it.ratesRequested && (
                     <p className="text-[10px] font-semibold text-indigo-400">
@@ -1172,7 +1172,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   )}
                   {revise[i] && (
                     <button type="button" onClick={() => setRevise((prev) => ({ ...prev, [i]: false }))}
-                      className="px-2.5 py-1.5 bg-transparent border-0 text-[11px] font-bold text-zinc-500 hover:text-zinc-300 cursor-pointer">
+                      className="px-2.5 py-1.5 bg-transparent border-0 text-[11px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer">
                       Cancel revise — keep previous rate
                     </button>
                   )}
@@ -1195,11 +1195,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           {flagBusy ? "Flagging…" : "Flag procurement"}
                         </button>
                         <button type="button" onClick={() => { setReqOpen(null); setReqNote(""); }}
-                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
                           Cancel
                         </button>
                       </div>
-                      <p className="text-[10px] text-zinc-500">Sends immediately — procurement is flagged live, no Save needed. Existing quotes are kept.</p>
+                      <p className="text-[10px] text-[var(--text-tertiary)]">Sends immediately — procurement is flagged live, no Save needed. Existing quotes are kept.</p>
                     </div>
                   ) : (
                     <button type="button" onClick={() => { setReqOpen(i); setReqNote(""); }}
@@ -1209,7 +1209,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   )}
                   {it.ratesRequested && (
                     <button type="button" onClick={() => withdrawFlagNow(i)} disabled={flagBusy}
-                      className="px-2.5 py-1.5 bg-transparent border-0 text-[11px] font-bold text-zinc-500 hover:text-zinc-300 cursor-pointer disabled:opacity-50">
+                      className="px-2.5 py-1.5 bg-transparent border-0 text-[11px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer disabled:opacity-50">
                       Withdraw request
                     </button>
                   )}
@@ -1237,7 +1237,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           Done
                         </button>
                         <button type="button" onClick={() => { setRemarks((prev) => ({ ...prev, [i]: "" })); setRemarkOpen(null); }}
-                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
                           Clear
                         </button>
                       </div>
@@ -1258,11 +1258,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       />
                       <div className="flex gap-2">
                         <button type="button" onClick={() => handleNotAvailable(i)} disabled={flagBusy}
-                          className="px-3 py-1.5 bg-[var(--bg-input)] hover:bg-zinc-600 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-50">
+                          className="px-3 py-1.5 bg-zinc-600 hover:bg-zinc-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-50">
                           {flagBusy ? "Saving…" : "Mark not available"}
                         </button>
                         <button type="button" onClick={() => { setNotAvailableOpen(null); setNotAvailableReason(""); }}
-                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-zinc-400 hover:text-zinc-200">
+                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
                           Cancel
                         </button>
                       </div>
@@ -1290,7 +1290,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
           {busy ? "Saving…" : revisingLocked ? "Save revised rate" : "Save rates"}
         </button>
         {(!locked || canSaveLocked) && actionableIdx.length > 0 && (
-          <span className={`text-[11px] font-bold ${allDecided ? "text-emerald-400" : "text-zinc-500"}`}>
+          <span className={`text-[11px] font-bold ${allDecided ? "text-emerald-400" : "text-[var(--text-tertiary)]"}`}>
             Decided {decidedCount} of {actionableIdx.length}
             {allDecided ? " — ready to finalize." : " — decide every item to unlock Finalize."}
           </span>
@@ -1315,7 +1315,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
               <button
                 onClick={() => setConfirming(false)}
                 disabled={busy}
-                className="px-3 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+                className="px-3 py-2 rounded-xl text-xs font-semibold text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
               >
                 Cancel
               </button>

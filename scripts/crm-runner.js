@@ -83,6 +83,19 @@ const CHARGE_LINES = new Set([
 const isChargeLine = (li) =>
   CHARGE_LINES.has(String(li?.name || li?.description || '').trim().toLowerCase().replace(/\s+/g, ' '));
 
+// Zoho's free-text Terms & Conditions block carries the real payment terms
+// (the structured payment_terms fields are 0/"Due on Receipt" on every SO).
+// Returns the Payment line, e.g. "Advance 100% received", or "" when absent.
+function extractPaymentTerms(terms) {
+  const text = String(terms || '');
+  if (!text) return '';
+  for (const line of text.split('\n')) {
+    const m = line.replace(/\*/g, '').match(/^(?:[\d.\-()\s]*?)payment\s*:?\s*(.+?)\s*$/i);
+    if (m && m[1]) return m[1].slice(0, 120);
+  }
+  return '';
+}
+
 // Full line items + client addresses for one SO via the detail endpoint (the
 // list endpoint never includes line_items or addresses). One 429 backoff +
 // retry; a second consecutive 429 OPENS the circuit — remaining rows skip this
@@ -98,6 +111,7 @@ async function fetchOrderDetail(salesorderId, org) {
       items: raw,
       billingAddress: formatAddress(so.billing_address) || String(so.billing_address_formatted || '').trim(),
       shippingAddress: formatAddress(so.shipping_address) || String(so.shipping_address_formatted || '').trim(),
+      paymentTerms: extractPaymentTerms(so.terms),
     };
   };
   try {
@@ -215,7 +229,7 @@ async function postFloorSync(args) {
  * definitive instead of a guess. Orders the worker lists as active but that are
  * already in this scan are simply reported `present`.
  */
-async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo, itemsByKey, addressesByKey, localOrders }) {
+async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo, itemsByKey, addressesByKey, paymentTermsByKey, localOrders }) {
   if (!Array.isArray(index) || index.length === 0) return null;
 
   // soKey → Zoho detail row (has customer/ref/items for the display-capped set).
@@ -247,6 +261,7 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
     // Items captured THIS tick (detail budget) or carried on the display row.
     const fetched = itemsByKey?.get(key);
     const addr = addressesByKey?.get(key) || null;
+    const paymentTerms = paymentTermsByKey?.get(key) || '';
     const items =
       Array.isArray(fetched) && fetched.length > 0
         ? fetched
@@ -268,6 +283,7 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
       ref: detail?.ref || '',
       billingAddress: addr?.billingAddress || '',
       shippingAddress: addr?.shippingAddress || '',
+      paymentTerms,
       // Only ISO values may reach this field — closed rows carry a display
       // date, and an empty value means "keep whatever the row already has"
       // (never overwrite a real date with a formatted string).
@@ -507,10 +523,11 @@ async function main() {
     console.log(`crm-runner: floor state unavailable (${e.message}) — items may be refetched`);
   }
   // A row is "detail-complete" when it has line items AND the client addresses
-  // (both arrive from the same Zoho detail call).
+  // AND the payment-terms line (all arrive from the same Zoho detail call).
+  // Rows predating payment-terms capture refetch once to fill the gap.
   const detailKnown = new Set(
     localOrders
-      .filter((o) => Number(o.itemCount) > 0 && o.hasAddress)
+      .filter((o) => Number(o.itemCount) > 0 && o.hasAddress && o.hasPaymentTerms)
       .map((o) => `${o.org || ''}:${o.so}`),
   );
 
@@ -526,6 +543,7 @@ async function main() {
   const due = queue.slice(0, ITEM_BUDGET);
   const itemsByKey = new Map();
   const addressesByKey = new Map();
+  const paymentTermsByKey = new Map();
   const t0 = Date.now();
   let detailErrors = 0;
   for (const { entry, hit } of due) {
@@ -539,6 +557,7 @@ async function main() {
           shippingAddress: detail.shippingAddress,
         });
       }
+      if (detail.paymentTerms) paymentTermsByKey.set(key, detail.paymentTerms);
     } catch (e) {
       detailErrors++;
       if (e?.message && !String(e.message).includes('circuit open')) {
@@ -555,7 +574,7 @@ async function main() {
 
   // The ONE sink: D1 rows. The runner only fetches; the Worker decides what to
   // insert, update, score or flag.
-  await postFloorSync({ date: today, index, stages, closed, activeBySo, itemsByKey, addressesByKey, localOrders });
+  await postFloorSync({ date: today, index, stages, closed, activeBySo, itemsByKey, addressesByKey, paymentTermsByKey, localOrders });
 
   const summary = STAGES.filter((s) => stages[s].count > 0)
     .map((s) => `${s}:${stages[s].count}(₹${Math.round(stages[s].value).toLocaleString()})`)

@@ -7,7 +7,7 @@
 // here — if a number is missing we show an em dash, never a guess.
 
 import React from "react";
-import { PhoneCall, Sparkles, Target, Timer, TrendingUp, Wallet } from "lucide-react";
+import { PhoneCall, Sparkles, Target, Timer, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { BoardKpi } from "@/telecalling/view-types";
 import type { TeamTarget, TargetStatus } from "@/telecalling/targets";
@@ -63,16 +63,13 @@ export function MetricStrip({ kpi, teamTarget, loading = false }: MetricStripPro
   const directPct = pctOf(directValue);
   const unlinkedPct = pctOf(unlinkedValue);
 
-  const weekDue = Number(teamTarget?.due ?? 0);
-  const weekAccepted = Number(teamTarget?.weekAccepted ?? 0);
-  const weekPct = weekDue > 0 ? Math.max(0, Math.min(100, (weekAccepted / weekDue) * 100)) : 0;
-  const carryIn = Number(teamTarget?.carryIn ?? 0);
-
   // Filter-period team bar (consumer-only, no carry-in): the number the tiles
   // go green on. Falls back to the week ledger for payloads that predate it.
   // Tile 2 IS this number — the "team target" always means the SELECTED
   // filter's start→end date. The since-start ledger (with backlog) survives
-  // only as the caption underneath and in tile 3 ("This week").
+  // only as the caption underneath (the fixed "This week" tile was removed
+  // 2026-11-03 — it never moved with the filter; backlog lives on each row
+  // and in the WeekLedger drawer).
   const hasPeriod = teamTarget != null && teamTarget.periodTarget !== undefined;
   const periodLabel = teamTarget?.periodLabel ?? "This week";
   const periodTarget = Number(hasPeriod ? teamTarget?.periodTarget ?? 0 : teamTarget?.weekTarget ?? 0);
@@ -88,7 +85,7 @@ export function MetricStrip({ kpi, teamTarget, loading = false }: MetricStripPro
   const periodTone = TARGET_TONE[periodStatus];
 
   return (
-    <div className={`grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4 ${loading ? "opacity-70 transition-opacity" : "transition-opacity"}`} aria-busy={loading}>
+    <div className={`grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 ${loading ? "opacity-70 transition-opacity" : "transition-opacity"}`} aria-busy={loading}>
       {/* 1 — the whole acceptance cohort, with the split explained underneath. */}
       <ValueTile index={0} icon={Wallet} label="Accepted ₹" accent="bg-indigo-500">
         <div className={`mt-0.5 text-xl ${NUM}`} title={`${fmtNum(Math.round(animatedAccepted))} accepted`}>
@@ -156,33 +153,8 @@ export function MetricStrip({ kpi, teamTarget, loading = false }: MetricStripPro
         </div>
       </ValueTile>
 
-      {/* 3 — this week ledger (carry-in included): where the backlog lives. */}
-      <ValueTile index={2} icon={TrendingUp} label="This week" accent={weekPct >= 100 ? "bg-emerald-500" : weekPct >= 60 ? "bg-amber-500" : "bg-rose-500"}>
-        <div className="mt-1 flex items-baseline gap-1.5">
-          <span className={`text-xl ${NUM}`}>{fmtLakh(weekAccepted)}</span>
-          <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">/ {fmtLakh(weekDue)} due</span>
-        </div>
-        <div className="mt-1 text-[11px] font-semibold text-[var(--text-secondary)]">
-          {teamTarget?.weekFrom ? `${fmtLakh(teamTarget.weekTarget)} accrued so far` : "No active week"}
-        </div>
-        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--border-card)]" role="progressbar" aria-valuenow={Math.round(weekPct)} aria-valuemin={0} aria-valuemax={100} aria-label="This week accepted against due">
-          <span className={`block h-full rounded-full ${weekPct >= 100 ? "bg-emerald-500" : weekPct >= 60 ? "bg-amber-500" : "bg-rose-500"} transition-[width] duration-700 ease-out`} style={{ width: `${Math.max(2, Math.min(100, weekPct))}%` }} />
-        </div>
-        <div className="mt-1.5">
-          {carryIn > 0 ? (
-            <span className={`${PILL} border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300`} title="Unmet target carried into this week">
-              ↩ {fmtLakh(carryIn)} carried in
-            </span>
-          ) : (
-            <span className={`${PILL} border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300`}>
-              ✓ no backlog carried
-            </span>
-          )}
-        </div>
-      </ValueTile>
-
-      {/* 4 — activity micro-group (calls / leads / talk). */}
-      <ValueTile index={3} icon={PhoneCall} label="Activity" accent="bg-sky-500">
+      {/* 3 — activity micro-group (calls / leads / talk). */}
+      <ValueTile index={2} icon={PhoneCall} label="Activity" accent="bg-sky-500">
         <div className="mt-1 grid grid-cols-3 gap-2">
           <div>
             <div className={`text-base ${NUM}`}>{fmtNum(Number(kpi?.callsConnected ?? 0))}</div>

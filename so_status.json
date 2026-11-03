@@ -1,0 +1,1315 @@
+{
+    "SO-11829": {
+        "so_status": "Not Updated",
+        "company": "Geofast Industries (India) LTD",
+        "so_date": "2026-11-02",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO date corrected 2026-02-11 -> 2026-11-02 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-11828": {
+        "so_status": "Not Updated",
+        "company": "Amar Jyoti Industries",
+        "so_date": "2026-11-02",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO date corrected 2026-02-11 -> 2026-11-02 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-11827": {
+        "so_status": "Not Updated",
+        "company": "Sheel Chand Flour Mills Pvt Ltd UK",
+        "so_date": "2026-11-02",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO date corrected 2026-02-11 -> 2026-11-02 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-11826": {
+        "so_status": "Not Updated",
+        "company": "Sourcewell Flours Pvt Ltd",
+        "so_date": "2026-11-02",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO date corrected 2026-02-11 -> 2026-11-02 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-11825": {
+        "so_status": "Unscheduled",
+        "company": "Sanwaria sweets Pvt. Ltd.",
+        "so_date": "2026-11-02",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO date corrected 2026-02-11 -> 2026-11-02 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-11824": {
+        "so_status": "Unscheduled",
+        "company": "JMP Industry (P) Ltd",
+        "so_date": "2026-11-02",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO date corrected 2026-02-11 -> 2026-11-02 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-11823": {
+        "so_status": "Unscheduled",
+        "company": "Girdharilal Manoharlal Glass Works",
+        "so_date": "2026-10-31",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master"
+    },
+    "SO-11822": {
+        "so_status": "Unscheduled",
+        "company": "RAJAM FOOD INDUSTRIES",
+        "so_date": "2026-10-31",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master"
+    },
+    "SO-11821": {
+        "so_status": "Scheduled",
+        "company": "Lakhishree Roller Flour Mill",
+        "so_date": "2026-10-31",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-11",
+        "source_sheet": "Master"
+    },
+    "SO-11820": {
+        "so_status": "Unscheduled",
+        "company": "Indo allied protein food Pvt Ltd",
+        "so_date": "2026-10-31",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master"
+    },
+    "SO-11819": {
+        "so_status": "Unscheduled",
+        "company": "Mr. Yuvraj singh",
+        "so_date": "2026-10-31",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Master"
+    },
+    "SO-11817": {
+        "so_status": "Partially Dispatched",
+        "company": "Radhey Industries",
+        "so_date": "2026-10-30",
+        "processed": "all except pending",
+        "pending": [
+            2,
+            3
+        ],
+        "pending_note": "PARTIALLY DESPATHED PENDING 12GG AND 16GG",
+        "expected_dispatch_date": "2026-10-31",
+        "last_remark": "PARTIALLY DESPATHED PENDING 12GG AND 16GG , ITEM 2, 3,, PENDING",
+        "source_sheet": "Master"
+    },
+    "SO-11816": {
+        "so_status": "Scheduled",
+        "company": "UK Enterprises (MH)",
+        "so_date": "2026-10-30",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-09",
+        "source_sheet": "Master"
+    },
+    "SO-11815": {
+        "so_status": "Scheduled",
+        "company": "Lavanya Purefood Pvt Ltd (BR)",
+        "so_date": "2026-10-29",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-03",
+        "last_remark": "29-OCT , CONFIRME TO RAHUL SIR , -PARTILY JANA HAI YA EK SAATH",
+        "source_sheet": "Master"
+    },
+    "SO-11814": {
+        "so_status": "Scheduled",
+        "company": "Pashupati Roller Flour Mill Pvt Ltd (BR)",
+        "so_date": "2026-10-29",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-12-01",
+        "last_remark": "30-OCT , TOMOROW NEER WILL TELL DATE / NEER WILL DISCUSS TO SMARTH SIR AND UPDATE ME",
+        "source_sheet": "Master"
+    },
+    "SO-11813": {
+        "so_status": "Unscheduled",
+        "company": "Kartikeya Trading",
+        "so_date": "2026-10-29",
+        "processed": "none",
+        "pending": "all",
+        "last_remark": "SAMAR MAM WILL CALL FOR PAYMNET , 31-OCT , NOT PIC 30-OCT . , CLIENT WILL DO THE PPAYMNET / This material requires advance payment so that it can be procured. Ask the client to make at least partial p",
+        "source_sheet": "Master"
+    },
+    "SO-11812": {
+        "so_status": "Scheduled",
+        "company": "Satyam Balaji Rice Industry (P) Ltd (CG",
+        "so_date": "2026-10-29",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-12-01",
+        "last_remark": "31-OCT , DECEMBER ENED / NOT IN STOCK",
+        "source_sheet": "Master"
+    },
+    "SO-11810": {
+        "so_status": "Scheduled",
+        "company": "Shri Raman Bihari Agro Industries Pvt Ltd (UP)",
+        "so_date": "2026-10-29",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-04",
+        "last_remark": "PLS SEND PO",
+        "source_sheet": "Master"
+    },
+    "SO-11808": {
+        "so_status": "Scheduled",
+        "company": "Shree Ganesh Food Products",
+        "so_date": "2026-10-28",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-05",
+        "source_sheet": "Master"
+    },
+    "SO-11805": {
+        "so_status": "Scheduled",
+        "company": "AWL Agri Business Limited MH",
+        "so_date": "2026-10-28",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-10-02",
+        "source_sheet": "Master"
+    },
+    "SO-11804": {
+        "so_status": "Partially Dispatched",
+        "company": "KOYLA ROLLER FLOUR MILLS & INDUSTRIES PVT. LTD.",
+        "so_date": "2026-10-28",
+        "processed": "all except pending",
+        "pending": [
+            5,
+            6,
+            8,
+            14,
+            16
+        ],
+        "pending_note": "PENDING BOLTING CLOTH",
+        "expected_dispatch_date": "2026-10-29",
+        "last_remark": "31-oct , pending item - nom - 5,6, 8, 14, 16",
+        "source_sheet": "Master"
+    },
+    "SO-11799": {
+        "so_status": "Scheduled",
+        "company": "CL INNOVATIVE ENGINEERING",
+        "so_date": "2026-10-27",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-04",
+        "source_sheet": "Master"
+    },
+    "SO-11798": {
+        "so_status": "Scheduled",
+        "company": "JMP Industry (P) Ltd",
+        "so_date": "2026-10-27",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-02",
+        "source_sheet": "Master"
+    },
+    "SO-11797": {
+        "so_status": "Partially Dispatched",
+        "company": "GOKUL KESARI FOODS PRIVATE LIMITED",
+        "so_date": "2026-10-27",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "12 XXX - 112 Width 158 cm Milling Fabrics - 12.60",
+            "13 XXX - 100 Width 158 cm Milling Fabrics - 10.00"
+        ],
+        "pending_note": "pending - 12 XXX - 112 Width 158 cm Milling Fabrics - 12.60 / MTR / 13 XXX - 100 Width 158 cm Milling Fabrics - 10.00",
+        "expected_dispatch_date": "2026-10-28",
+        "last_remark": "RAHUL CHWARI CONFIRME - pending - 12 XXX - 112 Width 158 cm Milling Fabrics - 12.60 / MTR / PENDING 12XXX WIDTH 158CM--15 MTR// 13XXX WIDTH 158CM--10 MTRye next lot me ayega?",
+        "source_sheet": "Master"
+    },
+    "SO-11795": {
+        "so_status": "Scheduled",
+        "company": "ANMOL GOLD AGRO FOODS",
+        "so_date": "2026-10-26",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-02",
+        "last_remark": "31-OCT , This SO has been cancelled after discussion with the client. (DISCUSS WITH SALES TEAM) / 30-OCT , LAST ADTE , 30-Oct-26/ DATE CHHANGE 2-NOV",
+        "source_sheet": "Master",
+        "data_flags": [
+            "Latest remark mentions cancellation but SO Status is still open - please verify"
+        ]
+    },
+    "SO-11794": {
+        "so_status": "Unscheduled",
+        "company": "Shree Ganesh Food Products",
+        "so_date": "2026-10-26",
+        "processed": "none",
+        "pending": "all",
+        "last_remark": "31-OCT , SALES TEAM SE SAMRTH SIR KRWA RHE HAI , 30-oct RAHUL SINGH WILL GIVE DATE , today this one will be shedule / 29-OCT , KIS BRAND KA HAI , KONSE ROLLER MIL KA HAI , IF NHI BATATA TO SAMPLE CHAH",
+        "source_sheet": "Master"
+    },
+    "SO-11792": {
+        "so_status": "Scheduled",
+        "company": "Royal Trade Company",
+        "so_date": "2026-10-26",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-02",
+        "last_remark": "TMR I WILL UPDATE",
+        "source_sheet": "Master"
+    },
+    "SO-11791": {
+        "so_status": "Scheduled",
+        "company": "Geofast Consumer Products Pvt Ltd",
+        "so_date": "2026-10-26",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-02",
+        "last_remark": "31-OCT , DATE CHANGE 2 NOV , door dilivery client want",
+        "source_sheet": "Master"
+    },
+    "SO-11790": {
+        "so_status": "Unscheduled",
+        "company": "Nutresta Foods Pvt Ltd",
+        "so_date": "2026-10-23",
+        "processed": "none",
+        "pending": "all",
+        "last_remark": "31-oct , today kissan ir give date , date change KISSAN SIR SATYRDAT KO BATAYENGE / 29-OCT , OLD DATE 27-Oct-26 , NOT FRRECIEVE CURRENT DATE EVENING KISAN SIR WILL CONFIRM ETHE DATE 24-OCT ,tpt & book",
+        "source_sheet": "Master"
+    },
+    "SO-11789": {
+        "so_status": "Partially Dispatched",
+        "company": "Royal Trade Company",
+        "so_date": "2026-10-23",
+        "processed": "all except pending",
+        "pending": [
+            7
+        ],
+        "pending_note": "item -7 ,, 36 GG - 530 Width 115 cm Milling Fabrics , not in sstock",
+        "expected_dispatch_date": "2026-10-23",
+        "last_remark": "PENDING 34GG--4 MTR// 36GG--3 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11787": {
+        "so_status": "Unscheduled",
+        "company": "Swadeshi Mill Stores Co",
+        "so_date": "2026-10-23",
+        "processed": "none",
+        "pending": "all",
+        "stock_note": "not in stock",
+        "expected_dispatch_date": "2026-12-01",
+        "last_remark": "30-oct , kissan sir update / not in stock , mam samarth sir nai kaha hai ane wala hai material",
+        "source_sheet": "Master"
+    },
+    "SO-11785": {
+        "so_status": "Scheduled",
+        "company": "Donthi Roller Flour Mills (KA)",
+        "so_date": "2026-10-22",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-02",
+        "last_remark": "OLD DATE 30-Oct-26 / NEW DATE -",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO Status is not Dispatched but an Actual Dispatch Date is filled - please verify"
+        ]
+    },
+    "SO-11781": {
+        "so_status": "Partially Dispatched",
+        "company": "Geeta Associates",
+        "so_date": "2026-10-22",
+        "processed": "all except pending",
+        "pending": "unspecified",
+        "pending_note": "29-OCT -NEEDLE PENDING HAI STOCK MAI NAHI HAI SATURDAY KO DESPATHED HONGI",
+        "expected_dispatch_date": "2026-10-23",
+        "last_remark": "29-OCT -NEEDLE PENDING HAI STOCK MAI NAHI HAI SATURDAY KO DESPATHED HONGI / needles monday ko jayenge",
+        "source_sheet": "Master",
+        "data_flags": [
+            "Partially dispatched but pending items are not identified by item number or size in the sheet - see pending_note"
+        ]
+    },
+    "SO-11779": {
+        "so_status": "Partially Dispatched",
+        "company": "Goalpara Flour Mills",
+        "so_date": "2026-10-21",
+        "processed": "all except pending",
+        "pending": [
+            2,
+            8,
+            9,
+            10,
+            11,
+            12
+        ],
+        "pending_note": "item -2 , 58ggm , item 8 to 12 pending",
+        "expected_dispatch_date": "2026-10-23",
+        "last_remark": "PENDING 58GG--5 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11777": {
+        "so_status": "Scheduled",
+        "company": "MKG SMART VENTURES",
+        "so_date": "2026-10-21",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-04",
+        "last_remark": "MONDAY I WILL UPDATE EXPECTED DATE",
+        "source_sheet": "Master"
+    },
+    "SO-11776": {
+        "so_status": "Partially Dispatched",
+        "company": "RK Patel Food Pvt Ltd (MH)",
+        "so_date": "2026-10-21",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "12 XXX - 112 Width 158 cm Milling Fabrics - 3.10"
+        ],
+        "pending_note": "12 XXX - 112 Width 158 cm Milling Fabrics - 3.10 / MTR / NOT IN STOCK",
+        "expected_dispatch_date": "2026-10-21",
+        "last_remark": "PENDING 12XXX WIDTH 158CM--3.10 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11771": {
+        "so_status": "Scheduled",
+        "company": "KN AGRI RESOURCES LIMITED",
+        "so_date": "2026-10-21",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-10-31",
+        "last_remark": "PO INCORRECT HAI @Rahul Bui VENDOR SAI BAAT KARLO",
+        "source_sheet": "Master"
+    },
+    "SO-11756": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "GDSJ Industries Pvt Ltd",
+        "so_date": "2026-10-15",
+        "processed": "all except pending",
+        "pending": [
+            4,
+            6
+        ],
+        "pending_note": "PENDING ITEM -4 , 6",
+        "expected_dispatch_date": "2026-10-27",
+        "remaining_material_expected": "2026-11-02",
+        "last_remark": "30-OCT , DISAPTACHED MATERIAL , PENDING - ITEM - 4 AND 6 / 27-OCT , PARTIAL DATE - 31-OCT / today he will do the paymnet , item - 1, 2, 3, 5 , 3 LOT ME JAYEGA / for SO-11756 ( item no -7-8-9-10-11) & ",
+        "source_sheet": "Master"
+    },
+    "SO-11745": {
+        "so_status": "Scheduled",
+        "company": "The Delhi Flour Mills Company Ltd (UP)",
+        "so_date": "2026-10-13",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-10-31",
+        "last_remark": "HOLD FOR SAMRTH SIR SIDE",
+        "source_sheet": "Master"
+    },
+    "SO-11742": {
+        "so_status": "Scheduled",
+        "company": "Maa Manokamna Agro Pvt Ltd (BR)",
+        "so_date": "2026-10-13",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-11-02",
+        "last_remark": "31-OCT , 30-Oct-26 DATE CHANGE , 15-OCT , LINE BUZY",
+        "source_sheet": "Master"
+    },
+    "SO-11738": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "GDS Nutri Pvt Ltd",
+        "so_date": "2026-10-12",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "12 XXX - 112 Width 158 cm Milling Fabrics , - 8.00",
+            "13 XXX - 100 Width 158 cm Milling Fabrics - 5.80"
+        ],
+        "pending_note": "pending - 12 XXX - 112 Width 158 cm Milling Fabrics , - 8.00 / MTR / 13 XXX - 100 Width 158 cm Milling Fabrics - 5.80 / MTR",
+        "expected_dispatch_date": "2026-10-12",
+        "remaining_material_expected": "2026-12-30",
+        "last_remark": "PENDING 12XXX WIDTH 158CM--8 MTR// 13XXX WIDTH 158CM--10 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11737": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Sakambari Flour Mills WB",
+        "so_date": "2026-10-12",
+        "processed": "all except pending",
+        "pending": [
+            1
+        ],
+        "pending_note": "item - 1 , 12 XXX - 112 Width 158 cm Milling Fabrics - 5.00 / MTR",
+        "expected_dispatch_date": "2026-10-12",
+        "remaining_material_expected": "2026-12-30",
+        "last_remark": "PENDING 12XXX WIDTH 158CM--5 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11735": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "RK Patel Food Pvt Ltd (MH)",
+        "so_date": "2026-10-12",
+        "processed": "all except pending",
+        "pending": [
+            2
+        ],
+        "pending_note": "ITEM NOM , 2ND , PENDING 12XXX - 1.5",
+        "expected_dispatch_date": "2026-10-12",
+        "remaining_material_expected": "2026-12-30",
+        "last_remark": "ITEM NOM , 2ND , PENDING 12XXX - 1.5",
+        "source_sheet": "Master"
+    },
+    "SO-11734": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "BANNARI AMMAN FOOD PRODUCTS PVT. LTD.",
+        "so_date": "2026-10-10",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2
+        ],
+        "pending_note": "ITEM NO 1,2 PENDING",
+        "expected_dispatch_date": "2026-10-21",
+        "remaining_material_expected": "2026-11-03",
+        "last_remark": "ITEM-1 , 2 , 27-oct , TUESDAY JAYEGA",
+        "source_sheet": "Master"
+    },
+    "SO-11732": {
+        "so_status": "Partially Dispatched",
+        "company": "Etage Agro Pvt. Ltd.",
+        "so_date": "2026-10-09",
+        "processed": "all except pending",
+        "pending": [
+            3
+        ],
+        "pending_note": "PENDING - ITEM NOM -3",
+        "expected_dispatch_date": "2026-10-19",
+        "last_remark": "PENDING - ITEM 3 DATE AFTER DIWALI",
+        "source_sheet": "Master"
+    },
+    "SO-11729": {
+        "so_status": "Scheduled",
+        "company": "Parveen flour mill",
+        "so_date": "2026-10-08",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "party will come to collect afyer 3 days",
+        "last_remark": "CLIENT WILL CONFIRME WHEN HE WILL COME TO COLLECT THE MATERIAL CALL AFTER 2 DAYS , PARTY WILL COME TO COLLECT MATERIAL ON NEXT WEEK",
+        "source_sheet": "Master"
+    },
+    "SO-11725": {
+        "so_status": "Partially Dispatched",
+        "company": "Mahesh Gruh Udyog (MH)",
+        "so_date": "2026-10-08",
+        "processed": "all except pending",
+        "pending": [
+            1
+        ],
+        "pending_note": "PENDING , ITEM - 1 , 18 GG - 1180 Width 115 cm Milling Fabrics",
+        "expected_dispatch_date": "2026-10-08",
+        "last_remark": "30-OCT , THIS WILL COME ON NEXT LOT / PENDING 18GG--2 MTR / PENDING 18GG--2 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11715": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Jaibundelkhand Roller Flour Mill Private Limited",
+        "so_date": "2026-10-05",
+        "processed": "all except pending",
+        "pending": [
+            5,
+            6
+        ],
+        "pending_note": "ITEM - NOM 5 , 6 PENDING",
+        "expected_dispatch_date": "2026-10-06",
+        "remaining_material_expected": "2026-10-30",
+        "last_remark": "30-oct , 3 , 4 din lagenge or / EXPECTED 30 OCT",
+        "source_sheet": "Master"
+    },
+    "SO-11714": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Kamal Kishore Flour Mills (MP)",
+        "so_date": "2026-10-05",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "18GG--5 MTR"
+        ],
+        "pending_note": "PARTIALLY DESPATHED PENDING 18GG--5 MTR",
+        "expected_dispatch_date": "2026-10-15",
+        "remaining_material_expected": "2026-12-30",
+        "last_remark": "PARTIALLY DESPATHED PENDING 18GG--5 MTR - PENDING 18GG 5 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11704": {
+        "so_status": "Unscheduled",
+        "company": "SIMRAN FOOD PVT LTD",
+        "so_date": "2026-10-01",
+        "processed": "none",
+        "pending": "all",
+        "last_remark": "30-OCT , 22-OCT , CALL EVENING SALES TEAM , 21-oct , not pic / So - 11704 - simran / Payment against me hai against -2,24,190 / Pending payment - / Akshat agro -1lakh 21k -due / Akshat roller - 2lakh ",
+        "source_sheet": "Master"
+    },
+    "SO-11700": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Indo allied protein food Pvt Ltd",
+        "so_date": "2026-09-30",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "47 GG - 1 MRT - not in stock it will availble on december"
+        ],
+        "pending_note": "47 GG - 1 MRT - not in stock it will availble on december",
+        "expected_dispatch_date": "1-oct--26",
+        "remaining_material_expected": "2026-12-30",
+        "last_remark": "47 GG - 375 Width 115 cm Milling Fabrics / PENDING 1-MTR / 17-OCT , NOT IN STOCK",
+        "source_sheet": "Master"
+    },
+    "SO-11680": {
+        "so_status": "Unscheduled",
+        "company": "Raj Agrochem Products Pvt Ltd",
+        "so_date": "2026-09-25",
+        "processed": "none",
+        "pending": "all",
+        "last_remark": "31-OCT , NOT PIC MY SIDE , SAMR MAM WILL CALL FOR PAYMMNET , 30-OCT , CLLIENT WILL DO THE PAYMNET / TOMOROW / 30-OCT , BUZY , NOT PIC , SAMRAJEET WILL CALL , 30-oct , advance payment ayega tabh hi jay",
+        "source_sheet": "Master"
+    },
+    "SO-11668": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "M/S Superior Industries Limited",
+        "so_date": "2026-09-22",
+        "processed": "all except pending",
+        "pending": [
+            3,
+            4
+        ],
+        "pending_note": "PENDING - ITEM , 3, 4",
+        "expected_dispatch_date": "2026-10-13",
+        "remaining_material_expected": "2026-10-30",
+        "last_remark": "30-OCT , BEL DATE IS TOMOROWC OR TODAY / PENDING 1 , 3 , 4 / PENDING ITEM WILL BE DESPATHED DAY AFTER TMR DIRECTHLY",
+        "source_sheet": "Master",
+        "data_flags": [
+            "Pending item numbers differ between \"Pending Items List\" [3, 4] and latest remarks [1, 3, 4] - listed [3, 4]; please verify"
+        ]
+    },
+    "SO-11656": {
+        "so_status": "Scheduled",
+        "company": "Gajraula Roller Flour Mill",
+        "so_date": "2026-09-19",
+        "processed": "none",
+        "pending": "all",
+        "expected_dispatch_date": "2026-10-02",
+        "last_remark": "31-OCT , CLIENT WILL COME TUESDAY , 30-Oct-26 OLD DATE / NEW DATE - 2--NOV , 29-OCT , 27OCT , DATE CHNAGE , 27-OCT , 27-Oct-26 THIS ADTE IS CHANGE / RAHUL SING WILL UPDATE MORNING / HE WIL COLECT MATE",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO Status is not Dispatched but an Actual Dispatch Date is filled - please verify"
+        ]
+    },
+    "SO-11639": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "AWL Agri Business Limited",
+        "so_date": "2026-09-16",
+        "processed": "all except pending",
+        "pending": "unspecified",
+        "pending_note": "PARTIALLY MATERIAL DESPATHED HONGA EXP--21 SEP",
+        "expected_dispatch_date": "2026-09-16",
+        "remaining_material_expected": "2026-10-30",
+        "last_remark": "30-OCT , 24-NOVEMBER KO BOXES JAYENGE , RAHUL PURACHSE AND RAHUL CONFIRME THIS",
+        "source_sheet": "Master",
+        "data_flags": [
+            "Partially dispatched but pending items are not identified by item number or size in the sheet - see pending_note"
+        ]
+    },
+    "SO-11619": {
+        "so_status": "Scheduled",
+        "company": "ABDUL ENGINEERING WORKS",
+        "so_date": "2026-09-11",
+        "processed": "none",
+        "pending": "all",
+        "items_not_in_stock": [
+            3
+        ],
+        "stock_note": "Item No 3 - Airlock 10\" Only / Req: 1 P | Avl: 0 P",
+        "expected_dispatch_date": "2026-11-04",
+        "source_sheet": "Master"
+    },
+    "SO-11616": {
+        "so_status": "Partially Dispatched",
+        "company": "Shree Siddhi Foods Agro Pvt Ltd",
+        "so_date": "2026-10-10",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "24GG WIDTH 158CM--2 MTR PLS CONFIRM KYA KARNA HAI"
+        ],
+        "pending_note": "PENDING 24GG WIDTH 158CM--2 MTR PLS CONFIRM KYA KARNA HAI",
+        "last_remark": "30-oct , not pic / 21-oct , switchoff , AS PER DISCUSS WITH SALES TEAM , SAMRTH MAM , DISPATCHED THE MATERIAL / PENDING 24GG WIDTH 158CM--2 MTR PLS CONFIRM KYA KARNA HAI",
+        "source_sheet": "Master",
+        "data_flags": [
+            "SO date corrected 2006-10-10 -> 2026-10-10 (day/month or year entry error; verified against sequence of neighbouring SO numbers)",
+            "Scheduled On has an implausible year (2006-10-30)",
+            "SO date 2026-10-10 is out of sequence with next SO SO-11617 (2026-09-10) - please verify the SO date"
+        ]
+    },
+    "SO-11542": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Shree Vishnu Flour Mills",
+        "so_date": "2026-08-19",
+        "processed": "all except pending",
+        "pending": [
+            7,
+            8,
+            9,
+            10
+        ],
+        "pending_note": "ITEM - 7, 8 ,9 , 10 , PENDIING",
+        "expected_dispatch_date": "2026-08-21",
+        "last_remark": "today , partialyy dispatched",
+        "source_sheet": "Master"
+    },
+    "SO-11516": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "THE TRIPURA FLOUR MILLS",
+        "so_date": "2026-08-12",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            3,
+            5
+        ],
+        "pending_note": "Item No 1, 3 , 5 , not in stock , Item No 3 IS NEXT MONTH",
+        "expected_dispatch_date": "2026-08-12",
+        "source_sheet": "Master"
+    },
+    "SO-11503": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Kushal Foods Pvt Ltd (UP)",
+        "so_date": "2026-08-08",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "10mf ending it will come november end , client says jab ayega tak humko bhej dena"
+        ],
+        "expected_dispatch_date": "2026-09-10",
+        "last_remark": "10mf ending it will come november end , client says jab ayega tak humko bhej dena",
+        "source_sheet": "Master"
+    },
+    "SO-11471": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Fine Flour Mills Pvt Ltd",
+        "so_date": "2026-07-30",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            3,
+            5,
+            6
+        ],
+        "pending_note": "PENDING ITEM NO 1,3,5,6",
+        "expected_dispatch_date": "2026-07-31",
+        "source_sheet": "Master"
+    },
+    "SO-11464": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Akshat Agro Milling Company (MP)",
+        "so_date": "2026-07-29",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            8,
+            9,
+            11,
+            12
+        ],
+        "pending_note": "PENDING ITEM NO 1,2,3--2 MTR, 4,5,7,8,9,11---5 MTR,12",
+        "expected_dispatch_date": "2026-07-30",
+        "source_sheet": "Master"
+    },
+    "SO-11445": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Amar Roller Flour Mill Pvt Ltd",
+        "so_date": "2026-07-25",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "9XXX--5 MTR"
+        ],
+        "pending_note": "PENDING 9XXX--5 MTR",
+        "expected_dispatch_date": "2026-07-27",
+        "source_sheet": "Master"
+    },
+    "SO-11411": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "RK Patel Food Pvt Ltd (MH)",
+        "so_date": "2026-07-20",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "10XXX WIDTH 158CM--5 MTR",
+            "12XXX WIDTH 158CM--3 MTR"
+        ],
+        "pending_note": "PENDING 10XXX WIDTH 158CM--5 MTR//12XXX WIDTH 158CM--3 MTR",
+        "source_sheet": "Master"
+    },
+    "SO-11353": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Grainspan Nutrients Pvt Ltd ( HR)",
+        "so_date": "2026-07-10",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "74GG WIDTH 158CM--5 MTR"
+        ],
+        "pending_note": "PENDING 74GG WIDTH 158CM--5 MTR",
+        "expected_dispatch_date": "2026-07-21",
+        "source_sheet": "Master"
+    },
+    "SO-11328": {
+        "so_status": "Partial – Scheduling Due",
+        "company": "Matrix Roller Mill Private Limited",
+        "so_date": "2026-07-06",
+        "processed": "all except pending",
+        "pending": [],
+        "pending_materials": [
+            "12XXX WIDTH 158CM--1 MTR",
+            "12XXX--3.50 MTR"
+        ],
+        "pending_note": "PENDING 12XXX WIDTH 158CM--1 MTR//12XXX--3.50 MTR",
+        "expected_dispatch_date": "2026-07-06",
+        "source_sheet": "Master"
+    },
+    "SO-11313": {
+        "so_status": "Partially Dispatched",
+        "company": "Anirudh Foods Ltd",
+        "so_date": "2026-06-30",
+        "processed": "all except pending",
+        "pending": [
+            4
+        ],
+        "pending_note": "ITEM 4",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11310": {
+        "so_status": "Partially Dispatched",
+        "company": "Shri Ram Roller Flour Mills (HR)",
+        "so_date": "2026-06-29",
+        "processed": "all except pending",
+        "pending": [
+            6
+        ],
+        "pending_note": "ITEM 6",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11300": {
+        "so_status": "Partially Dispatched",
+        "company": "Sakambari Flour Mills WB",
+        "so_date": "2026-06-26",
+        "processed": "all except pending",
+        "pending": [
+            5
+        ],
+        "pending_note": "ITEM 5",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11293": {
+        "so_status": "Partially Dispatched",
+        "company": "Lakhishree Roller Flour Mill",
+        "so_date": "2026-06-24",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2,
+            6,
+            7
+        ],
+        "pending_note": "ITEM 1,2,6,7",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11286": {
+        "so_status": "Scheduled",
+        "company": "Newryan Global Pvt Ltd",
+        "so_date": "2026-06-22",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11284": {
+        "so_status": "Partially Dispatched",
+        "company": "AWL Agri Business Limited",
+        "so_date": "2026-06-22",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            7,
+            8
+        ],
+        "pending_note": "ITEM 1,7,8",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11275": {
+        "so_status": "Scheduled",
+        "company": "SPA Agri Foods Pvt Ltd",
+        "so_date": "2026-06-18",
+        "processed": "none",
+        "pending": "all",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11256": {
+        "so_status": "Partially Dispatched",
+        "company": "SRG Products LLP",
+        "so_date": "2026-06-12",
+        "processed": "all except pending",
+        "pending": [
+            2
+        ],
+        "pending_note": "ITEM NO 2",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11233": {
+        "so_status": "Partially Dispatched",
+        "company": "Numix Industries Pvt Ltd",
+        "so_date": "2026-06-08",
+        "processed": "all except pending",
+        "pending": "unspecified",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "Partially dispatched but pending items are not identified by item number or size in the sheet - see pending_note"
+        ]
+    },
+    "SO-11232": {
+        "so_status": "Partially Dispatched",
+        "company": "Gajraula Roller Flour Mill",
+        "so_date": "2026-06-06",
+        "processed": "all except pending",
+        "pending": "unspecified",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "Partially dispatched but pending items are not identified by item number or size in the sheet - see pending_note"
+        ]
+    },
+    "SO-11188": {
+        "so_status": "Partially Dispatched",
+        "company": "Kesari Roller Flour Mills (KA)",
+        "so_date": "2026-05-26",
+        "processed": "all except pending",
+        "pending": [
+            4,
+            7,
+            8,
+            10,
+            11
+        ],
+        "pending_note": "ITEM 4,7,8,10,11",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11181": {
+        "so_status": "Partially Dispatched",
+        "company": "G Mart Foods Pvt Ltd",
+        "so_date": "2026-05-23",
+        "processed": "all except pending",
+        "pending": [
+            6
+        ],
+        "pending_note": "ITEM 6",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11132": {
+        "so_status": "Partially Dispatched",
+        "company": "Goa Roller Flour Mill Pvt Ltd (GA)",
+        "so_date": "2026-05-09",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2,
+            6
+        ],
+        "pending_note": "ITEM NO 1,2,,6",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11111": {
+        "so_status": "Partially Dispatched",
+        "company": "NEPTUNE FOODS AND HEALTHCARE INDIA PVT LTD",
+        "so_date": "2026-04-30",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2
+        ],
+        "pending_note": "ITEM 1,2",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11097": {
+        "so_status": "Partially Dispatched",
+        "company": "Grain Milling Technology (HR)",
+        "so_date": "2026-04-23",
+        "processed": "all except pending",
+        "pending": [
+            3
+        ],
+        "pending_note": "ITEM 3",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11065": {
+        "so_status": "Partially Dispatched",
+        "company": "Purvanchal Flour Mill Pvt. Ltd (UP)",
+        "so_date": "2026-04-13",
+        "processed": "all except pending",
+        "pending": [
+            2,
+            3,
+            4
+        ],
+        "pending_note": "ITEM 2,3,4",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-11021": {
+        "so_status": "Partially Dispatched",
+        "company": "Maa Bhagwati Roller Flour Mill",
+        "so_date": "2026-04-02",
+        "processed": "all except pending",
+        "pending": [
+            1
+        ],
+        "pending_note": "ITEM 1",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-02-04 -> 2026-04-02 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10992": {
+        "so_status": "Partially Dispatched",
+        "company": "MANISH AGRO INDUSTRIES",
+        "so_date": "2026-03-25",
+        "processed": "all except pending",
+        "pending": [
+            4
+        ],
+        "pending_note": "ITEM 4",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10991": {
+        "so_status": "Partially Dispatched",
+        "company": "Arya Manufacturing Co",
+        "so_date": "2026-03-24",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            4,
+            6,
+            7
+        ],
+        "pending_note": "ITEM 1,4,6,7",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10967": {
+        "so_status": "Partially Dispatched",
+        "company": "Akshat Roller Flour Mills (P) Ltd",
+        "so_date": "2026-03-19",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18
+        ],
+        "pending_note": "ITEM 1,2,6,7,8,9,10,11,12,13,14,15,16,17,18",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10965": {
+        "so_status": "Partially Dispatched",
+        "company": "Shri Vishwakarma (E.S.) Ind. Pvt. Ltd",
+        "so_date": "2026-03-19",
+        "processed": "all except pending",
+        "pending": [
+            1
+        ],
+        "pending_note": "ITEM 1",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10961": {
+        "so_status": "Partially Dispatched",
+        "company": "Mahesh Agro Food Industries (MH)",
+        "so_date": "2026-03-19",
+        "processed": "all except pending",
+        "pending": [
+            2,
+            3
+        ],
+        "pending_note": "ITEM 2,3",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10958": {
+        "so_status": "Partially Dispatched",
+        "company": "Mahesh Gruh Udyog (MH)",
+        "so_date": "2026-03-19",
+        "processed": "all except pending",
+        "pending": [
+            2,
+            3,
+            5
+        ],
+        "pending_note": "ITEM 2,3,5",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10951": {
+        "so_status": "Partially Dispatched",
+        "company": "Himanshu Flour Mill (MP)",
+        "so_date": "2026-03-18",
+        "processed": "all except pending",
+        "pending": [
+            2,
+            3
+        ],
+        "pending_note": "ITEM 2,3",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10936": {
+        "so_status": "Partially Dispatched",
+        "company": "Darbhanga Roller Flour Mill Pvt Ltd (BR)",
+        "so_date": "2026-03-14",
+        "processed": "all except pending",
+        "pending": [
+            2,
+            4
+        ],
+        "pending_note": "ITEM 2,4",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10932": {
+        "so_status": "Partially Dispatched",
+        "company": "Frumento Agro Foods LLP (GJ)",
+        "so_date": "2026-03-13",
+        "processed": "all except pending",
+        "pending": [
+            6,
+            13,
+            31
+        ],
+        "pending_note": "ITEM 6,13,31",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10929": {
+        "so_status": "Partially Dispatched",
+        "company": "F & K Agro Pvt Ltd ( Baba Sai Foods) MH",
+        "so_date": "2026-03-12",
+        "processed": "all except pending",
+        "pending": [
+            7
+        ],
+        "pending_note": "ITEM 7",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-12-03 -> 2026-03-12 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10923": {
+        "so_status": "Partially Dispatched",
+        "company": "GANESH CONSUMER PRODUCTS LIMITED",
+        "so_date": "2026-03-09",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2
+        ],
+        "pending_note": "ITEM 1,2",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-09-03 -> 2026-03-09 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10922": {
+        "so_status": "Partially Dispatched",
+        "company": "Shri Vishwakarma (E.S.) Ind. Pvt. Ltd",
+        "so_date": "2026-03-07",
+        "processed": "all except pending",
+        "pending": "unspecified",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "Partially dispatched but pending items are not identified by item number or size in the sheet - see pending_note",
+            "SO date corrected 2026-07-03 -> 2026-03-07 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10769": {
+        "so_status": "Partially Dispatched",
+        "company": "Akshat Agro Milling Company (MP)",
+        "so_date": "2026-01-23",
+        "processed": "all except pending",
+        "pending": [
+            8,
+            9,
+            10
+        ],
+        "pending_note": "ITEM 8,9,10",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10766": {
+        "so_status": "Partially Dispatched",
+        "company": "Bharat Machinery Store",
+        "so_date": "2026-01-22",
+        "processed": "all except pending",
+        "pending": [
+            6,
+            8,
+            13,
+            14,
+            16,
+            19,
+            20,
+            24,
+            25,
+            31,
+            33
+        ],
+        "pending_note": "ITEM 6,8,13,14,16,19,20,24,25,31,33",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10750": {
+        "so_status": "Partially Dispatched",
+        "company": "Telangana Mill Store",
+        "so_date": "2026-01-19",
+        "processed": "all except pending",
+        "pending": [
+            4
+        ],
+        "pending_note": "ITEM 4",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10741": {
+        "so_status": "Partially Dispatched",
+        "company": "SRG Products LLP",
+        "so_date": "2026-01-17",
+        "processed": "all except pending",
+        "pending": [
+            7
+        ],
+        "pending_note": "ITEM 7",
+        "source_sheet": "Main Master (legacy)"
+    },
+    "SO-10730": {
+        "so_status": "Partially Dispatched",
+        "company": "Swasth Aahar Pvt Ltd (HR)",
+        "so_date": "2026-01-14",
+        "processed": "all except pending",
+        "pending": "unspecified",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "Partially dispatched but pending items are not identified by item number or size in the sheet - see pending_note"
+        ]
+    },
+    "SO-10719": {
+        "so_status": "Partially Dispatched",
+        "company": "Akshat Agro Milling Company (MP)",
+        "so_date": "2026-01-12",
+        "processed": "all except pending",
+        "pending": [
+            2
+        ],
+        "pending_note": "ITEM 2",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-12-01 -> 2026-01-12 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10716": {
+        "so_status": "Partially Dispatched",
+        "company": "OMKAR REWINDING SERVICES",
+        "so_date": "2026-01-10",
+        "processed": "all except pending",
+        "pending": [
+            2
+        ],
+        "pending_note": "ITEM 2",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-10-01 -> 2026-01-10 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10715": {
+        "so_status": "Partially Dispatched",
+        "company": "Nav Bharat Flour Mills",
+        "so_date": "2026-01-10",
+        "processed": "all except pending",
+        "pending": [
+            2
+        ],
+        "pending_note": "ITEM 2",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-10-01 -> 2026-01-10 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10713": {
+        "so_status": "Partially Dispatched",
+        "company": "Radhey Industries",
+        "so_date": "2026-01-09",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2,
+            5,
+            7,
+            9,
+            10,
+            13,
+            18,
+            20
+        ],
+        "pending_note": "ITEM 1,2,5,7,9,10,13,18,20,",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-09-01 -> 2026-01-09 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    },
+    "SO-10689": {
+        "so_status": "Partially Dispatched",
+        "company": "Mukul Brothers Engg Works Ltd",
+        "so_date": "2026-01-05",
+        "processed": "all except pending",
+        "pending": [
+            1,
+            2,
+            3,
+            4
+        ],
+        "pending_note": "ITEM 1,2,3,4",
+        "source_sheet": "Main Master (legacy)",
+        "data_flags": [
+            "SO date corrected 2026-05-01 -> 2026-01-05 (day/month or year entry error; verified against sequence of neighbouring SO numbers)"
+        ]
+    }
+}

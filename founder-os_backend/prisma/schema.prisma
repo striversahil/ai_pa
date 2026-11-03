@@ -1778,8 +1778,17 @@ model CrmSalesOrder {
   salesperson     String   @default("")
   referenceNumber String   @default("") // the Zoho reference — carries the EST number (EST-024014)
   // Client addresses come from the Zoho detail call (list responses omit them).
+  // A human edit sets the matching EditedAt/By marker — the sync never
+  // overwrites a locally edited address (local wins permanently).
   billingAddress  String   @default("")
   shippingAddress String   @default("")
+  billingAddressEditedAt DateTime?
+  billingAddressEditedBy String?
+  shippingAddressEditedAt DateTime?
+  shippingAddressEditedBy String?
+  // Payment line extracted from Zoho's free-text `terms` block
+  // ("**Payment**: Advance 100% received"). Source-owned, display-only.
+  paymentTerms    String   @default("")
   createdDate     String   @default("") // YYYY-MM-DD IST
   // unscheduled | partially_scheduled | scheduled | partially_dispatched | dispatched | cancelled
   lifecycle       String   @default("unscheduled")

@@ -95,5 +95,11 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
     [],
   );
 
-  return { ...state, schedule, reschedule, dispatch, confirmRemoval };
+  const updateAddresses = useCallback(
+    (id: string, addresses: { billingAddress?: string; shippingAddress?: string }) =>
+      run(() => crmApi.updateAddresses(id, addresses)),
+    [run],
+  );
+
+  return { ...state, schedule, reschedule, dispatch, confirmRemoval, updateAddresses };
 }

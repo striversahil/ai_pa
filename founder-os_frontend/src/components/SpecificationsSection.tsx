@@ -603,7 +603,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       )}
                       {(it as any).notAvailable && !redacted && (
                         <div className="mt-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)] p-2 text-[11px] leading-relaxed">
-                          <p className="font-extrabold text-zinc-300 uppercase tracking-wide text-[10px]">Not available — flagged by procurement/management</p>
+                          <p className="font-extrabold text-[var(--text-secondary)] uppercase tracking-wide text-[10px]">Not available — flagged by procurement/management</p>
                           {(it as any).notAvailableReason && (
                             <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
                           )}

@@ -19,9 +19,9 @@ Files:
 
 | Table | Role |
 |---|---|
-| `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, client **billing/shipping address**, the **EST no.** (`referenceNumber`), derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
+| `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, client **billing/shipping address** (floor-editable — an edit sets a marker and the sync leaves that address alone), **payment terms** (extracted Payment line from Zoho's free-text `terms`), the **EST no.** (`referenceNumber`), derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
 | `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative dispatch date, dispatch state, delay reason, dispatched qty |
-| `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal` |
+| `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal`, `address_updated` |
 
 ## Lifecycle (derived from items, never set by hand)
 
@@ -39,7 +39,7 @@ cancelled   ← Zoho said cancelled/void (out of the queues, kept for audit)
 
 **Tab membership is per item, not per lifecycle bucket.** One order with a
 dispatched item, a dated item and an undated item is genuinely open in all
-three states, so it appears under **Dispatched**, **Scheduled** AND **Schedule**.
+three states, so it appears under **Dispatched**, **Scheduled** AND **To Schedule**.
 Filtering by the derived lifecycle hid exactly the leftover work (a
 `partially_dispatched` order with undated items never showed up under Schedule).
 An order whose items have not been captured yet counts as unscheduled — nothing

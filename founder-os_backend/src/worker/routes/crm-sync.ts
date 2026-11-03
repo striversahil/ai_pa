@@ -36,10 +36,12 @@ function normalizeOrder(o: any): SyncedOrder | null {
     paidStatus: String(o?.paidStatus ?? o?.paid_status ?? ''),
     salesperson: String(o?.salesperson ?? o?.salesperson_name ?? ''),
     ref: String(o?.ref ?? o?.reference_number ?? ''),
-    // Client addresses — present only when the runner sent this order's detail
-    // (the Zoho list response carries no addresses). Empty = leave the row as is.
+    // Client addresses + payment terms — present only when the runner sent
+    // this order's detail (the Zoho list response carries neither). Empty =
+    // leave the row as is.
     billingAddress: String(o?.billingAddress ?? '').slice(0, 600),
     shippingAddress: String(o?.shippingAddress ?? '').slice(0, 600),
+    paymentTerms: String(o?.paymentTerms ?? '').slice(0, 120),
     createdDate: String(o?.createdDate ?? o?.createdTime ?? o?.created_time ?? ''),
     createdTime: String(o?.createdTime ?? o?.created_time ?? ''),
     items: Array.isArray(o?.items) ? o.items : undefined,

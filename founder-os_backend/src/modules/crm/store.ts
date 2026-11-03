@@ -91,6 +91,11 @@ export function toOrderView(row: any, items: CrmItemRow[]): CrmOrderRow {
     referenceNumber: str(row?.referenceNumber),
     billingAddress: str(row?.billingAddress),
     shippingAddress: str(row?.shippingAddress),
+    billingAddressEditedAt: iso(row?.billingAddressEditedAt),
+    billingAddressEditedBy: row?.billingAddressEditedBy ? str(row.billingAddressEditedBy) : null,
+    shippingAddressEditedAt: iso(row?.shippingAddressEditedAt),
+    shippingAddressEditedBy: row?.shippingAddressEditedBy ? str(row.shippingAddressEditedBy) : null,
+    paymentTerms: str(row?.paymentTerms),
     createdDate: str(row?.createdDate),
     lifecycle: (str(row?.lifecycle) || 'unscheduled') as Lifecycle,
     sourceState: str(row?.sourceState) === 'deleted_source' ? 'deleted_source' : 'active',
@@ -236,6 +241,8 @@ export async function syncState(): Promise<{
     itemCount: number;
     /** True once the detail pass captured the client addresses. */
     hasAddress: boolean;
+    /** True once the detail pass captured the payment-terms line. */
+    hasPaymentTerms: boolean;
   }>;
 }> {
   const rows = (await prisma.crmSalesOrder.findMany({
@@ -259,6 +266,7 @@ export async function syncState(): Promise<{
       createdDate: str(r.createdDate).slice(0, 10),
       itemCount: counts.get(str(r.id)) || 0,
       hasAddress: !!(str(r.billingAddress) || str(r.shippingAddress)),
+      hasPaymentTerms: !!str(r.paymentTerms),
     })),
   };
 }
@@ -637,6 +645,49 @@ export async function confirmSourceDeletion(args: {
   return { soNumber, removed: true };
 }
 
+/**
+ * Human address correction from the floor. The edit writes straight into the
+ * address column and sets the edited marker, so the Zoho sync leaves that
+ * address alone from then on (local wins permanently). Zoho itself is never
+ * written back to — the module stays read-only toward Books.
+ */
+export async function updateAddresses(args: {
+  idOrSo: string;
+  billingAddress?: string | null;
+  shippingAddress?: string | null;
+  actor?: string | null;
+  today?: string;
+}): Promise<{ order: (CrmOrderRow & { events: any[] }) | null }> {
+  const today = args.today || istToday();
+  const orderRow = await loadRawOrder(args.idOrSo);
+  assertWorkable(orderRow, str(orderRow.lifecycle));
+  const hasBilling = args.billingAddress !== undefined && args.billingAddress !== null;
+  const hasShipping = args.shippingAddress !== undefined && args.shippingAddress !== null;
+  if (!hasBilling && !hasShipping) throw new CrmError('Nothing to update — pass billingAddress and/or shippingAddress.', 400, 'no_addresses');
+  const now = new Date();
+  const data: Record<string, unknown> = { updatedAt: now };
+  if (hasBilling) {
+    data.billingAddress = str(args.billingAddress).slice(0, 600);
+    data.billingAddressEditedAt = now;
+    data.billingAddressEditedBy = str(args.actor) || '';
+  }
+  if (hasShipping) {
+    data.shippingAddress = str(args.shippingAddress).slice(0, 600);
+    data.shippingAddressEditedAt = now;
+    data.shippingAddressEditedBy = str(args.actor) || '';
+  }
+  await prisma.crmSalesOrder.update({ where: { id: str(orderRow.id) }, data: data as any });
+  await writeEvent({
+    soId: str(orderRow.id),
+    soNumber: str(orderRow.soNumber),
+    kind: 'address_updated',
+    reason: `Address corrected on the floor${hasBilling && hasShipping ? ' (billing + shipping)' : hasBilling ? ' (billing)' : ' (shipping)'}`,
+    actor: args.actor,
+    day: today,
+  });
+  return { order: await getOrder(str(orderRow.id)) };
+}
+
 // ── Sync (runner → rows) ───────────────────────────────────────────────────
 
 export interface SyncedOrder {
@@ -654,9 +705,13 @@ export interface SyncedOrder {
   paidStatus?: string;
   salesperson?: string;
   ref?: string;
-  /** Detail-pass only (the Zoho list response omits addresses). */
+  // Client addresses — present only when the runner sent this order's detail
+  // (the Zoho list response carries no addresses). Empty = leave the row as is.
+  // A locally edited address (marker set) is never overwritten by the sync.
   billingAddress?: string;
   shippingAddress?: string;
+  /** Detail-pass only: payment line extracted from Zoho's free-text `terms`. */
+  paymentTerms?: string;
   createdDate?: string;
   createdTime?: string;
   /** Full line items — present only when the runner fetched this order's detail. */
@@ -873,6 +928,7 @@ export async function syncOrders(args: {
         referenceNumber: str(o.ref).slice(0, 120),
         billingAddress: str(o.billingAddress).slice(0, 600),
         shippingAddress: str(o.shippingAddress).slice(0, 600),
+        paymentTerms: str(o.paymentTerms).slice(0, 120),
         createdDate,
         lifecycle: cancelled ? 'cancelled' : 'unscheduled',
         sourceState: 'active',
@@ -912,12 +968,18 @@ export async function syncOrders(args: {
     // Addresses only arrive with the detail pass (one Zoho call per order), so
     // a list-only tick sends none — an empty value must never overwrite a real
     // address, and a late address must still be written when the rest of the
-    // row is unchanged.
+    // row is unchanged. A LOCALLY EDITED address is never overwritten at all.
     const addrPatch: Record<string, string> = {};
-    if (str(o.billingAddress)) addrPatch.billingAddress = str(o.billingAddress).slice(0, 600);
-    if (str(o.shippingAddress)) addrPatch.shippingAddress = str(o.shippingAddress).slice(0, 600);
+    if (str(o.billingAddress) && !str(existing.billingAddressEditedAt)) addrPatch.billingAddress = str(o.billingAddress).slice(0, 600);
+    if (str(o.shippingAddress) && !str(existing.shippingAddressEditedAt)) addrPatch.shippingAddress = str(o.shippingAddress).slice(0, 600);
+    // Payment terms are source-owned like everything else Zoho-side: an empty
+    // value never clears a real one, a changed one writes through.
+    const payPatch: Record<string, string> = {};
+    const payTerms = str(o.paymentTerms).slice(0, 120);
+    if (payTerms && payTerms !== str(existing.paymentTerms)) payPatch.paymentTerms = payTerms;
     const addrChanged = Object.entries(addrPatch).some(([k, v]) => str((existing as any)[k]) !== v);
-    if (str(existing.fingerprint) === fp && !healedNow && !addrChanged) {
+    const payChanged = Object.entries(payPatch).some(([k, v]) => str((existing as any)[k]) !== v);
+    if (str(existing.fingerprint) === fp && !healedNow && !addrChanged && !payChanged) {
       result.unchanged++;
       if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
       continue;
@@ -939,6 +1001,7 @@ export async function syncOrders(args: {
         salesperson: str(o.salesperson) || str(existing.salesperson),
         referenceNumber: str(o.ref).slice(0, 120) || str(existing.referenceNumber),
         ...addrPatch,
+        ...payPatch,
         createdDate: createdDate || str(existing.createdDate),
         sourceState: 'active',
         missCount: 0,

@@ -36,6 +36,7 @@ export const EVENT_KINDS = [
   'partial_dispatch',
   'source_deleted',
   'confirmed_removal',
+  'address_updated',
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
@@ -93,6 +94,13 @@ export interface CrmOrderRow {
   referenceNumber: string;
   billingAddress: string;
   shippingAddress: string;
+  /** Set when a human edits the address on the floor — the sync then leaves it alone. */
+  billingAddressEditedAt: string | null;
+  billingAddressEditedBy: string | null;
+  shippingAddressEditedAt: string | null;
+  shippingAddressEditedBy: string | null;
+  /** Payment line extracted from Zoho's free-text `terms` (source-owned, display-only). */
+  paymentTerms: string;
   createdDate: string;
   lifecycle: Lifecycle;
   sourceState: 'active' | 'deleted_source';

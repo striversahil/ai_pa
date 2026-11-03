@@ -78,6 +78,13 @@ export interface CrmOrder {
   /** From the Zoho detail call; empty until the detail pass reaches the order. */
   billingAddress: string;
   shippingAddress: string;
+  /** Set when a human corrects the address on the floor (sync then leaves it alone). */
+  billingAddressEditedAt: string | null;
+  billingAddressEditedBy: string | null;
+  shippingAddressEditedAt: string | null;
+  shippingAddressEditedBy: string | null;
+  /** Payment line extracted from Zoho's free-text terms (source-owned, display-only). */
+  paymentTerms: string;
   createdDate: string;
   lifecycle: Lifecycle;
   sourceState: "active" | "deleted_source";

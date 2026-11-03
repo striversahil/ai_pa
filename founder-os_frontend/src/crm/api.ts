@@ -47,4 +47,10 @@ export const crmApi = {
     api.post<{ ok: true; soNumber: string; removed: boolean }>(
       `/crm/orders/${encodeURIComponent(id)}/confirm-source-deletion`,
     ),
+
+  updateAddresses: (id: string, addresses: { billingAddress?: string; shippingAddress?: string }) =>
+    api.put<{ ok: true; order: CrmOrder }>(
+      `/crm/orders/${encodeURIComponent(id)}/addresses`,
+      addresses,
+    ),
 };
