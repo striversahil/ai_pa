@@ -301,7 +301,7 @@ stays **read-only**; the floor lives in D1 (migration `0097`):
 
 | Table | Role |
 |---|---|
-| `CrmSalesOrder` | one row per `org + soNumber` — Zoho fields, derived `lifecycle`, `sourceState` (`active`/`deleted_source`), miss counter |
+| `CrmSalesOrder` | one row per `org + soNumber` — Zoho fields, client billing/shipping address, EST no. (`referenceNumber`), derived `lifecycle`, `sourceState` (`active`/`deleted_source`), miss counter |
 | `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative date, dispatch state, delay reason, dispatched qty |
 | `CrmScheduleEvent` | append-only audit of every promise, slip and dispatch |
 
@@ -310,6 +310,14 @@ Lifecycle (derived from items, never set by hand):
 `cancelled` for Zoho `cancelled`/`void` (out of the queues, kept for audit). A committed
 date that passes undispatched makes the item **overdue**, and the floor forces the
 reschedule dialog (comprehensive reason) before it can move on.
+
+Tab membership is **per item**, not per lifecycle bucket: an order with one dispatched,
+one dated and one undated item shows under Dispatched, Scheduled and Schedule alike (a
+`partially_dispatched` order with undated items used to hide from Schedule). Rows whose
+items are not captured yet count as unscheduled; `cancelled` is out of every working tab;
+every tab reads newest-first (created date desc, SO number desc). The detail pass captures
+line items **and** the client addresses (billing/shipping) in one Zoho call, 80 orders per
+tick; "Packaging & Forwarding" is a standing charge and is dropped at sync.
 
 Rules exist once per runtime — backend `modules/crm/scheduling.ts` + `queues.ts`,
 frontend `src/crm/lifecycle.ts` + `queue.ts` — and `scripts/guards/crm-lifecycle.test.mjs`

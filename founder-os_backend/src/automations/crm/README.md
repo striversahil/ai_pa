@@ -19,7 +19,7 @@ Files:
 
 | Table | Role |
 |---|---|
-| `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
+| `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, client **billing/shipping address**, the **EST no.** (`referenceNumber`), derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
 | `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative dispatch date, dispatch state, delay reason, dispatched qty |
 | `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal` |
 
@@ -37,6 +37,15 @@ cancelled   ← Zoho said cancelled/void (out of the queues, kept for audit)
   the floor forces the reschedule dialog (comprehensive reason) before moving on.
 - Dispatching some items → `partially_dispatched`; all → `dispatched`.
 
+**Tab membership is per item, not per lifecycle bucket.** One order with a
+dispatched item, a dated item and an undated item is genuinely open in all
+three states, so it appears under **Dispatched**, **Scheduled** AND **Schedule**.
+Filtering by the derived lifecycle hid exactly the leftover work (a
+`partially_dispatched` order with undated items never showed up under Schedule).
+An order whose items have not been captured yet counts as unscheduled — nothing
+ships before it is dated. `cancelled` is out of every working tab. Every tab
+reads newest-first (created date desc, then SO number desc).
+
 Rules live once per side and are asserted equal by
 `scripts/guards/crm-lifecycle.test.mjs`:
 backend `modules/crm/scheduling.ts` ↔ frontend `src/crm/lifecycle.ts`
@@ -52,6 +61,7 @@ backend `modules/crm/scheduling.ts` ↔ frontend `src/crm/lifecycle.ts`
 | new OPEN order inside `FLOOR_WINDOW_DAYS` | inserted at `unscheduled` |
 | existing order | Zoho fields refreshed; **local scheduling never clobbered** |
 | brand-new COMPLETE order | skipped (it was never on the floor) |
+| line item "Packaging & Forwarding" | dropped — a standing charge, never dated or shipped |
 | unchanged order (per-order fingerprint) | write skipped |
 | absent from the scan | `missCount++` → flagged `deleted_source` at 2 |
 | re-verified 404 by id | flagged immediately (definitive) |
@@ -60,10 +70,11 @@ backend `modules/crm/scheduling.ts` ↔ frontend `src/crm/lifecycle.ts`
 
 The floor is bounded to 30 days (`FLOOR_WINDOW_DAYS`, mirrored in the runner) —
 Zoho reports 5,000+ open SOs going back years, and the per-order item fetch
-(rate limited) could never catch up on the backlog. Line items cost one Zoho
-call per order, so they land on a per-tick budget (40 orders, 2–4s apart) and
-accumulate newest-first; a floor order shows "No line items captured yet"
-until the fetcher reaches it (a 30-day cold start clears in ~2 ticks).
+(rate limited) could never catch up on the backlog. Line items and the client
+addresses both come from the SAME per-order detail call, so they land together
+on a per-tick budget (80 orders, ~2s apart) and accumulate newest-first; a floor
+order shows "No line items captured yet" until the fetcher reaches it (a 30-day
+cold start clears in ~2 ticks).
 
 ## Points (DepartmentScoreEvent)
 
