@@ -23,6 +23,7 @@ import {
 } from './scheduling';
 import { orderFlags, orderMatchesView, type ViewOrder } from './queues';
 import {
+  CANCELLED_STATUSES,
   istToday,
   soKey,
   type CrmItemRow,
@@ -724,8 +725,11 @@ export async function syncOrders(args: {
   };
 
   const seen = new Set<string>();
+  const toCreate: any[] = [];
   const newOrderCredits: Array<{ soNumber: string; salesperson: string | null; day: string }> = [];
+  const withItems: Array<{ soId: string; items: any[] }> = [];
   const now = new Date();
+  const today = istToday();
 
   for (const o of orders) {
     const soNumber = str(o?.so).trim();
@@ -734,9 +738,9 @@ export async function syncOrders(args: {
     const key = soKey(org, soNumber);
     seen.add(key);
     const existing = byKey.get(key);
-    const cancelled = ['cancelled', 'void'].includes(str(o.status).toLowerCase());
-
+    const cancelled = CANCELLED_STATUSES.has(str(o.status).toLowerCase());
     const createdDate = str(o.createdDate || o.createdTime).slice(0, 10);
+
     if (!existing) {
       if (isCompleteInZoho(o) && !cancelled) {
         // Never on the floor — do not create history rows for closed orders.
@@ -749,45 +753,40 @@ export async function syncOrders(args: {
         continue;
       }
       const id = crypto.randomUUID();
-      await prisma.crmSalesOrder.create({
-        data: {
-          id,
-          org,
-          soNumber,
-          zohoId: str(o.zohoId),
-          customerName: str(o.customer),
-          customerId: str(o.customerId),
-          value: num(o.total),
-          currency: str(o.currency) || 'INR',
-          orderStatus: str(o.orderStatus).toLowerCase(),
-          invoicedStatus: str(o.invoicedStatus).toLowerCase(),
-          shippedStatus: str(o.shippedStatus).toLowerCase(),
-          paidStatus: str(o.paidStatus).toLowerCase(),
-          status: str(o.status).toLowerCase() || 'open',
-          salesperson: str(o.salesperson),
-          referenceNumber: str(o.ref).slice(0, 120),
-          createdDate,
-          lifecycle: cancelled ? 'cancelled' : 'unscheduled',
-          sourceState: 'active',
-          soDelayReason: null,
-          fingerprint: '',
-          missCount: 0,
-          firstSeenAt: now,
-          lastSeenAt: now,
-          deletedDetectedAt: null,
-          createdAt: now,
-          updatedAt: now,
-        },
+      toCreate.push({
+        id,
+        org,
+        soNumber,
+        zohoId: str(o.zohoId),
+        customerName: str(o.customer),
+        customerId: str(o.customerId),
+        value: num(o.total),
+        currency: str(o.currency) || 'INR',
+        orderStatus: str(o.orderStatus).toLowerCase(),
+        invoicedStatus: str(o.invoicedStatus).toLowerCase(),
+        shippedStatus: str(o.shippedStatus).toLowerCase(),
+        paidStatus: str(o.paidStatus).toLowerCase(),
+        status: str(o.status).toLowerCase() || 'open',
+        salesperson: str(o.salesperson),
+        referenceNumber: str(o.ref).slice(0, 120),
+        createdDate,
+        lifecycle: cancelled ? 'cancelled' : 'unscheduled',
+        sourceState: 'active',
+        soDelayReason: null,
+        fingerprint: '',
+        missCount: 0,
+        firstSeenAt: now,
+        lastSeenAt: now,
+        deletedDetectedAt: null,
+        createdAt: now,
+        updatedAt: now,
       });
-      result.created++;
-      // New-order points only when Zoho says it was created today (same rule
-      // as the old snapshot diff — never re-credit on a cold start).
-      if (!cancelled && str(o.createdDate || o.createdTime).slice(0, 10) === day) {
+      if (!cancelled && createdDate === today) {
+        // New-order points only when Zoho says it was created today (never
+        // re-credit on a cold start).
         newOrderCredits.push({ soNumber, salesperson: str(o.salesperson) || null, day });
       }
-      if (Array.isArray(o.items) && o.items.length) {
-        result.itemsUpserted += await upsertItems(id, o.items);
-      }
+      if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: id, items: o.items });
       continue;
     }
 
@@ -805,8 +804,10 @@ export async function syncOrders(args: {
       str(o.salesperson),
       createdDate || str(existing.createdDate),
     ].join('|');
-    if (str(existing.fingerprint) === fp && str(existing.sourceState) === 'active') {
+    const healedNow = str(existing.sourceState) === 'deleted_source';
+    if (str(existing.fingerprint) === fp && !healedNow) {
       result.unchanged++;
+      if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
       continue;
     }
     await prisma.crmSalesOrder.update({
@@ -834,10 +835,19 @@ export async function syncOrders(args: {
       },
     });
     result.updated++;
-    if (str(existing.sourceState) === 'deleted_source') result.healed++;
-    if (Array.isArray(o.items) && o.items.length) {
-      result.itemsUpserted += await upsertItems(str(existing.id), o.items);
-    }
+    if (healedNow) result.healed++;
+    if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
+  }
+
+  // Bulk insert the new rows. D1 caps bound parameters per statement, so the
+  // batch is split into small chunks — still far cheaper than one INSERT +
+  // SELECT round trip per order (which blew the 90s runner timeout).
+  if (toCreate.length) {
+    result.created = await insertOrders(toCreate);
+  }
+
+  for (const { soId, items } of withItems) {
+    result.itemsUpserted += await upsertItems(soId, items);
   }
 
   // Mark rows missing from this tick.
@@ -852,17 +862,18 @@ export async function syncOrders(args: {
     const org = str(row.org);
     const verifiedPresent = verifyPresent.has(key) || verifyPresent.has(soNumber);
     const verifiedGone = verifyGone.has(key) || verifyGone.has(soNumber);
-    const missCount = verifiedPresent ? 0 : num(row.missCount) + 1;
+    if (verifiedPresent) {
+      if (num(row.missCount) !== 0) {
+        await prisma.crmSalesOrder.update({ where: { id: str(row.id) }, data: { missCount: 0, updatedAt: now } });
+      }
+      continue;
+    }
+    const missCount = num(row.missCount) + 1;
 
     if (verifiedGone || missCount >= 2) {
       await prisma.crmSalesOrder.update({
         where: { id: str(row.id) },
-        data: {
-          sourceState: 'deleted_source',
-          missCount,
-          deletedDetectedAt: now,
-          updatedAt: now,
-        },
+        data: { sourceState: 'deleted_source', missCount, deletedDetectedAt: now, updatedAt: now },
       });
       await writeEvent({
         soId: str(row.id),
@@ -901,10 +912,32 @@ export async function syncOrders(args: {
     }
   }
 
-  // Items changed → lifecycle moves. Recompute only the orders we touched.
-  await recomputeLifecycles(seen);
+  // Only orders that actually received items can change lifecycle — anything
+  // else keeps its stored state (items were not fetched this tick).
+  if (withItems.length) {
+    const ids = [...new Set(withItems.map((w) => w.soId))];
+    await recomputeLifecyclesById(ids);
+  }
 
   return result;
+}
+
+/** Chunked bulk insert (D1 caps bound parameters per statement). */
+async function insertOrders(rows: any[]): Promise<number> {
+  const cols = Object.keys(rows[0] || {});
+  if (!cols.length) return 0;
+  const perStatement = Math.max(1, Math.floor(90 / cols.length));
+  let written = 0;
+  for (let i = 0; i < rows.length; i += perStatement) {
+    const chunk = rows.slice(i, i + perStatement);
+    try {
+      const res = await prisma.crmSalesOrder.createMany({ data: chunk });
+      written += res?.count ?? chunk.length;
+    } catch (e: any) {
+      logger.warn({ err: e?.message, rows: chunk.length }, 'crm sync: order batch insert failed');
+    }
+  }
+  return written;
 }
 
 async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
@@ -959,30 +992,28 @@ async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
   return written;
 }
 
-async function recomputeLifecycles(keys: Set<string>): Promise<void> {
-  if (!keys.size) return;
-  const rows = (await prisma.crmSalesOrder.findMany({
-    where: { sourceState: 'active' },
-    take: 4000,
-  })) as any[];
-  const targets = rows.filter((r) => keys.has(soKey(str(r.org), str(r.soNumber))));
-  if (!targets.length) return;
-  const itemsBySo = await itemsForOrders(targets.map((r) => str(r.id)));
-  for (const r of targets) {
-    const items = itemsBySo.get(str(r.id)) || [];
-    if (!items.length) continue; // items not fetched this tick — keep current state
-    const lifecycle = deriveLifecycle(
-      items.map((it) => ({
-        id: it.id,
-        dispatchState: it.dispatchState,
-        tentativeDispatchDate: it.tentativeDispatchDate,
-        qty: it.qty,
-        dispatchedQty: it.dispatchedQty,
-      })) as ItemLike[],
-      { status: str(r.status), orderStatus: str(r.orderStatus) },
-    );
-    if (lifecycle !== str(r.lifecycle)) {
-      await prisma.crmSalesOrder.update({ where: { id: str(r.id) }, data: { lifecycle, updatedAt: new Date() } });
+async function recomputeLifecyclesById(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  for (let i = 0; i < ids.length; i += ITEM_BATCH) {
+    const chunk = ids.slice(i, i + ITEM_BATCH);
+    const rows = (await prisma.crmSalesOrder.findMany({ where: { id: { in: chunk } } })) as any[];
+    const itemsBySo = await itemsForOrders(chunk);
+    for (const r of rows) {
+      const items = itemsBySo.get(str(r.id)) || [];
+      if (!items.length) continue; // items not fetched this tick — keep state
+      const lifecycle = deriveLifecycle(
+        items.map((it) => ({
+          id: it.id,
+          dispatchState: it.dispatchState,
+          tentativeDispatchDate: it.tentativeDispatchDate,
+          qty: it.qty,
+          dispatchedQty: it.dispatchedQty,
+        })) as ItemLike[],
+        { status: str(r.status), orderStatus: str(r.orderStatus) },
+      );
+      if (lifecycle !== str(r.lifecycle)) {
+        await prisma.crmSalesOrder.update({ where: { id: str(r.id) }, data: { lifecycle, updatedAt: new Date() } });
+      }
     }
   }
 }

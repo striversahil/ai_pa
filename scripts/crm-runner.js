@@ -96,6 +96,19 @@ const EXCLUDED_STATUSES = new Set(ZOHO_STATUSES.SO_EXCLUDED);
 const STAGES = CRM.STAGES;
 // Orders older than this (created) are irrelevant history — scan stops.
 const SCAN_WINDOW_DAYS = 120;
+// The dispatch floor only tracks RECENT orders (mirror of FLOOR_WINDOW_DAYS in
+// backend/src/modules/crm/store.ts). Zoho reports 5000+ open sales orders going
+// back years — shipping that whole backlog every tick would make the floor
+// unusable and blow the runner's Worker-request budget, so only in-window
+// orders are sent (and the deletion detector ignores everything older).
+const FLOOR_WINDOW_DAYS = 30;
+
+/** YYYY-MM-DD minus N days (pure UTC date math). */
+function dayBefore(day, n) {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
 // Per-stage order detail cap (full rows); counts always reflect all orders.
 const DETAIL_CAP = 400;
 const CLOSED_CAP = 400;
@@ -142,17 +155,6 @@ function orderDate(so) {
 
 /** Compact order row for the dashboard tables (full per-stage detail). */
 /**
- * Build the dispatch-floor sync payload (migration 0097).
- *
- * Sends every order the scan touched this tick, enriched with line items where
- * the detail pass already fetched them. The Worker decides what to insert,
- * update, or flag — but IT cannot know which of its active rows are absent
- * from Zoho, so the runner also re-verifies those by id (few rows, one call
- * each) and reports `verify.gone`, making a deletion definitive instead of a
- * guess. Orders the worker lists as active but that are already in this scan
- * are simply reported `present`.
- */
-/**
  * Post the dispatch-floor sync (migration 0097) and log a compact summary.
  * Never throws: the KV snapshot path is the one that must stay unbroken until
  * the cutover, and the next tick retries anything missed here.
@@ -173,6 +175,17 @@ async function postFloorSync(args) {
   }
 }
 
+/**
+ * Build the dispatch-floor sync payload (migration 0097).
+ *
+ * Sends every IN-WINDOW order the scan touched this tick (FLOOR_WINDOW_DAYS),
+ * enriched with line items where the detail pass already fetched them. The
+ * Worker decides what to insert, update, or flag — but IT cannot know which of
+ * its active rows are absent from Zoho, so the runner also re-verifies those
+ * by id (a handful, one call each) and reports `verify.gone`, making a deletion
+ * definitive instead of a guess. Orders the worker lists as active but that are
+ * already in this scan are simply reported `present`.
+ */
 async function buildDispatchFloorPayload({ date, index, stages, closed, activeBySo }) {
   if (!Array.isArray(index) || index.length === 0) return null;
 
@@ -186,13 +199,19 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
   const closedByKey = new Map();
   for (const row of closed || []) closedByKey.set(`${row.org}:${row.so}`, row);
 
+  const cutoff = dayBefore(date, FLOOR_WINDOW_DAYS);
   const orders = [];
+  // `seen` = everything this scan COVERED (drives the re-verify pass);
+  // `orders` = only the in-window slice that the floor actually tracks.
   const seen = new Set();
   for (const entry of index) {
     if (!entry?.so) continue;
     const key = `${entry.org || ''}:${entry.so}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const createdDay = String(entry.createdDay || '').slice(0, 10);
+    // Older than the window — Zoho keeps it, the floor does not.
+    if (createdDay && createdDay < cutoff) continue;
     const hit = activeBySo.get(entry.org + ':' + entry.so);
     const detail = displayByKey.get(key) || null;
     const closedRow = closedByKey.get(key) || null;
@@ -210,11 +229,11 @@ async function buildDispatchFloorPayload({ date, index, stages, closed, activeBy
       paidStatus: entry.paidStatus || closedRow?.paidStatus || detail?.paidStatus || '',
       salesperson: entry.salesperson || closedRow?.salesperson || detail?.salesperson || '',
       ref: detail?.ref || '',
-      // Only createdTime is ISO — closed rows carry a display date. An empty
-      // value means "keep whatever the row already has" (never overwrite with
-      // a formatted string).
-      createdDate: String(detail?.createdTime || '').slice(0, 10),
-      createdTime: detail?.createdTime || '',
+      // Only ISO values may reach this field — closed rows carry a display
+      // date, and an empty value means "keep whatever the row already has"
+      // (never overwrite a real date with a formatted string).
+      createdDate: createdDay || String(detail?.createdTime || '').slice(0, 10),
+      createdTime: String(detail?.createdTime || '').slice(0, 10),
       items,
     });
   }
@@ -340,6 +359,15 @@ async function fetchOverrides() {
   }
 }
 
+/** Zoho created_time → IST calendar day (YYYY-MM-DD), '' when unparseable. */
+function createdDayIso(so) {
+  const raw = so && so.created_time;
+  if (!raw) return '';
+  const t = new Date(raw);
+  if (isNaN(t.getTime())) return '';
+  return istDateString(t);
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   console.log('crm-runner: fetching sales orders from Zoho Books');
@@ -401,6 +429,7 @@ async function main() {
         paidStatus: String(so.paid_status || '').toLowerCase(),
         status: String(so.status || '').toLowerCase(),
         createdToday: !!row.createdToday,
+        createdDay: createdDayIso(so),
         salesperson: row.salesperson || '',
         total: row.total,
         itemsSig: '',
