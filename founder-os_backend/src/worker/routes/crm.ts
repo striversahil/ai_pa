@@ -37,8 +37,11 @@ async function viewer(c: any): Promise<Viewer | null> {
     return {
       scopes: Array.isArray(me.scopes) ? me.scopes : [],
       roles: Array.isArray(me.roles) ? me.roles : [],
-      isAdmin: !!me.isAdmin,
-      name: String(me.name || me.email || ''),
+      isAdmin: !!me.isAdmin || !!me.isRoot,
+      // getMe() returns { user, scopes, roles, isAdmin } — the name lives on
+      // `user`. Reading `me.name` silently recorded an empty actor on every
+      // schedule/dispatch in the audit trail.
+      name: String(me.user?.name || me.user?.email || ''),
     };
   } catch {
     return null;
