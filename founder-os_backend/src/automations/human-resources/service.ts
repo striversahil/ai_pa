@@ -2,7 +2,8 @@ import { prisma } from '../../shared/prisma';
 import { cached } from '../../shared/cache';
 import { HrError } from './errors';
 import {
-  addDays, cleanExpenseCreate, cleanExpensePatch, cleanMemberCreate, cleanMemberPatch,
+  addDays, cleanExpenseCreate, cleanExpensePatch, cleanFundTxnCreate, cleanFundTxnPatch,
+  cleanMemberCreate, cleanMemberPatch,
   cleanTaskCreate, cleanTaskPatch, isTaskOverdue, isValidDate, istDateStr, istTimeStr, istMonthStr,
   normalizeMonth, taskSort,
 } from './parse';
@@ -100,11 +101,26 @@ function expenseJson(row: any) {
   };
 }
 
+/** One funding top-up HR received. */
+function fundTxnJson(row: any) {
+  return {
+    id: String(row.id),
+    title: row.title ?? '',
+    amount: Number(row.amount) || 0,
+    txnDate: row.txnDate ?? null,
+    notes: row.notes ?? null,
+    createdBy: row.createdBy ?? null,
+    updatedBy: row.updatedBy ?? null,
+    createdAt: row.createdAt ?? null,
+    updatedAt: row.updatedAt ?? null,
+  };
+}
+
 async function computeDashboard(today: string, month: string, scope: HrScope | null) {
   const nowTime = istTimeStr();
   const isAdmin = !scope || scope.isAdmin;
   const self = scope?.scope ?? null;
-  const [rosterRaw, taskRaw, expenseRaw, inventory] = await Promise.all([
+  const [rosterRaw, taskRaw, expenseRaw, fundRaw, lifetimeOfficeRaw, inventory] = await Promise.all([
     prisma.humanResourcesMember.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }) as Promise<any[]>,
     prisma.humanResourcesTask.findMany({
       where: { deleted: false },
@@ -116,6 +132,17 @@ async function computeDashboard(today: string, month: string, scope: HrScope | n
       where: { deleted: false, expenseMonth: month },
       orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
       take: 1000,
+    }).catch(() => []) as Promise<any[]>,
+    // Lifetime funding ledger (never month-scoped — funding isn't monthly).
+    prisma.humanResourcesFundTxn.findMany({
+      where: { deleted: false },
+      orderBy: [{ txnDate: 'desc' }, { createdAt: 'desc' }],
+      take: 1000,
+    }).catch(() => []) as Promise<any[]>,
+    // Lifetime office spend: fixed + variable only; field_staff never touches the balance.
+    prisma.humanResourcesExpense.findMany({
+      where: { deleted: false, expenseType: { in: ['fixed', 'variable'] } },
+      take: 5000,
     }).catch(() => []) as Promise<any[]>,
     getInventorySnapshot(month).catch(() => ({ month, items: [], summary: { itemCount: 0, lowStockCount: 0, outOfStockCount: 0, movementCount: 0, stockValue: 0 } })),
   ]);
@@ -147,6 +174,12 @@ async function computeDashboard(today: string, month: string, scope: HrScope | n
   const fixedTotal = fixed.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   const variableTotal = variable.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   const fieldStaffTotal = fieldStaff.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+  // Office balance (lifetime): all funding received minus all fixed+variable
+  // spend. Derived, never stored — editing either side corrects it.
+  const topups = fundRaw.map(fundTxnJson);
+  const topupTotal = topups.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  const officeTotal = lifetimeOfficeRaw.reduce((sum, e) => sum + (Number(e?.amount) || 0), 0);
 
   const roster = rosterRaw
     .filter((r) => r.active !== false)
@@ -197,6 +230,15 @@ async function computeDashboard(today: string, month: string, scope: HrScope | n
         fixedCount: fixed.length,
         variableCount: variable.length,
         fieldStaffCount: fieldStaff.length,
+      },
+    },
+    fund: {
+      topups,
+      summary: {
+        topupTotal: Math.round(topupTotal * 100) / 100,
+        officeTotal: Math.round(officeTotal * 100) / 100,
+        balance: Math.round((topupTotal - officeTotal) * 100) / 100,
+        topupCount: topups.length,
       },
     },
     inventory,
@@ -346,6 +388,50 @@ export async function deleteExpense(
     throw new HrError('You can only delete expenses you created', 403);
   }
   await prisma.humanResourcesExpense.update({
+    where: { id }, data: { deleted: true, updatedBy: actor },
+  });
+  await invalidateHumanResourcesCache();
+}
+
+export async function createFundTxn(input: Record<string, any>, actor: string | null) {
+  const data = cleanFundTxnCreate(input);
+  const row = await prisma.humanResourcesFundTxn.create({
+    data: { ...data, createdBy: actor, updatedBy: actor },
+  });
+  await invalidateHumanResourcesCache();
+  return fundTxnJson(row);
+}
+
+export async function updateFundTxn(
+  id: string,
+  input: Record<string, any>,
+  actor: string | null,
+  access: { canManage: boolean },
+) {
+  const current: any = await prisma.humanResourcesFundTxn.findUnique({ where: { id } });
+  if (!current || current.deleted) throw new HrError('funding entry not found', 404);
+  if (!access.canManage && String(current.createdBy || '') !== String(actor || '')) {
+    throw new HrError('You can only edit funding you recorded', 403);
+  }
+  const patch = cleanFundTxnPatch(input);
+  const row = await prisma.humanResourcesFundTxn.update({
+    where: { id }, data: { ...patch, updatedBy: actor },
+  });
+  await invalidateHumanResourcesCache();
+  return fundTxnJson(row);
+}
+
+export async function deleteFundTxn(
+  id: string,
+  actor: string | null,
+  access: { canManage: boolean },
+) {
+  const current: any = await prisma.humanResourcesFundTxn.findUnique({ where: { id } });
+  if (!current || current.deleted) throw new HrError('funding entry not found', 404);
+  if (!access.canManage && String(current.createdBy || '') !== String(actor || '')) {
+    throw new HrError('You can only delete funding you recorded', 403);
+  }
+  await prisma.humanResourcesFundTxn.update({
     where: { id }, data: { deleted: true, updatedBy: actor },
   });
   await invalidateHumanResourcesCache();

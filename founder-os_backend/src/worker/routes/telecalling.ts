@@ -20,6 +20,11 @@ import {
   markSalesHoliday,
   unmarkSalesHoliday,
 } from '../../automations/telecalling/service';
+import {
+  loadClientQueue,
+  setManualSegment,
+  setTypeRule,
+} from '../../automations/telecalling/client-segments';
 
 /** Root/MIS/sales-head gate for the region-model management writes. Accepts
  * the scope or the role itself, so a sales-head role holder is authorized even
@@ -318,6 +323,67 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json({ ok: true });
     } catch (e: any) {
       return c.json({ error: e?.message || 'failed to remove holiday' }, (e?.status ?? 400) as any);
+    }
+  });
+
+  // ── Client segments (sales-head / MIS): final-consumer vs reseller ───────
+  // The queue groups accepted + declined estimates by client with the auto
+  // match (or up to 5 candidates when unclear); type rules map a whole master
+  // family at once; manual marks always win and are the only stored rows.
+  // Writes bust the dashboard cache + go live (target bars read segments).
+  app.get('/api/telecalling/client-segments', async (c) => {
+    if (!(await requireSalesManager(c))) {
+      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    }
+    try {
+      const { DEFAULT_TARGET_START } = await import('../../automations/telecalling/targets');
+      const from = typeof c.req.query('from') === 'string' && c.req.query('from') ? String(c.req.query('from')) : DEFAULT_TARGET_START;
+      const to = typeof c.req.query('to') === 'string' && c.req.query('to') ? String(c.req.query('to')) : new Date().toISOString().slice(0, 10);
+      const queue = await loadClientQueue(from, to);
+      return c.json({ ...queue, from, to });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to load client queue' }, 500);
+    }
+  });
+
+  app.put('/api/telecalling/client-segments', async (c) => {
+    if (!(await requireSalesManager(c))) {
+      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    }
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const result = await setManualSegment(body?.clientKey ?? body?.key, body?.segment, {
+        masterCustomerId: body?.masterCustomerId,
+        masterName: body?.masterName,
+        decidedBy: String((me as any)?.user?.id ?? ''),
+        decidedByName: String((me as any)?.user?.name ?? (me as any)?.user?.email ?? ''),
+      });
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true, ...result });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to save client segment' }, 400);
+    }
+  });
+
+  app.put('/api/telecalling/client-type-rules', async (c) => {
+    if (!(await requireSalesManager(c))) {
+      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    }
+    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const body = await c.req.json().catch(() => ({}));
+    const rules = Array.isArray(body?.rules) ? body.rules : [{ typeBase: body?.typeBase, segment: body?.segment }];
+    try {
+      const saved: Array<{ base: string; segment: unknown }> = [];
+      for (const r of rules) {
+        saved.push(await setTypeRule(r?.typeBase, r?.segment,
+          String((me as any)?.user?.id ?? ''),
+          String((me as any)?.user?.name ?? (me as any)?.user?.email ?? '')));
+      }
+      notifyLive(c, { type: LiveEvent.Telecalling });
+      return c.json({ ok: true, rules: saved });
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'failed to save type rules' }, 400);
     }
   });
 

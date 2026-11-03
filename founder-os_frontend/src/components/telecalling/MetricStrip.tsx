@@ -10,7 +10,7 @@ import React from "react";
 import { PhoneCall, Sparkles, Target, Timer, TrendingUp, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { BoardKpi } from "@/telecalling/view-types";
-import type { TeamTarget } from "@/telecalling/targets";
+import type { TeamTarget, TargetStatus } from "@/telecalling/targets";
 import { TARGET_STATUS_LABEL } from "@/telecalling/targets";
 import { fmtDate, fmtLakh, fmtNum, fmtTalk } from "@/telecalling/format";
 import { TARGET_TONE } from "@/telecalling/tone";
@@ -63,16 +63,29 @@ export function MetricStrip({ kpi, teamTarget, loading = false }: MetricStripPro
   const directPct = pctOf(directValue);
   const unlinkedPct = pctOf(unlinkedValue);
 
-  const attainmentPct = teamTarget && teamTarget.sinceStartTarget > 0
-    ? Math.round((teamTarget.sinceStartAccepted / teamTarget.sinceStartTarget) * 100)
-    : 0;
-  const animatedPct = useCountUp(attainmentPct);
-  const targetTone = TARGET_TONE[teamTarget?.status ?? "critical"];
-
   const weekDue = Number(teamTarget?.due ?? 0);
   const weekAccepted = Number(teamTarget?.weekAccepted ?? 0);
   const weekPct = weekDue > 0 ? Math.max(0, Math.min(100, (weekAccepted / weekDue) * 100)) : 0;
   const carryIn = Number(teamTarget?.carryIn ?? 0);
+
+  // Filter-period team bar (consumer-only, no carry-in): the number the tiles
+  // go green on. Falls back to the week ledger for payloads that predate it.
+  // Tile 2 IS this number — the "team target" always means the SELECTED
+  // filter's start→end date. The since-start ledger (with backlog) survives
+  // only as the caption underneath and in tile 3 ("This week").
+  const hasPeriod = teamTarget != null && teamTarget.periodTarget !== undefined;
+  const periodLabel = teamTarget?.periodLabel ?? "This week";
+  const periodTarget = Number(hasPeriod ? teamTarget?.periodTarget ?? 0 : teamTarget?.weekTarget ?? 0);
+  const periodAccepted = Number(hasPeriod ? teamTarget?.periodAccepted ?? 0 : teamTarget?.weekAccepted ?? 0);
+  const periodPct = hasPeriod
+    ? Number(teamTarget?.periodPct ?? 0)
+    : (periodTarget > 0 ? Math.round((periodAccepted / periodTarget) * 100) : 0);
+  const periodMet = periodTarget > 0 ? periodAccepted >= periodTarget : periodAccepted > 0;
+  const periodNone = hasPeriod && periodTarget <= 0;
+  const periodUnclassified = Number(teamTarget?.periodUnclassifiedValue ?? 0);
+  const animatedPeriod = useCountUp(periodPct);
+  const periodStatus: TargetStatus = periodNone ? "critical" : periodMet ? "cleared" : periodPct >= 60 ? "behind" : "critical";
+  const periodTone = TARGET_TONE[periodStatus];
 
   return (
     <div className={`grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4 ${loading ? "opacity-70 transition-opacity" : "transition-opacity"}`} aria-busy={loading}>
@@ -97,39 +110,53 @@ export function MetricStrip({ kpi, teamTarget, loading = false }: MetricStripPro
           <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-violet-500" />Head {fmtLakh(directValue)}</span>
           <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Unlinked {fmtLakh(unlinkedValue)}</span>
         </div>
+        {kpi?.consumerValue !== undefined && (
+          <div className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]" title="Only end-consumer ₹ counts toward the ₹1L/day target — reseller and unclassified rows are excluded until reviewed">
+            Consumer {fmtLakh(Number(kpi.consumerValue ?? 0))}
+            {Number(kpi.resellerValue ?? 0) > 0 && <span> · Reseller {fmtLakh(Number(kpi.resellerValue ?? 0))}</span>}
+            {Number(kpi.unclassifiedValue ?? 0) > 0 && <span> · ? {fmtLakh(Number(kpi.unclassifiedValue ?? 0))} unclassified</span>}
+          </div>
+        )}
       </ValueTile>
 
-      {/* 2 — team target = the sum of the four region targets (₹4L/day). */}
-      <ValueTile index={1} icon={Target} label="Team target · since start" accent={targetTone.rail}>
+      {/* 2 — team target for the SELECTED filter (consumer-only, no backlog). */}
+      <ValueTile index={1} icon={Target} label={`Team target · ${hasPeriod ? periodLabel : "since start"}`} accent={periodTone.rail}>
         <div className="mt-1 flex items-baseline gap-2">
           <span className={`text-xl ${NUM}`}>
-            {teamTarget ? `${Math.round(animatedPct)}%` : "—"}
+            {teamTarget ? `${Math.round(animatedPeriod)}%` : "—"}
           </span>
           {teamTarget && (
-            <span className={`${PILL} ${targetTone.chip}`}>{TARGET_STATUS_LABEL[teamTarget.status]}</span>
+            <span className={`${PILL} ${periodTone.chip}`}>{TARGET_STATUS_LABEL[periodStatus]}</span>
           )}
         </div>
         <div className="mt-1 text-[11px] font-semibold text-[var(--text-secondary)]">
           {teamTarget
-            ? `${fmtLakh(teamTarget.sinceStartAccepted)} of ${fmtLakh(teamTarget.sinceStartTarget)} owed`
+            ? `${fmtLakh(periodAccepted)} of ${fmtLakh(periodTarget)} consumer`
             : "Ledger unavailable"}
         </div>
         <div
           className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--border-card)]"
           role="progressbar"
-          aria-valuenow={attainmentPct}
+          aria-valuenow={Math.round(periodPct)}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-label="Team target attainment since the ledger start"
+          aria-label={`Team target attainment ${periodLabel}`}
         >
-          <span className={`block h-full rounded-full ${targetTone.rail} transition-[width] duration-700 ease-out`} style={{ width: `${Math.min(100, Math.max(2, attainmentPct))}%` }} />
+          <span className={`block h-full rounded-full ${periodTone.rail} transition-[width] duration-700 ease-out`} style={{ width: `${Math.min(100, Math.max(2, periodPct))}%` }} />
         </div>
-        <div className="mt-1.5 text-[10px] font-semibold text-[var(--text-tertiary)]">
-          {teamTarget ? `Start ${fmtDate(teamTarget.targetStart)} · ₹${fmtNum(teamTarget.teamPerDay)}/day team` : "\u00A0"}
+        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+          {teamTarget
+            ? <span>Ledger {fmtLakh(teamTarget.sinceStartAccepted)} / {fmtLakh(teamTarget.sinceStartTarget)} since {fmtDate(teamTarget.targetStart)}</span>
+            : <span>&nbsp;</span>}
+          {periodUnclassified > 0 && (
+            <span className={`${PILL} border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300`} title="Accepted ₹ waiting for a consumer/reseller decision — excluded until reviewed">
+              ? {fmtLakh(periodUnclassified)} unclassified
+            </span>
+          )}
         </div>
       </ValueTile>
 
-      {/* 3 — this week: accepted vs due (carried backlog included). */}
+      {/* 3 — this week ledger (carry-in included): where the backlog lives. */}
       <ValueTile index={2} icon={TrendingUp} label="This week" accent={weekPct >= 100 ? "bg-emerald-500" : weekPct >= 60 ? "bg-amber-500" : "bg-rose-500"}>
         <div className="mt-1 flex items-baseline gap-1.5">
           <span className={`text-xl ${NUM}`}>{fmtLakh(weekAccepted)}</span>

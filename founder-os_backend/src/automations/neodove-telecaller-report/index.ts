@@ -135,8 +135,19 @@ function aggregate(rows: any[]): NeodoveAgentRow[] {
   for (const r of rows) {
     // NeoDove can return multiple user-day rows (one per lead bucket);
     // merge them so each agent appears exactly once.
-    const key = r.userId || r.userName || 'unknown';
-    const name = r.userName || key.slice(0, 8);
+    //
+    // Identity is userId + userName, NOT userId alone: NeoDove RECYCLES ids
+    // across staff (2026-11: 3518625a was Muskan Jul→Oct 1, Kamal from Oct 20).
+    // Keying by id alone merged two people into one agent with last-write-wins
+    // on the name, so the older name (Muskan) won: the new hire never appeared
+    // as an agent (roster sync could never link him) and inherited the
+    // predecessor's history. A rename across days splits instead — the roster
+    // sync then flags it via the userId-claim warning rather than merging two
+    // strangers.
+    const uid = String(r.userId || '').trim();
+    const uname = String(r.userName || '').trim();
+    const key = uid || uname ? `${uid}‖${uname}` : 'unknown';
+    const name = uname || (uid ? uid.slice(0, 8) : 'unknown');
     let agg = byUser.get(key);
     if (!agg) {
       agg = {
@@ -156,8 +167,10 @@ function aggregate(rows: any[]): NeodoveAgentRow[] {
     }
     // Always prefer a real userName over the sliced-id fallback so that any
     // day's report (even one where userName is missing) merges correctly.
-    if (r.userName) agg.userName = r.userName;
-    if (r.userId) agg.userId = r.userId;
+    // Trimmed: the aggregate key is trimmed, so the stored name must be too,
+    // or map lookups miss on stray spaces.
+    if (uname) agg.userName = uname;
+    if (uid) agg.userId = uid;
     if (!agg.managerName && r.managerName) agg.managerName = r.managerName;
   }
   // Match the NeoDove portal's USER_REPORT headline, which reports COMBINED

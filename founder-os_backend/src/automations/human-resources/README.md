@@ -9,7 +9,7 @@ recorded as a filter, not tied to a roster member).
 Files:
 
 - `index.ts` — dashboard data provider (`GET /api/automations/human-resources/data`).
-- `service.ts` — roster, delegated tasks, expense ledger, dashboard aggregation,
+- `service.ts` — roster, delegated tasks, expense ledger, office fund ledger, dashboard aggregation,
   `resolveSelfHumanResourcesMember` (login → roster matching).
 - `delegation.ts` — employee-facing board: scoped reads, self-created tasks, ownership
   guards, manager extras (team day cards, activity feed, logins).
@@ -36,6 +36,9 @@ Files:
   never written into `status`.
 - **HumanResourcesExpense** — one ledger row (`title, expenseType fixed|variable|field_staff,
   category, amount, expenseDate, expenseMonth, paymentMode, notes`).
+- **HumanResourcesFundTxn** — one funding top-up HR receives (`title, amount, txnDate,
+  notes`). Office balance = lifetime top-ups − lifetime `fixed`+`variable` expenses
+  (`field_staff` never touches the balance). Derived at read time, never stored.
 - **HumanResourcesInventoryItem** — daily-use stock item (`name, category, unit,
   reorderLevel, unitCost, notes, order, deleted`). Current quantity is derived from transactions.
 - **HumanResourcesInventoryTxn** — stock ledger row (`itemId, txnType opening|purchase|consumption|adjustment,
@@ -74,6 +77,8 @@ Files:
 - `DELETE /api/human-resources/tasks/:id` (HR/MIS)
 - `POST /api/human-resources/expenses`
 - `PATCH/DELETE /api/human-resources/expenses/:id` (HR/MIS)
+- `POST /api/human-resources/fund-topups` (any signed-in user; same as expenses)
+- `PATCH/DELETE /api/human-resources/fund-topups/:id` (creator or HR/MIS)
 - `GET /api/human-resources/inventory/items`
 - `POST/PATCH/DELETE /api/human-resources/inventory/items` (HR/MIS)
 - `GET /api/human-resources/inventory/items/:id/transactions`

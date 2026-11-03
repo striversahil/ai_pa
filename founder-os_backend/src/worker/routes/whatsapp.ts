@@ -19,14 +19,42 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   // ── Token webhook / store ───────────────────────────────────────────────────
+  // Session-free by design (AUTH_EXEMPT covers /api/token/): the NeoDove
+  // token extractor runs in a plain browser context with no login cookie.
+  // Auth: Bearer SHARED_SECRET (any source, runners + scripts) OR the
+  // limited TOKEN_WEBHOOK_KEY secret (neodove source only, browser-safe to
+  // embed — it can only overwrite the neodove token, never read anything).
+  // The key travels as `Authorization: Bearer <key>`, `X-Webhook-Key: <key>`,
+  // `?key=<key>`, or `body.key`. Never hardcoded — set via
+  // `printf '%s' "$VAL" | wrangler secret put TOKEN_WEBHOOK_KEY`.
   app.post('/api/token/webhook', async (c) => {
-    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const full = requireSecret(c);
+    let viaKey = false;
+    if (!full) {
+      const expected = String(c.env.TOKEN_WEBHOOK_KEY ?? '');
+      if (expected) {
+        const auth = c.req.header('Authorization') || '';
+        const bearer = auth.replace(/^Bearer\s+/i, '');
+        const headerKey = c.req.header('X-Webhook-Key') || '';
+        const queryKey = c.req.query('key') || '';
+        let bodyKey = '';
+        try {
+          const peek = await c.req.json().catch(() => null) as any;
+          bodyKey = String(peek?.key ?? peek?.webhookKey ?? '');
+          // Re-parse in the main body read below (Hono caches the JSON body).
+        } catch { /* ignore */ }
+        viaKey = [bearer, headerKey, queryKey, bodyKey].some((k) => k && k === expected);
+      }
+      if (!viaKey) return c.text('Unauthorized', 401);
+    }
     const { prisma } = deps();
     const body = await c.req.json().catch(() => ({}));
     const source = String(body?.source || '').trim().toLowerCase();
     const token = body?.token;
     const metadata = body?.metadata ? JSON.stringify(body.metadata) : null;
     if (!source || token === undefined || token === null) return c.json({ error: 'source and token required' }, 400);
+    // Limited key can only write the neodove token — nothing else.
+    if (viaKey && !full && source !== 'neodove') return c.json({ error: 'forbidden for this source' }, 403);
     const tokenStr = JSON.stringify(token);
     await prisma.token.upsert({
       where: { source },

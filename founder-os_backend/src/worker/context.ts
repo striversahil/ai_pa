@@ -33,6 +33,8 @@ export type Bindings = {
   ASYNC_RUNNER?: DurableObjectNamespace;
   CHAT_ROOM?: DurableObjectNamespace;
   SHARED_SECRET?: string;
+  ALLOWED_ORIGINS?: string;
+  TOKEN_WEBHOOK_KEY?: string;
   LINKEDIN_CLIENT_ID?: string;
   LINKEDIN_CLIENT_SECRET?: string;
   PUBLIC_ORIGIN?: string;
@@ -61,6 +63,7 @@ export function bootstrapEnv(env: Bindings) {
     ZOHO_BOOKS_AUTH_TOKEN: (env.ZOHO_BOOKS_AUTH_TOKEN as string) || '',
     ZOHO_CURL_CONTENT: (env.ZOHO_CURL_CONTENT as string) || '',
     GOOGLE_SERVICE_ACCOUNT_JSON: (env.GOOGLE_SERVICE_ACCOUNT_JSON as string) || '',
+    ALLOWED_ORIGINS: (env.ALLOWED_ORIGINS as string) || '',
     DATABASE_URL: '',
   };
   (globalThis as any).__WORKER_ENV__ = envObj;
@@ -357,24 +360,42 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
   const app = new Hono<{ Bindings: Bindings }>();
   // Tight CORS: reflect only known frontend origins; never `*` on an
   // authenticated API. Same-origin (Pages proxy) needs no CORS headers.
-  // Extra origins via ALLOWED_ORIGINS env (comma-separated).
+  // Direct browser → Worker calls (e.g. a token extractor running on a
+  // NeoDove page, or any external integration) DO trigger a preflight:
+  // hono/cors answers OPTIONS with 204 + ACAO headers automatically.
+  // Extra origins via ALLOWED_ORIGINS env/secret (comma-separated).
   app.use('*', cors({
-    origin: (origin) => {
+    origin: (origin, c: any) => {
       if (!origin) return null as any;
-      const extra = String((globalThis as any).__WORKER_ENV__?.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+      // c.env is live per-request; fall back to the bootstrapped snapshot
+      // (cors runs before bootstrapEnv on the first request of an isolate).
+      const extraRaw = String(
+        c?.env?.ALLOWED_ORIGINS
+        ?? (globalThis as any).__WORKER_ENV__?.ALLOWED_ORIGINS
+        ?? '',
+      );
+      const extra = extraRaw.split(',').map((s) => s.trim()).filter(Boolean);
       const allow = [
         'https://founder-os-frontend.pages.dev',
+        'https://connect.neodove.com',
         ...extra,
       ];
       try {
         const u = new URL(origin);
-        if (u.hostname.endsWith('.pages.dev') || u.hostname === 'localhost' || u.hostname === '127.0.0.1') return origin;
+        if (u.hostname.endsWith('.pages.dev')) return origin;
+        // NeoDove app + custom-integration pages call the Worker straight
+        // from the browser (token extractor) — reflect any NeoDove origin.
+        if (u.hostname === 'neodove.com' || u.hostname.endsWith('.neodove.com')) return origin;
+        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return origin;
       } catch { /* fall through to allowlist */ }
       return (allow as string[]).includes(origin) ? origin : null as any;
     },
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+    // X-Api-Key is required: server-to-server webhooks (WA Engine Pro) send
+    // it, and any browser preflight that lists it fails without it here.
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'Cookie'],
     credentials: true,
+    maxAge: 86400,
   }));
 
   // Lightweight auth rate limit: 30 req/min per IP on login/callback/me/logout.

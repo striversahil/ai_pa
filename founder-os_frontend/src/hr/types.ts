@@ -350,6 +350,26 @@ export interface HrExpenseSummary {
   fieldStaffCount: number;
 }
 
+/** One funding top-up HR received (office fund ledger). */
+export interface HrFundTxn {
+  id: string;
+  title: string;
+  amount: number;
+  txnDate: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface HrFundSummary {
+  topupTotal: number;
+  officeTotal: number;
+  balance: number;
+  topupCount: number;
+}
+
 export type InventoryTxnType = "opening" | "purchase" | "consumption" | "adjustment";
 export type InventoryMoveType = "purchase" | "consumption" | "adjustment";
 
@@ -468,6 +488,10 @@ export interface HrDashboardData {
     variable: HrExpense[];
     fieldStaff: HrExpense[];
     summary: HrExpenseSummary;
+  };
+  fund: {
+    topups: HrFundTxn[];
+    summary: HrFundSummary;
   };
   inventory: HrInventorySnapshot;
 }

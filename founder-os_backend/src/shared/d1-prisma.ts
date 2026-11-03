@@ -54,6 +54,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   HumanResourcesMember: ['deleted', 'active'],
   HumanResourcesTask: ['deleted'],
   HumanResourcesExpense: ['deleted'],
+  HumanResourcesFundTxn: ['deleted'],
   HumanResourcesSalaryComponent: ['deleted', 'isBasic'],
   HumanResourcesSalaryTemplate: ['isDefault', 'deleted'],
   HumanResourcesSalaryTemplateComponent: ['isBasic', 'deleted'],
@@ -110,6 +111,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   HumanResourcesMember: ['createdAt', 'salaryTemplateAppliedAt'],
   HumanResourcesTask: ['createdAt', 'updatedAt'],
   HumanResourcesExpense: ['createdAt', 'updatedAt'],
+  HumanResourcesFundTxn: ['createdAt', 'updatedAt'],
   HumanResourcesSalaryComponent: ['createdAt', 'updatedAt'],
   HumanResourcesSalaryTemplate: ['createdAt', 'updatedAt'],
   HumanResourcesSalaryTemplateComponent: ['createdAt', 'updatedAt'],
@@ -200,6 +202,7 @@ const ID_FIELDS: Record<string, string> = {
   HumanResourcesMember: 'id',
   HumanResourcesTask: 'id',
   HumanResourcesExpense: 'id',
+  HumanResourcesFundTxn: 'id',
   HumanResourcesSalaryComponent: 'id',
   HumanResourcesSalaryTemplate: 'id',
   HumanResourcesSalaryTemplateComponent: 'id',
@@ -926,6 +929,7 @@ export class D1PrismaClient {
   get humanResourcesMember() { return this.model('HumanResourcesMember'); }
   get humanResourcesTask() { return this.model('HumanResourcesTask'); }
   get humanResourcesExpense() { return this.model('HumanResourcesExpense'); }
+  get humanResourcesFundTxn() { return this.model('HumanResourcesFundTxn'); }
   get humanResourcesSalaryComponent() { return this.model('HumanResourcesSalaryComponent'); }
   get humanResourcesSalaryTemplate() { return this.model('HumanResourcesSalaryTemplate'); }
   get humanResourcesSalaryTemplateComponent() { return this.model('HumanResourcesSalaryTemplateComponent'); }

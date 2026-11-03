@@ -389,6 +389,34 @@ DB work when it matches the last fully-processed state:
   `GET/POST /api/runner/zoho/fingerprint`. Unchanged → exit early with **zero DB reads**.
 - Both paths share the same KV key, so they stay in sync. `ZOHO_FORCE=1` bypasses the gate.
 
+### 3.6 CORS (browser → Worker)
+
+The dashboard normally talks to the Worker **same-origin** via the Pages Functions
+`/api` proxy (`founder-os_frontend/functions/api/[[path]].ts` → `env.API_WORKER_URL`),
+so no CORS headers are needed. A browser calling the Worker **directly**
+(e.g. a NeoDove token extractor running on `connect.neodove.com`, or any external
+integration) triggers a preflight, and the browser blocks the response unless the
+Worker returns `Access-Control-Allow-Origin`.
+
+- `src/worker/context.ts` (`createApp()`) mounts `hono/cors` first: it reflects a
+  known `Origin` (never `*`, because `credentials: true` on an authenticated API)
+  and answers `OPTIONS` preflight with `204` + CORS headers automatically.
+- Allowed without config: `*.pages.dev`, `localhost`/`127.0.0.1`, and
+  `*.neodove.com` / `neodove.com` (token-extractor use case), plus the explicit
+  `https://founder-os-frontend.pages.dev` and `https://connect.neodove.com` entries.
+- Anything else goes in the `ALLOWED_ORIGINS` Worker secret/env (comma-separated
+  exact origins, e.g. `https://app.example.com`):
+  `printf '%s' "$VAL" | wrangler secret put ALLOWED_ORIGINS`.
+  The check reads `c.env.ALLOWED_ORIGINS` per request (with the bootstrapped
+  `__WORKER_ENV__` snapshot as fallback, since cors runs before `bootstrapEnv()`
+  on a cold isolate).
+- `allowHeaders` includes `Content-Type, Authorization, X-Api-Key, Cookie` —
+  `X-Api-Key` must stay listed because WA Engine Pro webhooks send it and a
+  browser preflight naming it fails otherwise. `maxAge` is 86400s (preflight cache).
+- Unknown origins get **no** `ACAO` header (tight fail-closed); the fix for a
+  blocked preflight is adding the caller origin to `ALLOWED_ORIGINS`, not `*`.
+- Server-to-server callers (GH Actions runners, relay, local-runner) are unaffected.
+
 ## 4. WhatsApp ingestion paths
 
 There are **two** ingestion routes from WA Engine Pro (the WhatsApp gateway):
@@ -595,6 +623,13 @@ holds them:
 2. Worker upserts by `source`.
 3. Runners `GET /api/token/:source` → use it for downstream API calls.
 4. Missing/expired → runner fails fast (alert) instead of silently breaking.
+
+`POST /api/token/webhook` also accepts a limited browser key for the NeoDove
+token extractor (no login cookie in that context): `TOKEN_WEBHOOK_KEY` Worker
+secret, sent as `Authorization: Bearer <key>`, `X-Webhook-Key`, `?key=`, or
+`body.key`. It can only write `source: "neodove"` (any other source → `403`);
+reads (`GET /api/token/*`) stay `SHARED_SECRET`-only. The value lives only as a
+secret (`wrangler secret put TOKEN_WEBHOOK_KEY`), never in code.
 
 This avoids manual GitHub Secret rotation for frequently-expiring tokens.
 

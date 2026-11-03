@@ -47,6 +47,9 @@ export interface BoardClosedItem {
   createdBy?: string | null;
   createdByName?: string | null;
   status?: string | null;
+  /** Final-consumer vs reseller classification (server-computed). */
+  segment?: "consumer" | "reseller" | "" | null;
+  segmentSource?: "manual" | "auto" | "none" | null;
 }
 
 export interface BoardRegion {
@@ -58,6 +61,12 @@ export interface BoardRegion {
   rank: number;
   won: { count: number; value: number };
   accepted?: { count: number; value: number; points: number };
+  /** Consumer / reseller / needs-review split of `won` (server-computed). */
+  wonSplit?: {
+    consumer: { count: number; value: number };
+    reseller: { count: number; value: number };
+    unclassified: { count: number; value: number };
+  };
   /** The closed estimates behind `won`, newest acceptance first (capped 60). */
   acceptedItems?: BoardClosedItem[];
   /** Estimates that BECAME declined inside the period (server-computed). */
@@ -66,6 +75,8 @@ export interface BoardRegion {
   declinedItems?: BoardClosedItem[];
   /** ₹1L/day target + weekly carry-forward ledger (server-computed). */
   target: RegionTarget | null;
+  /** Filter-period consumer target (server-computed, no carry-in). */
+  periodTarget?: import("./targets").PeriodTarget | null;
   open: { count: number; value: number };
   callsConnected: number;
   leadsGenerated: number;
@@ -90,6 +101,13 @@ export interface BoardKpi {
   directValue?: number;
   unlinkedWon?: number;
   unlinkedValue?: number;
+  /** Consumer-only cohort split (server-computed, whole acceptance window). */
+  consumerWon?: number;
+  consumerValue?: number;
+  resellerWon?: number;
+  resellerValue?: number;
+  unclassifiedWon?: number;
+  unclassifiedValue?: number;
   callsConnected?: number;
   leadsGenerated?: number;
   talkTimeSec?: number;

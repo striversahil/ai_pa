@@ -136,6 +136,26 @@ export function EstimateDrawer({
                     </td>
                     <td className="hidden max-w-[14rem] truncate px-2 py-1 text-[var(--text-primary)] sm:table-cell" title={it.customerName ?? undefined}>
                       {it.customerName || "—"}
+                      {it.segment !== undefined && it.segment !== null && (
+                        <span
+                          className={`ml-1.5 inline-block rounded-full border px-1.5 py-px text-[9px] font-bold leading-3 ${
+                            it.segment === "consumer"
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                              : it.segment === "reseller"
+                                ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                                : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                          }`}
+                          title={
+                            it.segment === "consumer"
+                              ? "End consumer — counts toward the ₹1L/day target"
+                              : it.segment === "reseller"
+                                ? "Reseller — excluded from the ₹1L/day target"
+                                : "Unclassified — excluded until reviewed in the Controller"
+                          }
+                        >
+                          {it.segment === "consumer" ? "consumer" : it.segment === "reseller" ? "reseller" : "?"}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1">
                       {it.createdByName ? (

@@ -8,8 +8,8 @@ import {
 } from '../context';
 import { HrError } from '../../automations/human-resources/errors';
 import {
-  createExpense, createTask, deleteExpense, deleteTask,
-  resolveSelfHumanResourcesMember, updateExpense, updateTask,
+  createExpense, createFundTxn, createTask, deleteExpense, deleteFundTxn, deleteTask,
+  resolveSelfHumanResourcesMember, updateExpense, updateFundTxn, updateTask,
 } from '../../automations/human-resources/service';
 import {
   applySalaryPlan, createEmployee, deleteEmployee, getEmployee, listEmployees,
@@ -508,6 +508,41 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     if (a.error) return a.error;
     try {
       await deleteExpense(c.req.param('id') ?? '', actorLabel(a.me), { canManage: a.canManage });
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json({ ok: true });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Office fund ledger (funding HR receives; balance = top-ups − office spend)
+  app.post('/api/human-resources/fund-topups', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const row = await createFundTxn(body || {}, actorLabel(a.me));
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(row, 201);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.patch('/api/human-resources/fund-topups/:id', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const row = await updateFundTxn(
+        c.req.param('id') ?? '', body || {}, actorLabel(a.me), { canManage: a.canManage },
+      );
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(row);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.delete('/api/human-resources/fund-topups/:id', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    try {
+      await deleteFundTxn(c.req.param('id') ?? '', actorLabel(a.me), { canManage: a.canManage });
       notifyLive(c, { type: LiveEvent.HumanResources });
       return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }

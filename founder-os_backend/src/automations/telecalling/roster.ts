@@ -33,15 +33,51 @@ async function syncTelecallersFromNeodove(): Promise<void> {
     })[];
     const byId = new Map<string, (typeof existing)[number]>();
     const byName = new Map<string, (typeof existing)[number]>();
+    // Roster-name fallback (2026-11-02, Kamal case): a row created by MIS with
+    // no NeoDove identity can never be adopted by the id/NeoDove-name match
+    // above. Fall back to the ROSTER name (case-insensitive, trimmed) when it
+    // identifies exactly one unlinked row — never when ambiguous.
+    const byRosterName = new Map<string, (typeof existing)[number][]>();
     for (const t of existing) {
       if (t.neodoveUserId) byId.set(t.neodoveUserId, t);
       if (t.neodoveUserName) byName.set(t.neodoveUserName, t);
+      const norm = String(t.name ?? '').toLowerCase().trim();
+      if (!norm) continue;
+      const list = byRosterName.get(norm) ?? [];
+      list.push(t);
+      byRosterName.set(norm, list);
     }
+
+    const matchExisting = (a: { userId?: string | null; userName?: string | null }) => {
+      // NeoDove userIds are RECYCLED across staff (2026-11-02: 3518625a stored
+      // on Muskan's row, reported as Kamal; 13889a99 on Deepak + Piyush rows,
+      // reported as Piyush). A userId hit against a DIFFERENT stored userName
+      // is a stale claim, never an adoption — the human-readable userName is
+      // the stable key, so it matches first and a conflicting userId is
+      // skipped (the stale row keeps its id but becomes inert: the userId
+      // fallback below only serves rows with no userName at all).
+      if (a.userName) {
+        const byNameHit = byName.get(a.userName);
+        if (byNameHit) return byNameHit;
+      }
+      if (a.userId) {
+        const byIdHit = byId.get(a.userId);
+        if (byIdHit) {
+          const storedName = String(byIdHit.neodoveUserName ?? '');
+          if (!storedName || (a.userName && storedName === a.userName)) return byIdHit;
+        }
+      }
+      const norm = String(a.userName ?? '').toLowerCase().trim();
+      if (!norm) return undefined;
+      const candidates = (byRosterName.get(norm) ?? []).filter(
+        (t) => !t.neodoveUserId && !t.neodoveUserName,
+      );
+      return candidates.length === 1 ? candidates[0] : undefined;
+    };
 
     let writesNeeded = 0;
     for (const a of agents) {
-      const existingT =
-        (a.userId && byId.get(a.userId)) || (a.userName && byName.get(a.userName));
+      const existingT = matchExisting(a);
       if (existingT) {
         if (!existingT.neodoveUserId || !existingT.neodoveUserName) writesNeeded++;
       } else {
@@ -52,8 +88,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
 
     let maxOrder = existing.reduce((m, t) => Math.max(m, t.order ?? 0), 0);
     for (const a of agents) {
-      const existingT =
-        (a.userId && byId.get(a.userId)) || (a.userName && byName.get(a.userName));
+      const existingT = matchExisting(a);
       if (existingT) {
         if (!existingT.neodoveUserId || !existingT.neodoveUserName) {
           await prisma.telecaller.update({
@@ -67,6 +102,17 @@ async function syncTelecallersFromNeodove(): Promise<void> {
         continue;
       }
       maxOrder += 1;
+      // Recycled-id tripwire: this agent's userId is still parked on a row
+      // with a different userName (a predecessor). Creating the new row is
+      // correct — the stale row is inert (userId fallback only serves rows
+      // with no userName) — but MIS should see it in the logs.
+      const clash = a.userId ? byId.get(a.userId) : undefined;
+      if (clash && String(clash.neodoveUserName ?? '') && String(clash.neodoveUserName) !== a.userName) {
+        logger.warn(
+          { userId: a.userId, staleName: clash.neodoveUserName, newName: a.userName },
+          'NeoDove userId recycled across staff — new roster row created, stale row left untouched',
+        );
+      }
       await prisma.telecaller.create({
         data: {
           name: a.userName,

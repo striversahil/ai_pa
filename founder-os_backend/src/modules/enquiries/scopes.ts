@@ -222,11 +222,23 @@ export async function resolveCreatorAgentId(prisma: any, me: MeResponse): Promis
     const roster = await prisma.telecaller.findMany();
     const rows = ((roster as any[]) ?? []).filter((t) => t && !t?.deleted);
     if (email) {
-      const hit = rows.find((t) => {
+      // Shared inboxes (2026-11-02: sales7bui@gmail.com is on Pooja, Kamal
+      // AND Lata) must never credit the wrong person: an email shared by
+      // several rows only resolves when the login NAME also matches one of
+      // those rows, otherwise the lead stays unattributed for MIS to assign.
+      const hits = rows.filter((t) => {
         const e = String(t?.email ?? '').toLowerCase().trim();
         return e && (e === email || local(e) === local(email));
       });
-      if (hit) return String(hit.id);
+      if (hits.length === 1) return String(hits[0].id);
+      if (hits.length > 1 && name) {
+        const named = hits.find(
+          (t) => String(t?.name ?? '').toLowerCase().trim() === name,
+        );
+        if (named) return String(named.id);
+        return null;
+      }
+      if (hits.length > 1) return null;
     }
     if (name) {
       const hit = rows.find((t) => String(t?.name ?? '').toLowerCase().trim() === name);

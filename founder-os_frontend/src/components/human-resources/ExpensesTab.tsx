@@ -3,9 +3,10 @@
 import React, { useState } from "react";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import ExpenseFormModal from "./ExpenseFormModal";
+import FundTopupModal from "./FundTopupModal";
 import {
   EXPENSE_TYPES, EXPENSE_TYPE_LABEL, PAYMENT_MODE_LABEL,
-  type ExpenseType, type HrDashboardData, type HrExpense,
+  type ExpenseType, type HrDashboardData, type HrExpense, type HrFundTxn,
 } from "@/hr/types";
 import { jsonRequest, readError } from "@/hr/api";
 import { dateLabel, isOwnExpense, money } from "@/hr/format";
@@ -64,6 +65,8 @@ export default function ExpensesTab({ data, month, canManage, me, onRefresh }: {
   const [type, setType] = useState<ExpenseType>("fixed");
   const [form, setForm] = useState<{ open: boolean; expense: HrExpense | null }>({ open: false, expense: null });
   const [deleting, setDeleting] = useState<HrExpense | null>(null);
+  const [fundForm, setFundForm] = useState<{ open: boolean; topup: HrFundTxn | null }>({ open: false, topup: null });
+  const [deletingTopup, setDeletingTopup] = useState<HrFundTxn | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -74,6 +77,7 @@ export default function ExpensesTab({ data, month, canManage, me, onRefresh }: {
   };
   const list = lists[type];
   const summary = data.expenses.summary;
+  const fund = data.fund ?? { topups: [], summary: { topupTotal: 0, officeTotal: 0, balance: 0, topupCount: 0 } };
 
   const remove = async () => {
     if (!deleting) return;
@@ -88,8 +92,37 @@ export default function ExpensesTab({ data, month, canManage, me, onRefresh }: {
     } finally { setBusy(false); }
   };
 
+  const removeTopup = async () => {
+    if (!deletingTopup) return;
+    setBusy(true); setErr(null);
+    try {
+      const res = await jsonRequest(`/api/human-resources/fund-topups/${deletingTopup.id}`, "DELETE");
+      if (!res.ok) throw new Error(await readError(res));
+      setDeletingTopup(null);
+      onRefresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Delete failed");
+    } finally { setBusy(false); }
+  };
+
   return (
     <div className="space-y-4">
+      {/* Office fund balance: lifetime funding minus lifetime fixed+variable spend */}
+      <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-500">Office balance</div>
+            <div className={`mt-0.5 text-2xl font-extrabold ${fund.summary.balance < 0 ? "text-rose-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+              {money(fund.summary.balance)}
+            </div>
+            <div className="mt-0.5 text-[11px] text-zinc-500">
+              Funded {money(fund.summary.topupTotal)} · Spent (office) {money(fund.summary.officeTotal)}
+            </div>
+          </div>
+          <button onClick={() => setFundForm({ open: true, topup: null })} className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white">+ Add funding</button>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <SummaryCard label="Fixed" amount={summary.fixedTotal} count={summary.fixedCount} tone="text-indigo-500 dark:text-indigo-400" />
         <SummaryCard label="Variable" amount={summary.variableTotal} count={summary.variableCount} tone="text-amber-600 dark:text-amber-400" />
@@ -132,6 +165,35 @@ export default function ExpensesTab({ data, month, canManage, me, onRefresh }: {
         </div>
       )}
 
+      {fund.topups.length > 0 && (
+        <details className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-extrabold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+            Funding history · {fund.summary.topupCount} {fund.summary.topupCount === 1 ? "entry" : "entries"} · {money(fund.summary.topupTotal)} received
+          </summary>
+          <div className="mt-2 space-y-1.5">
+            {fund.topups.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-bold text-zinc-800 dark:text-zinc-100">{t.title}</div>
+                  <div className="text-[10px] text-zinc-500">
+                    {t.txnDate ? dateLabel(t.txnDate) : ""}
+                    {t.createdBy ? ` · by ${t.createdBy}` : ""}
+                    {t.notes ? ` · ${t.notes}` : ""}
+                  </div>
+                </div>
+                <span className="shrink-0 text-xs font-extrabold text-emerald-600 dark:text-emerald-400">+{money(t.amount)}</span>
+                {isOwnExpense(t.createdBy, me, canManage) && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button onClick={() => setFundForm({ open: true, topup: t })} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">Edit</button>
+                    <button onClick={() => setDeletingTopup(t)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-rose-500 hover:bg-rose-500/10">Delete</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
       {form.open && (
         <ExpenseFormModal
           expense={form.expense}
@@ -150,6 +212,24 @@ export default function ExpensesTab({ data, month, canManage, me, onRefresh }: {
         busy={busy}
         onConfirm={remove}
         onCancel={() => setDeleting(null)}
+      />
+
+      {fundForm.open && (
+        <FundTopupModal
+          topup={fundForm.topup}
+          onClose={() => setFundForm({ open: false, topup: null })}
+          onSaved={onRefresh}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!deletingTopup}
+        title="Delete funding entry?"
+        message={<>Delete <b>{deletingTopup?.title}</b> ({deletingTopup ? money(deletingTopup.amount) : ""})? The office balance will go up by this amount.</>}
+        confirmLabel="Delete"
+        busy={busy}
+        onConfirm={removeTopup}
+        onCancel={() => setDeletingTopup(null)}
       />
     </div>
   );

@@ -69,6 +69,15 @@ export interface MemberInput {
   order: number;
 }
 
+/** One funding top-up HR receives. Balance = lifetime top-ups − lifetime
+ *  fixed+variable expenses (field_staff never touches the balance). */
+export interface FundTxnInput {
+  title: string;
+  amount: number;
+  txnDate: string;
+  notes: string | null;
+}
+
 
 export interface InventoryItemInput {
   name: string;

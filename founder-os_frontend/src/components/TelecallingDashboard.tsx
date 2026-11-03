@@ -16,6 +16,7 @@ import { MetricStrip } from "@/components/telecalling/MetricStrip";
 import NeoDoveCampaignSection from "@/components/telecalling/NeoDoveCampaignSection";
 import RehomeEstimateSection from "@/components/telecalling/RehomeEstimateSection";
 import SalesHolidaysSection from "@/components/telecalling/SalesHolidaysSection";
+import ClientSegmentSection from "@/components/telecalling/ClientSegmentSection";
 import { PodiumRow } from "@/components/telecalling/PodiumRow";
 import { HoldingPens } from "@/components/telecalling/HoldingPens";
 import { CARD } from "@/components/telecalling/surface";
@@ -111,6 +112,14 @@ interface RegionInfo {
   declinedItems?: BoardClosedItemLite[];
   /** ₹1L/day target + weekly carry-forward ledger (server-computed). */
   target?: RegionTarget | null;
+  /** Filter-period consumer target (server-computed, no carry-in). */
+  periodTarget?: import("@/telecalling/targets").PeriodTarget | null;
+  /** Consumer / reseller / needs-review split of `won` (server-computed). */
+  wonSplit?: {
+    consumer: { count: number; value: number };
+    reseller: { count: number; value: number };
+    unclassified: { count: number; value: number };
+  };
 }
 
 /** One accepted estimate behind a region's `Won` figure (BoardClosedItem). */
@@ -161,6 +170,13 @@ interface DashData {
     directValue?: number;
     unlinkedWon?: number;
     unlinkedValue?: number;
+    /** Consumer-only cohort split (server-computed, whole acceptance window). */
+    consumerWon?: number;
+    consumerValue?: number;
+    resellerWon?: number;
+    resellerValue?: number;
+    unclassifiedWon?: number;
+    unclassifiedValue?: number;
   };
   leaderboard: LeaderRow[];
   recent: any[];
@@ -925,6 +941,12 @@ function adaptDashData(d: any): DashData {
       directValue: Number(kpi.directValue ?? 0),
       unlinkedWon: Number(kpi.unlinkedWon ?? 0),
       unlinkedValue: Number(kpi.unlinkedValue ?? 0),
+      consumerWon: Number(kpi.consumerWon ?? 0),
+      consumerValue: Number(kpi.consumerValue ?? 0),
+      resellerWon: Number(kpi.resellerWon ?? 0),
+      resellerValue: Number(kpi.resellerValue ?? 0),
+      unclassifiedWon: Number(kpi.unclassifiedWon ?? 0),
+      unclassifiedValue: Number(kpi.unclassifiedValue ?? 0),
     },
     leaderboard,
     recent: d?.recent ?? [],
@@ -1478,6 +1500,11 @@ export default function TelecallingDashboard() {
         declined: r.declined ?? { count: 0, value: 0 },
         declinedItems: r.declinedItems ?? [],
         target: r.target ?? null,
+        // Filter-period consumer target + Won split — without these the row
+        // falls back to the since-start headline (2026-11-03 incident: rows
+        // read the October ledger while the tiles read the filter).
+        periodTarget: r.periodTarget ?? null,
+        wonSplit: r.wonSplit,
         open: r.open ?? { count: 0, value: 0 },
         callsConnected: Number(r.callsConnected ?? 0),
         leadsGenerated: Number(r.leadsGenerated ?? 0),
@@ -1560,8 +1587,9 @@ export default function TelecallingDashboard() {
                     <p className="mt-0.5 max-w-3xl text-[11px] leading-relaxed text-[var(--text-tertiary)]">
                       Every region team owes{" "}
                       <span className="font-bold text-[var(--text-secondary)]">₹{fmtNum(DAILY_REGION_TARGET)}</span> of accepted
-                      estimate value per working day (Mon–Sat). A week&apos;s shortfall carries forward — never forgiven. Ranks
-                      read accepted ÷ owed since {teamTarget?.targetStart ? fmtDate(teamTarget.targetStart) : "the ledger start"}.
+                      estimate value per working day (Mon–Sat) from <span className="font-bold text-[var(--text-secondary)]">end consumers</span> —
+                      reseller and unclassified ₹ never count. Ranks read this filter&apos;s consumer attainment; a week&apos;s
+                      shortfall still carries forward on the ledger below each bar.
                     </p>
                   </div>
                   <span className="rounded-full border border-[var(--border-card)] bg-[var(--surface-sunken)] px-2 py-1 text-[10px] font-bold text-[var(--text-tertiary)]">
@@ -1860,6 +1888,7 @@ export default function TelecallingDashboard() {
                   setError={setRosterError}
                   refreshAll={refreshAll}
                 />
+                <ClientSegmentSection refreshAll={refreshAll} />
                 <SalesHolidaysSection refreshAll={refreshAll} />
                 <HistoryResetSection
                   epoch={dash.data?.epoch ?? null}

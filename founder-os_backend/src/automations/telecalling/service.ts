@@ -56,6 +56,9 @@ import {
   workingDaysBetweenExcluding, isSunday,
 } from './targets';
 import { loadDeclinedSnapshot, type DeclinedAgg, type DeclinedEstimate } from './declined';
+import {
+  classifyClients, normalizeClientKey, type ClientSegmentKind,
+} from './client-segments';
 
 // ── Accepted-value targets ─────────────────────────────────────────────────
 // "Won ₹" = total ₹ of ACCEPTED estimates whose acceptance day (acceptedAt)
@@ -154,6 +157,19 @@ export function periodRange(period: string, todayStr: string): { from: string; t
       return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31`, label: 'Last Year' };
     default:
       return null;
+  }
+}
+
+/** Short prefix for the filter-period target line (wk ₹… / mo ₹… / …). */
+export function periodPrefix(period: string): string {
+  switch (period) {
+    case 'week': return 'wk';
+    case 'lastweek': return 'last wk';
+    case 'month': return 'mo';
+    case 'lastmonth': return 'last mo';
+    case 'year': return 'yr';
+    case 'lastyear': return 'last yr';
+    default: return 'today';
   }
 }
 
@@ -328,7 +344,9 @@ export async function computeTelecallingDaily(
       const id = o.id;
       const c = agg.get(`${d}|${id}`);
       const nd = (o.neodoveUserName && neoMap[o.neodoveUserName])
-        || (o.neodoveUserId && neoMap[o.neodoveUserId])
+        // userId fallback only when the row holds no userName (recycled ids
+        // must never credit a stranger's calls — see the ndByTc note above).
+        || (!o.neodoveUserName && o.neodoveUserId && neoMap[o.neodoveUserId])
         || undefined;
       const callsConnected = nd?.callsConnected ?? 0;
       // Enquiry-sourced (Sales Enquiries dashboard) — not NeoDove get-leads.
@@ -444,10 +462,15 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const epoch = await getEpochDate();
 
   // Lead Generation: drilled call KPis per staff member from the NeoDove map.
+  // The userId fallback serves ONLY rows with no stored userName: NeoDove ids
+  // are recycled across staff, so a stored userName that misses the map means
+  // "this person has no report" — falling back to their (possibly reassigned)
+  // id would credit them a stranger's calls (2026-11-02: Muskan's stale
+  // 3518625a would have read Kamal's calls).
   const ndByTc = new Map<string, Record<string, number>>();
   for (const t of telecallers as any[]) {
     const nd = (t.neodoveUserName && neodoveMap[t.neodoveUserName])
-      || (t.neodoveUserId && neodoveMap[t.neodoveUserId])
+      || (!t.neodoveUserName && t.neodoveUserId && neodoveMap[t.neodoveUserId])
       || null;
     ndByTc.set(String(t.id), nd ?? {});
   }
@@ -483,6 +506,25 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // only forgets credits, not what the team lost). Same creator index, same
   // region attribution rule as wins (declined.ts).
   const declinedSnapshot = await loadDeclinedSnapshot(leadFrom, wonTo, { creatorIndex });
+
+  // ── Consumer vs reseller (founder 2026-11-02: the ₹1L/day target counts
+  //  END-CONSUMER accepted ₹ only). Every accepted/declined row in the window
+  //  is classified: manual override → auto master match → unset (needs
+  //  review). Unset + reseller rows are EXCLUDED from target achievement but
+  //  stay in Won (bifurcated) so money never silently disappears.
+  const declinedNames: string[] = [];
+  for (const list of declinedSnapshot.byRegionItems.values()) {
+    for (const r of list as DeclinedEstimate[]) declinedNames.push(String(r?.customerName ?? ''));
+  }
+  const segmentByKey = await classifyClients([
+    ...wonSnapshot.rows.map((r) => String(r?.customerName ?? '')),
+    ...declinedNames,
+  ]);
+  const segOf = (customerName: unknown): { segment: ClientSegmentKind; source: string } => {
+    const cls = segmentByKey.get(normalizeClientKey(customerName));
+    if (!cls) return { segment: '', source: 'none' };
+    return { segment: cls.segment, source: cls.source };
+  };
 
   // Historic penalties (−10 remark / −15 snatch) are the only ledger rows that
   // still move a staff score; positive close rows no longer define wins.
@@ -621,12 +663,18 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     name: string;
     tl: TlLevel;
     states: string[];
-    /** Leaderboard position by target attainment (1 = best). */
+    /** Leaderboard position by FILTER-period consumer attainment (1 = best). */
     rank: number;
     leadsGenerated: number;
     won: { count: number; value: number };
     /** Same numbers as `won`, plus slab points (accepted-estimate source). */
     accepted: AcceptedAgg;
+    /** Consumer / reseller / needs-review split of `won` (target honesty). */
+    wonSplit: {
+      consumer: { count: number; value: number };
+      reseller: { count: number; value: number };
+      unclassified: { count: number; value: number };
+    };
     /** The closed estimates behind `accepted`, newest first (capped). */
     acceptedItems: AcceptedEstimate[];
     /** Declines that BECAME declined inside the period (the board's Declined stat). */
@@ -635,6 +683,23 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     declinedItems: DeclinedEstimate[];
     /** Daily ₹1L target + weekly carry-forward ledger (targets.ts). */
     target: RegionTarget | null;
+    /** Filter-period target: consumer-only accepted vs elapsed working days.
+     *  Excludes carry-in by design — the backlog stays visible as its own
+     *  badge (targets.ts ledger), never inside this bar. */
+    periodTarget: {
+      label: string;
+      prefix: string;
+      from: string;
+      to: string;
+      workingDays: number;
+      target: number;
+      accepted: number;
+      pct: number;
+      met: boolean;
+      resellerValue: number;
+      unclassifiedValue: number;
+      unclassifiedCount: number;
+    } | null;
     open: { count: number; value: number };
     callsAttempted: number;
     callsConnected: number;
@@ -721,6 +786,38 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const leadsStatus: 'green' | 'amber' | 'red' =
       leadsPct >= 100 ? 'green' : leadsPct >= 60 ? 'amber' : 'red';
     members.sort((a, b) => b.points - a.points || b.closedValue - a.closedValue || b.score - a.score);
+    // Consumer split + filter-period target for this region. Splits come from
+    // the FULL snapshot rows (never the capped drawer lists); the drawer rows
+    // below are annotated with the same segment so every ₹ reconciles.
+    const accRows = wonSnapshot.rows.filter((r) => String(r.region ?? '') === def.id);
+    const splitOf = (kind: ClientSegmentKind): { count: number; value: number } => {
+      let count = 0; let value = 0;
+      for (const r of accRows) {
+        if (segOf(r.customerName).segment !== kind) continue;
+        count += 1; value += Number(r.total ?? 0) || 0;
+      }
+      return { count, value: Math.round(value) };
+    };
+    const consumer = splitOf('consumer');
+    const reseller = splitOf('reseller');
+    const unclassified = splitOf('');
+    const annotateItems = (items: AcceptedEstimate[]): AcceptedEstimate[] =>
+      items.map((it) => {
+        const s = segOf(it.customerName);
+        return { ...it, segment: s.segment, segmentSource: s.source } as AcceptedEstimate;
+      });
+    const annotateDeclined = (items: DeclinedEstimate[]): DeclinedEstimate[] =>
+      items.map((it) => {
+        const s = segOf(it.customerName);
+        return { ...it, segment: s.segment, segmentSource: s.source } as DeclinedEstimate;
+      });
+    // Filter target: elapsed working days × ₹1L vs consumer-only accepted.
+    // Carry-in is deliberately NOT in this denominator (see periodTarget doc).
+    const periodTargetValue = DAILY_REGION_TARGET * workingDays;
+    const periodAccepted = consumer.value;
+    const periodPct = periodTargetValue > 0
+      ? Math.round((periodAccepted / periodTargetValue) * 100)
+      : periodAccepted > 0 ? 100 : 0;
     regions.push({
       id: def.id,
       name: def.name,
@@ -730,10 +827,25 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       leadsGenerated,
       won: { count: acc.count, value: Math.round(acc.value) },
       accepted: acc,
-      acceptedItems: wonSnapshot.byRegionItems.get(def.id) ?? [],
+      wonSplit: { consumer, reseller, unclassified },
+      acceptedItems: annotateItems(wonSnapshot.byRegionItems.get(def.id) ?? []),
       declined: { count: declined.count, value: Math.round(declined.value) },
-      declinedItems: declinedSnapshot.byRegionItems.get(def.id) ?? [],
+      declinedItems: annotateDeclined(declinedSnapshot.byRegionItems.get(def.id) ?? []),
       target: targetByRegion.get(def.id) ?? null,
+      periodTarget: {
+        label: periodRangeInfo?.label ?? 'Today',
+        prefix: periodPrefix(typeof q.period === 'string' ? q.period : 'today'),
+        from: periodRangeInfo?.from ?? day,
+        to: periodRangeInfo?.to ?? day,
+        workingDays,
+        target: periodTargetValue,
+        accepted: periodAccepted,
+        pct: periodPct,
+        met: periodTargetValue > 0 ? periodAccepted >= periodTargetValue : periodAccepted > 0,
+        resellerValue: reseller.value,
+        unclassifiedValue: unclassified.value,
+        unclassifiedCount: unclassified.count,
+      },
       open,
       callsAttempted,
       callsConnected,
@@ -744,13 +856,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       staff: members as unknown as Array<Record<string, unknown>>,
     });
   }
-  // One leaderboard, ranked REGIONWISE. Metric (founder decision 2026-10-26):
-  // target attainment since the ledger start — the share of everything a region
-  // owed (daily ₹1L + carried backlog) that it actually delivered. Ties fall
-  // back to accepted value. Ranks are stable for the whole week, so a huge
-  // Monday does not reshuffle the board every hour.
+  // One leaderboard, ranked REGIONWISE. Metric (founder decision 2026-11-02):
+  // consumer-only attainment in the SELECTED filter period (elapsed working
+  // days × ₹1L vs end-consumer accepted ₹) — so "This Month" ranks November
+  // alone, never October's sales. Ties fall back to consumer accepted value.
+  // The since-start ledger stays on the row as the backlog badge.
   [...regions]
-    .sort((a, b) => (b.target?.attainmentPct ?? 0) - (a.target?.attainmentPct ?? 0) || b.won.value - a.won.value)
+    .sort((a, b) => (b.periodTarget?.pct ?? 0) - (a.periodTarget?.pct ?? 0) || (b.periodTarget?.accepted ?? 0) - (a.periodTarget?.accepted ?? 0))
     .forEach((r, i) => { r.rank = i + 1; });
   const unmappedStaff = (telecallers as any[]).filter((t) => !String((t as any).region ?? ''))
     .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
@@ -766,11 +878,29 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // to it — that mismatch used to be a silent ₹17.79L (Oct 2026).
   const regionWon = regions.reduce((s, r) => s + r.won.count, 0);
   const regionValue = regions.reduce((s, r) => s + r.won.value, 0);
+  // Cohort consumer split (whole acceptance window, all buckets): Won stays
+  // the total, the split explains which ₹ counts toward the ₹1L target.
+  let consumerWon = 0; let consumerValue = 0;
+  let resellerWon = 0; let resellerValue = 0;
+  let unclassifiedWon = 0; let unclassifiedValue = 0;
+  for (const r of wonSnapshot.rows) {
+    const v = Math.round(Number(r.total ?? 0) || 0);
+    const seg = segOf(r.customerName).segment;
+    if (seg === 'consumer') { consumerWon += 1; consumerValue += v; }
+    else if (seg === 'reseller') { resellerWon += 1; resellerValue += v; }
+    else { unclassifiedWon += 1; unclassifiedValue += v; }
+  }
   const kpi = {
     won: wonSnapshot.count,
     closedValue: Math.round(wonSnapshot.value),
     regionWon,
     regionValue,
+    consumerWon,
+    consumerValue,
+    resellerWon,
+    resellerValue,
+    unclassifiedWon,
+    unclassifiedValue,
     directWon: wonSnapshot.direct.count,
     directValue: Math.round(wonSnapshot.direct.value),
     unlinkedWon: wonSnapshot.unlinked.count,
@@ -812,6 +942,23 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     sinceStartAccepted: regions.reduce((s, r) => s + (r.target?.sinceStart.accepted ?? 0), 0),
     pct: teamPct,
     status: teamPct >= 100 ? 'ontrack' : teamPct >= 60 ? 'behind' : 'critical',
+    // Filter-period team bar (consumer-only): the number the tiles go green on.
+    periodLabel: periodRangeInfo?.label ?? 'Today',
+    periodPrefix: periodPrefix(typeof q.period === 'string' ? q.period : 'today'),
+    periodFrom: periodRangeInfo?.from ?? day,
+    periodTo: periodRangeInfo?.to ?? day,
+    periodWorkingDays: workingDays,
+    periodTarget: regions.reduce((s, r) => s + (r.periodTarget?.target ?? 0), 0),
+    periodAccepted: regions.reduce((s, r) => s + (r.periodTarget?.accepted ?? 0), 0),
+    periodPct: (() => {
+      const t = regions.reduce((s, r) => s + (r.periodTarget?.target ?? 0), 0);
+      const a = regions.reduce((s, r) => s + (r.periodTarget?.accepted ?? 0), 0);
+      return t > 0 ? Math.round((a / t) * 100) : a > 0 ? 100 : 0;
+    })(),
+    periodConsumerValue: consumerValue,
+    periodResellerValue: resellerValue,
+    periodUnclassifiedValue: unclassifiedValue,
+    periodUnclassifiedWon: unclassifiedWon,
   };
 
   // Self-contained staff list so the dashboard can build dropdowns without a

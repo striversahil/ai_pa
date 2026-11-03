@@ -76,14 +76,27 @@ export function PodiumRow({
   declinedOpen, onToggleDeclined, onOpenRegion, targetStart, workingDays,
 }: PodiumRowProps) {
   const t = region.target;
+  const pt = region.periodTarget ?? null;
   const status: TargetStatus = t?.status ?? "critical";
   const tone = TARGET_TONE[status];
-  const attainment = t?.attainmentPct ?? 0;
-  const animatedPct = useCountUp(attainment);
-  const pace = t ? Math.max(0, Math.min(100, Math.round(t.pacePct ?? 0))) : 0;
-  const weekDue = t?.weekDue ?? 0;
-  const weekAccepted = t?.weekAccepted ?? 0;
-  const weekPct = weekDue > 0 ? Math.max(0, Math.min(100, (weekAccepted / weekDue) * 100)) : 0;
+  // Headline = FILTER-period consumer attainment (no carry-in, no backlog).
+  // Falls back to the since-start ledger only for payloads that predate
+  // periodTarget. The ledger status pill + carry badges below keep the backlog
+  // visible — the bar itself never mixes October into November.
+  const headlinePct = pt ? pt.pct : (t?.attainmentPct ?? 0);
+  const animatedPct = useCountUp(headlinePct);
+  const headlineAccepted = pt ? pt.accepted : (t?.sinceStart.accepted ?? 0);
+  const headlineTarget = pt ? pt.target : (t?.sinceStart.target ?? 0);
+  const headlineCaption = pt ? pt.label.toLowerCase() : `since ${startDay0()}`;
+  const periodMet = pt ? pt.met : headlinePct >= 100;
+  const periodNone = !!pt && pt.target <= 0;
+  const periodRail = periodNone
+    ? "bg-zinc-400 dark:bg-zinc-600"
+    : periodMet ? "bg-emerald-500" : headlinePct >= 60 ? "bg-amber-500" : "bg-rose-500";
+  function startDay0(): string {
+    const w0 = t?.weeks?.[0]?.weekStart ?? targetStart ?? "";
+    return w0 ? fmtDate(w0) : "start";
+  }
   const startDay = t?.weeks?.[0]?.weekStart ?? targetStart ?? "";
 
   return (
@@ -142,65 +155,53 @@ export function PodiumRow({
           </div>
         </div>
 
-        {/* ── Attainment + this week (the flexible middle) ─────────────── */}
+        {/* ── Filter-period attainment (consumer-only, no carry-in) ──── */}
         <div className="min-w-0 flex-1 border-t border-[var(--border-card)] pt-2 xl:border-l xl:border-t-0 xl:pl-3.5 xl:pt-0">
           <div className="flex items-baseline gap-1.5">
             <span className="font-heading text-base font-bold leading-5 tabular-nums tracking-tight text-[var(--text-primary)]">
-              {t ? `${Math.round(animatedPct)}%` : "—"}
+              {t || pt ? `${Math.round(animatedPct)}%` : "—"}
             </span>
             <span className="text-[9px] font-bold uppercase tracking-[0.07em] text-[var(--text-tertiary)]">
-              since {startDay ? fmtDate(startDay) : "start"}
+              {pt ? `${pt.prefix} · consumer` : headlineCaption}
             </span>
             <span className="ml-auto whitespace-nowrap font-mono text-[10px] font-semibold text-[var(--text-secondary)]">
-              {fmtLakh(t?.sinceStart.accepted ?? 0)}
-              <span className="text-[var(--text-tertiary)]"> / {fmtLakh(t?.sinceStart.target ?? 0)}</span>
+              {fmtLakh(headlineAccepted)}
+              <span className="text-[var(--text-tertiary)]"> / {fmtLakh(headlineTarget)}</span>
             </span>
           </div>
 
-          {/* Rail: fill = accepted ÷ owed since the ledger start. */}
+          {/* Rail: fill = consumer accepted ÷ filter target. Green the moment
+              the FILTER target is met — even when the ledger is still red. */}
           <div
             className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border-card)]"
             role="progressbar"
-            aria-valuenow={Math.round(attainment)}
+            aria-valuenow={Math.round(headlinePct)}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-label={`${region.name} target attainment since ${startDay ? fmtDate(startDay) : "start"}`}
+            aria-label={`${region.name} consumer target attainment ${pt ? pt.label.toLowerCase() : headlineCaption}`}
           >
             <span
-              className={`block h-full rounded-full ${tone.rail} transition-[width] duration-700 ease-out`}
-              style={{ width: `${Math.min(100, Math.max(2, attainment))}%` }}
+              className={`block h-full rounded-full ${periodRail} transition-[width] duration-700 ease-out`}
+              style={{ width: `${Math.min(100, Math.max(2, headlinePct))}%` }}
             />
           </div>
 
-          {/* This week: due includes the carried backlog, so the fill and the
-              pace tick use different denominators on purpose — the tick is this
-              week's OWN accrual (server `pacePct`). Hidden when the region has
-              no ledger, otherwise it would claim "week cleared" for a region
-              that is not being tracked at all. */}
+          {/* Backlog stays visible as badges — never inside the bar. */}
           {t && (
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] leading-4">
               <span className="whitespace-nowrap font-mono font-semibold text-[var(--text-secondary)]">
-                wk {fmtLakh(weekAccepted)}
-                <span className="text-[var(--text-tertiary)]"> / {fmtLakh(weekDue)}</span>
+                {pt ? `${pt.prefix} ${fmtLakh(pt.accepted)}` : `wk ${fmtLakh(t.weekAccepted)}`}
+                <span className="text-[var(--text-tertiary)]"> / {fmtLakh(pt ? pt.target : t.weekDue)} target</span>
               </span>
-              <span
-                className="relative inline-block h-1 w-14 overflow-visible rounded-full bg-[var(--border-card)]"
-                title={`Week pace ${pace}% of this week's ₹${fmtNum(t.weekTarget)} accrual (carry-in of ${fmtLakh(t.carryIn)} excluded)`}
-                aria-hidden="true"
-              >
-                <span
-                  className={`block h-full rounded-full ${weekPct >= 100 ? "bg-emerald-500" : weekPct >= 60 ? "bg-amber-500" : "bg-rose-500"} transition-[width] duration-700 ease-out`}
-                  style={{ width: `${Math.max(2, weekPct)}%` }}
-                />
-                <span
-                  className="absolute -top-[3px] h-2.5 w-[2px] rounded-full bg-[var(--text-tertiary)]/70 transition-[left] duration-700 ease-out"
-                  style={{ left: `calc(${pace}% - 1px)` }}
-                />
-              </span>
-              <span className="whitespace-nowrap font-semibold text-[var(--text-tertiary)]">pace {pace}%</span>
+              {periodNone && (
+                <span className={`${PILL} py-0 text-[9px] border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400`}>no working days</span>
+              )}
+              {!periodNone && periodMet && (
+                <span className={`${PILL} py-0 text-[9px] border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300`}>✓ {pt ? pt.label : "week"} met</span>
+              )}
               {t.carryIn > 0 && (
                 <span className={`${PILL} py-0 text-[9px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300`} title="Unmet target carried into this week from earlier weeks">
-                  ↩ {fmtLakh(t.carryIn)} in
+                  ↩ {fmtLakh(t.carryIn)} backlog
                 </span>
               )}
               {t.carryOut > 0 ? (
@@ -208,8 +209,16 @@ export function PodiumRow({
                   → {fmtLakh(t.carryOut)} out
                 </span>
               ) : (
-                <span className={`${PILL} py-0 text-[9px] border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300`}>✓ cleared</span>
+                <span className={`${PILL} py-0 text-[9px] border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300`}>✓ ledger cleared</span>
               )}
+              {pt && pt.unclassifiedCount > 0 && (
+                <span className={`${PILL} py-0 text-[9px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300`} title="Accepted ₹ waiting for a consumer/reseller decision — excluded from the bar until reviewed">
+                  ? {pt.unclassifiedCount} unclassified · {fmtLakh(pt.unclassifiedValue)}
+                </span>
+              )}
+              <span className="whitespace-nowrap text-[var(--text-tertiary)]" title="Since-start ledger (backlog included)">
+                ledger {fmtLakh(t.sinceStart.accepted)} / {fmtLakh(t.sinceStart.target)}
+              </span>
             </div>
           )}
         </div>
@@ -233,6 +242,16 @@ export function PodiumRow({
               {region.won.count}
             </div>
             <div className="truncate text-[9px] font-semibold leading-3 text-[var(--text-tertiary)]">{fmtLakh(region.won.value)}</div>
+            {region.wonSplit && (region.wonSplit.reseller.value > 0 || region.wonSplit.unclassified.value > 0) && (
+              <div
+                className="truncate text-[9px] font-semibold leading-3 text-[var(--text-tertiary)]"
+                title={`Consumer ${fmtLakh(region.wonSplit.consumer.value)} · Reseller ${fmtLakh(region.wonSplit.reseller.value)} · Unclassified ${fmtLakh(region.wonSplit.unclassified.value)} — only consumer ₹ counts toward the ₹1L target`}
+              >
+                cons {fmtLakh(region.wonSplit.consumer.value)}
+                {region.wonSplit.reseller.value > 0 && <span> · res {fmtLakh(region.wonSplit.reseller.value)}</span>}
+                {region.wonSplit.unclassified.value > 0 && <span> · ? {fmtLakh(region.wonSplit.unclassified.value)}</span>}
+              </div>
+            )}
           </button>
           {/* Loss side of the same period — same door pattern as Won. */}
           <button

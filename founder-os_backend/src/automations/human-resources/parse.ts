@@ -1,7 +1,7 @@
 import { HrError } from './errors';
 import {
   EXPENSE_TYPES, INVENTORY_MOVE_TYPES, PAYMENT_MODES, TASK_PRIORITIES, TASK_STATUSES,
-  type ExpenseInput, type InventoryItemInput, type InventoryItemPatch, type InventoryTxnInput,
+  type ExpenseInput, type FundTxnInput, type InventoryItemInput, type InventoryItemPatch, type InventoryTxnInput,
   type MemberInput, type TaskInput, type TaskPatch,
 } from './types';
 
@@ -157,6 +157,37 @@ export function cleanExpensePatch(input: Record<string, any>): Partial<ExpenseIn
     out.paymentMode = input.paymentMode === null || input.paymentMode === ''
       ? null
       : oneOf(input.paymentMode, PAYMENT_MODES, 'paymentMode');
+  }
+  if (input.notes !== undefined) out.notes = nullableText(input.notes, 1000);
+  if (Object.keys(out).length === 0) throw new HrError('nothing to update');
+  return out;
+}
+
+export function cleanFundTxnCreate(input: Record<string, any>): FundTxnInput {
+  const title = text(input.title, 200);
+  if (!title) throw new HrError('title is required');
+  const txnDate = String(input.txnDate ?? '').slice(0, 10);
+  if (!isValidDate(txnDate)) throw new HrError('txnDate must be YYYY-MM-DD');
+  return {
+    title,
+    amount: positiveAmount(input.amount),
+    txnDate,
+    notes: nullableText(input.notes, 1000),
+  };
+}
+
+export function cleanFundTxnPatch(input: Record<string, any>): Partial<FundTxnInput> {
+  const out: Partial<FundTxnInput> = {};
+  if (input.title !== undefined) {
+    const title = text(input.title, 200);
+    if (!title) throw new HrError('title cannot be empty');
+    out.title = title;
+  }
+  if (input.amount !== undefined) out.amount = positiveAmount(input.amount);
+  if (input.txnDate !== undefined) {
+    const txnDate = String(input.txnDate ?? '').slice(0, 10);
+    if (!isValidDate(txnDate)) throw new HrError('txnDate must be YYYY-MM-DD');
+    out.txnDate = txnDate;
   }
   if (input.notes !== undefined) out.notes = nullableText(input.notes, 1000);
   if (Object.keys(out).length === 0) throw new HrError('nothing to update');

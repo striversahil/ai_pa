@@ -46,6 +46,25 @@ export interface RegionTarget {
   status: TargetStatus;
 }
 
+/** Filter-period target (server-computed): consumer-only accepted ₹ vs the
+ *  elapsed working days × ₹1L in the SELECTED filter — no carry-in. The bar
+ *  goes green when the filter's own target is met, even if the since-start
+ *  ledger (backlog included) is still red. */
+export interface PeriodTarget {
+  label: string;
+  prefix: string;
+  from: string;
+  to: string;
+  workingDays: number;
+  target: number;
+  accepted: number;
+  pct: number;
+  met: boolean;
+  resellerValue: number;
+  unclassifiedValue: number;
+  unclassifiedCount: number;
+}
+
 /** Team roll-up of the four region ledgers (server-computed). */
 export interface TeamTarget {
   perRegionPerDay: number;
@@ -63,6 +82,19 @@ export interface TeamTarget {
   sinceStartAccepted: number;
   pct: number;
   status: TargetStatus;
+  /** Filter-period team bar (consumer-only) — what the tiles go green on. */
+  periodLabel?: string;
+  periodPrefix?: string;
+  periodFrom?: string;
+  periodTo?: string;
+  periodWorkingDays?: number;
+  periodTarget?: number;
+  periodAccepted?: number;
+  periodPct?: number;
+  periodConsumerValue?: number;
+  periodResellerValue?: number;
+  periodUnclassifiedValue?: number;
+  periodUnclassifiedWon?: number;
 }
 
 export const TARGET_STATUS_LABEL: Record<TargetStatus, string> = {

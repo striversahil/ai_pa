@@ -55,6 +55,9 @@ const tests = [
   ['GET /api/delegation/tasks/x/logs no-auth -> 401', '/api/delegation/tasks/x/logs'],
   ['DELETE /api/delegation/tasks/x no-auth -> 401', '/api/delegation/tasks/x', { method: 'DELETE' }],
   ['PUT /api/delegation/members/x/login-email no-auth -> 401', '/api/delegation/members/x/login-email', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginEmail: 'a@b.com' }) }],
+  ['POST /api/human-resources/fund-topups no-auth -> 401', '/api/human-resources/fund-topups', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x', amount: 1, txnDate: '2026-01-01' }) }],
+  ['PATCH /api/human-resources/fund-topups/x no-auth -> 401', '/api/human-resources/fund-topups/x', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'y' }) }],
+  ['DELETE /api/human-resources/fund-topups/x no-auth -> 401', '/api/human-resources/fund-topups/x', { method: 'DELETE' }],
   ['GET /api/accounts/roster', '/api/accounts/roster'],
   ['GET /api/accounts/templates', '/api/accounts/templates'],
   ['GET /api/neodove/campaign/states no-auth -> 401', '/api/neodove/campaign/states?region=R1'],
@@ -62,6 +65,9 @@ const tests = [
   ['POST /api/neodove/campaign/push no-auth -> 401', '/api/neodove/campaign/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ region: 'R1', state: 'Punjab' }) }],
   ['GET /api/neodove/campaign/batches no-auth -> 401', '/api/neodove/campaign/batches?region=R1'],
   ['PUT /api/neodove/campaign/agents/R1_NEHA_VERMA/url no-auth -> 401', '/api/neodove/campaign/agents/R1_NEHA_VERMA/url', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: 'https://x.neodove.com/integration/custom/u/leads' }) }],
+  ['GET /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments'],
+  ['PUT /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientKey: 'TEST', segment: 'consumer' }) }],
+  ['PUT /api/telecalling/client-type-rules no-auth -> 403', '/api/telecalling/client-type-rules', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ typeBase: 'Flour Mill', segment: 'consumer' }) }],
   ['GET /nope', '/nope'],
 ];
 
@@ -70,7 +76,7 @@ for (const [name, path, opts] of tests) {
   const expects404 = name.includes('(moved to GHA)');
   const ok = expects404
     ? r.status === 404
-    : r.status === 200 || r.status === 401 || r.status === 404;
+    : r.status === 200 || r.status === 401 || r.status === 403 || r.status === 404;
   console.log(`${ok ? 'PASS' : '???'}  ${name.padEnd(38)} -> ${r.status}`);
   if (r.status === 'ERR' || !ok) {
     console.log('     ', r.body);
