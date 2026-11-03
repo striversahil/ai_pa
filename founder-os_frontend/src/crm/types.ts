@@ -112,7 +112,7 @@ export interface CrmSummary {
 
 export const VIEW_LABELS: Record<View, string> = {
   "dispatch-floor": "Dispatch Floor",
-  unscheduled: "Schedule",
+  unscheduled: "To Schedule",
   scheduled: "Scheduled",
   dispatched: "Dispatched",
   "source-deleted": "Source Deleted",

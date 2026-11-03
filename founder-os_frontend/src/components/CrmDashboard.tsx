@@ -52,7 +52,7 @@ const daysBetween = (from: string, to: string) => {
 
 const TABS: Array<{ key: View; label: string; icon: LucideIcon }> = [
   { key: "dispatch-floor", label: "Dispatch Floor", icon: Truck },
-  { key: "unscheduled", label: "Schedule", icon: CalendarClock },
+  { key: "unscheduled", label: "To Schedule", icon: CalendarClock },
   { key: "scheduled", label: "Scheduled", icon: Clock },
   { key: "dispatched", label: "Dispatched", icon: CheckCircle2 },
   { key: "source-deleted", label: "Source Deleted", icon: Trash2 },
