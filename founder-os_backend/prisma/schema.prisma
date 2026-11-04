@@ -933,6 +933,8 @@ model Accountant {
 // Recurring task definition. MIS-owned: daily / weekly / monthly /
 // quarterly / yearly cadence, owner role (senior|junior|either), optional
 // dueDay (monthly: 1-31, yearly: day-of-month) + dueMonth (yearly: 1-12).
+// kind='payment' rows are recurring bills (Payment dues tab) — task rows
+// ignore the payment-only columns below.
 model AccountsTaskTemplate {
   id          String   @id @default(uuid())
   title       String
@@ -959,8 +961,15 @@ model AccountsTaskTemplate {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   logs        AccountsTaskLog[]
+  // ── Payment dues (kind='payment' templates; task rows ignore these) ──────
+  kind        String   @default("task") // task | payment
+  biller      String?
+  category    String?
+  amount      Float?
+  remindDays  String   @default("7,3,1") // CSV days-before-due, e.g. "7,3,1"
 
   @@index([active, frequency])
+  @@index([kind, active])
 }
 
 // One concrete task instance per (template, due date, slot). Status + remark
@@ -984,6 +993,9 @@ model AccountsTaskLog {
   accountantId String?
   accountant   Accountant? @relation(fields: [accountantId], references: [id], onDelete: SetNull)
   updatedBy    String?
+  // ── Payment proof (kind='payment' cycles only; task rows ignore these) ───
+  paidAmount Float?
+  paidRef    String?
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
 

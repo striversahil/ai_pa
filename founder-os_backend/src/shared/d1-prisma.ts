@@ -269,6 +269,8 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   DebtorInvoice: ['invoiceAmount', 'baseReceived', 'collectedAtImport'],
   PaymentCollection: ['amount'],
   PaymentReminder: ['amount'],
+  AccountsTaskTemplate: ['amount'],
+  AccountsTaskLog: ['paidAmount'],
 };
 
 const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?: boolean }>> = {

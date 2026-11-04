@@ -756,13 +756,16 @@ async function computeDashboard(
       };
     });
   const team = await computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs });
+  // Payment dues ride the same payload (no lane scoping). Fetch once.
+  const paymentDues = await getPaymentDues(dateStr);
+  const paymentHistory = await getPaymentHistory(dateStr);
   return {
     meta: {
       date: dateStr,
       today: istDateStr(),
       // Calc version tag (shown tiny in the UI header): proves which backend
       // logic produced these numbers. Bump when the dashboard math changes.
-      computeV: 'slot-1',
+      computeV: 'slot-2',
       total: items.length,
       open: openCount,
       inProgress: inProgressCount,
@@ -791,8 +794,11 @@ async function computeDashboard(
     unscheduled,
     // Payment dues ride the same payload (no lane scoping — any viewer of the
     // dashboard sees every due; the tab enforces nothing beyond dashboard
-    // access, and writes are separately gated per route).
-    payments: await getPaymentDues(dateStr),
+    // access, and writes are separately gated per route). `payments` = every
+    // unresolved cycle; `paymentHistory` = every paid cycle, newest first.
+    payments: paymentDues,
+    paymentHistory,
+    paymentSummary: summarizePayments(paymentDues, paymentHistory),
     team: { ...team, incompleteToday: (team as any).overdueToday },
   };
 }
@@ -1226,9 +1232,21 @@ export async function logTask(
 // ── Payment dues (kind='payment' templates — the Payment dues tab) ───────────
 // A payment template is a recurring bill (credit card, recharge, …). Each
 // billing cycle is a log instance; marking paid = done + amount + reference.
-// Buckets are fixed-schedule: overdue (past due, unpaid) · due within 7 days
-// (with 7/3/1-day remind flags) · upcoming · recently paid.
+// Structure: `dues` = EVERY unresolved cycle (all overdue, any age + due next
+// 60d + one projected cycle per bill) · `history` = ALL paid cycles, newest
+// first. Buckets on dues rows: overdue (past due, unpaid) · week (due within
+// 7 days, with 7/3/1-day remind flags) · upcoming.
 export type PaymentBucket = 'overdue' | 'week' | 'upcoming' | 'paid';
+
+export interface PaymentAttachment {
+  id: string;
+  fileName: string;
+  mime: string;
+  size: number;
+  uploadedBy: string;
+  createdAt: string;
+  url: string;
+}
 
 export interface PaymentDueRow {
   templateId: string;
@@ -1253,6 +1271,18 @@ export interface PaymentDueRow {
   daysOverdue: number;
   daysUntil: number;
   remind: boolean;
+  attachments: PaymentAttachment[];
+}
+
+export interface PaymentSummary {
+  unpaidTotal: number;
+  unpaidCount: number;
+  overdueCount: number;
+  overdueTotal: number;
+  weekCount: number;
+  weekTotal: number;
+  paidCount: number;
+  paidTotal: number;
 }
 
 function parseRemindDays(raw: unknown): number[] {
@@ -1264,7 +1294,7 @@ function parseRemindDays(raw: unknown): number[] {
   return uniq.length ? uniq : [7, 3, 1];
 }
 
-function toPaymentRow(t: any, log: any, dueDate: string, today: string): PaymentDueRow {
+function toPaymentRow(t: any, log: any, dueDate: string, today: string, attachments: PaymentAttachment[] = []): PaymentDueRow {
   const done = !!log && String(log.status) === 'done';
   const dd = dueDate.slice(0, 10);
   const daysUntil = diffDays(today, dd);
@@ -1299,22 +1329,58 @@ function toPaymentRow(t: any, log: any, dueDate: string, today: string): Payment
     daysOverdue: !done && dd < today ? diffDays(dd, today) : 0,
     daysUntil,
     remind: !done && dd >= today && remindDays.includes(daysUntil),
+    attachments,
   };
 }
 
+async function getPaymentTemplates(): Promise<any[]> {
+  const templates = (await prisma.accountsTaskTemplate.findMany({
+    where: { active: true },
+    orderBy: { order: 'asc' },
+  })) as any[];
+  return templates.filter((t) => String((t as any).kind || 'task') === 'payment');
+}
+
+function toPaymentAttachment(f: any): PaymentAttachment {
+  return {
+    id: String(f?.id ?? ''),
+    fileName: String(f?.fileName ?? ''),
+    mime: String(f?.mime ?? 'application/octet-stream'),
+    size: Number(f?.size ?? 0),
+    uploadedBy: String(f?.uploadedBy ?? ''),
+    createdAt: f?.createdAt instanceof Date ? f.createdAt.toISOString() : String(f?.createdAt ?? ''),
+    url: `/api/accounts/files/${String(f?.id ?? '')}`,
+  };
+}
+
+async function paymentAttachmentsByLog(logIds: string[]): Promise<Map<string, PaymentAttachment[]>> {
+  const out = new Map<string, PaymentAttachment[]>();
+  if (!logIds.length) return out;
+  const files = await (prisma as any).accountsTaskAttachment.findMany({
+    where: { logId: { in: logIds } },
+    orderBy: { createdAt: 'asc' },
+  }).catch(() => []);
+  for (const f of files as any[]) {
+    const k = String((f as any).logId);
+    if (!out.has(k)) out.set(k, []);
+    out.get(k)!.push(toPaymentAttachment(f));
+  }
+  return out;
+}
+
+/** EVERY unresolved cycle: all overdue (any age) + due next 60d + one projected
+ *  cycle per bill when no instance covers it. Never drops a bill. */
 export async function getPaymentDues(dateStr: string): Promise<PaymentDueRow[]> {
-  const templates = (
-    (await prisma.accountsTaskTemplate.findMany({
-      where: { active: true },
-      orderBy: { order: 'asc' },
-    })) as any[]
-  ).filter((t) => String(t.kind || 'task') === 'payment');
+  const templates = await getPaymentTemplates();
   if (!templates.length) return [];
-  const ids = templates.map((t) => String(t.id));
+  const ids = templates.map((t) => String((t as any).id));
+  const horizon = addDays(dateStr, 60);
+  // No lower bound — a bill unpaid for months stays overdue until paid.
   const logs = await (prisma as any).accountsTaskLog
     .findMany({
-      where: { templateId: { in: ids }, dueDate: { gte: addDays(dateStr, -120) } },
-      orderBy: { dueDate: 'desc' },
+      where: { templateId: { in: ids }, dueDate: { lte: horizon } },
+      orderBy: { dueDate: 'asc' },
+      take: 2000,
     })
     .catch(() => []);
   const byTemplate = new Map<string, any[]>();
@@ -1323,39 +1389,82 @@ export async function getPaymentDues(dateStr: string): Promise<PaymentDueRow[]> 
     if (!byTemplate.has(k)) byTemplate.set(k, []);
     byTemplate.get(k)!.push(l);
   }
+  const logIds = (logs as any[]).map((l) => String((l as any).id)).filter(Boolean);
+  const filesByLog = await paymentAttachmentsByLog(logIds);
   const rows: PaymentDueRow[] = [];
   for (const t of templates) {
-    const id = String(t.id);
+    const id = String((t as any).id);
     const tlogs = [...(byTemplate.get(id) ?? [])].sort((a, b) =>
       String(a.dueDate).localeCompare(String(b.dueDate)),
     );
     const open = tlogs.filter((l) => String(l.status) !== 'done');
-    const horizon = addDays(dateStr, 30);
-    // Unresolved cycles in window (overdue + due-soon + near upcoming).
     for (const l of open) {
       const dd = String(l.dueDate).slice(0, 10);
-      if (dd > horizon) continue;
-      rows.push(toPaymentRow(t, l, dd, dateStr));
+      rows.push(toPaymentRow(t, l, dd, dateStr, filesByLog.get(String(l.id)) ?? []));
     }
     // Next upcoming cycle (no instance yet — projected, paid on demand).
-    const covered = new Set(open.map((l) => String(l.dueDate).slice(0, 10)));
+    const covered = new Set([...open].map((l) => String(l.dueDate).slice(0, 10)));
     for (let i = 0; i <= 60; i++) {
       const d = addDays(dateStr, i);
       if (covered.has(d)) continue;
       if (isDueOn(t, d)) {
-        rows.push(toPaymentRow(t, null, d, dateStr));
+        rows.push(toPaymentRow(t, null, d, dateStr, []));
         break;
       }
     }
-    // Last paid cycle (recent history for the Paid bucket).
-    const paid = tlogs
-      .filter((l) => String(l.status) === 'done')
-      .sort((a, b) => String(b.dueDate).localeCompare(String(a.dueDate)));
-    if (paid.length && String(paid[0].dueDate).slice(0, 10) >= addDays(dateStr, -90)) {
-      rows.push(toPaymentRow(t, paid[0], String(paid[0].dueDate).slice(0, 10), dateStr));
-    }
   }
   return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
+}
+
+/** Complete paid history: every done cycle, newest first (cap 500). */
+export async function getPaymentHistory(dateStr: string, limit = 500): Promise<PaymentDueRow[]> {
+  const templates = await getPaymentTemplates();
+  if (!templates.length) return [];
+  const ids = templates.map((t) => String((t as any).id));
+  const byId = new Map(templates.map((t) => [String((t as any).id), t]));
+  const logs = await (prisma as any).accountsTaskLog
+    .findMany({
+      where: { templateId: { in: ids }, status: 'done' },
+      orderBy: { dueDate: 'desc' },
+      take: Math.min(1000, Math.max(50, limit)),
+    })
+    .catch(() => []);
+  const filesByLog = await paymentAttachmentsByLog(
+    (logs as any[]).map((l: any) => String(l.id)).filter(Boolean),
+  );
+  void dateStr;
+  return (logs as any[])
+    .map((l: any) => {
+      const t = byId.get(String(l.templateId));
+      if (!t) return null;
+      return toPaymentRow(t, l, String(l.dueDate).slice(0, 10), String(l.dueDate).slice(0, 10), filesByLog.get(String(l.id)) ?? []);
+    })
+    .filter((r): r is PaymentDueRow => !!r)
+    .sort((a, b) => b.dueDate.localeCompare(a.dueDate) || a.title.localeCompare(b.title));
+}
+
+export function summarizePayments(dues: PaymentDueRow[], history: PaymentDueRow[]): PaymentSummary {
+  let unpaidTotal = 0;
+  let overdueTotal = 0;
+  let weekTotal = 0;
+  let overdueCount = 0;
+  let weekCount = 0;
+  for (const d of dues) {
+    const amt = d.amount ?? 0;
+    unpaidTotal += amt;
+    if (d.bucket === 'overdue') { overdueCount++; overdueTotal += amt; }
+    else if (d.bucket === 'week') { weekCount++; weekTotal += amt; }
+  }
+  return {
+    unpaidTotal,
+    unpaidCount: dues.length,
+    overdueCount,
+    overdueTotal,
+    weekCount,
+    weekTotal,
+    paidCount: history.length,
+    paidTotal: history.reduce((t, h) => t + (h.paidAmount ?? h.amount ?? 0), 0),
+  };
 }
 
 /** Get-or-create the log instance for a payment cycle (pays projected dues). */
@@ -1393,7 +1502,20 @@ export async function payDue(
   if (input.paidAmount === undefined || input.paidAmount === null || input.paidAmount === '') {
     throw new Error('paidAmount is required to mark paid');
   }
+  if (input.paidRef === undefined || input.paidRef === null || String(input.paidRef).trim() === '') {
+    throw new Error('paidRef (UTR / transaction reference) is required to mark paid');
+  }
   const inst: any = await ensurePaymentInstance(templateId, dueDate);
+  if (String(inst.status) === 'done') {
+    // Idempotent re-pay: already paid — refresh amount/ref instead of erroring,
+    // so a double-click or retry can never create a duplicate cycle.
+    return logTask(
+      String(inst.id),
+      { status: 'done', paidAmount: input.paidAmount, paidRef: input.paidRef, remark: input.remark },
+      actor,
+      identity,
+    );
+  }
   return logTask(
     String(inst.id),
     { status: 'done', paidAmount: input.paidAmount, paidRef: input.paidRef, remark: input.remark },

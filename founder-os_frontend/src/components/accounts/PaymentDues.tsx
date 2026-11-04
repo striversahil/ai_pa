@@ -3,11 +3,20 @@
 // PaymentDues — the Payment dues tab: recurring bills (credit cards, mobile
 // recharges, EMIs…) with per-cycle paid/unpaid state.
 //
-// Data rides the accounts dashboard payload (`payments`); writes go to the
-// Worker-only payment endpoints (/api/accounts/payments*) plus the shared
-// log route for reopen. Any accountant manages dues (founder rule) — the tab
-// renders for every dashboard viewer, and the server gates each write.
+// Data rides the accounts dashboard payload (`payments` = every unresolved
+// cycle, `paymentHistory` = every paid cycle). Writes go to the Worker-only
+// payment endpoints (/api/accounts/payments*). Any accountant manages dues.
 import React, { useMemo, useState } from "react";
+
+export interface PaymentAttachment {
+  id: string;
+  fileName: string;
+  mime: string;
+  size: number;
+  uploadedBy: string;
+  createdAt: string;
+  url: string;
+}
 
 export interface PaymentDueRow {
   templateId: string;
@@ -32,6 +41,18 @@ export interface PaymentDueRow {
   daysOverdue: number;
   daysUntil: number;
   remind: boolean;
+  attachments?: PaymentAttachment[];
+}
+
+export interface PaymentSummary {
+  unpaidTotal: number;
+  unpaidCount: number;
+  overdueCount: number;
+  overdueTotal: number;
+  weekCount: number;
+  weekTotal: number;
+  paidCount: number;
+  paidTotal: number;
 }
 
 export const PAYMENT_CATEGORIES = [
@@ -39,24 +60,14 @@ export const PAYMENT_CATEGORIES = [
   "Rent", "Software / Subscription", "Tax / Compliance", "Other",
 ];
 
-type Bucket = "all" | PaymentDueRow["bucket"];
-type SortKey = "dueAsc" | "dueDesc" | "amountDesc" | "amountAsc" | "biller" | "overdue";
+type MainTab = "due" | "history";
+type Bucket = "all" | "overdue" | "week" | "upcoming";
 
 const BUCKETS: { key: Bucket; label: string; icon: string }[] = [
-  { key: "all", label: "All", icon: "🧾" },
+  { key: "all", label: "All due", icon: "🧾" },
   { key: "overdue", label: "Overdue", icon: "🔴" },
-  { key: "week", label: "Due this week", icon: "🟡" },
+  { key: "week", label: "Due in 7 days", icon: "🟡" },
   { key: "upcoming", label: "Upcoming", icon: "⚪" },
-  { key: "paid", label: "Paid", icon: "🟢" },
-];
-
-const SORTS: { key: SortKey; label: string }[] = [
-  { key: "dueAsc", label: "Due date ↑" },
-  { key: "dueDesc", label: "Due date ↓" },
-  { key: "amountDesc", label: "Amount ↓" },
-  { key: "amountAsc", label: "Amount ↑" },
-  { key: "biller", label: "Biller A–Z" },
-  { key: "overdue", label: "Most overdue" },
 ];
 
 const inr = (n: number | null | undefined) =>
@@ -69,8 +80,68 @@ function fmtDue(iso: string): string {
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}`;
 }
 
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 const inputCls =
   "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
+
+async function postJson(url: string, method: string, body: unknown): Promise<any> {
+  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.json();
+      if (j?.error) msg = String(j.error);
+    } catch {
+      try { msg = (await res.text()).slice(0, 300) || msg; } catch { /* ignore */ }
+    }
+    throw new Error(msg);
+  }
+  return res.json().catch(() => ({}));
+}
+
+interface BillGroup {
+  templateId: string;
+  title: string;
+  biller: string;
+  category: string;
+  amount: number | null;
+  frequency: string;
+  dueDay: number | null;
+  remindDays: number[];
+  sample: PaymentDueRow;
+  cycles: PaymentDueRow[];
+  worstOverdue: number;
+  earliestDue: string;
+  urgency: number; // 0 overdue · 1 week · 2 upcoming
+}
+
+function groupBills(dues: PaymentDueRow[]): BillGroup[] {
+  const byId = new Map<string, PaymentDueRow[]>();
+  for (const d of dues) {
+    if (!byId.has(d.templateId)) byId.set(d.templateId, []);
+    byId.get(d.templateId)!.push(d);
+  }
+  const groups: BillGroup[] = [];
+  for (const [templateId, cycles] of byId) {
+    const sorted = [...cycles].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    const s = sorted[0];
+    const worstOverdue = Math.max(0, ...sorted.map((c) => c.daysOverdue));
+    const urgency = sorted.some((c) => c.bucket === "overdue") ? 0 : sorted.some((c) => c.bucket === "week") ? 1 : 2;
+    groups.push({
+      templateId, title: s.title, biller: s.biller, category: s.category,
+      amount: s.amount, frequency: s.frequency, dueDay: s.dueDay, remindDays: s.remindDays,
+      sample: s, cycles: sorted, worstOverdue,
+      earliestDue: sorted[0]?.dueDate ?? "", urgency,
+    });
+  }
+  return groups.sort((a, b) => a.urgency - b.urgency || b.worstOverdue - a.worstOverdue || a.earliestDue.localeCompare(b.earliestDue));
+}
 
 function Countdown({ r }: { r: PaymentDueRow }) {
   if (r.bucket === "paid") return null;
@@ -89,7 +160,7 @@ function Countdown({ r }: { r: PaymentDueRow }) {
           {label}
         </span>
         {r.remind && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-bold text-indigo-600 dark:text-indigo-300" title="Reminder day for this bill">
+          <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-bold text-indigo-600 dark:text-indigo-300" title={`Reminder day (${r.remindDays.join(", ")} days before)`}>
             🔔 Reminder
           </span>
         )}
@@ -99,204 +170,271 @@ function Countdown({ r }: { r: PaymentDueRow }) {
   return <span className="text-[11px] font-semibold text-zinc-500">Due {fmtDue(r.dueDate)}</span>;
 }
 
-export default function PaymentDues({ dues, onRefresh }: { dues: PaymentDueRow[]; onRefresh: () => void }) {
+export default function PaymentDues({ dues, history, summary, onRefresh }: {
+  dues: PaymentDueRow[];
+  history: PaymentDueRow[];
+  summary?: PaymentSummary;
+  onRefresh: () => void;
+}) {
+  const [tab, setTab] = useState<MainTab>("due");
   const [bucket, setBucket] = useState<Bucket>("all");
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
-  const [sort, setSort] = useState<SortKey>("dueAsc");
-  const [minAmt, setMinAmt] = useState("");
-  const [maxAmt, setMaxAmt] = useState("");
   const [payRow, setPayRow] = useState<PaymentDueRow | null>(null);
   const [editRow, setEditRow] = useState<PaymentDueRow | "new" | null>(null);
   const [confirmDel, setConfirmDel] = useState<PaymentDueRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [openBills, setOpenBills] = useState<Record<string, boolean>>({});
+  const [uploading, setUploading] = useState<string | null>(null);
 
-  const counts = useMemo(() => {
-    const c: Record<Bucket, number> = { all: dues.length, overdue: 0, week: 0, upcoming: 0, paid: 0 };
-    for (const d of dues) c[d.bucket]++;
+  const sum: PaymentSummary = useMemo(() => {
+    if (summary) return summary;
+    let unpaidTotal = 0, overdueTotal = 0, weekTotal = 0, overdueCount = 0, weekCount = 0;
+    for (const d of dues) {
+      unpaidTotal += d.amount ?? 0;
+      if (d.bucket === "overdue") { overdueCount++; overdueTotal += d.amount ?? 0; }
+      if (d.bucket === "week") { weekCount++; weekTotal += d.amount ?? 0; }
+    }
+    return {
+      unpaidTotal, unpaidCount: dues.length, overdueCount, overdueTotal,
+      weekCount, weekTotal, paidCount: history.length,
+      paidTotal: history.reduce((t, h) => t + (h.paidAmount ?? h.amount ?? 0), 0),
+    };
+  }, [dues, history, summary]);
+
+  const cats = useMemo(() => [...new Set([...dues, ...history].map((d) => d.category).filter(Boolean))].sort(), [dues, history]);
+
+  const needle = q.trim().toLowerCase();
+  const matches = (r: PaymentDueRow) => {
+    if (cat && r.category !== cat) return false;
+    if (needle && !`${r.title} ${r.biller} ${r.paidRef ?? ""} ${r.remark ?? ""} ${r.doneBy ?? ""}`.toLowerCase().includes(needle)) return false;
+    if (bucket !== "all" && tab === "due" && r.bucket !== bucket) return false;
+    return true;
+  };
+
+  const billGroups = useMemo(() => {
+    const filtered = dues.filter(matches);
+    // Bucket filter applies at cycle level, then drop empty bills.
+    const groups = groupBills(dues);
+    if (bucket === "all" && !cat && !needle) return groups;
+    const kept: BillGroup[] = [];
+    for (const g of groups) {
+      const cycles = g.cycles.filter(matches);
+      if (!cycles.length) continue;
+      kept.push({ ...g, cycles });
+    }
+    return kept;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dues, bucket, cat, needle]);
+
+  const filteredHistory = useMemo(() => {
+    return history.filter(matches).sort((a, b) =>
+      String(b.updatedAt ?? b.dueDate).localeCompare(String(a.updatedAt ?? a.dueDate)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history, cat, needle]);
+
+  const bucketCounts = useMemo(() => {
+    const c: Record<Bucket, number> = { all: dues.length, overdue: 0, week: 0, upcoming: 0 };
+    for (const d of dues) { if (d.bucket === "overdue") c.overdue++; else if (d.bucket === "week") c.week++; else c.upcoming++; }
     return c;
   }, [dues]);
 
-  const cats = useMemo(() => [...new Set(dues.map((d) => d.category).filter(Boolean))].sort(), [dues]);
+  async function uploadReceipt(logId: string, file: File) {
+    setUploading(logId); setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/accounts/logs/${logId}/files`, { method: "POST", body: fd });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j?.error) msg = String(j.error); } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+      setOkMsg("Receipt attached.");
+      onRefresh();
+    } catch (e: any) { setErr(e?.message || "Upload failed"); }
+    finally { setUploading(null); }
+  }
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    const min = minAmt === "" ? null : Number(minAmt);
-    const max = maxAmt === "" ? null : Number(maxAmt);
-    const list = dues.filter((r) => {
-      if (bucket !== "all" && r.bucket !== bucket) return false;
-      if (cat && r.category !== cat) return false;
-      if (needle && !`${r.title} ${r.biller} ${r.paidRef ?? ""} ${r.remark ?? ""}`.toLowerCase().includes(needle)) return false;
-      const amt = r.paidAmount ?? r.amount;
-      if (min !== null && Number.isFinite(min) && (amt === null || amt < min)) return false;
-      if (max !== null && Number.isFinite(max) && (amt === null || amt > max)) return false;
-      return true;
-    });
-    const by = {
-      dueAsc: (a: PaymentDueRow, b: PaymentDueRow) => a.dueDate.localeCompare(b.dueDate),
-      dueDesc: (a: PaymentDueRow, b: PaymentDueRow) => b.dueDate.localeCompare(a.dueDate),
-      amountDesc: (a: PaymentDueRow, b: PaymentDueRow) => (b.paidAmount ?? b.amount ?? -1) - (a.paidAmount ?? a.amount ?? -1),
-      amountAsc: (a: PaymentDueRow, b: PaymentDueRow) => (a.paidAmount ?? a.amount ?? Infinity) - (b.paidAmount ?? b.amount ?? Infinity),
-      biller: (a: PaymentDueRow, b: PaymentDueRow) => (a.biller || a.title).localeCompare(b.biller || b.title),
-      overdue: (a: PaymentDueRow, b: PaymentDueRow) => b.daysOverdue - a.daysOverdue || a.dueDate.localeCompare(b.dueDate),
-    }[sort];
-    return [...list].sort(by);
-  }, [dues, bucket, q, cat, sort, minAmt, maxAmt]);
-
-  const grouped = useMemo(() => {
-    const order: PaymentDueRow["bucket"][] = ["overdue", "week", "upcoming", "paid"];
-    const groups: { bucket: PaymentDueRow["bucket"]; rows: PaymentDueRow[] }[] = [];
-    for (const b of order) {
-      const rows = filtered.filter((r) => r.bucket === b);
-      if (rows.length) groups.push({ bucket: b, rows });
-    }
-    return groups;
-  }, [filtered]);
-
-  const totalUnpaid = useMemo(
-    () => dues.filter((d) => d.bucket !== "paid").reduce((t, d) => t + (d.amount ?? 0), 0),
-    [dues],
-  );
-
-  async function postJson(url: string, method: string, body: unknown) {
-    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
-    return res.json().catch(() => ({}));
+  async function reopen(logId: string) {
+    setBusy(true); setErr(null); setOkMsg(null);
+    try {
+      await postJson(`/api/accounts/logs/${logId}`, "PATCH", { status: "pending", remark: "Reopened — marked unpaid" });
+      setOkMsg("Moved back to dues.");
+      onRefresh();
+    } catch (e: any) { setErr(e?.message || "Reopen failed"); }
+    finally { setBusy(false); }
   }
 
   return (
     <div className="space-y-3">
-      {/* Summary */}
-      <div className="grid gap-2 sm:grid-cols-4">
-        {([
-          ["Unpaid now", inr(totalUnpaid), counts.overdue + counts.week + counts.upcoming],
-          ["Overdue", counts.overdue, null],
-          ["Due this week", counts.week, null],
-          ["Paid (90d)", counts.paid, null],
-        ] as const).map(([label, value]) => (
-          <div key={label} className="rounded-xl border border-zinc-200/80 bg-white px-4 py-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{label}</p>
-            <p className="mt-0.5 font-mono text-xl font-bold text-zinc-900 dark:text-white">{value}</p>
-          </div>
-        ))}
+      {/* Reminder header: the at-a-glance strip */}
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl border border-zinc-200/80 bg-white px-4 py-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Unpaid now</p>
+          <p className="mt-0.5 font-mono text-xl font-bold text-zinc-900 dark:text-white">{inr(sum.unpaidTotal)}</p>
+          <p className="text-[11px] text-zinc-500">{sum.unpaidCount} open cycle{sum.unpaidCount === 1 ? "" : "s"}</p>
+        </div>
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/5 px-4 py-3 shadow-sm dark:bg-rose-500/10">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">🔴 Overdue</p>
+          <p className="mt-0.5 font-mono text-xl font-bold text-rose-700 dark:text-rose-300">{sum.overdueCount} · {inr(sum.overdueTotal)}</p>
+          <p className="text-[11px] text-rose-500">{sum.overdueCount ? "needs payment now" : "nothing overdue"}</p>
+        </div>
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 shadow-sm dark:bg-amber-500/10">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">🟡 Due in 7 days</p>
+          <p className="mt-0.5 font-mono text-xl font-bold text-amber-800 dark:text-amber-200">{sum.weekCount} · {inr(sum.weekTotal)}</p>
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">includes today + 🔔 reminder days</p>
+        </div>
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 shadow-sm dark:bg-emerald-500/10">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">🟢 Paid (all time)</p>
+          <p className="mt-0.5 font-mono text-xl font-bold text-emerald-700 dark:text-emerald-300">{sum.paidCount} · {inr(sum.paidTotal)}</p>
+          <p className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80">full history below</p>
+        </div>
       </div>
 
-      {/* Bucket tabs + add */}
+      {/* Main tabs + add */}
       <div className="flex flex-wrap items-center gap-2">
-        {BUCKETS.map((b) => (
-          <button
-            key={b.key}
-            onClick={() => setBucket(b.key)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
-              bucket === b.key
-                ? "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300"
-                : "border-zinc-300 text-zinc-600 hover:border-indigo-400 dark:border-zinc-700 dark:text-zinc-400"
-            }`}
-          >
-            {b.icon} {b.label} ({counts[b.key]})
-          </button>
-        ))}
+        <button onClick={() => setTab("due")} className={`rounded-full border px-3 py-1.5 text-xs font-bold cursor-pointer ${tab === "due" ? "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"}`}>
+          💳 Dues ({dues.length})
+        </button>
+        <button onClick={() => setTab("history")} className={`rounded-full border px-3 py-1.5 text-xs font-bold cursor-pointer ${tab === "history" ? "border-emerald-500 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"}`}>
+          🧾 Paid history ({history.length})
+        </button>
         <div className="flex-1" />
-        <button
-          onClick={() => { setErr(null); setEditRow("new"); }}
-          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 cursor-pointer"
-        >
+        <button onClick={() => { setErr(null); setOkMsg(null); setEditRow("new"); }} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 cursor-pointer">
           + Add due
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="grid gap-2 rounded-xl border border-zinc-200/80 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:grid-cols-2 lg:grid-cols-5">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, biller, ref…" className={inputCls} />
+      {/* Bucket tabs (dues) + filters */}
+      {tab === "due" && (
+        <div className="flex flex-wrap items-center gap-2">
+          {BUCKETS.map((b) => (
+            <button key={b.key} onClick={() => setBucket(b.key)} className={`rounded-full border px-3 py-1.5 text-xs font-bold cursor-pointer ${bucket === b.key ? "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"}`}>
+              {b.icon} {b.label} ({bucketCounts[b.key]})
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="grid gap-2 rounded-xl border border-zinc-200/80 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:grid-cols-2">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, biller, UTR ref, person…" className={inputCls} />
         <select value={cat} onChange={(e) => setCat(e.target.value)} className={inputCls}>
           <option value="">All categories</option>
           {cats.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className={inputCls} title="Sort">
-          {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-        </select>
-        <input value={minAmt} onChange={(e) => setMinAmt(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Min ₹" inputMode="decimal" className={inputCls} />
-        <input value={maxAmt} onChange={(e) => setMaxAmt(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Max ₹" inputMode="decimal" className={inputCls} />
       </div>
 
-      {filtered.length === 0 && (
-        <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          {dues.length === 0
-            ? "No payment dues yet — add the first bill (credit card, recharge, EMI…) with + Add due."
-            : "Nothing matches these filters."}
-        </div>
+      {okMsg && <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">{okMsg}</p>}
+      {err && <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">⚠ {err}</p>}
+
+      {tab === "due" && (
+        <>
+          {billGroups.length === 0 && (
+            <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+              {dues.length === 0 ? "No payment dues yet — add the first bill (credit card, recharge, EMI…) with + Add due." : "Nothing matches these filters."}
+            </div>
+          )}
+          {billGroups.map((g) => {
+            const open = openBills[g.templateId] ?? true;
+            const overdueCycles = g.cycles.filter((c) => c.bucket === "overdue");
+            return (
+              <div key={g.templateId} className={`rounded-xl border bg-white shadow-sm dark:bg-zinc-900/40 ${overdueCycles.length ? "border-rose-500/40" : g.cycles.some((c) => c.remind) ? "border-indigo-500/40" : "border-zinc-200/80 dark:border-zinc-800"}`}>
+                <button onClick={() => setOpenBills((m) => ({ ...m, [g.templateId]: !open }))} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left cursor-pointer">
+                  <span className="text-base">{overdueCycles.length ? "🔴" : g.cycles.some((c) => c.bucket === "week") ? "🟡" : "⚪"}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-bold text-zinc-900 dark:text-white">
+                      {g.title}
+                      {g.biller && g.biller !== g.title && <span className="ml-2 font-semibold text-zinc-500">· {g.biller}</span>}
+                    </span>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                      <span className="rounded bg-zinc-100 px-1.5 py-px font-semibold dark:bg-zinc-800">{g.category}</span>
+                      <span className="capitalize">{g.frequency}{g.dueDay ? ` · day ${g.dueDay}` : ""}</span>
+                      <span>{g.cycles.length} open cycle{g.cycles.length === 1 ? "" : "s"}</span>
+                      {overdueCycles.length > 0 && <span className="font-bold text-rose-600 dark:text-rose-400">· {overdueCycles.length} overdue</span>}
+                      {g.remindDays.length > 0 && <span title="Reminder schedule">· 🔔 {g.remindDays.join("/")}</span>}
+                    </span>
+                  </span>
+                  <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{inr(g.amount)}</span>
+                  <span className="text-xs text-zinc-400">{open ? "▾" : "▸"}</span>
+                </button>
+                {open && (
+                  <div className="space-y-1.5 border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
+                    {g.cycles.map((r) => (
+                      <div key={`${r.templateId}-${r.dueDate}-${r.logId ?? "proj"}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-900">
+                        <div className="min-w-0 flex-1">
+                          <p className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-300">
+                            <span className="font-bold text-zinc-800 dark:text-zinc-100">Due {fmtDue(r.dueDate)}</span>
+                            {!r.logId && <span className="rounded border border-dashed border-zinc-400 px-1.5 py-px text-[10px] font-semibold text-zinc-500" title="No instance yet — paying creates the cycle">projected</span>}
+                            <Countdown r={r} />
+                          </p>
+                          {r.attachments && r.attachments.length > 0 && (
+                            <p className="mt-0.5 text-[11px] text-zinc-500">
+                              📎 {r.attachments.map((a) => <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="mr-2 underline">{a.fileName}</a>)}
+                            </p>
+                          )}
+                        </div>
+                        <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{inr(r.amount)}</span>
+                        <button onClick={() => { setErr(null); setOkMsg(null); setPayRow(r); }} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 cursor-pointer">
+                          Mark paid
+                        </button>
+                        <button onClick={() => { setErr(null); setOkMsg(null); setEditRow(r); }} className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer">
+                          Edit bill
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
       )}
 
-      {grouped.map(({ bucket: b, rows }) => (
-        <div key={b} className="space-y-1.5">
-          <p className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
-            {BUCKETS.find((x) => x.key === b)?.icon} {BUCKETS.find((x) => x.key === b)?.label} · {rows.length}
-          </p>
-          {rows.map((r) => (
-            <div
-              key={`${r.templateId}-${r.dueDate}`}
-              className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border bg-white px-3 py-2 shadow-sm dark:bg-zinc-900/40 ${
-                r.bucket === "overdue" ? "border-rose-500/40" : r.remind ? "border-indigo-500/40" : "border-zinc-200/80 dark:border-zinc-800"
-              }`}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-zinc-900 dark:text-white">
-                  {r.title}
-                  {r.biller && r.biller !== r.title && <span className="ml-2 font-semibold text-zinc-500">· {r.biller}</span>}
-                </p>
-                <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                  <span className="rounded bg-zinc-100 px-1.5 py-px font-semibold dark:bg-zinc-800">{r.category}</span>
-                  <span className="capitalize">{r.frequency}</span>
-                  <span>Due {fmtDue(r.dueDate)}</span>
-                  <Countdown r={r} />
-                </p>
-                {r.bucket === "paid" && (
-                  <p className="mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
-                    ✓ Paid {inr(r.paidAmount)}{r.paidRef ? ` · ${r.paidRef}` : ""}{r.doneBy ? ` · by ${r.doneBy}` : ""}
-                  </p>
-                )}
-              </div>
-              <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{inr(r.paidAmount ?? r.amount)}</span>
-              <div className="flex items-center gap-1.5">
-                {r.bucket !== "paid" ? (
-                  <button
-                    onClick={() => { setErr(null); setPayRow(r); }}
-                    className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 cursor-pointer"
-                  >
-                    Mark paid
-                  </button>
-                ) : (
-                  r.logId && (
-                    <button
-                      onClick={() => void (async () => {
-                        setBusy(true); setErr(null);
-                        try {
-                          await postJson(`/api/accounts/logs/${r.logId}`, "PATCH", { status: "pending", remark: "Reopened — marked unpaid" });
-                          onRefresh();
-                        } catch (e: any) { setErr(e?.message || "Reopen failed"); }
-                        finally { setBusy(false); }
-                      })()}
-                      disabled={busy}
-                      className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 hover:border-amber-400 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer disabled:opacity-50"
-                    >
-                      Reopen
-                    </button>
-                  )
-                )}
-                <button
-                  onClick={() => { setErr(null); setEditRow(r); }}
-                  className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 hover:border-indigo-400 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer"
-                >
-                  Edit
-                </button>
-              </div>
+      {tab === "history" && (
+        <>
+          {filteredHistory.length === 0 && (
+            <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+              {history.length === 0 ? "No payments recorded yet — mark a due paid and it lands here with amount + reference." : "Nothing matches these filters."}
             </div>
-          ))}
-        </div>
-      ))}
-
-      {err && <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">{err}</p>}
+          )}
+          <div className="space-y-1.5">
+            {filteredHistory.map((r) => (
+              <div key={`${r.templateId}-${r.dueDate}-${r.logId}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-zinc-200/80 bg-white px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold text-zinc-900 dark:text-white">
+                    <span className="mr-1.5 text-emerald-500">✓</span>{r.title}
+                    {r.biller && r.biller !== r.title && <span className="ml-2 font-semibold text-zinc-500">· {r.biller}</span>}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    Due {fmtDue(r.dueDate)} · Paid {inr(r.paidAmount)}{r.paidRef ? ` · ${r.paidRef}` : ""}{r.doneBy ? ` · by ${r.doneBy}` : ""}{r.updatedAt ? ` · ${fmtDateTime(r.updatedAt)}` : ""}
+                  </p>
+                  {r.attachments && r.attachments.length > 0 && (
+                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                      📎 {r.attachments.map((a) => <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="mr-2 underline">{a.fileName}</a>)}
+                    </p>
+                  )}
+                </div>
+                <span className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-300">{inr(r.paidAmount ?? r.amount)}</span>
+                <div className="flex items-center gap-1.5">
+                  {r.logId && (
+                    <>
+                      <label className="cursor-pointer rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                        {uploading === r.logId ? "Uploading…" : "Attach receipt"}
+                        <input type="file" className="hidden" disabled={uploading === r.logId} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadReceipt(r.logId!, f); e.target.value = ""; }} />
+                      </label>
+                      <button onClick={() => void reopen(r.logId!)} disabled={busy} className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 hover:border-amber-400 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer disabled:opacity-50">
+                        Reopen
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {payRow && (
         <PayDialog
@@ -304,14 +442,17 @@ export default function PaymentDues({ dues, onRefresh }: { dues: PaymentDueRow[]
           busy={busy}
           onClose={() => setPayRow(null)}
           onPay={async (paidAmount, paidRef) => {
-            setBusy(true); setErr(null);
+            setBusy(true); setErr(null); setOkMsg(null);
             try {
               await postJson("/api/accounts/payments/pay", "POST", {
                 templateId: payRow.templateId, dueDate: payRow.dueDate, paidAmount, paidRef,
               });
               setPayRow(null);
+              setOkMsg(`Paid ${payRow.title} (${fmtDue(payRow.dueDate)}) — recorded with ${paidRef}.`);
+              // Optimistic: flip to history tab so the new record is visible.
+              setTab("history");
               onRefresh();
-            } catch (e: any) { setErr(e?.message || "Mark paid failed"); }
+            } catch (e: any) { setErr(e?.message || "Mark paid failed — not saved. Retry."); }
             finally { setBusy(false); }
           }}
         />
@@ -323,10 +464,11 @@ export default function PaymentDues({ dues, onRefresh }: { dues: PaymentDueRow[]
           busy={busy}
           onClose={() => setEditRow(null)}
           onSave={async (body, id) => {
-            setBusy(true); setErr(null);
+            setBusy(true); setErr(null); setOkMsg(null);
             try {
               await postJson(id ? `/api/accounts/payments/${id}` : "/api/accounts/payments", id ? "PUT" : "POST", body);
               setEditRow(null);
+              setOkMsg(id ? "Bill updated." : "Bill added — its cycles are now tracked.");
               onRefresh();
             } catch (e: any) { setErr(e?.message || "Save failed"); }
             finally { setBusy(false); }
@@ -336,6 +478,7 @@ export default function PaymentDues({ dues, onRefresh }: { dues: PaymentDueRow[]
             try {
               await postJson(`/api/accounts/payments/${id}`, "DELETE", {});
               setEditRow(null); setConfirmDel(null);
+              setOkMsg("Bill removed.");
               onRefresh();
             } catch (e: any) { setErr(e?.message || "Delete failed"); }
             finally { setBusy(false); }
@@ -359,13 +502,13 @@ function PayDialog({ row, busy, onClose, onPay }: {
   const [localErr, setLocalErr] = useState<string | null>(null);
   return (
     <Modal title={`Mark paid — ${row.title}`} onClose={onClose}>
-      <p className="text-xs text-zinc-500">Due {fmtDue(row.dueDate)} · expected {inr(row.amount)}</p>
+      <p className="text-xs text-zinc-500">Due {fmtDue(row.dueDate)}{row.logId ? "" : " · projected cycle (paying creates it)"} · expected {inr(row.amount)}</p>
       <label className="mt-3 block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
         Amount paid (₹)
         <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, "") as any)} inputMode="decimal" className={`${inputCls} mt-1`} placeholder="e.g. 12500" />
       </label>
       <label className="mt-2 block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-        UTR / transaction reference
+        UTR / transaction reference (required)
         <input value={ref} onChange={(e) => setRef(e.target.value)} className={`${inputCls} mt-1`} placeholder="e.g. UTR / UPI ref no." maxLength={200} />
       </label>
       {localErr && <p className="mt-2 text-xs text-rose-500">{localErr}</p>}
@@ -407,7 +550,7 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
   const [remindDays, setRemindDays] = useState((row?.remindDays ?? [7, 3, 1]).join(","));
   const [localErr, setLocalErr] = useState<string | null>(null);
   return (
-    <Modal title={row ? `Edit due — ${row.title}` : "Add payment due"} onClose={onClose}>
+    <Modal title={row ? `Edit bill — ${row.title}` : "Add payment due"} onClose={onClose}>
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400 sm:col-span-2">
           Title
@@ -451,7 +594,7 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
         <div>
           {row && (confirmDel ? (
             <span className="flex items-center gap-2 text-xs">
-              <span className="text-zinc-500">Remove this due?</span>
+              <span className="text-zinc-500">Remove this bill (all cycles)?</span>
               <button onClick={() => onDelete(row.templateId)} disabled={busy} className="rounded-lg bg-rose-600 px-2.5 py-1.5 font-bold text-white disabled:opacity-50 cursor-pointer">Yes, remove</button>
               <button onClick={() => setConfirmDel(null)} className="rounded-lg border border-zinc-300 px-2.5 py-1.5 font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer">Keep</button>
             </span>

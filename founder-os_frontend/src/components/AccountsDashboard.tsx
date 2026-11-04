@@ -4,7 +4,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { useLiveDashboard, useOptimisticMutation, patchRowInLists, mapRowInLists } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
-import PaymentDues, { type PaymentDueRow } from "@/components/accounts/PaymentDues";
+import PaymentDues, { type PaymentDueRow, type PaymentSummary } from "@/components/accounts/PaymentDues";
 
 interface FileItem {
   id: string;
@@ -130,6 +130,8 @@ interface DashData {
   freqStats?: FreqStat[];
   unscheduled?: UnscheduledItem[];
   payments?: PaymentDueRow[];
+  paymentHistory?: PaymentDueRow[];
+  paymentSummary?: PaymentSummary;
   team?: TeamData | null;
 }
 
@@ -829,7 +831,7 @@ export default function AccountsDashboard() {
       )}
 
       {data && view === "controller" && (canMIS ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to MIS-level users.</div>)}
-      {data && view === "dues" && <PaymentDues dues={data.payments ?? []} onRefresh={() => dash.refresh()} />}
+      {data && view === "dues" && <PaymentDues dues={data.payments ?? []} history={data.paymentHistory ?? []} summary={data.paymentSummary} onRefresh={() => dash.refresh()} />}
         </div>
       </div>
     </div>
