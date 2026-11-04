@@ -2,15 +2,18 @@
 
 // CustomerDrawer — the full record for one customer, with inline editing for
 // appointed editors. Region / sub-area / state stay manager-only (ownership is
-// the sales-head's call), matching the server's MANAGER_ONLY_FIELDS.
+// the sales-head's call), matching the server's MANAGER_ONLY_FIELDS. Client
+// type is editor-assignable but value-constrained: the base must come from the
+// sales-head's allowed list (ClientTypeRule), the tag is a free qualifier.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { CustomerPatch, DuplicateReview, MasterCustomer, MasterCustomerDetail } from "@/master-data/types";
-import { getMasterCustomer, patchMasterCustomer, setDuplicateReview } from "@/master-data/api";
+import type { CustomerPatch, DuplicateReview, MasterCustomer, MasterCustomerDetail, TypeBaseEntry } from "@/master-data/types";
+import { getMasterCustomer, getTypeBases, patchMasterCustomer, deleteMasterCustomer, setDuplicateReview } from "@/master-data/api";
 import {
   REVIEW_LABELS, countHint, duplicateTone, formatDate, formatPhone, initials,
   regionLabel, regionTone, reviewTone, statusTone, telHref,
 } from "@/master-data/normalize";
 import { Badge } from "@/components/ui";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import {
   Drawer, Field, GhostButton, PrimaryButton, ReadOnlyValue, SectionTitle, inputClass,
 } from "./ui";
@@ -18,6 +21,8 @@ import {
 interface Draft {
   displayName: string;
   companyName: string;
+  customerType: string;
+  typeTag: string;
   contactPerson: string;
   designation: string;
   phones: string;
@@ -34,7 +39,7 @@ interface Draft {
 }
 
 const DRAFT_KEYS: Array<keyof Draft> = [
-  "displayName", "companyName", "contactPerson", "designation", "phones", "emails",
+  "displayName", "companyName", "customerType", "typeTag", "contactPerson", "designation", "phones", "emails",
   "gstin", "pincode", "cityVerified", "billingAddress", "status", "notes", "region",
   "subArea", "state",
 ];
@@ -47,6 +52,8 @@ function toDraft(c: MasterCustomerDetail): Draft {
   return {
     displayName: c.name,
     companyName: c.company,
+    customerType: c.typeBase,
+    typeTag: c.typeTag,
     contactPerson: c.contact,
     designation: c.designation,
     phones: c.phones.join("\n"),
@@ -86,14 +93,18 @@ function ChipRow({ children }: { children: ReactNode }) {
 }
 
 export default function CustomerDrawer({
-  customerId, seed, canEdit, canManage, onClose, onSaved,
+  customerId, seed, canEdit, canManage, canDelete, onClose, onSaved, onDeleted,
 }: {
   customerId: string | null;
   seed: MasterCustomer | null;
   canEdit: boolean;
   canManage: boolean;
+  /** Sales-head only (server-enforced) — the danger zone stays hidden otherwise. */
+  canDelete: boolean;
   onClose: () => void;
   onSaved: () => void;
+  onDeleted?: (name: string) => void;
+  
 }) {
   const [detail, setDetail] = useState<MasterCustomerDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -103,6 +114,9 @@ export default function CustomerDrawer({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [typeBases, setTypeBases] = useState<TypeBaseEntry[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => {
     if (!customerId) return;
@@ -119,6 +133,16 @@ export default function CustomerDrawer({
       })
       .catch((e: any) => { if (alive) setError(e?.message || "Could not load this customer"); })
       .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [customerId]);
+
+  // Sales-head's allowed client-type vocabulary for the type dropdown.
+  useEffect(() => {
+    if (!customerId) return;
+    let alive = true;
+    getTypeBases()
+      .then((b) => { if (alive) setTypeBases(b); })
+      .catch(() => { /* read-only fallback: free text still validates server-side */ });
     return () => { alive = false; };
   }, [customerId]);
 
@@ -164,6 +188,22 @@ export default function CustomerDrawer({
       setSaveError(e?.message || "Could not update the duplicate review");
     } finally {
       setReviewBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!detail || deleteBusy) return;
+    setDeleteBusy(true);
+    setSaveError(null);
+    try {
+      const res = await deleteMasterCustomer(detail.id);
+      setConfirmDelete(false);
+      onDeleted?.(res.name);
+    } catch (e: any) {
+      setSaveError(e?.message || "Could not delete this client");
+      setConfirmDelete(false);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -225,9 +265,77 @@ export default function CustomerDrawer({
       {error && <p className="rounded-[var(--radius-control)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] px-3 py-2 text-label text-[var(--color-danger)]">{error}</p>}
       {saveError && <p className="mb-3 rounded-[var(--radius-control)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] px-3 py-2 text-label text-[var(--color-danger)]">{saveError}</p>}
 
-      <div className="space-y-5">
+      <div className="space-y-4">
+        {/* Identity — the main name and company. displayName is what every
+            list, leaderboard match and campaign push shows. */}
+        <section className="rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--surface-soft)] px-4 py-3">
+          <SectionTitle hint={editing ? "Shown everywhere — keep it recognisable" : undefined}>Identity</SectionTitle>
+          {editing && draft ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Display name" hint="The main name">
+                <input className={inputClass} value={draft.displayName} onChange={(e) => set("displayName", e.target.value)} maxLength={200} />
+              </Field>
+              <Field label="Company name" hint="Leave blank if same as above">
+                <input className={inputClass} value={draft.companyName} onChange={(e) => set("companyName", e.target.value)} maxLength={200} />
+              </Field>
+            </div>
+          ) : (
+            <div>
+              <p className="text-[15px] font-bold text-[var(--text-primary)]">{shown.name || "—"}</p>
+              {shown.company && shown.company !== shown.name && (
+                <p className="mt-0.5 text-label text-[var(--text-secondary)]">{shown.company}</p>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Client type — base from the sales-head's allowed list, free qualifier */}
+        <section className="rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--surface-soft)] px-4 py-3">
+          <SectionTitle hint={editing ? "Base: sales-head's list · qualifier: free" : undefined}>Client type</SectionTitle>
+          {editing && draft ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Type" hint={typeBases.length ? `${typeBases.length} allowed` : "Sales-head owns this list"}>
+                <select className={inputClass} value={draft.customerType} onChange={(e) => set("customerType", e.target.value)}>
+                  {typeBases.length === 0 && <option value={draft.customerType}>{draft.customerType || "Loading…"}</option>}
+                  {typeBases.map((t) => (
+                    <option key={t.base} value={t.base}>
+                      {t.base}{t.segment === "consumer" ? " · consumer" : t.segment === "reseller" ? " · reseller" : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Qualifier" hint="State/tag, e.g. MP">
+                <input className={inputClass} value={draft.typeTag} onChange={(e) => set("typeTag", e.target.value.toUpperCase())} maxLength={12} />
+              </Field>
+              {(() => {
+                const seg = typeBases.find((t) => t.base === draft.customerType)?.segment ?? "";
+                return seg ? (
+                  <p className="text-[11px] text-[var(--text-secondary)] sm:col-span-2">
+                    Maps to <strong>{seg === "consumer" ? "end consumer" : "reseller"}</strong> in the leaderboard target — changing it re-maps this client's segment.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-[var(--text-tertiary)] sm:col-span-2">
+                    No segment mapped — this client stays unclassified until the sales-head maps the family.
+                  </p>
+                );
+              })()}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-label font-semibold text-[var(--text-primary)]">{shown.typeBase || "Unspecified"}</span>
+              {shown.typeTag && <span className="rounded bg-[var(--bg-input)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">{shown.typeTag}</span>}
+              {(() => {
+                const seg = typeBases.find((t) => t.base === shown.typeBase)?.segment ?? "";
+                return seg ? (
+                  <Badge tone={seg === "consumer" ? "success" : "warning"}>{seg === "consumer" ? "End consumer" : "Reseller"}</Badge>
+                ) : null;
+              })()}
+            </div>
+          )}
+        </section>
+
         {/* Contact */}
-        <section>
+        <section className="rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--surface-soft)] px-4 py-3">
           <SectionTitle hint={editing ? "one per line" : undefined}>Contact</SectionTitle>
           {editing && draft ? (
             <div className="grid gap-3 sm:grid-cols-2">
@@ -267,7 +375,7 @@ export default function CustomerDrawer({
         </section>
 
         {/* Location */}
-        <section>
+        <section className="rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--surface-soft)] px-4 py-3">
           <SectionTitle hint="Region reassignment is manager-only">Location</SectionTitle>
           {editing && draft ? (
             <div className="grid gap-3 sm:grid-cols-2">
@@ -383,6 +491,40 @@ export default function CustomerDrawer({
             </p>
           )}
         </section>
+
+        {/* Danger zone — sales-head only. Pipeline rows are refused server-side. */}
+        {canDelete && detail && (
+          <section className="rounded-[var(--radius-control)] border border-[color-mix(in_srgb,var(--color-danger)_30%,transparent)] px-4 py-3">
+            <SectionTitle hint="Permanent">Danger zone</SectionTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] text-[var(--text-secondary)]">
+                Delete this client forever. Blocked while any estimate or sales order exists — set Inactive instead.
+              </p>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                className="shrink-0 rounded-[var(--radius-control)] border border-[color-mix(in_srgb,var(--color-danger)_45%,transparent)] px-3 py-1.5 text-[11px] font-semibold text-[var(--color-danger)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)]"
+              >
+                Delete client
+              </button>
+            </div>
+          </section>
+        )}
+
+        <ConfirmDialog
+          open={confirmDelete}
+          title="Delete this client?"
+          message={
+            <span>
+              <strong className="text-zinc-900 dark:text-white">{detail?.name || shown.name}</strong>
+              {" "}will be removed from the Customer Master permanently. This cannot be undone.
+            </span>
+          }
+          confirmLabel="Delete forever"
+          busy={deleteBusy}
+          onConfirm={() => void remove()}
+          onCancel={() => { if (!deleteBusy) setConfirmDelete(false); }}
+        />
 
         <p className="border-t border-[var(--border-card)] pt-3 text-[10px] text-[var(--text-tertiary)]">
           {shown.updatedAt ? `Record last updated ${formatDate(shown.updatedAt.slice(0, 10))}` : "Record from the Zoho customer master extract"}

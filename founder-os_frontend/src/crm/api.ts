@@ -63,10 +63,14 @@ export const crmApi = {
       { items, reason },
     ),
 
-  dispatch: (id: string, items: Array<{ itemId: string; qty?: number | null }>) =>
+  dispatch: (
+    id: string,
+    items: Array<{ itemId: string; qty?: number | null }>,
+    proof?: { invoiceId: string | null; beforeId: string | null; afterId: string | null } | null,
+  ) =>
     api.post<{ ok: true; lifecycle: string; credited: boolean; order: CrmOrder }>(
       `/crm/orders/${encodeURIComponent(id)}/dispatch`,
-      { items },
+      { items, proof: proof ?? null },
     ),
 
   confirmSourceDeletion: (id: string) =>

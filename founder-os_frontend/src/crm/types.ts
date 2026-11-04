@@ -66,6 +66,17 @@ export interface CrmEvent {
   createdAt: string | null;
 }
 
+/** One consumed dispatch proof triple (fresh per dispatch, full or partial). */
+export interface CrmDispatchProof {
+  id: string;
+  invoiceId: string;
+  beforeId: string;
+  afterId: string;
+  actor: string;
+  day: string;
+  createdAt: string | null;
+}
+
 export interface CrmOrder {
   id: string;
   org: string;
@@ -109,6 +120,8 @@ export interface CrmOrder {
   dueToday?: number;
   overdue?: boolean;
   events?: CrmEvent[];
+  /** Consumed dispatch proofs, newest first (each dispatch burns one triple). */
+  proofs?: CrmDispatchProof[];
 }
 
 export interface CrmSummary {

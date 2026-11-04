@@ -104,6 +104,11 @@ function fail(code: string, message: string, itemId?: string): ValidationFail {
   return itemId ? { ok: false, code, message, itemId } : { ok: false, code, message };
 }
 
+/** Non-blank string (proof IDs, dates) — trims so whitespace can't pass. */
+function str3(v: unknown): string {
+  return String(v ?? '').trim();
+}
+
 /** Reasons must clear REASON_MIN so "na" can't become a delay reason. */
 export function validateReason(reason: unknown, label = 'Reason'): Validation {
   const text = String(reason ?? '').trim();
@@ -230,19 +235,45 @@ export interface DispatchEntry {
   qty?: number | null;
 }
 
+/**
+ * Fresh proof triple for one dispatch action (decided 2026-11-04): every
+ * Mark dispatched — full or partial — consumes ONE invoice PDF + ONE
+ * before-packing + ONE after-packing photo. IDs reference SoAttachment rows;
+ * the store verifies ownership/kind/mime/freshness (shape-only here).
+ */
+export interface DispatchProof {
+  invoiceId?: string | null;
+  beforeId?: string | null;
+  afterId?: string | null;
+}
+
 export interface DispatchArgs {
   items: readonly ItemLike[];
   entries: readonly DispatchEntry[];
+  /** Required: no proof, no dispatch (even partial). */
+  proof?: DispatchProof | null;
 }
 
 /**
  * Validate a dispatch: only scheduled items can go out, quantity must be
  * positive and no more than what remains. Early dispatch (before the committed
  * date) is allowed and recorded with the actual date.
+ *
+ * PROOF GATE (2026-11-04): every dispatch needs a fresh triple — invoice PDF
+ * + before-packing + after-packing photo. Shape-only here (three IDs present);
+ * the store verifies the files exist, belong to this SO, have the right
+ * kind/mime and were never used before.
  */
 export function validateDispatch(args: DispatchArgs): Validation {
   const entries = (args.entries || []).filter((e) => e && e.itemId);
   if (entries.length === 0) return fail('no_items', 'Select at least one item to dispatch.');
+  const p = args.proof || null;
+  if (!p || !str3(p.invoiceId) || !str3(p.beforeId) || !str3(p.afterId)) {
+    return fail(
+      'proof_required',
+      'Add the invoice PDF + before-packing + after-packing photos before dispatching.',
+    );
+  }
   const byId = new Map((args.items || []).map((it) => [it.id, it]));
   for (const e of entries) {
     const item = byId.get(e.itemId);

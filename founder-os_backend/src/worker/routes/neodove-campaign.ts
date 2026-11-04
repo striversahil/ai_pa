@@ -7,8 +7,9 @@
 // scope grant (same rule as the telecalling roster).
 //
 // Endpoints:
-//   GET  /api/neodove/campaign/states?region=R1      agents + state dropdown
-//   GET  /api/neodove/campaign/preview?region&state&distribution&agent
+//   GET  /api/neodove/campaign/states?region=R1[&clientType=...]
+//   GET  /api/neodove/campaign/types?region=R1[&state=...]
+//   GET  /api/neodove/campaign/preview?region&state&distribution&agent[&clientType]
 //   POST /api/neodove/campaign/push                  create batch
 //   POST /api/neodove/campaign/push/:id/run          send next chunk
 //   GET  /api/neodove/campaign/batches?region=R1     push history
@@ -21,7 +22,7 @@ import {
 import { AuthError } from '../../modules/auth/types';
 import {
   CampaignError, createPush, getCampaignBatches, getCampaignPreview, getCampaignStates,
-  runBatchChunk, setAgentCampaignUrl,
+  runBatchChunk, setAgentCampaignUrl, getCampaignTypes,
 } from '../../modules/neodove-campaign/service';
 
 async function meFor(c: any) {
@@ -53,7 +54,17 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
   app.get('/api/neodove/campaign/states', async (c) => {
     try {
       await requireCampaignManager(c);
-      const payload = await getCampaignStates(c.env, c.req.query('region'));
+      const payload = await getCampaignStates(c.env, c.req.query('region'), c.req.query('clientType'));
+      return c.json(payload);
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.get('/api/neodove/campaign/types', async (c) => {
+    try {
+      await requireCampaignManager(c);
+      const payload = await getCampaignTypes(c.env, c.req.query('region'), c.req.query('state'));
       return c.json(payload);
     } catch (e) {
       return fail(c, e);
@@ -69,6 +80,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
         c.req.query('state'),
         c.req.query('distribution'),
         c.req.query('agent'),
+        c.req.query('clientType'),
       );
       return c.json({ preview });
     } catch (e) {
@@ -85,6 +97,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
         state: body?.state,
         distribution: body?.distribution,
         agentKey: body?.agentKey ?? body?.agent,
+        clientType: body?.clientType,
         actor: { id: String(me?.user?.id ?? ''), name: String(me?.user?.name ?? me?.user?.email ?? '') },
       });
       notifyLive(c, { type: LiveEvent.NeodoveCampaign, batchId: batch.id, status: batch.status });

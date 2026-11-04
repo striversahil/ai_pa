@@ -94,6 +94,9 @@ export const PATCH_COLUMNS: Record<string, string> = {
   region: 'region',
   subArea: 'subArea',
   state: 'state',
+  customerType: 'customerType',
+  customerTypeBase: 'customerTypeBase',
+  customerTypeTag: 'customerTypeTag',
 };
 
 /** Fields that reassign ownership / geography — sales-head + MIS only. */
@@ -142,7 +145,19 @@ export async function markDuplicateGroupRow(group: string, review: DuplicateRevi
   return Number(res?.meta?.changes ?? res?.changes ?? 0) || 0;
 }
 
-/** Upsert one customer (source columns only — local notes/review survive). */
+/** Hard delete — managers only (service guards pipeline rows). The Zoho
+ *  re-import will NOT resurrect the row (upsert matches on id; a deleted id
+ *  simply never appears again unless a future extract still carries it). */
+export async function deleteCustomerRow(id: string): Promise<boolean> {
+  const db = masterDb();
+  if (!db) throw new Error('database not ready');
+  const res = await db.prepare(`DELETE FROM MasterCustomer WHERE id = ?`).bind(id).run();
+  return (Number((res as any)?.meta?.changes ?? (res as any)?.changes ?? 0) || 0) > 0;
+}
+
+/** Upsert one customer (source columns only — local review survives; notes are
+ *  seeded only when the stored row has none, so hand-written notes always win
+ *  while lead imports still land their requirement text on fresh rows). */
 export function prepareUpsert(db: any, c: ImportCustomer): any {
   const iso = new Date().toISOString();
   return db
@@ -153,8 +168,8 @@ export function prepareUpsert(db: any, c: ImportCustomer): any {
          phonesJson, emailsJson, billingAddress, gstin, owner, pipelineStage, estimateCount,
          lastEstimateDate, salesOrderCount, lastSalesOrderDate, cityZoho, cityVerified,
          citySource, locationBasis, duplicateGroup, duplicateConfidence, suggestedAction,
-         createdAt, updatedAt
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         notes, createdAt, updatedAt
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET
          region = excluded.region, zone = excluded.zone, subArea = excluded.subArea,
          state = excluded.state, pincode = excluded.pincode, displayName = excluded.displayName,
@@ -170,7 +185,10 @@ export function prepareUpsert(db: any, c: ImportCustomer): any {
          citySource = excluded.citySource, locationBasis = excluded.locationBasis,
          duplicateGroup = excluded.duplicateGroup,
          duplicateConfidence = excluded.duplicateConfidence,
-         suggestedAction = excluded.suggestedAction, updatedAt = excluded.updatedAt`,
+         suggestedAction = excluded.suggestedAction,
+         notes = CASE WHEN MasterCustomer.notes IS NULL OR MasterCustomer.notes = ''
+                      THEN excluded.notes ELSE MasterCustomer.notes END,
+         updatedAt = excluded.updatedAt`,
     )
     .bind(
       c.id, c.zohoCustomerId, c.region, c.zone, c.subArea, c.state, c.pincode,
@@ -179,7 +197,7 @@ export function prepareUpsert(db: any, c: ImportCustomer): any {
       c.billingAddress, c.gstin, c.owner, c.pipelineStage, c.estimateCount,
       c.lastEstimateDate || null, c.salesOrderCount, c.lastSalesOrderDate || null,
       c.cityZoho, c.cityVerified, c.citySource, c.locationBasis, c.duplicateGroup,
-      c.duplicateConfidence, c.suggestedAction, iso, iso,
+      c.duplicateConfidence, c.suggestedAction, c.notes ?? '', iso, iso,
     );
 }
 

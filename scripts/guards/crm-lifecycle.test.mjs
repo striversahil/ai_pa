@@ -201,20 +201,36 @@ describe('crm lifecycle mirror', () => {
   });
 
   it('validateDispatch agrees', () => {
+    const proof = { invoiceId: 'att-inv', beforeId: 'att-before', afterId: 'att-after' };
     const cases = [
       { items: ITEM_SETS.allScheduled, entries: [] },
+      { items: ITEM_SETS.allScheduled, entries: [], proof },
       { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }] },
-      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 3 }] },
-      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 0 }] },
-      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 99 }] },
-      { items: ITEM_SETS.halfDispatched, entries: [{ itemId: 'a' }] },
-      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a' }] },
-      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'nope' }] },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: { invoiceId: 'att-inv', beforeId: '', afterId: 'att-after' } },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: { invoiceId: '  ', beforeId: 'att-before', afterId: 'att-after' } },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: null },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 3 }], proof },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 0 }], proof },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a', qty: 99 }], proof },
+      { items: ITEM_SETS.halfDispatched, entries: [{ itemId: 'a' }], proof },
+      { items: ITEM_SETS.allUnscheduled, entries: [{ itemId: 'a' }], proof },
+      { items: ITEM_SETS.allScheduled, entries: [{ itemId: 'nope' }], proof },
     ];
     for (const c of cases) {
       const a = be.validateDispatch(c);
       const b = fe.validateDispatch(c);
       assert.deepEqual(b, a, `validateDispatch ${JSON.stringify(c)}`);
+    }
+    // The gate itself: proof present dispatches, anything else is proof_required.
+    assert.equal(be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof }).ok, true);
+    assert.equal(fe.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof }).ok, true);
+    for (const bad of [undefined, null, {}, { invoiceId: 'x' }]) {
+      const a = be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: bad });
+      const b = fe.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: bad });
+      assert.deepEqual(b, a);
+      assert.equal(a.ok, false);
+      assert.equal(a.code, 'proof_required');
     }
   });
 

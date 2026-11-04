@@ -104,6 +104,15 @@ export interface CustomerPatch {
   region?: string;
   subArea?: string;
   state?: string;
+  customerType?: string;
+  typeTag?: string;
+}
+
+/** One sales-head-allowed client-type base with its segment + book count. */
+export interface TypeBaseEntry {
+  base: string;
+  segment: string;
+  count: number;
 }
 
 export interface EditorEntry {
@@ -131,4 +140,5 @@ export interface MasterCapabilities {
   canEdit: boolean;
   canAppoint: boolean;
   canImport: boolean;
+  canDelete: boolean;
 }

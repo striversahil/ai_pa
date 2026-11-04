@@ -215,6 +215,68 @@ export default function OrderPanel({
   const [addrSaving, setAddrSaving] = useState(false);
   const [addrError, setAddrError] = useState<string | null>(null);
 
+  // ── Dispatch proof (2026-11-04): every Mark dispatched consumes a FRESH
+  // triple — invoice PDF + before-packing + after-packing photo. Files upload
+  // the moment they're picked (SoAttachment IDs); the dispatch call sends the
+  // three IDs and the server burns them. Starts empty on every open so a
+  // consumed triple can never be re-picked for a repeat partial.
+  type ProofSlot = "invoice" | "before" | "after";
+  const PROOF_SLOT_META: Record<ProofSlot, { label: string; kind: string; accept: string; hint: string }> = {
+    invoice: { label: "Invoice PDF", kind: "invoice", accept: "application/pdf,.pdf", hint: "The invoice for this dispatch" },
+    before: { label: "Before packing", kind: "packing_before", accept: "image/*", hint: "Photo before packing" },
+    after: { label: "After packing", kind: "packing_after", accept: "image/*", hint: "Photo after packing" },
+  };
+  const [proofIds, setProofIds] = useState<{ invoiceId: string | null; beforeId: string | null; afterId: string | null }>({
+    invoiceId: null, beforeId: null, afterId: null,
+  });
+  const [proofNames, setProofNames] = useState<{ invoice: string; before: string; after: string }>({
+    invoice: "", before: "", after: "",
+  });
+  const [proofBusy, setProofBusy] = useState<ProofSlot | null>(null);
+  const [proofError, setProofError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setProofIds({ invoiceId: null, beforeId: null, afterId: null });
+    setProofNames({ invoice: "", before: "", after: "" });
+    setProofError(null);
+  }, [order.id]);
+
+  const uploadProof = async (slot: ProofSlot, file: File | null) => {
+    if (!file || proofBusy) return;
+    if (slot === "invoice" && file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
+      setProofError("Invoice must be a PDF file.");
+      return;
+    }
+    if (slot !== "invoice" && !file.type.startsWith("image/") && !/\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
+      setProofError("Packing proof must be a photo.");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setProofError(`"${file.name}" exceeds 20MB.`);
+      return;
+    }
+    setProofBusy(slot);
+    setProofError(null);
+    try {
+      const fd = new FormData();
+      fd.append("soNumber", order.soNumber);
+      fd.append("kind", PROOF_SLOT_META[slot].kind);
+      fd.append("file", file);
+      const res = await fetch("/api/crm/attachments", { method: "POST", body: fd });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "Upload failed");
+      const id = String(data?.attachment?.id || "");
+      if (!id) throw new Error("Upload failed — please retry.");
+      setProofIds((p) => ({ ...p, [`${slot}Id`]: id }));
+      setProofNames((p) => ({ ...p, [slot]: file.name }));
+      loadAttachments();
+    } catch (e: any) {
+      setProofError(e?.message || "Upload failed — please retry.");
+    } finally {
+      setProofBusy(null);
+    }
+  };
+
   const saveAddress = async (which: "billing" | "shipping", text: string) => {
     setAddrSaving(true);
     setAddrError(null);
@@ -258,8 +320,7 @@ export default function OrderPanel({
   const pickedItems = items.filter((it) => picked.has(it.id));
 
   // ── Client-side preview of the server's verdict ──────────────────────────
-  const check = useMemo(() => {
-    if (mode === "schedule") {
+  const check = useMemo(() => {    if (mode === "schedule") {
       return validateSchedule({
         today,
         items,
@@ -271,6 +332,7 @@ export default function OrderPanel({
       return validateDispatch({
         items,
         entries: pickedItems.map((it) => ({ itemId: it.id, qty: qty[it.id] ? Number(qty[it.id]) : null })),
+        proof: proofIds,
       });
     }
     if (mode === "reschedule") {
@@ -282,7 +344,7 @@ export default function OrderPanel({
       });
     }
     return { ok: true as const };
-  }, [mode, today, items, pickedItems, dates, reasons, soReason, moveReason, qty]);
+  }, [mode, today, items, pickedItems, dates, reasons, soReason, moveReason, qty, proofIds]);
 
   const anyDated = pickedItems.some((it) => !!dates[it.id]);
 
@@ -302,6 +364,7 @@ export default function OrderPanel({
       await actions.dispatch(
         order.id,
         pickedItems.map((it) => ({ itemId: it.id, qty: qty[it.id] ? Number(qty[it.id]) : null })),
+        { ...proofIds },
       );
       return;
     }
@@ -481,7 +544,7 @@ export default function OrderPanel({
                   ? "Set the tentative dispatch date for each item — this is the promise the dispatch floor works to. Anything you cannot date needs a reason."
                   : "Pick the items going out and the tentative dispatch date for each. Anything you cannot date needs a reason — leave every item undated to keep the whole order unscheduled with one order-level reason.")}
               {mode === "dispatch" &&
-                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch."}
+                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the dispatch proof below — Mark dispatched stays locked until the invoice + both packing photos are attached."}
               {mode === "reschedule" &&
                 "The committed date slipped. Give every selected item a new date and explain the slip — that reason is the audit trail."}
             </p>
@@ -578,6 +641,50 @@ export default function OrderPanel({
             </table>
           </div>
 
+          {/* Dispatch proof — every Mark dispatched (even partial) consumes a
+              fresh invoice PDF + before/after packing photo triple. Files
+              upload on pick; the server burns the three IDs on dispatch. */}
+          {mode === "dispatch" && (
+            <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                Dispatch proof — required
+              </h3>
+              <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
+                Each dispatch needs a fresh set: the invoice PDF plus a photo before packing and a photo after
+                packing. A set works once — the next partial needs a new one.
+              </p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                {(Object.keys(PROOF_SLOT_META) as Array<"invoice" | "before" | "after">).map((slot) => {
+                  const meta = PROOF_SLOT_META[slot];
+                  const done = !!proofIds[`${slot}Id` as keyof typeof proofIds];
+                  return (
+                    <label
+                      key={slot}
+                      className={`block rounded-xl border border-dashed px-3 py-2.5 text-[11px] transition-colors ${
+                        done
+                          ? "border-emerald-500/50 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                          : "border-zinc-300 text-zinc-500 hover:border-indigo-500 hover:text-indigo-600 dark:border-zinc-700 dark:hover:border-indigo-400"
+                      } ${proofBusy ? "pointer-events-none opacity-60" : "cursor-pointer"}`}
+                    >
+                      <span className="block text-[10px] font-bold uppercase tracking-wide">{meta.label}</span>
+                      <span className="mt-0.5 block truncate font-semibold">
+                        {proofBusy === slot ? "Uploading…" : done ? `✓ ${proofNames[slot]}` : meta.hint}
+                      </span>
+                      <input
+                        type="file"
+                        accept={meta.accept}
+                        className="hidden"
+                        disabled={!!proofBusy}
+                        onChange={(e) => { void uploadProof(slot, e.target.files?.[0] ?? null); e.target.value = ""; }}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+              {proofError && <p className="mt-2 text-[11px] font-bold text-rose-500">{proofError}</p>}
+            </div>
+          )}
+
           {/* Reason inputs */}
           {mode === "schedule" && pickedItems.length > 0 && (
             <div className="mt-4 space-y-3">
@@ -615,6 +722,29 @@ export default function OrderPanel({
             <div className="mt-5">
               <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">SO documents</h3>
               <SoAttachments so={order.soNumber} attachments={attachments} canManage={floorWrite} onChanged={loadAttachments} />
+            </div>
+          )}
+
+          {/* Consumed dispatch proofs — one triple per dispatch, newest first. */}
+          {mode === "view" && order.proofs && order.proofs.length > 0 && (
+            <div className="mt-5">
+              <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Dispatch proofs</h3>
+              <ul className="space-y-1.5">
+                {order.proofs.map((p) => (
+                  <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-600 dark:text-zinc-300">
+                    <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
+                    <span>
+                      <b>{p.day || "dispatch"}</b>
+                      {p.actor ? ` · ${p.actor}` : ""}
+                    </span>
+                    <span className="flex gap-2">
+                      <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
+                      <a href={`/api/crm/files/${p.beforeId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Before</a>
+                      <a href={`/api/crm/files/${p.afterId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">After</a>
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 

@@ -156,12 +156,28 @@ export function validateReschedule(args: {
   return ok;
 }
 
+export interface DispatchProof {
+  invoiceId?: string | null;
+  beforeId?: string | null;
+  afterId?: string | null;
+}
+
 export function validateDispatch(args: {
   items: readonly ItemLike[];
   entries: readonly { itemId: string; qty?: number | null }[];
+  /** Required: no proof, no dispatch (even partial). */
+  proof?: DispatchProof | null;
 }): Validation {
   const entries = (args.entries || []).filter((e) => e && e.itemId);
   if (entries.length === 0) return fail("no_items", "Select at least one item to dispatch.");
+  const p = args.proof || null;
+  const s = (v: unknown) => String(v ?? "").trim();
+  if (!p || !s(p.invoiceId) || !s(p.beforeId) || !s(p.afterId)) {
+    return fail(
+      "proof_required",
+      "Add the invoice PDF + before-packing + after-packing photos before dispatching.",
+    );
+  }
   const byId = new Map((args.items || []).map((it) => [it.id, it]));
   for (const e of entries) {
     const item = byId.get(e.itemId);

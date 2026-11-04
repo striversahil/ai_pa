@@ -20,11 +20,12 @@ import {
 } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import {
-  getCustomerDetail, updateCustomer, setDuplicateReview, importMasterData,
+  getCustomerDetail, updateCustomer, deleteCustomer, setDuplicateReview, importMasterData,
+  getAllowedTypeBases,
   MasterDataError, type Actor,
 } from '../../modules/master-data/service';
 import {
-  canEditMaster, canViewMaster, isMasterManager, listEditors, setEditor,
+  canEditMaster, canViewMaster, isMasterManager, isSalesHead, listEditors, setEditor,
 } from '../../modules/master-data/editors';
 import type { CustomerPatch, DuplicateReview } from '../../modules/master-data/types';
 
@@ -77,6 +78,19 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
     }
   });
 
+  // ── Allowed client-type bases (drawer dropdown; view-gated so appointed
+  //  editors can see the sales-head's vocabulary). Writes stay manager-only
+  //  in the Controller's client-type-rules endpoint.
+  app.get('/api/master-data/type-bases', async (c) => {
+    try {
+      await requireView(c);
+      const bases = await getAllowedTypeBases();
+      return c.json({ bases });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
   // ── Record edit (appointed editors + managers) ────────────────────────────
   app.patch('/api/master-data/customers/:id', async (c) => {
     try {
@@ -90,6 +104,19 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
       );
       notifyLive(c, { type: LiveEvent.MasterData, id: customer.id });
       return c.json({ customer });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Record delete (sales-head only — even MIS cannot delete) ─────────────
+  app.delete('/api/master-data/customers/:id', async (c) => {
+    try {
+      const me = await requireManager(c);
+      if (!isSalesHead(me)) throw new MasterDataError('only the sales-head can delete clients', 403);
+      const result = await deleteCustomer(c.req.param('id'), actorOf(me), isSalesHead(me));
+      notifyLive(c, { type: LiveEvent.MasterData, id: result.id, deleted: true });
+      return c.json(result);
     } catch (e) {
       return fail(c, e);
     }
@@ -162,6 +189,7 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
         canEdit: canEditMaster(me),
         canAppoint: isMasterManager(me),
         canImport: isMasterManager(me),
+        canDelete: isSalesHead(me),
       });
     } catch (e) {
       return fail(c, e);

@@ -419,7 +419,7 @@ model CrmOrderAction {
 model SoAttachment {
   id         String   @id @default(uuid())
   soNumber   String
-  kind       String   @default("other") // invoice | lr | pod | other
+  kind       String   @default("other") // invoice | packing_before | packing_after | lr | pod | other
   fileName   String
   mime       String   @default("application/octet-stream")
   size       Int      @default(0)
@@ -1867,6 +1867,24 @@ model CrmScheduleEvent {
   @@index([soId])
   @@index([kind])
   @@index([day])
+}
+
+// ── Dispatch proof (2026-11-04): every Mark dispatched consumes one fresh
+// triple — invoice PDF + before-packing + after-packing photo. UNIQUE per
+// file so a repeat partial must upload a fresh set.
+model CrmDispatchProof {
+  id        String   @id @default(uuid())
+  soId      String   @default("")
+  soNumber  String   @default("")
+  invoiceId String   @unique @default("")
+  beforeId  String   @unique @default("")
+  afterId   String   @unique @default("")
+  actor     String   @default("")
+  day       String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([soId])
+  @@index([soNumber])
 }
 
 // ── Manual connected-call log (TEMPORARY, founder 2026-11-03) ───────────────

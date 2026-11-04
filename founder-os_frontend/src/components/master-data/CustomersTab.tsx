@@ -1,15 +1,19 @@
 "use client";
 
-// CustomersTab — the customer table: sortable columns, 50-per-page paging and
-// a row drawer. Filtering happens in the parent (so KPI tiles can drive it and
-// the CSV export can reuse it); this file sorts + slices only.
+// CustomersTab — the customer table: sortable, 50-per-page and a row
+// drawer. Filtering happens in the parent (so KPI tiles can drive it and the
+// CSV export can reuse it); this file sorts + slices only.
+//
+// Six columns by design: Customer / Type / Location (region badge + city) /
+// Contact / Activity (estimates + orders) / Status. Owner, duplicate flags
+// and data-quality markers live in the drawer.
 import { useEffect, useMemo, useState } from "react";
 import type { MasterCustomer } from "@/master-data/types";
 import {
   DEFAULT_SORT, compareRows, sortRows, type SortKey, type SortState,
 } from "@/master-data/filters";
 import {
-  REVIEW_LABELS, duplicateTone, formatPhone, initials, joinCapped,
+  formatPhone, initials, joinCapped,
   regionLabel, regionTone, shortDate, statusTone,
 } from "@/master-data/normalize";
 import { Badge, EmptyState, Table, tdClass, thClass } from "@/components/ui";
@@ -18,13 +22,9 @@ const PAGE_SIZE = 50;
 
 const SORTABLE: Array<{ key: SortKey; label: string; numeric?: boolean }> = [
   { key: "name", label: "Customer" },
-  { key: "region", label: "Region" },
-  { key: "city", label: "Location" },
   { key: "type", label: "Type" },
-  { key: "est", label: "Estimates", numeric: true },
-  { key: "lastEst", label: "Last estimate", numeric: true },
-  { key: "so", label: "Sales orders", numeric: true },
-  { key: "lastSo", label: "Last order", numeric: true },
+  { key: "city", label: "Location" },
+  { key: "est", label: "Activity", numeric: true },
 ];
 
 function SortHeader({
@@ -38,7 +38,7 @@ function SortHeader({
 }) {
   const active = sort.key === sortKey;
   return (
-    <th className={`${thClass} ${numeric ? "text-right" : ""}`} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+    <th className={`${thClass} sticky top-0 z-10 ${numeric ? "text-right" : ""}`} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
       <button
         type="button"
         onClick={() => onSort(sortKey)}
@@ -50,6 +50,32 @@ function SortHeader({
       </button>
     </th>
   );
+}
+
+function PageButton({ disabled, onClick, label }: { disabled: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded-[var(--radius-control)] border border-[var(--border-card)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-40"
+    >
+      {label}
+    </button>
+  );
+}
+
+/** Compact page window: first · last · ±1 around current, with gaps. */
+function pageWindow(current: number, total: number): Array<number | "…"> {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i);
+  const keep = new Set([0, total - 1, current - 1, current, current + 1]);
+  const pages = [...keep].filter((p) => p >= 0 && p < total).sort((a, b) => a - b);
+  const out: Array<number | "…"> = [];
+  for (let i = 0; i < pages.length; i++) {
+    if (i > 0 && pages[i] - pages[i - 1] > 1) out.push("…");
+    out.push(pages[i]);
+  }
+  return out;
 }
 
 export default function CustomersTab({
@@ -104,16 +130,11 @@ export default function CustomersTab({
         <thead>
           <tr>
             <SortHeader label="Customer" sortKey="name" sort={sort} onSort={onSort} />
-            <th className={thClass}>Contact</th>
-            <SortHeader label="Region" sortKey="region" sort={sort} onSort={onSort} />
-            <SortHeader label="Location" sortKey="city" sort={sort} onSort={onSort} />
             <SortHeader label="Type" sortKey="type" sort={sort} onSort={onSort} />
-            <th className={thClass}>Status</th>
-            {SORTABLE.filter((c) => c.numeric).map((c) => (
-              <SortHeader key={c.key} label={c.label} sortKey={c.key} sort={sort} onSort={onSort} numeric />
-            ))}
-            <th className={thClass}>Flags</th>
-            <th className={thClass}>Owner</th>
+            <SortHeader label="Location" sortKey="city" sort={sort} onSort={onSort} />
+            <th className={`${thClass} sticky top-0 z-10`}>Contact</th>
+            <SortHeader label="Activity" sortKey="est" sort={sort} onSort={onSort} numeric />
+            <th className={`${thClass} sticky top-0 z-10`}>Status</th>
           </tr>
         </thead>
         <tbody>
@@ -121,7 +142,7 @@ export default function CustomersTab({
             <tr
               key={r.id}
               onClick={() => onOpen(r)}
-              className="cursor-pointer transition-colors hover:bg-[var(--surface-soft)]"
+              className="group cursor-pointer transition-colors odd:bg-[color-mix(in_srgb,var(--surface-soft)_45%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-brand-indigo)_7%,transparent)]"
             >
               <td className={`${tdClass} max-w-[280px] whitespace-normal`}>
                 <div className="flex items-start gap-2.5">
@@ -136,6 +157,17 @@ export default function CustomersTab({
                     <p className="truncate text-[10px] text-[var(--text-tertiary)]">Zoho #{r.zohoCustomerId}</p>
                   </div>
                 </div>
+              </td>
+              <td className={tdClass}>
+                <span className="text-[var(--text-primary)]">{r.typeBase}</span>
+                {r.typeTag && <span className="ml-1.5 rounded bg-[var(--bg-input)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">{r.typeTag}</span>}
+              </td>
+              <td className={`${tdClass} max-w-[220px] whitespace-normal`}>
+                <Badge tone={regionTone(r.region)}>{regionLabel(r.region)}</Badge>
+                <p className="mt-1 truncate text-[var(--text-primary)]">{r.city || "—"}</p>
+                <p className="truncate text-[11px] text-[var(--text-secondary)]">
+                  {[r.state, r.pincode].filter(Boolean).join(" · ") || "No state / pincode"}
+                </p>
               </td>
               <td className={`${tdClass} max-w-[240px] whitespace-normal`}>
                 {r.contact && <p className="truncate text-[var(--text-primary)]">{r.contact}{r.designation ? ` · ${r.designation}` : ""}</p>}
@@ -152,49 +184,17 @@ export default function CustomersTab({
                 )}
                 {r.emails[0] && <p className="truncate text-[11px] text-[var(--text-secondary)]">{joinCapped(r.emails, 1)}</p>}
               </td>
-              <td className={tdClass}>
-                <Badge tone={regionTone(r.region)}>{regionLabel(r.region)}</Badge>
-                {r.zone && <p className="mt-1 text-[10px] text-[var(--text-tertiary)]">{r.zone}{r.subArea ? ` · ${r.subArea}` : ""}</p>}
-              </td>
-              <td className={`${tdClass} max-w-[190px] whitespace-normal`}>
-                <p className="truncate text-[var(--text-primary)]">{r.city || "—"}</p>
-                <p className="truncate text-[11px] text-[var(--text-secondary)]">
-                  {[r.state, r.pincode].filter(Boolean).join(" · ") || "No state / pincode"}
+              <td className={`${tdClass} whitespace-normal`}>
+                <p className="text-[var(--text-primary)]">
+                  <strong>E{r.estCount}</strong> <span className="text-[var(--text-tertiary)]">·</span> <strong className={r.soCount > 0 ? "text-[var(--color-success)]" : ""}>S{r.soCount}</strong>
+                </p>
+                <p className="text-[10px] text-[var(--text-tertiary)]">
+                  {[r.lastEstimateDate ? `est ${shortDate(r.lastEstimateDate)}` : "never quoted",
+                    r.lastSalesOrderDate ? `ord ${shortDate(r.lastSalesOrderDate)}` : "never ordered"].join(" · ")}
                 </p>
               </td>
               <td className={tdClass}>
-                <span className="text-[var(--text-primary)]">{r.typeBase}</span>
-                {r.typeTag && <span className="ml-1.5 rounded bg-[var(--bg-input)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">{r.typeTag}</span>}
-              </td>
-              <td className={tdClass}>
                 <Badge tone={statusTone(r.status)} dot>{r.status}</Badge>
-              </td>
-              <td className={`${tdClass} text-right`}>
-                <p className={`font-semibold ${r.estCount > 0 ? "text-[var(--text-primary)]" : "text-[var(--text-tertiary)]"}`}>{r.estCount}</p>
-                <p className="text-[10px] text-[var(--text-tertiary)]">{r.lastEstimateDate ? shortDate(r.lastEstimateDate) : "never"}</p>
-              </td>
-              <td className={`${tdClass} text-right`}>
-                <p className={`font-semibold ${r.soCount > 0 ? "text-[var(--color-success)]" : "text-[var(--text-tertiary)]"}`}>{r.soCount}</p>
-                <p className="text-[10px] text-[var(--text-tertiary)]">{r.lastSalesOrderDate ? shortDate(r.lastSalesOrderDate) : "never"}</p>
-              </td>
-              <td className={`${tdClass} max-w-[170px] whitespace-normal`}>
-                <div className="flex flex-wrap items-center gap-1">
-                  {r.duplicateGroup ? (
-                    <span title={`Duplicate group ${r.duplicateGroup} · ${r.duplicateConfidence || "unrated"}`}>
-                      <Badge tone={duplicateTone(r.duplicateConfidence)}>Dup {r.duplicateGroup}</Badge>
-                    </span>
-                  ) : null}
-                  {r.duplicateGroup && (
-                    <span className="text-[10px] text-[var(--text-tertiary)]">{REVIEW_LABELS[r.duplicateReview]}</span>
-                  )}
-                  {r.hasNote && <span title="Has a note" className="text-[11px]">📝</span>}
-                  {!r.phones.length && <span title="No phone number" className="text-[11px]">📵</span>}
-                  {!r.gstin && <span title="No GSTIN" className="rounded bg-[var(--bg-input)] px-1 text-[9px] font-bold text-[var(--text-tertiary)]">NO GST</span>}
-                </div>
-                {!r.duplicateGroup && !r.hasNote && r.phones.length > 0 && r.gstin && <span className="text-[11px] text-[var(--text-tertiary)]">—</span>}
-              </td>
-              <td className={tdClass}>
-                <span className="text-[11px] text-[var(--text-secondary)]">{r.owner || "—"}</span>
               </td>
             </tr>
           ))}
@@ -204,39 +204,28 @@ export default function CustomersTab({
       {pageCount > 1 && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-caption text-[var(--text-tertiary)]">Page {safePage + 1} of {pageCount}</span>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setPage(0)}
-              disabled={safePage === 0}
-              className="rounded-[var(--radius-control)] border border-[var(--border-card)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] disabled:opacity-40"
-            >
-              First
-            </button>
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={safePage === 0}
-              className="rounded-[var(--radius-control)] border border-[var(--border-card)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] disabled:opacity-40"
-            >
-              Prev
-            </button>
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-              disabled={safePage >= pageCount - 1}
-              className="rounded-[var(--radius-control)] border border-[var(--border-card)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] disabled:opacity-40"
-            >
-              Next
-            </button>
-            <button
-              type="button"
-              onClick={() => setPage(pageCount - 1)}
-              disabled={safePage >= pageCount - 1}
-              className="rounded-[var(--radius-control)] border border-[var(--border-card)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] disabled:opacity-40"
-            >
-              Last
-            </button>
+          <div className="flex items-center gap-1">
+            <PageButton disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} label="‹ Prev" />
+            {pageWindow(safePage, pageCount).map((p) =>
+              p === "…" ? (
+                <span key={`gap-${safePage}`} className="px-1 text-[11px] text-[var(--text-tertiary)]">…</span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPage(p)}
+                  aria-current={p === safePage ? "page" : undefined}
+                  className={`min-w-[32px] rounded-[var(--radius-control)] px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                    p === safePage
+                      ? "bg-[var(--color-brand-indigo)] text-white"
+                      : "border border-[var(--border-card)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {p + 1}
+                </button>
+              ),
+            )}
+            <PageButton disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} label="Next ›" />
           </div>
         </div>
       )}

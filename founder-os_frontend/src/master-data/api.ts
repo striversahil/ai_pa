@@ -5,7 +5,7 @@
 
 import type {
   CustomerPatch, EditorEntry, MasterCapabilities, MasterCustomerDetail,
-  MasterDataPayload, MasterImportResult, DuplicateReview,
+  MasterDataPayload, MasterImportResult, DuplicateReview, TypeBaseEntry,
 } from "./types";
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
@@ -34,6 +34,15 @@ export async function patchMasterCustomer(id: string, patch: CustomerPatch): Pro
   });
   const body = await jsonOrThrow<{ customer: MasterCustomerDetail }>(res);
   return body.customer;
+}
+
+/** Hard delete (managers only). Pipeline rows are refused server-side — the
+ *  caller surfaces the error and suggests Inactive instead. */
+export async function deleteMasterCustomer(id: string): Promise<{ id: string; name: string }> {
+  const res = await fetch(`/api/master-data/customers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  return jsonOrThrow<{ id: string; name: string }>(res);
 }
 
 export async function setDuplicateReview(
@@ -76,4 +85,12 @@ export async function importMasterData(file: unknown): Promise<MasterImportResul
 export async function getCapabilities(): Promise<MasterCapabilities> {
   const res = await fetch("/api/master-data/capabilities", { cache: "no-store" });
   return jsonOrThrow<MasterCapabilities>(res);
+}
+
+/** Sales-head's allowed client-type vocabulary (view-gated; appointed editors
+ *  can read it for the drawer dropdown — writes stay manager-only). */
+export async function getTypeBases(): Promise<TypeBaseEntry[]> {
+  const res = await fetch("/api/master-data/type-bases", { cache: "no-store" });
+  const body = await jsonOrThrow<{ bases: TypeBaseEntry[] }>(res);
+  return body.bases ?? [];
 }

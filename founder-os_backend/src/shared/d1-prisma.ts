@@ -147,6 +147,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   CrmSalesOrder: ['firstSeenAt', 'lastSeenAt', 'deletedDetectedAt', 'billingAddressEditedAt', 'shippingAddressEditedAt', 'createdAt', 'updatedAt'],
   CrmSoItem: ['dispatchedAt', 'scheduledAt', 'createdAt', 'updatedAt'],
   CrmScheduleEvent: ['createdAt'],
+  CrmDispatchProof: ['createdAt'],
   WaTask: ['lastInboundAt', 'lastOutboundAt', 'waitingSince', 'waitTimeoutAt', 'followUpDueAt', 'createdAt', 'updatedAt'],
   MessageLineage: ['createdAt'],
   WaTaskHistory: ['occurredAt'],
@@ -187,6 +188,7 @@ const ID_FIELDS: Record<string, string> = {
   CrmSalesOrder: 'id',
   CrmSoItem: 'id',
   CrmScheduleEvent: 'id',
+  CrmDispatchProof: 'id',
   TelecallerScoreEvent: 'id',
   WaTask: 'id',
   MessageLineage: 'id',
@@ -900,6 +902,7 @@ export class D1PrismaClient {
   get crmSalesOrder() { return this.model('CrmSalesOrder'); }
   get crmSoItem() { return this.model('CrmSoItem'); }
   get crmScheduleEvent() { return this.model('CrmScheduleEvent'); }
+  get crmDispatchProof() { return this.model('CrmDispatchProof'); }
   get comment() { return this.model('Comment'); }
   get classification() { return this.model('Classification'); }
   get auditLog() { return this.model('AuditLog'); }

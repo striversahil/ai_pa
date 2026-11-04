@@ -1,21 +1,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// routes/crm-attachments.ts — SO document attachments (accounts uploads).
+// routes/crm-attachments.ts — SO document attachments.
 //
-// Invoice PDFs, LR copies, PODs attached to a sales order from the CRM
-// dashboard. Metadata is durable in D1 (SoAttachment, keyed by SO number —
-// snapshot refreshes can never wipe it); file bytes live in Workers KV
-// (CHAT_FILES, same locker as team-chat files). Upload/delete are MIS-only;
-// listing/download is any approved member. Every mutation busts the cached
-// CRM payload and broadcasts LiveEvent.Crm so open tabs refetch.
+// Invoice PDFs, packing photos, LR copies, PODs attached to a sales order from
+// the CRM dashboard. Metadata is durable in D1 (SoAttachment, keyed by SO
+// number — snapshot refreshes can never wipe it); file bytes live in Workers
+// KV (CHAT_FILES, same locker as team-chat files).
+//
+// Auth (2026-11-04): proof uploads (invoice + packing_before + packing_after)
+// are MIS *or* dispatch floor — the floor must attach the dispatch proof
+// itself; LR/POD/other uploads and ALL deletes stay MIS-only. Listing/download
+// is any approved member. Every mutation busts the cached CRM payload and
+// broadcasts LiveEvent.Crm so open tabs refetch.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import {
-  authStore, getMe, isApproved, requireMisScope, misScopeError,
+  authStore, getMe, isApproved, requireMisScope, requireScope, misScopeError,
   notifyLive, broadcastLive, LiveEvent, MAX_ATTACHMENT_BYTES, deps,
   type Bindings,
 } from '../context';
 
-const VALID_KINDS = new Set(['invoice', 'lr', 'pod', 'other']);
+const VALID_KINDS = new Set(['invoice', 'packing_before', 'packing_after', 'lr', 'pod', 'other']);
+
+/** Kinds the dispatch floor may upload itself (the per-dispatch proof). */
+const PROOF_KINDS = new Set(['invoice', 'packing_before', 'packing_after']);
 
 function isAllowedMime(mime: string): boolean {
   return mime === 'application/pdf' || mime.startsWith('image/');
@@ -36,9 +43,9 @@ function toJson(row: any) {
 }
 
 export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // Upload: MIS only (accounts desk works under the MIS grant).
+  // Upload: MIS (everything) or the dispatch floor (proof kinds only — invoice
+  // + packing photos, so the floor can attach its own dispatch proof).
   app.post('/api/crm/attachments', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     let form: FormData;
     try {
@@ -50,10 +57,36 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
     const kind = String(form.get('kind') || 'other').trim().toLowerCase();
     const file = form.get('file');
     if (!soNumber) return c.json({ error: 'soNumber required' }, 400);
-    if (!VALID_KINDS.has(kind)) return c.json({ error: 'kind must be one of invoice|lr|pod|other' }, 400);
+    if (!VALID_KINDS.has(kind)) return c.json({ error: 'kind must be one of invoice|packing_before|packing_after|lr|pod|other' }, 400);
+    let isMis = true;
+    try {
+      await requireMisScope(c);
+    } catch {
+      // Not MIS — the floor may still upload the dispatch proof kinds.
+      isMis = false;
+      if (!PROOF_KINDS.has(kind)) {
+        return c.json({ error: 'Only MIS can upload this document kind.' }, 403);
+      }
+      try {
+        await requireScope(authStore(c), c.req.header('cookie') ?? null, 'dispatch');
+      } catch {
+        return c.json({ error: 'Proof uploads need the dispatch scope (MIS can upload everything).' }, 403);
+      }
+    }
+    void isMis;
     if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
     const mime = file.type || 'application/octet-stream';
     if (!isAllowedMime(mime)) return c.json({ error: 'Only PDF and image files can be attached' }, 400);
+    if (kind === 'invoice' && mime !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+      return c.json({ error: 'Invoice proof must be a PDF file.' }, 400);
+    }
+    if (
+      (kind === 'packing_before' || kind === 'packing_after') &&
+      !mime.startsWith('image/') &&
+      !/\.(png|jpe?g|webp|gif)$/i.test(file.name)
+    ) {
+      return c.json({ error: 'Packing proof must be a photo (image file).' }, 400);
+    }
     if (file.size > MAX_ATTACHMENT_BYTES) return c.json({ error: 'File too large (max 20MB)' }, 413);
     if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
     const me = await getMe(authStore(c), c.req.header('cookie') ?? null);

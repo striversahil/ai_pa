@@ -40,6 +40,14 @@ export function isMasterManager(me: MeResponse | null): boolean {
   return held.has('sales-head') || held.has('mis');
 }
 
+/** Client delete is sales-head-only (root keeps it as system owner): even MIS
+ *  cannot delete — a wrong delete is unrecoverable, unlike an edit. */
+export function isSalesHead(me: MeResponse | null): boolean {
+  if (!me) return false;
+  if (me.isAdmin) return true;
+  return heldScopes(me).has('sales-head');
+}
+
 /** Appointed editor: the direct scope, or implicit manager authority. */
 export function canEditMaster(me: MeResponse | null): boolean {
   if (!me) return false;

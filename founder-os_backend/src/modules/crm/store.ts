@@ -17,6 +17,7 @@ import {
   validateReschedule,
   validateSchedule,
   type DispatchEntry,
+  type DispatchProof,
   type ItemLike,
   type RescheduleEntry,
   type ScheduleEntry,
@@ -242,7 +243,94 @@ export async function getOrder(idOrSo: string): Promise<(CrmOrderRow & { events:
       day: str(e.day),
       createdAt: iso(e.createdAt),
     })),
+    proofs: await proofsForOrder(str(row.id)),
   };
+}
+
+/** Dispatch proofs consumed by this order (newest first) — shown in view mode. */
+async function proofsForOrder(soId: string): Promise<any[]> {
+  try {
+    const rows = (await prisma.crmDispatchProof.findMany({
+      where: { soId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    })) as any[];
+    return rows.map((p) => ({
+      id: str(p.id),
+      invoiceId: str(p.invoiceId),
+      beforeId: str(p.beforeId),
+      afterId: str(p.afterId),
+      actor: str(p.actor),
+      day: str(p.day),
+      createdAt: iso(p.createdAt),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+const isPdfFile = (mime: string, name: string): boolean =>
+  mime === 'application/pdf' || /\.pdf$/i.test(name);
+
+const isImageFile = (mime: string, name: string): boolean =>
+  mime.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(name);
+
+/**
+ * Fresh-proof gate (2026-11-04): every dispatch consumes one unused triple.
+ * Verifies the three SoAttachment rows exist, belong to THIS soNumber, carry
+ * the right kind/mime, and were never consumed by an earlier dispatch.
+ */
+async function verifyDispatchProof(
+  soId: string,
+  soNumber: string,
+  proof?: DispatchProof | null,
+): Promise<{ invoiceId: string; beforeId: string; afterId: string }> {
+  const pick = (v: unknown): string => String(v ?? '').trim();
+  const invoiceId = pick((proof as any)?.invoiceId);
+  const beforeId = pick((proof as any)?.beforeId);
+  const afterId = pick((proof as any)?.afterId);
+  if (!invoiceId || !beforeId || !afterId) {
+    throw new CrmError(
+      'Add the invoice PDF + before-packing + after-packing photos before dispatching.',
+      400,
+      'proof_required',
+    );
+  }
+  const [invoice, before, after] = (await Promise.all([
+    prisma.soAttachment.findUnique({ where: { id: invoiceId } }).catch(() => null),
+    prisma.soAttachment.findUnique({ where: { id: beforeId } }).catch(() => null),
+    prisma.soAttachment.findUnique({ where: { id: afterId } }).catch(() => null),
+  ])) as any[];
+  if (!invoice || !before || !after) {
+    throw new CrmError('Dispatch proof files not found — please re-upload them.', 400, 'proof_not_found');
+  }
+  for (const row of [invoice, before, after]) {
+    if (str(row.soNumber) !== soNumber) {
+      throw new CrmError('Dispatch proof belongs to a different sales order.', 400, 'proof_wrong_order');
+    }
+  }
+  if (str(invoice.kind) !== 'invoice' || !isPdfFile(str(invoice.mime), str(invoice.fileName))) {
+    throw new CrmError('The invoice proof must be a PDF uploaded as kind "invoice".', 400, 'proof_kind');
+  }
+  if (str(before.kind) !== 'packing_before' || !isImageFile(str(before.mime), str(before.fileName))) {
+    throw new CrmError('The before-packing proof must be a photo uploaded as "before packing".', 400, 'proof_kind');
+  }
+  if (str(after.kind) !== 'packing_after' || !isImageFile(str(after.mime), str(after.fileName))) {
+    throw new CrmError('The after-packing proof must be a photo uploaded as "after packing".', 400, 'proof_kind');
+  }
+  const reused = (await Promise.all([
+    prisma.crmDispatchProof.findFirst({ where: { invoiceId } }).catch(() => null),
+    prisma.crmDispatchProof.findFirst({ where: { beforeId } }).catch(() => null),
+    prisma.crmDispatchProof.findFirst({ where: { afterId } }).catch(() => null),
+  ])) as any[];
+  if (reused.some(Boolean)) {
+    throw new CrmError(
+      'This proof was already used for a dispatch — upload a fresh invoice + fresh packing photos.',
+      400,
+      'proof_reused',
+    );
+  }
+  return { invoiceId, beforeId, afterId };
 }
 
 /**
@@ -532,6 +620,8 @@ export async function rescheduleOrder(args: {
 export async function dispatchOrder(args: {
   idOrSo: string;
   entries: DispatchEntry[];
+  /** Fresh proof triple — required for every dispatch, full or partial. */
+  proof?: DispatchProof | null;
   actor?: string | null;
   today?: string;
 }): Promise<ActionResult & { credited: boolean }> {
@@ -549,8 +639,12 @@ export async function dispatchOrder(args: {
     dispatchedQty: num(r.dispatchedQty),
   })) as ItemLike[];
 
-  const check = validateDispatch({ items, entries: args.entries });
+  const check = validateDispatch({ items, entries: args.entries, proof: args.proof });
   if (!check.ok) throw new CrmError(check.message, 400, check.code);
+
+  // Proof files are verified BEFORE anything moves — a bad triple fails the
+  // whole dispatch and consumes nothing.
+  const proofIds = await verifyDispatchProof(str(orderRow.id), str(orderRow.soNumber), args.proof);
 
   const byId = new Map(itemRows.map((r) => [str(r.id), r]));
   const now = new Date();
@@ -585,6 +679,30 @@ export async function dispatchOrder(args: {
 
   const fresh = await loadRawItems(str(orderRow.id));
   const lifecycle = await refreshLifecycle(orderRow, fresh);
+  // Consume the proof AFTER the items moved: a failed dispatch must not burn
+  // a fresh triple, and the UNIQUE columns turn a double-submit race into a
+  // clean `proof_reused` instead of a double dispatch.
+  try {
+    await prisma.crmDispatchProof.create({
+      data: {
+        id: crypto.randomUUID(),
+        soId: str(orderRow.id),
+        soNumber: str(orderRow.soNumber),
+        invoiceId: proofIds.invoiceId,
+        beforeId: proofIds.beforeId,
+        afterId: proofIds.afterId,
+        actor: args.actor || '',
+        day: today,
+        createdAt: new Date(),
+      },
+    });
+  } catch (e: any) {
+    throw new CrmError(
+      'This proof was already used for a dispatch — upload a fresh invoice + fresh packing photos.',
+      400,
+      'proof_reused',
+    );
+  }
   const credited = await creditDispatch(
     str(orderRow.soNumber),
     lifecycle === 'dispatched',
