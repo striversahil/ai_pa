@@ -66,12 +66,12 @@ export interface CrmEvent {
   createdAt: string | null;
 }
 
-/** One consumed dispatch proof triple (fresh per dispatch, full or partial). */
+/** One consumed dispatch proof (fresh invoice per dispatch; packing photos optional). */
 export interface CrmDispatchProof {
   id: string;
   invoiceId: string;
-  beforeId: string;
-  afterId: string;
+  beforeId: string | null;
+  afterId: string | null;
   actor: string;
   day: string;
   createdAt: string | null;

@@ -165,17 +165,17 @@ export interface DispatchProof {
 export function validateDispatch(args: {
   items: readonly ItemLike[];
   entries: readonly { itemId: string; qty?: number | null }[];
-  /** Required: no proof, no dispatch (even partial). */
+  /** Required: no invoice, no dispatch (even partial). Packing photos optional. */
   proof?: DispatchProof | null;
 }): Validation {
   const entries = (args.entries || []).filter((e) => e && e.itemId);
   if (entries.length === 0) return fail("no_items", "Select at least one item to dispatch.");
   const p = args.proof || null;
   const s = (v: unknown) => String(v ?? "").trim();
-  if (!p || !s(p.invoiceId) || !s(p.beforeId) || !s(p.afterId)) {
+  if (!p || !s(p.invoiceId)) {
     return fail(
       "proof_required",
-      "Add the invoice PDF + before-packing + after-packing photos before dispatching.",
+      "Add the invoice PDF before dispatching. Packing photos are optional.",
     );
   }
   const byId = new Map((args.items || []).map((it) => [it.id, it]));

@@ -22,7 +22,7 @@ Files:
 | `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, client **billing/shipping address** (floor-editable — an edit sets a marker and the sync leaves that address alone), **payment terms** (extracted Payment line from Zoho's free-text `terms`), the **EST no.** (`referenceNumber`), derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
 | `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative dispatch date, dispatch state, delay reason, dispatched qty |
 | `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal`, `address_updated` |
-| `CrmDispatchProof` (migration 0105) | one row per dispatch action: the fresh proof triple (invoice PDF + before/after packing photo IDs). UNIQUE per file so a repeat partial must upload a new set |
+| `CrmDispatchProof` (migration 0105, photos optional since 0106) | one row per dispatch action: the fresh invoice PDF ID + optional before/after packing photo IDs. UNIQUE per file so a repeat partial must upload a new invoice |
 
 ## Lifecycle (derived from items, never set by hand)
 
@@ -37,11 +37,11 @@ cancelled   ← Zoho said cancelled/void (out of the queues, kept for audit)
 - An item whose committed date passed and is still undispatched is **overdue**;
   the floor forces the reschedule dialog (comprehensive reason) before moving on.
 - Dispatching some items → `partially_dispatched`; all → `dispatched`.
-- **Proof gate (2026-11-04):** every dispatch burns a FRESH triple — an invoice
-  PDF plus a before-packing and an after-packing photo (all three are
-  `SoAttachment` rows the dispatch floor may upload itself; LR/POD/other stay
-  MIS-only). A missing or already-used triple fails the whole dispatch; a
-  repeat partial needs a new set.
+- **Proof gate (2026-11-04):** every dispatch burns a FRESH invoice PDF
+  (before/after packing photos are optional extras — `packing_before` /
+  `packing_after` `SoAttachment` rows the dispatch floor may upload itself;
+  LR/POD/other stay MIS-only). A missing or already-used invoice fails the
+  whole dispatch; a repeat partial needs a new invoice.
 
 **Tab membership is per item, not per lifecycle bucket.** One order with a
 dispatched item, a dated item and an undated item is genuinely open in all

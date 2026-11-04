@@ -221,10 +221,10 @@ export default function OrderPanel({
   // three IDs and the server burns them. Starts empty on every open so a
   // consumed triple can never be re-picked for a repeat partial.
   type ProofSlot = "invoice" | "before" | "after";
-  const PROOF_SLOT_META: Record<ProofSlot, { label: string; kind: string; accept: string; hint: string }> = {
-    invoice: { label: "Invoice PDF", kind: "invoice", accept: "application/pdf,.pdf", hint: "The invoice for this dispatch" },
-    before: { label: "Before packing", kind: "packing_before", accept: "image/*", hint: "Photo before packing" },
-    after: { label: "After packing", kind: "packing_after", accept: "image/*", hint: "Photo after packing" },
+  const PROOF_SLOT_META: Record<ProofSlot, { label: string; kind: string; accept: string; hint: string; optional: boolean }> = {
+    invoice: { label: "Invoice PDF", kind: "invoice", accept: "application/pdf,.pdf", hint: "The invoice for this dispatch", optional: false },
+    before: { label: "Before packing (optional)", kind: "packing_before", accept: "image/*", hint: "Photo before packing", optional: true },
+    after: { label: "After packing (optional)", kind: "packing_after", accept: "image/*", hint: "Photo after packing", optional: true },
   };
   const [proofIds, setProofIds] = useState<{ invoiceId: string | null; beforeId: string | null; afterId: string | null }>({
     invoiceId: null, beforeId: null, afterId: null,
@@ -544,7 +544,7 @@ export default function OrderPanel({
                   ? "Set the tentative dispatch date for each item — this is the promise the dispatch floor works to. Anything you cannot date needs a reason."
                   : "Pick the items going out and the tentative dispatch date for each. Anything you cannot date needs a reason — leave every item undated to keep the whole order unscheduled with one order-level reason.")}
               {mode === "dispatch" &&
-                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the dispatch proof below — Mark dispatched stays locked until the invoice + both packing photos are attached."}
+                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the invoice PDF below — Mark dispatched stays locked until it is attached (packing photos optional)."}
               {mode === "reschedule" &&
                 "The committed date slipped. Give every selected item a new date and explain the slip — that reason is the audit trail."}
             </p>
@@ -642,16 +642,16 @@ export default function OrderPanel({
           </div>
 
           {/* Dispatch proof — every Mark dispatched (even partial) consumes a
-              fresh invoice PDF + before/after packing photo triple. Files
-              upload on pick; the server burns the three IDs on dispatch. */}
+              fresh invoice PDF; packing photos are optional extras. Files
+              upload on pick; the server burns the invoice on dispatch. */}
           {mode === "dispatch" && (
             <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                Dispatch proof — required
+                Dispatch proof — invoice required
               </h3>
               <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
-                Each dispatch needs a fresh set: the invoice PDF plus a photo before packing and a photo after
-                packing. A set works once — the next partial needs a new one.
+                Each dispatch needs a fresh invoice PDF — it works once, so the next partial needs a new one.
+                Before/after packing photos are optional; attach them when you have them.
               </p>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
                 {(Object.keys(PROOF_SLOT_META) as Array<"invoice" | "before" | "after">).map((slot) => {
@@ -739,8 +739,16 @@ export default function OrderPanel({
                     </span>
                     <span className="flex gap-2">
                       <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
-                      <a href={`/api/crm/files/${p.beforeId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Before</a>
-                      <a href={`/api/crm/files/${p.afterId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">After</a>
+                      {p.beforeId ? (
+                        <a href={`/api/crm/files/${p.beforeId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Before</a>
+                      ) : (
+                        <span className="text-zinc-400">Before —</span>
+                      )}
+                      {p.afterId ? (
+                        <a href={`/api/crm/files/${p.afterId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">After</a>
+                      ) : (
+                        <span className="text-zinc-400">After —</span>
+                      )}
                     </span>
                   </li>
                 ))}

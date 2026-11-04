@@ -276,35 +276,37 @@ const isImageFile = (mime: string, name: string): boolean =>
   mime.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(name);
 
 /**
- * Fresh-proof gate (2026-11-04): every dispatch consumes one unused triple.
- * Verifies the three SoAttachment rows exist, belong to THIS soNumber, carry
- * the right kind/mime, and were never consumed by an earlier dispatch.
+ * Fresh-proof gate (2026-11-04): every dispatch consumes one fresh INVOICE
+ * PDF; before/after packing photos are optional and verified only when
+ * provided. Verifies the files exist, belong to THIS soNumber, carry the
+ * right kind/mime, and were never consumed by an earlier dispatch.
  */
 async function verifyDispatchProof(
   soId: string,
   soNumber: string,
   proof?: DispatchProof | null,
-): Promise<{ invoiceId: string; beforeId: string; afterId: string }> {
+): Promise<{ invoiceId: string; beforeId: string | null; afterId: string | null }> {
   const pick = (v: unknown): string => String(v ?? '').trim();
   const invoiceId = pick((proof as any)?.invoiceId);
-  const beforeId = pick((proof as any)?.beforeId);
-  const afterId = pick((proof as any)?.afterId);
-  if (!invoiceId || !beforeId || !afterId) {
+  const beforeId = pick((proof as any)?.beforeId) || null;
+  const afterId = pick((proof as any)?.afterId) || null;
+  if (!invoiceId) {
     throw new CrmError(
-      'Add the invoice PDF + before-packing + after-packing photos before dispatching.',
+      'Add the invoice PDF before dispatching. Packing photos are optional.',
       400,
       'proof_required',
     );
   }
   const [invoice, before, after] = (await Promise.all([
     prisma.soAttachment.findUnique({ where: { id: invoiceId } }).catch(() => null),
-    prisma.soAttachment.findUnique({ where: { id: beforeId } }).catch(() => null),
-    prisma.soAttachment.findUnique({ where: { id: afterId } }).catch(() => null),
+    beforeId ? prisma.soAttachment.findUnique({ where: { id: beforeId } }).catch(() => null) : null,
+    afterId ? prisma.soAttachment.findUnique({ where: { id: afterId } }).catch(() => null) : null,
   ])) as any[];
-  if (!invoice || !before || !after) {
+  if (!invoice || (beforeId && !before) || (afterId && !after)) {
     throw new CrmError('Dispatch proof files not found — please re-upload them.', 400, 'proof_not_found');
   }
-  for (const row of [invoice, before, after]) {
+  const present = [invoice, before, after].filter(Boolean);
+  for (const row of present) {
     if (str(row.soNumber) !== soNumber) {
       throw new CrmError('Dispatch proof belongs to a different sales order.', 400, 'proof_wrong_order');
     }
@@ -312,20 +314,19 @@ async function verifyDispatchProof(
   if (str(invoice.kind) !== 'invoice' || !isPdfFile(str(invoice.mime), str(invoice.fileName))) {
     throw new CrmError('The invoice proof must be a PDF uploaded as kind "invoice".', 400, 'proof_kind');
   }
-  if (str(before.kind) !== 'packing_before' || !isImageFile(str(before.mime), str(before.fileName))) {
+  if (before && (str(before.kind) !== 'packing_before' || !isImageFile(str(before.mime), str(before.fileName)))) {
     throw new CrmError('The before-packing proof must be a photo uploaded as "before packing".', 400, 'proof_kind');
   }
-  if (str(after.kind) !== 'packing_after' || !isImageFile(str(after.mime), str(after.fileName))) {
+  if (after && (str(after.kind) !== 'packing_after' || !isImageFile(str(after.mime), str(after.fileName)))) {
     throw new CrmError('The after-packing proof must be a photo uploaded as "after packing".', 400, 'proof_kind');
   }
-  const reused = (await Promise.all([
-    prisma.crmDispatchProof.findFirst({ where: { invoiceId } }).catch(() => null),
-    prisma.crmDispatchProof.findFirst({ where: { beforeId } }).catch(() => null),
-    prisma.crmDispatchProof.findFirst({ where: { afterId } }).catch(() => null),
-  ])) as any[];
+  const reuseChecks = [prisma.crmDispatchProof.findFirst({ where: { invoiceId } }).catch(() => null)];
+  if (beforeId) reuseChecks.push(prisma.crmDispatchProof.findFirst({ where: { beforeId } }).catch(() => null));
+  if (afterId) reuseChecks.push(prisma.crmDispatchProof.findFirst({ where: { afterId } }).catch(() => null));
+  const reused = (await Promise.all(reuseChecks)) as any[];
   if (reused.some(Boolean)) {
     throw new CrmError(
-      'This proof was already used for a dispatch — upload a fresh invoice + fresh packing photos.',
+      'This proof was already used for a dispatch — upload a fresh invoice (packing photos are optional).',
       400,
       'proof_reused',
     );
@@ -680,7 +681,7 @@ export async function dispatchOrder(args: {
   const fresh = await loadRawItems(str(orderRow.id));
   const lifecycle = await refreshLifecycle(orderRow, fresh);
   // Consume the proof AFTER the items moved: a failed dispatch must not burn
-  // a fresh triple, and the UNIQUE columns turn a double-submit race into a
+  // a fresh invoice, and the UNIQUE columns turn a double-submit race into a
   // clean `proof_reused` instead of a double dispatch.
   try {
     await prisma.crmDispatchProof.create({
@@ -698,7 +699,7 @@ export async function dispatchOrder(args: {
     });
   } catch (e: any) {
     throw new CrmError(
-      'This proof was already used for a dispatch — upload a fresh invoice + fresh packing photos.',
+      'This proof was already used for a dispatch — upload a fresh invoice (packing photos are optional).',
       400,
       'proof_reused',
     );

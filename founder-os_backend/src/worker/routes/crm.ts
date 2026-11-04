@@ -306,10 +306,9 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
 
   // ── Dispatch (full or partial) ──────────────────────────────────────────────
-  // PROOF GATE (2026-11-04): every dispatch consumes a fresh triple — invoice
-  // PDF + before-packing + after-packing photo (SoAttachment IDs). The store
-  // verifies ownership/kind/mime/freshness; a missing or reused triple fails
-  // the whole dispatch and consumes nothing.
+  // PROOF GATE (2026-11-04): every dispatch consumes a fresh invoice PDF
+  // (packing photos optional). The store verifies ownership/kind/mime/freshness;
+  // a missing or reused invoice fails the whole dispatch and consumes nothing.
   app.post('/api/crm/orders/:id/dispatch', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;

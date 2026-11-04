@@ -236,10 +236,11 @@ export interface DispatchEntry {
 }
 
 /**
- * Fresh proof triple for one dispatch action (decided 2026-11-04): every
- * Mark dispatched — full or partial — consumes ONE invoice PDF + ONE
- * before-packing + ONE after-packing photo. IDs reference SoAttachment rows;
- * the store verifies ownership/kind/mime/freshness (shape-only here).
+ * Fresh proof for one dispatch action (decided 2026-11-04): every Mark
+ * dispatched — full or partial — consumes a fresh INVOICE PDF. Before/after
+ * packing photos are optional and ride along when the floor has them. IDs
+ * reference SoAttachment rows; the store verifies ownership/kind/mime/freshness
+ * (shape-only here).
  */
 export interface DispatchProof {
   invoiceId?: string | null;
@@ -259,19 +260,19 @@ export interface DispatchArgs {
  * positive and no more than what remains. Early dispatch (before the committed
  * date) is allowed and recorded with the actual date.
  *
- * PROOF GATE (2026-11-04): every dispatch needs a fresh triple — invoice PDF
- * + before-packing + after-packing photo. Shape-only here (three IDs present);
- * the store verifies the files exist, belong to this SO, have the right
- * kind/mime and were never used before.
+ * PROOF GATE (2026-11-04): every dispatch needs a fresh invoice PDF;
+ * before/after packing photos are optional extras. Shape-only here (invoice
+ * ID present); the store verifies the files exist, belong to this SO, have
+ * the right kind/mime and were never used before.
  */
 export function validateDispatch(args: DispatchArgs): Validation {
   const entries = (args.entries || []).filter((e) => e && e.itemId);
   if (entries.length === 0) return fail('no_items', 'Select at least one item to dispatch.');
   const p = args.proof || null;
-  if (!p || !str3(p.invoiceId) || !str3(p.beforeId) || !str3(p.afterId)) {
+  if (!p || !str3(p.invoiceId)) {
     return fail(
       'proof_required',
-      'Add the invoice PDF + before-packing + after-packing photos before dispatching.',
+      'Add the invoice PDF before dispatching. Packing photos are optional.',
     );
   }
   const byId = new Map((args.items || []).map((it) => [it.id, it]));

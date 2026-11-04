@@ -1876,9 +1876,9 @@ model CrmDispatchProof {
   id        String   @id @default(uuid())
   soId      String   @default("")
   soNumber  String   @default("")
-  invoiceId String   @unique @default("")
-  beforeId  String   @unique @default("")
-  afterId   String   @unique @default("")
+  invoiceId String  @unique @default("")
+  beforeId  String? @unique
+  afterId   String? @unique
   actor     String   @default("")
   day       String   @default("")
   createdAt DateTime @default(now())
