@@ -1870,8 +1870,10 @@ model CrmScheduleEvent {
 }
 
 // ── Dispatch proof (2026-11-04): every Mark dispatched consumes one fresh
-// triple — invoice PDF + before-packing + after-packing photo. UNIQUE per
-// file so a repeat partial must upload a fresh set.
+// invoice PDF (packing photos ride along when the floor has them). UNIQUE per
+// file so a repeat partial must upload a fresh invoice. `items` is a JSON
+// snapshot of the batch ([{ itemId, name, qty, unit }]) so the panel can list
+// previously dispatched batches with their quantities.
 model CrmDispatchProof {
   id        String   @id @default(uuid())
   soId      String   @default("")
@@ -1879,6 +1881,7 @@ model CrmDispatchProof {
   invoiceId String  @unique @default("")
   beforeId  String? @unique
   afterId   String? @unique
+  items     String   @default("[]")
   actor     String   @default("")
   day       String   @default("")
   createdAt DateTime @default(now())

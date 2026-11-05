@@ -230,8 +230,7 @@ export async function getOrder(
   if (!row) return null;
   const itemRows = (await prisma.crmSoItem.findMany({ where: { soId: str(row.id) }, orderBy: { lineKey: 'asc' } })) as any[];
   const events = (await prisma.crmScheduleEvent.findMany({ where: { soId: str(row.id) }, orderBy: { createdAt: 'desc' }, take: 100 })) as any[];
-  const order = withFlags(toOrderView(row, itemRows.map(toItemView)), istToday());
-  return {
+  const order = withFlags(toOrderView(row, itemRows.map(toItemView)), istToday());  return {
     ...order,
     events: events.map((e) => ({
       id: str(e.id),
@@ -245,27 +244,69 @@ export async function getOrder(
       day: str(e.day),
       createdAt: iso(e.createdAt),
     })),
-    proofs: await proofsForOrder(str(row.id)),
+    proofs: await proofsForOrder(str(row.id), itemRows, events),
   };
 }
 
-/** Dispatch proofs consumed by this order (newest first) — shown in view mode. */
-async function proofsForOrder(soId: string): Promise<any[]> {
+/** Dispatch proofs for one order (newest first) — each row carries the batch
+ *  snapshot (items + quantities) written at dispatch time. Rows predating the
+ *  `items` column (0107) backfill from the dispatch audit events on the same
+ *  day so earlier batches still list what went out. */
+async function proofsForOrder(soId: string, itemRows?: any[], eventRows?: any[]): Promise<any[]> {
   try {
     const rows = (await prisma.crmDispatchProof.findMany({
       where: { soId },
       orderBy: { createdAt: 'desc' },
       take: 50,
     })) as any[];
-    return rows.map((p) => ({
-      id: str(p.id),
-      invoiceId: str(p.invoiceId),
-      beforeId: str(p.beforeId),
-      afterId: str(p.afterId),
-      actor: str(p.actor),
-      day: str(p.day),
-      createdAt: iso(p.createdAt),
-    }));
+    const nameOf = new Map<string, { name: string; unit: string }>();
+    for (const r of itemRows || []) {
+      nameOf.set(str((r as any)?.id), {
+        name: str((r as any)?.name || (r as any)?.description || (r as any)?.sku || 'Item'),
+        unit: str((r as any)?.unit),
+      });
+    }
+    const eventsByDay = new Map<string, any[]>();
+    for (const e of eventRows || []) {
+      if (str((e as any)?.kind) !== 'dispatch' && str((e as any)?.kind) !== 'partial_dispatch') continue;
+      const day = str((e as any)?.day);
+      const list = eventsByDay.get(day) || [];
+      list.push(e);
+      eventsByDay.set(day, list);
+    }
+    return rows.map((p) => {
+      let items: any[] = [];
+      try {
+        const parsed = JSON.parse(str(p.items) || '[]');
+        if (Array.isArray(parsed)) items = parsed;
+      } catch {
+        items = [];
+      }
+      if (!items.length) {
+        const fellows = eventsByDay.get(str(p.day)) || [];
+        items = fellows
+          .filter((e) => num((e as any)?.qty) > 0)
+          .map((e) => {
+            const meta = nameOf.get(str((e as any)?.itemId));
+            return {
+              itemId: str((e as any)?.itemId),
+              name: meta?.name || 'Item',
+              qty: num((e as any)?.qty),
+              unit: meta?.unit || '',
+            };
+          });
+      }
+      return {
+        id: str(p.id),
+        invoiceId: str(p.invoiceId),
+        beforeId: str(p.beforeId) || null,
+        afterId: str(p.afterId) || null,
+        items,
+        actor: str(p.actor),
+        day: str(p.day),
+        createdAt: iso(p.createdAt),
+      };
+    });
   } catch {
     return [];
   }
@@ -294,7 +335,7 @@ async function verifyDispatchProof(
   const afterId = pick((proof as any)?.afterId) || null;
   if (!invoiceId) {
     throw new CrmError(
-      'Add the invoice PDF before dispatching. Packing photos are optional.',
+      'Add the invoice PDF before dispatching. Packing photos can be added if available.',
       400,
       'proof_required',
     );
@@ -328,7 +369,7 @@ async function verifyDispatchProof(
   const reused = (await Promise.all(reuseChecks)) as any[];
   if (reused.some(Boolean)) {
     throw new CrmError(
-      'This proof was already used for a dispatch — upload a fresh invoice (packing photos are optional).',
+      'This proof was already used for a dispatch — upload a fresh invoice. Packing photos can be added if available.',
       400,
       'proof_reused',
     );
@@ -651,6 +692,7 @@ export async function dispatchOrder(args: {
 
   const byId = new Map(itemRows.map((r) => [str(r.id), r]));
   const now = new Date();
+  const batchItems: Array<{ itemId: string; name: string; qty: number; unit: string }> = [];
   for (const e of args.entries) {
     const row = byId.get(e.itemId);
     if (!row) continue;
@@ -659,6 +701,12 @@ export async function dispatchOrder(args: {
     const total = num(row.qty);
     const nextQty = Math.min(total, num(row.dispatchedQty) + qty);
     const complete = nextQty >= total - 1e-6;
+    batchItems.push({
+      itemId: str(row.id),
+      name: str(row.name || row.description || row.sku || 'Item'),
+      qty,
+      unit: str(row.unit),
+    });
     await prisma.crmSoItem.update({
       where: { id: e.itemId },
       data: {
@@ -694,6 +742,7 @@ export async function dispatchOrder(args: {
         invoiceId: proofIds.invoiceId,
         beforeId: proofIds.beforeId,
         afterId: proofIds.afterId,
+        items: JSON.stringify(batchItems),
         actor: args.actor || '',
         day: today,
         createdAt: new Date(),
@@ -701,7 +750,7 @@ export async function dispatchOrder(args: {
     });
   } catch (e: any) {
     throw new CrmError(
-      'This proof was already used for a dispatch — upload a fresh invoice (packing photos are optional).',
+      'This proof was already used for a dispatch — upload a fresh invoice. Packing photos can be added if available.',
       400,
       'proof_reused',
     );

@@ -216,15 +216,15 @@ export default function OrderPanel({
   const [addrError, setAddrError] = useState<string | null>(null);
 
   // ── Dispatch proof (2026-11-04): every Mark dispatched consumes a FRESH
-  // triple — invoice PDF + before-packing + after-packing photo. Files upload
-  // the moment they're picked (SoAttachment IDs); the dispatch call sends the
-  // three IDs and the server burns them. Starts empty on every open so a
-  // consumed triple can never be re-picked for a repeat partial.
+  // invoice PDF; packing photos ride along when the floor has them. Files
+  // upload the moment they're picked (SoAttachment IDs); the dispatch call
+  // sends the IDs and the server burns the invoice. Starts empty on every
+  // open so a consumed invoice can never be re-picked for a repeat partial.
   type ProofSlot = "invoice" | "before" | "after";
-  const PROOF_SLOT_META: Record<ProofSlot, { label: string; kind: string; accept: string; hint: string; optional: boolean }> = {
-    invoice: { label: "Invoice PDF", kind: "invoice", accept: "application/pdf,.pdf", hint: "The invoice for this dispatch", optional: false },
-    before: { label: "Before packing (optional)", kind: "packing_before", accept: "image/*", hint: "Photo before packing", optional: true },
-    after: { label: "After packing (optional)", kind: "packing_after", accept: "image/*", hint: "Photo after packing", optional: true },
+  const PROOF_SLOT_META: Record<ProofSlot, { label: string; kind: string; accept: string; hint: string }> = {
+    invoice: { label: "Invoice PDF", kind: "invoice", accept: "application/pdf,.pdf", hint: "The invoice for this dispatch" },
+    before: { label: "Before packing", kind: "packing_before", accept: "image/*", hint: "Add if available" },
+    after: { label: "After packing", kind: "packing_after", accept: "image/*", hint: "Add if available" },
   };
   const [proofIds, setProofIds] = useState<{ invoiceId: string | null; beforeId: string | null; afterId: string | null }>({
     invoiceId: null, beforeId: null, afterId: null,
@@ -544,7 +544,7 @@ export default function OrderPanel({
                   ? "Set the tentative dispatch date for each item — this is the promise the dispatch floor works to. Anything you cannot date needs a reason."
                   : "Pick the items going out and the tentative dispatch date for each. Anything you cannot date needs a reason — leave every item undated to keep the whole order unscheduled with one order-level reason.")}
               {mode === "dispatch" &&
-                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the invoice PDF below — Mark dispatched stays locked until it is attached (packing photos optional)."}
+                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the invoice PDF below — Mark dispatched stays locked until it is attached. Packing photos can be added if available."}
               {mode === "reschedule" &&
                 "The committed date slipped. Give every selected item a new date and explain the slip — that reason is the audit trail."}
             </p>
@@ -642,7 +642,7 @@ export default function OrderPanel({
           </div>
 
           {/* Dispatch proof — every Mark dispatched (even partial) consumes a
-              fresh invoice PDF; packing photos are optional extras. Files
+              fresh invoice PDF; packing photos ride along when available. Files
               upload on pick; the server burns the invoice on dispatch. */}
           {mode === "dispatch" && (
             <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
@@ -651,8 +651,32 @@ export default function OrderPanel({
               </h3>
               <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
                 Each dispatch needs a fresh invoice PDF — it works once, so the next partial needs a new one.
-                Before/after packing photos are optional; attach them when you have them.
+                Packing photos can be added if available.
               </p>
+              {/* Earlier batches on this SO — what already went out and in what
+                  quantity, so the floor never double-dispatches blind. */}
+              {order.proofs && order.proofs.length > 0 && (
+                <div className="mt-2 rounded-xl border border-zinc-200 bg-white/70 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                    Earlier dispatches ({order.proofs.length})
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {order.proofs.map((p) => (
+                      <li key={p.id} className="text-[11px] text-zinc-600 dark:text-zinc-300">
+                        <span className="font-bold text-zinc-800 dark:text-zinc-100">{p.day || "dispatch"}</span>
+                        {p.actor ? <span> · {p.actor}</span> : null}
+                        {p.items && p.items.length > 0 ? (
+                          <span> — {p.items.map((bi) => `${bi.qty}${bi.unit ? ` ${bi.unit}` : ""} × ${bi.name}`).join(" · ")}</span>
+                        ) : (
+                          <span> — batch details in the audit trail below</span>
+                        )}
+                        {" "}
+                        <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
                 {(Object.keys(PROOF_SLOT_META) as Array<"invoice" | "before" | "after">).map((slot) => {
                   const meta = PROOF_SLOT_META[slot];
@@ -696,7 +720,7 @@ export default function OrderPanel({
                 />
               ) : (
                 <>
-                  <ReasonBox label="Order-level note (optional)" value={soReason} onChange={setSoReason} optional />
+                  <ReasonBox label="Order-level note" value={soReason} onChange={setSoReason} optional />
                   {pickedItems
                     .filter((it) => !dates[it.id])
                     .map((it) => (
@@ -725,31 +749,42 @@ export default function OrderPanel({
             </div>
           )}
 
-          {/* Consumed dispatch proofs — one triple per dispatch, newest first. */}
+          {/* Consumed dispatch proofs — one batch per dispatch, newest first. */}
           {mode === "view" && order.proofs && order.proofs.length > 0 && (
             <div className="mt-5">
               <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Dispatch proofs</h3>
-              <ul className="space-y-1.5">
+              <ul className="space-y-2">
                 {order.proofs.map((p) => (
-                  <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-600 dark:text-zinc-300">
-                    <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
-                    <span>
-                      <b>{p.day || "dispatch"}</b>
-                      {p.actor ? ` · ${p.actor}` : ""}
-                    </span>
-                    <span className="flex gap-2">
-                      <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
-                      {p.beforeId ? (
-                        <a href={`/api/crm/files/${p.beforeId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Before</a>
-                      ) : (
-                        <span className="text-zinc-400">Before —</span>
-                      )}
-                      {p.afterId ? (
-                        <a href={`/api/crm/files/${p.afterId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">After</a>
-                      ) : (
-                        <span className="text-zinc-400">After —</span>
-                      )}
-                    </span>
+                  <li key={p.id} className="rounded-xl border border-zinc-200 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-300">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
+                      <span>
+                        <b>{p.day || "dispatch"}</b>
+                        {p.actor ? ` · ${p.actor}` : ""}
+                      </span>
+                      <span className="flex gap-2">
+                        <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
+                        {p.beforeId ? (
+                          <a href={`/api/crm/files/${p.beforeId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Before</a>
+                        ) : (
+                          <span className="text-zinc-400">Before —</span>
+                        )}
+                        {p.afterId ? (
+                          <a href={`/api/crm/files/${p.afterId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">After</a>
+                        ) : (
+                          <span className="text-zinc-400">After —</span>
+                        )}
+                      </span>
+                    </div>
+                    {p.items && p.items.length > 0 && (
+                      <ul className="mt-1 space-y-0.5 pl-5">
+                        {p.items.map((bi) => (
+                          <li key={`${p.id}-${bi.itemId}`} className="tabular-nums">
+                            {bi.qty}{bi.unit ? ` ${bi.unit}` : ""} × {bi.name}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -853,7 +888,7 @@ function ReasonBox({
   return (
     <label className="block">
       <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-        {label} {optional ? <em className="font-normal normal-case text-zinc-400">(optional)</em> : null}
+        {label} {optional ? <em className="font-normal normal-case text-zinc-400">— if needed</em> : null}
       </span>
       <textarea
         value={value}

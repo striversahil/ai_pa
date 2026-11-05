@@ -66,12 +66,21 @@ export interface CrmEvent {
   createdAt: string | null;
 }
 
-/** One consumed dispatch proof (fresh invoice per dispatch; packing photos optional). */
+/** One consumed dispatch proof (fresh invoice per dispatch; packing photos ride along when available). */
+export interface CrmProofItem {
+  itemId: string;
+  name: string;
+  qty: number;
+  unit?: string;
+}
+
 export interface CrmDispatchProof {
   id: string;
   invoiceId: string;
   beforeId: string | null;
   afterId: string | null;
+  /** Batch snapshot written at dispatch time — what went out in this batch. */
+  items: CrmProofItem[];
   actor: string;
   day: string;
   createdAt: string | null;

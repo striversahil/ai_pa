@@ -165,7 +165,7 @@ export interface DispatchProof {
 export function validateDispatch(args: {
   items: readonly ItemLike[];
   entries: readonly { itemId: string; qty?: number | null }[];
-  /** Required: no invoice, no dispatch (even partial). Packing photos optional. */
+  /** Required: no invoice, no dispatch (even partial). Packing photos ride along when available. */
   proof?: DispatchProof | null;
 }): Validation {
   const entries = (args.entries || []).filter((e) => e && e.itemId);
@@ -175,7 +175,7 @@ export function validateDispatch(args: {
   if (!p || !s(p.invoiceId)) {
     return fail(
       "proof_required",
-      "Add the invoice PDF before dispatching. Packing photos are optional.",
+      "Add the invoice PDF before dispatching. Packing photos can be added if available.",
     );
   }
   const byId = new Map((args.items || []).map((it) => [it.id, it]));
