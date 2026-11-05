@@ -1,12 +1,14 @@
 "use client";
 
 // ui.tsx — small presentational primitives shared by the Customer Master
-// components. Deliberately local: the dashboard has one look (theme tokens),
-// and these wrappers keep the tab files about data + layout.
+// components. Deliberately local: the dashboard speaks the Dispatch Floor
+// dialect (zinc + indigo, lucide icons, compact type scale), and these
+// wrappers keep the tab files about data + layout.
+import { X } from "lucide-react";
 import type { ReactNode } from "react";
 
 export const inputClass =
-  "w-full rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--bg-input)] px-3 py-2 text-label text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-tertiary)] focus:border-[var(--color-brand-indigo)]";
+  "w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100";
 
 export function Chip({
   active, onClick, children, title, tone = "brand",
@@ -18,18 +20,18 @@ export function Chip({
   tone?: "brand" | "danger";
 }) {
   const activeClass = tone === "danger"
-    ? "bg-[var(--color-danger)] text-white border-[var(--color-danger)]"
-    : "bg-[var(--color-brand-indigo)] text-white border-[var(--color-brand-indigo)]";
+    ? "bg-rose-600 text-white border-rose-600"
+    : "bg-indigo-600 text-white border-indigo-600";
   return (
     <button
       type="button"
       onClick={onClick}
       title={title}
       aria-pressed={!!active}
-      className={`rounded-[var(--radius-pill)] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${
         active
           ? activeClass
-          : "border-[var(--border-card)] bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
       }`}
     >
       {children}
@@ -48,8 +50,8 @@ export function FilterSelect({
 }) {
   return (
     <label className="flex min-w-0 flex-col gap-1">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={`${inputClass} py-1.5`}>
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}>
         <option value="">{allLabel}</option>
         {options.map((o) => (
           <option key={o} value={o}>{o}</option>
@@ -69,22 +71,22 @@ export function Field({
 }) {
   return (
     <label className={`flex flex-col gap-1 ${className}`}>
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</span>
       {children}
-      {hint && <span className="text-[10px] text-[var(--text-tertiary)]">{hint}</span>}
+      {hint && <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{hint}</span>}
     </label>
   );
 }
 
 export function ReadOnlyValue({ children = "—" }: { children?: ReactNode }) {
-  return <p className="break-words text-label text-[var(--text-primary)]">{children || "—"}</p>;
+  return <p className="break-words text-sm text-zinc-800 dark:text-zinc-100">{children || "—"}</p>;
 }
 
 export function SectionTitle({ children, hint }: { children: ReactNode; hint?: string }) {
   return (
     <div className="mb-2 flex items-baseline justify-between gap-2">
-      <h4 className="text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">{children}</h4>
-      {hint && <span className="text-[10px] text-[var(--text-tertiary)]">{hint}</span>}
+      <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{children}</h4>
+      {hint && <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{hint}</span>}
     </div>
   );
 }
@@ -112,25 +114,25 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`flex max-h-[90vh] w-full flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] shadow-2xl ${wide ? "max-w-3xl" : "max-w-lg"}`}
+        className={`flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 ${wide ? "max-w-3xl" : "max-w-lg"}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--border-card)] px-5 py-4">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
           <div className="min-w-0">
-            <h3 className="font-heading text-card-title font-semibold text-[var(--text-primary)]">{title}</h3>
-            {subtitle && <p className="mt-0.5 text-caption text-[var(--text-secondary)]">{subtitle}</p>}
+            <h3 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">{title}</h3>
+            {subtitle && <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[var(--radius-control)] px-2 py-1 text-lg leading-none text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)]"
+            className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
             aria-label="Close"
           >
-            ×
+            <X className="h-4 w-4" />
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="border-t border-[var(--border-card)] px-5 py-3">{footer}</div>}
+        {footer && <div className="border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">{footer}</div>}
       </div>
     </div>
   );
@@ -153,22 +155,22 @@ export function Drawer({
       <aside
         role="dialog"
         aria-modal="true"
-        className={`flex h-full w-full flex-col border-l border-[var(--border-card)] bg-[var(--bg-card)] shadow-2xl ${width}`}
+        className={`flex h-full w-full flex-col border-l border-zinc-200 bg-white text-zinc-900 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 ${width}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--border-card)] px-5 py-4">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
           <div className="min-w-0">{title}{subtitle && <div className="mt-1">{subtitle}</div>}</div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[var(--radius-control)] px-2 py-1 text-xl leading-none text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)]"
+            className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
             aria-label="Close"
           >
-            ×
+            <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="border-t border-[var(--border-card)] px-5 py-3">{footer}</div>}
+        <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50/60 px-5 py-4 dark:bg-zinc-900/30">{children}</div>
+        {footer && <div className="border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">{footer}</div>}
       </aside>
     </div>
   );
@@ -183,13 +185,13 @@ export function PrimaryButton({
   type?: "button" | "submit";
   tone?: "brand" | "danger";
 }) {
-  const color = tone === "danger" ? "bg-[var(--color-danger)]" : "bg-[var(--color-brand-indigo)]";
+  const color = tone === "danger" ? "bg-rose-600 hover:bg-rose-500" : "bg-indigo-600 hover:bg-indigo-500";
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`rounded-[var(--radius-control)] ${color} px-4 py-2 text-label font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50`}
+      className={`rounded-lg ${color} px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50`}
     >
       {children}
     </button>
@@ -210,7 +212,7 @@ export function GhostButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--surface-soft)] px-3 py-2 text-label font-semibold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+      className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-200 dark:hover:bg-zinc-800"
     >
       {children}
     </button>

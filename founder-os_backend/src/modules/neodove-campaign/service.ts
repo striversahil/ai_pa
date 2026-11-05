@@ -24,13 +24,13 @@
 
 import {
   agentTallies, batchesWithPending, claimPending, getAgentRow, getBatch, insertBatch, insertLeadRows,
-  lastLivePushes, listAgents, listBatches, listCustomersByState, listFailedLeads, listStateCounts,
+  lastLivePushes, listAgents, listBatches, listCustomersByState, listFailedLeads, listStateCounts, listTypeCounts,
   markOutcomes, recountBatch, recoverStuckClaims, setAgentUrl, updateBatch,
 } from './store';
 import { assignAgents, maskMobile, selectLeads } from './selection';
 import type {
   Actor, AgentTally, CampaignAgent, CampaignAgentPlan, CampaignPreview, Distribution,
-  PushBatch, PushProgress, StateCount,
+  PushBatch, PushProgress, StateCount, TypeCount,
 } from './types';
 
 const REGIONS = ['R1', 'R2', 'R3', 'R4'];
@@ -71,6 +71,15 @@ export function normalizeDistribution(value: unknown): Distribution {
   if (!text) return 'split';
   if (text === 'single' || text === 'split') return text;
   throw new CampaignError("distribution must be 'single' or 'split'", 400);
+}
+
+/** '' = all client types; otherwise the exact customerTypeBase family. The
+ *  value is validated against the book at read time (unknown → 400) so a
+ *  crafted type can never silently push zero rows. */
+export function normalizeClientType(value: unknown): string {
+  const text = String(value ?? '').trim().slice(0, 80);
+  if (!text) return '';
+  return text;
 }
 
 /**
@@ -226,16 +235,19 @@ function newId(prefix: string): string {
 // ── Reads ──────────────────────────────────────────────────────────────────
 
 /** Region-scoped agents + state dropdown with phone coverage and last pushes. */
-export async function getCampaignStates(env: any, region: unknown): Promise<{
+export async function getCampaignStates(env: any, region: unknown, clientType?: unknown): Promise<{
   region: string;
+  clientType: string;
   configured: boolean;
   liveEnabled: boolean;
   agents: CampaignAgent[];
   states: StateCount[];
+  types: TypeCount[];
 }> {
   const code = normalizeRegion(region);
-  const [counts, last, resolved] = await Promise.all([
-    listStateCounts(code), lastLivePushes(code), resolveAgents(env, code),
+  const type = normalizeClientType(clientType);
+  const [counts, last, resolved, types] = await Promise.all([
+    listStateCounts(code, type), lastLivePushes(code, type), resolveAgents(env, code), listTypeCounts(code),
   ]);
   const active = resolved.filter((a) => a.active);
   const agents: CampaignAgent[] = active.map((a) => ({
@@ -258,10 +270,12 @@ export async function getCampaignStates(env: any, region: unknown): Promise<{
   });
   return {
     region: code,
+    clientType: type,
     configured: agents.length > 0 && agents.every((a) => a.configured),
     liveEnabled: liveEnabled(env),
     agents,
     states,
+    types,
   };
 }
 
@@ -272,16 +286,18 @@ export async function getCampaignPreview(
   state: unknown,
   distribution?: unknown,
   agentKey?: unknown,
+  clientType?: unknown,
 ): Promise<CampaignPreview> {
   const code = normalizeRegion(region);
   const stateName = normalizeState(state);
   const dist = normalizeDistribution(distribution);
+  const type = normalizeClientType(clientType);
 
   const active = (await resolveAgents(env, code)).filter((a) => a.active);
   if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
   const participants = participantsFor(active, dist, agentKey);
 
-  const rows = await listCustomersByState(code, stateName);
+  const rows = await listCustomersByState(code, stateName, type);
   if (rows.length === 0) throw new CampaignError('no customers in that region and state', 404);
   const { leads, skipped } = selectLeads(rows, code, stateName);
 
@@ -303,6 +319,7 @@ export async function getCampaignPreview(
   return {
     region: code,
     state: stateName,
+    clientType: type,
     total: rows.length,
     ready: leads.length,
     skipped,
@@ -325,6 +342,18 @@ export async function getCampaignBatches(region: unknown, limit = 20): Promise<P
   return listBatches(code, Math.min(Math.max(limit, 1), 50));
 }
 
+/** Client-type dropdown for one region (+ optional state): bases + coverage. */
+export async function getCampaignTypes(env: any, region: unknown, state?: unknown): Promise<{
+  region: string;
+  state: string;
+  types: TypeCount[];
+}> {
+  void env;
+  const code = normalizeRegion(region);
+  const st = String(state ?? '').trim();
+  return { region: code, state: st, types: await listTypeCounts(code, st) };
+}
+
 // ── Writes ─────────────────────────────────────────────────────────────────
 
 /** Create a batch + its ledger rows. Never sends anything. */
@@ -335,12 +364,14 @@ export async function createPush(
     state: unknown;
     distribution?: unknown;
     agentKey?: unknown;
+    clientType?: unknown;
     actor: Actor;
   },
 ): Promise<PushBatch> {
   const code = normalizeRegion(input.region);
   const stateName = normalizeState(input.state);
   const dist = normalizeDistribution(input.distribution);
+  const type = normalizeClientType((input as any)?.clientType);
 
   const active = (await resolveAgents(env, code)).filter((a) => a.active);
   if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
@@ -353,8 +384,8 @@ export async function createPush(
     throw new CampaignError(`no campaign URL configured for ${names}`, 400);
   }
 
-  const rows = await listCustomersByState(code, stateName);
-  if (rows.length === 0) throw new CampaignError('no customers in that region and state', 404);
+  const rows = await listCustomersByState(code, stateName, type);
+  if (rows.length === 0) throw new CampaignError('no customers in that region, state and type', 404);
   const { leads, skipped } = selectLeads(rows, code, stateName);
   if (leads.length === 0) throw new CampaignError('no pushable leads (every row is missing a valid phone)', 400);
 
@@ -367,6 +398,7 @@ export async function createPush(
     id: newId('ndp'),
     region: code,
     state: stateName,
+    clientType: type,
     mode: live ? 'live' : 'dry-run',
     status: live ? 'queued' : 'done',
     total: leads.length + skipped.length,

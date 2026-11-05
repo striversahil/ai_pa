@@ -306,11 +306,15 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
 
   // ── Dispatch (full or partial) ──────────────────────────────────────────────
+  // PROOF GATE (2026-11-04): every dispatch consumes a fresh invoice PDF
+  // (packing photos optional). The store verifies ownership/kind/mime/freshness;
+  // a missing or reused invoice fails the whole dispatch and consumes nothing.
   app.post('/api/crm/orders/:id/dispatch', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
     const body = await c.req.json().catch(() => ({}));
     const entries = Array.isArray(body?.items) ? body.items : [];
+    const proof = body?.proof && typeof body.proof === 'object' ? body.proof : null;
     try {
       const res = await dispatchOrder({
         idOrSo: c.req.param('id'),
@@ -318,6 +322,13 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
           itemId: String(e?.itemId ?? e?.id ?? ''),
           qty: e?.qty === undefined || e?.qty === null || e?.qty === '' ? null : Number(e.qty),
         })),
+        proof: proof
+          ? {
+              invoiceId: String(proof?.invoiceId ?? ''),
+              beforeId: String(proof?.beforeId ?? ''),
+              afterId: String(proof?.afterId ?? ''),
+            }
+          : null,
         actor: v.name,
       });
       notifyLive(c, { type: 'crm', action: 'dispatched', so: res.order?.soNumber });

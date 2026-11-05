@@ -4,7 +4,7 @@
 // dashboard filters/sorts client-side, so the whole book must arrive in one
 // request. Writes are narrow (a record patch, a duplicate-group review, a JSON
 // re-import) and every one of them invalidates the cache + audits the actor.
-import { cached, cacheDel } from '../../shared/cache';
+import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
 import type {
   CustomerPatch, DuplicateReview, MasterCustomerDetail, MasterDataPayload,
   MasterDataTotals, MasterImportResult,
@@ -12,15 +12,16 @@ import type {
 import { isDuplicateReview } from './types';
 import {
   cleanText, toCustomer, toCustomerDetail, parseImportPayload, normalizePhone,
-  normalizeEmail, normalizeGstin, cleanBlock,
+  normalizeEmail, normalizeGstin, normalizeCustomerType, cleanBlock,
 } from './parse';
 import {
   countCustomers, getCustomerRow, insertAudit, lastAuditAt, listAllCustomers,
   listRegions, upsertCustomers, upsertRegions, updateCustomerRow, patchToColumns,
-  MANAGER_ONLY_FIELDS, markDuplicateGroupRow, PATCH_COLUMNS, listCustomerIds,
+  MANAGER_ONLY_FIELDS, markDuplicateGroupRow, deleteCustomerRow, PATCH_COLUMNS, listCustomerIds,
+  masterDb,
 } from './store';
 
-export const MASTER_CACHE_KEY = 'master:data:v1';
+export const MASTER_CACHE_KEY = 'master:data:v2';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export class MasterDataError extends Error {
@@ -107,6 +108,53 @@ export async function getMasterDataStamp(): Promise<{ updatedAt: string; count: 
   return { updatedAt, count };
 }
 
+/** Mill families count as end consumers unless a sales-head rule says
+ *  otherwise (mirrors client-segments.ts defaultSegmentFor). */
+function defaultTypeSegment(base: string): string {
+  const b = String(base ?? '').trim();
+  if (b === 'Flour Mill' || b === 'Chakki Mill' || b === 'Maida Plant') return 'consumer';
+  return '';
+}
+
+/** Allowed client-type bases: every base present in the book plus every
+ *  sales-head rule (so a freshly added rule with zero customers is still
+ *  pickable), with the effective segment attached. This is the vocabulary
+ *  the drawer dropdown reads and type edits validate against. */
+export async function getAllowedTypeBases(): Promise<Array<{ base: string; segment: string; count: number }>> {
+  const fallback = ['Flour Mill', 'Chakki Mill', 'Maida Plant', 'Conveyor Belt', 'Reseller', 'Other', 'Unspecified'];
+  try {
+    const db = masterDb();
+    if (!db) return fallback.map((base) => ({ base, segment: defaultTypeSegment(base), count: 0 }));
+    const countsRes = await db.prepare(
+      `SELECT customerTypeBase AS base, COUNT(*) AS n FROM MasterCustomer GROUP BY customerTypeBase`,
+    ).all().catch(() => null);
+    const counts = new Map<string, number>();
+    for (const r of ((countsRes?.results ?? []) as any[])) {
+      const base = String(r?.base ?? '').trim() || 'Unspecified';
+      counts.set(base, Number(r?.n ?? 0) || 0);
+    }
+    let rules = new Map<string, string>();
+    try {
+      const rulesRes = await db.prepare(`SELECT typeBase, segment FROM ClientTypeRule`).all();
+      for (const r of ((rulesRes?.results ?? []) as any[])) {
+        const base = String(r?.typeBase ?? '').trim();
+        if (base) rules.set(base, String(r?.segment ?? ''));
+      }
+    } catch { /* table not applied yet — book bases still list */ }
+    const bases = new Set<string>([...counts.keys(), ...rules.keys()]);
+    if (bases.size === 0) fallback.forEach((b) => bases.add(b));
+    return [...bases]
+      .map((base) => ({
+        base,
+        segment: rules.has(base) ? String(rules.get(base)) : defaultTypeSegment(base),
+        count: counts.get(base) ?? 0,
+      }))
+      .sort((a, b) => b.count - a.count || a.base.localeCompare(b.base));
+  } catch {
+    return fallback.map((base) => ({ base, segment: defaultTypeSegment(base), count: 0 }));
+  }
+}
+
 export async function getCustomerDetail(id: string): Promise<MasterCustomerDetail> {
   const key = cleanText(id, 60);
   if (!key) throw new MasterDataError('customer id is required', 400);
@@ -148,6 +196,11 @@ function sanitizePatch(patch: CustomerPatch): { clean: Record<string, unknown>; 
   if ('region' in patch) put('region', cleanText(patch.region, 8).toUpperCase());
   if ('subArea' in patch) put('subArea', cleanText(patch.subArea, 80));
   if ('state' in patch) put('state', cleanText(patch.state, 80));
+  // Client type: base is constrained to the sales-head's allowed list
+  // (validated in updateCustomer against getAllowedTypeBases); the tag is a
+  // free qualifier. Both resolve into the customerType/base/tag triple there.
+  if ('customerType' in patch) put('customerType', cleanText(patch.customerType, 80));
+  if ('typeTag' in patch) put('customerTypeTag', cleanText(patch.typeTag, 12).toUpperCase());
   // Never let an unknown key through.
   for (const key of Object.keys(clean)) {
     if (!(key in PATCH_COLUMNS)) delete clean[key];
@@ -171,6 +224,31 @@ export async function updateCustomer(
   const existing = await getCustomerRow(key);
   if (!existing) throw new MasterDataError('customer not found', 404);
   const { clean, changed } = sanitizePatch(patch ?? {});
+  // Resolve a type touch into the full customerType/base/tag triple. The base
+  // must be one of the sales-head's allowed bases; the tag is free.
+  const typeTouched = 'customerType' in clean || 'customerTypeTag' in clean;
+  if (typeTouched) {
+    const baseInput = 'customerType' in clean
+      ? String(clean.customerType ?? '')
+      : String((existing as any).customerTypeBase ?? '');
+    const tagInput = 'customerTypeTag' in clean
+      ? String(clean.customerTypeTag ?? '')
+      : String((existing as any).customerTypeTag ?? '');
+    const norm = normalizeCustomerType(`${baseInput} ${tagInput}`.trim());
+    const allowed = await getAllowedTypeBases();
+    if (!allowed.some((a) => a.base === norm.base)) {
+      throw new MasterDataError(
+        `unknown client type "${norm.base}" — ask the sales-head to add it in the Controller`,
+        400,
+      );
+    }
+    clean.customerType = norm.tag ? `${norm.base} ${norm.tag}` : norm.base;
+    clean.customerTypeBase = norm.base;
+    clean.customerTypeTag = norm.tag;
+    for (const k of ['customerType', 'customerTypeBase', 'customerTypeTag']) {
+      if (!changed.includes(k)) changed.push(k);
+    }
+  }
   if (changed.length === 0) throw new MasterDataError('nothing to update', 400);
   const managerOnly = changed.filter((k) => MANAGER_ONLY_FIELDS.has(k));
   if (managerOnly.length > 0 && !isManager) {
@@ -186,6 +264,11 @@ export async function updateCustomer(
     detail: { fields: changed, before: Object.fromEntries(changed.map((k) => [k, (existing as any)[PATCH_COLUMNS[k]] ?? ''])) },
   });
   await invalidateMasterDataCache();
+  // A type change re-maps the leaderboard's consumer/reseller split, which is
+  // cached separately — bust it so the Controller re-reads immediately.
+  if (typeTouched) {
+    try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
+  }
   return getCustomerDetail(key);
 }
 
@@ -205,6 +288,41 @@ export async function setDuplicateReview(
   });
   await invalidateMasterDataCache();
   return { group: g, review, changed };
+}
+
+/** Hard delete — sales-head only (root as system owner). Pipeline rows (any
+ *  estimate or sales order on file) are refused: set Inactive instead so
+ *  history survives. Busts the telecalling dashboard cache too — a deleted
+ *  client un-maps from the Controller's auto-match immediately. */
+export async function deleteCustomer(
+  id: string,
+  actor: Actor,
+  canDelete: boolean,
+): Promise<{ id: string; name: string }> {
+  if (!canDelete) {
+    throw new MasterDataError('only the sales-head can delete clients', 403);
+  }
+  const key = cleanText(id, 60);
+  if (!key) throw new MasterDataError('customer id is required', 400);
+  const existing = await getCustomerRow(key);
+  if (!existing) throw new MasterDataError('customer not found', 404);
+  const estCount = Number((existing as any).estimateCount ?? 0) || 0;
+  const soCount = Number((existing as any).salesOrderCount ?? 0) || 0;
+  if (estCount > 0 || soCount > 0) {
+    throw new MasterDataError(
+      `“${String((existing as any).displayName ?? key)}” has ${estCount} estimate${estCount === 1 ? '' : 's'} and ${soCount} sales order${soCount === 1 ? '' : 's'} — set it Inactive instead of deleting`,
+      400,
+    );
+  }
+  const name = String((existing as any).displayName ?? key);
+  await deleteCustomerRow(key);
+  await insertAudit({
+    actorId: actor.id, actorName: actor.name, action: 'customer-delete', entityId: key,
+    detail: { name },
+  });
+  await invalidateMasterDataCache();
+  try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
+  return { id: key, name };
 }
 
 const MAX_IMPORT_BYTES = 12 * 1024 * 1024;

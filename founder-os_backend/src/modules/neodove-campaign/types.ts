@@ -44,6 +44,12 @@ export interface StateCount {
   lastPushedCount: number;
 }
 
+export interface TypeCount {
+  base: string;
+  total: number;
+  withPhone: number;
+}
+
 /**
  * single → every lead in the push goes to one agent.
  * split  → both agents, assigned by a stable hash of the mobile number.
@@ -75,6 +81,8 @@ export interface CampaignAgentPlan extends CampaignAgent {
 export interface CampaignPreview {
   region: string;
   state: string;
+  /** '' = all client types; otherwise the single filtered customerTypeBase. */
+  clientType: string;
   total: number;
   ready: number;
   skipped: SkippedLead[];
@@ -99,6 +107,8 @@ export interface PushBatch {
   id: string;
   region: string;
   state: string;
+  /** '' = all client types; otherwise the single filtered customerTypeBase. */
+  clientType: string;
   mode: PushMode;
   status: PushStatus;
   total: number;

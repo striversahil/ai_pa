@@ -40,6 +40,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
   const [region, setRegion] = useState<string>('R1');
   const [states, setStates] = useState<CampaignStatesPayload | null>(null);
   const [stateName, setStateName] = useState<string>('');
+  const [clientType, setClientType] = useState<string>('');
   const [distribution, setDistribution] = useState<Distribution>('split');
   const [agentKey, setAgentKey] = useState<string>('');
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
@@ -56,12 +57,14 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
 
   useEffect(() => () => { cancelled.current = true; }, []);
 
-  const loadStates = useCallback(async (code: string) => {
+  const loadStates = useCallback(async (code: string, type: string) => {
     setLoadingStates(true);
     setError(null);
     try {
+      const params = new URLSearchParams({ region: code });
+      if (type) params.set('clientType', type);
       const payload = await jsonFetch<CampaignStatesPayload>(
-        `/api/neodove/campaign/states?region=${encodeURIComponent(code)}`,
+        `/api/neodove/campaign/states?${params.toString()}`,
       );
       if (cancelled.current) return;
       setStates(payload);
@@ -88,9 +91,9 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
   }, []);
 
   useEffect(() => {
-    void loadStates(region);
+    void loadStates(region, clientType);
     void loadHistory(region);
-  }, [region, loadStates, loadHistory]);
+  }, [region, clientType, loadStates, loadHistory]);
 
   const options = useMemo(
     () => distributionOptions(states?.agents ?? [], stateName),
@@ -121,12 +124,13 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     setError(null);
     const params = new URLSearchParams({ region, state: stateName, distribution });
     if (distribution === 'single' && agentKey) params.set('agent', agentKey);
+    if (clientType) params.set('clientType', clientType);
     jsonFetch<{ preview: CampaignPreview }>(`/api/neodove/campaign/preview?${params.toString()}`)
       .then((r) => { if (alive) setPreview(r.preview); })
       .catch((e: any) => { if (alive) setError(e?.message ?? 'Failed to preview'); })
       .finally(() => { if (alive) setLoadingPreview(false); });
     return () => { alive = false; };
-  }, [region, stateName, distribution, agentKey]);
+  }, [region, stateName, distribution, agentKey, clientType]);
 
   const selectedState = useMemo(
     () => states?.states.find((s) => s.state === stateName) ?? null,
@@ -172,7 +176,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
       const created = await jsonFetch<{ batch: PushBatch }>('/api/neodove/campaign/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ region, state: stateName, distribution, agentKey }),
+        body: JSON.stringify({ region, state: stateName, distribution, agentKey, clientType }),
       });
       setBatch(created.batch);
       if (created.batch.mode === 'dry-run') {
@@ -191,13 +195,13 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
         }
       }
       void loadHistory(region);
-      void loadStates(region);
+      void loadStates(region, clientType);
     } catch (e: any) {
       if (!cancelled.current) setError(e?.message ?? 'Push failed');
     } finally {
       if (!cancelled.current) setPushing(false);
     }
-  }, [canManage, stateName, pushing, region, distribution, agentKey, runRemaining, loadHistory, loadStates]);
+  }, [canManage, stateName, pushing, region, distribution, agentKey, clientType, runRemaining, loadHistory, loadStates]);
 
   if (!canManage) return null;
 
@@ -229,7 +233,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           </span>
           <button
             type="button"
-            onClick={() => { void loadStates(region); void loadHistory(region); }}
+            onClick={() => { void loadStates(region, clientType); void loadHistory(region); }}
             className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
             title="Refresh states and history"
           >
@@ -244,7 +248,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           <button
             key={code}
             type="button"
-            onClick={() => { setRegion(code); setStateName(''); setAgentKey(''); setDistribution('split'); }}
+            onClick={() => { setRegion(code); setStateName(''); setClientType(''); setAgentKey(''); setDistribution('split'); }}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${
               region === code
                 ? 'bg-indigo-600 text-white border-indigo-600'
@@ -279,7 +283,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
               name={agent.name}
               configured={agent.configured}
               source={agent.source}
-              onSaved={() => { void loadStates(region); }}
+              onSaved={() => { void loadStates(region, clientType); }}
               onError={setError}
             />
           ))}
@@ -314,6 +318,31 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
             {selectedState.lastPushedAt
               ? ` · last live push ${formatStamp(selectedState.lastPushedAt)} (${selectedState.lastPushedCount} sent)`
               : ' · never pushed'}
+          </p>
+        )}
+      </div>
+
+      {/* Client type picker — one family per push, or all types */}
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex min-w-[220px] flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Client type</span>
+          <select
+            value={clientType}
+            onChange={(e) => { setClientType(e.target.value); setConfirming(false); }}
+            disabled={loadingStates}
+            className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-sm"
+          >
+            <option value="">All types</option>
+            {(states?.types ?? []).map((t) => (
+              <option key={t.base} value={t.base}>
+                {t.base} — {t.withPhone} with phone
+              </option>
+            ))}
+          </select>
+        </label>
+        {clientType && (
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 pb-2">
+            Only {clientType} customers are counted below and in the push.
           </p>
         )}
       </div>
@@ -400,6 +429,12 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500">Skipped</p>
                   <p className="text-sm font-semibold font-mono">{preview.skipped.length}</p>
                 </div>
+                {preview.clientType ? (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Client type</p>
+                    <p className="text-sm font-semibold">{preview.clientType}</p>
+                  </div>
+                ) : null}
                 <div>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500">detail1 / detail2</p>
                   <p className="text-sm font-semibold">{preview.detail1} / {preview.detail2}</p>
@@ -458,7 +493,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                   <p className="text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
                     <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
                     <span>
-                      This sends <b>{preview.ready} leads</b> {distributionSummary(preview.distribution, preview.agents)}
+                      This sends <b>{preview.ready} leads</b>{preview.clientType ? <> of type <b>{preview.clientType}</b></> : null} {distributionSummary(preview.distribution, preview.agents)}
                       {' '}in the live {preview.region} campaign
                       {selectedState?.lastPushedAt
                         ? ` — ${selectedState.state} was already pushed on ${formatStamp(selectedState.lastPushedAt)} and will be duplicated.`
@@ -562,6 +597,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                 <tr>
                   <th className="text-left font-semibold px-2 py-1">When</th>
                   <th className="text-left font-semibold px-2 py-1">State</th>
+                  <th className="text-left font-semibold px-2 py-1">Type</th>
                   <th className="text-left font-semibold px-2 py-1">Mode</th>
                   <th className="text-left font-semibold px-2 py-1">Assign</th>
                   <th className="text-left font-semibold px-2 py-1">Result</th>
@@ -573,6 +609,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                   <tr key={row.id} className="border-t border-zinc-100 dark:border-zinc-800">
                     <td className="px-2 py-1 text-zinc-500">{formatStamp(row.createdAt)}</td>
                     <td className="px-2 py-1 font-semibold">{row.state}</td>
+                    <td className="px-2 py-1 text-zinc-500">{row.clientType || 'All'}</td>
                     <td className="px-2 py-1">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                         row.mode === 'live'

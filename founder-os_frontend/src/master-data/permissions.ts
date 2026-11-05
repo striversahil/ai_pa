@@ -10,6 +10,7 @@ export interface MasterCapabilitiesClient {
   canEdit: boolean;
   canAppoint: boolean;
   canImport: boolean;
+  canDelete: boolean;
 }
 
 export function masterCapabilities(me: AuthUserMe | null): MasterCapabilitiesClient {
@@ -20,6 +21,7 @@ export function masterCapabilities(me: AuthUserMe | null): MasterCapabilitiesCli
     canEdit: isManager || scopes.has("master-data-edit"),
     canAppoint: isManager,
     canImport: isManager,
+    canDelete: masterIsSalesHead(me),
   };
 }
 
@@ -30,4 +32,11 @@ export function masterIsManager(me: AuthUserMe | null): boolean {
   if (me.isAdmin) return true;
   const scopes = grantedScopes(me);
   return scopes.has("mis") || scopes.has("sales-head");
+}
+
+/** Delete is sales-head-only (root as system owner) — even MIS is excluded. */
+export function masterIsSalesHead(me: AuthUserMe | null): boolean {
+  if (!me) return false;
+  if (me.isAdmin) return true;
+  return grantedScopes(me).has("sales-head");
 }

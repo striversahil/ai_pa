@@ -109,7 +109,10 @@ export interface MasterDataPayload {
 }
 
 /** Fields an appointed editor may change. Region ownership stays with
- *  sales-head/MIS (see EDITOR_FIELDS vs MANAGER_FIELDS in service.ts). */
+ *  sales-head/MIS (see EDITOR_FIELDS vs MANAGER_FIELDS in service.ts).
+ *  Client type is editor-assignable but value-constrained: the base must be
+ *  one of the sales-head's allowed bases (ClientTypeRule); the tag is a free
+ *  qualifier. The server normalizes both into customerType/base/tag. */
 export interface CustomerPatch {
   displayName?: string;
   companyName?: string;
@@ -126,13 +129,15 @@ export interface CustomerPatch {
   region?: string;
   subArea?: string;
   state?: string;
+  customerType?: string;
+  typeTag?: string;
 }
 
 /** Audit log row (insert-only) — who changed what, when. */
 export interface MasterDataAuditEntry {
   actorId: string;
   actorName: string;
-  action: 'editor-grant' | 'editor-revoke' | 'customer-edit' | 'duplicate-review' | 'import';
+  action: 'editor-grant' | 'editor-revoke' | 'customer-edit' | 'customer-delete' | 'duplicate-review' | 'import';
   entityId: string;
   detail?: Record<string, unknown>;
 }
@@ -183,4 +188,7 @@ export interface ImportCustomer {
   duplicateGroup: string;
   duplicateConfidence: string;
   suggestedAction: string;
+  /** Lead requirement text (conveyor/trader imports). Seeded on insert only —
+   *  the upsert keeps hand-written notes (see store.prepareUpsert). */
+  notes: string;
 }

@@ -8,10 +8,9 @@ import type { DuplicateReview, MasterCustomer } from "@/master-data/types";
 import { groupDuplicates } from "@/master-data/filters";
 import { setDuplicateReview } from "@/master-data/api";
 import {
-  REVIEW_LABELS, duplicateTone, formatPhone, regionLabel, regionTone, reviewTone, shortDate,
+  REVIEW_LABELS, formatPhone, regionLabel, shortDate,
 } from "@/master-data/normalize";
-import { Badge, EmptyState } from "@/components/ui";
-import { Chip, GhostButton } from "./ui";
+import { Chip, GhostButton, PrimaryButton } from "./ui";
 
 const PAGE = 12;
 
@@ -59,17 +58,15 @@ export default function DuplicatesTab({
 
   if (groups.length === 0) {
     return (
-      <EmptyState
-        icon={<span className="text-xl">✅</span>}
-        title="No duplicates in this region"
-        description="Every customer row in the current region is unique — nothing to review."
-      />
+      <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        No duplicates in this region. Every customer row here is unique — nothing to review.
+      </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-2.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <Chip active={status === ""} onClick={() => { setStatus(""); setLimit(PAGE); }}>All ({groups.length})</Chip>
         <Chip active={status === "open"} onClick={() => { setStatus("open"); setLimit(PAGE); }} tone="danger">Needs review ({openCount})</Chip>
         <Chip active={status === "reviewed"} onClick={() => { setStatus("reviewed"); setLimit(PAGE); }}>Reviewed ({reviewedCount})</Chip>
@@ -85,132 +82,110 @@ export default function DuplicatesTab({
         ))}
       </div>
 
-      <p className="text-caption text-[var(--text-secondary)]">
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">
         Duplicates are grouped by the extract — the review records a decision only. No rows are merged or deleted in this phase.
       </p>
 
       {error && (
-        <p className="rounded-[var(--radius-control)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] px-3 py-2 text-label text-[var(--color-danger)]">{error}</p>
-      )}
-
-      {visible.length === 0 ? (
-        <EmptyState title="Nothing matches this filter" description="Switch back to “Needs review” or clear the confidence filter." />
-      ) : (
-        <div className="space-y-3">
-          {visible.map((g) => {
-            const members = g.members;
-            const lead = members[0];
-            return (
-              <div key={g.group} className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)]">
-                <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-card)] bg-[var(--surface-soft)] px-4 py-2.5">
-                  <span className="font-heading text-label font-semibold text-[var(--text-primary)]">Group {g.group}</span>
-                  <Badge tone={duplicateTone(g.confidence)}>{g.confidence || "Unrated"}</Badge>
-                  <Badge tone={reviewTone(g.review)}>{REVIEW_LABELS[g.review]}</Badge>
-                  <span className="text-[11px] text-[var(--text-secondary)]">
-                    {members.length} rows{g.action ? ` · ${g.action}` : ""}
-                  </span>
-                  <div className="flex-1" />
-                  {canEdit && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        type="button"
-                        disabled={busy === g.group}
-                        onClick={() => void decide(g.group, "keep-master")}
-                        className="rounded-[var(--radius-control)] bg-[var(--color-brand-indigo)] px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
-                        title="Mark the suggested master row as the kept record"
-                      >
-                        Keep master
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy === g.group}
-                        onClick={() => void decide(g.group, "ignored")}
-                        className="rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--bg-card)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] disabled:opacity-50"
-                      >
-                        Ignore
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy === g.group}
-                        onClick={() => void decide(g.group, "open")}
-                        className="rounded-[var(--radius-control)] px-2 py-1.5 text-[11px] font-semibold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] disabled:opacity-50"
-                        title="Reopen the review"
-                      >
-                        Reopen
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] border-collapse text-sm">
-                    <thead>
-                      <tr className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">
-                        <th className="px-4 py-2 text-left font-semibold">Customer</th>
-                        <th className="px-3 py-2 text-left font-semibold">Contact</th>
-                        <th className="px-3 py-2 text-left font-semibold">Location</th>
-                        <th className="px-3 py-2 text-left font-semibold">Region</th>
-                        <th className="px-3 py-2 text-right font-semibold">Est. / SO</th>
-                        <th className="px-3 py-2 text-left font-semibold">Suggested action</th>
-                        <th className="px-3 py-2 text-left font-semibold">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {members.map((m) => (
-                        <tr
-                          key={m.id}
-                          onClick={() => onOpen(m)}
-                          className={`cursor-pointer border-t border-[var(--border-card)] transition-colors hover:bg-[var(--surface-soft)] ${m.id === lead.id ? "bg-[color-mix(in_srgb,var(--color-brand-indigo)_4%,transparent)]" : ""}`}
-                        >
-                          <td className="px-4 py-2">
-                            <p className="font-semibold text-[var(--text-primary)]">{m.name}</p>
-                            <p className="text-[10px] text-[var(--text-tertiary)]">Zoho #{m.zohoCustomerId}</p>
-                          </td>
-                          <td className="px-3 py-2">
-                            {m.phones[0] ? (
-                              <a
-                                href={`tel:${m.phones[0].replace(/[^\d+]/g, "")}`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-[11px] font-semibold text-[var(--color-brand-indigo)] hover:underline"
-                              >
-                                {formatPhone(m.phones[0])}
-                              </a>
-                            ) : (
-                              <span className="text-[11px] text-[var(--color-danger)]">No phone</span>
-                            )}
-                            {m.contact && <p className="truncate text-[10px] text-[var(--text-secondary)]">{m.contact}</p>}
-                          </td>
-                          <td className="px-3 py-2 text-[11px] text-[var(--text-secondary)]">
-                            {[m.city, m.state, m.pincode].filter(Boolean).join(" · ") || "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge tone={regionTone(m.region)}>{regionLabel(m.region)}</Badge>
-                          </td>
-                          <td className="px-3 py-2 text-right text-[11px] text-[var(--text-secondary)]">
-                            {m.estCount} / {m.soCount}
-                            <p className="text-[10px] text-[var(--text-tertiary)]">
-                              {m.lastSalesOrderDate ? shortDate(m.lastSalesOrderDate) : m.lastEstimateDate ? shortDate(m.lastEstimateDate) : "never"}
-                            </p>
-                          </td>
-                          <td className="max-w-[200px] px-3 py-2 text-[11px] text-[var(--text-secondary)]">{m.duplicateAction || "—"}</td>
-                          <td className="px-3 py-2 text-[11px] text-[var(--text-secondary)]">{m.status}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            );
-          })}
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
+          {error}
         </div>
       )}
 
+      {visible.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+          Nothing matches this filter. Switch back to “Needs review” or clear the confidence filter.
+        </div>
+      ) : (
+        visible.map((g) => {
+          const members = g.members;
+          const lead = members[0];
+          return (
+            <div key={g.group} className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+              <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 bg-zinc-50/60 px-3.5 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">Group {g.group}</span>
+                <Pill tone={g.confidence === "High" ? "rose" : g.confidence === "Medium" ? "amber" : "zinc"} label={g.confidence || "Unrated"} />
+                <Pill tone={g.review === "open" ? "indigo" : "emerald"} label={REVIEW_LABELS[g.review]} />
+                <span className="text-[11px] text-zinc-500">
+                  {members.length} rows{g.action ? ` · ${g.action}` : ""}
+                </span>
+                <div className="flex-1" />
+                {canEdit && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <PrimaryButton disabled={busy === g.group} onClick={() => void decide(g.group, "keep-master")}>
+                      Keep master
+                    </PrimaryButton>
+                    <GhostButton disabled={busy === g.group} onClick={() => void decide(g.group, "ignored")}>
+                      Ignore
+                    </GhostButton>
+                    <button
+                      type="button"
+                      disabled={busy === g.group}
+                      onClick={() => void decide(g.group, "open")}
+                      className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-zinc-400 transition-colors hover:text-zinc-700 disabled:opacity-50 dark:hover:text-zinc-200"
+                      title="Reopen the review"
+                    >
+                      Reopen
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div>
+                {members.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => onOpen(m)}
+                    className={`block w-full cursor-pointer border-t border-zinc-100 px-3.5 py-2.5 text-left transition-colors first:border-t-0 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50 ${
+                      m.id === lead.id ? "bg-indigo-500/[0.04]" : ""
+                    }`}
+                    title="Open the full record"
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        {m.name}
+                        {m.id === lead.id && <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-indigo-500">suggested master</span>}
+                      </span>
+                      <span className="text-[11px] tabular-nums text-zinc-500">
+                        E{m.estCount} · S{m.soCount}
+                        {" · "}
+                        {m.lastSalesOrderDate ? shortDate(m.lastSalesOrderDate) : m.lastEstimateDate ? shortDate(m.lastEstimateDate) : "never"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      <span>Zoho #{m.zohoCustomerId}</span>
+                      <span>{[m.city, m.state].filter(Boolean).join(" · ") || "no location"}</span>
+                      <span>{regionLabel(m.region)}</span>
+                      {m.phones[0] ? <span className="font-semibold text-indigo-600 dark:text-indigo-400">{formatPhone(m.phones[0])}</span> : <span className="text-rose-500">no phone</span>}
+                      {m.contact && <span>{m.contact}</span>}
+                      {m.duplicateAction && <span className="truncate">suggests: {m.duplicateAction}</span>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })
+      )}
+
       {filtered.length > visible.length && (
-        <div className="flex justify-center">
+        <div className="flex justify-center pt-1">
           <GhostButton onClick={() => setLimit((n) => n + PAGE)}>
-            Show {Math.min(PAGE, filtered.length - visible.length)} more groups
+            Show more ({filtered.length - visible.length} left)
           </GhostButton>
         </div>
       )}
     </div>
   );
+}
+
+function Pill({ tone, label }: { tone: "rose" | "amber" | "zinc" | "indigo" | "emerald"; label: string }) {
+  const tones = {
+    rose: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+    amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    zinc: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+    indigo: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  } as const;
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tones[tone]}`}>{label}</span>;
 }

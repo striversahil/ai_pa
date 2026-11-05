@@ -122,25 +122,42 @@ export async function agentTallies(batchId: string): Promise<AgentTally[]> {
 const CUSTOMER_COLUMNS = [
   'id', 'zohoCustomerId', 'region', 'state',
   'companyName', 'displayName', 'contactPerson', 'phonesJson', 'emailsJson',
+  'customerTypeBase',
 ].join(', ');
 
-/** Every customer row for one region + state (bounded by the master's size). */
-export async function listCustomersByState(region: string, state: string): Promise<any[]> {
+/** Every customer row for one region + state, optionally one client type. */
+export async function listCustomersByState(region: string, state: string, clientType = ''): Promise<any[]> {
   const db = campaignDb();
   if (!db) return [];
-  const res = await db
-    .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM MasterCustomer WHERE region = ? AND state = ? ORDER BY id`)
-    .bind(region, state)
-    .all();
+  const type = String(clientType ?? '').trim();
+  const res = type
+    ? await db
+      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM MasterCustomer WHERE region = ? AND state = ? AND customerTypeBase = ? ORDER BY id`)
+      .bind(region, state, type)
+      .all()
+    : await db
+      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM MasterCustomer WHERE region = ? AND state = ? ORDER BY id`)
+      .bind(region, state)
+      .all();
   return (res?.results ?? []) as any[];
 }
 
 /** Region-scoped state list with phone coverage — the dropdown's source. */
-export async function listStateCounts(region: string): Promise<Array<{ state: string; total: number; withPhone: number }>> {
+export async function listStateCounts(region: string, clientType = ''): Promise<Array<{ state: string; total: number; withPhone: number }>> {
   const db = campaignDb();
   if (!db) return [];
-  const res = await db
-    .prepare(
+  const type = String(clientType ?? '').trim();
+  const res = type
+    ? await db.prepare(
+      `SELECT state,
+              COUNT(*) AS total,
+              SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
+         FROM MasterCustomer
+        WHERE region = ? AND customerTypeBase = ?
+        GROUP BY state
+        ORDER BY total DESC, state ASC`,
+    ).bind(region, type).all()
+    : await db.prepare(
       `SELECT state,
               COUNT(*) AS total,
               SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
@@ -148,9 +165,7 @@ export async function listStateCounts(region: string): Promise<Array<{ state: st
         WHERE region = ?
         GROUP BY state
         ORDER BY total DESC, state ASC`,
-    )
-    .bind(region)
-    .all();
+    ).bind(region).all();
   return ((res?.results ?? []) as any[]).map((r) => ({
     state: String(r?.state ?? ''),
     total: Number(r?.total ?? 0),
@@ -158,21 +173,58 @@ export async function listStateCounts(region: string): Promise<Array<{ state: st
   }));
 }
 
-/** Last completed LIVE push per state — the "this will duplicate" warning. */
-export async function lastLivePushes(region: string): Promise<Map<string, { at: string; count: number }>> {
+/** Client-type list for one region (+ optional state) with coverage counts. */
+export async function listTypeCounts(region: string, state = ''): Promise<Array<{ base: string; total: number; withPhone: number }>> {
+  const db = campaignDb();
+  if (!db) return [];
+  const st = String(state ?? '').trim();
+  const res = st
+    ? await db.prepare(
+      `SELECT customerTypeBase AS base,
+              COUNT(*) AS total,
+              SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
+         FROM MasterCustomer
+        WHERE region = ? AND state = ?
+        GROUP BY customerTypeBase
+        ORDER BY total DESC, base ASC`,
+    ).bind(region, st).all()
+    : await db.prepare(
+      `SELECT customerTypeBase AS base,
+              COUNT(*) AS total,
+              SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
+         FROM MasterCustomer
+        WHERE region = ?
+        GROUP BY customerTypeBase
+        ORDER BY total DESC, base ASC`,
+    ).bind(region).all();
+  return ((res?.results ?? []) as any[]).map((r) => ({
+    base: String(r?.base ?? '').trim() || 'Unspecified',
+    total: Number(r?.total ?? 0),
+    withPhone: Number(r?.withPhone ?? 0),
+  }));
+}
+
+/** Last completed LIVE push per state (+ type) — the "this will duplicate" warning. */
+export async function lastLivePushes(region: string, clientType = ''): Promise<Map<string, { at: string; count: number }>> {
   const db = campaignDb();
   const out = new Map<string, { at: string; count: number }>();
   if (!db) return out;
+  const type = String(clientType ?? '').trim();
   try {
-    const res = await db
-      .prepare(
+    // clientType column exists from migration 0103; older isolates fall back.
+    const res = type
+      ? await db.prepare(
+        `SELECT state, MAX(finishedAt) AS at, SUM(sent) AS sent
+           FROM NeoDovePushBatch
+          WHERE region = ? AND mode = 'live' AND status = 'done' AND clientType = ?
+          GROUP BY state`,
+      ).bind(region, type).all()
+      : await db.prepare(
         `SELECT state, MAX(finishedAt) AS at, SUM(sent) AS sent
            FROM NeoDovePushBatch
           WHERE region = ? AND mode = 'live' AND status = 'done'
           GROUP BY state`,
-      )
-      .bind(region)
-      .all();
+      ).bind(region).all();
     for (const row of ((res?.results ?? []) as any[])) {
       const state = String(row?.state ?? '');
       if (!state) continue;
@@ -187,7 +239,7 @@ export async function lastLivePushes(region: string): Promise<Map<string, { at: 
 // ── Batches ────────────────────────────────────────────────────────────────
 
 const BATCH_COLUMNS = [
-  'id', 'region', 'state', 'mode', 'status', 'total', 'planned', 'sent', 'failed', 'skipped', 'pending',
+  'id', 'region', 'state', 'clientType', 'mode', 'status', 'total', 'planned', 'sent', 'failed', 'skipped', 'pending',
   'distribution', 'agentKey',
   'requestedBy', 'requestedByName', 'campaignHost', 'detail1', 'error',
   'createdAt', 'updatedAt', 'finishedAt',
@@ -198,6 +250,7 @@ function toBatch(row: any): PushBatch {
     id: String(row?.id ?? ''),
     region: String(row?.region ?? ''),
     state: String(row?.state ?? ''),
+    clientType: String(row?.clientType ?? ''),
     mode: (String(row?.mode ?? 'dry-run') as PushMode),
     status: (String(row?.status ?? 'queued') as PushStatus),
     total: Number(row?.total ?? 0),
@@ -225,10 +278,10 @@ export async function insertBatch(batch: PushBatch): Promise<void> {
   await db
     .prepare(
       `INSERT INTO NeoDovePushBatch (${BATCH_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
-      batch.id, batch.region, batch.state, batch.mode, batch.status,
+      batch.id, batch.region, batch.state, batch.clientType || '', batch.mode, batch.status,
       batch.total, batch.planned, batch.sent, batch.failed, batch.skipped, batch.pending,
       batch.distribution, batch.agentKey,
       batch.requestedBy, batch.requestedByName, batch.campaignHost, batch.detail1, batch.error,
@@ -240,8 +293,15 @@ export async function insertBatch(batch: PushBatch): Promise<void> {
 export async function getBatch(id: string): Promise<PushBatch | null> {
   const db = campaignDb();
   if (!db) return null;
-  const row = await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first();
-  return row ? toBatch(row) : null;
+  try {
+    const row = await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first();
+    return row ? toBatch(row) : null;
+  } catch {
+    // Pre-0103 isolate without the clientType column.
+    const legacy = BATCH_COLUMNS.replace(', clientType', '');
+    const row: any = await db.prepare(`SELECT ${legacy} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first().catch(() => null);
+    return row ? toBatch({ ...row, clientType: '' }) : null;
+  }
 }
 
 const PATCHABLE = new Set([
@@ -285,10 +345,19 @@ export async function recountBatch(id: string): Promise<PushBatch | null> {
 export async function listBatches(region: string, limit = 20): Promise<PushBatch[]> {
   const db = campaignDb();
   if (!db) return [];
-  const res = region
-    ? await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch WHERE region = ? ORDER BY createdAt DESC LIMIT ?`).bind(region, limit).all()
-    : await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch ORDER BY createdAt DESC LIMIT ?`).bind(limit).all();
-  return ((res?.results ?? []) as any[]).map(toBatch);
+  try {
+    const res = region
+      ? await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch WHERE region = ? ORDER BY createdAt DESC LIMIT ?`).bind(region, limit).all()
+      : await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch ORDER BY createdAt DESC LIMIT ?`).bind(limit).all();
+    return ((res?.results ?? []) as any[]).map(toBatch);
+  } catch {
+    // Pre-0103 isolate without the clientType column.
+    const legacy = BATCH_COLUMNS.replace(', clientType', '');
+    const res = region
+      ? await db.prepare(`SELECT ${legacy} FROM NeoDovePushBatch WHERE region = ? ORDER BY createdAt DESC LIMIT ?`).bind(region, limit).all().catch(() => null)
+      : await db.prepare(`SELECT ${legacy} FROM NeoDovePushBatch ORDER BY createdAt DESC LIMIT ?`).bind(limit).all().catch(() => null);
+    return (((res as any)?.results ?? []) as any[]).map((r: any) => toBatch({ ...r, clientType: '' }));
+  }
 }
 
 // ── Leads ──────────────────────────────────────────────────────────────────

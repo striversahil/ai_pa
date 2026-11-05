@@ -71,6 +71,9 @@ function parseJsonList(raw) {
   return [];
 }
 const TYPE_FAMILIES = [
+  // MIRROR of parse.ts: Conveyor Belt + Reseller before the broad `fm` shorthand.
+  { base: 'Conveyor Belt', test: /conveyor/ },
+  { base: 'Reseller', test: /\b(reseller|trader)\b/ },
   { base: 'Flour Mill', test: /\b(flour\s*mills?|flour|fm|rfm)\b/ },
   { base: 'Maida Plant', test: /\bmaida\b/ },
   { base: 'Chakki Mill', test: /\bchakki\b/ },
@@ -84,7 +87,7 @@ function normalizeCustomerType(raw) {
   if (!hit) return { base: 'Other', tag: '' };
   let rest = lower
     .replace(/^[.\s]+/, '')
-    .replace(/\b(flour\s*mills?|flour|mills?|maida\s*plant|maida|chakki\s*mill|chakki|fm|rfm)\b/g, ' ')
+    .replace(/\b(flour\s*mills?|flour|mills?|maida\s*plant|maida|chakki\s*mill|chakki|conveyor[_ ]?belts?|conveyor|reseller|traders?|fm|rfm)\b/g, ' ')
     .replace(/[.,&]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

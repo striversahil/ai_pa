@@ -82,8 +82,11 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
   );
 
   const dispatch = useCallback(
-    (id: string, items: Array<{ itemId: string; qty?: number | null }>) =>
-      run(() => crmApi.dispatch(id, items)),
+    (
+      id: string,
+      items: Array<{ itemId: string; qty?: number | null }>,
+      proof?: { invoiceId: string | null; beforeId: string | null; afterId: string | null } | null,
+    ) => run(() => crmApi.dispatch(id, items, proof)),
     [run],
   );
 

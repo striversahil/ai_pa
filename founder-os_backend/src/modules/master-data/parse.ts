@@ -101,6 +101,11 @@ export function parseJsonList(raw: unknown): string[] {
 // qualifier as a chip; the raw value is preserved for export/editing.
 
 const TYPE_FAMILIES: Array<{ base: string; test: RegExp }> = [
+  // Conveyor Belt + Reseller first: specific families before the broad
+  // flour-mill `fm` shorthand below. `conveyor` is a substring on purpose —
+  // the lead files use `conveyor_belt` (underscore = word char, so \b fails).
+  { base: 'Conveyor Belt', test: /conveyor/ },
+  { base: 'Reseller', test: /\b(reseller|trader)\b/ },
   { base: 'Flour Mill', test: /\b(flour\s*mills?|flour|fm|rfm)\b/ },
   { base: 'Maida Plant', test: /\bmaida\b/ },
   { base: 'Chakki Mill', test: /\bchakki\b/ },
@@ -116,10 +121,11 @@ export function normalizeCustomerType(raw: unknown): { base: string; tag: string
   const hit = TYPE_FAMILIES.find((f) => f.test.test(lower));
   if (!hit) return { base: 'Other', tag: '' };
   // Drop every token belonging to the family name ("flour mill", "mills",
-  // "fm", "rfm"…), keep the qualifier that follows ("MP", "Nepal").
+  // "fm", "rfm", "conveyor belt", "reseller"…), keep the qualifier that
+  // follows ("MP", "Nepal").
   let rest = lower
     .replace(/^[.\s]+/, '')
-    .replace(/\b(flour\s*mills?|flour|mills?|maida\s*plant|maida|chakki\s*mill|chakki|fm|rfm)\b/g, ' ')
+    .replace(/\b(flour\s*mills?|flour|mills?|maida\s*plant|maida|chakki\s*mill|chakki|conveyor[_ ]?belts?|conveyor|reseller|traders?|fm|rfm)\b/g, ' ')
     .replace(/[.,&]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -258,6 +264,9 @@ export function toImportCustomer(raw: any, fallbackRegion: string): ImportCustom
     duplicateGroup: cleanText(raw?.['Duplicate Group'] ?? raw?.duplicateGroup, 20),
     duplicateConfidence: cleanText(raw?.['Duplicate Confidence'] ?? raw?.duplicateConfidence, 20),
     suggestedAction: cleanText(raw?.['Suggested Action'] ?? raw?.suggestedAction, 60),
+    // Lead notes (conveyor Product/Requirement). The store upsert only seeds
+    // this when the stored row has none — hand-written notes always win.
+    notes: cleanBlock(raw?.notes ?? raw?.['Product / Requirement'] ?? '', 2000),
   };
 }
 

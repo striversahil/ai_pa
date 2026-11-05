@@ -20,6 +20,12 @@ export interface CampaignStateCount {
   lastPushedCount: number;
 }
 
+export interface CampaignTypeCount {
+  base: string;
+  total: number;
+  withPhone: number;
+}
+
 export interface CampaignAgent {
   key: string;
   region: string;
@@ -36,10 +42,12 @@ export interface CampaignAgentPlan extends CampaignAgent {
 
 export interface CampaignStatesPayload {
   region: string;
+  clientType: string;
   configured: boolean;
   liveEnabled: boolean;
   agents: CampaignAgent[];
   states: CampaignStateCount[];
+  types: CampaignTypeCount[];
 }
 
 export interface CampaignSkip {
@@ -51,6 +59,7 @@ export interface CampaignSkip {
 export interface CampaignPreview {
   region: string;
   state: string;
+  clientType: string;
   total: number;
   ready: number;
   skipped: CampaignSkip[];
@@ -67,6 +76,7 @@ export interface PushBatch {
   id: string;
   region: string;
   state: string;
+  clientType: string;
   mode: PushMode;
   status: PushStatus;
   total: number;
