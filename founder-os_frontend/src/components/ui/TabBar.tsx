@@ -5,6 +5,17 @@
  * Marketing, Telecalling, Debtors Tracker). One visual contract: wrapping row
  * of rounded pills, indigo active state, optional icon + count.
  */
+export type TabBarBadgeTone = "danger" | "warning" | "neutral";
+
+/** Extra pill after the label — used where one tab carries two live numbers
+ *  (e.g. Payment dues: overdue ₹ + this-week ₹, visible before opening the tab). */
+export type TabBarBadge = {
+  text: string;
+  tone: TabBarBadgeTone;
+  /** Full-figure explanation; falls back to the tab's own title. */
+  title?: string;
+};
+
 export type TabBarItem<K extends string = string> = {
   key: K;
   label: string;
@@ -14,6 +25,8 @@ export type TabBarItem<K extends string = string> = {
   title?: string;
   /** 'danger' paints the count rose (e.g. incomplete backlog). */
   tone?: "danger";
+  /** Up to a few short tone-coded pills rendered next to the label. */
+  badges?: TabBarBadge[];
 };
 
 export function TabBar<K extends string>({
@@ -56,6 +69,21 @@ export function TabBar<K extends string>({
                 {t.count}
               </span>
             )}
+            {t.badges?.map((b) => (
+              <span
+                key={`${t.key}-${b.tone}-${b.text}`}
+                title={b.title ?? t.title}
+                className={`inline-flex h-5 items-center rounded-full px-1.5 font-mono text-[11px] font-extrabold leading-none ${
+                  b.tone === "danger"
+                    ? "bg-rose-600 text-white"
+                    : b.tone === "warning"
+                      ? "bg-amber-500 text-amber-950"
+                      : "bg-zinc-500/20 text-zinc-600 dark:text-zinc-300"
+                }`}
+              >
+                {b.text}
+              </span>
+            ))}
           </button>
         );
       })}

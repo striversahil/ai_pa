@@ -32,6 +32,8 @@ class CallReceiver : BroadcastReceiver() {
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            // Restore tracking (service self-guards on prefs) and the 15-min sync loop.
+            try { in.brindavan.foundercalls.sync.SyncScheduler.schedule(context) } catch (_: Exception) {}
             CallTrackingService.ensureRunning(context)
         }
     }

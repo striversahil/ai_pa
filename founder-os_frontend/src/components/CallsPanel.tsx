@@ -159,7 +159,7 @@ function DeviceCallsView({ canManage, filters, setFilters, onSelect, devicesOpen
   const agents = useLiveQuery(
     async () => {
       if (!canManage) return { agents: [] as Array<{ id: string; name: string; region: string }> };
-      const res = await fetch(`/api/telecalling/manual-calls?from=${filters.from}&to=${filters.from}`, { cache: "no-store" });
+      const res = await fetch(`/api/telecalling/manual-calls?from=${filters.from}&to=${filters.to}`, { cache: "no-store" });
       const body = await res.json().catch(() => ({}));
       return { agents: (body?.agents ?? []) as Array<{ id: string; name: string; region: string }> };
     },

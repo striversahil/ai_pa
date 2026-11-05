@@ -16,7 +16,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val db = app.container.db
 
         return try {
-            val heartbeat = ApiClient.heartbeat(token, app.container.prefs.deviceId())
+            val deviceId = app.container.prefs.deviceId()
+            val consent = try { kotlinx.coroutines.flow.first(app.container.prefs.consentAccepted) } catch (_: Exception) { false }
+            val heartbeat = ApiClient.heartbeat(token, deviceId, in.brindavan.foundercalls.BuildConfig.VERSION_NAME, consent)
             tokens.loggingOnly = heartbeat.loggingOnly
 
             val pending = db.calls().unsynced(200)
@@ -52,6 +54,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 ApiClient.uploadRecording(token, call.id, 0, file)
                 db.calls().update(call.copy(recordingUploaded = true, recordingParts = 1))
             }
+            purgeOld(db)
             Result.success()
         } catch (e: ApiException) {
             if (e.status == 401) tokens.clear()
@@ -85,4 +88,30 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         recordingParts = if (recordingPath != null) 1 else 0,
         deviceId = deviceId,
     )
+
+    /** 7-day offline queue + storage caps: delete ACKed audio, drop old rows, cap at ~500 MB. */
+    private suspend fun purgeOld(db: in.brindavan.foundercalls.data.AppDatabase) {
+        try {
+            val cutoff = System.currentTimeMillis() - 7L * 24 * 3600_000
+            val old = db.calls().purgeable(cutoff)
+            for (row in old) {
+                try { row.recordingPath?.let { File(it).delete() } } catch (_: Exception) {}
+            }
+            if (old.isNotEmpty()) db.calls().purgeSyncedOlderThan(cutoff)
+            db.calls().purgeOrphanAttempts()
+            // 500 MB local cap: delete oldest synced audio files until under budget.
+            val dir = File(applicationContext.filesDir, "recordings")
+            if (dir.exists()) {
+                val files = dir.listFiles()?.sortedBy { it.lastModified() } ?: emptyList()
+                var total = files.sumOf { it.length() }
+                for (f in files) {
+                    if (total <= 500L * 1024 * 1024) break
+                    try {
+                        val n = f.length()
+                        if (f.delete()) total -= n
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+    }
 }

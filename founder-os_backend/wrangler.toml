@@ -27,12 +27,16 @@ id = "233eb9aa540f48a9a2e21b993252f1aa"
 binding = "CACHE_KV"
 id = "e30d130e7aab46daa5dadba451ddee4f"
 
-# Call recordings (private). Create with:
+# Call recordings (private). TEMPORARILY UNBOUND 2026-11-05: R2 is not enabled on
+# this account yet (API 10042), and a missing bucket blocks `wrangler deploy`.
+# Handlers already degrade to 501 when c.env.CALL_RECORDINGS is undefined, so
+# call logging / pairing / dashboard ship now; audio upload goes live once the
+# bucket exists. To restore: enable R2 in the dashboard, then
 #   npx wrangler r2 bucket create founder-os-call-recordings
-# then add a 90-day lifecycle rule on prefix calls/.
-[[r2_buckets]]
-binding = "CALL_RECORDINGS"
-bucket_name = "founder-os-call-recordings"
+# plus a 90-day lifecycle rule on prefix calls/, and re-add:
+# [[r2_buckets]]
+# binding = "CALL_RECORDINGS"
+# bucket_name = "founder-os-call-recordings"
 
 [durable_objects]
 bindings = [

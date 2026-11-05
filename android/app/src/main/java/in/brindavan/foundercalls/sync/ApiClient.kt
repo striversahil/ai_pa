@@ -48,7 +48,11 @@ data class CallBatch(val calls: List<CallDto>)
 data class BatchResponse(val accepted: Int = 0, val duplicates: Int = 0, val errors: List<String> = emptyList())
 
 @Serializable
-data class HeartbeatRequest(val deviceId: String)
+data class HeartbeatRequest(
+    val deviceId: String,
+    val appVersion: String = "",
+    val consent: Boolean = false,
+)
 
 @Serializable
 data class HeartbeatResponse(
@@ -91,8 +95,8 @@ object ApiClient {
         return execute(req) { json.decodeFromString(PairResponse.serializer(), it) }
     }
 
-    fun heartbeat(token: String, deviceId: String): HeartbeatResponse {
-        val body = json.encodeToString(HeartbeatRequest.serializer(), HeartbeatRequest(deviceId))
+    fun heartbeat(token: String, deviceId: String, appVersion: String = "", consent: Boolean = false): HeartbeatResponse {
+        val body = json.encodeToString(HeartbeatRequest.serializer(), HeartbeatRequest(deviceId, appVersion, consent))
         val req = request(token, "/api/android/heartbeat").post(body.toRequestBody(jsonType)).build()
         return execute(req) { json.decodeFromString(HeartbeatResponse.serializer(), it) }
     }

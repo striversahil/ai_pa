@@ -7,6 +7,8 @@
 // cycle, `paymentHistory` = every paid cycle). Writes go to the Worker-only
 // payment endpoints (/api/accounts/payments*). Any accountant manages dues.
 import React, { useMemo, useState } from "react";
+import PaymentCalendar from "./PaymentCalendar";
+import { awaitingStatement, fmtDay as fmtDue, inr, istToday } from "./payment-calendar";
 
 export interface PaymentAttachment {
   id: string;
@@ -30,6 +32,10 @@ export interface PaymentDueRow {
   dueDay: number | null;
   dueMonth: number | null;
   remindDays: number[];
+  /** Credit cards: statement day of month; null for every other category. */
+  statementDay?: number | null;
+  /** Date the statement pricing this cycle lands (amount is known from here). */
+  statementDate?: string | null;
   logId: string | null;
   dueDate: string;
   status: string;
@@ -87,16 +93,6 @@ const BUCKETS: { key: Bucket; label: string; icon: string }[] = [
   { key: "upcoming", label: "Upcoming", icon: "⚪" },
 ];
 
-const inr = (n: number | null | undefined) =>
-  n === null || n === undefined || !Number.isFinite(n) ? "—" : `₹${Number(n).toLocaleString("en-IN")}`;
-
-function fmtDue(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}`;
-}
-
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -126,6 +122,24 @@ function schedLabel(frequency: string, dueDay: number | null, dueMonth: number |
 
 const inputCls =
   "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
+
+/** Amount cell. A null amount is normal for credit cards (the statement sets
+ *  it) and for variable bills, so it must read as "not known yet" instead of
+ *  the bare em-dash that looks like a rendering bug. `compact` is for the
+ *  group header, where the cycle rows below already spell it out. */
+function Amount({ value, compact }: { value: number | null | undefined; compact?: boolean }) {
+  if (value === null || value === undefined) {
+    return (
+      <span
+        className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+        title="Amount not known yet — a credit card's figure arrives with its statement"
+      >
+        {compact ? "TBD" : "Amount TBD"}
+      </span>
+    );
+  }
+  return <>{inr(value)}</>;
+}
 
 async function postJson(url: string, method: string, body: unknown): Promise<any> {
   const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -206,7 +220,7 @@ function Countdown({ r }: { r: PaymentDueRow }) {
       </span>
     );
   }
-  return <span className="text-[11px] font-semibold text-zinc-500">Due {fmtDue(r.dueDate)}</span>;
+  return <span className="text-[11px] font-semibold text-zinc-500">in {r.daysUntil}d</span>;
 }
 
 export default function PaymentDues({ dues, history, summary, onRefresh }: {
@@ -227,6 +241,8 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [openBills, setOpenBills] = useState<Record<string, boolean>>({});
   const [uploading, setUploading] = useState<string | null>(null);
+  const [selDay, setSelDay] = useState<string | null>(null);
+  const today = useMemo(() => istToday(), []);
 
   const sum: PaymentSummary = useMemo(() => {
     if (summary) return summary;
@@ -248,16 +264,16 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
   const needle = q.trim().toLowerCase();
   const matches = (r: PaymentDueRow) => {
     if (cat && r.category !== cat) return false;
+    if (selDay && r.dueDate.slice(0, 10) !== selDay) return false;
     if (needle && !`${r.title} ${r.biller} ${r.identifier ?? ""} ${r.paidRef ?? ""} ${r.remark ?? ""} ${r.doneBy ?? ""}`.toLowerCase().includes(needle)) return false;
     if (bucket !== "all" && tab === "due" && r.bucket !== bucket) return false;
     return true;
   };
 
   const billGroups = useMemo(() => {
-    const filtered = dues.filter(matches);
-    // Bucket filter applies at cycle level, then drop empty bills.
+    // Bucket/day filters apply at cycle level, then drop empty bills.
     const groups = groupBills(dues);
-    if (bucket === "all" && !cat && !needle) return groups;
+    if (bucket === "all" && !cat && !needle && !selDay) return groups;
     const kept: BillGroup[] = [];
     for (const g of groups) {
       const cycles = g.cycles.filter(matches);
@@ -266,7 +282,7 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
     }
     return kept;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dues, bucket, cat, needle]);
+  }, [dues, bucket, cat, needle, selDay]);
 
   const filteredHistory = useMemo(() => {
     return history.filter(matches).sort((a, b) =>
@@ -278,6 +294,15 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
     const c: Record<Bucket, number> = { all: dues.length, overdue: 0, week: 0, upcoming: 0 };
     for (const d of dues) { if (d.bucket === "overdue") c.overdue++; else if (d.bucket === "week") c.week++; else c.upcoming++; }
     return c;
+  }, [dues]);
+
+  /** Credit cards still missing their statement day — the amount can't be known without it. */
+  const missingStatement = useMemo(() => {
+    const ids = new Set<string>();
+    for (const d of dues) {
+      if (d.category === "Credit Card" && !d.statementDay) ids.add(d.templateId);
+    }
+    return ids.size;
   }, [dues]);
 
   async function uploadReceipt(logId: string, file: File) {
@@ -313,17 +338,23 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-zinc-200/80 bg-white px-4 py-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Unpaid now</p>
-          <p className="mt-0.5 font-mono text-xl font-bold text-zinc-900 dark:text-white">{inr(sum.unpaidTotal)}</p>
+          <p className="mt-0.5 font-mono text-xl font-bold text-zinc-900 dark:text-white">
+            {sum.unpaidTotal > 0 ? inr(sum.unpaidTotal) : sum.unpaidCount > 0 ? <span className="text-base">Amount TBD</span> : inr(0)}
+          </p>
           <p className="text-[11px] text-zinc-500">{sum.unpaidCount} open cycle{sum.unpaidCount === 1 ? "" : "s"}</p>
         </div>
         <div className="rounded-xl border border-rose-500/40 bg-rose-500/5 px-4 py-3 shadow-sm dark:bg-rose-500/10">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">🔴 Overdue</p>
-          <p className="mt-0.5 font-mono text-xl font-bold text-rose-700 dark:text-rose-300">{sum.overdueCount} · {inr(sum.overdueTotal)}</p>
+          <p className="mt-0.5 font-mono text-xl font-bold text-rose-700 dark:text-rose-300">
+            {sum.overdueCount} · {sum.overdueTotal > 0 ? inr(sum.overdueTotal) : sum.overdueCount > 0 ? <span className="text-base">TBD</span> : inr(0)}
+          </p>
           <p className="text-[11px] text-rose-500">{sum.overdueCount ? "needs payment now" : "nothing overdue"}</p>
         </div>
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 shadow-sm dark:bg-amber-500/10">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">🟡 Due in 7 days</p>
-          <p className="mt-0.5 font-mono text-xl font-bold text-amber-800 dark:text-amber-200">{sum.weekCount} · {inr(sum.weekTotal)}</p>
+          <p className="mt-0.5 font-mono text-xl font-bold text-amber-800 dark:text-amber-200">
+            {sum.weekCount} · {sum.weekTotal > 0 ? inr(sum.weekTotal) : sum.weekCount > 0 ? <span className="text-base">TBD</span> : inr(0)}
+          </p>
           <p className="text-[11px] text-amber-600 dark:text-amber-400">includes today + 🔔 reminder days</p>
         </div>
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 shadow-sm dark:bg-emerald-500/10">
@@ -347,14 +378,80 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
         </button>
       </div>
 
-      {/* Bucket tabs (dues) + filters */}
+      {/* Bucket tabs (dues) + filters. Overdue / this-week carry their live
+          count + rupee value so the pill itself answers "how many, how much". */}
       {tab === "due" && (
         <div className="flex flex-wrap items-center gap-2">
-          {BUCKETS.map((b) => (
-            <button key={b.key} onClick={() => setBucket(b.key)} className={`rounded-full border px-3 py-1.5 text-xs font-bold cursor-pointer ${bucket === b.key ? "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"}`}>
-              {b.icon} {b.label} ({bucketCounts[b.key]})
+          {BUCKETS.map((b) => {
+            const active = bucket === b.key;
+            const count = bucketCounts[b.key];
+            const amount = b.key === "overdue" ? sum.overdueTotal : b.key === "week" ? sum.weekTotal : null;
+            const tone =
+              b.key === "overdue"
+                ? "border-rose-500/60 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                : b.key === "week"
+                  ? "border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                  : "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300";
+            const idle =
+              b.key === "overdue"
+                ? "border-rose-500/30 text-rose-600 dark:text-rose-400"
+                : b.key === "week"
+                  ? "border-amber-500/30 text-amber-700 dark:text-amber-300"
+                  : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400";
+            const tip =
+              b.key === "overdue"
+                ? `${count} unpaid bill${count === 1 ? "" : "s"} past the due date · ${inr(sum.overdueTotal)} total — needs payment now`
+                : b.key === "week"
+                  ? `${count} unpaid bill${count === 1 ? "" : "s"} due in the next 7 days (today + reminder days) · ${inr(sum.weekTotal)} total`
+                  : b.key === "upcoming"
+                    ? `${count} bill${count === 1 ? "" : "s"} due later than 7 days`
+                    : `${count} open cycle${count === 1 ? "" : "s"} in total`;
+            return (
+              <button
+                key={b.key}
+                onClick={() => setBucket(b.key)}
+                aria-pressed={active}
+                aria-label={tip}
+                title={tip}
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold cursor-pointer ${active ? tone : idle}`}
+              >
+                <span aria-hidden="true">{b.icon}</span>
+                <span>{b.label}</span>
+                <span
+                  className={`rounded-full px-1.5 py-px font-mono text-[11px] ${
+                    b.key === "overdue"
+                      ? "bg-rose-600 text-white"
+                      : b.key === "week"
+                        ? "bg-amber-500 text-white"
+                        : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+                  }`}
+                >
+                  {count}
+                </span>
+                {amount !== null && amount > 0 && count > 0 && (
+                  <span className="font-mono text-[11px] font-semibold opacity-80">{inr(amount)}</span>
+                )}
+              </button>
+            );
+          })}
+          {selDay && (
+            <button
+              onClick={() => setSelDay(null)}
+              className="rounded-full border border-indigo-500 bg-indigo-500/15 px-3 py-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 cursor-pointer"
+              title="Showing one day only — click to clear"
+            >
+              📅 {fmtDue(selDay)} · {dues.filter((d) => d.dueDate.slice(0, 10) === selDay).length} due ×
             </button>
-          ))}
+          )}
+        </div>
+      )}
+      {tab === "due" && missingStatement > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-2 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300"
+          title="A credit card's amount is only known once its statement generates — set the statement day in Edit bill"
+        >
+          <span>💳 {missingStatement} credit-card bill{missingStatement === 1 ? "" : "s"} without a statement day</span>
+          <span className="font-normal text-zinc-600 dark:text-zinc-400">· set it in Edit bill</span>
         </div>
       )}
       <div className="grid gap-2 rounded-xl border border-zinc-200/80 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:grid-cols-2">
@@ -369,7 +466,19 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
       {err && <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">⚠ {err}</p>}
 
       {tab === "due" && (
-        <>
+        // Desktop: bill list left, calendar as a sticky right rail (~370px) so
+        // the month never eats the whole page and the list scrolls beside it.
+        // DOM order stays calendar-first for the stacked mobile layout.
+        <div className="space-y-3 lg:grid lg:grid-cols-[minmax(0,1fr)_370px] lg:items-start lg:gap-3 lg:space-y-0">
+          <div className="lg:order-2 lg:sticky lg:top-4">
+            <PaymentCalendar
+              dues={dues}
+              selectedDay={selDay}
+              onSelectDay={setSelDay}
+              onPay={(r) => { setErr(null); setOkMsg(null); setPayRow(r); }}
+            />
+          </div>
+          <div className="space-y-3 lg:order-1">
           {billGroups.length === 0 && (
             <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
               {dues.length === 0 ? "No payment dues yet — add the first bill (credit card, recharge, EMI…) with + Add due." : "Nothing matches these filters."}
@@ -394,9 +503,24 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
                       <span>{g.cycles.length} open cycle{g.cycles.length === 1 ? "" : "s"}</span>
                       {overdueCycles.length > 0 && <span className="font-bold text-rose-600 dark:text-rose-400">· {overdueCycles.length} overdue</span>}
                       {g.remindDays.length > 0 && <span title="Reminder schedule">· 🔔 {g.remindDays.join("/")}</span>}
+                      {g.category === "Credit Card" && g.sample.statementDay ? (
+                        <span
+                          className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-px font-semibold text-indigo-600 dark:text-indigo-300"
+                          title={`Statement generates on day ${g.sample.statementDay} — the amount is only known from the statement date`}
+                        >
+                          💳 statement day {g.sample.statementDay}
+                        </span>
+                      ) : g.category === "Credit Card" ? (
+                        <span
+                          className="rounded-full border border-dashed border-indigo-400/60 px-1.5 py-px font-semibold text-indigo-500 dark:text-indigo-300"
+                          title="Credit card — set the statement day (Edit bill) so you can see when the amount becomes known"
+                        >
+                          💳 statement day not set
+                        </span>
+                      ) : null}
                     </span>
                   </span>
-                  <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{inr(g.amount)}</span>
+                  <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white"><Amount value={g.amount} compact /></span>
                   <span className="text-xs text-zinc-400">{open ? "▾" : "▸"}</span>
                 </button>
                 {open && (
@@ -408,6 +532,15 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
                             <span className="font-bold text-zinc-800 dark:text-zinc-100">Due {fmtDue(r.dueDate)}</span>
                             {!r.logId && <span className="rounded border border-dashed border-zinc-400 px-1.5 py-px text-[10px] font-semibold text-zinc-500" title="No instance yet — paying creates the cycle">projected</span>}
                             <Countdown r={r} />
+                            {r.statementDate && (
+                              <span
+                                className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-px text-[10px] font-bold text-indigo-600 dark:text-indigo-300"
+                                title={`Credit-card statement date — the amount is known from ${fmtDue(r.statementDate)}`}
+                              >
+                                💳 Stmt {fmtDue(r.statementDate)}
+                                {awaitingStatement(r, today) ? " · amount TBD" : ""}
+                              </span>
+                            )}
                           </p>
                           {r.attachments && r.attachments.length > 0 && (
                             <p className="mt-0.5 text-[11px] text-zinc-500">
@@ -415,7 +548,7 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
                             </p>
                           )}
                         </div>
-                        <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{inr(r.amount)}</span>
+                        <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white"><Amount value={r.amount} /></span>
                         <button onClick={() => { setErr(null); setOkMsg(null); setPayRow(r); }} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 cursor-pointer">
                           Mark paid
                         </button>
@@ -429,7 +562,8 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
               </div>
             );
           })}
-        </>
+          </div>
+        </div>
       )}
 
       {tab === "history" && (
@@ -449,7 +583,7 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
                     {r.identifier && <span className="ml-2 rounded bg-indigo-500/10 px-1.5 py-px font-mono text-[11px] font-bold text-indigo-600 dark:text-indigo-300">· {r.identifier}</span>}
                   </p>
                   <p className="mt-0.5 text-[11px] text-zinc-500">
-                    Due {fmtDue(r.dueDate)} · Paid {inr(r.paidAmount)}{r.paidRef ? ` · ${r.paidRef}` : ""}{r.doneBy ? ` · by ${r.doneBy}` : ""}{r.updatedAt ? ` · ${fmtDateTime(r.updatedAt)}` : ""}
+                    Due {fmtDue(r.dueDate)} · Paid <Amount value={r.paidAmount} />{r.paidRef ? ` · ${r.paidRef}` : ""}{r.doneBy ? ` · by ${r.doneBy}` : ""}{r.updatedAt ? ` · ${fmtDateTime(r.updatedAt)}` : ""}
                   </p>
                   {r.attachments && r.attachments.length > 0 && (
                     <p className="mt-0.5 text-[11px] text-zinc-500">
@@ -457,7 +591,7 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
                     </p>
                   )}
                 </div>
-                <span className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-300">{inr(r.paidAmount ?? r.amount)}</span>
+                <span className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-300"><Amount value={r.paidAmount ?? r.amount} /></span>
                 <div className="flex items-center gap-1.5">
                   {r.logId && (
                     <>
@@ -543,7 +677,17 @@ function PayDialog({ row, busy, onClose, onPay }: {
   const [localErr, setLocalErr] = useState<string | null>(null);
   return (
     <Modal title={`Mark paid — ${row.title}`} onClose={onClose}>
-      <p className="text-xs text-zinc-500">Due {fmtDue(row.dueDate)}{(row as any).identifier ? ` · ${(row as any).identifier}` : ""}{row.logId ? "" : " · projected cycle (paying creates it)"} · expected {inr(row.amount)}</p>
+      <p className="text-xs text-zinc-500">
+        Due {fmtDue(row.dueDate)}{row.identifier ? ` · ${row.identifier}` : ""}{row.logId ? "" : " · projected cycle (paying creates it)"} · expected <Amount value={row.amount} />
+        {row.statementDate && (
+          <span
+            className="ml-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-px text-[10px] font-bold text-indigo-600 dark:text-indigo-300"
+            title="Statement date — the card amount is known from here, so enter the figure printed on the statement"
+          >
+            💳 Stmt {fmtDue(row.statementDate)}
+          </span>
+        )}
+      </p>
       <label className="mt-3 block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
         Amount paid (₹)
         <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, "") as any)} inputMode="decimal" className={`${inputCls} mt-1`} placeholder="e.g. 12500" />
@@ -597,6 +741,7 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
     row?.frequency === "weekly" && row?.dueDay !== null && row?.dueDay !== undefined ? String(row.dueDay) : "4",
   );
   const [remindDays, setRemindDays] = useState((row?.remindDays ?? [7, 3, 1]).join(","));
+  const [statementDay, setStatementDay] = useState(row?.statementDay ?? "" as number | "");
   const [localErr, setLocalErr] = useState<string | null>(null);
   return (
     <Modal title={row ? `Edit bill — ${row.title}` : "Add payment due"} onClose={onClose}>
@@ -663,6 +808,21 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
             </label>
           </>
         )}
+        {category === "Credit Card" && (
+          <label
+            className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400"
+            title="Day the credit-card statement generates — the amount is known from then"
+          >
+            Statement day of month
+            <input
+              value={statementDay}
+              onChange={(e) => setStatementDay(e.target.value.replace(/[^0-9]/g, "").slice(0, 2) as any)}
+              inputMode="numeric"
+              className={`${inputCls} mt-1`}
+              placeholder="e.g. 18"
+            />
+          </label>
+        )}
       </div>
       <label className="mt-2 block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
         Reminder days before due (comma-separated)
@@ -702,11 +862,16 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
                 day = Number(schedDay);
                 if (!Number.isInteger(day) || day < 1 || day > 31) { setLocalErr("Due day must be 1–31"); return; }
               }
+              const sDay = statementDay === "" ? null : Number(statementDay);
+              if (category === "Credit Card" && sDay !== null && (!Number.isInteger(sDay) || sDay < 1 || sDay > 31)) {
+                setLocalErr("Statement day must be 1–31"); return;
+              }
               const body: Record<string, unknown> = {
                 title: title.trim(), biller: biller.trim() || null, identifier: identifier.trim() || null, category,
                 amount: amount === "" ? null : Number(amount),
                 frequency, dueDay: day, dueMonth: month,
                 ownerRole: "either", remindDays: remindDays || "7,3,1",
+                statementDay: category === "Credit Card" ? sDay : null,
               };
               onSave(body, row?.templateId ?? null);
             }}

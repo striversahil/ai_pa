@@ -98,10 +98,19 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const auth = await requireDevice(c);
     if (!auth) return c.json({ error: 'unauthorized' }, 401);
     const body = await c.req.json().catch(() => ({}));
-    await touchDevice(c.env.DB, auth.device.id, String(body?.appVersion ?? '')).catch(() => null);
+    const appVersion = String(body?.appVersion ?? body?.deviceId ?? '').slice(0, 40);
+    await touchDevice(c.env.DB, auth.device.id, appVersion || undefined).catch(() => null);
     if (body?.consent === true && !auth.device.consentAt) {
+      const now = new Date().toISOString();
       await c.env.DB.prepare('UPDATE DeviceRegistration SET consentAt=? WHERE id=?')
-        .bind(new Date().toISOString(), auth.device.id).run().catch(() => null);
+        .bind(now, auth.device.id).run().catch(() => null);
+      // Audit-log the consent accept (best-effort; never fails the heartbeat).
+      await c.env.DB.prepare(
+        'INSERT INTO AuditLog(id, action, entityType, entityId, metadata, createdAt) VALUES(?,?,?,?,?,?)',
+      ).bind(
+        crypto.randomUUID(), 'device.consent', 'DeviceRegistration', auth.device.id,
+        JSON.stringify({ telecallerId: auth.telecallerId, appVersion: appVersion || null }), now,
+      ).run().catch(() => null);
     }
     const cfg = await config();
     return c.json({
@@ -138,9 +147,11 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ error: 'not your call' }, 403);
     }
     const length = Number(c.req.header('content-length') ?? 0);
-    if (length > MAX_RECORDING_BYTES) return c.json({ error: 'recording too large' }, 413);
     const bytes = await c.req.arrayBuffer();
     if (bytes.byteLength === 0) return c.json({ error: 'empty body' }, 400);
+    if (length > MAX_RECORDING_BYTES || bytes.byteLength > MAX_RECORDING_BYTES) {
+      return c.json({ error: 'recording too large' }, 413);
+    }
     const part = Math.max(0, Math.min(Number(c.req.query('part') ?? 0) || 0, 59));
     const day = String(call.attemptAt).slice(0, 7);
     const key = `calls/${day}/${String(auth.telecallerId).replace(/[^A-Za-z0-9_-]/g, '_')}/${call.id}-${part}.m4a`;

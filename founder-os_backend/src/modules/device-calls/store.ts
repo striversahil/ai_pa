@@ -39,7 +39,7 @@ export async function createDevice(db: Db, args: {
     db.prepare(
       `INSERT INTO DeviceRegistration(id, telecallerId, tokenHash, deviceId, label, status, loggingOnly, consentAt, lastSeenAt, appVersion, pairedBy, pairedByName, createdAt, updatedAt)
        VALUES(?,?,?,?,?,'active',0,?,?,?,?,?,?,?)`,
-    ).bind(id, args.telecallerId, args.tokenHash, args.deviceId, args.label.slice(0, 120), now, now, args.appVersion.slice(0, 40), args.pairedBy, args.pairedByName, now, now),
+    ).bind(id, args.telecallerId, args.tokenHash, args.deviceId, args.label.slice(0, 120), null, now, args.appVersion.slice(0, 40), args.pairedBy, args.pairedByName, now, now),
     db.prepare('UPDATE DevicePairCode SET usedAt=? WHERE code=?').bind(now, args.pairCode),
   ]);
   return id;

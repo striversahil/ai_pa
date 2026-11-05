@@ -15,8 +15,11 @@ object SyncScheduler {
     private const val HEARTBEAT = "founder-calls-heartbeat"
 
     private fun constraints(context: Context): Constraints {
-        val prefs = (context.applicationContext as in.brindavan.foundercalls.FounderCallsApp).container.prefs
-        val wifiOnly = kotlinx.coroutines.runBlocking { kotlinx.coroutines.flow.first(prefs.wifiOnly) }
+        // Read on a background caller only; WorkManager invokes this off the main thread
+        // in practice, but stay fail-safe — default to CONNECTED when prefs are unreadable.
+        val wifiOnly = try {
+            kotlinx.coroutines.runBlocking { kotlinx.coroutines.flow.first((context.applicationContext as in.brindavan.foundercalls.FounderCallsApp).container.prefs.wifiOnly) }
+        } catch (_: Exception) { false }
         return Constraints.Builder()
             .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
             .build()

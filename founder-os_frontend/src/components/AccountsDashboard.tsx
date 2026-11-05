@@ -5,6 +5,7 @@ import { useLiveDashboard, useOptimisticMutation, patchRowInLists, mapRowInLists
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
 import PaymentDues, { type PaymentDueRow, type PaymentSummary } from "@/components/accounts/PaymentDues";
+import { inr, inrShort } from "@/components/accounts/payment-calendar";
 
 interface FileItem {
   id: string;
@@ -620,6 +621,42 @@ export default function AccountsDashboard() {
         ];
   const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
   const isIncompleteView = view === "incomplete";
+  // Payment-dues badges on the TAB BAR (not just inside the tab): the red
+  // overdue ₹ and the amber this-week ₹ stay visible from every Accounts view,
+  // so money at risk is seen before opening the page. Short notation keeps the
+  // nav from reflowing; the tooltip carries the full figures.
+  const paySum = data?.paymentSummary ?? null;
+  const duesBadges = useMemo(() => {
+    if (!paySum) return undefined;
+    const out: { text: string; tone: "danger" | "warning"; title: string }[] = [];
+    // A credit card's amount is NULL until its statement is entered, so a
+    // backlog can exist with ₹0 behind it. Show the amount when we know it and
+    // fall back to the count so the tab still warns that bills are waiting.
+    if (paySum.overdueCount > 0) {
+      out.push({
+        text: paySum.overdueTotal > 0 ? inrShort(paySum.overdueTotal) : String(paySum.overdueCount),
+        tone: "danger",
+        title: paySum.overdueTotal > 0
+          ? `${paySum.overdueCount} overdue bill${paySum.overdueCount === 1 ? "" : "s"} · ${inr(paySum.overdueTotal)} — past the due date`
+          : `${paySum.overdueCount} overdue bill${paySum.overdueCount === 1 ? "" : "s"} — amounts not entered yet`,
+      });
+    }
+    if (paySum.weekCount > 0) {
+      out.push({
+        text: paySum.weekTotal > 0 ? inrShort(paySum.weekTotal) : String(paySum.weekCount),
+        tone: "warning",
+        title: paySum.weekTotal > 0
+          ? `${paySum.weekCount} bill${paySum.weekCount === 1 ? "" : "s"} due in the next 7 days · ${inr(paySum.weekTotal)}`
+          : `${paySum.weekCount} bill${paySum.weekCount === 1 ? "" : "s"} due in the next 7 days — amounts not entered yet`,
+      });
+    }
+    return out.length ? out : undefined;
+  }, [paySum]);
+  const duesTitle = paySum
+    ? `${paySum.unpaidCount} open cycle${paySum.unpaidCount === 1 ? "" : "s"} · ${inr(paySum.unpaidTotal)} unpaid` +
+      (paySum.overdueCount > 0 ? ` · ${paySum.overdueCount} overdue (${inr(paySum.overdueTotal)})` : "") +
+      (paySum.weekCount > 0 ? ` · ${paySum.weekCount} due in 7 days (${inr(paySum.weekTotal)})` : "")
+    : undefined;
   const isHistoryView = view === "history";
   // Incomplete tab shows the full not-done backlog (past-due unresolved logs).
   // The payload is already lane-scoped server-side, so admins see everything and
@@ -701,6 +738,8 @@ export default function AccountsDashboard() {
                 ...t,
                 count: t.key === "incomplete" ? incompleteCount : t.key === "history" ? historyCount : null,
                 tone: t.key === "incomplete" ? "danger" as const : undefined,
+                badges: t.key === "dues" ? duesBadges : undefined,
+                title: t.key === "dues" ? duesTitle : undefined,
               }))}
             active={view}
             onChange={setView}

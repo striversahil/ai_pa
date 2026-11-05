@@ -973,7 +973,7 @@ model AccountsTaskTemplate {
   // Optional bill number: card number, mobile number, loan/account no.,
   // policy no. … (label chosen per category in the UI; task rows ignore it).
   identifier  String?
-
+  statementDay Int? // credit cards: statement day of month (1-31); amount is known only from here
 
   @@index([active, frequency])
   @@index([kind, active])

@@ -76,6 +76,11 @@ interface CallDao {
     @Query("SELECT * FROM call_events ORDER BY attemptAt DESC") suspend fun allOnce(): List<CallEventEntity>
     @Query("SELECT * FROM call_events WHERE recordingPath IS NOT NULL AND recordingUploaded = 0 ORDER BY attemptAt ASC LIMIT :limit") suspend fun pendingRecordings(limit: Int): List<CallEventEntity>
 
+    // 7-day offline queue: drop fully-synced rows past the window and delete their audio.
+    @Query("SELECT * FROM call_events WHERE synced = 1 AND recordingUploaded = 1 AND attemptAt < :cutoff") suspend fun purgeable(cutoff: Long): List<CallEventEntity>
+    @Query("DELETE FROM call_events WHERE synced = 1 AND recordingUploaded = 1 AND attemptAt < :cutoff") suspend fun purgeSyncedOlderThan(cutoff: Long)
+    @Query("DELETE FROM recording_attempts WHERE callId NOT IN (SELECT id FROM call_events)") suspend fun purgeOrphanAttempts()
+
     @Insert suspend fun insertAttempt(attempt: RecordingAttemptEntity): Long
     @Query("SELECT * FROM recording_attempts WHERE callId = :callId") suspend fun attemptsFor(callId: String): List<RecordingAttemptEntity>
 

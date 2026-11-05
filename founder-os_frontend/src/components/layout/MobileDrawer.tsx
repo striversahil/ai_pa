@@ -1,12 +1,14 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import {
   NAV_ITEMS,
   type ViewType,
   type NavTarget,
 } from "./nav";
 import { useDashboardNav } from "@/hooks/useDashboardNav";
+import { useAuth } from "@/auth/AuthContext";
+import { applyOrder, dashKey, orderStorageKey, useSidebarOrder } from "@/hooks/useSidebarCustom";
 import { APP_THEMES, type AppThemeId } from "@/hooks/useTheme";
 import {
   LayoutGrid,
@@ -67,6 +69,28 @@ export default function MobileDrawer({
 }: MobileDrawerProps) {
   const visible = NAV_ITEMS.filter((i) => canView(i.view));
   const dashboards = useDashboardNav();
+  const { me: authMe } = useAuth();
+  /* Root keeps the legacy drawer — saved order + flat list are non-root only. */
+  const reorderable = !authMe?.isAdmin;
+
+  /* Dashboards follow the saved desktop order (static here — no drag on touch).
+     Main views stay fixed exactly as before. */
+  const defaultKeys = useMemo(
+    () => dashboards.map((d) => dashKey(d.slug)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dashboards.map((d) => d.slug).join("|")],
+  );
+  const { order } = useSidebarOrder(orderStorageKey(me?.email), defaultKeys);
+  const dashRows = useMemo(() => {
+    const all = dashboards.map((d) => ({
+      key: dashKey(d.slug),
+      label: d.name,
+      icon: DASH_ICONS[d.slug] ?? LayoutGrid,
+      target: { type: "dashboard", slug: d.slug } as NavTarget,
+      isActive: d.slug === activeSlug,
+    }));
+    return applyOrder(all, (r) => r.key, order);
+  }, [dashboards, order, activeSlug]);
 
   /* Tokens, not hardcoded whites — the drawer must read correctly on the warm
      Sage canvas as well as on the dark presets (mirrors Sidebar.tsx). */
@@ -110,39 +134,79 @@ export default function MobileDrawer({
         </div>
 
         <nav className="flex flex-col gap-1">
-          {visible.map((item) => {
-            const Icon = item.icon;
-            const isActive = item.view === activeView;
-            return (
-              <button key={item.view} type="button" onClick={() => go({ type: "view", view: item.view })} className={itemClass(isActive)}>
-                {isActive && (
-                  <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
-                )}
-                <Icon className="h-5 w-5" strokeWidth={2} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+          {reorderable ? (
+            <>
+              {visible.map((item) => {
+                const Icon = item.icon;
+                const isActive = item.view === activeView;
+                return (
+                  <button key={item.view} type="button" onClick={() => go({ type: "view", view: item.view })} className={itemClass(isActive)}>
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
+                    )}
+                    <Icon className="h-5 w-5" strokeWidth={2} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
 
-          {dashboards.length > 0 && (
-            <div className="mt-3">
-              <div className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">Dashboards</div>
-              <div className="flex flex-col gap-1">
-                {dashboards.map((d) => {
-                  const Icon = DASH_ICONS[d.slug] ?? LayoutGrid;
-                  const isActive = d.slug === activeSlug;
-                  return (
-                    <button key={d.slug} type="button" onClick={() => go({ type: "dashboard", slug: d.slug })} className={itemClass(isActive)} title={d.name}>
-                      {isActive && (
-                        <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
-                      )}
-                      <Icon className="h-5 w-5" strokeWidth={2} />
-                      <span className="truncate">{d.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+              {dashRows.length > 0 && (
+                <div className="mt-3">
+                  <div className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">Dashboards</div>
+                  <div className="flex flex-col gap-1">
+                    {dashRows.map((row) => {
+                      const Icon = row.icon;
+                      return (
+                        <button key={row.key} type="button" onClick={() => go(row.target)} className={itemClass(row.isActive)} title={row.label}>
+                          {row.isActive && (
+                            <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
+                          )}
+                          <Icon className="h-5 w-5" strokeWidth={2} />
+                          <span className="truncate">{row.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {visible.map((item) => {
+                const Icon = item.icon;
+                const isActive = item.view === activeView;
+                return (
+                  <button key={item.view} type="button" onClick={() => go({ type: "view", view: item.view })} className={itemClass(isActive)}>
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
+                    )}
+                    <Icon className="h-5 w-5" strokeWidth={2} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+
+              {dashboards.length > 0 && (
+                <div className="mt-3">
+                  <div className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">Dashboards</div>
+                  <div className="flex flex-col gap-1">
+                    {dashboards.map((d) => {
+                      const Icon = DASH_ICONS[d.slug] ?? LayoutGrid;
+                      const isActive = d.slug === activeSlug;
+                      return (
+                        <button key={d.slug} type="button" onClick={() => go({ type: "dashboard", slug: d.slug })} className={itemClass(isActive)} title={d.name}>
+                          {isActive && (
+                            <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
+                          )}
+                          <Icon className="h-5 w-5" strokeWidth={2} />
+                          <span className="truncate">{d.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </nav>
 

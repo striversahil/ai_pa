@@ -1120,6 +1120,20 @@ function cleanTemplateInput(input: Record<string, any>, partial = false) {
       .filter((n) => Number.isFinite(n) && n >= 0 && n <= 60);
     data.remindDays = [...new Set(days)].sort((a, b) => b - a).join(',') || '7,3,1';
   }
+  // Credit cards only: the statement day is when the amount first becomes
+  // known. Switching a bill off 'Credit Card' clears it so a stale statement
+  // date can't linger on a utility/EMI bill.
+  if (input.statementDay !== undefined) {
+    if (input.statementDay === null || input.statementDay === '') data.statementDay = null;
+    else {
+      const n = Math.floor(Number(input.statementDay));
+      if (!Number.isFinite(n) || n < 1 || n > 31) throw new Error('statementDay must be 1–31');
+      data.statementDay = n;
+    }
+  }
+  if (input.category !== undefined && String(input.category) !== 'Credit Card' && input.statementDay === undefined) {
+    data.statementDay = null;
+  }
   return data;
 }
 
@@ -1263,6 +1277,10 @@ export interface PaymentDueRow {
   dueDay: number | null;
   dueMonth: number | null;
   remindDays: number[];
+  /** Credit cards: statement day of month; null for every other category. */
+  statementDay: number | null;
+  /** Date the statement that prices THIS cycle lands (null when no statement day). */
+  statementDate: string | null;
   logId: string | null;
   dueDate: string;
   status: string;
@@ -1298,11 +1316,38 @@ function parseRemindDays(raw: unknown): number[] {
   return uniq.length ? uniq : [7, 3, 1];
 }
 
+/**
+ * Statement date that prices the cycle due on `dueDate`.
+ *
+ * The statement is generated `statementDay` of a month and the payment is due
+ * on `dueDay`. When the statement day lands BEFORE the due day the pair sits in
+ * the same month (statement 2nd → due 15th); otherwise the statement belongs to
+ * the previous month (statement 25th → due 15th of the following month). The
+ * day is clamped to the month length so a 31st statement works in February.
+ */
+export function statementDateFor(dueDate: string, statementDay: number): string | null {
+  const { y, m, d } = parseDay(dueDate);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  const day = Math.floor(statementDay);
+  if (!Number.isFinite(day) || day < 1 || day > 31) return null;
+  let sy = y;
+  let sm = m;
+  if (day >= d) {
+    sm -= 1;
+    if (sm < 1) { sm = 12; sy -= 1; }
+  }
+  return fmtDay(sy, sm, Math.min(day, daysInMonth(sy, sm)));
+}
+
 function toPaymentRow(t: any, log: any, dueDate: string, today: string, attachments: PaymentAttachment[] = []): PaymentDueRow {
   const done = !!log && String(log.status) === 'done';
   const dd = dueDate.slice(0, 10);
   const daysUntil = diffDays(today, dd);
   const remindDays = parseRemindDays((t as any).remindDays);
+  const statementDayRaw = (t as any).statementDay;
+  const statementDay = statementDayRaw === null || statementDayRaw === undefined || statementDayRaw === ''
+    ? null
+    : Number(statementDayRaw);
   const bucket: PaymentBucket = done
     ? 'paid'
     : dd < today
@@ -1322,6 +1367,8 @@ function toPaymentRow(t: any, log: any, dueDate: string, today: string, attachme
     dueDay: (t as any).dueDay ?? null,
     dueMonth: (t as any).dueMonth ?? null,
     remindDays,
+    statementDay,
+    statementDate: statementDay === null ? null : statementDateFor(dd, statementDay),
     logId: log ? String(log.id) : null,
     dueDate: dd,
     status: log ? String(log.status) : 'pending',

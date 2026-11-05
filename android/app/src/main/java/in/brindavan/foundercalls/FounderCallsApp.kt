@@ -12,6 +12,8 @@ class FounderCallsApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        // Restore the 15-min heartbeat/sync loop (survives reboot via BootReceiver too).
+        try { in.brindavan.foundercalls.sync.SyncScheduler.schedule(this) } catch (_: Exception) {}
     }
 }
 
