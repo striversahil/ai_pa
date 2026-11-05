@@ -3,10 +3,19 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { LiveInvoice } from "@/debtors-tracker/types";
 import { BUCKET_LABELS, formatDays, formatINR, shortDate } from "@/debtors-tracker/types";
+import { describeSortSpecs, isDefaultSort, nextSortSpecs, type SortSpec } from "@/debtors-tracker/multi-sort";
 import { useColumnOrder } from "@/hooks/useColumnOrder";
 import { Card, Chip, EmptyState, SearchInput, SortableTh, TDC, TDCR, TableShell, bucketBadge } from "../ui";
 
 const BUCKET_CHIPS = ["ALL", "NOT_DUE", "D0", "D31", "D61", "D91", "D181", "PAID"] as const;
+
+const INVOICE_TEXT_FIRST = new Set(["customer", "invoice", "dueMonth", "bucket", "status", "owner", "place", "remarks"]);
+const DEFAULT_INVOICE_SORT: SortSpec[] = [{ key: "date", dir: "desc" }];
+const INVOICE_SORT_LABELS: Record<string, string> = {
+  customer: "Customer", invoice: "Invoice", date: "Date", due: "Due", dueMonth: "Due Month",
+  amount: "Amount", received: "Received", balance: "Balance", overdue: "Overdue",
+  bucket: "Bucket", status: "Call / Payment", owner: "Owner", place: "State / Region", remarks: "Remarks",
+};
 
 const DEFAULT_COLUMNS = [
   "customer", "invoice", "date", "due", "dueMonth", "amount", "received",
@@ -32,21 +41,14 @@ export default function InvoicesTab({
   const [q, setQ] = useState("");
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<string>("date");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sortSpecs, setSortSpecs] = useState<SortSpec[]>(DEFAULT_INVOICE_SORT);
   const { order, move } = useColumnOrder("pt:invoice-columns:v1", DEFAULT_COLUMNS);
 
   const changeSort = (key: string) => {
     if (key === "edit") return;
-    if (key === sortKey) {
-      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
-      return;
-    }
-    // Text-ish columns read better A→Z first; dates + money newest/largest first.
-    const textFirst = new Set(["customer", "invoice", "dueMonth", "bucket", "status", "owner", "place", "remarks"]);
-    setSortKey(key);
-    setSortDir(textFirst.has(key) ? "asc" : "desc");
+    setSortSpecs((prev) => nextSortSpecs(prev, key, DEFAULT_INVOICE_SORT, INVOICE_TEXT_FIRST));
   };
+  const customSort = !isDefaultSort(sortSpecs, DEFAULT_INVOICE_SORT);
 
   const counts = useMemo(() => {
     const m: Record<string, number> = { ALL: invoices.length };
@@ -56,7 +58,6 @@ export default function InvoicesTab({
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const dir = sortDir === "asc" ? 1 : -1;
     const strCmp = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
     const dateCmp = (a: string | null, b: string | null) => {
       if (!a && !b) return 0;
@@ -76,6 +77,25 @@ export default function InvoicesTab({
       const i = (BUCKET_ORDER as readonly string[]).indexOf(b);
       return i === -1 ? BUCKET_ORDER.length : i;
     };
+    const compareByKey = (a: LiveInvoice, b: LiveInvoice, key: string): number => {
+      switch (key) {
+        case "customer": return strCmp(a.customerName, b.customerName);
+        case "invoice": return strCmp(String(a.invoiceNo), String(b.invoiceNo));
+        case "date": return dateCmp(a.invoiceDate, b.invoiceDate);
+        case "due": return dateCmp(a.dueDate, b.dueDate);
+        case "dueMonth": return strCmp(a.dueMonth || "", b.dueMonth || "");
+        case "amount": return numCmp(a.invoiceAmount, b.invoiceAmount);
+        case "received": return numCmp(a.effectiveReceived, b.effectiveReceived);
+        case "balance": return numCmp(a.balance, b.balance);
+        case "overdue": return overdueCmp(a.daysOverdue, b.daysOverdue);
+        case "bucket": return bucketRank(a.bucket) - bucketRank(b.bucket);
+        case "status": return strCmp([a.callStatus, a.paymentStatus].filter(Boolean).join(" · "), [b.callStatus, b.paymentStatus].filter(Boolean).join(" · "));
+        case "owner": return strCmp(a.employee || "", b.employee || "");
+        case "place": return strCmp([a.state, a.region].filter(Boolean).join(" / "), [b.state, b.region].filter(Boolean).join(" / "));
+        case "remarks": return strCmp([a.remarks, a.accountsRemarks].filter(Boolean).join(" · "), [b.remarks, b.accountsRemarks].filter(Boolean).join(" · "));
+        default: return 0;
+      }
+    };
     const rows = invoices
       .filter((inv) => bucket === "ALL" || inv.bucket === bucket)
       .filter((inv) =>
@@ -86,30 +106,15 @@ export default function InvoicesTab({
         (inv.state || "").toLowerCase().includes(needle) ||
         (inv.region || "").toLowerCase().includes(needle));
     return [...rows].sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case "customer": cmp = strCmp(a.customerName, b.customerName); break;
-        case "invoice": cmp = strCmp(String(a.invoiceNo), String(b.invoiceNo)); break;
-        case "date": cmp = dateCmp(a.invoiceDate, b.invoiceDate); break;
-        case "due": cmp = dateCmp(a.dueDate, b.dueDate); break;
-        case "dueMonth": cmp = strCmp(a.dueMonth || "", b.dueMonth || ""); break;
-        case "amount": cmp = numCmp(a.invoiceAmount, b.invoiceAmount); break;
-        case "received": cmp = numCmp(a.effectiveReceived, b.effectiveReceived); break;
-        case "balance": cmp = numCmp(a.balance, b.balance); break;
-        case "overdue": cmp = overdueCmp(a.daysOverdue, b.daysOverdue); break;
-        case "bucket": cmp = bucketRank(a.bucket) - bucketRank(b.bucket); break;
-        case "status": cmp = strCmp([a.callStatus, a.paymentStatus].filter(Boolean).join(" · "), [b.callStatus, b.paymentStatus].filter(Boolean).join(" · ")); break;
-        case "owner": cmp = strCmp(a.employee || "", b.employee || ""); break;
-        case "place": cmp = strCmp([a.state, a.region].filter(Boolean).join(" / "), [b.state, b.region].filter(Boolean).join(" / ")); break;
-        case "remarks": cmp = strCmp([a.remarks, a.accountsRemarks].filter(Boolean).join(" · "), [b.remarks, b.accountsRemarks].filter(Boolean).join(" · ")); break;
-        default: cmp = 0;
+      for (const spec of sortSpecs) {
+        const cmp = compareByKey(a, b, spec.key);
+        if (cmp !== 0) return spec.dir === "asc" ? cmp : -cmp;
       }
-      if (cmp !== 0) return cmp * dir;
       // Stable fallback: newest invoice first, then largest balance.
       const fb = (b.invoiceDate || b.dueDate || "").localeCompare(a.invoiceDate || a.dueDate || "");
       return fb !== 0 ? fb : b.balance - a.balance;
     });
-  }, [invoices, bucket, q, sortKey, sortDir]);
+  }, [invoices, bucket, q, sortSpecs]);
 
   const columns: InvoiceColumn[] = [
     {
@@ -199,8 +204,21 @@ export default function InvoicesTab({
         <div className="flex flex-wrap items-center gap-2">
           <SearchInput value={q} onChange={setQ} placeholder="Search customer, invoice, owner, state…" />
           <div className="flex-1" />
-          <span className="text-xs text-zinc-400 dark:text-zinc-500">Click a header to sort · drag headers to reorder · {filtered.length} of {invoices.length}</span>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">Click headers to stack sorts · again to flip · third click clears · drag to reorder · {filtered.length} of {invoices.length}</span>
         </div>
+        {customSort && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="rounded-full bg-indigo-500/10 px-2.5 py-1 font-medium tabular-nums text-indigo-600 dark:text-indigo-400">
+              Sort: {describeSortSpecs(sortSpecs, (k) => INVOICE_SORT_LABELS[k] ?? k)}
+            </span>
+            <button
+              onClick={() => setSortSpecs(DEFAULT_INVOICE_SORT)}
+              className="rounded-full px-2.5 py-1 font-medium text-zinc-500 ring-1 ring-zinc-300 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:ring-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              Reset
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-1">
           {BUCKET_CHIPS.map((b) => (
             <Chip key={b} active={bucket === b} onClick={() => setBucket(b)} count={counts[b]}>
@@ -223,6 +241,8 @@ export default function InvoicesTab({
               {order.map((key) => {
                 const col = columnByKey.get(key);
                 if (!col) return null;
+                const activeIdx = sortSpecs.findIndex((s) => s.key === key);
+                const active = activeIdx >= 0 ? sortSpecs[activeIdx] : undefined;
                 return (
                   <SortableTh
                     key={key}
@@ -232,8 +252,10 @@ export default function InvoicesTab({
                     ariaLabel={col.ariaLabel}
                     dragging={dragKey === key}
                     over={overKey === key}
-                    sortActive={key !== "edit" && sortKey === key}
-                    sortDir={sortDir}
+                    sortActive={key !== "edit" && !!active}
+                    sortDir={active?.dir ?? "asc"}
+                    sortIndex={active ? activeIdx + 1 : null}
+                    sortCount={sortSpecs.length}
                     onSort={key === "edit" ? undefined : changeSort}
                     onDragStart={setDragKey}
                     onDragOver={setOverKey}

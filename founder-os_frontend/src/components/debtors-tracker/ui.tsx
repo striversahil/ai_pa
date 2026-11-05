@@ -168,7 +168,7 @@ export function matchLabel(status: string): string {
 /** Draggable + sortable table header: drag to reorder, click label to sort. */
 export function SortableTh({
   id, label, align = "left", dragging, over, onDragStart, onDragOver, onDrop, onDragEnd, ariaLabel,
-  sortActive, sortDir, onSort, sortTitle,
+  sortActive, sortDir, sortIndex, sortCount, onSort, sortTitle,
 }: {
   id: string;
   label?: ReactNode;
@@ -182,6 +182,9 @@ export function SortableTh({
   ariaLabel?: string;
   sortActive?: boolean;
   sortDir?: "asc" | "desc";
+  /** 1-based position inside a cumulative sort stack; shown when >1 column sorted. */
+  sortIndex?: number | null;
+  sortCount?: number;
   onSort?: (id: string) => void;
   sortTitle?: string;
 }) {
@@ -190,7 +193,7 @@ export function SortableTh({
   return (
     <th
       draggable
-      title={sortTitle ?? (sortable ? "Click to sort · drag to reorder column" : "Drag to reorder column")}
+      title={sortTitle ?? (sortable ? "Click to add sort · again to flip · third click clears · drag to reorder" : "Drag to reorder column")}
       aria-label={ariaLabel}
       aria-sort={sortActive ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
       onDragStart={(e) => {
@@ -221,7 +224,9 @@ export function SortableTh({
         </svg>
         {label}
         {sortable && sortActive && (
-          <span className="text-[10px] leading-none" aria-hidden="true">{sortDir === "asc" ? "↑" : "↓"}</span>
+          <span className="text-[10px] leading-none tabular-nums" aria-hidden="true">
+            {sortCount != null && sortCount > 1 && sortIndex != null ? `${sortIndex}${sortDir === "asc" ? "↑" : "↓"}` : (sortDir === "asc" ? "↑" : "↓")}
+          </span>
         )}
       </span>
     </th>
