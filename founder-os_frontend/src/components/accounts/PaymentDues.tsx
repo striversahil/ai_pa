@@ -22,6 +22,7 @@ export interface PaymentDueRow {
   templateId: string;
   title: string;
   biller: string;
+  identifier: string;
   category: string;
   amount: number | null;
   frequency: string;
@@ -60,6 +61,22 @@ export const PAYMENT_CATEGORIES = [
   "Rent", "Software / Subscription", "Tax / Compliance", "Other",
 ];
 
+// Per-category label + placeholder for the optional bill number (card number,
+// mobile number, account/policy no. …). Falls back to a generic reference.
+export function identifierMeta(category: string): { label: string; placeholder: string } {
+  switch (category) {
+    case "Credit Card": return { label: "Card number (optional)", placeholder: "e.g. ending 4521" };
+    case "Mobile Recharge": return { label: "Mobile number (optional)", placeholder: "e.g. 98XXXXXXXX" };
+    case "Loan / EMI": return { label: "Loan / account no. (optional)", placeholder: "e.g. loan or account no." };
+    case "Insurance": return { label: "Policy no. (optional)", placeholder: "e.g. policy number" };
+    case "Rent": return { label: "Property / flat (optional)", placeholder: "e.g. flat or property ref" };
+    case "Utilities": return { label: "Consumer / account no. (optional)", placeholder: "e.g. consumer number" };
+    case "Software / Subscription": return { label: "Account / license (optional)", placeholder: "e.g. account or license id" };
+    case "Tax / Compliance": return { label: "PAN / GSTIN (optional)", placeholder: "e.g. PAN or GSTIN" };
+    default: return { label: "Reference no. (optional)", placeholder: "e.g. account or ref no." };
+  }
+}
+
 type MainTab = "due" | "history";
 type Bucket = "all" | "overdue" | "week" | "upcoming";
 
@@ -87,6 +104,26 @@ function fmtDateTime(iso: string | null): string {
   return d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Human schedule label per repeat choice (matches the engine: weekly reads
+// dueDay as weekday 0–6 Sun=0, daily runs Mon–Sat, yearly reads dueMonth).
+function schedLabel(frequency: string, dueDay: number | null, dueMonth: number | null): string {
+  if (frequency === "daily") return "every working day";
+  if (frequency === "weekly") {
+    const wd = dueDay ?? 4;
+    return `every ${WEEKDAY_SHORT[wd] ?? "Thu"}`;
+  }
+  if (frequency === "monthly") return dueDay ? `day ${dueDay}` : "monthly";
+  if (frequency === "quarterly") return dueDay ? `day ${dueDay} of quarter-start month` : "quarterly";
+  if (frequency === "yearly") {
+    const m = dueMonth != null && dueMonth >= 1 && dueMonth <= 12 ? MONTH_SHORT[dueMonth - 1] : null;
+    return m && dueDay ? `${m} ${dueDay}` : "yearly";
+  }
+  return frequency;
+}
+
 const inputCls =
   "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
 
@@ -109,10 +146,12 @@ interface BillGroup {
   templateId: string;
   title: string;
   biller: string;
+  identifier: string;
   category: string;
   amount: number | null;
   frequency: string;
   dueDay: number | null;
+  dueMonth: number | null;
   remindDays: number[];
   sample: PaymentDueRow;
   cycles: PaymentDueRow[];
@@ -134,8 +173,8 @@ function groupBills(dues: PaymentDueRow[]): BillGroup[] {
     const worstOverdue = Math.max(0, ...sorted.map((c) => c.daysOverdue));
     const urgency = sorted.some((c) => c.bucket === "overdue") ? 0 : sorted.some((c) => c.bucket === "week") ? 1 : 2;
     groups.push({
-      templateId, title: s.title, biller: s.biller, category: s.category,
-      amount: s.amount, frequency: s.frequency, dueDay: s.dueDay, remindDays: s.remindDays,
+      templateId, title: s.title, biller: s.biller, identifier: s.identifier ?? "", category: s.category,
+      amount: s.amount, frequency: s.frequency, dueDay: s.dueDay ?? null, dueMonth: s.dueMonth ?? null, remindDays: s.remindDays,
       sample: s, cycles: sorted, worstOverdue,
       earliestDue: sorted[0]?.dueDate ?? "", urgency,
     });
@@ -209,7 +248,7 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
   const needle = q.trim().toLowerCase();
   const matches = (r: PaymentDueRow) => {
     if (cat && r.category !== cat) return false;
-    if (needle && !`${r.title} ${r.biller} ${r.paidRef ?? ""} ${r.remark ?? ""} ${r.doneBy ?? ""}`.toLowerCase().includes(needle)) return false;
+    if (needle && !`${r.title} ${r.biller} ${r.identifier ?? ""} ${r.paidRef ?? ""} ${r.remark ?? ""} ${r.doneBy ?? ""}`.toLowerCase().includes(needle)) return false;
     if (bucket !== "all" && tab === "due" && r.bucket !== bucket) return false;
     return true;
   };
@@ -319,7 +358,7 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
         </div>
       )}
       <div className="grid gap-2 rounded-xl border border-zinc-200/80 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:grid-cols-2">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, biller, UTR ref, person…" className={inputCls} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, biller, number, UTR ref, person…" className={inputCls} />
         <select value={cat} onChange={(e) => setCat(e.target.value)} className={inputCls}>
           <option value="">All categories</option>
           {cats.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -347,10 +386,11 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
                     <span className="block truncate text-sm font-bold text-zinc-900 dark:text-white">
                       {g.title}
                       {g.biller && g.biller !== g.title && <span className="ml-2 font-semibold text-zinc-500">· {g.biller}</span>}
+                      {g.identifier && <span className="ml-2 rounded bg-indigo-500/10 px-1.5 py-px font-mono text-[11px] font-bold text-indigo-600 dark:text-indigo-300">· {g.identifier}</span>}
                     </span>
                     <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
                       <span className="rounded bg-zinc-100 px-1.5 py-px font-semibold dark:bg-zinc-800">{g.category}</span>
-                      <span className="capitalize">{g.frequency}{g.dueDay ? ` · day ${g.dueDay}` : ""}</span>
+                      <span className="capitalize">{schedLabel(g.frequency, g.dueDay, g.dueMonth)}</span>
                       <span>{g.cycles.length} open cycle{g.cycles.length === 1 ? "" : "s"}</span>
                       {overdueCycles.length > 0 && <span className="font-bold text-rose-600 dark:text-rose-400">· {overdueCycles.length} overdue</span>}
                       {g.remindDays.length > 0 && <span title="Reminder schedule">· 🔔 {g.remindDays.join("/")}</span>}
@@ -406,6 +446,7 @@ export default function PaymentDues({ dues, history, summary, onRefresh }: {
                   <p className="truncate text-sm font-bold text-zinc-900 dark:text-white">
                     <span className="mr-1.5 text-emerald-500">✓</span>{r.title}
                     {r.biller && r.biller !== r.title && <span className="ml-2 font-semibold text-zinc-500">· {r.biller}</span>}
+                    {r.identifier && <span className="ml-2 rounded bg-indigo-500/10 px-1.5 py-px font-mono text-[11px] font-bold text-indigo-600 dark:text-indigo-300">· {r.identifier}</span>}
                   </p>
                   <p className="mt-0.5 text-[11px] text-zinc-500">
                     Due {fmtDue(r.dueDate)} · Paid {inr(r.paidAmount)}{r.paidRef ? ` · ${r.paidRef}` : ""}{r.doneBy ? ` · by ${r.doneBy}` : ""}{r.updatedAt ? ` · ${fmtDateTime(r.updatedAt)}` : ""}
@@ -502,7 +543,7 @@ function PayDialog({ row, busy, onClose, onPay }: {
   const [localErr, setLocalErr] = useState<string | null>(null);
   return (
     <Modal title={`Mark paid — ${row.title}`} onClose={onClose}>
-      <p className="text-xs text-zinc-500">Due {fmtDue(row.dueDate)}{row.logId ? "" : " · projected cycle (paying creates it)"} · expected {inr(row.amount)}</p>
+      <p className="text-xs text-zinc-500">Due {fmtDue(row.dueDate)}{(row as any).identifier ? ` · ${(row as any).identifier}` : ""}{row.logId ? "" : " · projected cycle (paying creates it)"} · expected {inr(row.amount)}</p>
       <label className="mt-3 block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
         Amount paid (₹)
         <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, "") as any)} inputMode="decimal" className={`${inputCls} mt-1`} placeholder="e.g. 12500" />
@@ -542,11 +583,19 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
 }) {
   const [title, setTitle] = useState(row?.title ?? "");
   const [biller, setBiller] = useState(row?.biller ?? "");
+  const [identifier, setIdentifier] = useState(row?.identifier ?? "");
   const [category, setCategory] = useState(row?.category ?? "Credit Card");
+  const idMeta = identifierMeta(category);
   const [amount, setAmount] = useState(row?.amount ?? "" as number | "");
   const [frequency, setFrequency] = useState(row?.frequency ?? "monthly");
-  const [dueDay, setDueDay] = useState(row?.dueDay ?? "" as number | "");
-  const [dueMonth, setDueMonth] = useState(row?.dueMonth ?? "" as number | "");
+  // Schedule inputs adapt to the repeat choice (daily needs nothing, weekly
+  // takes a weekday, monthly/quarterly a day-of-month, yearly a month + day).
+  const initDay = row?.frequency === "weekly" ? "" : (row?.dueDay ?? "");
+  const [schedDay, setSchedDay] = useState(initDay as number | "");
+  const [schedMonth, setSchedMonth] = useState(row?.dueMonth ?? "" as number | "");
+  const [schedWeekday, setSchedWeekday] = useState(
+    row?.frequency === "weekly" && row?.dueDay !== null && row?.dueDay !== undefined ? String(row.dueDay) : "4",
+  );
   const [remindDays, setRemindDays] = useState((row?.remindDays ?? [7, 3, 1]).join(","));
   const [localErr, setLocalErr] = useState<string | null>(null);
   return (
@@ -559,6 +608,10 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
         <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
           Biller
           <input value={biller} onChange={(e) => setBiller(e.target.value)} className={`${inputCls} mt-1`} placeholder="e.g. HDFC Bank" maxLength={200} />
+        </label>
+        <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+          {idMeta.label}
+          <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} className={`${inputCls} mt-1`} placeholder={idMeta.placeholder} maxLength={100} />
         </label>
         <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
           Category
@@ -576,14 +629,40 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
             {["daily", "weekly", "monthly", "quarterly", "yearly"].map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
         </label>
-        <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-          Due day of month
-          <input value={dueDay} onChange={(e) => setDueDay(e.target.value.replace(/[^0-9]/g, "").slice(0, 2) as any)} inputMode="numeric" className={`${inputCls} mt-1`} placeholder="e.g. 5" />
-        </label>
-        <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-          Due month (yearly only)
-          <input value={dueMonth} onChange={(e) => setDueMonth(e.target.value.replace(/[^0-9]/g, "").slice(0, 2) as any)} inputMode="numeric" className={`${inputCls} mt-1`} placeholder="1–12" />
-        </label>
+        {frequency === "daily" && (
+          <p className="self-end rounded-lg bg-zinc-100 px-3 py-2 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            Runs every working day (Mon–Sat) — no date needed.
+          </p>
+        )}
+        {frequency === "weekly" && (
+          <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+            Due weekday
+            <select value={schedWeekday} onChange={(e) => setSchedWeekday(e.target.value)} className={`${inputCls} mt-1`}>
+              {[["1", "Monday"], ["2", "Tuesday"], ["3", "Wednesday"], ["4", "Thursday"], ["5", "Friday"], ["6", "Saturday"], ["0", "Sunday"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </label>
+        )}
+        {(frequency === "monthly" || frequency === "quarterly") && (
+          <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+            Due day of month{frequency === "quarterly" ? " (in the quarter-start month)" : ""}
+            <input value={schedDay} onChange={(e) => setSchedDay(e.target.value.replace(/[^0-9]/g, "").slice(0, 2) as any)} inputMode="numeric" className={`${inputCls} mt-1`} placeholder="e.g. 5" />
+          </label>
+        )}
+        {frequency === "yearly" && (
+          <>
+            <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+              Due month
+              <select value={schedMonth} onChange={(e) => setSchedMonth(e.target.value as any)} className={`${inputCls} mt-1`}>
+                <option value="">Select…</option>
+                {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+              Due day of month
+              <input value={schedDay} onChange={(e) => setSchedDay(e.target.value.replace(/[^0-9]/g, "").slice(0, 2) as any)} inputMode="numeric" className={`${inputCls} mt-1`} placeholder="e.g. 5" />
+            </label>
+          </>
+        )}
       </div>
       <label className="mt-2 block text-xs font-semibold text-zinc-600 dark:text-zinc-400">
         Reminder days before due (comma-separated)
@@ -608,13 +687,25 @@ function DueFormDialog({ row, busy, onClose, onSave, onDelete, confirmDel, setCo
             disabled={busy}
             onClick={() => {
               if (!title.trim()) { setLocalErr("Title is required"); return; }
-              const day = dueDay === "" ? null : Number(dueDay);
-              if (day !== null && (!Number.isInteger(day) || day < 1 || day > 31)) { setLocalErr("Due day must be 1–31"); return; }
+              let day: number | null = null;
+              let month: number | null = null;
+              if (frequency === "weekly") {
+                day = Number(schedWeekday);
+              } else if (frequency === "monthly" || frequency === "quarterly") {
+                if (schedDay === "") { setLocalErr("Enter the due day of month"); return; }
+                day = Number(schedDay);
+                if (!Number.isInteger(day) || day < 1 || day > 31) { setLocalErr("Due day must be 1–31"); return; }
+              } else if (frequency === "yearly") {
+                if (schedMonth === "") { setLocalErr("Pick the due month"); return; }
+                month = Number(schedMonth);
+                if (schedDay === "") { setLocalErr("Enter the due day of month"); return; }
+                day = Number(schedDay);
+                if (!Number.isInteger(day) || day < 1 || day > 31) { setLocalErr("Due day must be 1–31"); return; }
+              }
               const body: Record<string, unknown> = {
-                title: title.trim(), biller: biller.trim() || null, category,
+                title: title.trim(), biller: biller.trim() || null, identifier: identifier.trim() || null, category,
                 amount: amount === "" ? null : Number(amount),
-                frequency, dueDay: day,
-                dueMonth: frequency === "yearly" && dueMonth !== "" ? Number(dueMonth) : null,
+                frequency, dueDay: day, dueMonth: month,
                 ownerRole: "either", remindDays: remindDays || "7,3,1",
               };
               onSave(body, row?.templateId ?? null);

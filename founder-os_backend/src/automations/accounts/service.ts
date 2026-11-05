@@ -1098,6 +1098,9 @@ function cleanTemplateInput(input: Record<string, any>, partial = false) {
     data.kind = String(input.kind);
   }
   if (input.biller !== undefined) data.biller = input.biller ? String(input.biller).slice(0, 200) : null;
+  // Optional bill number (card / mobile / account / policy …). Free text,
+  // per-bill; every cycle inherits it. Empty clears it.
+  if (input.identifier !== undefined) data.identifier = input.identifier ? String(input.identifier).slice(0, 100) : null;
   if (input.category !== undefined) {
     if (input.category !== null && !(PAYMENT_CATEGORIES as readonly string[]).includes(String(input.category))) {
       throw new Error(`category must be ${PAYMENT_CATEGORIES.join(' | ')}`);
@@ -1252,6 +1255,7 @@ export interface PaymentDueRow {
   templateId: string;
   title: string;
   biller: string;
+  identifier: string;
   category: string;
   amount: number | null;
   frequency: string;
@@ -1310,6 +1314,7 @@ function toPaymentRow(t: any, log: any, dueDate: string, today: string, attachme
     templateId: String(t.id),
     title: String(t.title ?? ''),
     biller: String((t as any).biller ?? ''),
+    identifier: String((t as any).identifier ?? ''),
     category: String((t as any).category ?? 'Other'),
     amount: (t as any).amount === null || (t as any).amount === undefined ? null : Number((t as any).amount),
     frequency: String(t.frequency ?? 'monthly'),

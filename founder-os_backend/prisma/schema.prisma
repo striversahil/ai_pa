@@ -967,6 +967,9 @@ model AccountsTaskTemplate {
   category    String?
   amount      Float?
   remindDays  String   @default("7,3,1") // CSV days-before-due, e.g. "7,3,1"
+  // Optional bill number: card number, mobile number, loan/account no.,
+  // policy no. … (label chosen per category in the UI; task rows ignore it).
+  identifier  String?
 
   @@index([active, frequency])
   @@index([kind, active])
