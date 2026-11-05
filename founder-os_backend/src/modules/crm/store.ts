@@ -764,6 +764,79 @@ export async function dispatchOrder(args: {
   return { order: await getOrder(str(orderRow.id)), lifecycle, credited };
 }
 
+/**
+ * Attach packing photos to an existing dispatch proof AFTER the dispatch
+ * (2026-11-05): the floor may dispatch invoice-only and add the before/after
+ * photos later from the same panel. First-write-wins per slot — a filled slot
+ * is never overwritten. Consumed-file rules match the dispatch gate (same SO,
+ * right kind/mime, never used by another proof).
+ */
+export async function attachProofPhotos(args: {
+  idOrSo: string;
+  proofId: string;
+  beforeId?: string | null;
+  afterId?: string | null;
+  actor?: string | null;
+}): Promise<{ order: (CrmOrderRow & { events: any[] }) | null }> {
+  const orderRow = await loadRawOrder(args.idOrSo);
+  assertWorkable(orderRow, str(orderRow.lifecycle));
+  const proof: any = await prisma.crmDispatchProof
+    .findUnique({ where: { id: str(args.proofId) } })
+    .catch(() => null);
+  if (!proof || str(proof.soId) !== str(orderRow.id)) {
+    throw new CrmError('Dispatch proof not found on this sales order.', 404, 'proof_not_found');
+  }
+  const beforeId = str(args.beforeId).trim() || null;
+  const afterId = str(args.afterId).trim() || null;
+  if (!beforeId && !afterId) {
+    throw new CrmError('Nothing to attach — pick a before or after photo.', 400, 'no_photos');
+  }
+  if (beforeId && beforeId === afterId) {
+    throw new CrmError('Before and after photos must be different files.', 400, 'proof_kind');
+  }
+  if (beforeId && beforeId === str(proof.invoiceId)) {
+    throw new CrmError('That file is the invoice of this dispatch — upload a photo instead.', 400, 'proof_kind');
+  }
+  if (afterId && afterId === str(proof.invoiceId)) {
+    throw new CrmError('That file is the invoice of this dispatch — upload a photo instead.', 400, 'proof_kind');
+  }
+
+  const verifyPhoto = async (id: string, kind: 'packing_before' | 'packing_after', label: string) => {
+    const row: any = await prisma.soAttachment.findUnique({ where: { id } }).catch(() => null);
+    if (!row) {
+      throw new CrmError('Photo file not found — please re-upload it.', 400, 'proof_not_found');
+    }
+    if (str(row.soNumber) !== str(orderRow.soNumber)) {
+      throw new CrmError('Photo belongs to a different sales order.', 400, 'proof_wrong_order');
+    }
+    if (str(row.kind) !== kind || !isImageFile(str(row.mime), str(row.fileName))) {
+      throw new CrmError(`The ${label} photo must be an image uploaded as "${label} packing".`, 400, 'proof_kind');
+    }
+    const reused = (await Promise.all([
+      prisma.crmDispatchProof.findFirst({ where: { invoiceId: id } }).catch(() => null),
+      prisma.crmDispatchProof.findFirst({ where: { beforeId: id } }).catch(() => null),
+      prisma.crmDispatchProof.findFirst({ where: { afterId: id } }).catch(() => null),
+    ])) as any[];
+    if (reused.some(Boolean)) {
+      throw new CrmError('This photo was already used in a dispatch proof — upload a fresh one.', 400, 'proof_reused');
+    }
+  };
+
+  const data: Record<string, unknown> = {};
+  if (beforeId) {
+    if (str(proof.beforeId)) throw new CrmError('Before-packing photo is already attached.', 409, 'photo_attached');
+    await verifyPhoto(beforeId, 'packing_before', 'before');
+    data.beforeId = beforeId;
+  }
+  if (afterId) {
+    if (str(proof.afterId)) throw new CrmError('After-packing photo is already attached.', 409, 'photo_attached');
+    await verifyPhoto(afterId, 'packing_after', 'after');
+    data.afterId = afterId;
+  }
+  await prisma.crmDispatchProof.update({ where: { id: str(proof.id) }, data: data as any });
+  return { order: await getOrder(str(orderRow.id)) };
+}
+
 // ── Points ─────────────────────────────────────────────────────────────────
 
 /**

@@ -73,6 +73,12 @@ export const crmApi = {
       { items, proof: proof ?? null },
     ),
 
+  attachProofPhotos: (id: string, proofId: string, photos: { beforeId?: string | null; afterId?: string | null }) =>
+    api.post<{ ok: true; order: CrmOrder }>(
+      `/crm/orders/${encodeURIComponent(id)}/proofs/${encodeURIComponent(proofId)}/photos`,
+      photos,
+    ),
+
   confirmSourceDeletion: (id: string) =>
     api.post<{ ok: true; soNumber: string; removed: boolean }>(
       `/crm/orders/${encodeURIComponent(id)}/confirm-source-deletion`,

@@ -21,6 +21,7 @@ import type { Hono } from 'hono';
 import { authStore, deps, getMe, isApproved, readSessionCookie, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
 import {
   CrmError,
+  attachProofPhotos,
   confirmSourceDeletion,
   dispatchOrder,
   dispatchSummary,
@@ -333,6 +334,29 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
       });
       notifyLive(c, { type: 'crm', action: 'dispatched', so: res.order?.soNumber });
       return c.json({ ok: true, lifecycle: res.lifecycle, credited: res.credited, order: res.order });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Attach packing photos to an existing proof (floor, after the dispatch) ──
+  // The floor may dispatch invoice-only and add before/after photos later from
+  // the same panel. First-write-wins per slot; consumed-file rules match the
+  // dispatch gate. Returns the refreshed order (proofs included).
+  app.post('/api/crm/orders/:id/proofs/:proofId/photos', async (c) => {
+    const v = await requireDispatchWrite(c);
+    if (v instanceof Response) return v;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const res = await attachProofPhotos({
+        idOrSo: c.req.param('id'),
+        proofId: c.req.param('proofId'),
+        beforeId: body?.beforeId ?? null,
+        afterId: body?.afterId ?? null,
+        actor: v.name,
+      });
+      notifyLive(c, { type: 'crm', action: 'proof-photo', so: res.order?.soNumber });
+      return c.json({ ok: true, order: res.order });
     } catch (e) {
       return fail(c, e);
     }

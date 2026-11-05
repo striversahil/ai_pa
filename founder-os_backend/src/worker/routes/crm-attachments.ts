@@ -147,7 +147,9 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
     const headers = new Headers();
     headers.set('Content-Type', type);
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-    if (!/^image\/|^application\/pdf$/.test(type)) {
+    // `?download=1` forces a download (used by the dispatch-proof buttons);
+    // otherwise images + PDFs render inline and anything else downloads.
+    if (String(c.req.query('download') || '') === '1' || !/^image\/|^application\/pdf$/.test(type)) {
       headers.set('Content-Disposition', `attachment; filename="${name.replace(/["\\]/g, '')}"`);
     }
     return new Response(obj.value, { headers });

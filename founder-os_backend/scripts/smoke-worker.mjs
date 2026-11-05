@@ -67,6 +67,7 @@ const tests = [
   ['PUT /api/neodove/campaign/agents/R1_NEHA_VERMA/url no-auth -> 401', '/api/neodove/campaign/agents/R1_NEHA_VERMA/url', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: 'https://x.neodove.com/integration/custom/u/leads' }) }],
   ['PUT /api/crm/orders/SO-1/addresses no-auth -> 401', '/api/crm/orders/SO-1/addresses', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ billingAddress: 'x' }) }],
   ['POST /api/crm/orders/SO-1/dispatch no-auth -> 401', '/api/crm/orders/SO-1/dispatch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items: [] }) }],
+  ['POST /api/crm/orders/SO-1/proofs/P1/photos no-auth -> 401', '/api/crm/orders/SO-1/proofs/P1/photos', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) }],
   ['GET /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments'],
   ['PUT /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientKey: 'TEST', segment: 'consumer' }) }],
   ['PUT /api/telecalling/client-type-rules no-auth -> 403', '/api/telecalling/client-type-rules', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ typeBase: 'Flour Mill', segment: 'consumer' }) }],

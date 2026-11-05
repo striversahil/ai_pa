@@ -25,7 +25,7 @@ import {
   Truck,
   X,
 } from "lucide-react";
-import type { CrmItem, CrmOrder } from "./types";
+import type { CrmDispatchProof, CrmItem, CrmOrder } from "./types";
 import { LIFECYCLE_META } from "./types";
 import {
   REASON_MIN,
@@ -37,11 +37,24 @@ import {
 } from "./lifecycle";
 import { istToday, useCrmAction } from "./hooks";
 import { crmApi } from "./api";
-import { api } from "@/api/client";
 import { REGIONS } from "@/telecalling/regions";
-import SoAttachments from "@/components/SoAttachments";
 
 export type PanelMode = "view" | "schedule" | "dispatch" | "reschedule";
+
+/** Upload one proof file for an SO; resolves the SoAttachment id. Shared by
+ *  the dispatch dialog slots and the per-proof add-photo buttons. */
+async function uploadProofFile(soNumber: string, kind: string, file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("soNumber", soNumber);
+  fd.append("kind", kind);
+  fd.append("file", file);
+  const res = await fetch("/api/crm/attachments", { method: "POST", body: fd });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "Upload failed");
+  const id = String(data?.attachment?.id || "");
+  if (!id) throw new Error("Upload failed — please retry.");
+  return id;
+}
 
 const inr = (n: number | null | undefined) =>
   `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
@@ -170,34 +183,20 @@ export default function OrderPanel({
   // on open; every history section below reads from `detail` first and falls
   // back to the list row while loading.
   const [detail, setDetail] = useState<CrmOrder | null>(null);
-  useEffect(() => {
-    setDetail(null);
-    let live = true;
+  const loadDetail = React.useCallback(() => {
     crmApi
       .order(order.id)
-      .then((r) => { if (live && r?.order) setDetail(r.order); })
+      .then((r) => setDetail(r?.order ?? null))
       .catch(() => {});
-    return () => { live = false; };
   }, [order.id]);
+  useEffect(() => {
+    setDetail(null);
+    loadDetail();
+  }, [order.id, loadDetail]);
   const full: CrmOrder = detail ?? order;
   const items = full.items || [];
   const proofs = full.proofs ?? [];
   const events = full.events ?? [];
-  const [attachments, setAttachments] = useState<any[]>([]);
-
-  // SO documents (invoice / LR / POD) are keyed by SO number, not by the row
-  // id — the uploader is unchanged, so the floor keeps that capability.
-  const loadAttachments = React.useCallback(() => {
-    if (!order.soNumber) return;
-    api
-      .get<{ attachments: any[] }>(`/crm/attachments?so=${encodeURIComponent(order.soNumber)}`)
-      .then((r) => setAttachments(Array.isArray(r?.attachments) ? r.attachments : []))
-      .catch(() => setAttachments([]));
-  }, [order.soNumber]);
-
-  useEffect(() => {
-    loadAttachments();
-  }, [loadAttachments]);
 
   const defaultPicked = useMemo(() => {
     if (initialMode === "dispatch") {
@@ -275,18 +274,9 @@ export default function OrderPanel({
     setProofBusy(slot);
     setProofError(null);
     try {
-      const fd = new FormData();
-      fd.append("soNumber", order.soNumber);
-      fd.append("kind", PROOF_SLOT_META[slot].kind);
-      fd.append("file", file);
-      const res = await fetch("/api/crm/attachments", { method: "POST", body: fd });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || "Upload failed");
-      const id = String(data?.attachment?.id || "");
-      if (!id) throw new Error("Upload failed — please retry.");
+      const id = await uploadProofFile(order.soNumber, PROOF_SLOT_META[slot].kind, file);
       setProofIds((p) => ({ ...p, [`${slot}Id`]: id }));
       setProofNames((p) => ({ ...p, [slot]: file.name }));
-      loadAttachments();
     } catch (e: any) {
       setProofError(e?.message || "Upload failed — please retry.");
     } finally {
@@ -710,8 +700,12 @@ export default function OrderPanel({
                           ) : (
                             <span> — batch details in the audit trail below</span>
                           )}
-                          {" "}
-                          <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
+                          <span className="whitespace-nowrap">
+                            {" "}· <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">View</a>
+                            {" "}<a href={`/api/crm/files/${p.invoiceId}?download=1`} className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Download</a>
+                            {!p.beforeId && <span className="text-amber-600 dark:text-amber-400"> · Before pending</span>}
+                            {!p.afterId && <span className="text-amber-600 dark:text-amber-400"> · After pending</span>}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -795,51 +789,23 @@ export default function OrderPanel({
             </div>
           )}
 
-          {mode === "view" && (
-            <div className="mt-5">
-              <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">SO documents</h3>
-              <SoAttachments so={order.soNumber} attachments={attachments} canManage={floorWrite} onChanged={loadAttachments} />
-            </div>
-          )}
-
           {/* Consumed dispatch proofs — one batch per dispatch, newest first,
-              plus anything that went out before invoice tracking existed. */}
+              plus anything that went out before invoice tracking existed.
+              Missing packing photos show as Pending inside the proof (never on
+              the lifecycle chips) and the floor can add them afterwards. */}
           {mode === "view" && (proofs.length > 0 || untrackedDispatched.length > 0) && (
             <div className="mt-5">
               <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Dispatch proofs</h3>
               <ul className="space-y-2">
                 {proofs.map((p) => (
-                  <li key={p.id} className="rounded-xl border border-zinc-200 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-300">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
-                      <span>
-                        <b>{p.day || "dispatch"}</b>
-                        {p.actor ? ` · ${p.actor}` : ""}
-                      </span>
-                      <span className="flex gap-2">
-                        <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
-                        {p.beforeId ? (
-                          <a href={`/api/crm/files/${p.beforeId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Before</a>
-                        ) : (
-                          <span className="text-zinc-400">Before —</span>
-                        )}
-                        {p.afterId ? (
-                          <a href={`/api/crm/files/${p.afterId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">After</a>
-                        ) : (
-                          <span className="text-zinc-400">After —</span>
-                        )}
-                      </span>
-                    </div>
-                    {p.items && p.items.length > 0 && (
-                      <ul className="mt-1 space-y-0.5 pl-5">
-                        {p.items.map((bi) => (
-                          <li key={`${p.id}-${bi.itemId}`} className="tabular-nums">
-                            {bi.qty}{bi.unit ? ` ${bi.unit}` : ""} × {bi.name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
+                  <ProofCard
+                    key={p.id}
+                    orderId={order.id}
+                    soNumber={order.soNumber}
+                    proof={p}
+                    canWrite={floorWrite}
+                    onChanged={loadDetail}
+                  />
                 ))}
                 {untrackedDispatched.length > 0 && (
                   <li className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
@@ -920,8 +886,105 @@ export default function OrderPanel({
   );
 }
 
-function ItemStateChip({ item, overdue, due }: { item: CrmItem; overdue: boolean; due: boolean }) {
-  if (item.dispatchState === "dispatched") {
+/** One dispatch batch: invoice + packing photos with View/Download, batch
+ *  quantities, and Pending slots the floor can fill afterwards. The pending
+ *  state lives inside this proof card — never on the lifecycle chips. */
+function ProofCard({
+  orderId,
+  soNumber,
+  proof,
+  canWrite,
+  onChanged,
+}: {
+  orderId: string;
+  soNumber: string;
+  proof: CrmDispatchProof;
+  canWrite: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<null | "before" | "after">(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const addPhoto = async (slot: "before" | "after", file: File | null) => {
+    if (!file || busy) return;
+    if (!file.type.startsWith("image/") && !/\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
+      setError("Packing photo must be an image.");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setError(`"${file.name}" exceeds 20MB.`);
+      return;
+    }
+    setBusy(slot);
+    setError(null);
+    try {
+      const id = await uploadProofFile(soNumber, slot === "before" ? "packing_before" : "packing_after", file);
+      await crmApi.attachProofPhotos(orderId, proof.id, slot === "before" ? { beforeId: id } : { afterId: id });
+      onChanged();
+    } catch (e: any) {
+      setError(e?.message || "Could not attach photo — please retry.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const renderFile = (label: string, fileId: string | null, slot?: "before" | "after") => (
+    <div className="flex items-center justify-between gap-2 py-0.5">
+      <span className="font-bold text-zinc-700 dark:text-zinc-200">{label}</span>
+      {fileId ? (
+        <span className="flex gap-2">
+          <a href={`/api/crm/files/${fileId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">View</a>
+          <a href={`/api/crm/files/${fileId}?download=1`} className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Download</a>
+        </span>
+      ) : (
+        <span className="flex items-center gap-2">
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">Pending</span>
+          {canWrite && slot && (
+            <label className={`cursor-pointer font-bold text-indigo-600 hover:underline dark:text-indigo-400 ${busy ? "pointer-events-none opacity-60" : ""}`}>
+              {busy === slot ? "Uploading…" : "Add photo"}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={!!busy}
+                onChange={(e) => { void addPhoto(slot, e.target.files?.[0] ?? null); e.target.value = ""; }}
+              />
+            </label>
+          )}
+        </span>
+      )}
+    </div>
+  );
+
+  return (
+    <li className="rounded-xl border border-zinc-200 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-300">
+      <div className="flex items-center gap-1.5">
+        <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
+        <span>
+          <b>{proof.day || "dispatch"}</b>
+          {proof.actor ? ` · ${proof.actor}` : ""}
+        </span>
+      </div>
+      <div className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800/60">
+        {renderFile("Invoice", proof.invoiceId)}
+        {renderFile("Before packing", proof.beforeId, "before")}
+        {renderFile("After packing", proof.afterId, "after")}
+      </div>
+      {proof.items && proof.items.length > 0 && (
+        <ul className="mt-1 space-y-0.5 border-t border-zinc-100 pl-5 pt-1 dark:border-zinc-800/60">
+          {proof.items.map((bi) => (
+            <li key={`${proof.id}-${bi.itemId}`} className="tabular-nums">
+              {bi.qty}{bi.unit ? ` ${bi.unit}` : ""} × {bi.name}
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="mt-1 font-bold text-rose-500">{error}</p>}
+    </li>
+  );
+}
+
+function ItemStateChip({ item, overdue, due }: { item: CrmItem; overdue: boolean; due: boolean }) {  if (item.dispatchState === "dispatched") {
     return <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Dispatched</span>;
   }
   if (item.dispatchState === "scheduled") {
