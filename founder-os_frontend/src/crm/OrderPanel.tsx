@@ -165,7 +165,24 @@ export default function OrderPanel({
   const today = istToday();
   const floorWrite = canWrite && !promiseOnly;
   const [mode, setMode] = useState<PanelMode>(initialMode);
-  const items = order.items || [];
+  // Full detail (proofs + audit events) lives only on the order-detail
+  // endpoint — dashboard list rows carry items but no proofs/events. Fetch it
+  // on open; every history section below reads from `detail` first and falls
+  // back to the list row while loading.
+  const [detail, setDetail] = useState<CrmOrder | null>(null);
+  useEffect(() => {
+    setDetail(null);
+    let live = true;
+    crmApi
+      .order(order.id)
+      .then((r) => { if (live && r?.order) setDetail(r.order); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [order.id]);
+  const full: CrmOrder = detail ?? order;
+  const items = full.items || [];
+  const proofs = full.proofs ?? [];
+  const events = full.events ?? [];
   const [attachments, setAttachments] = useState<any[]>([]);
 
   // SO documents (invoice / LR / POD) are keyed by SO number, not by the row
@@ -318,6 +335,28 @@ export default function OrderPanel({
   };
 
   const pickedItems = items.filter((it) => picked.has(it.id));
+
+  // Batches that went out before invoice tracking existed (backfill era):
+  // items show dispatched quantities but no proof batch covers them. Shown
+  // without an invoice link — quantities come straight from the item rows.
+  const untrackedDispatched = useMemo(() => {
+    const covered = new Map<string, number>();
+    for (const p of proofs) {
+      for (const bi of p.items || []) covered.set(bi.itemId, (covered.get(bi.itemId) || 0) + (Number(bi.qty) || 0));
+    }
+    const out: Array<{ id: string; name: string; qty: number; unit: string }> = [];
+    for (const it of items) {
+      const missing = (Number(it.dispatchedQty) || 0) - (covered.get(it.id) || 0);
+      if (missing > 1e-6) {
+        out.push({ id: it.id, name: it.name || it.description || it.sku || "Item", qty: missing, unit: it.unit || "" });
+      } else if (it.dispatchState === "dispatched" && !covered.has(it.id)) {
+        // Fully dispatched but no recorded quantity — the whole line went out
+        // before tracking, so the line quantity is what left the floor.
+        out.push({ id: it.id, name: it.name || it.description || it.sku || "Item", qty: Number(it.qty) || 0, unit: it.unit || "" });
+      }
+    }
+    return out;
+  }, [items, proofs]);
 
   // ── Client-side preview of the server's verdict ──────────────────────────
   const check = useMemo(() => {    if (mode === "schedule") {
@@ -655,26 +694,40 @@ export default function OrderPanel({
               </p>
               {/* Earlier batches on this SO — what already went out and in what
                   quantity, so the floor never double-dispatches blind. */}
-              {order.proofs && order.proofs.length > 0 && (
+              {(proofs.length > 0 || untrackedDispatched.length > 0) && (
                 <div className="mt-2 rounded-xl border border-zinc-200 bg-white/70 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                    Earlier dispatches ({order.proofs.length})
+                    Earlier dispatches
                   </p>
-                  <ul className="mt-1 space-y-1">
-                    {order.proofs.map((p) => (
-                      <li key={p.id} className="text-[11px] text-zinc-600 dark:text-zinc-300">
-                        <span className="font-bold text-zinc-800 dark:text-zinc-100">{p.day || "dispatch"}</span>
-                        {p.actor ? <span> · {p.actor}</span> : null}
-                        {p.items && p.items.length > 0 ? (
-                          <span> — {p.items.map((bi) => `${bi.qty}${bi.unit ? ` ${bi.unit}` : ""} × ${bi.name}`).join(" · ")}</span>
-                        ) : (
-                          <span> — batch details in the audit trail below</span>
-                        )}
-                        {" "}
-                        <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
-                      </li>
-                    ))}
-                  </ul>
+                  {proofs.length > 0 && (
+                    <ul className="mt-1 space-y-1">
+                      {proofs.map((p) => (
+                        <li key={p.id} className="text-[11px] text-zinc-600 dark:text-zinc-300">
+                          <span className="font-bold text-zinc-800 dark:text-zinc-100">{p.day || "dispatch"}</span>
+                          {p.actor ? <span> · {p.actor}</span> : null}
+                          {p.items && p.items.length > 0 ? (
+                            <span> — {p.items.map((bi) => `${bi.qty}${bi.unit ? ` ${bi.unit}` : ""} × ${bi.name}`).join(" · ")}</span>
+                          ) : (
+                            <span> — batch details in the audit trail below</span>
+                          )}
+                          {" "}
+                          <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Invoice</a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {untrackedDispatched.length > 0 && (
+                    <div className="mt-1">
+                      <p className="text-[10px] font-semibold text-zinc-500">Dispatched before invoice tracking</p>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {untrackedDispatched.map((u) => (
+                          <li key={u.id} className="text-[11px] tabular-nums text-zinc-600 dark:text-zinc-300">
+                            {u.qty}{u.unit ? ` ${u.unit}` : ""} × {u.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -749,12 +802,13 @@ export default function OrderPanel({
             </div>
           )}
 
-          {/* Consumed dispatch proofs — one batch per dispatch, newest first. */}
-          {mode === "view" && order.proofs && order.proofs.length > 0 && (
+          {/* Consumed dispatch proofs — one batch per dispatch, newest first,
+              plus anything that went out before invoice tracking existed. */}
+          {mode === "view" && (proofs.length > 0 || untrackedDispatched.length > 0) && (
             <div className="mt-5">
               <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Dispatch proofs</h3>
               <ul className="space-y-2">
-                {order.proofs.map((p) => (
+                {proofs.map((p) => (
                   <li key={p.id} className="rounded-xl border border-zinc-200 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-300">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                       <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
@@ -787,15 +841,27 @@ export default function OrderPanel({
                     )}
                   </li>
                 ))}
+                {untrackedDispatched.length > 0 && (
+                  <li className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+                    <span className="font-bold">Dispatched before invoice tracking</span>
+                    <ul className="mt-1 space-y-0.5 pl-5">
+                      {untrackedDispatched.map((u) => (
+                        <li key={u.id} className="tabular-nums">
+                          {u.qty}{u.unit ? ` ${u.unit}` : ""} × {u.name}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                )}
               </ul>
             </div>
           )}
 
-          {order.events && order.events.length > 0 && mode === "view" && (
+          {events.length > 0 && mode === "view" && (
             <div className="mt-5">
               <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audit trail</h3>
               <ul className="space-y-1.5">
-                {order.events.map((e) => (
+                {events.map((e) => (
                   <li key={e.id} className="flex items-start gap-2 text-[11px] text-zinc-600 dark:text-zinc-300">
                     <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
                     <span>
