@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS CrmDispatchProof_new (
   invoiceId     TEXT NOT NULL DEFAULT '',
   beforeId      TEXT,
   afterId       TEXT,
+  items         TEXT NOT NULL DEFAULT '[]',
   transportId   TEXT,
   courierId     TEXT,
   packingListId TEXT,
@@ -32,9 +33,11 @@ CREATE TABLE IF NOT EXISTS CrmDispatchProof_new (
   UNIQUE (packingListId)
 );
 
+-- `items` (migration 0107) is carried across too, so a from-scratch replay
+-- keeps the batch snapshots.
 INSERT OR IGNORE INTO CrmDispatchProof_new
-  (id, soId, soNumber, invoiceId, beforeId, afterId, actor, day, createdAt)
-  SELECT id, soId, soNumber, invoiceId, NULLIF(beforeId, ''), NULLIF(afterId, ''), actor, day, createdAt
+  (id, soId, soNumber, invoiceId, beforeId, afterId, items, actor, day, createdAt)
+  SELECT id, soId, soNumber, invoiceId, NULLIF(beforeId, ''), NULLIF(afterId, ''), COALESCE(items, '[]'), actor, day, createdAt
   FROM CrmDispatchProof;
 
 DROP TABLE CrmDispatchProof;
