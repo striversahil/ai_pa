@@ -11,6 +11,7 @@ import { REGIONS, type RegionId } from "@/telecalling/regions";
 import { BoardHeader } from "@/components/telecalling/BoardHeader";
 import { MetricStrip } from "@/components/telecalling/MetricStrip";
 import { PodiumRow } from "@/components/telecalling/PodiumRow";
+import { TlStrip } from "@/components/telecalling/TlStrip";
 import { HoldingPens } from "@/components/telecalling/HoldingPens";
 import { CARD } from "@/components/telecalling/surface";
 import type { BoardBucket, BoardRegion, BoardStaff } from "@/telecalling/view-types";
@@ -58,6 +59,13 @@ interface LeaderRow {
   type?: string;
   /** Conversion specialist (eligible to be picked as the 80% closer). */
   closerEligible?: boolean;
+  /** Period-window split of this staff's own closes (server-computed). */
+  consumerWon?: number;
+  consumerValue?: number;
+  resellerWon?: number;
+  resellerValue?: number;
+  unclassifiedWon?: number;
+  unclassifiedValue?: number;
 }
 
 interface RiskRow {
@@ -142,8 +150,7 @@ interface UnmappedAcceptedItem {
   hasCreator?: boolean;
 }
 
-export interface DashData {
-  meta: { day: string; requestedDay?: string; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null; canManage?: boolean; taxonomy?: { id: string; name: string; tl: string; states: string[] }[]; epoch?: string | null; viewer?: { staffId: string | null; name: string | null; region: string | null; tlLevel: string | null } | null; teamTarget?: TeamTarget | null; };
+export interface DashData {  meta: { day: string; requestedDay?: string; unassignedSent: number; activeCount: number; telecallerCount: number; generatedAt: string; period?: string; periodLabel?: string; periodFrom?: string | null; periodTo?: string | null; workingDays?: number; targets?: { connectedCallsPerDay: number; leadsPerAgentPerDay: number }; conversionTarget?: { perDay: number; goldPerDay: number; workingDays: number; target: number; gold: number; value: number; pct: number; status: "below" | "hit" | "gold" }; agents?: { id: string; name: string; active: boolean }[]; selfAgentId?: string | null; canManage?: boolean; taxonomy?: { id: string; name: string; tl: string; states: string[] }[]; epoch?: string | null; viewer?: { staffId: string | null; name: string | null; region: string | null; tlLevel: string | null } | null; teamTarget?: TeamTarget | null; };
   /** Winning-value buckets that can never win a region target (server-computed). */
   direct?: BoardBucket | null;
   unlinked?: BoardBucket | null;
@@ -185,6 +192,8 @@ export interface DashData {
   };
   /** Region cards — the heart of the sales leaderboard. */
   regions?: RegionInfo[];
+  /** TL1 reseller targets — one row per TL1 with a region pair (server-computed). */
+  tlTargets?: import("@/telecalling/view-types").TlTarget[];
   /** Roster staff with no region yet (MIS should map them). */
   unmappedStaff?: LeaderRow[];
   /** Unmapped open estimates (managers only). */
@@ -761,6 +770,8 @@ export interface RosterRow {
   activeAssigned: number;
   tlLevel?: string;
   region?: string;
+  /** Secondary region for TL1s (two regions at once, 2026-11-05). */
+  region2?: string;
   type?: string;
   closerEligible?: boolean;
   linkedUser?: { id: string; email: string; name: string; isRoot: boolean } | null;
@@ -839,6 +850,12 @@ function adaptLeaderRow(s: any, region: any, targets: any): LeaderRow {
     tlLevel: String(s?.tlLevel ?? ""),
     type: String(s?.type ?? "telecaller"),
     closerEligible: !!s?.closerEligible,
+    consumerWon: Number(s?.consumerWon ?? 0),
+    consumerValue: Number(s?.consumerValue ?? 0),
+    resellerWon: Number(s?.resellerWon ?? 0),
+    resellerValue: Number(s?.resellerValue ?? 0),
+    unclassifiedWon: Number(s?.unclassifiedWon ?? 0),
+    unclassifiedValue: Number(s?.unclassifiedValue ?? 0),
   };
 }
 
@@ -861,6 +878,12 @@ function adaptBoardStaff(s: any, region: any, riskByStaff: Map<string, number>):
     score: Number(s?.score ?? 0),
     region: String(s?.region ?? region?.id ?? ""),
     regionName: String(region?.name ?? ""),
+    consumerWon: Number(s?.consumerWon ?? 0),
+    consumerValue: Number(s?.consumerValue ?? 0),
+    resellerWon: Number(s?.resellerWon ?? 0),
+    resellerValue: Number(s?.resellerValue ?? 0),
+    unclassifiedWon: Number(s?.unclassifiedWon ?? 0),
+    unclassifiedValue: Number(s?.unclassifiedValue ?? 0),
     conversion: {
       assigned: Number(region?.open?.count ?? 0),
       won: Number(s?.won ?? 0),
@@ -962,6 +985,7 @@ export function adaptDashData(d: any): DashData {
     regions,
     direct: d?.direct ?? null,
     unlinked: d?.unlinked ?? null,
+    tlTargets: Array.isArray(d?.tlTargets) ? d.tlTargets : [],
     unmappedStaff: (d?.unmappedStaff ?? []).map((s: any) => adaptLeaderRow(s, null, targets)),
     unmapped: d?.unmapped ?? null,
     unmappedAccepted: d?.unmappedAccepted ?? null,
@@ -1388,6 +1412,19 @@ export default function TelecallingDashboard() {
     }
     return m;
   }, [dashRegions, riskByStaff]);
+  /** Region → TL names covering it (two-region model: one region can have two TLs). */
+  const tlByRegion = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const t of ((dash.data as any)?.tlTargets ?? []) as Array<{ name?: string; regions?: string[] }>) {
+      for (const r of t?.regions ?? []) {
+        const key = String(r);
+        const list = m.get(key) ?? [];
+        if (t?.name) list.push(String(t.name));
+        m.set(key, list);
+      }
+    }
+    return m;
+  }, [(dash.data as any)?.tlTargets]);
   return (
     <div className="space-y-6">
       <BoardHeader
@@ -1462,6 +1499,7 @@ export default function TelecallingDashboard() {
                       region={r}
                       index={i}
                       staff={boardStaffByRegion.get(r.id) ?? []}
+                      tlName={(tlByRegion.get(r.id) ?? []).join(" · ") || undefined}
                       weeksOpen={openWeeks === r.id}
                       onToggleWeeks={() => setOpenWeeks((cur) => (cur === r.id ? null : r.id))}
                       closedOpen={closedOpen === r.id}
@@ -1487,6 +1525,7 @@ export default function TelecallingDashboard() {
 
               {/* Accepted value no region can claim — real revenue that must
                   reconcile, parked below the race on purpose. */}
+              <TlStrip items={(dash.data as any)?.tlTargets ?? []} periodLabel={dash.data?.meta?.periodLabel} />
               <HoldingPens
                 direct={dash.data?.direct ?? null}
                 unlinked={dash.data?.unlinked ?? null}

@@ -42,3 +42,19 @@ export function isValidTlLevel(v: unknown): v is "TL1" | "TL2" {
 export function regionDef(id: string): RegionDef | null {
   return REGIONS.find((r) => r.id === id) ?? null;
 }
+
+/** ₹ each TL1 owes per working day of RESELLER accepted value (2026-11-05). */
+export const DAILY_TL_RESELLER_TARGET = 100_000;
+
+/**
+ * Regions a roster row works (mirror of the backend helper): primary `region`
+ * + secondary `region2` for TL1s (two regions at once, pair by sales-head).
+ */
+export function tlRegions(t: { region?: unknown; region2?: unknown }): RegionId[] {
+  const out: RegionId[] = [];
+  for (const v of [t?.region, t?.region2]) {
+    const s = String(v ?? "").trim();
+    if (isValidRegion(s) && !out.includes(s as RegionId)) out.push(s as RegionId);
+  }
+  return out;
+}

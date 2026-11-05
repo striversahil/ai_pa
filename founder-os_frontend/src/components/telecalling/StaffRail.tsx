@@ -16,7 +16,7 @@
 import React from "react";
 import { UserRound, Zap } from "lucide-react";
 import type { BoardStaff } from "@/telecalling/view-types";
-import { fmtNum, fmtTalk, initials } from "@/telecalling/format";
+import { fmtNum, fmtLakh, fmtTalk, initials } from "@/telecalling/format";
 import { TRAFFIC_TONE } from "@/telecalling/tone";
 import { LABEL, PILL } from "./surface";
 
@@ -27,6 +27,8 @@ export interface StaffRailProps {
   regionName?: string;
   /** Working days in the selected period (Mon–Sat) — drives the avg/day readout. */
   workingDays?: number;
+  /** TL name(s) covering this region — reseller ₹ here counts to their total. */
+  tlName?: string;
 }
 
 function MicroBar({ pct, tone }: { pct: number; tone: "green" | "amber" | "red" }) {
@@ -40,7 +42,7 @@ function MicroBar({ pct, tone }: { pct: number; tone: "green" | "amber" | "red" 
   );
 }
 
-export function StaffRail({ staff, regionId, regionName, workingDays = 1 }: StaffRailProps) {
+export function StaffRail({ staff, regionId, regionName, workingDays = 1, tlName }: StaffRailProps) {
   if (staff.length === 0) {
     return (
       <div className="border-t border-[var(--border-card)] px-2.5 py-1.5 md:px-3">
@@ -80,6 +82,22 @@ export function StaffRail({ staff, regionId, regionName, workingDays = 1 }: Staf
                   )}
                   {isField && (
                     <span className={`${PILL} border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300`}>Field</span>
+                  )}
+                  {(s.resellerWon ?? 0) > 0 && (
+                    <span
+                      className="rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[9px] font-bold text-violet-700 dark:text-violet-300"
+                      title={`Reseller sales by ${s.name} count into the team-lead total${tlName ? ` (TL ${tlName})` : ""} — consumer sales stay on the region race`}
+                    >
+                      res {fmtNum(s.resellerWon ?? 0)} · {fmtLakh(s.resellerValue ?? 0)} → TL
+                    </span>
+                  )}
+                  {(s.consumerWon ?? 0) > 0 && (
+                    <span
+                      className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-1.5 text-[9px] font-bold text-emerald-700 dark:text-emerald-300"
+                      title={`End-consumer sales by ${s.name} — count toward the region ₹1L/day target`}
+                    >
+                      cons {fmtNum(s.consumerWon ?? 0)} · {fmtLakh(s.consumerValue ?? 0)}
+                    </span>
                   )}
                 </span>
 

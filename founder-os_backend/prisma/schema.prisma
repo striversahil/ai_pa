@@ -295,6 +295,9 @@ model Telecaller {
   // Region this staff member works ('R1'–'R4'; '' = unmapped staff, shown
   // highlighted in the dashboard but gets no region data).
   region             String   @default("")
+  // Second region for TL1s (founder rule 2026-11-05: one TL1 handles TWO
+  // regions at once, pair decided by the sales-head). TL2s keep this ''.
+  region2            String   @default("")
   order                   Int      @default(0)
   // Soft delete: hidden from the roster/leaderboard/assignment engine but kept
   // for history; restorable from the MIS Controller.

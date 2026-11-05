@@ -32,6 +32,8 @@ export interface PodiumRowProps {
   region: BoardRegion;
   index: number;
   staff: BoardStaff[];
+  /** TL name(s) covering this region — reseller ₹ here counts to their TL total. */
+  tlName?: string;
   weeksOpen: boolean;
   onToggleWeeks: () => void;
   /** Drawer listing the accepted estimates behind `Won`. */
@@ -72,7 +74,7 @@ function Stat({ label, value, hint, tone }: { label: string; value: string; hint
 }
 
 export function PodiumRow({
-  region, index, staff, weeksOpen, onToggleWeeks, closedOpen, onToggleClosed,
+  region, index, staff, tlName, weeksOpen, onToggleWeeks, closedOpen, onToggleClosed,
   declinedOpen, onToggleDeclined, onOpenRegion, targetStart, workingDays,
 }: PodiumRowProps) {
   const t = region.target;
@@ -145,7 +147,13 @@ export function PodiumRow({
                 {status === "critical" && <span className="fos-pulse h-1 w-1 rounded-full bg-rose-500" aria-hidden="true" />}
                 {t ? TARGET_STATUS_LABEL[status] : "No ledger"}
               </span>
-              <span className="truncate font-semibold text-[var(--text-secondary)]">{region.tl || "—"}</span>
+              {tlName ? (
+                <span className="truncate font-semibold text-indigo-600 dark:text-indigo-300" title={`Team Lead covering ${region.id}: ${tlName} — reseller sales here count into their TL total`}>
+                  TL · {tlName}
+                </span>
+              ) : (
+                <span className="truncate font-semibold text-[var(--text-secondary)]">{region.tl || "—"}</span>
+              )}
               <span aria-hidden="true">·</span>
               <span className="inline-flex items-center gap-0.5" title={`${staff.length} roster staff`}>
                 <Users className="h-2.5 w-2.5" aria-hidden="true" />
@@ -313,6 +321,7 @@ export function PodiumRow({
             totalCount={region.won.count}
             totalValue={region.won.value}
             regionName={region.name}
+            resellerNote={tlName ? `counts to TL ${tlName}` : "counts to the TL total"}
           />
         </div>
       )}
@@ -342,6 +351,7 @@ export function PodiumRow({
         regionId={region.id}
         regionName={region.name}
         workingDays={workingDays}
+        tlName={tlName}
       />
     </article>
   );

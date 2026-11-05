@@ -41,6 +41,8 @@ export interface ClientClass {
   source: 'manual' | 'auto' | 'none';
   masterCustomerId: string;
   masterName: string;
+  /** Master region (R1–R4, '' when unmatched) — drives sales-head direct re-homing. */
+  masterRegion: string;
   matchKind: 'exact' | 'fuzzy-unique' | 'fuzzy-best' | 'ambiguous' | 'none' | 'manual';
   candidates: ClientCandidate[];
 }
@@ -214,12 +216,15 @@ export async function classifyClients(names: string[]): Promise<Map<string, Clie
     const displayName = rawByKey.get(key) ?? key;
     const manual = manuals.get(key);
     if (manual && isValidSegment(manual.segment) && manual.segment) {
+      const manualMasterId = String(manual.masterCustomerId ?? '');
+      const manualMaster = master.find((m) => m.id === manualMasterId) ?? null;
       out.set(key, {
         key, displayName,
         segment: manual.segment as ClientSegmentKind,
         source: 'manual',
-        masterCustomerId: String(manual.masterCustomerId ?? ''),
-        masterName: String(manual.masterName ?? ''),
+        masterCustomerId: manualMasterId,
+        masterName: String(manual.masterName ?? manualMaster?.displayName ?? manualMaster?.companyName ?? ''),
+        masterRegion: manualMaster ? String(manualMaster.region ?? '') : '',
         matchKind: 'manual',
         candidates: [],
       });
@@ -234,6 +239,7 @@ export async function classifyClients(names: string[]): Promise<Map<string, Clie
         segment: seg, source: seg ? 'auto' : 'none',
         masterCustomerId: seg ? m.id : '',
         masterName: seg ? (m.displayName || m.companyName) : '',
+        masterRegion: m ? String(m.region ?? '') : '',
         matchKind: 'exact',
         candidates: seg ? [] : exactHit.slice(0, 5).map((i) => toCandidate(master[i])),
       });
@@ -259,7 +265,7 @@ export async function classifyClients(names: string[]): Promise<Map<string, Clie
     if (scored.length === 0) {
       out.set(key, {
         key, displayName, segment: '', source: 'none',
-        masterCustomerId: '', masterName: '', matchKind: 'none', candidates: [],
+        masterCustomerId: '', masterName: '', masterRegion: '', matchKind: 'none', candidates: [],
       });
       continue;
     }
@@ -273,6 +279,7 @@ export async function classifyClients(names: string[]): Promise<Map<string, Clie
         segment: seg, source: seg ? 'auto' : 'none',
         masterCustomerId: seg ? m.id : '',
         masterName: seg ? (m.displayName || m.companyName) : '',
+        masterRegion: m ? String(m.region ?? '') : '',
         matchKind: scored.length === 1 ? 'fuzzy-unique' : 'fuzzy-best',
         candidates: seg ? [] : scored.slice(0, 5).map((s) => toCandidate(master[s.i])),
       });
@@ -280,7 +287,7 @@ export async function classifyClients(names: string[]): Promise<Map<string, Clie
     }
     out.set(key, {
       key, displayName, segment: '', source: 'none',
-      masterCustomerId: '', masterName: '', matchKind: 'ambiguous',
+      masterCustomerId: '', masterName: '', masterRegion: '', matchKind: 'ambiguous',
       candidates: best.slice(0, 5).map((s) => toCandidate(master[s.i])),
     });
   }

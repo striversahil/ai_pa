@@ -20,6 +20,13 @@ export interface BoardStaff {
   score: number;
   region?: string;
   regionName?: string;
+  /** Period-window split of this staff's own closes (server-computed). */
+  consumerWon?: number;
+  consumerValue?: number;
+  resellerWon?: number;
+  resellerValue?: number;
+  unclassifiedWon?: number;
+  unclassifiedValue?: number;
   conversion: { assigned: number; won: number; acceptedValue?: number };
   generation: {
     callsConnected: number;
@@ -47,6 +54,8 @@ export interface BoardClosedItem {
   createdBy?: string | null;
   createdByName?: string | null;
   status?: string | null;
+  /** True when a sales-head direct close re-homed to this region. */
+  viaSalesHead?: boolean | null;
   /** Final-consumer vs reseller classification (server-computed). */
   segment?: "consumer" | "reseller" | "" | null;
   segmentSource?: "manual" | "auto" | "none" | null;
@@ -139,4 +148,45 @@ export interface BoardMeta {
   telecallerCount?: number;
   /** Raw payload extra — enquiries with no roster match. */
   unattributedLeads?: number;
+}
+
+/** One TL1's reseller target (server-computed, mirrors BoardRegion targets). */
+export interface TlTarget {
+  id: string;
+  name: string;
+  regions: Array<"R1" | "R2" | "R3" | "R4">;
+  perDay: number;
+  /** Weekly carry-forward ledger over reseller ₹ (same shape as regions). */
+  target: RegionTarget | null;
+  /** Filter-period reseller bar (no carry-in, same week/day window). */
+  periodTarget: {
+    from: string;
+    to: string;
+    workingDays: number;
+    target: number;
+    accepted: number;
+    pct: number;
+    met: boolean;
+  };
+  /** Period-window split: TL's own reseller closes vs their team's. Both count to the TL total. */
+  personal?: { count: number; value: number };
+  team?: { count: number; value: number };
+  /** Reseller deals behind the period total (capped, newest first). */
+  items?: TlDeal[];
+}
+
+/** One reseller deal counting toward a TL's total. */
+export interface TlDeal {
+  estimateId: string;
+  estimateNumber?: string | null;
+  customerName?: string | null;
+  total?: number | null;
+  region?: string | null;
+  acceptedAt?: string | null;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  /** True when the TL closed it themselves (vs a team telecaller). */
+  isPersonal?: boolean;
+  /** True when a sales-head direct close re-homed to the TL's home region. */
+  viaSalesHead?: boolean;
 }

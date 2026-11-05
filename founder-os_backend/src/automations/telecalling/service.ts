@@ -44,10 +44,10 @@ import {
   type CallTag,
 } from './call-tags';
 import { linkEnquiryEstimate, sweepEnquiryEstimateLinks, type EnquiryLinkResult } from './enquiry-links';
-import { REGIONS, TL_LEVELS, type RegionId, type TlLevel } from './regions';
+import { REGIONS, TL_LEVELS, DAILY_TL_RESELLER_TARGET, tlRegions, isValidRegion, type RegionId, type TlLevel } from './regions';
 import { DATE_RE, IN_BATCH, istDate } from './util';
 import {
-  loadAcceptedSnapshot, loadCreatorIndex, groupAcceptedByWeek, roundAgg,
+  loadAcceptedSnapshot, loadCreatorIndex, groupAcceptedByWeek, groupAcceptedByWeekFiltered, roundAgg,
   type AcceptedSnapshot, type AcceptedAgg, type AcceptedEstimate,
 } from './accepted';
 import {
@@ -690,33 +690,284 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const targetSnapshot = wonFrom <= targetStart && todayDay <= wonTo
     ? wonSnapshot
     : await loadAcceptedSnapshot(targetStart, todayDay, { creatorIndex });
+  // The ledger window can hold customer names the period classify never saw —
+  // merge them so segOf/regionOf cover every ledger row (else older-week
+  // reseller rows silently miss the TL ledger).
+  try {
+    const seen = new Set<string>();
+    for (const k of segmentByKey.keys()) seen.add(k);
+    const missingNames: string[] = [];
+    const missingKeys = new Set<string>();
+    for (const r of targetSnapshot.rows as any[]) {
+      const k = normalizeClientKey((r as any)?.customerName);
+      if (!k || seen.has(k) || missingKeys.has(k)) continue;
+      missingKeys.add(k);
+      missingNames.push(String((r as any)?.customerName ?? ''));
+    }
+    if (missingNames.length > 0) {
+      const extra = await classifyClients(missingNames);
+      for (const [k, v] of extra) segmentByKey.set(k, v);
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'tl ledger classify merge failed — older weeks may undercount');
+  }
+  // Sales-head direct re-homing (founder 2026-11-05): a direct row (HQ close,
+  // no Estimate.region) is resolved through the Customer Master — consumer
+  // direct goes back to its region, reseller direct to the TLs covering that
+  // region. Unmatched/unset rows stay in `direct` (never guessed).
+  const regionOfKey = (key: string): string => {
+    const r = String(((segmentByKey.get(key) as any)?.masterRegion) ?? '').trim();
+    return isValidRegion(r) ? r : '';
+  };
+  const homeRegionOf = (row: { region?: unknown; customerName?: unknown; createdBy?: unknown }): string => {
+    const own = String((row as any)?.region ?? '').trim();
+    if (isValidRegion(own)) return own;
+    const creator = String((row as any)?.createdBy ?? '').trim();
+    if (!creator || !creatorIndex.knownIds.has(creator)) return '';
+    return regionOfKey(normalizeClientKey((row as any)?.customerName));
+  };
+  const isRehomedDirect = (row: { region?: unknown; createdBy?: unknown }): boolean =>
+    !String((row as any)?.region ?? '').trim() && !!String((row as any)?.createdBy ?? '').trim() && creatorIndex.knownIds.has(String((row as any)?.createdBy ?? ''));
+  // Ledger-window re-homed rows (resolved home region + classified segment).
+  const rehomeTargetConsumer = new Map<string, number>(); // weekStart|region → ₹ (region ledger top-up)
+  const rehomeTargetReseller = new Map<string, number>(); // weekStart|region → ₹ (TL ledger top-up)
+  for (const r of targetSnapshot.rows as any[]) {
+    if (!isRehomedDirect(r)) continue;
+    const home = homeRegionOf(r);
+    if (!home) continue;
+    const seg = segOf((r as any)?.customerName).segment;
+    const week = weekStartOf(String((r as any)?.acceptedAt ?? ''));
+    if (!week) continue;
+    const v = Math.round(Number((r as any)?.total ?? 0) || 0);
+    if (seg === 'consumer') {
+      const k = `${week}|${home}`;
+      rehomeTargetConsumer.set(k, (rehomeTargetConsumer.get(k) ?? 0) + v);
+    } else if (seg === 'reseller') {
+      const k = `${week}|${home}`;
+      rehomeTargetReseller.set(k, (rehomeTargetReseller.get(k) ?? 0) + v);
+    }
+  }
+  const regionLedgerWeeks = groupAcceptedByWeek(targetSnapshot.rows, weekStartOf);
+  for (const [k, v] of rehomeTargetConsumer) {
+    const sep = k.indexOf('|');
+    const week = k.slice(0, sep);
+    const region = k.slice(sep + 1);
+    let byRegion = regionLedgerWeeks.get(week);
+    if (!byRegion) { byRegion = new Map(); regionLedgerWeeks.set(week, byRegion); }
+    byRegion.set(region, (byRegion.get(region) ?? 0) + v);
+  }
   const targetByRegion: Map<string, RegionTarget> = buildRegionTargets({
     regions: REGIONS.map((r) => r.id),
     startDay: targetStart,
     asOfDay: todayDay,
-    acceptedByWeek: groupAcceptedByWeek(targetSnapshot.rows, weekStartOf),
+    acceptedByWeek: regionLedgerWeeks,
     holidays,
   });
 
-  // Lead Generation targets scale with the period's working days (6-day work
-  // week, Mon–Sat, minus national holidays) — a week target is one day ×
-  // working days, never 1×.
   const workingDays = periodMode && periodRangeInfo
     ? Math.max(1, workingDaysBetweenExcluding(periodRangeInfo.from, periodRangeInfo.to, holidays))
     : 1;
 
+  // ── TL1 reseller targets (founder 2026-11-05) ────────────────────────────
+  // Each TL1 owes ₹1L/working-day of RESELLER accepted ₹ summed across THEIR
+  // TWO regions, with the same weekly carry-forward ledger as the region
+  // end-consumer target. Consumer + unset ₹ never counts here (mirror image
+  // of the region rule). TL identity comes from the roster pair
+  // (region + region2, sales-head assigned).
+  interface TlTargetRow {
+    id: string;
+    name: string;
+    regions: RegionId[];
+    perDay: number;
+    target: RegionTarget | null;
+    periodTarget: {
+      from: string;
+      to: string;
+      workingDays: number;
+      target: number;
+      accepted: number;
+      pct: number;
+      met: boolean;
+    };
+    /** Period-window reseller split: TL's own closes vs team closes (both count to the TL total). */
+    personal: { count: number; value: number };
+    team: { count: number; value: number };
+    /** Reseller deals behind the period total (capped 25, newest first). */
+    items: Array<{
+      estimateId: string;
+      estimateNumber: string;
+      customerName: string;
+      total: number;
+      region: string;
+      acceptedAt: string;
+      createdBy: string;
+      createdByName: string | null;
+      isPersonal: boolean;
+      /** True when this was a sales-head direct close re-homed to the region. */
+      viaSalesHead: boolean;
+    }>;
+  }
+  const tlTargets: TlTargetRow[] = [];
+  try {
+    const tlStaff = (telecallers as any[]).filter(
+      (t) => String((t as any).tlLevel ?? '') === 'TL1' && !((t as any).deleted ?? false),
+    );
+    const resellerByWeekRegion = groupAcceptedByWeekFiltered(
+      targetSnapshot.rows, weekStartOf,
+      (row) => segOf(row.customerName).segment === 'reseller',
+    );
+    for (const [k, v] of rehomeTargetReseller) {
+      const sep = k.indexOf('|');
+      const week = k.slice(0, sep);
+      const region = k.slice(sep + 1);
+      let byRegion = resellerByWeekRegion.get(week);
+      if (!byRegion) { byRegion = new Map(); resellerByWeekRegion.set(week, byRegion); }
+      byRegion.set(region, (byRegion.get(region) ?? 0) + v);
+    }
+    const tlAcceptedByWeek = new Map<string, Map<string, number>>();
+    const tlRegionLists = new Map<string, RegionId[]>();
+    for (const t of tlStaff) {
+      const id = String(t.id);
+      const pair = tlRegions(t);
+      if (pair.length === 0) continue;
+      tlRegionLists.set(id, pair);
+      for (const [week, byRegion] of resellerByWeekRegion) {
+        let sum = 0;
+        for (const r of pair) sum += byRegion.get(r) ?? 0;
+        if (sum <= 0) continue;
+        let byTl = tlAcceptedByWeek.get(week);
+        if (!byTl) { byTl = new Map(); tlAcceptedByWeek.set(week, byTl); }
+        byTl.set(id, (byTl.get(id) ?? 0) + sum);
+      }
+    }
+    const tlIds = [...tlRegionLists.keys()];
+    const tlLedger = tlIds.length > 0 ? buildRegionTargets({
+      regions: tlIds,
+      startDay: targetStart,
+      asOfDay: todayDay,
+      dailyTarget: DAILY_TL_RESELLER_TARGET,
+      acceptedByWeek: tlAcceptedByWeek,
+      holidays,
+    }) : new Map<string, RegionTarget>();
+    // Period-window reseller ₹ per TL (filter-period bar, no carry-in — same
+    // shape as the region periodTarget so the frontend reuses one renderer).
+    // EVERY reseller row in the TL's pair counts to the TL total; the split
+    // below only explains WHO closed it (TL personal vs team).
+    const periodResellerByTl = new Map<string, number>();
+    const periodPersonalByTl = new Map<string, { count: number; value: number }>();
+    const periodTeamByTl = new Map<string, { count: number; value: number }>();
+    const itemsByTl = new Map<string, TlTargetRow['items']>();
+    for (const row of wonSnapshot.rows) {
+      if (segOf(row.customerName).segment !== 'reseller') continue;
+      // Direct (sales-head) rows carry region '' — resolve through the master
+      // so reseller direct flows to the TLs covering the home region.
+      const effRegion = String((row as any).region ?? '').trim() || (isRehomedDirect(row as any) ? homeRegionOf(row as any) : '');
+      if (!effRegion) continue;
+      const rehomed = isRehomedDirect(row as any) && !String((row as any).region ?? '').trim();
+      for (const [tlId, pair] of tlRegionLists) {
+        if (pair.includes(effRegion as RegionId)) {
+          const v = Math.round(Number(row.total ?? 0) || 0);
+          periodResellerByTl.set(tlId, (periodResellerByTl.get(tlId) ?? 0) + v);
+          const isPersonal = String((row as any).createdBy ?? '') === tlId;
+          const bucket = isPersonal ? periodPersonalByTl : periodTeamByTl;
+          const cur = bucket.get(tlId) ?? { count: 0, value: 0 };
+          cur.count += 1; cur.value += v;
+          bucket.set(tlId, cur);
+          const list = itemsByTl.get(tlId) ?? [];
+          list.push({
+            estimateId: String((row as any).estimateId ?? ''),
+            estimateNumber: String((row as any).estimateNumber ?? ''),
+            customerName: String((row as any).customerName ?? ''),
+            total: v,
+            region: effRegion,
+            acceptedAt: String((row as any).acceptedAt ?? ''),
+            createdBy: String((row as any).createdBy ?? ''),
+            createdByName: String((row as any).createdBy ?? '') ? (nameById.get(String((row as any).createdBy)) ?? (row as any).createdByName ?? null) : null,
+            isPersonal,
+            viaSalesHead: rehomed,
+          });
+          itemsByTl.set(tlId, list);
+        }
+      }
+    }
+    for (const list of itemsByTl.values()) {
+      list.sort((a, b) => (b.acceptedAt.localeCompare(a.acceptedAt)) || (b.total - a.total));
+      if (list.length > 25) list.length = 25;
+    }
+    const periodTlTarget = DAILY_TL_RESELLER_TARGET * workingDays;
+    for (const t of tlStaff) {
+      const id = String(t.id);
+      const pair = tlRegionLists.get(id);
+      if (!pair) continue;
+      const target = tlLedger.get(id) ?? null;
+      const accepted = Math.round(periodResellerByTl.get(id) ?? 0);
+      const personal = periodPersonalByTl.get(id) ?? { count: 0, value: 0 };
+      const team = periodTeamByTl.get(id) ?? { count: 0, value: 0 };
+      tlTargets.push({
+        id,
+        name: String((t as any).name ?? ''),
+        regions: pair,
+        perDay: DAILY_TL_RESELLER_TARGET,
+        target,
+        personal: { count: personal.count, value: Math.round(personal.value) },
+        team: { count: team.count, value: Math.round(team.value) },
+        items: itemsByTl.get(id) ?? [],
+        periodTarget: {
+          from: periodRangeInfo?.from ?? day,
+          to: periodRangeInfo?.to ?? day,
+          workingDays,
+          target: periodTlTarget,
+          accepted,
+          pct: periodTlTarget > 0 ? Math.round((accepted / periodTlTarget) * 100) : accepted > 0 ? 100 : 0,
+          met: periodTlTarget > 0 ? accepted >= periodTlTarget : accepted > 0,
+        },
+      });
+    }
+    tlTargets.sort((a, b) => (b.periodTarget.pct - a.periodTarget.pct) || (b.periodTarget.accepted - a.periodTarget.accepted));
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'tl reseller targets failed — board renders without TL strip');
+  }
+
+  // Lead Generation targets scale with the period's working days (6-day work
+  // week, Mon–Sat, minus national holidays) — a week target is one day ×
+  // working days, never 1×.
+
   // ── Region + staff aggregation ──────────────────────────────────────────────
+  // Per-creator consumer/reseller split (period window): lets the board show
+  // normal telecaller sales vs TL-attributed reseller sales without implying
+  // double counting — region totals stay estimate-region owned.
+  const segSplitByCreator = new Map<string, { consumerWon: number; consumerValue: number; resellerWon: number; resellerValue: number; unclassifiedWon: number; unclassifiedValue: number }>();
+  for (const r of wonSnapshot.rows) {
+    const cid = String((r as any).createdBy ?? '');
+    if (!cid) continue;
+    const seg = segOf((r as any).customerName).segment;
+    const cur = segSplitByCreator.get(cid) ?? { consumerWon: 0, consumerValue: 0, resellerWon: 0, resellerValue: 0, unclassifiedWon: 0, unclassifiedValue: 0 };
+    const v = Math.round(Number((r as any).total ?? 0) || 0);
+    if (seg === 'consumer') { cur.consumerWon += 1; cur.consumerValue += v; }
+    else if (seg === 'reseller') { cur.resellerWon += 1; cur.resellerValue += v; }
+    else { cur.unclassifiedWon += 1; cur.unclassifiedValue += v; }
+    segSplitByCreator.set(cid, cur);
+  }
   interface StaffRow {
     id: string;
     name: string;
     type: string;
     region: string;
+    /** Secondary region for TL1s (two-region model, 2026-11-05). */
+    region2: string;
     tlLevel: TlLevel;
     closerEligible: boolean;
     wonGenerator: number;
     wonCloser: number;
     won: number;
     closedValue: number;
+    /** Period-window consumer/reseller split of this staff's own closes. */
+    consumerWon: number;
+    consumerValue: number;
+    resellerWon: number;
+    resellerValue: number;
+    unclassifiedWon: number;
+    unclassifiedValue: number;
     generatorPoints: number;
     closerPoints: number;
     points: number;
@@ -805,11 +1056,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const closedValue = Math.round(acc.value);
     // Historic −10/−15 penalties still apply once the epoch rule passes them.
     const points = Math.round(acc.points + (penaltiesByTc.get(id) ?? 0));
+    const segSplit = segSplitByCreator.get(id) ?? { consumerWon: 0, consumerValue: 0, resellerWon: 0, resellerValue: 0, unclassifiedWon: 0, unclassifiedValue: 0 };
     staffRows.set(id, {
       id,
       name: String(t.name ?? ''),
       type: String((t as any).type ?? 'telecaller'),
       region: String((t as any).region ?? ''),
+      region2: String((t as any).region2 ?? ''),
       tlLevel: ((t as any).tlLevel ?? '') as TlLevel,
       // Field staff generate leads only — never eligible as the 80% closer.
       closerEligible: !!(t as any).assignEstimateFollowUps && String((t as any).type ?? 'telecaller') !== 'field_staff',
@@ -817,6 +1070,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       wonCloser: 0,
       won: acc.count,
       closedValue,
+      consumerWon: segSplit.consumerWon,
+      consumerValue: segSplit.consumerValue,
+      resellerWon: segSplit.resellerWon,
+      resellerValue: segSplit.resellerValue,
+      unclassifiedWon: segSplit.unclassifiedWon,
+      unclassifiedValue: segSplit.unclassifiedValue,
       generatorPoints: acc.points,
       closerPoints: 0,
       points,
@@ -834,14 +1093,37 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     });
   }
 
+  // Period-window sales-head direct re-homes (resolved home region +
+  // classified segment; unset/unmatched rows stay in `direct`).
+  const rehomedWon: Array<{ row: AcceptedEstimate; home: string; seg: ClientSegmentKind }> = [];
+  for (const r of wonSnapshot.rows as any[]) {
+    if (!isRehomedDirect(r)) continue;
+    const home = homeRegionOf(r);
+    if (!home) continue;
+    const seg = segOf(r?.customerName).segment;
+    if (seg !== 'consumer' && seg !== 'reseller') continue;
+    rehomedWon.push({ row: r as AcceptedEstimate, home, seg });
+  }
+
   const regions: RegionRow[] = [];
   for (const def of REGIONS) {
-    const members = (telecallers as any[]).filter((t) => String((t as any).region ?? '') === def.id)
+    // Team Leads are NOT telecallers (founder 2026-11-05: `type='team_lead'`
+    // is its own role) — they hang off the TL strip, never the staff rail.
+    const members = (telecallers as any[]).filter((t) => String((t as any).region ?? '') === def.id && String((t as any).type ?? 'telecaller') !== 'team_lead')
       .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
     // Region wins/points come from the ESTIMATE's lead region (a founder
     // mapping or the creator's roster region — accepted.ts resolves both), so
     // a region's total never depends on who happened to hold a ledger row.
-    const acc: AcceptedAgg = wonSnapshot.byRegion.get(def.id) ?? { count: 0, value: 0, points: 0 };
+    // Sales-head direct re-homes land here too (consumer → region target).
+    const baseAcc: AcceptedAgg = wonSnapshot.byRegion.get(def.id) ?? { count: 0, value: 0, points: 0 };
+    let reWon = 0; let reValue = 0; let rePoints = 0;
+    for (const h of rehomedWon) {
+      if (h.home !== def.id) continue;
+      reWon += 1;
+      reValue += Math.round(Number((h.row as any).total ?? 0) || 0);
+      rePoints += closePointsFor(Number((h.row as any).total ?? 0) || 0);
+    }
+    const acc: AcceptedAgg = { count: baseAcc.count + reWon, value: baseAcc.value + reValue, points: baseAcc.points + rePoints };
     const open = openByRegion.get(def.id) ?? { count: 0, value: 0 };
     const declined = declinedSnapshot.byRegion.get(def.id) ?? { count: 0, value: 0 };
     const callsAttempted = members.reduce((s, m) => s + m.callsAttempted, 0);
@@ -861,7 +1143,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     // Consumer split + filter-period target for this region. Splits come from
     // the FULL snapshot rows (never the capped drawer lists); the drawer rows
     // below are annotated with the same segment so every ₹ reconciles.
-    const accRows = wonSnapshot.rows.filter((r) => String(r.region ?? '') === def.id);
+    // Re-homed sales-head direct rows join their home region here.
+    const accRows = [
+      ...wonSnapshot.rows.filter((r) => String(r.region ?? '') === def.id),
+      ...rehomedWon.filter((h) => h.home === def.id).map((h) => h.row),
+    ];
     const splitOf = (kind: ClientSegmentKind): { count: number; value: number } => {
       let count = 0; let value = 0;
       for (const r of accRows) {
@@ -900,7 +1186,16 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       won: { count: acc.count, value: Math.round(acc.value) },
       accepted: acc,
       wonSplit: { consumer, reseller, unclassified },
-      acceptedItems: annotateItems(wonSnapshot.byRegionItems.get(def.id) ?? []),
+      acceptedItems: (() => {
+        const base = annotateItems(wonSnapshot.byRegionItems.get(def.id) ?? []);
+        const re = rehomedWon.filter((h) => h.home === def.id).map((h) => {
+          const s = segOf(h.row.customerName);
+          return { ...(h.row as any), segment: s.segment, segmentSource: s.source, region: def.id, viaSalesHead: true } as AcceptedEstimate;
+        });
+        const merged = [...base, ...re];
+        merged.sort((a: any, b: any) => String(b.acceptedAt ?? '').localeCompare(String(a.acceptedAt ?? '')) || (Number(b.total ?? 0) - Number(a.total ?? 0)));
+        return merged.slice(0, 60);
+      })(),
       declined: { count: declined.count, value: Math.round(declined.value) },
       declinedItems: annotateDeclined(declinedSnapshot.byRegionItems.get(def.id) ?? []),
       target: targetByRegion.get(def.id) ?? null,
@@ -936,7 +1231,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   [...regions]
     .sort((a, b) => (b.periodTarget?.pct ?? 0) - (a.periodTarget?.pct ?? 0) || (b.periodTarget?.accepted ?? 0) - (a.periodTarget?.accepted ?? 0))
     .forEach((r, i) => { r.rank = i + 1; });
-  const unmappedStaff = (telecallers as any[]).filter((t) => !String((t as any).region ?? ''))
+  const unmappedStaff = (telecallers as any[]).filter((t) => !String((t as any).region ?? '') && !String((t as any).region2 ?? ''))
     .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
   for (const t of unmappedStaff) {
     // Highlighted on the board so MIS notices and maps them.
@@ -962,6 +1257,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     else if (seg === 'reseller') { resellerWon += 1; resellerValue += v; }
     else { unclassifiedWon += 1; unclassifiedValue += v; }
   }
+  // Sales-head direct re-homes leave `direct` (consumer → home region, reseller
+  // → TL strip via the same home region). The header still reconciles:
+  // regions + direct(remaining) + unlinked = Won.
+  const rehomedIds = new Set(rehomedWon.map((h) => String((h.row as any).estimateId ?? '')));
+  const directRemaining = (wonSnapshot.direct.items as any[]).filter((it: any) => !rehomedIds.has(String(it?.estimateId ?? '')));
+  let directReValue = 0;
+  for (const h of rehomedWon) directReValue += Math.round(Number((h.row as any).total ?? 0) || 0);
   const kpi = {
     won: wonSnapshot.count,
     closedValue: Math.round(wonSnapshot.value),
@@ -973,8 +1275,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     resellerValue,
     unclassifiedWon,
     unclassifiedValue,
-    directWon: wonSnapshot.direct.count,
-    directValue: Math.round(wonSnapshot.direct.value),
+    directWon: wonSnapshot.direct.count - rehomedWon.length,
+    directValue: Math.round(wonSnapshot.direct.value) - directReValue,
+    directRehomedWon: rehomedWon.length,
+    directRehomedValue: directReValue,
     unlinkedWon: wonSnapshot.unlinked.count,
     unlinkedValue: Math.round(wonSnapshot.unlinked.value),
     pipelineValue: Math.round(openTotal),
@@ -1037,7 +1341,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // second round-trip.
   const agentList = telecallers.map((t: any) => ({
     id: String(t.id), name: String(t.name ?? ''),
-    region: String(t.region ?? ''), tlLevel: String(t.tlLevel ?? ''),
+    region: String(t.region ?? ''), region2: String(t.region2 ?? ''),
+    regions: tlRegions(t), tlLevel: String(t.tlLevel ?? ''),
     active: !!t.assignEstimateFollowUps,
   }));
 
@@ -1274,15 +1579,18 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const selfStaff = selfAgentId ? staffRows.get(selfAgentId) ?? null : null;
   const selfRegion = selfStaff?.region ?? '';
 
-  // Non-managing staff are scoped to their OWN region: the team leaderboard
+  // Non-managing staff are scoped to their OWN region(s): the team leaderboard
   // (region cards) stays visible, but at-risk/recent lists carry only their
-  // region's rows.
+  // region's rows. TL1s covering two regions see BOTH (region + region2).
+  const selfRegions = selfStaff ? [selfStaff.region, (selfStaff as StaffRow).region2].filter(Boolean) : [];
+  const inSelfRegions = (r: string): boolean =>
+    selfRegions.length === 0 ? !r : selfRegions.includes(r);
   const scopedRiskItems = canManage
     ? riskItems
-    : riskItems.filter((r) => r.region === selfRegion);
+    : riskItems.filter((r) => inSelfRegions(r.region));
   const scopedRecent = canManage
     ? recent
-    : recent.filter((r) => String(r.region ?? '') === selfRegion);
+    : recent.filter((r) => inSelfRegions(String(r.region ?? '')));
 
   return {
     meta: {
@@ -1306,6 +1614,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       unmappedSentCount: unmappedCount,
       telecallerCount: telecallers.length,
       fieldStaffCount: (telecallers as any[]).filter((t) => String((t as any).type ?? 'telecaller') === 'field_staff').length,
+      teamLeadCount: (telecallers as any[]).filter((t) => String((t as any).type ?? '') === 'team_lead' || String((t as any).tlLevel ?? '') === 'TL1').length,
       unmappedStaffCount: unmappedStaff.length,
       staff: agentList,
       agents: agentList,
@@ -1354,6 +1663,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     },
     // Region cards — the heart of the sales leaderboard.
     regions,
+    // TL1 reseller targets (founder 2026-11-05): one row per TL1 with a region
+    // pair — ₹1L/working-day of reseller ₹ across their two regions, same
+    // carry-forward ledger as regions. Rendered as the TL strip.
+    tlTargets,
     // Staff working NO region (roster_tl/region unset) — actionable: map them.
     unmappedStaff,
     // Unmapped estimates (region '') across sent/accepted/confirmed/declined —
@@ -1367,9 +1680,19 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     } : {}),
     // Accepted value no region can claim — visible to EVERYONE, because these
     // rows are the answer to "why don't the region cards add up to the total?".
-    // direct   = Sales Head / HQ. A real, permanent bucket, never a data bug.
+    // direct   = Sales Head / HQ remainder (resolved rows are re-homed: consumer
+    //            → home region, reseller → TL strip via the same home region).
     // unlinked = no roster creator at all (needs an EST→region mapping).
-    direct: { ...roundAgg(wonSnapshot.direct), items: wonSnapshot.direct.items, label: 'Sales Head — Direct', kind: 'direct' },
+    direct: {
+      count: wonSnapshot.direct.count - rehomedWon.length,
+      value: Math.round(wonSnapshot.direct.value) - directReValue,
+      points: wonSnapshot.direct.points,
+      items: directRemaining,
+      label: 'Sales Head — Direct',
+      kind: 'direct' as const,
+      rehomedWon: rehomedWon.length,
+      rehomedValue: directReValue,
+    },
     unlinked: { ...roundAgg(wonSnapshot.unlinked), items: wonSnapshot.unlinked.items, label: 'Needs region mapping', kind: 'unlinked' },
     recent: scopedRecent,
     // MIS daily breakdown (only when ?daily=1 in period mode): per-day ×
@@ -1416,10 +1739,10 @@ export {
 } from './call-tags';
 export type { CallTag } from './call-tags';
 export { linkEnquiryEstimate, sweepEnquiryEstimateLinks, type EnquiryLinkResult } from './enquiry-links';
-export { REGIONS, TL_LEVELS, isValidRegion, isValidTlLevel } from './regions';
+export { REGIONS, TL_LEVELS, DAILY_TL_RESELLER_TARGET, tlRegions, tlPairError, isValidRegion, isValidTlLevel } from './regions';
 export type { RegionId, TlLevel, RegionDef } from './regions';
 export {
-  loadAcceptedSnapshot, loadCreatorIndex, groupAcceptedByWeek, roundAgg,
+  loadAcceptedSnapshot, loadCreatorIndex, groupAcceptedByWeek, groupAcceptedByWeekFiltered, roundAgg,
 } from './accepted';
 export type {
   AcceptedSnapshot, AcceptedEstimate, AcceptedBucket, AcceptedAgg, AcceptedBucketKind, CreatorIndex,

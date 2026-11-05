@@ -31,6 +31,8 @@ export interface EstimateDrawerProps {
   totalValue: number;
   regionName?: string;
   variant?: EstimateDrawerVariant;
+  /** Note shown on reseller rows (they count to the TL total, not the region target). */
+  resellerNote?: string;
 }
 
 interface VariantConfig {
@@ -84,7 +86,7 @@ const VARIANTS: Record<EstimateDrawerVariant, VariantConfig> = {
 };
 
 export function EstimateDrawer({
-  items, totalCount, totalValue, regionName, variant = "won",
+  items, totalCount, totalValue, regionName, variant = "won", resellerNote,
 }: EstimateDrawerProps) {
   const cfg = VARIANTS[variant];
   const { Icon } = cfg;
@@ -137,6 +139,7 @@ export function EstimateDrawer({
                     <td className="hidden max-w-[14rem] truncate px-2 py-1 text-[var(--text-primary)] sm:table-cell" title={it.customerName ?? undefined}>
                       {it.customerName || "—"}
                       {it.segment !== undefined && it.segment !== null && (
+                        <>
                         <span
                           className={`ml-1.5 inline-block rounded-full border px-1.5 py-px text-[9px] font-bold leading-3 ${
                             it.segment === "consumer"
@@ -149,12 +152,29 @@ export function EstimateDrawer({
                             it.segment === "consumer"
                               ? "End consumer — counts toward the ₹1L/day target"
                               : it.segment === "reseller"
-                                ? "Reseller — excluded from the ₹1L/day target"
+                                ? `Reseller — excluded from the region target${resellerNote ? `, ${resellerNote}` : ", counts to the TL total"}`
                                 : "Unclassified — excluded until reviewed in the Controller"
                           }
                         >
                           {it.segment === "consumer" ? "consumer" : it.segment === "reseller" ? "reseller" : "?"}
                         </span>
+                        {it.segment === "reseller" && variant === "won" && (
+                          <span
+                            className="ml-1 inline-block rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 py-px text-[9px] font-bold leading-3 text-violet-700 dark:text-violet-300"
+                            title={`This reseller sale counts into the team-lead total${resellerNote ? ` (${resellerNote})` : ""}`}
+                          >
+                            → TL
+                          </span>
+                        )}
+                        {it.viaSalesHead && variant === "won" && (
+                          <span
+                            className="ml-1 inline-block rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-px text-[9px] font-bold leading-3 text-amber-700 dark:text-amber-300"
+                            title="Sales-head direct close re-homed here by the Customer Master region"
+                          >
+                            via SH
+                          </span>
+                        )}
+                        </>
                       )}
                     </td>
                     <td className="px-2 py-1">

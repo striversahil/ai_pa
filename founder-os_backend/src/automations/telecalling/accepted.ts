@@ -229,9 +229,22 @@ export function groupAcceptedByWeek(
   rows: AcceptedEstimate[],
   weekStartOf: (day: string) => string,
 ): Map<string, Map<string, number>> {
+  return groupAcceptedByWeekFiltered(rows, weekStartOf, () => true);
+}
+
+/**
+ * Same as above but only rows passing `pick` count (the TL reseller ledger
+ * passes "segment is reseller"). Direct / unlinked rows never feed a ledger.
+ */
+export function groupAcceptedByWeekFiltered(
+  rows: AcceptedEstimate[],
+  weekStartOf: (day: string) => string,
+  pick: (row: AcceptedEstimate) => boolean,
+): Map<string, Map<string, number>> {
   const out = new Map<string, Map<string, number>>();
   for (const row of rows) {
     if (!row.region) continue; // direct / unlinked never feed a region target
+    if (!pick(row)) continue;
     const week = weekStartOf(row.acceptedAt);
     if (!week) continue;
     let byRegion = out.get(week);

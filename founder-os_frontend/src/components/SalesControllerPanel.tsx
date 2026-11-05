@@ -128,7 +128,7 @@ export default function SalesControllerPanel() {
   // Add/edit agent from the modal — contact + role only, never NeoDove mapping.
   // The closer/follow-up flag is intentionally not edited here: the backend
   // preserves the stored value on PUT and defaults new telecallers on POST.
-  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; tlLevel: string; type: string }) => {
+  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; region2: string; tlLevel: string; type: string }) => {
     if (!updates.name.trim()) return;
     setBusy(true);
     setRosterError(null);
@@ -139,6 +139,7 @@ export default function SalesControllerPanel() {
         phone: updates.phone || null,
         whatsapp: updates.whatsapp || null,
         region: updates.region,
+        region2: updates.region2,
         tlLevel: updates.tlLevel,
         type: updates.type,
       };
@@ -540,17 +541,17 @@ function RosterSection({
             <div className="flex items-center justify-between">
               <div className="font-semibold text-zinc-900 dark:text-white">{t.name}</div>
               <div className="flex items-center gap-1 flex-wrap justify-end">
-                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${t.type === "field_staff" ? "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400" : "border-zinc-400/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-300"}`}>
-                  {t.type === "field_staff" ? "Field Staff" : "Telecaller"}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${t.type === "field_staff" ? "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400" : t.type === "team_lead" ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300" : "border-zinc-400/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-300"}`}>
+                  {t.type === "field_staff" ? "Field Staff" : t.type === "team_lead" ? "Team Lead" : "Telecaller"}
                 </span>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${t.region ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-500 dark:text-indigo-300" : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}>
-                  {t.region || "Unmapped"}
+                  {t.region ? (t.region2 ? `${t.region}+${t.region2}` : t.region) : "Unmapped"}
                 </span>
                 {t.tlLevel && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-semibold">{t.tlLevel}</span>
                 )}
-                <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.type === "field_staff" ? "bg-sky-500/10 text-sky-600 dark:text-sky-400" : t.assignEstimateFollowUps ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
-                  {t.type === "field_staff" ? "Leads only" : t.assignEstimateFollowUps ? "Closer" : "Generator"}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.type === "field_staff" ? "bg-sky-500/10 text-sky-600 dark:text-sky-400" : t.type === "team_lead" ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300" : t.assignEstimateFollowUps ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"}`}>
+                  {t.type === "field_staff" ? "Leads only" : t.type === "team_lead" ? "Reseller target" : t.assignEstimateFollowUps ? "Closer" : "Generator"}
                 </span>
               </div>
             </div>
@@ -571,9 +572,13 @@ function RosterSection({
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Open in region: {t.activeAssigned} · lifetime assigned: {t.totalAssigned}</div>
             <div className="flex gap-2 mt-3 flex-wrap">
               {!readOnly && <button onClick={() => onEditModal(t)} className="flex-1 text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 py-1.5 font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-700">Edit</button>}
-              {t.type !== "field_staff" ? (
+              {t.type !== "field_staff" && t.type !== "team_lead" ? (
                 <span className="flex-1 text-center text-[11px] rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-500 py-1.5 font-semibold">
                   {t.assignEstimateFollowUps ? "Closer" : "Generator"}
+                </span>
+              ) : t.type === "team_lead" ? (
+                <span className="flex-1 text-center text-[11px] rounded-lg bg-indigo-500/5 text-indigo-600 dark:text-indigo-300 py-1.5 font-semibold" title="Team Leads own the reseller target across their two regions — they are never listed as telecallers">
+                  Owns reseller target
                 </span>
               ) : (
                 <span className="flex-1 text-center text-[11px] rounded-lg bg-sky-500/5 text-sky-600 dark:text-sky-400 py-1.5 font-semibold" title="Field staff never operate the dashboard and never close — they only generate leads">
@@ -655,7 +660,7 @@ function RosterEditModal({
   target: RosterRow | null; // null = creating a new agent
   open: boolean;
   busy: boolean;
-  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; tlLevel: string; type: string }) => void;
+  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; region2: string; tlLevel: string; type: string }) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
@@ -663,6 +668,7 @@ function RosterEditModal({
   const [phone, setPhone] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [region, setRegion] = useState("");
+  const [region2, setRegion2] = useState("");
   const [tlLevel, setTlLevel] = useState("");
   const [staffType, setStaffType] = useState("telecaller");
 
@@ -676,11 +682,12 @@ function RosterEditModal({
       setPhone(target.phone ?? "");
       setWhatsapp(target.whatsapp ?? "");
       setRegion(target.region ?? "");
+      setRegion2(target.region2 ?? "");
       setTlLevel(target.tlLevel ?? "");
-      setStaffType(target.type === "field_staff" ? "field_staff" : "telecaller");
+      setStaffType(target.type === "field_staff" ? "field_staff" : target.type === "team_lead" ? "team_lead" : "telecaller");
     } else {
       setName(""); setEmail(""); setPhone(""); setWhatsapp("");
-      setRegion(""); setTlLevel(""); setStaffType("telecaller");
+      setRegion(""); setRegion2(""); setTlLevel(""); setStaffType("telecaller");
     }
   }, [target, open]);
 
@@ -701,7 +708,7 @@ function RosterEditModal({
         <div>
           <h4 className="font-bold text-zinc-900 dark:text-white">{isCreate ? "Add sales staff" : "Edit sales staff"}</h4>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            {isCreate ? "Create a sales-roster entry — telecaller or field staff." : "Update contact details, type and role. NeoDove mapping is read-only."}
+            {isCreate ? "Create a sales-roster entry — telecaller, field staff or team lead." : "Update contact details, type and role. NeoDove mapping is read-only."}
           </p>
         </div>
 
@@ -714,6 +721,7 @@ function RosterEditModal({
             >
               <option value="telecaller">Telecaller — uses the dashboard</option>
               <option value="field_staff">Field Staff — leads logged by sales agents</option>
+              <option value="team_lead">Team Lead — owns the reseller target, never listed as a telecaller</option>
             </select>
           ))}
           {field("Name", <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Full name" />)}
@@ -736,6 +744,23 @@ function RosterEditModal({
               </select>
             ))}
           </div>
+          {tlLevel === "TL1" && field("Second region (TL1 covers two)", (
+            <select value={region2} onChange={(e) => setRegion2(e.target.value)} className={inputCls}>
+              <option value="">Pick second region…</option>
+              {REGIONS.filter((r) => r.id !== region).map((r) => <option key={r.id} value={r.id}>{r.id} · {r.name}</option>)}
+            </select>
+          ))}
+          {tlLevel === "TL1" && region && region2 && region === region2 && (
+            <p className="text-[11px] rounded-lg border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-rose-600 dark:text-rose-400">
+              A TL1 needs two DIFFERENT regions — pick a second region different from the first.
+            </p>
+          )}
+
+          {staffType === "team_lead" && (
+            <p className="text-[11px] rounded-lg border border-indigo-500/25 bg-indigo-500/5 px-3 py-2 text-indigo-700 dark:text-indigo-300">
+              Team Leads are <b>not telecallers</b> — they never appear in the region staff rail. They own the ₹1L/day <b>reseller</b> target across their two regions (TL strip); every reseller sale by their telecallers counts into it.
+            </p>
+          )}
 
           {staffType === "field_staff" && (
             <p className="text-[11px] rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-sky-700 dark:text-sky-400">
@@ -760,8 +785,8 @@ function RosterEditModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave({ name, email, phone, whatsapp, region, tlLevel, type: staffType })}
-            disabled={busy || !name.trim()}
+            onClick={() => onSave({ name, email, phone, whatsapp, region, region2: tlLevel === "TL1" ? region2 : "", tlLevel, type: staffType })}
+            disabled={busy || !name.trim() || (tlLevel === "TL1" && !!region && !!region2 && region === region2)}
             className="px-4 py-2 text-sm rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
             {busy ? "Saving…" : isCreate ? "Add" : "Save"}
           </button>
@@ -851,8 +876,8 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
           rows.push([
             i + 1,
             r.name,
-            r.type === "field_staff" ? "Field Staff" : "Telecaller",
-            r.type === "field_staff" ? "n/a" : r.assignEstimateFollowUps ? "yes" : "no",
+            r.type === "field_staff" ? "Field Staff" : r.type === "team_lead" ? "Team Lead" : "Telecaller",
+            r.type === "field_staff" ? "n/a" : r.type === "team_lead" ? "reseller target" : r.assignEstimateFollowUps ? "yes" : "no",
             r.neodoveUserName,
             r.conversion.assigned,
             r.conversion.won,
@@ -879,7 +904,7 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
         .forEach((r) => {
           rows.push([
             r.name,
-            r.type === "field_staff" ? "Field Staff" : "Telecaller",
+            r.type === "field_staff" ? "Field Staff" : r.type === "team_lead" ? "Team Lead" : "Telecaller",
             r.conversion.assigned,
             r.conversion.won,
             r.conversion.conversionRate,
