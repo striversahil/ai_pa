@@ -19,10 +19,20 @@ import {
   type Bindings,
 } from '../context';
 
-const VALID_KINDS = new Set(['invoice', 'packing_before', 'packing_after', 'lr', 'pod', 'other']);
+const VALID_KINDS = new Set([
+  'invoice', 'packing_before', 'packing_after',
+  'transport_receipt', 'courier_receipt', 'packing_list',
+  'lr', 'pod', 'other',
+]);
 
 /** Kinds the dispatch floor may upload itself (the per-dispatch proof). */
-const PROOF_KINDS = new Set(['invoice', 'packing_before', 'packing_after']);
+const PROOF_KINDS = new Set([
+  'invoice', 'packing_before', 'packing_after',
+  'transport_receipt', 'courier_receipt', 'packing_list',
+]);
+
+/** The three extra dispatch documents accept a photo OR a PDF — the global
+ *  mime allow-list already covers both, so they need no extra check. */
 
 function isAllowedMime(mime: string): boolean {
   return mime === 'application/pdf' || mime.startsWith('image/');
@@ -57,7 +67,7 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
     const kind = String(form.get('kind') || 'other').trim().toLowerCase();
     const file = form.get('file');
     if (!soNumber) return c.json({ error: 'soNumber required' }, 400);
-    if (!VALID_KINDS.has(kind)) return c.json({ error: 'kind must be one of invoice|packing_before|packing_after|lr|pod|other' }, 400);
+    if (!VALID_KINDS.has(kind)) return c.json({ error: 'kind must be one of invoice|packing_before|packing_after|transport_receipt|courier_receipt|packing_list|lr|pod|other' }, 400);
     let isMis = true;
     try {
       await requireMisScope(c);

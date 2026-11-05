@@ -66,7 +66,7 @@ export interface CrmEvent {
   createdAt: string | null;
 }
 
-/** One consumed dispatch proof (fresh invoice per dispatch; packing photos ride along when available). */
+/** One batch line of a consumed dispatch proof (what went out, how much). */
 export interface CrmProofItem {
   itemId: string;
   name: string;
@@ -74,16 +74,44 @@ export interface CrmProofItem {
   unit?: string;
 }
 
+/** One attachment on a consumed dispatch proof — enough to draw a thumbnail
+ *  and open the image/PDF in the shared big-view components. */
+export interface CrmProofFile {
+  id: string;
+  kind: string;
+  fileName: string;
+  mime: string;
+  size: number;
+  /** Authed file route (`/api/crm/files/:id`), never a raw KV key. */
+  url: string;
+  uploadedBy: string;
+  createdAt: string | null;
+}
+
+/** One consumed dispatch proof: invoice (required) + optional packing photos
+ *  and transport/courier/packing-list documents. */
 export interface CrmDispatchProof {
   id: string;
   invoiceId: string;
   beforeId: string | null;
   afterId: string | null;
+  transportId: string | null;
+  courierId: string | null;
+  packingListId: string | null;
   /** Batch snapshot written at dispatch time — what went out in this batch. */
   items: CrmProofItem[];
   actor: string;
   day: string;
   createdAt: string | null;
+  /** Resolved attachment metadata per slot (null when that slot was empty). */
+  files?: {
+    invoice: CrmProofFile | null;
+    before: CrmProofFile | null;
+    after: CrmProofFile | null;
+    transport: CrmProofFile | null;
+    courier: CrmProofFile | null;
+    packingList: CrmProofFile | null;
+  };
 }
 
 export interface CrmOrder {

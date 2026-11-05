@@ -85,7 +85,7 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
     (
       id: string,
       items: Array<{ itemId: string; qty?: number | null }>,
-      proof?: { invoiceId: string | null; beforeId: string | null; afterId: string | null } | null,
+      proof?: { invoiceId: string | null; beforeId: string | null; afterId: string | null; transportId: string | null; courierId: string | null; packingListId: string | null } | null,
     ) => run(() => crmApi.dispatch(id, items, proof)),
     [run],
   );

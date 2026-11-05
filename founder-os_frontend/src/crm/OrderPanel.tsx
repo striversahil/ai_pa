@@ -25,7 +25,7 @@ import {
   Truck,
   X,
 } from "lucide-react";
-import type { CrmDispatchProof, CrmItem, CrmOrder } from "./types";
+import type { CrmDispatchProof, CrmItem, CrmOrder, CrmProofFile } from "./types";
 import { LIFECYCLE_META } from "./types";
 import {
   REASON_MIN,
@@ -38,6 +38,8 @@ import {
 import { istToday, useCrmAction } from "./hooks";
 import { crmApi } from "./api";
 import { REGIONS } from "@/telecalling/regions";
+import Lightbox from "@/components/Lightbox";
+import PdfViewer from "@/components/PdfViewer";
 
 export type PanelMode = "view" | "schedule" | "dispatch" | "reschedule";
 
@@ -158,6 +160,88 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
+const isPhotoFile = (f: CrmProofFile | null): boolean =>
+  !!f && (f.mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.fileName));
+const isPdfFile = (f: CrmProofFile | null): boolean =>
+  !!f && (f.mime === "application/pdf" || /\.pdf$/i.test(f.fileName));
+
+/** A proof slot that was never uploaded — muted, keeps the row's shape. */
+function EmptyProofDoc({ label }: { label: string }) {
+  return (
+    <div className="flex w-[68px] flex-col items-center gap-1 opacity-45" title={`No ${label.toLowerCase()} attached`}>
+      <span className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-zinc-300 text-[11px] text-zinc-400 dark:border-zinc-700">
+        —
+      </span>
+      <span className="w-full truncate text-center text-[9px] font-semibold uppercase tracking-wide text-zinc-400">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/** One document on a consumed proof: photo miniature or PDF tile, both opening
+ *  the shared big-view components (Lightbox for images, PdfViewer for PDFs) —
+ *  the same UX as the SO documents list and management review. */
+function ProofDoc({
+  file,
+  label,
+  onOpen,
+}: {
+  file: CrmProofFile | null;
+  label: string;
+  onOpen: (file: CrmProofFile) => void;
+}) {
+  if (!file || !file.url) return <EmptyProofDoc label={label} />;
+  const photo = isPhotoFile(file);
+  const pdf = isPdfFile(file);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(file)}
+      title={`${label}${file.fileName ? ` — ${file.fileName}` : ""}`}
+      className="group/doc flex w-[68px] cursor-zoom-in flex-col items-center gap-1 border-0 bg-transparent p-0"
+    >
+      {photo ? (
+        <img
+          src={file.url}
+          alt={file.fileName || label}
+          loading="lazy"
+          className="h-12 w-12 rounded-lg border border-zinc-200 object-cover transition-transform group-hover/doc:scale-[1.06] dark:border-zinc-700"
+        />
+      ) : (
+        <span
+          className={`flex h-12 w-12 items-center justify-center rounded-lg border text-lg ${
+            pdf
+              ? "border-red-500/30 bg-red-500/10"
+              : "border-zinc-200 bg-zinc-500/10 dark:border-zinc-700"
+          }`}
+        >
+          {pdf ? "📕" : "📄"}
+        </span>
+      )}
+      <span className="w-full truncate text-center text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        {label}
+      </span>
+      <span className="w-full truncate text-center text-[9px] text-zinc-400 group-hover/doc:text-indigo-500">
+        {file.fileName || (pdf ? "PDF" : "Open")}
+      </span>
+    </button>
+  );
+}
+
+/** Older payloads carried proof IDs without file metadata — synth a tile so a
+ *  dispatched order never shows blank documents. */
+const proofFileFromId = (id: string): CrmProofFile => ({
+  id,
+  kind: "",
+  fileName: "",
+  mime: "",
+  size: 0,
+  url: `/api/crm/files/${id}`,
+  uploadedBy: "",
+  createdAt: null,
+});
+
 export default function OrderPanel({
   order,
   initialMode,
@@ -232,39 +316,79 @@ export default function OrderPanel({
   const [addrError, setAddrError] = useState<string | null>(null);
 
   // ── Dispatch proof (2026-11-04): every Mark dispatched consumes a FRESH
-  // invoice PDF; packing photos ride along when the floor has them. Files
-  // upload the moment they're picked (SoAttachment IDs); the dispatch call
-  // sends the IDs and the server burns the invoice. Starts empty on every
-  // open so a consumed invoice can never be re-picked for a repeat partial.
-  type ProofSlot = "invoice" | "before" | "after";
-  const PROOF_SLOT_META: Record<ProofSlot, { label: string; kind: string; accept: string; hint: string }> = {
-    invoice: { label: "Invoice PDF", kind: "invoice", accept: "application/pdf,.pdf", hint: "The invoice for this dispatch" },
-    before: { label: "Before packing", kind: "packing_before", accept: "image/*", hint: "Add if available" },
-    after: { label: "After packing", kind: "packing_after", accept: "image/*", hint: "Add if available" },
+  // invoice PDF; before/after packing photos and the transport receipt, courier
+  // receipt and packing list ride along when the floor has them. Files upload
+  // the moment they're picked (SoAttachment IDs); the dispatch call sends the
+  // IDs and the server burns them. Starts empty on every open so a consumed
+  // set can never be re-picked for a repeat partial.
+  type ProofSlot = "invoice" | "before" | "after" | "transport" | "courier" | "packingList";
+  const PROOF_SLOT_META: Record<ProofSlot, { label: string; kind: string; accept: string; hint: string; photoOnly: boolean }> = {
+    invoice: { label: "Invoice PDF", kind: "invoice", accept: "application/pdf,.pdf", hint: "The invoice for this dispatch", photoOnly: false },
+    before: { label: "Before packing", kind: "packing_before", accept: "image/*", hint: "Photo before packing", photoOnly: true },
+    after: { label: "After packing", kind: "packing_after", accept: "image/*", hint: "Photo after packing", photoOnly: true },
+    transport: { label: "Transport receipt", kind: "transport_receipt", accept: "application/pdf,image/*,.pdf", hint: "Transporter's receipt (photo or PDF)", photoOnly: false },
+    courier: { label: "Courier receipt", kind: "courier_receipt", accept: "application/pdf,image/*,.pdf", hint: "Courier slip / AWB (photo or PDF)", photoOnly: false },
+    packingList: { label: "Packing list", kind: "packing_list", accept: "application/pdf,image/*,.pdf", hint: "Packing list for the box (photo or PDF)", photoOnly: false },
+
   };
-  const [proofIds, setProofIds] = useState<{ invoiceId: string | null; beforeId: string | null; afterId: string | null }>({
-    invoiceId: null, beforeId: null, afterId: null,
+  const PROOF_SLOTS = Object.keys(PROOF_SLOT_META) as ProofSlot[];
+  const emptyProofIds = (): { invoiceId: string | null; beforeId: string | null; afterId: string | null; transportId: string | null; courierId: string | null; packingListId: string | null } => ({
+    invoiceId: null, beforeId: null, afterId: null, transportId: null, courierId: null, packingListId: null,
   });
-  const [proofNames, setProofNames] = useState<{ invoice: string; before: string; after: string }>({
-    invoice: "", before: "", after: "",
+  const [proofIds, setProofIds] = useState(emptyProofIds);
+  const [proofNames, setProofNames] = useState<Record<ProofSlot, string>>({
+    invoice: "", before: "", after: "", transport: "", courier: "", packingList: "",
   });
   const [proofBusy, setProofBusy] = useState<ProofSlot | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
+  // Big-view state for consumed proof documents (images → Lightbox with
+  // prev/next across the order, PDFs → PdfViewer with a download button).
+  const [proofLightbox, setProofLightbox] = useState<{ images: string[]; index: number } | null>(null);
+  const [proofViewer, setProofViewer] = useState<{ url: string; name: string } | null>(null);
+
+  /** Every photo across this order's consumed proofs, in display order — so the
+   *  lightbox can page through them instead of opening one at a time. */
+  const proofPhotos = useMemo(() => {
+    const out: string[] = [];
+    for (const p of order.proofs ?? []) {
+      const f = p.files;
+      for (const k of ["before", "after", "transport", "courier", "packingList"] as const) {
+        const file = f?.[k];
+        if (file && isPhotoFile(file) && file.url) out.push(file.url);
+      }
+    }
+    return out;
+  }, [order.proofs]);
+
+  const openProofDoc = (file: CrmProofFile) => {
+    if (isPhotoFile(file)) {
+      const list = proofPhotos.includes(file.url) ? proofPhotos : [file.url];
+      setProofLightbox({ images: list, index: Math.max(0, list.indexOf(file.url)) });
+    } else {
+      setProofViewer({ url: file.url, name: file.fileName || "Dispatch document" });
+    }
+  };
 
   useEffect(() => {
-    setProofIds({ invoiceId: null, beforeId: null, afterId: null });
-    setProofNames({ invoice: "", before: "", after: "" });
+    setProofIds(emptyProofIds());
+    setProofNames({ invoice: "", before: "", after: "", transport: "", courier: "", packingList: "" });
     setProofError(null);
   }, [order.id]);
 
   const uploadProof = async (slot: ProofSlot, file: File | null) => {
     if (!file || proofBusy) return;
-    if (slot === "invoice" && file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    const isPhoto = file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+    if (slot === "invoice" && !isPdf) {
       setProofError("Invoice must be a PDF file.");
       return;
     }
-    if (slot !== "invoice" && !file.type.startsWith("image/") && !/\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
+    if (PROOF_SLOT_META[slot].photoOnly && !isPhoto) {
       setProofError("Packing proof must be a photo.");
+      return;
+    }
+    if (!PROOF_SLOT_META[slot].photoOnly && slot !== "invoice" && !isPhoto && !isPdf) {
+      setProofError("Attach a photo or a PDF for this document.");
       return;
     }
     if (file.size > 20 * 1024 * 1024) {
@@ -309,11 +433,18 @@ export default function OrderPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // A document big-view sits on top of the panel — close it first.
+      if (proofLightbox || proofViewer) {
+        setProofLightbox(null);
+        setProofViewer(null);
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, proofLightbox, proofViewer]);
 
   const toggle = (id: string) => {
     setPicked((prev) => {
@@ -671,8 +802,9 @@ export default function OrderPanel({
           </div>
 
           {/* Dispatch proof — every Mark dispatched (even partial) consumes a
-              fresh invoice PDF; packing photos ride along when available. Files
-              upload on pick; the server burns the invoice on dispatch. */}
+              fresh invoice PDF; packing photos, transport receipt, courier
+              receipt and packing list ride along when the floor has them. Files
+              upload on pick; the server burns them on dispatch. */}
           {mode === "dispatch" && (
             <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
@@ -680,7 +812,8 @@ export default function OrderPanel({
               </h3>
               <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
                 Each dispatch needs a fresh invoice PDF — it works once, so the next partial needs a new one.
-                Packing photos can be added if available.
+                Packing photos, transport receipt, courier receipt and packing
+                list can be added when available.
               </p>
               {/* Earlier batches on this SO — what already went out and in what
                   quantity, so the floor never double-dispatches blind. */}
@@ -701,7 +834,14 @@ export default function OrderPanel({
                             <span> — batch details in the audit trail below</span>
                           )}
                           <span className="whitespace-nowrap">
-                            {" "}· <a href={`/api/crm/files/${p.invoiceId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">View</a>
+                            {" "}·{" "}
+                            <button
+                              type="button"
+                              onClick={() => openProofDoc(p.files?.invoice ?? proofFileFromId(p.invoiceId))}
+                              className="border-0 bg-transparent p-0 font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+                            >
+                              View
+                            </button>
                             {" "}<a href={`/api/crm/files/${p.invoiceId}?download=1`} className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Download</a>
                             {!p.beforeId && <span className="text-amber-600 dark:text-amber-400"> · Before pending</span>}
                             {!p.afterId && <span className="text-amber-600 dark:text-amber-400"> · After pending</span>}
@@ -724,8 +864,9 @@ export default function OrderPanel({
                   )}
                 </div>
               )}
-              <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                {(Object.keys(PROOF_SLOT_META) as Array<"invoice" | "before" | "after">).map((slot) => {
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {PROOF_SLOTS.map((slot) => {
+
                   const meta = PROOF_SLOT_META[slot];
                   const done = !!proofIds[`${slot}Id` as keyof typeof proofIds];
                   return (
@@ -737,7 +878,9 @@ export default function OrderPanel({
                           : "border-zinc-300 text-zinc-500 hover:border-indigo-500 hover:text-indigo-600 dark:border-zinc-700 dark:hover:border-indigo-400"
                       } ${proofBusy ? "pointer-events-none opacity-60" : "cursor-pointer"}`}
                     >
-                      <span className="block text-[10px] font-bold uppercase tracking-wide">{meta.label}</span>
+                      <span className="block text-[10px] font-bold uppercase tracking-wide">
+                        {meta.label}
+                      </span>
                       <span className="mt-0.5 block truncate font-semibold">
                         {proofBusy === slot ? "Uploading…" : done ? `✓ ${proofNames[slot]}` : meta.hint}
                       </span>
@@ -804,6 +947,7 @@ export default function OrderPanel({
                     soNumber={order.soNumber}
                     proof={p}
                     canWrite={floorWrite}
+                    onOpenDoc={openProofDoc}
                     onChanged={loadDetail}
                   />
                 ))}
@@ -819,6 +963,7 @@ export default function OrderPanel({
                     </ul>
                   </li>
                 )}
+
               </ul>
             </div>
           )}
@@ -881,6 +1026,17 @@ export default function OrderPanel({
             </div>
           </footer>
         )}
+        {proofLightbox && (
+          <Lightbox
+            images={proofLightbox.images}
+            initialIndex={proofLightbox.index}
+            image={null}
+            onClose={() => setProofLightbox(null)}
+          />
+        )}
+        {proofViewer && (
+          <PdfViewer url={proofViewer.url} name={proofViewer.name} onClose={() => setProofViewer(null)} />
+        )}
       </aside>
     </div>
   );
@@ -894,12 +1050,15 @@ function ProofCard({
   soNumber,
   proof,
   canWrite,
+  onOpenDoc,
   onChanged,
 }: {
   orderId: string;
   soNumber: string;
   proof: CrmDispatchProof;
   canWrite: boolean;
+  /** Opens a document in the shared big view (Lightbox / PdfViewer). */
+  onOpenDoc: (file: CrmProofFile) => void;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState<null | "before" | "after">(null);
@@ -928,33 +1087,99 @@ function ProofCard({
     }
   };
 
-  const renderFile = (label: string, fileId: string | null, slot?: "before" | "after") => (
-    <div className="flex items-center justify-between gap-2 py-0.5">
-      <span className="font-bold text-zinc-700 dark:text-zinc-200">{label}</span>
-      {fileId ? (
-        <span className="flex gap-2">
-          <a href={`/api/crm/files/${fileId}`} target="_blank" rel="noopener" className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">View</a>
-          <a href={`/api/crm/files/${fileId}?download=1`} className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Download</a>
+  /** One proof document: thumbnail on the left (opens the big view), name,
+   *  and explicit View / Download actions. An empty optional slot shows a
+   *  muted dash; an empty packing photo offers the add-later upload. */
+  const renderDoc = (
+    label: string,
+    slot: "invoice" | "before" | "after" | "transport" | "courier" | "packingList",
+    canAddPhoto?: "before" | "after",
+  ) => {
+    const found = proof.files?.[slot];
+    const fallbackId =
+      slot === "invoice" ? proof.invoiceId
+      : slot === "before" ? proof.beforeId
+      : slot === "after" ? proof.afterId
+      : slot === "transport" ? proof.transportId
+      : slot === "courier" ? proof.courierId
+      : proof.packingListId;
+    const file = found?.url ? found : fallbackId ? proofFileFromId(fallbackId) : null;
+    const photo = isPhotoFile(file);
+    return (
+      <div className="flex items-center gap-2 py-1">
+        {file ? (
+          photo ? (
+            <button
+              type="button"
+              onClick={() => onOpenDoc(file)}
+              title={`Open ${label}`}
+              className="h-9 w-9 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-zinc-200 p-0 dark:border-zinc-700"
+            >
+              <img src={file.url} alt={file.fileName || label} loading="lazy" className="h-full w-full object-cover" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onOpenDoc(file)}
+              title={`Open ${label}`}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-sm ${
+                isPdfFile(file) ? "border-red-500/30 bg-red-500/10" : "border-zinc-200 bg-zinc-500/10 dark:border-zinc-700"
+              }`}
+            >
+              {isPdfFile(file) ? "📕" : "📄"}
+            </button>
+          )
+        ) : (
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-dashed border-zinc-300 text-[11px] text-zinc-400 dark:border-zinc-700">
+            —
+          </span>
+        )}
+        <span className="min-w-0 flex-1">
+          <span className="block font-bold text-zinc-700 dark:text-zinc-200">{label}</span>
+          {file?.fileName ? (
+            <span className="block truncate text-[10px] text-zinc-400">{file.fileName}</span>
+          ) : null}
         </span>
-      ) : (
-        <span className="flex items-center gap-2">
-          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">Pending</span>
-          {canWrite && slot && (
-            <label className={`cursor-pointer font-bold text-indigo-600 hover:underline dark:text-indigo-400 ${busy ? "pointer-events-none opacity-60" : ""}`}>
-              {busy === slot ? "Uploading…" : "Add photo"}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                disabled={!!busy}
-                onChange={(e) => { void addPhoto(slot, e.target.files?.[0] ?? null); e.target.value = ""; }}
-              />
-            </label>
-          )}
-        </span>
-      )}
-    </div>
-  );
+        {file ? (
+          <span className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenDoc(file)}
+              className="border-0 bg-transparent p-0 font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              View
+            </button>
+            <a
+              href={`${file.url}?download=1`}
+              className="font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              Download
+            </a>
+          </span>
+        ) : canAddPhoto ? (
+          <span className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+              Pending
+            </span>
+            {canWrite && (
+              <label className={`cursor-pointer font-bold text-indigo-600 hover:underline dark:text-indigo-400 ${busy ? "pointer-events-none opacity-60" : ""}`}>
+                {busy === canAddPhoto ? "Uploading…" : "Add photo"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={!!busy}
+                  onChange={(e) => { void addPhoto(canAddPhoto, e.target.files?.[0] ?? null); e.target.value = ""; }}
+                />
+              </label>
+            )}
+          </span>
+        ) : (
+          <span className="shrink-0 text-[10px] text-zinc-400">—</span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <li className="rounded-xl border border-zinc-200 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-300">
@@ -966,9 +1191,12 @@ function ProofCard({
         </span>
       </div>
       <div className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800/60">
-        {renderFile("Invoice", proof.invoiceId)}
-        {renderFile("Before packing", proof.beforeId, "before")}
-        {renderFile("After packing", proof.afterId, "after")}
+        {renderDoc("Invoice", "invoice")}
+        {renderDoc("Before packing", "before", "before")}
+        {renderDoc("After packing", "after", "after")}
+        {renderDoc("Transport receipt", "transport")}
+        {renderDoc("Courier receipt", "courier")}
+        {renderDoc("Packing list", "packingList")}
       </div>
       {proof.items && proof.items.length > 0 && (
         <ul className="mt-1 space-y-0.5 border-t border-zinc-100 pl-5 pt-1 dark:border-zinc-800/60">

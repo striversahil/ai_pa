@@ -238,14 +238,17 @@ export interface DispatchEntry {
 /**
  * Fresh proof for one dispatch action (decided 2026-11-04): every Mark
  * dispatched — full or partial — consumes a fresh INVOICE PDF. Before/after
- * packing photos are optional and ride along when the floor has them. IDs
- * reference SoAttachment rows; the store verifies ownership/kind/mime/freshness
- * (shape-only here).
+ * packing photos and the transport receipt / courier receipt / packing list are
+ * optional and ride along when the floor has them. IDs reference SoAttachment
+ * rows; the store verifies ownership/kind/mime/freshness (shape-only here).
  */
 export interface DispatchProof {
   invoiceId?: string | null;
   beforeId?: string | null;
   afterId?: string | null;
+  transportId?: string | null;
+  courierId?: string | null;
+  packingListId?: string | null;
 }
 
 export interface DispatchArgs {

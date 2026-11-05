@@ -974,6 +974,7 @@ model AccountsTaskTemplate {
   // policy no. … (label chosen per category in the UI; task rows ignore it).
   identifier  String?
 
+
   @@index([active, frequency])
   @@index([kind, active])
 }
@@ -1881,16 +1882,20 @@ model CrmScheduleEvent {
 // snapshot of the batch ([{ itemId, name, qty, unit }]) so the panel can list
 // previously dispatched batches with their quantities.
 model CrmDispatchProof {
-  id        String   @id @default(uuid())
-  soId      String   @default("")
-  soNumber  String   @default("")
-  invoiceId String  @unique @default("")
-  beforeId  String? @unique
-  afterId   String? @unique
-  items     String   @default("[]")
-  actor     String   @default("")
-  day       String   @default("")
-  createdAt DateTime @default(now())
+  id            String   @id @default(uuid())
+  soId          String   @default("")
+  soNumber      String   @default("")
+  invoiceId     String  @unique @default("")
+  beforeId      String? @unique
+  afterId       String? @unique
+  transportId   String? @unique
+  courierId     String? @unique
+  packingListId String? @unique
+  items         String   @default("[]")
+  actor         String   @default("")
+  day           String   @default("")
+  createdAt     DateTime @default(now())
+
 
   @@index([soId])
   @@index([soNumber])

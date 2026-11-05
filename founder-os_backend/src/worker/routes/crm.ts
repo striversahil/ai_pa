@@ -328,6 +328,9 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
               invoiceId: String(proof?.invoiceId ?? ''),
               beforeId: String(proof?.beforeId ?? ''),
               afterId: String(proof?.afterId ?? ''),
+              transportId: String(proof?.transportId ?? ''),
+              courierId: String(proof?.courierId ?? ''),
+              packingListId: String(proof?.packingListId ?? ''),
             }
           : null,
         actor: v.name,

@@ -201,7 +201,10 @@ describe('crm lifecycle mirror', () => {
   });
 
   it('validateDispatch agrees', () => {
-    const proof = { invoiceId: 'att-inv', beforeId: 'att-before', afterId: 'att-after' };
+    const proof = {
+      invoiceId: 'att-inv', beforeId: 'att-before', afterId: 'att-after',
+      transportId: 'att-transport', courierId: 'att-courier', packingListId: 'att-list',
+    };
     const cases = [
       { items: ITEM_SETS.allScheduled, entries: [] },
       { items: ITEM_SETS.allScheduled, entries: [], proof },
@@ -227,7 +230,21 @@ describe('crm lifecycle mirror', () => {
     // The gate itself: invoice alone dispatches, anything without one is proof_required.
     assert.equal(be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: { invoiceId: 'att-inv' } }).ok, true);
     assert.equal(fe.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: { invoiceId: 'att-inv' } }).ok, true);
-    for (const bad of [undefined, null, {}, { beforeId: 'x', afterId: 'y' }]) {
+    // The five extra documents are optional on both sides — invoice-only is fine
+    // whether none, some or all of them are attached.
+    for (const extra of [
+      {},
+      { transportId: 'att-transport' },
+      { courierId: 'att-courier' },
+      { packingListId: 'att-list' },
+      { transportId: 'att-transport', courierId: 'att-courier', packingListId: 'att-list' },
+    ]) {
+      const a = be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: { invoiceId: 'att-inv', ...extra } });
+      const b = fe.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: { invoiceId: 'att-inv', ...extra } });
+      assert.deepEqual(b, a, `optional proof ${JSON.stringify(extra)}`);
+      assert.equal(a.ok, true);
+    }
+    for (const bad of [undefined, null, {}, { beforeId: 'x', afterId: 'y' }, { transportId: 'x', courierId: 'y', packingListId: 'z' }]) {
       const a = be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: bad });
       const b = fe.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: bad });
       assert.deepEqual(b, a);

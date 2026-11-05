@@ -160,6 +160,9 @@ export interface DispatchProof {
   invoiceId?: string | null;
   beforeId?: string | null;
   afterId?: string | null;
+  transportId?: string | null;
+  courierId?: string | null;
+  packingListId?: string | null;
 }
 
 export function validateDispatch(args: {
