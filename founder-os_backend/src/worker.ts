@@ -43,6 +43,8 @@ import { registerMasterDataRoutes } from './worker/routes/master-data';
 import { registerReportingSheetRoutes } from './worker/routes/reporting-sheet';
 import { registerNeodoveCampaignRoutes } from './worker/routes/neodove-campaign';
 import { registerEventsRoute } from './worker/routes/events';
+import { registerAndroidRoutes } from './worker/routes/android';
+import { registerCallLogRoutes } from './worker/routes/call-log';
 import { scheduled } from './worker/cron';
 
 const app = createApp();
@@ -79,6 +81,8 @@ registerReportingSheetRoutes(app);
 registerNeodoveCampaignRoutes(app);
 registerMarketingRoutes(app);
 registerEventsRoute(app);
+registerAndroidRoutes(app);
+registerCallLogRoutes(app);
 
 export default {
   fetch: app.fetch,

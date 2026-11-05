@@ -13,7 +13,7 @@ export interface AppSettingSpec {
   hint: string;
   /** enum → segmented/dropdown control; text → free model-id input;
    *  textlist → comma-separated provider slugs (empty = compiled default). */
-  kind: 'enum' | 'text' | 'textlist';
+  kind: 'enum' | 'text' | 'textlist' | 'json';
   options: string[];
   default: string;
 }
@@ -34,10 +34,22 @@ export function isValidSettingValue(spec: AppSettingSpec, v: string): boolean {
   }
   if (!s) return false;
   if (spec.kind === 'enum') return spec.options.includes(s);
+  if (spec.kind === 'json') {
+    if (s.length > 500) return false;
+    try { JSON.parse(s); return true; } catch { return false; }
+  }
   return s.length <= 120 && MODEL_ID_RE.test(s);
 }
 
 export const APP_SETTINGS: Record<string, AppSettingSpec> = {
+  'device:call_config': {
+    key: 'device:call_config',
+    label: 'Android call-recording limits',
+    hint: 'JSON: {"loggingOnlyFallback":false,"maxBytes":31457280,"maxMinutes":60,"partMinutes":10}',
+    kind: 'json',
+    options: [],
+    default: '',
+  },
   'chat:primary_provider': {
     key: 'chat:primary_provider',
     label: 'AI chat primary provider',

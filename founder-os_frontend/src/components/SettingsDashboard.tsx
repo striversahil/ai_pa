@@ -6,7 +6,7 @@ import { useLiveDashboard } from "@/hooks/useLiveData";
 
 interface SettingsPayload {
   settings: Record<string, string>;
-  spec: Record<string, { key: string; label: string; hint: string; kind: "enum" | "text" | "textlist"; options: string[]; default: string }>;
+  spec: Record<string, { key: string; label: string; hint: string; kind: "enum" | "text" | "textlist" | "json"; options: string[]; default: string }>;
   preview: {
     chat: { chain: string[]; models: Record<string, string>; route: { slugs: string; mode: string } };
     intake: { chain: string[]; models: Record<string, string> };

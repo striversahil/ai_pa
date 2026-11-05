@@ -81,6 +81,8 @@ export const LiveEvent = {
    * this, so a brand-new endpoint/view goes live with ZERO wiring.
    */
   DataChanged: "data-changed",
+  /** Android device call-log ingest, pairing and device config changes. */
+  DeviceCalls: "device-calls",
 } as const;
 
 export type LiveEventType = (typeof LiveEvent)[keyof typeof LiveEvent];

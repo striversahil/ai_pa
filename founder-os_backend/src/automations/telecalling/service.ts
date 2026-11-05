@@ -338,16 +338,23 @@ export async function computeTelecallingDaily(
   // Enquiry-sourced leads (replaces NeoDove get-leads): one count map for the
   // whole range, looked up per (day, agent) cell below.
   const enquiryLeadsDaily = await getEnquiryLeadCounts(from, to).catch(() => new Map<string, number>());
-  // TEMPORARY manual-call override: same mode flag as the dashboard.
+  // Connected-call source: neodove | manual | device (Setting `call_source`).
   let manualByDay = new Map<string, Record<string, unknown>>();
+  let deviceByDay = new Map<string, { attempted: number; connected: number; notConnected: number; talkSec: number }>();
+  let callSource: 'neodove' | 'manual' | 'device' = 'neodove';
   try {
-    const { getManualCallsMode, listManualCallRows } = await import('./manual-calls');
-    if (await getManualCallsMode() === 'manual') {
+    const { getCallSource } = await import('./call-source');
+    callSource = await getCallSource();
+    if (callSource === 'manual') {
+      const { listManualCallRows } = await import('./manual-calls');
       const rows = await listManualCallRows(from, to);
       for (const r of rows as any[]) {
         const k = `${String(r.day ?? '')}|${String(r.telecallerId ?? '')}`;
         manualByDay.set(k, r as Record<string, unknown>);
       }
+    } else if (callSource === 'device') {
+      const { getDeviceCallSums } = await import('./device-calls');
+      deviceByDay = await getDeviceCallSums(from, to);
     }
   } catch { /* pre-migration → NeoDove as before */ }
   for (const d of dates) {
@@ -361,7 +368,10 @@ export async function computeTelecallingDaily(
         || (!o.neodoveUserName && o.neodoveUserId && neoMap[o.neodoveUserId])
         || undefined;
       const manualRow = manualByDay.get(`${d}|${id}`);
-      const callsConnected = manualRow ? Number((manualRow as any).connectedCalls ?? 0) || 0 : nd?.callsConnected ?? 0;
+      const deviceRow = deviceByDay.get(`${d}|${id}`);
+      const callsConnected = deviceRow
+        ? deviceRow.connected
+        : manualRow ? Number((manualRow as any).connectedCalls ?? 0) || 0 : nd?.callsConnected ?? 0;
       // Enquiry-sourced (Sales Enquiries dashboard) — not NeoDove get-leads.
       const leadsGenerated = enquiryLeadsDaily.get(`${d}|${id}`) ?? 0;
       out.push({
@@ -373,10 +383,10 @@ export async function computeTelecallingDaily(
         won: c?.won ?? 0,
         closedValue: Math.round(c?.value ?? 0),
         closedEstimates: (c?.estIds ?? []).join(' | '),
-        callsAttempted: manualRow ? callsConnected : nd?.callsAttempted ?? 0,
+        callsAttempted: deviceRow ? deviceRow.attempted : manualRow ? callsConnected : nd?.callsAttempted ?? 0,
         callsConnected,
-        callsNotConnected: manualRow ? 0 : nd?.callsNotConnected ?? 0,
-        talkTimeMin: Math.round((nd?.talkTimeSec ?? 0) / 60),
+        callsNotConnected: deviceRow ? deviceRow.notConnected : manualRow ? 0 : nd?.callsNotConnected ?? 0,
+        talkTimeMin: deviceRow ? Math.round(deviceRow.talkSec / 60) : Math.round((nd?.talkTimeSec ?? 0) / 60),
         leadsGenerated,
         leadsConverted: nd?.leadsConverted ?? 0,
         score: (c?.closePoints ?? 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
@@ -493,13 +503,14 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // ManualCallLog rows (screenshot proof) instead of NeoDove. Attempted is set
   // = connected (no attempted split is collected manually); talk/other NeoDove
   // fields ride through unchanged.
-  let callsSource: 'manual' | 'neodove' = 'neodove';
+  let callsSource: 'manual' | 'neodove' | 'device' = 'neodove';
   try {
-    const { getManualCallsMode, getManualCallsSum } = await import('./manual-calls');
-    if (await getManualCallsMode() === 'manual') {
-      callsSource = 'manual';
-      const leadFrom0 = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
-      const leadTo0 = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
+    const { getCallSource } = await import('./call-source');
+    callsSource = await getCallSource();
+    const leadFrom0 = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
+    const leadTo0 = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
+    if (callsSource === 'manual') {
+      const { getManualCallsSum } = await import('./manual-calls');
       const manualSum = await getManualCallsSum(leadFrom0, leadTo0);
       for (const t of telecallers as any[]) {
         const id = String((t as any).id ?? '');
@@ -507,8 +518,34 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         const prev = ndByTc.get(id) ?? {};
         ndByTc.set(id, { ...prev, callsConnected: m, callsAttempted: m, callsNotConnected: 0 });
       }
+    } else if (callsSource === 'device') {
+      const { getDeviceCallSums } = await import('./device-calls');
+      const sums = await getDeviceCallSums(leadFrom0, leadTo0);
+      const perAgent = new Map<string, { attempted: number; connected: number; notConnected: number; talkSec: number }>();
+      for (const [key, value] of sums) {
+        const id = key.slice(key.indexOf('|') + 1);
+        const cur = perAgent.get(id) ?? { attempted: 0, connected: 0, notConnected: 0, talkSec: 0 };
+        cur.attempted += value.attempted;
+        cur.connected += value.connected;
+        cur.notConnected += value.notConnected;
+        cur.talkSec += value.talkSec;
+        perAgent.set(id, cur);
+      }
+      for (const t of telecallers as any[]) {
+        const id = String((t as any).id ?? '');
+        const d = perAgent.get(id);
+        if (!d) continue;
+        const prev = ndByTc.get(id) ?? {};
+        ndByTc.set(id, {
+          ...prev,
+          callsAttempted: d.attempted,
+          callsConnected: d.connected,
+          callsNotConnected: d.notConnected,
+          talkTimeSec: d.talkSec,
+        });
+      }
     }
-  } catch { /* manual table missing (pre-migration) → NeoDove as before */ }
+  } catch { /* call_source unavailable (pre-migration) → NeoDove as before */ }
 
   // Enquiry-sourced leads (Sales Enquiries dashboard — replaces NeoDove
   // get-leads): per-agent enquiry-creation totals over the leaderboard window.

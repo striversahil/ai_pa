@@ -316,6 +316,22 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     );
   }
 
+  // Device-call recording retention: mark metadata expired 90 days after
+  // upload (R2 lifecycle purges the bytes on the same horizon). 21:35 UTC.
+  if (now.getUTCHours() === 21 && min === 35) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const { expireRecordings } = await import('../modules/device-calls/store');
+          const expired = await expireRecordings(env.DB as any);
+          if (expired > 0) console.log(`[cron] device-call retention: ${expired} recording(s) expired`);
+        } catch (e: any) {
+          console.error('[cron] device-call retention failed:', e?.message);
+        }
+      })(),
+    );
+  }
+
   // Email outbox tick every minute (native, token-independent — runs before
   // the dispatcher early-return below): sends due one-shot + daily-repeat
   // mails via the Gmail API. CAS-claimed, max 10/tick, 5 attempts then dead.

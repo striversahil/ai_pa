@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Founder Calls</string>
+    <string name="recording_channel">Call recording</string>
+    <string name="tracking_channel">Call tracking</string>
+</resources>

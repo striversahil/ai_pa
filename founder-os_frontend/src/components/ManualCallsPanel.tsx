@@ -33,7 +33,7 @@ interface Entry {
 }
 
 interface Payload {
-  mode: "manual" | "neodove";
+  mode: "manual" | "neodove" | "device";
   day: string;
   from: string;
   to: string;
@@ -121,7 +121,7 @@ export default function ManualCallsPanel() {
     return out;
   }, [month]);
 
-  const setMode = async (next: "manual" | "neodove") => {
+  const setMode = async (next: "manual" | "neodove" | "device") => {
     setModeBusy(true);
     setMsg(null);
     try {
@@ -132,7 +132,7 @@ export default function ManualCallsPanel() {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error || `toggle failed (${res.status})`);
-      setMsg(next === "manual" ? "Manual mode ON — leaderboard reads this log." : "NeoDove mode — leaderboard reads NeoDove.");
+      setMsg(next === "manual" ? "Manual mode ON — leaderboard reads this log." : next === "device" ? "Device mode — leaderboard reads the Android call log." : "NeoDove mode — leaderboard reads NeoDove.");
       await query.refresh();
     } catch (e: any) {
       setMsg(e?.message ?? "toggle failed");
@@ -226,20 +226,21 @@ export default function ManualCallsPanel() {
             </p>
           </div>
           {canManage ? (
-            <button
-              onClick={() => setMode(mode === "manual" ? "neodove" : "manual")}
-              disabled={modeBusy}
-              className={`rounded-full px-4 py-2 text-xs font-bold shadow ${
-                mode === "manual"
-                  ? "bg-amber-600 text-white hover:bg-amber-700"
-                  : "bg-white text-amber-800 ring-1 ring-amber-500 hover:bg-amber-100"
-              } disabled:opacity-50`}
-            >
-              {modeBusy ? "…" : mode === "manual" ? "Manual ON → use NeoDove" : "NeoDove → use Manual"}
-            </button>
+            <div className="flex gap-1 rounded-full bg-white/70 p-1 ring-1 ring-amber-500">
+              {(["manual", "device", "neodove"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  disabled={modeBusy || mode === m}
+                  className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${mode === m ? "bg-amber-600 text-white" : "text-amber-800 hover:bg-amber-100"} disabled:opacity-80`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
           ) : (
             <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-500">
-              {mode === "manual" ? "Manual mode ON" : "NeoDove mode"}
+              {mode} mode
             </span>
           )}
         </div>

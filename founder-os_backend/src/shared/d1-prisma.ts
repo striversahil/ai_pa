@@ -75,6 +75,9 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DebtorsExportEvent: [],
   PaymentCustomerRemark: ['deleted'],
   ManualCallLog: [],
+  DeviceRegistration: ['loggingOnly'],
+  DeviceCall: [],
+  DevicePairCode: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -141,6 +144,9 @@ const DATE_FIELDS: Record<string, string[]> = {
   DebtorsExportEvent: ['createdAt'],
   PaymentCustomerRemark: ['createdAt', 'deletedAt'],
   ManualCallLog: ['createdAt', 'updatedAt'],
+  DeviceRegistration: ['consentAt', 'lastSeenAt', 'createdAt', 'updatedAt', 'revokedAt'],
+  DevicePairCode: ['expiresAt', 'usedAt', 'createdAt'],
+  DeviceCall: ['attemptAt', 'ringStartAt', 'connectAt', 'endAt', 'recordingUploadedAt', 'receivedAt', 'createdAt', 'updatedAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
@@ -232,6 +238,9 @@ const ID_FIELDS: Record<string, string> = {
   DebtorsExportEvent: 'id',
   PaymentCustomerRemark: 'id',
   ManualCallLog: 'id',
+  DeviceRegistration: 'id',
+  DeviceCall: 'id',
+  DevicePairCode: 'code',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -252,6 +261,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   ProductItem: ['name'],
   Vendor: ['name'],
   ManualCallLog: ['telecallerId', 'day'],
+  DeviceRegistration: ['tokenHash'],
+  DeviceCall: ['idempotencyKey'],
 };
 
 const FLOAT_FIELDS: Record<string, string[]> = {
@@ -968,6 +979,10 @@ export class D1PrismaClient {
   get debtorsExportEvent() { return this.model('DebtorsExportEvent'); }
   // Manual connected-call log (TEMPORARY migration 0102).
   get manualCallLog() { return this.model('ManualCallLog'); }
+  // Android call recording devices + events (migration 0107).
+  get deviceRegistration() { return this.model('DeviceRegistration'); }
+  get devicePairCode() { return this.model('DevicePairCode'); }
+  get deviceCall() { return this.model('DeviceCall'); }
 
   $on() {}
   $disconnect() {}

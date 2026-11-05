@@ -27,6 +27,13 @@ id = "233eb9aa540f48a9a2e21b993252f1aa"
 binding = "CACHE_KV"
 id = "e30d130e7aab46daa5dadba451ddee4f"
 
+# Call recordings (private). Create with:
+#   npx wrangler r2 bucket create founder-os-call-recordings
+# then add a 90-day lifecycle rule on prefix calls/.
+[[r2_buckets]]
+binding = "CALL_RECORDINGS"
+bucket_name = "founder-os-call-recordings"
+
 [durable_objects]
 bindings = [
   { name = "EVENT_HUB", class_name = "EventHub" },

@@ -29,6 +29,7 @@ export type Bindings = {
   DB: D1Database;
   CHAT_FILES?: KVNamespace;
   CACHE_KV?: KVNamespace;
+  CALL_RECORDINGS?: R2Bucket;
   EVENT_HUB?: DurableObjectNamespace;
   ASYNC_RUNNER?: DurableObjectNamespace;
   CHAT_ROOM?: DurableObjectNamespace;
@@ -223,6 +224,9 @@ export const AUTH_EXEMPT = [
   '/api/token/',
   '/api/estimates/bulk-upsert',
   '/api/neodove/report',
+  // Android devices authenticate with a per-device bearer token (requireDevice)
+  // instead of the Google session cookie.
+  '/api/android/',
 ];
 export function isAuthExempt(path: string): boolean {
   return AUTH_EXEMPT.some((p) => path.startsWith(p));

@@ -21,7 +21,7 @@ const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { s
 const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false });
 const MasterDataView = dynamic(() => import("./master-data/MasterDataView"), { ssr: false });
 const SalesDispatchPanel = dynamic(() => import("./SalesDispatchPanel"), { ssr: false });
-const ManualCallsPanel = dynamic(() => import("./ManualCallsPanel"), { ssr: false });
+const CallsPanel = dynamic(() => import("./CallsPanel"), { ssr: false });
 const SalesControllerPanel = dynamic(() => import("./SalesControllerPanel"), { ssr: false });
 
 type SalesTab = "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "controller";
@@ -55,7 +55,7 @@ export default function SalesWorkspace() {
     // audience as the leaderboard. Delete with ManualCallsPanel when NeoDove
     // is trusted again.
     if (canView(me, "telecalling") || canManage) {
-      out.push({ key: "calls", label: "Call Log", icon: "📞" });
+      out.push({ key: "calls", label: "Calls", icon: "📞" });
     }
     // Controller is MIS/sales-head only and sits LAST so agents' tabs never shift.
     if (canManage) out.push({ key: "controller", label: "Controller", icon: "🎛️" });
@@ -106,7 +106,7 @@ export default function SalesWorkspace() {
         {active === "enquiries" && <EnquiryTracker />}
         {active === "master" && <MasterDataView />}
         {active === "dispatch" && <SalesDispatchPanel />}
-        {active === "calls" && <ManualCallsPanel />}
+        {active === "calls" && <CallsPanel />}
         {active === "controller" && <SalesControllerPanel />}
       </div>
     </div>

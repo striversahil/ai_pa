@@ -70,6 +70,9 @@ const tests = [
   ['GET /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments'],
   ['PUT /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientKey: 'TEST', segment: 'consumer' }) }],
   ['PUT /api/telecalling/client-type-rules no-auth -> 403', '/api/telecalling/client-type-rules', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ typeBase: 'Flour Mill', segment: 'consumer' }) }],
+  ['GET /api/call-log/calls no-auth -> 401', '/api/call-log/calls'],
+  ['GET /api/call-log/devices no-auth -> 403', '/api/call-log/devices'],
+  ['POST /api/android/pair empty -> 400', '/api/android/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }],
   ['GET /nope', '/nope'],
 ];
 
@@ -78,7 +81,7 @@ for (const [name, path, opts] of tests) {
   const expects404 = name.includes('(moved to GHA)');
   const ok = expects404
     ? r.status === 404
-    : r.status === 200 || r.status === 401 || r.status === 403 || r.status === 404;
+    : r.status === 200 || r.status === 400 || r.status === 401 || r.status === 403 || r.status === 404;
   console.log(`${ok ? 'PASS' : '???'}  ${name.padEnd(38)} -> ${r.status}`);
   if (r.status === 'ERR' || !ok) {
     console.log('     ', r.body);

@@ -397,8 +397,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     try {
-      const { getManualCallsMode } = await import('../../automations/telecalling/manual-calls');
-      return c.json({ mode: await getManualCallsMode() });
+      const { getCallSource } = await import('../../automations/telecalling/call-source');
+      return c.json({ mode: await getCallSource() });
     } catch (e: any) {
       return c.json({ mode: 'neodove', error: e?.message ?? null });
     }
@@ -408,8 +408,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
     const body = await c.req.json().catch(() => ({}));
     try {
-      const { setManualCallsMode } = await import('../../automations/telecalling/manual-calls');
-      const mode = await setManualCallsMode(body?.mode);
+      const { setCallSource } = await import('../../automations/telecalling/call-source');
+      const mode = await setCallSource(body?.mode);
       notifyLive(c, { type: LiveEvent.Telecalling });
       return c.json({ ok: true, mode });
     } catch (e: any) {

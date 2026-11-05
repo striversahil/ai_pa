@@ -1910,3 +1910,71 @@ model ManualCallLog {
   @@index([day])
   @@index([telecallerId])
 }
+
+// ── Android call recording + logging devices (migration 0107) ───────────────
+model DeviceRegistration {
+  id           String    @id @default(uuid())
+  telecallerId String
+  tokenHash    String    @unique
+  deviceId     String
+  label        String    @default("")
+  status       String    @default("active")
+  loggingOnly  Boolean   @default(false)
+  consentAt    DateTime?
+  lastSeenAt   DateTime?
+  appVersion   String    @default("")
+  pairedBy     String    @default("")
+  pairedByName String    @default("")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  revokedAt    DateTime?
+  revokedBy    String    @default("")
+
+  @@index([telecallerId, status])
+}
+
+model DevicePairCode {
+  code         String    @id
+  telecallerId String
+  expiresAt    DateTime
+  usedAt       DateTime?
+  createdBy    String    @default("")
+  createdAt    DateTime  @default(now())
+
+  @@index([telecallerId])
+}
+
+model DeviceCall {
+  id                  String    @id @default(uuid())
+  deviceId            String
+  telecallerId        String
+  idempotencyKey      String    @unique
+  direction           String    @default("UNKNOWN")
+  numberE164          String    @default("")
+  numberHash          String    @default("")
+  contactName         String    @default("")
+  attemptAt           DateTime
+  ringStartAt         DateTime?
+  connectAt           DateTime?
+  endAt               DateTime?
+  status              String    @default("FAILED")
+  callLogType         Int?
+  durationSec         Int       @default(0)
+  ringSec             Int       @default(0)
+  simSlot             Int?
+  day                 String
+  recordingState      String    @default("none")
+  recordingKey        String    @default("")
+  recordingBytes      Int       @default(0)
+  recordingParts      Int       @default(0)
+  recordingUploadedAt DateTime?
+  audioSource         String    @default("")
+  receivedAt          DateTime
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([telecallerId, attemptAt])
+  @@index([day])
+  @@index([numberHash])
+  @@index([deviceId])
+}

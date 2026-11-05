@@ -105,3 +105,11 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - The event is an invalidation signal (type only, not changed rows) — dashboards refetch the full
   payload from KV-cached endpoints (single-flight `cached()`), so refetch storms collapse to one
   compute. Add a new write endpoint → auto-live is covered.
+## Android call recording + call log (2026-11-05)
+- App lives in `android/` (Kotlin/Compose POC, minSdk 26, sideload only). Debug builds point at `http://127.0.0.1:8787` via `adb reverse`; release at the worker. Build with `./gradlew :app:assembleDebug` or Android Studio.
+- **Phase 1 is a standalone audio-gate POC** (`android/README.md`): 10 connected calls across the AudioSource matrix, far-side 1–5 score, CSV export. Do not build sync/UI before the gate passes.
+- Worker side: `src/modules/device-calls/` (types/parse/tokens/scopes/store) + `worker/routes/android.ts` (device token) + `worker/routes/call-log.ts` (session/manager). `/api/android/` is `AUTH_EXEMPT` and enforces `requireDevice`; all other call-log routes need a session.
+- Device auth = manager-issued one-time `DevicePairCode` → 32-byte token, only its SHA-256 stored in `DeviceRegistration`. Raw tokens are never persisted.
+- Recordings: private R2 `CALL_RECORDINGS` (`calls/<YYYY-MM>/<telecallerId>/<callId>-<part>.m4a`), 90-day lifecycle, streamed by `GET /api/call-log/recording/:callId` (Range). Rows set `expired` by the 21:35 UTC cron.
+- Leaderboard reads exactly one `call_source` (`neodove|manual|device`); the 20% double-count trap is why the switch is explicit. Device aggregates live in `automations/telecalling/device-calls.ts`.
+- Identity is full E.164 + contact snapshot + hash; calls never write CRM/enquiries in v1.
