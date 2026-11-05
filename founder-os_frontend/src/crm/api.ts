@@ -73,10 +73,23 @@ export const crmApi = {
       { items, proof: proof ?? null },
     ),
 
-  attachProofPhotos: (id: string, proofId: string, photos: { beforeId?: string | null; afterId?: string | null }) =>
+  /** Attach documents to a consumed dispatch proof — before/after packing
+   *  photos (images) plus the transport receipt, courier receipt and packing
+   *  list (photo or PDF). First write wins per slot on the server. */
+  attachProofDocs: (
+    id: string,
+    proofId: string,
+    docs: {
+      beforeId?: string | null;
+      afterId?: string | null;
+      transportId?: string | null;
+      courierId?: string | null;
+      packingListId?: string | null;
+    },
+  ) =>
     api.post<{ ok: true; order: CrmOrder }>(
-      `/crm/orders/${encodeURIComponent(id)}/proofs/${encodeURIComponent(proofId)}/photos`,
-      photos,
+      `/crm/orders/${encodeURIComponent(id)}/proofs/${encodeURIComponent(proofId)}/documents`,
+      docs,
     ),
 
   confirmSourceDeletion: (id: string) =>

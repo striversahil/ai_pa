@@ -21,7 +21,7 @@ import type { Hono } from 'hono';
 import { authStore, deps, getMe, isApproved, readSessionCookie, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
 import {
   CrmError,
-  attachProofPhotos,
+  attachProofDocs,
   confirmSourceDeletion,
   dispatchOrder,
   dispatchSummary,
@@ -342,28 +342,35 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Attach packing photos to an existing proof (floor, after the dispatch) ──
-  // The floor may dispatch invoice-only and add before/after photos later from
-  // the same panel. First-write-wins per slot; consumed-file rules match the
-  // dispatch gate. Returns the refreshed order (proofs included).
-  app.post('/api/crm/orders/:id/proofs/:proofId/photos', async (c) => {
+  // ── Attach documents to an existing proof (floor, after the dispatch) ──────
+  // The floor may dispatch invoice-only and add the rest later from the same
+  // panel: before/after packing photos plus the transport receipt, courier
+  // receipt and packing list. First-write-wins per slot; consumed-file rules
+  // match the dispatch gate. `/photos` is the original photos-only path kept
+  // for older clients — both hit the same handler. Returns the refreshed order.
+  const attachProofHandler = async (c: any) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
     const body = await c.req.json().catch(() => ({}));
     try {
-      const res = await attachProofPhotos({
+      const res = await attachProofDocs({
         idOrSo: c.req.param('id'),
         proofId: c.req.param('proofId'),
         beforeId: body?.beforeId ?? null,
         afterId: body?.afterId ?? null,
+        transportId: body?.transportId ?? null,
+        courierId: body?.courierId ?? null,
+        packingListId: body?.packingListId ?? null,
         actor: v.name,
       });
-      notifyLive(c, { type: 'crm', action: 'proof-photo', so: res.order?.soNumber });
+      notifyLive(c, { type: 'crm', action: 'proof-docs', so: res.order?.soNumber });
       return c.json({ ok: true, order: res.order });
     } catch (e) {
       return fail(c, e);
     }
-  });
+  };
+  app.post('/api/crm/orders/:id/proofs/:proofId/documents', attachProofHandler);
+  app.post('/api/crm/orders/:id/proofs/:proofId/photos', attachProofHandler);
 
   // ── Confirm a source deletion (destructive — dispatch/MIS only) ─────────────
   app.post('/api/crm/orders/:id/confirm-source-deletion', async (c) => {

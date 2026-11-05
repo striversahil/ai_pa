@@ -900,17 +900,39 @@ export async function dispatchOrder(args: {
 }
 
 /**
- * Attach packing photos to an existing dispatch proof AFTER the dispatch
- * (2026-11-05): the floor may dispatch invoice-only and add the before/after
- * photos later from the same panel. First-write-wins per slot — a filled slot
- * is never overwritten. Consumed-file rules match the dispatch gate (same SO,
- * right kind/mime, never used by another proof).
+ * Attach documents to an existing dispatch proof AFTER the dispatch
+ * (2026-11-05): the floor usually dispatches invoice-only and adds the rest
+ * when the transporter hands over the receipt or the signed packing list comes
+ * back. All five optional slots are addable later —
+ *   before/after packing photos        (packing_before / packing_after, photos)
+ *   transport / courier / packing list (photo OR PDF)
+ * First-write-wins per slot: a filled slot is never overwritten. Consumed-file
+ * rules match the dispatch gate (same SO, right kind/mime, never used by
+ * another dispatch proof).
  */
-export async function attachProofPhotos(args: {
+export type ProofDocSlot = 'beforeId' | 'afterId' | 'transportId' | 'courierId' | 'packingListId';
+
+export const PROOF_DOC_RULES: Record<
+  ProofDocSlot,
+  { kind: string; label: string; acceptsPdf: boolean }
+> = {
+  beforeId: { kind: 'packing_before', label: 'Before packing', acceptsPdf: false },
+  afterId: { kind: 'packing_after', label: 'After packing', acceptsPdf: false },
+  transportId: { kind: 'transport_receipt', label: 'Transport receipt', acceptsPdf: true },
+  courierId: { kind: 'courier_receipt', label: 'Courier receipt', acceptsPdf: true },
+  packingListId: { kind: 'packing_list', label: 'Packing list', acceptsPdf: true },
+};
+
+const PROOF_DOC_SLOTS = Object.keys(PROOF_DOC_RULES) as ProofDocSlot[];
+
+export async function attachProofDocs(args: {
   idOrSo: string;
   proofId: string;
   beforeId?: string | null;
   afterId?: string | null;
+  transportId?: string | null;
+  courierId?: string | null;
+  packingListId?: string | null;
   actor?: string | null;
 }): Promise<{ order: (CrmOrderRow & { events: any[] }) | null }> {
   const orderRow = await loadRawOrder(args.idOrSo);
@@ -921,59 +943,81 @@ export async function attachProofPhotos(args: {
   if (!proof || str(proof.soId) !== str(orderRow.id)) {
     throw new CrmError('Dispatch proof not found on this sales order.', 404, 'proof_not_found');
   }
-  const beforeId = str(args.beforeId).trim() || null;
-  const afterId = str(args.afterId).trim() || null;
-  if (!beforeId && !afterId) {
-    throw new CrmError('Nothing to attach — pick a before or after photo.', 400, 'no_photos');
+
+  const incoming: Array<[ProofDocSlot, string]> = [];
+  for (const slot of PROOF_DOC_SLOTS) {
+    const id = str((args as any)[slot]).trim();
+    if (id) incoming.push([slot, id]);
   }
-  if (beforeId && beforeId === afterId) {
-    throw new CrmError('Before and after photos must be different files.', 400, 'proof_kind');
-  }
-  if (beforeId && beforeId === str(proof.invoiceId)) {
-    throw new CrmError('That file is the invoice of this dispatch — upload a photo instead.', 400, 'proof_kind');
-  }
-  if (afterId && afterId === str(proof.invoiceId)) {
-    throw new CrmError('That file is the invoice of this dispatch — upload a photo instead.', 400, 'proof_kind');
+  if (incoming.length === 0) {
+    throw new CrmError('Nothing to attach — pick at least one document.', 400, 'no_docs');
   }
 
-  const verifyPhoto = async (id: string, kind: 'packing_before' | 'packing_after', label: string) => {
+  // One file can never fill two slots of the same proof (and never the invoice).
+  const seen = new Set<string>();
+  const invoiceId = str(proof.invoiceId);
+  if (invoiceId) seen.add(invoiceId);
+  for (const [slot, id] of incoming) {
+    if (seen.has(id)) {
+      throw new CrmError(
+        `${PROOF_DOC_RULES[slot].label} must be a different file from the invoice and the other documents.`,
+        400,
+        'proof_kind',
+      );
+    }
+    seen.add(id);
+  }
+
+  // First write wins — an already-filled slot is never replaced.
+  for (const [slot] of incoming) {
+    if (str(proof[slot])) {
+      throw new CrmError(`${PROOF_DOC_RULES[slot].label} is already attached.`, 409, 'doc_attached');
+    }
+  }
+
+  for (const [slot, id] of incoming) {
+    const rule = PROOF_DOC_RULES[slot];
     const row: any = await prisma.soAttachment.findUnique({ where: { id } }).catch(() => null);
     if (!row) {
-      throw new CrmError('Photo file not found — please re-upload it.', 400, 'proof_not_found');
+      throw new CrmError(`${rule.label} file not found — please re-upload it.`, 400, 'proof_not_found');
     }
     if (str(row.soNumber) !== str(orderRow.soNumber)) {
-      throw new CrmError('Photo belongs to a different sales order.', 400, 'proof_wrong_order');
+      throw new CrmError(`${rule.label} belongs to a different sales order.`, 400, 'proof_wrong_order');
     }
-    if (str(row.kind) !== kind || !isImageFile(str(row.mime), str(row.fileName))) {
-      throw new CrmError(`The ${label} photo must be an image uploaded as "${label} packing".`, 400, 'proof_kind');
+    const mime = str(row.mime);
+    const name = str(row.fileName);
+    const okMime = isImageFile(mime, name) || (rule.acceptsPdf && isPdfFile(mime, name));
+    if (str(row.kind) !== rule.kind || !okMime) {
+      throw new CrmError(
+        rule.acceptsPdf
+          ? `The ${rule.label.toLowerCase()} must be uploaded as "${rule.label}" (photo or PDF).`
+          : `The ${rule.label.toLowerCase()} must be a photo uploaded as "${rule.label}".`,
+        400,
+        'proof_kind',
+      );
     }
-    const reused = (await Promise.all([
-      prisma.crmDispatchProof.findFirst({ where: { invoiceId: id } }).catch(() => null),
-      prisma.crmDispatchProof.findFirst({ where: { beforeId: id } }).catch(() => null),
-      prisma.crmDispatchProof.findFirst({ where: { afterId: id } }).catch(() => null),
-      prisma.crmDispatchProof.findFirst({ where: { transportId: id } }).catch(() => null),
-      prisma.crmDispatchProof.findFirst({ where: { courierId: id } }).catch(() => null),
-      prisma.crmDispatchProof.findFirst({ where: { packingListId: id } }).catch(() => null),
-    ])) as any[];
+    const reuseChecks = [prisma.crmDispatchProof.findFirst({ where: { invoiceId: id } }).catch(() => null)];
+    for (const col of PROOF_DOC_SLOTS) {
+      reuseChecks.push(prisma.crmDispatchProof.findFirst({ where: { [col]: id } as any }).catch(() => null));
+    }
+    const reused = (await Promise.all(reuseChecks)) as any[];
     if (reused.some(Boolean)) {
-      throw new CrmError('This photo was already used in a dispatch proof — upload a fresh one.', 400, 'proof_reused');
+      throw new CrmError(
+        'This file was already used in a dispatch proof — upload a fresh one.',
+        400,
+        'proof_reused',
+      );
     }
-  };
+  }
 
   const data: Record<string, unknown> = {};
-  if (beforeId) {
-    if (str(proof.beforeId)) throw new CrmError('Before-packing photo is already attached.', 409, 'photo_attached');
-    await verifyPhoto(beforeId, 'packing_before', 'before');
-    data.beforeId = beforeId;
-  }
-  if (afterId) {
-    if (str(proof.afterId)) throw new CrmError('After-packing photo is already attached.', 409, 'photo_attached');
-    await verifyPhoto(afterId, 'packing_after', 'after');
-    data.afterId = afterId;
-  }
+  for (const [slot, id] of incoming) data[slot] = id;
   await prisma.crmDispatchProof.update({ where: { id: str(proof.id) }, data: data as any });
   return { order: await getOrder(str(orderRow.id)) };
 }
+
+/** Backwards-compatible name for the photos-only era. */
+export const attachProofPhotos = attachProofDocs;
 
 // ── Points ─────────────────────────────────────────────────────────────────
 

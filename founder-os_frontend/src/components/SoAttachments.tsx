@@ -4,7 +4,16 @@ import React, { useState } from "react";
 import Lightbox from "@/components/Lightbox";
 import PdfViewer from "@/components/PdfViewer";
 
-export type SoAttachmentKind = "invoice" | "lr" | "pod" | "other";
+export type SoAttachmentKind =
+  | "invoice"
+  | "packing_before"
+  | "packing_after"
+  | "transport_receipt"
+  | "courier_receipt"
+  | "packing_list"
+  | "lr"
+  | "pod"
+  | "other";
 
 export interface SoAttachment {
   id: string;
@@ -30,6 +39,9 @@ const KIND_META: Record<string, { label: string; chip: string }> = {
   invoice: { label: "Invoice", chip: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30" },
   packing_before: { label: "Before packing", chip: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30" },
   packing_after: { label: "After packing", chip: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/30" },
+  transport_receipt: { label: "Transport receipt", chip: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30" },
+  courier_receipt: { label: "Courier receipt", chip: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/30" },
+  packing_list: { label: "Packing list", chip: "bg-lime-500/10 text-lime-600 dark:text-lime-400 border-lime-500/30" },
   lr: { label: "LR copy", chip: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30" },
   pod: { label: "POD", chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" },
   other: { label: "Doc", chip: "bg-zinc-500/10 text-zinc-500 border-zinc-500/30" },
@@ -209,6 +221,9 @@ export default function SoAttachments({
             <option value="invoice">🧾 Invoice</option>
             <option value="packing_before">📦 Before packing</option>
             <option value="packing_after">📦 After packing</option>
+            <option value="transport_receipt">🛻 Transport receipt</option>
+            <option value="courier_receipt">📮 Courier receipt</option>
+            <option value="packing_list">📋 Packing list</option>
             <option value="lr">🚚 LR copy</option>
             <option value="pod">📦 POD</option>
             <option value="other">📎 Other</option>

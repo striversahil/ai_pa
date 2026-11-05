@@ -704,7 +704,7 @@ export default function OrderPanel({
                   ? "Set the tentative dispatch date for each item — this is the promise the dispatch floor works to. Anything you cannot date needs a reason."
                   : "Pick the items going out and the tentative dispatch date for each. Anything you cannot date needs a reason — leave every item undated to keep the whole order unscheduled with one order-level reason.")}
               {mode === "dispatch" &&
-                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the invoice PDF below — Mark dispatched stays locked until it is attached. Packing photos can be added if available."}
+                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the invoice PDF below — Mark dispatched stays locked until it is attached. Transport receipt, courier receipt, packing list and the packing photos are optional and can be attached now or later from the dispatch proof."}
               {mode === "reschedule" &&
                 "The committed date slipped. Give every selected item a new date and explain the slip — that reason is the audit trail."}
             </p>
@@ -1061,13 +1061,30 @@ function ProofCard({
   onOpenDoc: (file: CrmProofFile) => void;
   onChanged: () => void;
 }) {
-  const [busy, setBusy] = useState<null | "before" | "after">(null);
+  /** The five optional documents — each attaches after the dispatch too.
+   *  Packing photos stay photo-only; the three receipts/docs take photo or PDF. */
+  type AttachSlot = "beforeId" | "afterId" | "transportId" | "courierId" | "packingListId";
+  const ATTACH_META: Record<AttachSlot, { label: string; kind: string; photoOnly: boolean; accept: string; cta: string }> = {
+    beforeId: { label: "Before packing", kind: "packing_before", photoOnly: true, accept: "image/*", cta: "Add photo" },
+    afterId: { label: "After packing", kind: "packing_after", photoOnly: true, accept: "image/*", cta: "Add photo" },
+    transportId: { label: "Transport receipt", kind: "transport_receipt", photoOnly: false, accept: "application/pdf,image/*,.pdf", cta: "Add document" },
+    courierId: { label: "Courier receipt", kind: "courier_receipt", photoOnly: false, accept: "application/pdf,image/*,.pdf", cta: "Add document" },
+    packingListId: { label: "Packing list", kind: "packing_list", photoOnly: false, accept: "application/pdf,image/*,.pdf", cta: "Add document" },
+  };
+  const [busy, setBusy] = useState<AttachSlot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const addPhoto = async (slot: "before" | "after", file: File | null) => {
+  const addDoc = async (slot: AttachSlot, file: File | null) => {
     if (!file || busy) return;
-    if (!file.type.startsWith("image/") && !/\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
-      setError("Packing photo must be an image.");
+    const meta = ATTACH_META[slot];
+    const isPhoto = file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    if (meta.photoOnly && !isPhoto) {
+      setError(`${meta.label} must be a photo.`);
+      return;
+    }
+    if (!meta.photoOnly && !isPhoto && !isPdf) {
+      setError(`${meta.label} must be a photo or a PDF.`);
       return;
     }
     if (file.size > 20 * 1024 * 1024) {
@@ -1077,11 +1094,12 @@ function ProofCard({
     setBusy(slot);
     setError(null);
     try {
-      const id = await uploadProofFile(soNumber, slot === "before" ? "packing_before" : "packing_after", file);
-      await crmApi.attachProofPhotos(orderId, proof.id, slot === "before" ? { beforeId: id } : { afterId: id });
+      const id = await uploadProofFile(soNumber, meta.kind, file);
+      const payload: Partial<Record<AttachSlot, string>> = { [slot]: id };
+      await crmApi.attachProofDocs(orderId, proof.id, payload);
       onChanged();
     } catch (e: any) {
-      setError(e?.message || "Could not attach photo — please retry.");
+      setError(e?.message || `Could not attach the ${meta.label.toLowerCase()} — please retry.`);
     } finally {
       setBusy(null);
     }
@@ -1093,7 +1111,7 @@ function ProofCard({
   const renderDoc = (
     label: string,
     slot: "invoice" | "before" | "after" | "transport" | "courier" | "packingList",
-    canAddPhoto?: "before" | "after",
+    canAdd?: AttachSlot,
   ) => {
     const found = proof.files?.[slot];
     const fallbackId =
@@ -1156,20 +1174,20 @@ function ProofCard({
               Download
             </a>
           </span>
-        ) : canAddPhoto ? (
+        ) : canAdd ? (
           <span className="flex shrink-0 items-center gap-2">
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
               Pending
             </span>
             {canWrite && (
               <label className={`cursor-pointer font-bold text-indigo-600 hover:underline dark:text-indigo-400 ${busy ? "pointer-events-none opacity-60" : ""}`}>
-                {busy === canAddPhoto ? "Uploading…" : "Add photo"}
+                {busy === canAdd ? "Uploading…" : ATTACH_META[canAdd].cta}
                 <input
                   type="file"
-                  accept="image/*"
+                  accept={ATTACH_META[canAdd].accept}
                   className="hidden"
                   disabled={!!busy}
-                  onChange={(e) => { void addPhoto(canAddPhoto, e.target.files?.[0] ?? null); e.target.value = ""; }}
+                  onChange={(e) => { void addDoc(canAdd, e.target.files?.[0] ?? null); e.target.value = ""; }}
                 />
               </label>
             )}
@@ -1192,11 +1210,11 @@ function ProofCard({
       </div>
       <div className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800/60">
         {renderDoc("Invoice", "invoice")}
-        {renderDoc("Before packing", "before", "before")}
-        {renderDoc("After packing", "after", "after")}
-        {renderDoc("Transport receipt", "transport")}
-        {renderDoc("Courier receipt", "courier")}
-        {renderDoc("Packing list", "packingList")}
+        {renderDoc("Before packing", "before", "beforeId")}
+        {renderDoc("After packing", "after", "afterId")}
+        {renderDoc("Transport receipt", "transport", "transportId")}
+        {renderDoc("Courier receipt", "courier", "courierId")}
+        {renderDoc("Packing list", "packingList", "packingListId")}
       </div>
       {proof.items && proof.items.length > 0 && (
         <ul className="mt-1 space-y-0.5 border-t border-zinc-100 pl-5 pt-1 dark:border-zinc-800/60">
