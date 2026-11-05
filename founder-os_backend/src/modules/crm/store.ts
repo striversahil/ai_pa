@@ -311,11 +311,20 @@ async function proofsForOrder(soId: string, itemRows?: any[], eventRows?: any[])
     }
     const files = new Map<string, ProofFile>();
     if (ids.size > 0) {
+      // D1 caps ~100 bound parameters per statement — chunk the IN lookup so
+      // an order with many past dispatches still resolves its thumbnails.
+      const all = Array.from(ids);
+      const chunks: string[][] = [];
+      for (let i = 0; i < all.length; i += 50) chunks.push(all.slice(i, i + 50));
       try {
-        const found = (await prisma.soAttachment.findMany({
-          where: { id: { in: Array.from(ids) } },
-        })) as any[];
-        for (const row of found ?? []) files.set(str(row.id), proofFile(row));
+        const found = await Promise.all(
+          chunks.map((chunk) =>
+            prisma.soAttachment.findMany({ where: { id: { in: chunk } } }).catch(() => []),
+          ),
+        );
+        for (const rowsOfChunk of found) {
+          for (const row of (rowsOfChunk as any[]) ?? []) files.set(str(row.id), proofFile(row));
+        }
       } catch {
         /* metadata best-effort — the IDs still render as inert tiles */
       }
