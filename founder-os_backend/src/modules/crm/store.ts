@@ -220,8 +220,10 @@ export async function orderRegion(idOrSo: string): Promise<string | null> {
   return str(row.region);
 }
 
-/** Full order (with items + audit trail) by row id or SO number. */
-export async function getOrder(idOrSo: string): Promise<(CrmOrderRow & { events: any[] }) | null> {
+/** Full order (with items + audit trail + consumed dispatch proofs) by row id or SO number. */
+export async function getOrder(
+  idOrSo: string,
+): Promise<(CrmOrderRow & { events: any[]; proofs: any[] }) | null> {
   const row: any =
     (await prisma.crmSalesOrder.findFirst({ where: { id: idOrSo } })) ||
     (await prisma.crmSalesOrder.findFirst({ where: { soNumber: idOrSo } }));
