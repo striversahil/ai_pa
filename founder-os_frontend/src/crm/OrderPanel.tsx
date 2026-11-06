@@ -29,9 +29,12 @@ import type { CrmDispatchProof, CrmItem, CrmOrder, CrmProofFile } from "./types"
 import { LIFECYCLE_META } from "./types";
 import {
   REASON_MIN,
+  effectiveQty,
   isDueTodayItem,
   isOverdueItem,
+  validateAmend,
   validateDispatch,
+  validateLocalCancel,
   validateReschedule,
   validateSchedule,
 } from "./lifecycle";
@@ -283,17 +286,18 @@ export default function OrderPanel({
   const events = full.events ?? [];
 
   const defaultPicked = useMemo(() => {
+    const open = items.filter((it) => !(it as any).removedAt);
     if (initialMode === "dispatch") {
       return new Set(
-        items
+        open
           .filter((it) => it.dispatchState === "scheduled" && (isDueTodayItem(it, today) || isOverdueItem(it, today)))
           .map((it) => it.id),
       );
     }
     if (initialMode === "reschedule") {
-      return new Set(items.filter((it) => it.dispatchState === "scheduled" && isOverdueItem(it, today)).map((it) => it.id));
+      return new Set(open.filter((it) => it.dispatchState === "scheduled" && isOverdueItem(it, today)).map((it) => it.id));
     }
-    return new Set(items.filter((it) => it.dispatchState === "unscheduled").map((it) => it.id));
+    return new Set(open.filter((it) => it.dispatchState === "unscheduled").map((it) => it.id));
   }, [initialMode, items, today]);
 
   const [picked, setPicked] = useState<Set<string>>(defaultPicked);
@@ -314,6 +318,24 @@ export default function OrderPanel({
   const [addrOverride, setAddrOverride] = useState<{ billing?: string | null; billingBy?: string | null; shipping?: string | null; shippingBy?: string | null } | null>(null);
   const [addrSaving, setAddrSaving] = useState(false);
   const [addrError, setAddrError] = useState<string | null>(null);
+
+  // ── Amend items (client-confirmed floor overlay) ─────────────────────────
+  // Local state only until Save: qty drafts per line, remove ticks, added
+  // lines, and the single client-confirmation note that becomes the audit.
+  const [amendOpen, setAmendOpen] = useState(false);
+  const [amendQty, setAmendQty] = useState<Record<string, string>>({});
+  const [amendRemove, setAmendRemove] = useState<Set<string>>(new Set());
+  const [amendAdded, setAmendAdded] = useState<Array<{ name: string; qty: string; unit: string }>>([]);
+  const [amendReason, setAmendReason] = useState("");
+  const [amendBusy, setAmendBusy] = useState(false);
+  const [amendError, setAmendError] = useState<string | null>(null);
+  // ── Floor cancel (whole SO) ────────────────────────────────────────────
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const locallyCancelled = !!(full as any).localCancelledAt;
 
   // ── Dispatch proof (2026-11-04): every Mark dispatched consumes a FRESH
   // invoice PDF; before/after packing photos and the transport receipt, courier
@@ -423,6 +445,112 @@ export default function OrderPanel({
       setAddrError(String(e?.message || e));
     } finally {
       setAddrSaving(false);
+    }
+  };
+
+  /** Reset the amend editor to the current server rows. */
+  const openAmend = () => {
+    const seed: Record<string, string> = {};
+    for (const it of items) {
+      if ((it as any).removedAt) continue;
+      seed[it.id] = String(effectiveQty(it as any));
+    }
+    setAmendQty(seed);
+    setAmendRemove(new Set());
+    setAmendAdded([]);
+    setAmendReason("");
+    setAmendError(null);
+    setAmendOpen(true);
+  };
+
+  const amendCheck = useMemo(() => {
+    if (!amendOpen) return { ok: true as const };
+    const qtyChanges = Object.entries(amendQty)
+      .filter(([id, v]) => {
+        const it = items.find((i) => i.id === id);
+        if (!it || (it as any).removedAt) return false;
+        const n = Number(v);
+        return v.trim() !== "" && Number.isFinite(n) && n !== effectiveQty(it as any);
+      })
+      .map(([id, v]) => ({ itemId: id, qty: Number(v) }));
+    return validateAmend({
+      items: items as any,
+      qtyChanges,
+      removals: [...amendRemove].map((id) => ({ itemId: id })),
+      additions: amendAdded
+        .filter((a) => a.name.trim() !== "" || a.qty.trim() !== "")
+        .map((a) => ({ name: a.name.trim(), qty: Number(a.qty), unit: a.unit.trim() || null })),
+      reason: amendReason,
+    });
+  }, [amendOpen, amendQty, amendRemove, amendAdded, amendReason, items]);
+
+  const saveAmend = async () => {
+    if (!amendCheck.ok) return;
+    setAmendBusy(true);
+    setAmendError(null);
+    try {
+      const qtyChanges = Object.entries(amendQty)
+        .filter(([id, v]) => {
+          const it = items.find((i) => i.id === id);
+          if (!it || (it as any).removedAt) return false;
+          const n = Number(v);
+          return v.trim() !== "" && Number.isFinite(n) && n !== effectiveQty(it as any);
+        })
+        .map(([id, v]) => ({ itemId: id, qty: Number(v) }));
+      await crmApi.amendItems(order.id, {
+        qtyChanges,
+        removals: [...amendRemove].map((id) => ({ itemId: id })),
+        additions: amendAdded
+          .filter((a) => a.name.trim() !== "" || a.qty.trim() !== "")
+          .map((a) => ({ name: a.name.trim(), qty: Number(a.qty), unit: a.unit.trim() || null })),
+        reason: amendReason.trim(),
+      });
+      setAmendOpen(false);
+      loadDetail();
+      onChanged();
+    } catch (e: any) {
+      setAmendError(String(e?.message || e));
+    } finally {
+      setAmendBusy(false);
+    }
+  };
+
+  const saveCancelLocal = async () => {
+    const v = validateLocalCancel({
+      reason: cancelReason,
+      order: { status: order.status, orderStatus: (order as any).orderStatus },
+      localCancelledAt: (full as any).localCancelledAt,
+    });
+    if (!v.ok) {
+      setCancelError(v.message);
+      return;
+    }
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await crmApi.cancelLocal(order.id, cancelReason.trim());
+      setCancelOpen(false);
+      setCancelReason("");
+      loadDetail();
+      onChanged();
+    } catch (e: any) {
+      setCancelError(String(e?.message || e));
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
+  const saveReopen = async () => {
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await crmApi.reopen(order.id);
+      loadDetail();
+      onChanged();
+    } catch (e: any) {
+      setCancelError(String(e?.message || e));
+    } finally {
+      setCancelBusy(false);
     }
   };
 
@@ -724,11 +852,14 @@ export default function OrderPanel({
               </thead>
               <tbody>
                 {items.map((it) => {
-                  const overdue = isOverdueItem(it, today);
-                  const due = isDueTodayItem(it, today);
-                  const selectable = mode === "schedule" ? it.dispatchState !== "dispatched" : it.dispatchState === "scheduled";
+                  const overdue = isOverdueItem(it as any, today);
+                  const due = isDueTodayItem(it as any, today);
+                  const removed = !!(it as any).removedAt;
+                  const eff = effectiveQty(it as any);
+                  const amended = (it as any).amendedQty !== null && (it as any).amendedQty !== undefined && Number((it as any).amendedQty) !== Number(it.qty);
+                  const selectable = !removed && (mode === "schedule" ? it.dispatchState !== "dispatched" : it.dispatchState === "scheduled");
                   return (
-                    <tr key={it.id} className="border-t border-zinc-100 align-top dark:border-zinc-800/60">
+                    <tr key={it.id} className={`border-t border-zinc-100 align-top dark:border-zinc-800/60 ${removed ? "opacity-60" : ""}`}>
                       {mode !== "view" && (
                         <td className="px-2 py-2">
                           <input
@@ -741,12 +872,27 @@ export default function OrderPanel({
                         </td>
                       )}
                       <td className="px-2 py-2">
-                        <div className="font-medium text-zinc-800 dark:text-zinc-100">{it.name || it.description || "—"}</div>
+                        <div className={`font-medium text-zinc-800 dark:text-zinc-100 ${removed ? "line-through" : ""}`}>
+                          {it.name || it.description || "—"}
+                          {(it as any).isLocalAdded && (
+                            <span className="ml-1 rounded-full bg-sky-500/15 px-1.5 py-px text-[9px] font-bold text-sky-600 dark:text-sky-400">added on floor</span>
+                          )}
+                        </div>
                         {it.sku && <div className="font-mono text-[10px] text-zinc-500">{it.sku}</div>}
+                        {removed && (
+                          <div className="mt-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+                            Removed{(it as any).removedBy ? ` by ${(it as any).removedBy}` : ""} — client-confirmed
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
-                        {it.qty}
+                        <b>{eff}</b>
                         {it.unit ? ` ${it.unit}` : ""}
+                        {amended && (
+                          <div className="text-[10px] text-zinc-400">
+                            <s>{it.qty}</s> <span className="font-semibold text-indigo-500">amended</span>
+                          </div>
+                        )}
                         {it.dispatchedQty > 0 && it.dispatchState !== "dispatched" && (
                           <div className="text-[10px] text-violet-500">{it.dispatchedQty} out</div>
                         )}
@@ -767,8 +913,8 @@ export default function OrderPanel({
                               <input
                                 type="number"
                                 min={1}
-                                max={Math.max(0, it.qty - it.dispatchedQty)}
-                                placeholder={String(Math.max(0, it.qty - it.dispatchedQty))}
+                                max={Math.max(0, eff - it.dispatchedQty)}
+                                placeholder={String(Math.max(0, eff - it.dispatchedQty))}
                                 value={qty[it.id] ?? ""}
                                 onChange={(e) => setQty((p) => ({ ...p, [it.id]: e.target.value }))}
                                 className="w-20 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-900"
@@ -800,6 +946,190 @@ export default function OrderPanel({
               </tbody>
             </table>
           </div>
+
+          {/* Floor-cancelled banner — the client called the whole SO off. Every
+              floor action stays locked until MIS reopens it. */}
+          {locallyCancelled && (
+            <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
+              <p className="font-bold">Cancelled on the floor{(full as any).localCancelledBy ? ` by ${(full as any).localCancelledBy}` : ""}{(full as any).localCancelledAt ? ` · ${dateLabel(String((full as any).localCancelledAt).slice(0, 10))}` : ""}</p>
+              {(full as any).localCancelReason && <p className="mt-1">{(full as any).localCancelReason}</p>}
+              {floorWrite && (
+                <button
+                  onClick={() => { void saveReopen(); }}
+                  disabled={cancelBusy}
+                  className="mt-2 rounded-lg border border-rose-500/40 px-2.5 py-1 text-[11px] font-bold hover:bg-rose-500/10 disabled:opacity-50"
+                >
+                  {cancelBusy ? "Working…" : "Reopen (MIS only)"}
+                </button>
+              )}
+              {cancelError && <p className="mt-1 font-bold">{cancelError}</p>}
+            </div>
+          )}
+
+          {/* Amend + cancel — floor-only, view mode. The client confirms a
+              different count, drops a line, or calls the whole SO off; every
+              change is logged against the confirmation note. */}
+          {mode === "view" && floorWrite && !locallyCancelled && order.sourceState !== "deleted_source" && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                onClick={() => (amendOpen ? setAmendOpen(false) : openAmend())}
+                className="rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-400"
+              >
+                {amendOpen ? "Close amendment" : "Amend items"}
+              </button>
+              <button
+                onClick={() => { setCancelOpen(!cancelOpen); setCancelError(null); }}
+                className="rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+              >
+                {cancelOpen ? "Close cancel" : "Cancel SO"}
+              </button>
+            </div>
+          )}
+
+          {mode === "view" && amendOpen && floorWrite && !locallyCancelled && (
+            <div className="mt-3 rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-3">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                Amend items — as confirmed by the client
+              </h3>
+              <div className="mt-2 space-y-1.5">
+                {items.filter((it) => !(it as any).removedAt).map((it) => {
+                  const eff = effectiveQty(it as any);
+                  const dispatched = Number(it.dispatchedQty) || 0;
+                  const lockQty = it.dispatchState === "dispatched" || dispatched >= eff - 1e-6;
+                  return (
+                    <div key={it.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white/70 px-2 py-1.5 text-xs dark:bg-zinc-900/60">
+                      <span className="min-w-0 flex-1 font-medium text-zinc-800 dark:text-zinc-100">
+                        {it.name || it.description || it.sku || "—"}
+                        <span className="ml-1 text-[10px] text-zinc-400">Zoho {it.qty}{it.unit ? ` ${it.unit}` : ""}</span>
+                      </span>
+                      <label className="flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-300">
+                        Qty
+                        <input
+                          type="number"
+                          min={Math.max(dispatched, 1)}
+                          disabled={lockQty}
+                          title={lockQty ? "Fully dispatched — quantity is locked" : "Amended quantity"}
+                          value={amendQty[it.id] ?? ""}
+                          onChange={(e) => setAmendQty((p) => ({ ...p, [it.id]: e.target.value }))}
+                          className="w-20 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs outline-none focus:border-indigo-500 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-950"
+                        />
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-1 text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                        <input
+                          type="checkbox"
+                          disabled={dispatched > 1e-6}
+                          title={dispatched > 1e-6 ? "Already dispatched — cannot remove" : "Remove this line"}
+                          checked={amendRemove.has(it.id)}
+                          onChange={() => setAmendRemove((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(it.id)) next.delete(it.id);
+                            else next.add(it.id);
+                            return next;
+                          })}
+                          className="h-3.5 w-3.5 rounded border-zinc-300 accent-rose-600 disabled:opacity-30"
+                        />
+                        Remove
+                      </label>
+                    </div>
+                  );
+                })}
+                {items.filter((it) => !(it as any).removedAt).length === 0 && (
+                  <p className="text-xs italic text-zinc-400">No open lines — every line was removed earlier (see audit trail).</p>
+                )}
+              </div>
+              <div className="mt-2 space-y-1.5">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Added lines</p>
+                {amendAdded.map((a, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={a.name}
+                      onChange={(e) => setAmendAdded((p) => p.map((row, j) => (j === i ? { ...row, name: e.target.value } : row)))}
+                      placeholder="Item name"
+                      className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={a.qty}
+                      onChange={(e) => setAmendAdded((p) => p.map((row, j) => (j === i ? { ...row, qty: e.target.value } : row)))}
+                      placeholder="Qty"
+                      className="w-20 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950"
+                    />
+                    <input
+                      value={a.unit}
+                      onChange={(e) => setAmendAdded((p) => p.map((row, j) => (j === i ? { ...row, unit: e.target.value } : row)))}
+                      placeholder="Unit"
+                      className="w-20 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950"
+                    />
+                    <button
+                      onClick={() => setAmendAdded((p) => p.filter((_, j) => j !== i))}
+                      className="rounded-lg px-2 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => setAmendAdded((p) => [...p, { name: "", qty: "", unit: "" }])}
+                  className="rounded-lg border border-dashed border-zinc-300 px-2.5 py-1 text-[11px] font-bold text-zinc-500 hover:border-indigo-500 hover:text-indigo-600 dark:border-zinc-700"
+                >
+                  + Add a line
+                </button>
+              </div>
+              <div className="mt-2">
+                <ReasonBox label="Client confirmation note" value={amendReason} onChange={setAmendReason} />
+              </div>
+              {!amendCheck.ok && (
+                <p className="mt-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">{amendCheck.message}</p>
+              )}
+              {amendError && <p className="mt-2 text-[11px] font-bold text-rose-500">{amendError}</p>}
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  onClick={() => setAmendOpen(false)}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { void saveAmend(); }}
+                  disabled={!amendCheck.ok || amendBusy}
+                  className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:disabled:bg-zinc-800"
+                >
+                  {amendBusy ? "Saving…" : "Save amendment"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mode === "view" && cancelOpen && floorWrite && !locallyCancelled && (
+            <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-3">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                Cancel this sales order
+              </h3>
+              <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
+                The whole SO leaves the floor. This is logged with your reason and can only be reversed by MIS.
+              </p>
+              <div className="mt-2">
+                <ReasonBox label="Cancellation reason" value={cancelReason} onChange={setCancelReason} />
+              </div>
+              {cancelError && <p className="mt-2 text-[11px] font-bold text-rose-500">{cancelError}</p>}
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  onClick={() => setCancelOpen(false)}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300"
+                >
+                  Keep order
+                </button>
+                <button
+                  onClick={() => { void saveCancelLocal(); }}
+                  disabled={cancelBusy || cancelReason.trim().length < REASON_MIN}
+                  className="rounded-lg bg-rose-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-rose-500 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:disabled:bg-zinc-800"
+                >
+                  {cancelBusy ? "Cancelling…" : "Cancel SO"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Dispatch proof — every Mark dispatched (even partial) consumes a
               fresh invoice PDF; packing photos, transport receipt, courier
@@ -972,20 +1302,24 @@ export default function OrderPanel({
             <div className="mt-5">
               <h3 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audit trail</h3>
               <ul className="space-y-1.5">
-                {events.map((e) => (
-                  <li key={e.id} className="flex items-start gap-2 text-[11px] text-zinc-600 dark:text-zinc-300">
-                    <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
-                    <span>
-                      <b>{e.kind.replace(/_/g, " ")}</b>
-                      {e.fromDate || e.toDate
-                        ? ` · ${e.fromDate ? dateLabel(e.fromDate) : "—"} → ${e.toDate ? dateLabel(e.toDate) : "—"}`
-                        : ""}
-                      {e.qty ? ` · qty ${e.qty}` : ""}
-                      {e.actor ? ` · ${e.actor}` : ""}
-                      {e.reason ? <span className="block text-[10px] text-zinc-500">{e.reason}</span> : null}
-                    </span>
-                  </li>
-                ))}
+                {events.map((e) => {
+                  const itemName = e.itemId ? items.find((i) => i.id === e.itemId)?.name || items.find((i) => i.id === e.itemId)?.sku || null : null;
+                  return (
+                    <li key={e.id} className="flex items-start gap-2 text-[11px] text-zinc-600 dark:text-zinc-300">
+                      <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
+                      <span>
+                        <b>{e.kind.replace(/_/g, " ")}</b>
+                        {itemName ? ` · ${itemName}` : ""}
+                        {e.fromDate || e.toDate
+                          ? ` · ${e.fromDate ? dateLabel(e.fromDate) : "—"} → ${e.toDate ? dateLabel(e.toDate) : "—"}`
+                          : ""}
+                        {e.qty ? ` · qty ${e.qty}` : ""}
+                        {e.actor ? ` · ${e.actor}` : ""}
+                        {e.reason ? <span className="block text-[10px] text-zinc-500">{e.reason}</span> : null}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

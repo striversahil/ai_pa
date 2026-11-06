@@ -20,9 +20,37 @@ Files:
 | Table | Role |
 |---|---|
 | `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, client **billing/shipping address** (floor-editable — an edit sets a marker and the sync leaves that address alone), **payment terms** (extracted Payment line from Zoho's free-text `terms`), the **EST no.** (`referenceNumber`), derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
-| `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative dispatch date, dispatch state, delay reason, dispatched qty |
-| `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal`, `address_updated` |
+| `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative dispatch date, dispatch state, delay reason, dispatched qty, plus the amendment overlay (`amendedQty`, `removedAt/By`, `isLocalAdded` for floor-added lines) |
+| `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal`, `address_updated`, `item_amended`, `item_removed`, `item_added`, `order_cancelled_local`, `order_reopened_local` |
 | `CrmDispatchProof` (migration 0105; photos 0106; batch items 0107; receipts + packing list 0108) | one row per dispatch action: the fresh invoice PDF ID + optional before/after packing photo IDs + transport receipt / courier receipt / packing list IDs + batch items JSON. UNIQUE per file so a repeat partial must upload a new invoice |
+
+## Amendments + full-SO cancel (migration 0114, floor overlay)
+
+The client confirms a different count, drops a line, adds one, or calls the
+whole SO off. The floor records it as a **local overlay** — never a Zoho
+write-back:
+
+| Change | Storage | Queue effect |
+|---|---|---|
+| qty change | `CrmSoItem.amendedQty` (NULL = follow Zoho) | floor works against the amended qty (dispatch caps, remaining) |
+| line removal | `removedAt/By` (row stays, struck-through in the panel) | out of every queue, lifecycle, overdue and dispatch validation |
+| added line | `isLocalAdded` row (`local:*` key) | behaves like a normal undated line |
+| full-SO cancel | `localCancelledAt/By/Reason` + lifecycle parked at `cancelled` | out of every working queue; all floor actions locked; MIS reverses with `POST …/reopen` |
+
+`PUT /api/crm/orders/:id/items` (qtyChanges + removals + additions, one
+client-confirmation note for the batch, every line audit-logged as
+`item_amended` / `item_removed` / `item_added`),
+`POST /api/crm/orders/:id/cancel-local` (`order_cancelled_local`) and
+`POST /api/crm/orders/:id/reopen` (MIS-only, `order_reopened_local`) — all
+three behind the same `dispatch`-scope floor gate as the other writes
+(reopen additionally requires MIS).
+
+The sync never clobbers the overlay: an amended qty survives every tick (the
+rate still refreshes and re-prices the line), a removed line keeps its flag,
+floor-added `local:*` lines are ignored, and a floor cancel keeps its
+parked lifecycle until MIS reopens it. Removing an already-dispatched line
+or amending below the dispatched quantity is rejected on both sides
+(`scripts/guards/crm-lifecycle.test.mjs`).
 
 ## Lifecycle (derived from items, never set by hand)
 
@@ -117,7 +145,9 @@ never score twice.
 
 `GET /api/crm/orders?view=&q=` · `GET /api/crm/summary` ·
 `GET /api/crm/orders/:id` (with audit trail) ·
-`POST /api/crm/orders/:id/{schedule,reschedule,dispatch,confirm-source-deletion}`.
+`POST /api/crm/orders/:id/{schedule,reschedule,dispatch,confirm-source-deletion}` ·
+`PUT /api/crm/orders/:id/{addresses,items}` ·
+`POST /api/crm/orders/:id/{cancel-local,reopen}`.
 
 Read = `crm` or `dispatch` scope; writes = `dispatch` (MIS/root always).
 Frontend `IMPLIED_SCOPES.dispatch = ["crm"]` so a dispatch holder can open the

@@ -340,4 +340,92 @@ describe('crm lifecycle mirror', () => {
       assert.equal(fe.deriveLifecycle(input), be.deriveLifecycle(input), `deriveLifecycle(${String(input)})`);
     }
   });
+
+  it('removed lines leave every queue and lifecycle on both sides', () => {
+    const gone = { id: 'x', dispatchState: 'scheduled', tentativeDispatchDate: TODAY, qty: 10, dispatchedQty: 0, removedAt: '2026-11-06T00:00:00.000Z' };
+    const live = { id: 'y', dispatchState: 'unscheduled', tentativeDispatchDate: null, qty: 5, dispatchedQty: 0 };
+    for (const q of [be, fe]) {
+      assert.equal(q.isRemovedItem(gone), true);
+      assert.equal(q.isRemovedItem(live), false);
+      assert.equal(q.isOrderOverdue([gone], TODAY), false, 'removed overdue must not flag');
+      assert.equal(q.countDueToday([gone], TODAY), 0, 'removed due-today must not count');
+      assert.equal(q.deriveLifecycle([gone], null), 'unscheduled', 'only-removed reads empty');
+    }
+    assert.equal(fe.deriveLifecycle([gone, live], null), be.deriveLifecycle([gone, live], null));
+    for (const qq of [beQ, feQ]) {
+      // Only removed lines ⇒ reads like a bare order: unscheduled, but with
+      // nothing left to schedule or dispatch.
+      const shape = { lifecycle: 'unscheduled', sourceState: 'active', items: [gone] };
+      assert.equal(qq.orderMatchesView(shape, 'unscheduled', TODAY), true, 'removed/unscheduled');
+      assert.equal(qq.orderMatchesView(shape, 'scheduled', TODAY), false, 'removed/scheduled');
+      assert.equal(qq.orderFlags(shape, TODAY).canSchedule, false, 'removed/canSchedule');
+    }
+  });
+
+  it('effectiveQty prefers the amended override on both sides', () => {
+    const amended = { id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: TODAY, qty: 10, dispatchedQty: 2, amendedQty: 7 };
+    for (const q of [be, fe]) {
+      assert.equal(q.effectiveQty(amended), 7);
+      assert.equal(q.effectiveQty({ qty: 10 }), 10);
+      assert.equal(q.resolveDispatchQty(amended, { itemId: 'a' }), 5);
+    }
+    // Dispatch beyond the amended remainder fails identically.
+    for (const q of [be, fe]) {
+      const r = q.validateDispatch({ items: [amended], entries: [{ itemId: 'a', qty: 6 }], proof: { invoiceId: 'att-inv' } });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'bad_qty');
+    }
+    // Removed lines cannot schedule/reschedule/dispatch on either side.
+    const removed = { id: 'r', dispatchState: 'scheduled', tentativeDispatchDate: TODAY, qty: 5, dispatchedQty: 0, removedAt: '2026-11-06T00:00:00.000Z' };
+    const gate = { invoiceId: 'att-inv' };
+    assert.deepEqual(
+      fe.validateSchedule({ today: TODAY, items: [removed], entries: [{ itemId: 'r', date: TODAY }] }),
+      be.validateSchedule({ today: TODAY, items: [removed], entries: [{ itemId: 'r', date: TODAY }] }),
+    );
+    assert.deepEqual(
+      fe.validateReschedule({ today: TODAY, items: [removed], entries: [{ itemId: 'r', date: '2026-11-08' }], reason: 'vendor delayed the material' }),
+      be.validateReschedule({ today: TODAY, items: [removed], entries: [{ itemId: 'r', date: '2026-11-08' }], reason: 'vendor delayed the material' }),
+    );
+    assert.deepEqual(
+      fe.validateDispatch({ items: [removed], entries: [{ itemId: 'r' }], proof: gate }),
+      be.validateDispatch({ items: [removed], entries: [{ itemId: 'r' }], proof: gate }),
+    );
+    assert.equal(be.validateDispatch({ items: [removed], entries: [{ itemId: 'r' }], proof: gate }).code, 'removed_item');
+  });
+
+  it('validateAmend + validateLocalCancel agree on every branch', () => {
+    const open = [
+      { id: 'a', dispatchState: 'unscheduled', tentativeDispatchDate: null, qty: 10, dispatchedQty: 0 },
+      { id: 'b', dispatchState: 'scheduled', tentativeDispatchDate: TODAY, qty: 5, dispatchedQty: 2 },
+      { id: 'c', dispatchState: 'dispatched', tentativeDispatchDate: TODAY, qty: 5, dispatchedQty: 5 },
+    ];
+    const amendCases = [
+      {},
+      { items: open, reason: 'short' },
+      { items: open, reason: 'client confirmed fewer pieces' },
+      { items: open, qtyChanges: [{ itemId: 'a', qty: 8 }], reason: 'client confirmed fewer pieces' },
+      { items: open, qtyChanges: [{ itemId: 'b', qty: 1 }], reason: 'client confirmed fewer pieces' },
+      { items: open, qtyChanges: [{ itemId: 'zzz', qty: 8 }], reason: 'client confirmed fewer pieces' },
+      { items: open, qtyChanges: [{ itemId: 'a', qty: 0 }], reason: 'client confirmed fewer pieces' },
+      { items: open, qtyChanges: [{ itemId: 'a', qty: 8 }, { itemId: 'a', qty: 9 }], reason: 'client confirmed fewer pieces' },
+      { items: open, removals: [{ itemId: 'a' }], reason: 'client dropped this line item' },
+      { items: open, removals: [{ itemId: 'c' }], reason: 'client dropped this line item' },
+      { items: open, additions: [{ name: 'Extra belt', qty: 2 }], reason: 'client added an extra line' },
+      { items: open, additions: [{ name: '', qty: 2 }], reason: 'client added an extra line' },
+      { items: open, additions: [{ name: 'Extra belt', qty: 0 }], reason: 'client added an extra line' },
+    ];
+    for (const c of amendCases) {
+      assert.deepEqual(fe.validateAmend(c), be.validateAmend(c), `validateAmend ${JSON.stringify(c)}`);
+    }
+    const cancelCases = [
+      {},
+      { reason: 'short' },
+      { reason: 'client cancelled the full order', order: { status: 'open' } },
+      { reason: 'client cancelled the full order', order: { status: 'cancelled' } },
+      { reason: 'client cancelled the full order', localCancelledAt: '2026-11-06T00:00:00.000Z' },
+    ];
+    for (const c of cancelCases) {
+      assert.deepEqual(fe.validateLocalCancel(c), be.validateLocalCancel(c), `validateLocalCancel ${JSON.stringify(c)}`);
+    }
+  });
 });

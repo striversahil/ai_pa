@@ -84,6 +84,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DeviceRegistration: ['loggingOnly'],
   DeviceCall: [],
   DevicePairCode: [],
+  CrmSoItem: ['isLocalAdded'],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -162,8 +163,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
   CrmOrderAction: ['createdAt'],
-  CrmSalesOrder: ['firstSeenAt', 'lastSeenAt', 'deletedDetectedAt', 'billingAddressEditedAt', 'shippingAddressEditedAt', 'createdAt', 'updatedAt'],
-  CrmSoItem: ['dispatchedAt', 'scheduledAt', 'createdAt', 'updatedAt'],
+  CrmSalesOrder: ['firstSeenAt', 'lastSeenAt', 'deletedDetectedAt', 'billingAddressEditedAt', 'shippingAddressEditedAt', 'localCancelledAt', 'createdAt', 'updatedAt'],
+  CrmSoItem: ['dispatchedAt', 'scheduledAt', 'removedAt', 'createdAt', 'updatedAt'],
   CrmScheduleEvent: ['createdAt'],
   CrmDispatchProof: ['createdAt'],
   WaTask: ['lastInboundAt', 'lastOutboundAt', 'waitingSince', 'waitTimeoutAt', 'followUpDueAt', 'createdAt', 'updatedAt'],
@@ -290,6 +291,7 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   VendorRate: ['pricePerUnit', 'discountPercent', 'baseRate', 'weightPerUnit'],
   MessageLineage: ['confidence'],
   WaTaskHistory: ['confidence'],
+  CrmSoItem: ['qty', 'rate', 'itemTotal', 'dispatchedQty', 'amendedQty'],
   OverrideLog: ['systemConfidence'],
   HumanResourcesSalaryComponent: ['value', 'cap', 'floor'],
   HumanResourcesSalaryTemplateComponent: ['value', 'cap', 'floor'],

@@ -37,6 +37,11 @@ export const EVENT_KINDS = [
   'source_deleted',
   'confirmed_removal',
   'address_updated',
+  'item_amended',
+  'item_removed',
+  'item_added',
+  'order_cancelled_local',
+  'order_reopened_local',
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
@@ -112,6 +117,10 @@ export interface CrmOrderRow {
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   deletedDetectedAt: string | null;
+  /** Full-SO floor cancel (client-confirmed). Distinct from Zoho status=cancelled. */
+  localCancelledAt: string | null;
+  localCancelledBy: string | null;
+  localCancelReason: string | null;
   items?: CrmItemRow[];
   /** Number of line items on this order (populated on list views). */
   itemCount?: number;
@@ -138,6 +147,13 @@ export interface CrmItemRow {
   dispatchedAt: string | null;
   scheduledBy: string | null;
   scheduledAt: string | null;
+  /** Client-confirmed qty override (NULL = follow Zoho qty). Sync never clears it. */
+  amendedQty: number | null;
+  /** Floor removal marker — removed lines stay in DB but leave every queue. */
+  removedAt: string | null;
+  removedBy: string | null;
+  /** True for lines added by the floor (no Zoho lineKey; the sync ignores them). */
+  isLocalAdded: boolean;
 }
 
 /** Dashboard tab → the predicate that fills it (see queues.ts semantics). */

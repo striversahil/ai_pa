@@ -21,13 +21,16 @@ import type { Hono } from 'hono';
 import { authStore, deps, getMe, isApproved, readSessionCookie, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
 import {
   CrmError,
+  amendOrderItems,
   attachProofDocs,
+  cancelOrderLocal,
   confirmSourceDeletion,
   dispatchOrder,
   dispatchSummary,
   getOrder,
   listOrders,
   orderRegion,
+  reopenOrderLocal,
   rescheduleOrder,
   scheduleOrder,
   updateAddresses,
@@ -135,6 +138,14 @@ async function requireDispatchWrite(c: any): Promise<Viewer | Response> {
   if (!v) return c.json({ error: 'Sign-in required.' }, 401);
   if (v.canWriteFloor) return v;
   return denial(c, 'Dispatch access required — ask root for the dispatch scope.');
+}
+
+/** Floor-cancel reversal is MIS-only (root always passes). */
+async function requireMisWrite(c: any): Promise<Viewer | Response> {
+  const v = await viewer(c);
+  if (!v) return c.json({ error: 'Sign-in required.' }, 401);
+  if (v.isAdmin || v.scopes.includes('mis')) return v;
+  return denial(c, 'MIS access required to reopen a cancelled sales order.');
 }
 
 /** Promise dates: floor OR sales agent (own region, enforced by the caller). */
@@ -371,6 +382,72 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   };
   app.post('/api/crm/orders/:id/proofs/:proofId/documents', attachProofHandler);
   app.post('/api/crm/orders/:id/proofs/:proofId/photos', attachProofHandler);
+
+  // ── Amend items (client-confirmed floor overlay — dispatch/MIS only) ───────
+  // Qty changes, line removals and added lines. The reason is the
+  // client-confirmation note and every line is audit-logged. Nothing is
+  // written back to Zoho Books (read-only).
+  app.put('/api/crm/orders/:id/items', async (c) => {
+    const v = await requireDispatchWrite(c);
+    if (v instanceof Response) return v;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const res = await amendOrderItems({
+        idOrSo: c.req.param('id'),
+        qtyChanges: Array.isArray(body?.qtyChanges)
+          ? body.qtyChanges.map((e: any) => ({ itemId: String(e?.itemId ?? e?.id ?? ''), qty: Number(e?.qty) }))
+          : [],
+        removals: Array.isArray(body?.removals)
+          ? body.removals.map((e: any) => ({ itemId: String(e?.itemId ?? e?.id ?? '') }))
+          : [],
+        additions: Array.isArray(body?.additions)
+          ? body.additions.map((e: any) => ({
+              name: String(e?.name ?? ''),
+              qty: Number(e?.qty),
+              unit: e?.unit === undefined || e?.unit === null ? null : String(e.unit),
+              rate: e?.rate === undefined || e?.rate === null || e?.rate === '' ? null : Number(e.rate),
+            }))
+          : [],
+        reason: body?.reason ? String(body.reason) : null,
+        actor: v.name,
+      });
+      notifyLive(c, { type: 'crm', action: 'amended', so: res.order?.soNumber });
+      return c.json({ ok: true, lifecycle: res.lifecycle, order: res.order });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Cancel the whole SO on the floor (client-confirmed — dispatch/MIS only)
+  app.post('/api/crm/orders/:id/cancel-local', async (c) => {
+    const v = await requireDispatchWrite(c);
+    if (v instanceof Response) return v;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const res = await cancelOrderLocal({
+        idOrSo: c.req.param('id'),
+        reason: body?.reason ? String(body.reason) : null,
+        actor: v.name,
+      });
+      notifyLive(c, { type: 'crm', action: 'cancelled_local', so: res.order?.soNumber });
+      return c.json({ ok: true, lifecycle: res.lifecycle, order: res.order });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Reopen a floor-cancelled SO (MIS only) ────────────────────────────────
+  app.post('/api/crm/orders/:id/reopen', async (c) => {
+    const v = await requireMisWrite(c);
+    if (v instanceof Response) return v;
+    try {
+      const res = await reopenOrderLocal({ idOrSo: c.req.param('id'), actor: v.name });
+      notifyLive(c, { type: 'crm', action: 'reopened_local', so: res.order?.soNumber });
+      return c.json({ ok: true, lifecycle: res.lifecycle, order: res.order });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
 
   // ── Confirm a source deletion (destructive — dispatch/MIS only) ─────────────
   app.post('/api/crm/orders/:id/confirm-source-deletion', async (c) => {

@@ -1862,6 +1862,10 @@ model CrmSalesOrder {
   firstSeenAt     DateTime @default(now())
   lastSeenAt      DateTime @default(now())
   deletedDetectedAt DateTime?
+  // Full-SO floor cancel (client-confirmed). Distinct from Zoho status=cancelled.
+  localCancelledAt DateTime?
+  localCancelledBy String?
+  localCancelReason String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -1889,6 +1893,13 @@ model CrmSoItem {
   dispatchedAt          DateTime?
   scheduledBy           String?
   scheduledAt           DateTime?
+  // Client-confirmed qty override (NULL = follow Zoho qty). The sync never clears it.
+  amendedQty            Float?
+  // Floor removal marker — removed lines stay in DB but leave every queue.
+  removedAt             DateTime?
+  removedBy             String?
+  // True for lines added by the floor (no Zoho lineKey; the sync ignores them).
+  isLocalAdded          Boolean  @default(false)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
@@ -1902,7 +1913,7 @@ model CrmScheduleEvent {
   soId      String
   soNumber  String   @default("")
   itemId    String?
-  kind      String // schedule | reschedule | delay | dispatch | partial_dispatch | source_deleted | confirmed_removal
+  kind      String // schedule | reschedule | delay | dispatch | partial_dispatch | source_deleted | confirmed_removal | address_updated | item_amended | item_removed | item_added | order_cancelled_local | order_reopened_local
   fromDate  String?
   toDate    String?
   reason    String?

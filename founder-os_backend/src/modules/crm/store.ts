@@ -11,11 +11,18 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import {
   deriveLifecycle,
+  effectiveQty,
   isOverdueItem,
+  isRemovedItem,
   resolveDispatchQty,
+  validateAmend,
   validateDispatch,
+  validateLocalCancel,
   validateReschedule,
   validateSchedule,
+  type AmendAdd,
+  type AmendQtyChange,
+  type AmendRemove,
   type DispatchEntry,
   type DispatchProof,
   type ItemLike,
@@ -77,6 +84,10 @@ export function toItemView(row: any): CrmItemRow {
     dispatchedAt: iso(row?.dispatchedAt),
     scheduledBy: row?.scheduledBy ? str(row.scheduledBy) : null,
     scheduledAt: iso(row?.scheduledAt),
+    amendedQty: row?.amendedQty === null || row?.amendedQty === undefined ? null : num(row.amendedQty),
+    removedAt: iso(row?.removedAt),
+    removedBy: row?.removedBy ? str(row.removedBy) : null,
+    isLocalAdded: !!row?.isLocalAdded,
   };
 }
 
@@ -113,6 +124,9 @@ export function toOrderView(row: any, items: CrmItemRow[]): CrmOrderRow {
     firstSeenAt: iso(row?.firstSeenAt),
     lastSeenAt: iso(row?.lastSeenAt),
     deletedDetectedAt: iso(row?.deletedDetectedAt),
+    localCancelledAt: iso(row?.localCancelledAt),
+    localCancelledBy: row?.localCancelledBy ? str(row.localCancelledBy) : null,
+    localCancelReason: row?.localCancelReason ? str(row.localCancelReason) : null,
     items,
     itemCount: items.length,
   };
@@ -622,8 +636,9 @@ async function refreshLifecycle(orderRow: any, items: any[]): Promise<Lifecycle>
       dispatchState: str(it.dispatchState) as ItemState,
       tentativeDispatchDate: it.tentativeDispatchDate ? str(it.tentativeDispatchDate).slice(0, 10) : null,
       delayReason: it.delayReason ?? null,
-      qty: num(it.qty),
+      qty: effectiveQty({ qty: num(it.qty), amendedQty: it.amendedQty ?? null }),
       dispatchedQty: num(it.dispatchedQty),
+      removedAt: it.removedAt ? iso(it.removedAt) : null,
     })) as ItemLike[],
     { status: str(orderRow.status), orderStatus: str(orderRow.orderStatus) },
   );
@@ -637,6 +652,9 @@ async function refreshLifecycle(orderRow: any, items: any[]): Promise<Lifecycle>
 function assertWorkable(orderRow: any, lifecycle: string) {
   if (str(orderRow.sourceState) === 'deleted_source') {
     throw new CrmError('This order was deleted at source — confirm the removal instead.', 409, 'source_deleted');
+  }
+  if (str(orderRow.localCancelledAt)) {
+    throw new CrmError('This sales order was cancelled on the floor — reopen it before scheduling or dispatching.', 409, 'cancelled_local');
   }
   if (lifecycle === 'cancelled') {
     throw new CrmError('This order is cancelled in Zoho — nothing to schedule or dispatch.', 409, 'cancelled');
@@ -668,8 +686,9 @@ export async function scheduleOrder(args: {
     dispatchState: str(r.dispatchState) as ItemState,
     tentativeDispatchDate: r.tentativeDispatchDate ? str(r.tentativeDispatchDate).slice(0, 10) : null,
     delayReason: r.delayReason ?? null,
-    qty: num(r.qty),
+    qty: effectiveQty({ qty: num(r.qty), amendedQty: (r as any).amendedQty ?? null }),
     dispatchedQty: num(r.dispatchedQty),
+    removedAt: (r as any).removedAt ? iso((r as any).removedAt) : null,
   })) as ItemLike[];
 
   const check = validateSchedule({ today, items, entries: args.entries, soReason: args.soReason });
@@ -742,8 +761,9 @@ export async function rescheduleOrder(args: {
     dispatchState: str(r.dispatchState) as ItemState,
     tentativeDispatchDate: r.tentativeDispatchDate ? str(r.tentativeDispatchDate).slice(0, 10) : null,
     delayReason: r.delayReason ?? null,
-    qty: num(r.qty),
+    qty: effectiveQty({ qty: num(r.qty), amendedQty: (r as any).amendedQty ?? null }),
     dispatchedQty: num(r.dispatchedQty),
+    removedAt: (r as any).removedAt ? iso((r as any).removedAt) : null,
   })) as ItemLike[];
 
   const check = validateReschedule({ today, items, entries: args.entries, reason: args.reason });
@@ -811,8 +831,9 @@ export async function dispatchOrder(args: {
     dispatchState: str(r.dispatchState) as ItemState,
     tentativeDispatchDate: r.tentativeDispatchDate ? str(r.tentativeDispatchDate).slice(0, 10) : null,
     delayReason: r.delayReason ?? null,
-    qty: num(r.qty),
+    qty: effectiveQty({ qty: num(r.qty), amendedQty: (r as any).amendedQty ?? null }),
     dispatchedQty: num(r.dispatchedQty),
+    removedAt: (r as any).removedAt ? iso((r as any).removedAt) : null,
   })) as ItemLike[];
 
   const check = validateDispatch({ items, entries: args.entries, proof: args.proof });
@@ -830,7 +851,7 @@ export async function dispatchOrder(args: {
     if (!row) continue;
     const item = items.find((it) => it.id === e.itemId);
     const qty = resolveDispatchQty(item, e);
-    const total = num(row.qty);
+    const total = effectiveQty({ qty: num(row.qty), amendedQty: (row as any).amendedQty ?? null });
     const nextQty = Math.min(total, num(row.dispatchedQty) + qty);
     const complete = nextQty >= total - 1e-6;
     batchItems.push({
@@ -1133,6 +1154,211 @@ export async function updateAddresses(args: {
     day: today,
   });
   return { order: await getOrder(str(orderRow.id)) };
+}
+
+// ── Amendments (client-confirmed floor overlay) ──────────────────────────────
+//
+// The client confirms a different count, drops a line, or adds one. The floor
+// records it as a local overlay — NEVER a Zoho write-back:
+//   qty change → `amendedQty` (the floor works against it, the sync never clears it)
+//   removal    → `removedAt/By` (the line stays in DB, struck-through, out of queues)
+//   addition   → a new `isLocalAdded` row (no Zoho lineKey, the sync ignores it)
+// Every line gets its own audit event; the reason is the client-confirmation note.
+export async function amendOrderItems(args: {
+  idOrSo: string;
+  qtyChanges?: AmendQtyChange[];
+  removals?: AmendRemove[];
+  additions?: AmendAdd[];
+  reason?: string | null;
+  actor?: string | null;
+  today?: string;
+}): Promise<ActionResult> {
+  const today = args.today || istToday();
+  const orderRow = await loadRawOrder(args.idOrSo);
+  assertWorkable(orderRow, str(orderRow.lifecycle));
+  const itemRows = await loadRawItems(str(orderRow.id));
+
+  const items = itemRows.map((r) => ({
+    id: str(r.id),
+    dispatchState: str(r.dispatchState) as ItemState,
+    tentativeDispatchDate: r.tentativeDispatchDate ? str(r.tentativeDispatchDate).slice(0, 10) : null,
+    delayReason: r.delayReason ?? null,
+    qty: effectiveQty({ qty: num(r.qty), amendedQty: (r as any).amendedQty ?? null }),
+    dispatchedQty: num(r.dispatchedQty),
+    removedAt: (r as any).removedAt ? iso((r as any).removedAt) : null,
+  })) as ItemLike[];
+
+  const check = validateAmend({
+    items,
+    qtyChanges: args.qtyChanges,
+    removals: args.removals,
+    additions: args.additions,
+    reason: args.reason,
+  });
+  if (!check.ok) throw new CrmError(check.message, 400, check.code);
+
+  const now = new Date();
+  const byId = new Map(itemRows.map((r) => [str(r.id), r]));
+  const note = str(args.reason).trim();
+
+  for (const c of args.qtyChanges || []) {
+    const row = byId.get(String(c.itemId));
+    if (!row) continue;
+    const before = effectiveQty({ qty: num(row.qty), amendedQty: (row as any).amendedQty ?? null });
+    const want = Number(c.qty);
+    await prisma.crmSoItem.update({
+      where: { id: String(c.itemId) },
+      data: { amendedQty: want, itemTotal: Math.round(want * num(row.rate) * 100) / 100, updatedAt: now } as any,
+    });
+    await writeEvent({
+      soId: str(orderRow.id),
+      soNumber: str(orderRow.soNumber),
+      kind: 'item_amended',
+      itemId: String(c.itemId),
+      qty: want,
+      reason: `Qty ${before} → ${want} (client-confirmed: ${note})`,
+      actor: args.actor,
+      day: today,
+    });
+  }
+
+  for (const r of args.removals || []) {
+    const row = byId.get(String(r.itemId));
+    if (!row) continue;
+    await prisma.crmSoItem.update({
+      where: { id: String(r.itemId) },
+      data: { removedAt: now, removedBy: str(args.actor) || '', updatedAt: now } as any,
+    });
+    await writeEvent({
+      soId: str(orderRow.id),
+      soNumber: str(orderRow.soNumber),
+      kind: 'item_removed',
+      itemId: String(r.itemId),
+      reason: `Removed from the SO (client-confirmed: ${note}) — ${str(row.name || row.description || row.sku || 'line')}`,
+      actor: args.actor,
+      day: today,
+    });
+  }
+
+  for (const a of args.additions || []) {
+    const id = crypto.randomUUID();
+    const qty = Number(a.qty);
+    const rate = Number(a.rate ?? 0);
+    await prisma.crmSoItem.create({
+      data: {
+        id,
+        soId: str(orderRow.id),
+        lineKey: `local:${id.slice(0, 8)}`,
+        name: str(a.name).slice(0, 300),
+        sku: '',
+        description: '',
+        qty,
+        unit: str(a.unit).slice(0, 40),
+        rate,
+        itemTotal: Math.round(qty * (Number.isFinite(rate) ? rate : 0) * 100) / 100,
+        dispatchState: 'unscheduled',
+        tentativeDispatchDate: null,
+        delayReason: null,
+        dispatchedQty: 0,
+        dispatchedAt: null,
+        scheduledBy: null,
+        scheduledAt: null,
+        amendedQty: null,
+        removedAt: null,
+        removedBy: null,
+        isLocalAdded: true,
+        createdAt: now,
+        updatedAt: now,
+      } as any,
+    });
+    await writeEvent({
+      soId: str(orderRow.id),
+      soNumber: str(orderRow.soNumber),
+      kind: 'item_added',
+      itemId: id,
+      qty,
+      reason: `Added to the SO (client-confirmed: ${note}) — ${str(a.name).slice(0, 300)}`,
+      actor: args.actor,
+      day: today,
+    });
+  }
+
+  const fresh = await loadRawItems(str(orderRow.id));
+  const lifecycle = await refreshLifecycle(orderRow, fresh);
+  return { order: await getOrder(str(orderRow.id)), lifecycle };
+}
+
+/**
+ * Cancel the whole SO on the floor (client-confirmed). Sets the local marker
+ * and parks the lifecycle at `cancelled` — out of every working queue, kept
+ * for audit. Distinct from a Zoho `status=cancelled`; the Zoho sync never
+ * clears the marker. MIS can reverse it with `reopenOrderLocal`.
+ */
+export async function cancelOrderLocal(args: {
+  idOrSo: string;
+  reason?: string | null;
+  actor?: string | null;
+  today?: string;
+}): Promise<ActionResult> {
+  const today = args.today || istToday();
+  const orderRow = await loadRawOrder(args.idOrSo);
+  if (str(orderRow.sourceState) === 'deleted_source') {
+    throw new CrmError('This order was deleted at source — confirm the removal instead.', 409, 'source_deleted');
+  }
+  const check = validateLocalCancel({
+    reason: args.reason,
+    order: { status: str(orderRow.status), orderStatus: str(orderRow.orderStatus) },
+    localCancelledAt: str(orderRow.localCancelledAt) || null,
+  });
+  if (!check.ok) throw new CrmError(check.message, 400, check.code);
+  const now = new Date();
+  await prisma.crmSalesOrder.update({
+    where: { id: str(orderRow.id) },
+    data: {
+      localCancelledAt: now,
+      localCancelledBy: str(args.actor) || '',
+      localCancelReason: str(args.reason).trim(),
+      lifecycle: 'cancelled',
+      updatedAt: now,
+    } as any,
+  });
+  await writeEvent({
+    soId: str(orderRow.id),
+    soNumber: str(orderRow.soNumber),
+    kind: 'order_cancelled_local',
+    reason: str(args.reason).trim(),
+    actor: args.actor,
+    day: today,
+  });
+  return { order: await getOrder(str(orderRow.id)), lifecycle: 'cancelled' };
+}
+
+/** Reverse a floor cancel (MIS only — the route enforces it). Re-derives the lifecycle. */
+export async function reopenOrderLocal(args: {
+  idOrSo: string;
+  actor?: string | null;
+  today?: string;
+}): Promise<ActionResult> {
+  const today = args.today || istToday();
+  const orderRow = await loadRawOrder(args.idOrSo);
+  if (!str(orderRow.localCancelledAt)) {
+    throw new CrmError('This sales order is not floor-cancelled — nothing to reopen.', 409, 'not_cancelled');
+  }
+  await prisma.crmSalesOrder.update({
+    where: { id: str(orderRow.id) },
+    data: { localCancelledAt: null, localCancelledBy: null, localCancelReason: null, updatedAt: new Date() } as any,
+  });
+  await writeEvent({
+    soId: str(orderRow.id),
+    soNumber: str(orderRow.soNumber),
+    kind: 'order_reopened_local',
+    reason: 'Floor cancel reversed — order back to the working queues',
+    actor: args.actor,
+    day: today,
+  });
+  const fresh = await loadRawItems(str(orderRow.id));
+  const lifecycle = await refreshLifecycle(orderRow, fresh);
+  return { order: await getOrder(str(orderRow.id)), lifecycle };
 }
 
 // ── Sync (runner → rows) ───────────────────────────────────────────────────
@@ -1764,29 +1990,42 @@ async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
     const lineKey = lineKeyFor(li, i);
     if (seenKeys.has(lineKey)) continue;
     seenKeys.add(lineKey);
-    const qty = num(li.quantity ?? li.qty);
+    // Floor-added lines (lineKey `local:*`) never come from Zoho — a collision
+    // would mean Zoho reused the key, which must not clobber the local line.
+    if (lineKey.startsWith('local:')) continue;
     const rate = num(li.rate);
-    const itemTotal = num(li.item_total) || Math.round(qty * rate * 100) / 100;
-    const payload = {
+    const payload: Record<string, unknown> = {
       name: str(li.name).slice(0, 300),
       sku: str(li.sku || li.item_code).slice(0, 120),
       description: str(li.description).slice(0, 500),
-      qty,
       unit: str(li.unit).slice(0, 40),
       rate,
-      itemTotal,
       updatedAt: now,
     };
     const found = byKey.get(lineKey);
     if (found) {
-      // NEVER clobber local scheduling state — only the Zoho-side fields.
+      // NEVER clobber local scheduling state — only the Zoho-side fields. A
+      // client-confirmed qty override (`amendedQty`) wins permanently: the
+      // sync refreshes the rate but keeps the floor qty and re-prices the line.
+      const amended = (found as any).amendedQty;
+      if (amended !== null && amended !== undefined) {
+        const aq = num(amended);
+        payload.itemTotal = Math.round(aq * rate * 100) / 100;
+      } else {
+        const qty = num(li.quantity ?? li.qty);
+        payload.qty = qty;
+        payload.itemTotal = num(li.item_total) || Math.round(qty * rate * 100) / 100;
+      }
       await prisma.crmSoItem.update({ where: { id: str(found.id) }, data: payload });
     } else {
+      const qty = num(li.quantity ?? li.qty);
       pending.push({
         id: crypto.randomUUID(),
         soId,
         lineKey,
         ...payload,
+        qty,
+        itemTotal: num(li.item_total) || Math.round(qty * rate * 100) / 100,
         dispatchState: 'unscheduled',
         tentativeDispatchDate: null,
         delayReason: null,
@@ -1812,13 +2051,22 @@ async function recomputeLifecyclesById(ids: string[]): Promise<void> {
     for (const r of rows) {
       const items = itemsBySo.get(str(r.id)) || [];
       if (!items.length) continue; // items not fetched this tick — keep state
+      // A floor cancel parks the lifecycle at `cancelled` — the tick must not
+      // resurrect it (only an MIS reopen clears the marker).
+      if (str((r as any).localCancelledAt)) {
+        if (str(r.lifecycle) !== 'cancelled') {
+          await prisma.crmSalesOrder.update({ where: { id: str(r.id) }, data: { lifecycle: 'cancelled', updatedAt: new Date() } });
+        }
+        continue;
+      }
       const lifecycle = deriveLifecycle(
         items.map((it) => ({
           id: it.id,
           dispatchState: it.dispatchState,
           tentativeDispatchDate: it.tentativeDispatchDate,
-          qty: it.qty,
-          dispatchedQty: it.dispatchedQty,
+          qty: effectiveQty({ qty: num((it as any).qty), amendedQty: (it as any).amendedQty ?? null }),
+          dispatchedQty: num((it as any).dispatchedQty),
+          removedAt: (it as any).removedAt ? iso((it as any).removedAt) : null,
         })) as ItemLike[],
         { status: str(r.status), orderStatus: str(r.orderStatus) },
       );

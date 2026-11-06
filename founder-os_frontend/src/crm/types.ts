@@ -51,6 +51,13 @@ export interface CrmItem {
   dispatchedAt: string | null;
   scheduledBy: string | null;
   scheduledAt: string | null;
+  /** Client-confirmed qty override (null = follow Zoho qty). */
+  amendedQty?: number | null;
+  /** Floor removal marker — removed lines stay visible but leave every queue. */
+  removedAt?: string | null;
+  removedBy?: string | null;
+  /** True for lines added by the floor (no Zoho lineKey). */
+  isLocalAdded?: boolean;
 }
 
 export interface CrmEvent {
@@ -152,6 +159,10 @@ export interface CrmOrder {
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   deletedDetectedAt: string | null;
+  /** Full-SO floor cancel (client-confirmed). Distinct from Zoho status=cancelled. */
+  localCancelledAt?: string | null;
+  localCancelledBy?: string | null;
+  localCancelReason?: string | null;
   items: CrmItem[];
   itemCount: number;
   dueToday?: number;

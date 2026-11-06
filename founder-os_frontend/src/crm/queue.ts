@@ -45,19 +45,21 @@ export function orderMatchesView(order: ViewOrder, view: View, today: string): b
   // dispatched, one dated and one undated item is still open in all three
   // states, so it shows in Unscheduled, Scheduled and Dispatched alike.
   const live = order.sourceState === "active" && order.lifecycle !== "cancelled";
+  // Removed lines stay in DB for audit but never count as live work.
+  const open = items.filter((it) => !(it as any)?.removedAt);
   const someItem = (state: "unscheduled" | "scheduled" | "dispatched") =>
-    items.some((it) => it.dispatchState === state);
+    open.some((it) => it.dispatchState === state);
   switch (view) {
     case "source-deleted":
       return order.sourceState === "deleted_source";
     case "dispatch-floor": {
       if (!live) return false;
       if (order.lifecycle === "dispatched") return false;
-      return countDueToday(items, today) > 0 || isOrderOverdue(items, today);
+      return countDueToday(open, today) > 0 || isOrderOverdue(open, today);
     }
     case "unscheduled":
       // No items captured yet counts as unscheduled — nothing ships undated.
-      return live && (items.length === 0 || someItem("unscheduled"));
+      return live && (open.length === 0 || someItem("unscheduled"));
     case "scheduled":
       return live && someItem("scheduled");
     case "dispatched":
@@ -78,6 +80,7 @@ export function orderMatchesView(order: ViewOrder, view: View, today: string): b
 export function earliestCommittedDate(items: readonly ItemLike[]): string {
   let min = "";
   for (const it of items || []) {
+    if ((it as any)?.removedAt) continue;
     if (it.dispatchState !== "scheduled") continue;
     const d = String(it.tentativeDispatchDate || "");
     if (!d) continue;
@@ -95,16 +98,17 @@ export interface OrderFlags {
 
 export function orderFlags(order: ViewOrder, today: string): OrderFlags {
   const items = order.items || [];
+  const open = items.filter((it) => !(it as any)?.removedAt);
   return {
-    overdue: isOrderOverdue(items, today),
-    dueToday: countDueToday(items, today),
+    overdue: isOrderOverdue(open, today),
+    dueToday: countDueToday(open, today),
     canSchedule:
       order.sourceState === "active" &&
       order.lifecycle !== "cancelled" &&
-      items.some((it) => it.dispatchState === "unscheduled"),
+      open.some((it) => it.dispatchState === "unscheduled"),
     canDispatch:
       order.sourceState === "active" &&
       order.lifecycle !== "cancelled" &&
-      items.some((it) => it.dispatchState === "scheduled"),
+      open.some((it) => it.dispatchState === "scheduled"),
   };
 }

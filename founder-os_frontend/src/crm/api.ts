@@ -102,4 +102,33 @@ export const crmApi = {
       `/crm/orders/${encodeURIComponent(id)}/addresses`,
       addresses,
     ),
+
+  /** Amend lines: qty changes, removals, added lines + client-confirmation note. */
+  amendItems: (
+    id: string,
+    payload: {
+      qtyChanges: Array<{ itemId: string; qty: number }>;
+      removals: Array<{ itemId: string }>;
+      additions: Array<{ name: string; qty: number; unit?: string | null; rate?: number | null }>;
+      reason: string;
+    },
+  ) =>
+    api.put<{ ok: true; lifecycle: string; order: CrmOrder }>(
+      `/crm/orders/${encodeURIComponent(id)}/items`,
+      payload,
+    ),
+
+  /** Cancel the whole SO on the floor (client-confirmed). */
+  cancelLocal: (id: string, reason: string) =>
+    api.post<{ ok: true; lifecycle: string; order: CrmOrder }>(
+      `/crm/orders/${encodeURIComponent(id)}/cancel-local`,
+      { reason },
+    ),
+
+  /** Reverse a floor cancel (MIS only). */
+  reopen: (id: string) =>
+    api.post<{ ok: true; lifecycle: string; order: CrmOrder }>(
+      `/crm/orders/${encodeURIComponent(id)}/reopen`,
+      {},
+    ),
 };

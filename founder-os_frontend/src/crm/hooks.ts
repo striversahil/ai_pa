@@ -111,5 +111,25 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
     [run],
   );
 
-  return { ...state, schedule, promise, reschedule, dispatch, confirmRemoval, updateAddresses };
+  const amendItems = useCallback(
+    (
+      id: string,
+      payload: {
+        qtyChanges: Array<{ itemId: string; qty: number }>;
+        removals: Array<{ itemId: string }>;
+        additions: Array<{ name: string; qty: number; unit?: string | null; rate?: number | null }>;
+        reason: string;
+      },
+    ) => run(() => crmApi.amendItems(id, payload)),
+    [run],
+  );
+
+  const cancelLocal = useCallback(
+    (id: string, reason: string) => run(() => crmApi.cancelLocal(id, reason)),
+    [run],
+  );
+
+  const reopen = useCallback((id: string) => run(() => crmApi.reopen(id)), [run]);
+
+  return { ...state, schedule, promise, reschedule, dispatch, confirmRemoval, updateAddresses, amendItems, cancelLocal, reopen };
 }
