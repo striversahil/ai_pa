@@ -34,6 +34,8 @@ export interface CampaignAgent {
   active: boolean;
   /** db = mapped in Controller, secret = Worker-secret fallback, none = unset. */
   source: "db" | "secret" | "none";
+  /** Roster regions this Team Lead covers (hint only — routing never blocks on it). */
+  covers?: string[];
 }
 
 export interface CampaignAgentPlan extends CampaignAgent {
@@ -46,6 +48,8 @@ export interface CampaignStatesPayload {
   configured: boolean;
   liveEnabled: boolean;
   agents: CampaignAgent[];
+  /** Team-Lead full-copy targets (all TLs; `covers` hints the region owner). */
+  teamLeads: CampaignAgent[];
   states: CampaignStateCount[];
   types: CampaignTypeCount[];
 }
@@ -123,8 +127,9 @@ export const SKIP_LABELS: Record<CampaignSkip["reason"], string> = {
 };
 
 /**
- * "Both agents — split evenly" vs one named agent.
- * The single-agent option carries the agent key in `agentKey`.
+ * "Both agents — split evenly" vs one named agent vs a full copy to a TL.
+ * The single-agent option carries the agent key in `agentKey`. TL entries
+ * always mean the whole state copy (split stays pair-only — hash stability).
  */
 export interface DistributionOption {
   id: string;
@@ -133,11 +138,14 @@ export interface DistributionOption {
   distribution: Distribution;
   agentKey: string;
   disabled: boolean;
+  /** Set on Team-Lead options (full-copy coverage target). */
+  teamLead?: boolean;
 }
 
-/** Build the selector options for a region's agent pair. */
+/** Build the selector options for a region's agent pair + Team-Lead copies. */
 export function distributionOptions(
   agents: CampaignAgent[],
+  teamLeads: CampaignAgent[],
   stateName: string,
 ): DistributionOption[] {
   const usable = agents.filter((a) => a.active);
@@ -166,7 +174,24 @@ export function distributionOptions(
     disabled: !agent.configured,
   }));
 
-  return [both, ...singles];
+  const tls: DistributionOption[] = teamLeads
+    .filter((t) => t.active)
+    .map((tl) => {
+      const covers = (tl.covers ?? []).filter(Boolean);
+      return {
+        id: `single:${tl.key}`,
+        label: `Full copy to ${tl.name} (TL)`,
+        hint: tl.configured
+          ? `Every lead in ${stateName || "this state"} also goes to TL ${tl.name}${covers.length > 0 ? ` (covers ${covers.join("+")})` : ""} — coverage copy, agents keep theirs.`
+          : `TL ${tl.name} has no campaign URL configured yet.`,
+        distribution: "single" as Distribution,
+        agentKey: tl.key,
+        disabled: !tl.configured,
+        teamLead: true,
+      };
+    });
+
+  return [both, ...singles, ...tls];
 }
 
 /** "Neha 59 / Arjun 59" — the preview's per-agent split. */

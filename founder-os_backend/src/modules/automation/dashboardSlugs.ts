@@ -27,6 +27,7 @@ export const DASHBOARD_SLUGS = new Set<string>([
   'reporting-sheet',
   'crm',
   'product-line',
+  'stock',
   'samarth-overview',
   'sahil-overview',
   'linkedin',

@@ -26,6 +26,7 @@ const SahilOverviewDashboard = dynamic(() => import("./SahilOverviewDashboard"),
 const LinkedinDashboard = dynamic(() => import("./LinkedinDashboard"), { ssr: false });
 const AiUsageDashboard = dynamic(() => import("./AiUsageDashboard"), { ssr: false });
 const ReportingSheetView = dynamic(() => import("./reporting/ReportingSheetView"), { ssr: false });
+const StockDashboard = dynamic(() => import("./StockDashboard"), { ssr: false });
 const DebtorsTrackerDashboard = dynamic(() => import("./DebtorsTrackerDashboard"), { ssr: false });
 const SalesWorkspace = dynamic(() => import("./SalesWorkspace"), { ssr: false });
 
@@ -156,6 +157,7 @@ export default function Automations({ slug, onNavigate }: AutomationsProps) {
     if (selected === "linkedin") return <LinkedinDashboard />;
     if (selected === "ai-usage") return <AiUsageDashboard />;
     if (selected === "reporting-sheet") return <ReportingSheetView />;
+    if (selected === "stock") return <StockDashboard />;
     // Generic sheet-analysis renderer: any automation whose `data()` returns
     // { meta: { analysis: 'sheet', ... } } gets a dashboard automatically.
     return <SheetAnalysisDashboard slug={selected ?? ""} />;

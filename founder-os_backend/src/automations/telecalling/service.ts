@@ -490,6 +490,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // "this person has no report" — falling back to their (possibly reassigned)
   // id would credit them a stranger's calls (2026-11-02: Muskan's stale
   // 3518625a would have read Kamal's calls).
+  // Links are sales-head set on the roster row (NeoDove user picker);
+  // auto-sync only fills empty link fields and never overwrites a hand link.
   const ndByTc = new Map<string, Record<string, number>>();
   for (const t of telecallers as any[]) {
     const nd = (t.neodoveUserName && neodoveMap[t.neodoveUserName])
@@ -809,8 +811,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   }
   const tlTargets: TlTargetRow[] = [];
   try {
+    // Team Leads ONLY (founder 2026-11-05: `type='team_lead'` is its own role).
+    // Sourcing by tlLevel leaked telecaller/field_staff rows labelled TL1 into
+    // the race (9 rows for 2 defined TLs) — the role is authoritative.
     const tlStaff = (telecallers as any[]).filter(
-      (t) => String((t as any).tlLevel ?? '') === 'TL1' && !((t as any).deleted ?? false),
+      (t) => String((t as any).type ?? '') === 'team_lead' && !((t as any).deleted ?? false),
     );
     const resellerByWeekRegion = groupAcceptedByWeekFiltered(
       targetSnapshot.rows, weekStartOf,
@@ -1346,6 +1351,27 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     active: !!t.assignEstimateFollowUps,
   }));
 
+  // NeoDove users with no roster link — the Controller's link picker source.
+  // Links are sales-head set on the roster row; auto-sync only fills empty
+  // link fields, so this list is the entire manual-mapping queue.
+  const unmappedNeodoveUsers: Array<{ userId: string; userName: string }> = [];
+  try {
+    const linkedNames = new Set((telecallers as any[]).map((t) => String((t as any)?.neodoveUserName ?? '').trim()).filter(Boolean));
+    const linkedIds = new Set((telecallers as any[]).map((t) => String((t as any)?.neodoveUserId ?? '').trim()).filter(Boolean));
+    const seenNeo = new Set<string>();
+    for (const a of Object.values(neodoveMap ?? {}) as any[]) {
+      const uid = String(a?.userId ?? '').trim();
+      const uname = String(a?.userName ?? '').trim();
+      const key = `${uid}‖${uname}`;
+      if (!key || seenNeo.has(key)) continue;
+      seenNeo.add(key);
+      if ((uname && linkedNames.has(uname)) || (uid && linkedIds.has(uid))) continue;
+      unmappedNeodoveUsers.push({ userId: uid, userName: uname });
+      if (unmappedNeodoveUsers.length >= 100) break;
+    }
+    unmappedNeodoveUsers.sort((x, y) => x.userName.localeCompare(y.userName));
+  } catch { /* picker list is best-effort — the board never depends on it */ }
+
   // ── Region drill-down: ?region=R1..R4|unmapped (or ?agent= → that staff's region)
   // Staff work every open estimate in their own region, so the drill shows the
   // whole region's pipeline (not a personal hold). A scoped staff member may
@@ -1614,10 +1640,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       unmappedSentCount: unmappedCount,
       telecallerCount: telecallers.length,
       fieldStaffCount: (telecallers as any[]).filter((t) => String((t as any).type ?? 'telecaller') === 'field_staff').length,
-      teamLeadCount: (telecallers as any[]).filter((t) => String((t as any).type ?? '') === 'team_lead' || String((t as any).tlLevel ?? '') === 'TL1').length,
+      teamLeadCount: (telecallers as any[]).filter((t) => String((t as any).type ?? '') === 'team_lead').length,
       unmappedStaffCount: unmappedStaff.length,
       staff: agentList,
       agents: agentList,
+      // NeoDove users with no roster link — Controller link-picker source.
+      unmappedNeodoveUsers,
       // Enquiries in the window with no roster match (assignedAgentId empty).
       // Surfaced so MIS can fix attribution instead of silently undercounting.
       unattributedLeads,

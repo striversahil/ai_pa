@@ -1,0 +1,9 @@
+{
+  "name": "Stock",
+  "description": "Manual SKU inventory: on-hand qty, reorder level and day-wise closing stock per product.",
+  "type": "handler",
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": "stock"
+}

@@ -69,8 +69,12 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
       if (cancelled.current) return;
       setStates(payload);
       setStateName((prev) => (payload.states.some((s) => s.state === prev) ? prev : ''));
-      // Drop an agent choice that does not belong to this region.
-      setAgentKey((prev) => (payload.agents.some((a) => a.key === prev) ? prev : ''));
+      // Drop an agent choice that does not belong to this region (pair or TL).
+      const validKeys = new Set([
+        ...(payload.agents ?? []).map((a) => a.key),
+        ...(payload.teamLeads ?? []).map((a) => a.key),
+      ]);
+      setAgentKey((prev) => (validKeys.has(prev) ? prev : ''));
       setDistribution((prev) => (prev === 'single' && !payload.agents.length ? 'split' : prev));
     } catch (e: any) {
       if (!cancelled.current) setError(e?.message ?? 'Failed to load states');
@@ -96,7 +100,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
   }, [region, clientType, loadStates, loadHistory]);
 
   const options = useMemo(
-    () => distributionOptions(states?.agents ?? [], stateName),
+    () => distributionOptions(states?.agents ?? [], states?.teamLeads ?? [], stateName),
     [states, stateName],
   );
 
@@ -220,7 +224,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           </h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
             Push a region&apos;s customers, state by state, into the live NeoDove calling campaign —
-            to one agent, or split across the region&apos;s pair.
+            to one agent, split across the region&apos;s pair, or as a full copy to the Team Lead.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -289,6 +293,30 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           ))}
           {agents.length === 0 && (
             <p className="text-[11px] text-zinc-500">No agents registered for {region}.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Team-Lead URL mapping — same paste-a-URL flow, keyed by TL agent id.
+          A TL push is always a single-mode full copy; split stays pair-only. */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          Team Lead campaign URLs
+        </span>
+        <div className="flex flex-col gap-1.5">
+          {(states?.teamLeads ?? []).map((tl) => (
+            <AgentUrlRow
+              key={tl.key}
+              agentKey={tl.key}
+              name={`${tl.name}${(tl.covers ?? []).length > 0 ? ` · covers ${(tl.covers ?? []).join('+')}` : ' · TL'}`}
+              configured={tl.configured}
+              source={tl.source}
+              onSaved={() => { void loadStates(region, clientType); }}
+              onError={setError}
+            />
+          ))}
+          {(states?.teamLeads ?? []).length === 0 && (
+            <p className="text-[11px] text-zinc-500">No Team Leads registered for campaign push.</p>
           )}
         </div>
       </div>

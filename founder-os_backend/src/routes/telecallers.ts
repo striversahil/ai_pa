@@ -8,6 +8,7 @@ import { PrismaAuthStore } from '../modules/auth/store-prisma';
 // EOD-reassignment switch and the absent/present cover flow are retired
 // (founder decision 2026-10-22) and removed here.
 import { isValidRegion, isValidTlLevel } from '../automations/telecalling/service';
+import { normalizeAgentPhone } from '../automations/telecalling/util';
 
 const router = Router();
 
@@ -49,7 +50,7 @@ router.post('/', misGuard, asyncHandler(async (req, res) => {
     data: {
       name: String(name).trim(),
       email: email ?? null,
-      phone: phone ?? null,
+      phone: phone ? normalizeAgentPhone(phone) || null : null,
       whatsapp: whatsapp ?? null,
       tlLevel: tlLevel ?? '',
       region: region ?? '',
@@ -71,7 +72,7 @@ router.put('/:id', misGuard, asyncHandler(async (req, res) => {
   }
   if (name !== undefined) data.name = String(name).trim();
   if (email !== undefined) data.email = email;
-  if (phone !== undefined) data.phone = phone;
+  if (phone !== undefined) data.phone = phone ? normalizeAgentPhone(phone) || null : null;
   if (whatsapp !== undefined) data.whatsapp = whatsapp;
   if (assignEstimateFollowUps !== undefined) data.assignEstimateFollowUps = assignEstimateFollowUps;
   if (data.type === 'field_staff') data.assignEstimateFollowUps = false;

@@ -83,6 +83,8 @@ export const LiveEvent = {
   DataChanged: "data-changed",
   /** Android device call-log ingest, pairing and device config changes. */
   DeviceCalls: "device-calls",
+  /** Stock inventory writes (SKU catalogue + movements). */
+  Stock: "stock",
 } as const;
 
 export type LiveEventType = (typeof LiveEvent)[keyof typeof LiveEvent];

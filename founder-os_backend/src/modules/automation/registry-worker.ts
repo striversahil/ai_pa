@@ -34,6 +34,7 @@ import * as linkedin from '../../automations/linkedin';
 import * as debtorsTracker from '../../automations/debtors-tracker';
 import * as masterData from '../../automations/master-data';
 import * as reportingSheet from '../../automations/reporting-sheet';
+import * as stock from '../../automations/stock';
 
 const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
@@ -61,6 +62,7 @@ const MODULES: Record<string, AutomationModule> = {
   'debtors-tracker': debtorsTracker as AutomationModule,
   'master-data': masterData as AutomationModule,
   'reporting-sheet': reportingSheet as AutomationModule,
+  'stock': stock as AutomationModule,
 };
 
 const RULES: Record<string, Partial<AutomationDefinition>> = {
@@ -165,6 +167,9 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   },
   'reporting-sheet': {
     id: 'reporting-sheet', name: 'Reporting Sheet', description: 'Weekly management review: department heads enter their sections (sales, CRM & operations, digital marketing); root and MIS see everything. Auto-fill pulls live numbers, heads confirm or adjust.', type: 'handler', trigger: { type: 'manual' }, scope: 'reporting-sheet', enabled: true,
+  },
+  'stock': {
+    id: 'stock', name: 'Stock', description: 'Manual SKU inventory: on-hand qty, reorder level and day-wise closing stock per product.', type: 'handler', trigger: { type: 'manual' }, scope: 'stock', enabled: true,
   },
 };
 

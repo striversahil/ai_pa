@@ -58,7 +58,7 @@ export type Distribution = 'single' | 'split';
 
 /** One configurable NeoDove agent (a row in NeoDoveAgent). */
 export interface CampaignAgent {
-  /** Stable routing key, e.g. R1_NEHA_VERMA. */
+  /** Stable routing key, e.g. R1_NEHA_VERMA / TL_RAJIV_KAPOOR. */
   key: string;
   region: string;
   name: string;
@@ -71,6 +71,11 @@ export interface CampaignAgent {
    * The URL itself is never exposed — only this flag plus `configured`.
    */
   source: 'db' | 'secret' | 'none';
+  /**
+   * Roster regions this Team Lead covers (from Telecaller region+region2).
+   * Hint only — routing is never blocked on it. Empty/absent for pair agents.
+   */
+  covers?: string[];
 }
 
 export interface CampaignAgentPlan extends CampaignAgent {

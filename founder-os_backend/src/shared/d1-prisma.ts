@@ -67,6 +67,10 @@ const BOOL_FIELDS: Record<string, string[]> = {
   KypGuide: ['isRequired', 'active'],
   Vendor: ['active'],
   VendorRate: ['active'],
+  StockItem: ['active'],
+  StockMovement: [],
+  StockLocation: ['active'],
+  StockReservation: [],
   LinkedinPost: ['hasImage', 'picked'],
   DebtorInvoice: ['deleted'],
   PaymentCollection: ['deleted'],
@@ -135,6 +139,10 @@ const DATE_FIELDS: Record<string, string[]> = {
   KypGuide: ['createdAt', 'updatedAt'],
   Vendor: ['createdAt', 'updatedAt'],
   VendorRate: ['quotedAt', 'createdAt', 'updatedAt'],
+  StockItem: ['createdAt', 'updatedAt'],
+  StockMovement: ['createdAt'],
+  StockLocation: ['createdAt'],
+  StockReservation: ['createdAt'],
   SoAttachment: ['createdAt'],
   LinkedinPost: ['postedAt', 'createdAt'],
   DebtorInvoice: ['createdAt', 'updatedAt'],
@@ -230,6 +238,10 @@ const ID_FIELDS: Record<string, string> = {
   KypGuide: 'id',
   Vendor: 'id',
   VendorRate: 'id',
+  StockItem: 'id',
+  StockMovement: 'id',
+  StockLocation: 'id',
+  StockReservation: 'id',
   LinkedinPost: 'id',
   DebtorInvoice: 'id',
   PaymentCollection: 'id',
@@ -260,6 +272,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   HumanResourcesPositionDoc: ['kvKey'],
   ProductItem: ['name'],
   Vendor: ['name'],
+  StockItem: ['sku'],
   ManualCallLog: ['telecallerId', 'day'],
   DeviceRegistration: ['tokenHash'],
   DeviceCall: ['idempotencyKey'],
@@ -277,6 +290,9 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   HumanResourcesLeave: ['days'],
   HumanResourcesSalarySlip: ['workingDays', 'eligibleDays', 'payableDays', 'presentDays', 'halfDays', 'absentDays', 'paidLeaveDays', 'unpaidLeaveDays', 'holidayDays', 'unmarkedDays', 'perDay', 'monthlyGross', 'earnedGross', 'absenceDeduction', 'componentDeductions', 'manualDeductions', 'totalDeductions', 'netPay'],
   HumanResourcesMember: ['salaryInputAmount'],
+  StockItem: ['reorderLevel', 'minLevel', 'maxLevel', 'unitFactor', 'purchaseRate', 'saleRate'],
+  StockMovement: ['qty', 'rate'],
+  StockReservation: ['qty'],
   HumanResourcesInventoryItem: ['reorderLevel', 'unitCost'],
   HumanResourcesInventoryTxn: ['quantity'],
   DebtorInvoice: ['invoiceAmount', 'baseReceived', 'collectedAtImport'],
@@ -401,6 +417,13 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   ProductItem: {
     guide: { model: 'KypGuide', fk: 'productId' },
     rates: { model: 'VendorRate', fk: 'productId' },
+  },
+  StockItem: {
+    movements: { model: 'StockMovement', fk: 'itemId' },
+    reservations: { model: 'StockReservation', fk: 'itemId' },
+  },
+  StockMovement: {
+    item: { model: 'StockItem', fk: 'itemId', one: true },
   },
   KypGuide: {
     product: { model: 'ProductItem', fk: 'productId', one: true },
@@ -967,6 +990,11 @@ export class D1PrismaClient {
   get kypGuide() { return this.model('KypGuide'); }
   get vendor() { return this.model('Vendor'); }
   get vendorRate() { return this.model('VendorRate'); }
+  // Stock automation (migration 0111, manual inventory).
+  get stockItem() { return this.model('StockItem'); }
+  get stockLocation() { return this.model('StockLocation'); }
+  get stockReservation() { return this.model('StockReservation'); }
+  get stockMovement() { return this.model('StockMovement'); }
   // LinkedIn daily drafts (migration 0051).
   get linkedinPost() { return this.model('LinkedinPost'); }
   // Debtors Tracker (migration 0069).

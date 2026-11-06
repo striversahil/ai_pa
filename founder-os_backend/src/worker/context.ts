@@ -215,6 +215,12 @@ export const AUTH_EXEMPT = [
   // URLs to vision providers that fetch with no credentials at all — a gated
   // GET blinds both. Uploads stay fully gated; only byte-serving is open.
   '/api/enquiries/files/',
+  // Dispatch proofs (invoice / packing photos at `/api/crm/files/<uuid>` —
+  // crypto-random ids, unguessable). View/Download links must work without a
+  // session (shared with customers/transporters, opened where the login
+  // cookie isn't attached). Listing/upload/delete stay gated; only
+  // byte-serving is open.
+  '/api/crm/files/',
   // Email OAuth callback: Google redirects here (no session yet on first
   // connect). State token in KV is the CSRF guard. All other /api/email/*
   // actions stay behind the session gate (+ MIS for sends/writes).

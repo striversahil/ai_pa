@@ -8,9 +8,12 @@
 //
 // Auth (2026-11-04): proof uploads (invoice + packing_before + packing_after)
 // are MIS *or* dispatch floor — the floor must attach the dispatch proof
-// itself; LR/POD/other uploads and ALL deletes stay MIS-only. Listing/download
-// is any approved member. Every mutation busts the cached CRM payload and
-// broadcasts LiveEvent.Crm so open tabs refetch.
+// itself; LR/POD/other uploads and ALL deletes stay MIS-only. Listing stays
+// gated (SO numbers are guessable). Byte-serving is OPEN (2026-11-06): file
+// ids are crypto-random UUIDs (unguessable bearer URLs, same contract as
+// /api/chat/files/:key and /api/enquiries/files/*), so View/Download links
+// work without a session — e.g. shared with a customer/transporter or opened
+// in a context where the login cookie isn't attached.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import {
@@ -141,10 +144,10 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
 
   // Serve file bytes by attachment id (never exposes raw KV keys).
   // Images + PDFs render inline (native big-view); anything else downloads.
+  // No auth (2026-11-06): ids are crypto-random UUIDs — the URL is the bearer
+  // token (mirrors /api/chat/files/:key), so proofs are shareable without a
+  // session. Listing/upload/delete above stay gated.
   app.get('/api/crm/files/:id', async (c) => {
-    const me = await getMe(authStore(c), c.req.header('cookie') ?? null);
-    if (!me) return c.json({ error: 'Authentication required' }, 401);
-    if (!isApproved(me)) return c.json({ error: 'Approval required' }, 403);
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     const { prisma } = deps();
     const row: any = await prisma.soAttachment.findUnique({ where: { id: c.req.param('id') ?? '' } }).catch(() => null);

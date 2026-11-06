@@ -26,6 +26,7 @@ import {
   setManualSegment,
   setTypeRule,
 } from '../../automations/telecalling/client-segments';
+import { normalizeAgentPhone } from '../../automations/telecalling/util';
 
 /** Root/MIS/sales-head gate for the region-model management writes. Accepts
  * the scope or the role itself, so a sales-head role holder is authorized even
@@ -132,7 +133,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       data: {
         name: String(body.name).trim(),
         email: body.email ?? null,
-        phone: body.phone ?? null,
+        // Normalized: the NeoDove phone join compares normalized digits.
+        phone: body.phone ? normalizeAgentPhone(body.phone) || null : null,
         whatsapp: body.whatsapp ?? null,
         tlLevel: body.tlLevel ? String(body.tlLevel) : '',
         region: body.region ? String(body.region) : '',
@@ -159,7 +161,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const data: Record<string, unknown> = {};
     if (body.name !== undefined) data.name = String(body.name).trim();
     if (body.email !== undefined) data.email = body.email;
-    if (body.phone !== undefined) data.phone = body.phone;
+    if (body.phone !== undefined) data.phone = body.phone ? normalizeAgentPhone(body.phone) || null : null;
     if (body.whatsapp !== undefined) data.whatsapp = body.whatsapp;
     if (body.type !== undefined) {
       if (body.type !== 'telecaller' && body.type !== 'field_staff' && body.type !== 'team_lead') return c.json({ error: "type must be 'telecaller', 'field_staff' or 'team_lead'" }, 400);
@@ -225,6 +227,11 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     return c.json({ ok: true });
   });
 
+  // ── NeoDove phone directory (sales-head / MIS) ────────────────────────────
+  // Manual userId‖userName → phone map (founder 2026-11-06): NeoDove exposes
+  // no agent phone, so the sales-head maps each dialling NeoDove user once.
+  // The dashboard joins phone-first; unmapped agents stay on the name
+  // fallback and are flagged until mapped.
   // ── Estimate region search (sales-head / MIS): find ANY active/past deal ───
   // The Controller uses this to re-home an estimate by number/customer across
   // sent, accepted (incl. confirmed) and declined — the region is authoritative

@@ -14,23 +14,26 @@ export function campaignDb(): any {
 
 // ── Agents ─────────────────────────────────────────────────────────────────
 
-const AGENT_COLUMNS = ['id', 'region', 'name', 'secretName', 'active', 'campaignUrl'].join(', ');
+const AGENT_COLUMNS = ['id', 'region', 'name', 'secretName', 'active', 'campaignUrl', 'kind'].join(', ');
 
 /**
- * Agents for a region. Includes inactive rows on purpose: a batch created
- * before an agent was disabled must still be able to finish sending its
- * pending leads. Callers filter on `active` when building a NEW push.
+ * Agents for a region. Pair-only (`kind='agent'`): Team-Lead rows are NEVER
+ * part of a region pair — `split` assignment hashes across exactly the pair,
+ * and a third bucket would reshuffle every repeat push (see selection.ts).
+ * Includes inactive rows on purpose: a batch created before an agent was
+ * disabled must still be able to finish sending its pending leads. Callers
+ * filter on `active` when building a NEW push.
  *
  * `campaignUrl` (DB override, set from the Controller) is server-only — it is
  * never sent to the client. The `states` endpoint only exposes which source
  * is effective (db | secret | none) plus the configured flag.
  */
-export async function listAgents(region: string): Promise<Array<CampaignAgent & { secretName: string; campaignUrl: string }>> {
+export async function listAgents(region: string): Promise<Array<CampaignAgent & { secretName: string; campaignUrl: string; kind: string }>> {
   const db = campaignDb();
   if (!db) return [];
   try {
     const res = await db
-      .prepare(`SELECT ${AGENT_COLUMNS} FROM NeoDoveAgent WHERE region = ? ORDER BY id`)
+      .prepare(`SELECT ${AGENT_COLUMNS} FROM NeoDoveAgent WHERE region = ? AND kind = 'agent' ORDER BY id`)
       .bind(region)
       .all();
     return ((res?.results ?? []) as any[]).map((row) => ({
@@ -42,9 +45,38 @@ export async function listAgents(region: string): Promise<Array<CampaignAgent & 
       configured: false,
       source: 'none' as const,
       campaignUrl: String(row?.campaignUrl ?? ''),
+      kind: String(row?.kind ?? 'agent'),
     }));
   } catch {
     // Table not applied yet — behave like "no agents configured".
+    return [];
+  }
+}
+
+/**
+ * Team-Lead campaign targets (all regions — a TL covers two). Same shape as
+ * pair agents; they only ever receive `single` full-copy pushes, never a
+ * `split` share.
+ */
+export async function listTeamLeads(): Promise<Array<CampaignAgent & { secretName: string; campaignUrl: string; kind: string }>> {
+  const db = campaignDb();
+  if (!db) return [];
+  try {
+    const res = await db
+      .prepare(`SELECT ${AGENT_COLUMNS} FROM NeoDoveAgent WHERE kind = 'team_lead' ORDER BY id`)
+      .all();
+    return ((res?.results ?? []) as any[]).map((row) => ({
+      key: String(row?.id ?? ''),
+      region: String(row?.region ?? ''),
+      name: String(row?.name ?? ''),
+      secretName: String(row?.secretName ?? ''),
+      active: Number(row?.active ?? 0) === 1,
+      configured: false,
+      source: 'none' as const,
+      campaignUrl: String(row?.campaignUrl ?? ''),
+      kind: String(row?.kind ?? 'team_lead'),
+    }));
+  } catch {
     return [];
   }
 }

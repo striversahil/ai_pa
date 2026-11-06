@@ -125,10 +125,11 @@ export default function SalesControllerPanel() {
     }
   };
 
-  // Add/edit agent from the modal — contact + role only, never NeoDove mapping.
+  // Add/edit agent from the modal — contact + role + NeoDove link (hand-picked
+  // in the modal; auto-sync only fills empty link fields, never overwrites).
   // The closer/follow-up flag is intentionally not edited here: the backend
   // preserves the stored value on PUT and defaults new telecallers on POST.
-  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; region2: string; tlLevel: string; type: string }) => {
+  const saveRoster = async (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; region2: string; tlLevel: string; type: string; neodove: { userId: string; userName: string } | null }) => {
     if (!updates.name.trim()) return;
     setBusy(true);
     setRosterError(null);
@@ -142,6 +143,8 @@ export default function SalesControllerPanel() {
         region2: updates.region2,
         tlLevel: updates.tlLevel,
         type: updates.type,
+        neodoveUserId: updates.neodove ? updates.neodove.userId : '',
+        neodoveUserName: updates.neodove ? updates.neodove.userName : '',
       };
       const res = editTarget
         ? await fetch(`/api/telecallers/${editTarget.id}`, {
@@ -244,6 +247,7 @@ export default function SalesControllerPanel() {
         target={editTarget}
         open={rosterModalOpen}
         busy={busy}
+        neodoveUsers={(tele.data?.meta?.unmappedNeodoveUsers ?? []) as Array<{ userId: string; userName: string }>}
         onSave={saveRoster}
         onClose={() => setRosterModalOpen(false)}
       />
@@ -648,19 +652,23 @@ function RosterSection({
 
 // ── Roster add/edit modal ────────────────────────────────────────────────────
 // Opens from "Add agent" (create) or a roster card's Edit button. Edits contact
-// + role fields ONLY — the NeoDove mapping is managed by the auto-sync (never
-// edited here) and is shown read-only when editing an existing agent.
+// + role fields, plus the NeoDove link: a dropdown of currently-unlinked
+// NeoDove users (the roster phone is the human-verifiable key — compare it
+// with the NeoDove User Call Report's Mobile Number column before linking).
+// Auto-sync only fills empty link fields and never overwrites a hand link.
 function RosterEditModal({
   target,
   open,
   busy,
+  neodoveUsers,
   onSave,
   onClose,
 }: {
   target: RosterRow | null; // null = creating a new agent
   open: boolean;
   busy: boolean;
-  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; region2: string; tlLevel: string; type: string }) => void;
+  neodoveUsers: Array<{ userId: string; userName: string }>;
+  onSave: (updates: { name: string; email: string; phone: string; whatsapp: string; region: string; region2: string; tlLevel: string; type: string; neodove: { userId: string; userName: string } | null }) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
@@ -671,6 +679,10 @@ function RosterEditModal({
   const [region2, setRegion2] = useState("");
   const [tlLevel, setTlLevel] = useState("");
   const [staffType, setStaffType] = useState("telecaller");
+  const [neoLink, setNeoLink] = useState("");
+
+  const neoKeyOf = (userId: unknown, userName: unknown) =>
+    `${String(userId ?? '').trim()}‖${String(userName ?? '').trim()}`;
 
   // Re-sync on open too: cancelling with dirty edits then re-opening the SAME
   // agent must not resurrect the abandoned values (target identity unchanged).
@@ -685,9 +697,11 @@ function RosterEditModal({
       setRegion2(target.region2 ?? "");
       setTlLevel(target.tlLevel ?? "");
       setStaffType(target.type === "field_staff" ? "field_staff" : target.type === "team_lead" ? "team_lead" : "telecaller");
+      setNeoLink((target as any)?.neodoveUserName ? neoKeyOf((target as any).neodoveUserId, (target as any).neodoveUserName) : "");
     } else {
       setName(""); setEmail(""); setPhone(""); setWhatsapp("");
       setRegion(""); setRegion2(""); setTlLevel(""); setStaffType("telecaller");
+      setNeoLink("");
     }
   }, [target, open]);
 
@@ -708,7 +722,7 @@ function RosterEditModal({
         <div>
           <h4 className="font-bold text-zinc-900 dark:text-white">{isCreate ? "Add sales staff" : "Edit sales staff"}</h4>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            {isCreate ? "Create a sales-roster entry — telecaller, field staff or team lead." : "Update contact details, type and role. NeoDove mapping is read-only."}
+            {isCreate ? "Create a sales-roster entry — telecaller, field staff or team lead. Link their NeoDove user so calls attribute correctly." : "Update contact details, type, role and the NeoDove link (phone + linked user must belong to the same person)."}
           </p>
         </div>
 
@@ -726,7 +740,7 @@ function RosterEditModal({
           ))}
           {field("Name", <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Full name" />)}
           {field("Email", <input value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="Email" />)}
-          {field("Phone", <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} placeholder="Phone" />)}
+          {field("Phone — the mapping key (must match the NeoDove User Call Report's Mobile Number for this person)", <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} placeholder="Phone" />)}
           {field("WhatsApp", <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className={inputCls} placeholder="WhatsApp" />)}
 
           <div className="grid grid-cols-2 gap-2">
@@ -768,14 +782,34 @@ function RosterEditModal({
             </p>
           )}
 
-          {/* NeoDove mapping — read-only, managed by the auto-sync */}
-          {!isCreate && (
-            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-3 py-2.5 text-xs text-zinc-500 dark:text-zinc-400">
-              <div className="font-bold uppercase tracking-wider text-[10px] mb-1">NeoDove mapping</div>
-              {target.neodoveUserName ? `Linked to NeoDove user: ${target.neodoveUserName}` : "Not linked to a NeoDove user"}
-              {target.neodoveUserId ? ` (id: ${target.neodoveUserId})` : ""}
-              <div className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">Managed automatically — not editable here.</div>
-            </div>
+          {/* NeoDove link — hand-picked here; auto-sync never overwrites it.
+              Compare the roster phone above with the NeoDove User Call Report's
+              Mobile Number column before linking. */}
+          {field("NeoDove user", (
+            <select
+              value={neoLink}
+              onChange={(e) => setNeoLink(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">No link</option>
+              {target && (target as any)?.neodoveUserName && !neodoveUsers.some((u) => neoKeyOf(u.userId, u.userName) === neoKeyOf((target as any).neodoveUserId, (target as any).neodoveUserName)) && (
+                <option value={neoKeyOf((target as any).neodoveUserId, (target as any).neodoveUserName)}>
+                  ✓ {(target as any).neodoveUserName} (currently linked)
+                </option>
+              )}
+              {neodoveUsers.map((u) => (
+                <option key={neoKeyOf(u.userId, u.userName)} value={neoKeyOf(u.userId, u.userName)}>
+                  {u.userName || "(no name)"}{u.userId ? ` · ${String(u.userId).slice(0, 8)}…` : ""}
+                </option>
+              ))}
+            </select>
+          ))}
+          {!isCreate && (target as any)?.neodoveUserName && (
+            <p className="text-[11px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-zinc-500 dark:text-zinc-400">
+              Currently linked to NeoDove user <b>{(target as any).neodoveUserName}</b>
+              {(target as any)?.neodoveUserId ? ` (id: ${String((target as any).neodoveUserId).slice(0, 8)}…)` : ""}.
+              Pick another user to re-link, or “No link” to unlink.
+            </p>
           )}
         </div>
 
@@ -785,7 +819,17 @@ function RosterEditModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave({ name, email, phone, whatsapp, region, region2: staffType === "team_lead" && tlLevel === "TL1" ? region2 : "", tlLevel, type: staffType })}
+            onClick={() => {
+              const parts = neoLink ? String(neoLink).split('‖') : [];
+              onSave({
+                name, email, phone, whatsapp, region,
+                region2: staffType === "team_lead" && tlLevel === "TL1" ? region2 : "",
+                tlLevel, type: staffType,
+                neodove: parts.length === 2 && (parts[0] || parts[1])
+                  ? { userId: parts[0], userName: parts[1] }
+                  : null,
+              });
+            }}
             disabled={busy || !name.trim() || (staffType === "team_lead" && tlLevel === "TL1" && !!region && !!region2 && region === region2)}
             className="px-4 py-2 text-sm rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
             {busy ? "Saving…" : isCreate ? "Add" : "Save"}

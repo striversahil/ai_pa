@@ -166,6 +166,23 @@ function summarizeNeodove(d: any) {
   };
 }
 
+function summarizeStock(d: any) {
+  const totals = d?.totals ?? {};
+  const items: any[] = Array.isArray(d?.items) ? d.items : [];
+  const low = items.filter((i) => i?.status === 'low').slice(0, 3).map((i) => `${String(i.sku)} low (${num(i.onHand)} left)`);
+  const out = items.filter((i) => i?.status === 'out').slice(0, 3).map((i) => `${String(i.sku)} out of stock`);
+  return {
+    headline: `${num(totals.skus)} SKUs · ${num(totals.units)} units · ${num(totals.low)} low · ${num(totals.out)} out`,
+    kpis: [
+      { label: 'SKUs', value: String(num(totals.skus)) },
+      { label: 'Units', value: String(num(totals.units)) },
+      { label: 'Low', value: String(num(totals.low)) },
+      { label: 'Out', value: String(num(totals.out)) },
+    ],
+    attention: [...out, ...low].slice(0, 4),
+  };
+}
+
 export interface SectionDef {
   key: string;
   title: string;
@@ -189,6 +206,7 @@ export const SECTIONS: SectionDef[] = [
   },
   { key: 'accounts', title: 'Accounts', slugs: ['accounts'], linkSlug: 'accounts', build: (r) => section('accounts', 'Accounts', r.accounts?.data, r.accounts?.error, (d) => summarizeTaskbar(d, 'accounts')) },
   { key: 'digital', title: 'Digital Marketing', slugs: ['digital-marketing'], linkSlug: 'digital-marketing', build: (r) => section('digital-marketing', 'Digital Marketing', r['digital-marketing']?.data, r['digital-marketing']?.error, (d) => summarizeTaskbar(d, 'marketing')) },
+  { key: 'stock', title: 'Stock', slugs: ['stock'], linkSlug: 'stock', build: (r) => section('stock', 'Stock', r.stock?.data, r.stock?.error, summarizeStock) },
   { key: 'neodove', title: 'NeoDove Calls', slugs: ['neodove-telecaller-report'], linkSlug: 'neodove-telecaller-report', build: (r) => section('neodove-telecaller-report', 'NeoDove Calls', r['neodove-telecaller-report']?.data, r['neodove-telecaller-report']?.error, summarizeNeodove) },
 ];
 

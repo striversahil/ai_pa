@@ -1998,34 +1998,79 @@ model DeviceCall {
   @@index([deviceId])
 }
 
-// ── Stock (manual inventory: SKU catalogue + dated movements) ───────────────
-// Closing stock is derived (sum of movements ≤ day), never stored. One row per
-// SKU; movements are append-only (opening|receipt|issue|adjustment).
+// -- Stock (manual inventory: auto-SKU catalogue + dated movements) --
+// Closing stock is derived (sum of movements <= day), never stored. SKU is
+// system-generated (CAT-0007), never typed. Multi-location with transfer;
+// available = on-hand minus reserved (open SO reservations).
 model StockItem {
   id           String   @id @default(uuid())
   sku          String   @unique
   productName  String
+  category     String   @default("")
+  brand        String   @default("")
+  barcode      String   @default("")
   unit         String   @default("pcs")
+  unitPurchase String   @default("")
+  unitFactor   Float    @default(1)
+  purchaseRate Float    @default(0)
+  saleRate     Float    @default(0)
+  supplier     String   @default("")
   reorderLevel Float    @default(0)
+  minLevel     Float    @default(0)
+  maxLevel     Float    @default(0)
+  imageUrl     String   @default("")
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   movements    StockMovement[]
+  reservations StockReservation[]
 
   @@index([active, sku])
+  @@index([category, active])
+}
+
+model StockLocation {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
 }
 
 model StockMovement {
-  id        String    @id @default(uuid())
-  itemId    String
-  item      StockItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  day       String // YYYY-MM-DD IST
-  kind      String // opening | receipt | issue | adjustment
-  qty       Float // signed: receipt/opening/positive-adjust +, issue/negative-adjust −
-  note      String    @default("")
-  createdBy String    @default("")
-  createdAt DateTime  @default(now())
+  id           String    @id @default(uuid())
+  itemId       String
+  item         StockItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  day          String
+  kind         String
+  qty          Float
+  locationId   String    @default("")
+  toLocationId String    @default("")
+  rate         Float     @default(0)
+  status       String    @default("approved")
+  refType      String    @default("")
+  refId        String    @default("")
+  note         String    @default("")
+  createdBy    String    @default("")
+  createdAt    DateTime  @default(now())
 
   @@index([itemId, day])
   @@index([day, kind])
+  @@index([locationId, day])
+}
+
+model StockReservation {
+  id         String    @id @default(uuid())
+  itemId     String
+  item       StockItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  locationId String    @default("")
+  qty        Float
+  refType    String    @default("SO")
+  refId      String    @default("")
+  status     String    @default("open")
+  day        String    @default("")
+  createdBy  String    @default("")
+  createdAt  DateTime  @default(now())
+
+  @@index([itemId, status])
+  @@index([refId, status])
 }

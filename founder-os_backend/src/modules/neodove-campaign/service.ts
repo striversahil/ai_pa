@@ -24,7 +24,7 @@
 
 import {
   agentTallies, batchesWithPending, claimPending, getAgentRow, getBatch, insertBatch, insertLeadRows,
-  lastLivePushes, listAgents, listBatches, listCustomersByState, listFailedLeads, listStateCounts, listTypeCounts,
+  lastLivePushes, listAgents, listBatches, listCustomersByState, listFailedLeads, listStateCounts, listTypeCounts, listTeamLeads,
   markOutcomes, recountBatch, recoverStuckClaims, setAgentUrl, updateBatch,
 } from './store';
 import { assignAgents, maskMobile, selectLeads } from './selection';
@@ -175,6 +175,45 @@ async function resolveAgents(env: any, region: string): Promise<ResolvedAgent[]>
 }
 
 /**
+ * Team-Lead campaign targets with URLs resolved (same DB-wins/secret-fallback
+ * rule). TLs only ever receive `single` full-copy pushes — never split.
+ */
+async function resolveTeamLeads(env: any): Promise<ResolvedAgent[]> {
+  const rows = await listTeamLeads();
+  return rows.map((row) => {
+    const dbUrl = normalizeCampaignUrl(row.campaignUrl);
+    const secretUrl = urlFromSecret(env, row.secretName);
+    const url = dbUrl || secretUrl;
+    const source = dbUrl ? 'db' : (secretUrl ? 'secret' : 'none');
+    return { ...row, url, configured: !!url, source };
+  });
+}
+
+/**
+ * Live roster pairs for team leads (`type='team_lead'`, not deleted):
+ * normalized name → covered regions. Pure hint for the Controller (which TL
+ * owns this region) — routing is never blocked on it; the sales-head decides.
+ */
+async function teamLeadCoverage(): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  try {
+    const { campaignDb } = await import('./store');
+    const db = campaignDb();
+    if (!db) return out;
+    const res = await db
+      .prepare(`SELECT name, region, region2 FROM Telecaller WHERE type = 'team_lead' AND deleted = 0`)
+      .all();
+    for (const r of ((res as any)?.results ?? []) as any[]) {
+      const key = String(r?.name ?? '').trim().toLowerCase();
+      if (!key) continue;
+      const pair = [String(r?.region ?? '').trim(), String(r?.region2 ?? '').trim()].filter(Boolean);
+      if (pair.length > 0) out.set(key, [...new Set(pair)]);
+    }
+  } catch { /* roster read failed — covers hints stay empty, pushes unaffected */ }
+  return out;
+}
+
+/**
  * Map (or clear) an agent's campaign URL from the Controller. Accepts a bare
  * URL or a full curl command; empty clears the DB override so the Worker
  * secret becomes effective again. Returns the host + source for the UI — the
@@ -207,16 +246,19 @@ export async function setAgentCampaignUrl(
   };
 }
 
-/** Who receives this push. `single` names one; `split` uses the whole pair. */
+/** Who receives this push. `single` names one agent (pair member or TL);
+ *  `split` uses the region pair ONLY (a third bucket would reshuffle every
+ *  re-push — see selection.assignAgents). */
 function participantsFor(
   agents: ResolvedAgent[],
+  teamLeads: ResolvedAgent[],
   distribution: Distribution,
   agentKey: unknown,
 ): ResolvedAgent[] {
   if (distribution === 'single') {
     const key = String(agentKey ?? '').trim();
     if (!key) throw new CampaignError('agentKey is required when distribution is single', 400);
-    const found = agents.find((a) => a.key === key);
+    const found = agents.find((a) => a.key === key) ?? teamLeads.find((a) => a.key === key);
     if (!found) throw new CampaignError(`unknown agent for this region: ${key}`, 400);
     return [found];
   }
@@ -241,13 +283,16 @@ export async function getCampaignStates(env: any, region: unknown, clientType?: 
   configured: boolean;
   liveEnabled: boolean;
   agents: CampaignAgent[];
+  /** Team-Lead full-copy targets (all TLs; the UI hints the covering one). */
+  teamLeads: CampaignAgent[];
   states: StateCount[];
   types: TypeCount[];
 }> {
   const code = normalizeRegion(region);
   const type = normalizeClientType(clientType);
-  const [counts, last, resolved, types] = await Promise.all([
+  const [counts, last, resolved, types, resolvedTls, coverage] = await Promise.all([
     listStateCounts(code, type), lastLivePushes(code, type), resolveAgents(env, code), listTypeCounts(code),
+    resolveTeamLeads(env), teamLeadCoverage(),
   ]);
   const active = resolved.filter((a) => a.active);
   const agents: CampaignAgent[] = active.map((a) => ({
@@ -257,6 +302,15 @@ export async function getCampaignStates(env: any, region: unknown, clientType?: 
     configured: a.configured,
     active: a.active,
     source: a.source,
+  }));
+  const teamLeads: CampaignAgent[] = resolvedTls.filter((a) => a.active).map((a) => ({
+    key: a.key,
+    region: a.region,
+    name: a.name,
+    configured: a.configured,
+    active: a.active,
+    source: a.source,
+    covers: coverage.get(String(a.name ?? '').trim().toLowerCase()) ?? [],
   }));
   const states: StateCount[] = counts.map((row) => {
     const prior = last.get(row.state);
@@ -274,6 +328,7 @@ export async function getCampaignStates(env: any, region: unknown, clientType?: 
     configured: agents.length > 0 && agents.every((a) => a.configured),
     liveEnabled: liveEnabled(env),
     agents,
+    teamLeads,
     states,
     types,
   };
@@ -295,7 +350,8 @@ export async function getCampaignPreview(
 
   const active = (await resolveAgents(env, code)).filter((a) => a.active);
   if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
-  const participants = participantsFor(active, dist, agentKey);
+  const tls = (await resolveTeamLeads(env)).filter((a) => a.active);
+  const participants = participantsFor(active, tls, dist, agentKey);
 
   const rows = await listCustomersByState(code, stateName, type);
   if (rows.length === 0) throw new CampaignError('no customers in that region and state', 404);
@@ -375,7 +431,8 @@ export async function createPush(
 
   const active = (await resolveAgents(env, code)).filter((a) => a.active);
   if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
-  const participants = participantsFor(active, dist, input.agentKey);
+  const tls = (await resolveTeamLeads(env)).filter((a) => a.active);
+  const participants = participantsFor(active, tls, dist, input.agentKey);
 
   // Fail closed: never send a state half-routed.
   const missing = participants.filter((a) => !a.configured);
@@ -486,8 +543,10 @@ async function sendOne(url: string, lead: any, detail1: string, detail2: string)
 
 /** Per-agent tallies with display names filled in from the registry. */
 async function talliesFor(env: any, batchId: string, region: string): Promise<AgentTally[]> {
-  const [raw, agents] = await Promise.all([agentTallies(batchId), resolveAgents(env, region)]);
-  const nameByKey = new Map(agents.map((a) => [a.key, a.name]));
+  const [raw, agents, tls] = await Promise.all([
+    agentTallies(batchId), resolveAgents(env, region), resolveTeamLeads(env),
+  ]);
+  const nameByKey = new Map([...agents, ...tls].map((a) => [a.key, a.name]));
   return raw.map((t) => ({ ...t, name: nameByKey.get(t.agentKey) ?? t.agentKey }));
 }
 
@@ -517,10 +576,11 @@ export async function runBatchChunk(env: any, batchId: string, chunk = DEFAULT_C
   }
 
   // Includes inactive agents so a batch in flight when an agent is disabled can
-  // still finish instead of stalling forever.
-  const agents = await resolveAgents(env, batch.region);
+  // still finish instead of stalling forever. Team leads included: a TL batch
+  // is just a single-mode batch with a TL agent key.
+  const [agents, tls] = await Promise.all([resolveAgents(env, batch.region), resolveTeamLeads(env)]);
   const urlByAgent = new Map<string, string>();
-  for (const agent of agents) {
+  for (const agent of [...agents, ...tls]) {
     if (agent.url) urlByAgent.set(agent.key, agent.url);
   }
 

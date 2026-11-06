@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import KraKpiCharts from "./DigitalMarketingCharts";
+import DigitalMarketingAds from "./DigitalMarketingAds";
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
 
@@ -514,7 +515,7 @@ function TaskRow({ t, roster, identity, onLogged, today }: {
   );
 }
 
-type DigitalMarketingView = "dashboard" | "tasks" | "controller";
+type DigitalMarketingView = "dashboard" | "tasks" | "ads" | "controller";
 
   // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
   // (MIS/root additionally see the Controller tab).
@@ -574,11 +575,13 @@ export default function AccountsDashboard() {
       ? [
         { key: "dashboard", label: "Dashboard", icon: "📊" },
         { key: "tasks", label: "Tasks", icon: "📋" },
+        { key: "ads", label: "ADS", icon: "📢" },
         { key: "controller", label: "Controller", icon: "🎛️" },
       ]
       : [
         { key: "dashboard", label: "Dashboard", icon: "📊" },
         { key: "tasks", label: "Tasks", icon: "📋" },
+        { key: "ads", label: "ADS", icon: "📢" },
       ];
   const isTaskView = view === "tasks";
   const incompleteTray = useMemo(() => data?.incompleteList ?? data?.overdueList ?? [], [data]);
@@ -629,6 +632,7 @@ export default function AccountsDashboard() {
         {/* Content (seamless switch — queries stay mounted) */}
         <div className="flex-1 min-w-0">
           {data && view === "dashboard" && <KraKpiCharts />}
+          {data && view === "ads" && <DigitalMarketingAds />}
 
       {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading digital marketing taskbar…</div>}
       {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}

@@ -14,6 +14,7 @@ import {
   createAttachmentRecord, getAttachment, deleteAttachmentRecord, toAttachmentJson,
   resolveSelfDigitalMarketingManager,
 } from '../../automations/digital-marketing/service';
+import { getDigitalMarketingAds } from '../../automations/digital-marketing/ads';
 
 async function actorName(c: any): Promise<string | null> {
   try {
@@ -111,6 +112,16 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     try {
       return c.json(await getDigitalMarketingMetricsSeries(c.req.query('days')));
     } catch (e: any) { return c.json({ error: e?.message ?? 'series failed' }, 400); }
+  });
+
+  // ── ADS tab: unified read-only ad history (DMM logs only) ──
+  // Aggregates only (no PII) — any signed-in viewer, like metrics-series.
+  // KV-cached under the dashboard prefix, so log writes bust it via the
+  // existing invalidateDigitalMarketingCache().
+  app.get('/api/digital-marketing/ads', async (c) => {
+    try {
+      return c.json(await getDigitalMarketingAds());
+    } catch (e: any) { return c.json({ error: e?.message ?? 'ads failed' }, 400); }
   });
 
   // ── Taskbar logging (any signed-in accounts viewer; MIS included) ──

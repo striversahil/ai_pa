@@ -49,6 +49,9 @@ async function syncTelecallersFromNeodove(): Promise<void> {
     }
 
     const matchExisting = (a: { userId?: string | null; userName?: string | null }) => {
+      // Links are sales-head set on the roster row (NeoDove user picker in the
+      // Controller); auto-sync only fills empty link fields below and never
+      // overwrites a hand-picked link.
       // NeoDove userIds are RECYCLED across staff (2026-11-02: 3518625a stored
       // on Muskan's row, reported as Kamal; 13889a99 on Deepak + Piyush rows,
       // reported as Piyush). A userId hit against a DIFFERENT stored userName

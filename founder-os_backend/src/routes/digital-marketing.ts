@@ -10,6 +10,7 @@ import {
   getDigitalMarketingMetricsSeries,
   resolveSelfDigitalMarketingManager,
 } from '../automations/digital-marketing/service';
+import { getDigitalMarketingAds } from '../automations/digital-marketing/ads';
 
 void prisma;
 
@@ -66,6 +67,11 @@ router.get('/export', misGuard, asyncHandler(async (req, res) => {
 router.get('/metrics-series', asyncHandler(async (req, res) => {
   try { res.json(await getDigitalMarketingMetricsSeries((req.query as any)?.days)); }
   catch (e: any) { res.status(400).json({ error: e?.message ?? 'series failed' }); }
+}));
+
+router.get('/ads', asyncHandler(async (_req, res) => {
+  try { res.json(await getDigitalMarketingAds()); }
+  catch (e: any) { res.status(400).json({ error: e?.message ?? 'ads failed' }); }
 }));
 
 router.patch('/logs/:id', asyncHandler(async (req, res) => {
