@@ -117,6 +117,13 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     try {
       const body = await c.req.json().catch(() => ({}));
+      // Probe mode (founder 2026-11-05): inventory the NeoDove API shape for
+      // agent phone data (keys only, no PII) without storing anything.
+      if ((body as any)?.probe) {
+        const { probeNeodoveDirectory } = await import('../../automations/neodove-refresh');
+        const result = await probeNeodoveDirectory();
+        return c.json(result, result.ok ? 200 : 502);
+      }
       const result = await refreshNeodoveReport(typeof body?.date === 'string' ? body.date : undefined);
       return c.json(result, result.ok ? 200 : 502);
     } catch (e: any) {

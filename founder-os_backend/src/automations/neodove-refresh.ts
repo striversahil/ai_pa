@@ -186,6 +186,96 @@ async function fetchRosterUserIds(): Promise<string[]> {
 }
 
 /**
+ * Probe the NeoDove API shape for agent phone data (founder 2026-11-05: join
+ * dashboard calls to roster by phone). Returns KEY NAMES ONLY — never values —
+ * so the response is safe to inspect: the raw user-report row keys (is there
+ * already a phone/mobile field hiding in the payload we normalize away?) plus
+ * a small set of candidate user-directory endpoints with their HTTP status
+ * and top-level response keys.
+ */
+export async function probeNeodoveDirectory(): Promise<{
+  ok: boolean;
+  reportKeys?: string[];
+  phoneLikeReportKeys?: string[];
+  rowCount?: number;
+  candidates?: Array<{ method: string; path: string; status: number | string; topKeys?: string[]; phoneLikeKeys?: string[] }>;
+  error?: string;
+}> {
+  const tokenRow = await prisma.token.findUnique({ where: { source: 'neodove' } });
+  if (!tokenRow) return { ok: false, error: 'no neodove token stored' };
+  let token: string;
+  try {
+    const parsed = JSON.parse(tokenRow.token);
+    token = typeof parsed === 'string' ? parsed : String(parsed?.token ?? parsed);
+  } catch {
+    token = tokenRow.token;
+  }
+  const PHONE_RE = /phone|mobile|contact.*(number|no)|msisdn/i;
+  const get = async (path: string, params?: URLSearchParams): Promise<{ status: number; json: any }> => {
+    const url = `${NEODOVE_API}${path}${params ? `?${params}` : ''}`;
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(30000),
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        Referer: 'https://connect.neodove.com/reports/user-report',
+        token,
+      },
+    });
+    const json: any = await res.json().catch(() => null);
+    return { status: res.status, json };
+  };
+  // 1. Raw user-report rows: inventory the keys (values never leave NeoDove).
+  const reportDate = istDateStr(0);
+  const { startDate, endDate } = istRangeStrings(reportDate);
+  const params = new URLSearchParams({
+    reportName: 'USER_REPORT',
+    startDate,
+    endDate,
+    usersId: '',
+    managersId: '',
+    application_type: 'PORTAL',
+  });
+  let first: any = null;
+  let rowCount = 0;
+  try {
+    const { status, json } = await get('/report/call-log-report', params);
+    if (status === 401) return { ok: false, error: 'NeoDove rejected the token (401)' };
+    const all = Array.isArray(json?.data?.data) ? json.data.data : [];
+    rowCount = all.length;
+    first = all[0] ?? null;
+  } catch (e: any) {
+    return { ok: false, error: `report fetch failed: ${e?.message ?? e}` };
+  }
+  const reportKeys = first ? Object.keys(first).sort() : [];
+  const phoneLikeReportKeys = reportKeys.filter((k) => PHONE_RE.test(k));
+  // 2. Candidate user-directory endpoints (read-only GETs; 404s are fine).
+  const candidates: Array<{ method: string; path: string; status: number | string; topKeys?: string[]; phoneLikeKeys?: string[] }> = [];
+  for (const path of ['/user/get-users', '/user/users', '/agent/get-agents', '/agents', '/user/profile', '/report/user-list']) {
+    try {
+      const { status, json } = await get(path);
+      const entry: { method: string; path: string; status: number | string; topKeys?: string[]; phoneLikeKeys?: string[] } = { method: 'GET', path, status };
+      if (status === 200 && json && typeof json === 'object') {
+        const topKeys = Object.keys(json).slice(0, 20).sort();
+        entry.topKeys = topKeys;
+        // Dig one level for list payloads.
+        const list = Array.isArray(json?.data) ? json.data : Array.isArray(json?.data?.data) ? json.data.data : Array.isArray(json?.users) ? json.users : null;
+        if (list && list[0] && typeof list[0] === 'object') {
+          const itemKeys = Object.keys(list[0]).sort();
+          entry.topKeys = [`list[${list.length}]`, ...itemKeys.slice(0, 20)];
+          entry.phoneLikeKeys = itemKeys.filter((k) => PHONE_RE.test(k));
+        } else {
+          entry.phoneLikeKeys = topKeys.filter((k) => PHONE_RE.test(k));
+        }
+      }
+      candidates.push(entry);
+    } catch (e: any) {
+      candidates.push({ method: 'GET', path, status: `error: ${e?.message ?? e}` });
+    }
+  }
+  return { ok: true, reportKeys, phoneLikeReportKeys, rowCount, candidates };
+}
+
+/**
  * Refresh today's (or a specific IST day's) snapshot. Returns a summary.
  */
 export async function refreshNeodoveReport(dateStr?: string): Promise<{
@@ -251,6 +341,64 @@ export async function refreshNeodoveReport(dateStr?: string): Promise<{
   }
   const json: any = await res.json().catch(() => null);
   const all = Array.isArray(json?.data?.data) ? json.data.data : [];
+  // Key inventory (KEYS ONLY, no values — PII-safe): reveals whether the raw
+  // payload already carries an agent phone field we normalize away (founder
+  // 2026-11-05: phone-keyed dashboard mapping).
+  if (all.length > 0 && all[0] && typeof all[0] === 'object') {
+    const rawKeys = Object.keys(all[0]).sort();
+    console.log(`[neodove] raw row keys (${all.length} rows): ${rawKeys.join(',')}`);
+    const phoneLike = rawKeys.filter((k) => /phone|mobile|msisdn/i.test(k));
+    if (phoneLike.length > 0) console.log(`[neodove] phone-like keys: ${phoneLike.join(',')}`);
+    // callActivity is dropped by normalizeRow — inventory its shape (KEYS
+    // ONLY) in case nested call items carry agent device/phone keys.
+    try {
+      const ca: any = (all[0] as any).callActivity;
+      const shape = Array.isArray(ca)
+        ? `array[${ca.length}]${ca.length > 0 && ca[0] && typeof ca[0] === 'object' ? `{${Object.keys(ca[0]).sort().join(',')}}` : ''}`
+        : typeof ca;
+      console.log(`[neodove] callActivity shape: ${String(shape).slice(0, 500)}`);
+      if (Array.isArray(ca) && ca.length > 0 && ca[0] && typeof ca[0] === 'object') {
+        const itemKeys = Object.keys(ca[0]).sort();
+        const pl = itemKeys.filter((k) => /phone|mobile|msisdn|agent|user|device/i.test(k));
+        if (pl.length > 0) console.log(`[neodove] callActivity phone-like keys: ${pl.join(',')}`);
+      }
+    } catch { /* shape probe is best-effort */ }
+    // Candidate user-directory endpoints (read-only GETs; 404s are fine).
+    // Logs status + KEY NAMES ONLY so a phone-bearing endpoint can be wired
+    // as the automatic agent-phone source (founder 2026-11-05).
+    try {
+      const cands = ['/user/get-users', '/user/users', '/agent/get-agents', '/agents', '/user/profile', '/report/user-list'];
+      for (const p of cands) {
+        try {
+          const r = await fetch(`${NEODOVE_API}${p}`, {
+            signal: AbortSignal.timeout(20000),
+            headers: {
+              Accept: 'application/json, text/plain, */*',
+              Referer: 'https://connect.neodove.com/reports/user-report',
+              token,
+            },
+          });
+          let top = '';
+          if (r.status === 200) {
+            const j: any = await r.json().catch(() => null);
+            if (j && typeof j === 'object') {
+              const list = Array.isArray(j?.data) ? j.data : Array.isArray(j?.data?.data) ? j.data.data : Array.isArray(j?.users) ? j.users : null;
+              if (list && list[0] && typeof list[0] === 'object') {
+                const ik = Object.keys(list[0]).sort();
+                const pl = ik.filter((k) => /phone|mobile|msisdn/i.test(k));
+                top = `list[${list.length}]{${ik.slice(0, 25).join(',')}}${pl.length > 0 ? ` phone-like:${pl.join(',')}` : ''}`;
+              } else {
+                top = `keys:${Object.keys(j).slice(0, 15).sort().join(',')}`;
+              }
+            }
+          }
+          console.log(`[neodove] dir-probe ${p} -> ${r.status}${top ? ` ${top.slice(0, 400)}` : ''}`);
+        } catch (e: any) {
+          console.log(`[neodove] dir-probe ${p} -> error:${String(e?.message ?? e).slice(0, 80)}`);
+        }
+      }
+    } catch { /* directory probe is best-effort */ }
+  }
   const filtered = all.filter((r: any) => rowDateStr(r) === reportDate);
 
   // 3b. true "leads generated" per telecaller via get-leads. This feeds the

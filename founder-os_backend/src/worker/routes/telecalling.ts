@@ -115,14 +115,17 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json({ error: "type must be 'telecaller', 'field_staff' or 'team_lead'" }, 400);
     }
     const staffType = body.type === 'field_staff' ? 'field_staff' : body.type === 'team_lead' ? 'team_lead' : 'telecaller';
+    // Second region is a Team-Lead-only concept — never store it on other types.
+    const secondRegion = staffType === 'team_lead' && body.region2 ? String(body.region2) : '';
     if (body.tlLevel !== undefined && body.tlLevel !== '' && !isValidTlLevel(body.tlLevel)) return c.json({ error: 'tlLevel must be TL1 or TL2 (or unset)' }, 400);
     if (body.region !== undefined && body.region !== '' && !isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4 (or unset)' }, 400);
     if (body.region2 !== undefined && body.region2 !== '' && !isValidRegion(body.region2)) return c.json({ error: 'region2 must be R1–R4 (or empty)' }, 400);
     {
       // TL1 = exactly two DIFFERENT regions when both are set (the pair is
       // sales-head assigned; existing single-region TL1 rows stay valid until
-      // the sales-head completes the pair in the Controller).
-      const pairErr = tlPairError(body.tlLevel ?? '', body.region ?? '', body.region2 ?? '');
+      // the sales-head completes the pair in the Controller). region2 only
+      // exists on team_lead rows — validate the coerced value.
+      const pairErr = tlPairError(body.tlLevel ?? '', body.region ?? '', secondRegion);
       if (pairErr) return c.json({ error: pairErr }, 400);
     }
     const tc = await prisma.telecaller.create({
@@ -133,7 +136,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
         whatsapp: body.whatsapp ?? null,
         tlLevel: body.tlLevel ? String(body.tlLevel) : '',
         region: body.region ? String(body.region) : '',
-        region2: body.region2 ? String(body.region2) : '',
+        region2: secondRegion,
         type: staffType,
         // Field staff never close — they only generate leads.
         assignEstimateFollowUps: staffType === 'field_staff' ? false : (body.assignEstimateFollowUps ?? true),
@@ -180,15 +183,21 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       if (body.region2 !== '' && !isValidRegion(body.region2)) return c.json({ error: 'region2 must be R1–R4 (or empty)' }, 400);
       data.region2 = String(body.region2);
     }
-    if (body.tlLevel !== undefined || body.region !== undefined || body.region2 !== undefined) {
+    if (body.tlLevel !== undefined || body.region !== undefined || body.region2 !== undefined || body.type !== undefined) {
       // Re-validate the resulting pair: fetch current row so a partial update
       // (e.g. only region2) still checks the full TL1 pair.
       try {
-        const current: any = await prisma.telecaller.findUnique({ where: { id: c.req.param('id') }, select: { tlLevel: true, region: true, region2: true } });
+        const current: any = await prisma.telecaller.findUnique({ where: { id: c.req.param('id') }, select: { tlLevel: true, region: true, region2: true, type: true } });
+        const resolvedType = body.type !== undefined ? String(body.type) : String(current?.type ?? 'telecaller');
+        // region2 is Team-Lead-only: changing away from team_lead clears it,
+        // and it can never be set on other types.
+        if (resolvedType !== 'team_lead') {
+          data.region2 = '';
+        }
         const pairErr = tlPairError(
           body.tlLevel !== undefined ? body.tlLevel : current?.tlLevel,
           body.region !== undefined ? body.region : current?.region,
-          body.region2 !== undefined ? body.region2 : (current as any)?.region2,
+          resolvedType === 'team_lead' ? (body.region2 !== undefined ? body.region2 : (current as any)?.region2) : '',
         );
         if (pairErr) return c.json({ error: pairErr }, 400);
       } catch { /* row read failed — the update below surfaces it */ }

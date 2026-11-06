@@ -112,6 +112,7 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - Worker side: `src/modules/device-calls/` (types/parse/tokens/scopes/store) + `worker/routes/android.ts` (device token) + `worker/routes/call-log.ts` (session/manager). `/api/android/` is `AUTH_EXEMPT` and enforces `requireDevice`; all other call-log routes need a session.
 - Device auth = manager-issued one-time `DevicePairCode` → 32-byte token, only its SHA-256 stored in `DeviceRegistration`. Raw tokens are never persisted.
 - Recordings: private R2 `CALL_RECORDINGS` (`calls/<YYYY-MM>/<telecallerId>/<callId>-<part>.m4a`), 90-day lifecycle, streamed by `GET /api/call-log/recording/:callId` (Range). Rows set `expired` by the 21:35 UTC cron.
+- **DEPLOY BLOCKER (2026-11-05)**: R2 is not enabled on the Cloudflare account (`[10042]` — founder must enable R2 in the dashboard) so `founder-os-call-recordings` can't be created and the `[[r2_buckets]]` binding fails every Worker deploy with `[10085]`. Binding TEMPORARILY commented out in `wrangler.toml` (recording upload/download 500 until restored — dead anyway without the bucket). Restore: enable R2 → `npx wrangler r2 bucket create founder-os-call-recordings` + 90-day lifecycle on `calls/` → uncomment → redeploy.
 - Leaderboard reads exactly one `call_source` (`neodove|manual|device`); the 20% double-count trap is why the switch is explicit. Device aggregates live in `automations/telecalling/device-calls.ts`.
 - Identity is full E.164 + contact snapshot + hash; calls never write CRM/enquiries in v1.
 

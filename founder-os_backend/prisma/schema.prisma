@@ -974,6 +974,11 @@ model AccountsTaskTemplate {
   // policy no. … (label chosen per category in the UI; task rows ignore it).
   identifier  String?
   statementDay Int? // credit cards: statement day of month (1-31); amount is known only from here
+  // Credit-card billing model: 'fixed' = due on dueDay each month;
+  // 'after_statement' = due graceDays after the statement (statementDay +
+  // graceDays, may spill into the next month). Task rows ignore both.
+  dueMode     String @default("fixed")
+  graceDays   Int?
 
   @@index([active, frequency])
   @@index([kind, active])
@@ -1991,4 +1996,36 @@ model DeviceCall {
   @@index([day])
   @@index([numberHash])
   @@index([deviceId])
+}
+
+// ── Stock (manual inventory: SKU catalogue + dated movements) ───────────────
+// Closing stock is derived (sum of movements ≤ day), never stored. One row per
+// SKU; movements are append-only (opening|receipt|issue|adjustment).
+model StockItem {
+  id           String   @id @default(uuid())
+  sku          String   @unique
+  productName  String
+  unit         String   @default("pcs")
+  reorderLevel Float    @default(0)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  movements    StockMovement[]
+
+  @@index([active, sku])
+}
+
+model StockMovement {
+  id        String    @id @default(uuid())
+  itemId    String
+  item      StockItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  day       String // YYYY-MM-DD IST
+  kind      String // opening | receipt | issue | adjustment
+  qty       Float // signed: receipt/opening/positive-adjust +, issue/negative-adjust −
+  note      String    @default("")
+  createdBy String    @default("")
+  createdAt DateTime  @default(now())
+
+  @@index([itemId, day])
+  @@index([day, kind])
 }

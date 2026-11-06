@@ -744,13 +744,13 @@ function RosterEditModal({
               </select>
             ))}
           </div>
-          {tlLevel === "TL1" && field("Second region (TL1 covers two)", (
+          {staffType === "team_lead" && tlLevel === "TL1" && field("Second region (Team Lead covers two)", (
             <select value={region2} onChange={(e) => setRegion2(e.target.value)} className={inputCls}>
               <option value="">Pick second region…</option>
               {REGIONS.filter((r) => r.id !== region).map((r) => <option key={r.id} value={r.id}>{r.id} · {r.name}</option>)}
             </select>
           ))}
-          {tlLevel === "TL1" && region && region2 && region === region2 && (
+          {staffType === "team_lead" && tlLevel === "TL1" && region && region2 && region === region2 && (
             <p className="text-[11px] rounded-lg border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-rose-600 dark:text-rose-400">
               A TL1 needs two DIFFERENT regions — pick a second region different from the first.
             </p>
@@ -785,8 +785,8 @@ function RosterEditModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave({ name, email, phone, whatsapp, region, region2: tlLevel === "TL1" ? region2 : "", tlLevel, type: staffType })}
-            disabled={busy || !name.trim() || (tlLevel === "TL1" && !!region && !!region2 && region === region2)}
+            onClick={() => onSave({ name, email, phone, whatsapp, region, region2: staffType === "team_lead" && tlLevel === "TL1" ? region2 : "", tlLevel, type: staffType })}
+            disabled={busy || !name.trim() || (staffType === "team_lead" && tlLevel === "TL1" && !!region && !!region2 && region === region2)}
             className="px-4 py-2 text-sm rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
             {busy ? "Saving…" : isCreate ? "Add" : "Save"}
           </button>

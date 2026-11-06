@@ -149,11 +149,51 @@ function parseRule(t: any): any | null {
   }
 }
 
+/** Due date produced by one statement month: statement (day clamped to the
+ *  month length) + graceDays. Spills into the next month / year naturally
+ *  (e.g. statement Jan 28 + 20d → Feb 17; statement Jan 31 + 20d → Feb 20 —
+ *  the "different billing date per card" model). */
+export function dueDateForStatement(sy: number, sm: number, statementDay: number, graceDays: number): string | null {
+  const s = Math.floor(statementDay);
+  const g = Math.floor(graceDays);
+  if (!Number.isFinite(s) || s < 1 || s > 31) return null;
+  if (!Number.isFinite(g) || g < 1 || g > 60) return null;
+  if (!Number.isFinite(sy) || !Number.isFinite(sm) || sm < 1 || sm > 12) return null;
+  const stmt = fmtDay(sy, sm, Math.min(s, daysInMonth(sy, sm)));
+  return addDays(stmt, g);
+}
+
+/** Is `dateStr` a due date under the statement+days model? The grace window
+ *  (≤60d) means a due date in month M can come from the statement of M, M-1
+ *  or M-2 — check all three back-months. */
+function isOffsetDueOn(t: any, y: number, m: number, d: number): boolean {
+  const s = Math.floor(Number((t as any)?.statementDay));
+  const g = Math.floor(Number((t as any)?.graceDays));
+  if (!Number.isFinite(s) || s < 1 || s > 31) return false;
+  if (!Number.isFinite(g) || g < 1 || g > 60) return false;
+  const want = fmtDay(y, m, d);
+  for (let back = 0; back <= 2; back++) {
+    let sy = y;
+    let sm = m - back;
+    while (sm < 1) { sm += 12; sy -= 1; }
+    const due = dueDateForStatement(sy, sm, s, g);
+    if (due === want) return true;
+  }
+  return false;
+}
+
 /** Legacy path for simple MIS-created tasks (no ruleJson): frequency + dueDay/dueMonth. */
 function legacyDueOn(t: any, y: number, m: number, d: number, wd: number, dim: number): boolean {
   const freq = String(t.frequency || 'daily');
   if (freq === 'daily') return wd >= 1 && wd <= 6;
   if (freq === 'weekly') return wd === Number(t.dueDay ?? 4);
+  // Credit cards on the statement+days model ignore dueDay entirely — the due
+  // date is statementDay + graceDays (may land in the next month).
+  if (String((t as any)?.dueMode || 'fixed') === 'after_statement'
+    && String((t as any)?.kind || 'task') === 'payment'
+    && freq === 'monthly') {
+    return isOffsetDueOn(t, y, m, d);
+  }
   if (freq === 'monthly') return d === Math.min(Number(t.dueDay ?? 1), dim);
   if (freq === 'quarterly') {
     const qStart = Math.floor((m - 1) / 3) * 3 + 1;
@@ -1134,6 +1174,45 @@ function cleanTemplateInput(input: Record<string, any>, partial = false) {
   if (input.category !== undefined && String(input.category) !== 'Credit Card' && input.statementDay === undefined) {
     data.statementDay = null;
   }
+  // Billing model: 'fixed' (due on dueDay) or 'after_statement' (due =
+  // statementDay + graceDays). Only meaningful for monthly credit cards —
+  // anything else is forced back to fixed so task rows and other bills can
+  // never carry a stale offset.
+  if (input.dueMode !== undefined) {
+    if (!['fixed', 'after_statement'].includes(String(input.dueMode))) {
+      throw new Error('dueMode must be fixed|after_statement');
+    }
+    data.dueMode = String(input.dueMode);
+  }
+  if (input.graceDays !== undefined) {
+    if (input.graceDays === null || input.graceDays === '') data.graceDays = null;
+    else {
+      const n = Math.floor(Number(input.graceDays));
+      if (!Number.isFinite(n) || n < 1 || n > 60) throw new Error('graceDays must be 1–60');
+      data.graceDays = n;
+    }
+  }
+  // Resolve the effective values for cross-field validation. On partial
+  // updates the caller may send only one side, so fall back to input for the
+  // other (create path: input is the whole story).
+  const effCategory = input.category !== undefined ? input.category : undefined;
+  const effFreq = input.frequency !== undefined ? String(input.frequency) : undefined;
+  const wantsOffset = (input.dueMode !== undefined ? String(input.dueMode) : undefined) === 'after_statement';
+  if (wantsOffset) {
+    if (effCategory !== undefined && String(effCategory) !== 'Credit Card') {
+      throw new Error('after_statement is only for Credit Card bills');
+    }
+    if (effFreq !== undefined && effFreq !== 'monthly') {
+      throw new Error('after_statement needs monthly repeats');
+    }
+    if (input.graceDays === undefined && !partial) {
+      throw new Error('graceDays required for after_statement (days after statement)');
+    }
+  }
+  if (input.category !== undefined && String(input.category) !== 'Credit Card') {
+    if (input.dueMode === undefined) data.dueMode = 'fixed';
+    if (input.graceDays === undefined) data.graceDays = null;
+  }
   return data;
 }
 
@@ -1279,6 +1358,11 @@ export interface PaymentDueRow {
   remindDays: number[];
   /** Credit cards: statement day of month; null for every other category. */
   statementDay: number | null;
+  /** Credit cards: 'fixed' (due on dueDay) or 'after_statement' (due =
+   *  statementDay + graceDays). */
+  dueMode: string;
+  /** Credit cards on after_statement: days after the statement the bill is due. */
+  graceDays: number | null;
   /** Date the statement that prices THIS cycle lands (null when no statement day). */
   statementDate: string | null;
   logId: string | null;
@@ -1319,13 +1403,24 @@ function parseRemindDays(raw: unknown): number[] {
 /**
  * Statement date that prices the cycle due on `dueDate`.
  *
- * The statement is generated `statementDay` of a month and the payment is due
- * on `dueDay`. When the statement day lands BEFORE the due day the pair sits in
- * the same month (statement 2nd → due 15th); otherwise the statement belongs to
- * the previous month (statement 25th → due 15th of the following month). The
- * day is clamped to the month length so a 31st statement works in February.
+ * Fixed model: the statement is generated `statementDay` of a month and the
+ * payment is due on `dueDay`. When the statement day lands BEFORE the due day
+ * the pair sits in the same month (statement 2nd → due 15th); otherwise the
+ * statement belongs to the previous month (statement 25th → due 15th of the
+ * following month). The day is clamped to the month length so a 31st
+ * statement works in February.
+ *
+ * Statement+days model (`graceDays` given): the due date IS statement +
+ * graceDays, so the statement is simply due − graceDays.
  */
-export function statementDateFor(dueDate: string, statementDay: number): string | null {
+export function statementDateFor(dueDate: string, statementDay: number, graceDays?: number | null): string | null {
+  const gg: any = graceDays;
+  const g = gg === null || gg === undefined || gg === '' ? null : Math.floor(Number(gg));
+  if (g !== null && Number.isFinite(g) && g >= 1 && g <= 60) {
+    const dd = String(dueDate || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dd)) return null;
+    return addDays(dd, -g);
+  }
   const { y, m, d } = parseDay(dueDate);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
   const day = Math.floor(statementDay);
@@ -1348,6 +1443,12 @@ function toPaymentRow(t: any, log: any, dueDate: string, today: string, attachme
   const statementDay = statementDayRaw === null || statementDayRaw === undefined || statementDayRaw === ''
     ? null
     : Number(statementDayRaw);
+  const dueModeRaw = String((t as any)?.dueMode || 'fixed');
+  const dueMode = dueModeRaw === 'after_statement' ? 'after_statement' : 'fixed';
+  const graceRaw = (t as any)?.graceDays;
+  const graceDays = graceRaw === null || graceRaw === undefined || graceRaw === ''
+    ? null
+    : Number(graceRaw);
   const bucket: PaymentBucket = done
     ? 'paid'
     : dd < today
@@ -1368,7 +1469,9 @@ function toPaymentRow(t: any, log: any, dueDate: string, today: string, attachme
     dueMonth: (t as any).dueMonth ?? null,
     remindDays,
     statementDay,
-    statementDate: statementDay === null ? null : statementDateFor(dd, statementDay),
+    statementDate: statementDay === null ? null : statementDateFor(dd, statementDay, dueMode === 'after_statement' ? graceDays : null),
+    dueMode,
+    graceDays: dueMode === 'after_statement' ? graceDays : null,
     logId: log ? String(log.id) : null,
     dueDate: dd,
     status: log ? String(log.status) : 'pending',
