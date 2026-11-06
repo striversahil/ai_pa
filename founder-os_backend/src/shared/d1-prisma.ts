@@ -51,6 +51,8 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskTemplate: ['active', 'isShared'],
   DigitalMarketingTaskLog: [],
   DigitalMarketingTaskAttachment: [],
+  DigitalMarketingAd: [],
+  DigitalMarketingAdAttachment: [],
   HumanResourcesMember: ['deleted', 'active'],
   HumanResourcesTask: ['deleted'],
   HumanResourcesExpense: ['deleted'],
@@ -116,6 +118,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskTemplate: ['createdAt', 'updatedAt'],
   DigitalMarketingTaskLog: ['createdAt', 'updatedAt'],
   DigitalMarketingTaskAttachment: ['createdAt'],
+  DigitalMarketingAd: ['createdAt', 'updatedAt'],
+  DigitalMarketingAdAttachment: ['createdAt'],
   HumanResourcesMember: ['createdAt', 'salaryTemplateAppliedAt'],
   HumanResourcesTask: ['createdAt', 'updatedAt'],
   HumanResourcesExpense: ['createdAt', 'updatedAt'],
@@ -217,6 +221,8 @@ const ID_FIELDS: Record<string, string> = {
   DigitalMarketingTaskTemplate: 'id',
   DigitalMarketingTaskLog: 'id',
   DigitalMarketingTaskAttachment: 'id',
+  DigitalMarketingAd: 'id',
+  DigitalMarketingAdAttachment: 'id',
   HumanResourcesMember: 'id',
   HumanResourcesTask: 'id',
   HumanResourcesExpense: 'id',
@@ -300,6 +306,7 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   PaymentReminder: ['amount'],
   AccountsTaskTemplate: ['amount'],
   AccountsTaskLog: ['paidAmount'],
+  DigitalMarketingAd: ['amountSpent'],
 };
 
 const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?: boolean }>> = {
@@ -366,6 +373,12 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   DigitalMarketingTaskAttachment: {
     log: { model: 'DigitalMarketingTaskLog', fk: 'logId', one: true },
+  },
+  DigitalMarketingAd: {
+    attachments: { model: 'DigitalMarketingAdAttachment', fk: 'adId' },
+  },
+  DigitalMarketingAdAttachment: {
+    ad: { model: 'DigitalMarketingAd', fk: 'adId', one: true },
   },
   HumanResourcesMember: {
     tasks: { model: 'HumanResourcesTask', fk: 'assignedToId' },
@@ -968,6 +981,8 @@ export class D1PrismaClient {
   get digitalMarketingTaskTemplate() { return this.model('DigitalMarketingTaskTemplate'); }
   get digitalMarketingTaskLog() { return this.model('DigitalMarketingTaskLog'); }
   get digitalMarketingTaskAttachment() { return this.model('DigitalMarketingTaskAttachment'); }
+  get digitalMarketingAd() { return this.model('DigitalMarketingAd'); }
+  get digitalMarketingAdAttachment() { return this.model('DigitalMarketingAdAttachment'); }
   // Human Resources (ad-hoc tasks + fixed/variable expenses).
   get humanResourcesMember() { return this.model('HumanResourcesMember'); }
   get humanResourcesTask() { return this.model('HumanResourcesTask'); }

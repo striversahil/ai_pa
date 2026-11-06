@@ -1208,6 +1208,18 @@ function ProofCard({
           {proof.actor ? ` · ${proof.actor}` : ""}
         </span>
       </div>
+      {proof.items && proof.items.length > 0 && (
+        <div className="mt-1 rounded-lg bg-emerald-500/5 px-2 py-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Items dispatched</p>
+          <ul className="mt-0.5 space-y-0.5">
+            {proof.items.map((bi) => (
+              <li key={`${proof.id}-${bi.itemId}`} className="tabular-nums">
+                <b>{bi.qty}{bi.unit ? ` ${bi.unit}` : ""}</b> × {bi.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800/60">
         {renderDoc("Invoice", "invoice")}
         {renderDoc("Before packing", "before", "beforeId")}

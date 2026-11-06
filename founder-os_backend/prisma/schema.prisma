@@ -1229,6 +1229,41 @@ model DigitalMarketingTaskAttachment {
   @@index([logId])
 }
 
+// ── Digital Marketing ADS registry (migration 0113, manual ad runs) ──
+model DigitalMarketingAd {
+  id              String   @id @default(uuid())
+  type            String   @default("meta") // google | meta | whatsapp | email | twitter | other
+  title           String   @default("")
+  startDate       String // YYYY-MM-DD (mandatory)
+  endDate         String // YYYY-MM-DD (mandatory, >= startDate)
+  amountSpent     Float    @default(0)
+  leads           Int      @default(0)
+  enquiries       Int      @default(0)
+  dataDescription String   @default("")
+  status          String   @default("planned") // planned | live | completed
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  attachments     DigitalMarketingAdAttachment[]
+
+  @@index([startDate])
+  @@index([status])
+}
+
+model DigitalMarketingAdAttachment {
+  id         String             @id @default(uuid())
+  adId       String
+  ad         DigitalMarketingAd @relation(fields: [adId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String   @default("application/octet-stream")
+  size       Int      @default(0)
+  kvKey      String   @unique
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([adId])
+}
+
 // ── Human Resources (ad-hoc delegated task list + fixed/variable expenses) ──
 model HumanResourcesMember {
   id                    String   @id @default(uuid())
