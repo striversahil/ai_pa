@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { CustomerAgeingRow } from "@/debtors-tracker/types";
 import { BUCKET_LABELS, CUSTOMER_SITUATIONS, CUSTOMER_SITUATION_LABELS, formatINR, shortDate, situationLabel } from "@/debtors-tracker/types";
+import { debtorRegionLabel, debtorRegionOf, matchesDebtorRegion, type DebtorRegionFilter } from "@/debtors-tracker/regions";
 import { formatPromiseDate, promiseStatus, promiseStatusLabel, todayIST } from "@/debtors-tracker/promise";
 import { Chip, EmptyState, TD, TDR, TH, THR, TableShell } from "../ui";
 
@@ -105,6 +106,7 @@ export default function AgeingTab({
   const [sortKey, setSortKey] = useState<SortKey>("grossDue");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [situationFilter, setSituationFilter] = useState<string>("ALL");
+  const [regionFilter, setRegionFilter] = useState<DebtorRegionFilter>("ALL");
   const [groupBy, setGroupBy] = useState(false);
   const today = useMemo(() => todayIST(), []);
 
@@ -125,10 +127,21 @@ export default function AgeingTab({
     return m;
   }, [customers]);
 
+  const regionCounts = useMemo(() => {
+    const m = new Map<DebtorRegionFilter, number>();
+    m.set("ALL", customers.length);
+    for (const r of customers) {
+      const region = debtorRegionOf(r);
+      const key: DebtorRegionFilter = region === "" ? "UNMAPPED" : (region as DebtorRegionFilter);
+      m.set(key, (m.get(key) || 0) + 1);
+    }
+    return m;
+  }, [customers]);
+
   const filtered = useMemo(() => {
-    const rows = situationFilter === "ALL"
-      ? customers
-      : customers.filter((r) => (r.situation || "") === situationFilter);
+    const rows = customers
+      .filter((r) => matchesDebtorRegion(r, regionFilter))
+      .filter((r) => situationFilter === "ALL" || (r.situation || "") === situationFilter);
     const dir = sortDir === "asc" ? 1 : -1;
     const nameTie = (a: CustomerAgeingRow, b: CustomerAgeingRow) => a.customerName.localeCompare(b.customerName);
     // Empty dates always sink to the bottom, whichever direction is active.
@@ -172,7 +185,7 @@ export default function AgeingTab({
       if (cmp !== 0) return cmp * dir;
       return nameTie(a, b);
     });
-  }, [customers, situationFilter, sortKey, sortDir]);
+  }, [customers, regionFilter, situationFilter, sortKey, sortDir]);
 
   const groups = useMemo(() => {
     if (!groupBy) return null;
@@ -285,6 +298,20 @@ export default function AgeingTab({
           </Chip>
         ))}
         <label className="ml-2 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+          Region
+          <select
+            value={regionFilter}
+            onChange={(e) => setRegionFilter(e.target.value as DebtorRegionFilter)}
+            className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-800 outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+          >
+            {(["ALL", "R1", "R2", "R3", "R4", "UNMAPPED"] as const).map((f) => (
+              <option key={f} value={f}>
+                {debtorRegionLabel(f)} ({regionCounts.get(f) || 0})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="ml-2 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
           Situation
           <select
             value={situationFilter}
@@ -306,9 +333,9 @@ export default function AgeingTab({
 
       {filtered.length === 0 ? (
         <EmptyState
-          title={customers.length ? "No customers in this situation" : "No customer ageing yet"}
+          title={customers.length ? "No customers match these filters" : "No customer ageing yet"}
           hint={customers.length
-            ? "Try a different situation filter — or set the situation from any customer row."
+            ? "Try a different region or situation filter — or set the situation from any customer row."
             : canAccounts
               ? "Import the debtors ageing sheet from the Accounts tab — the buckets are calculated automatically from each invoice's due date."
               : "The accounts team has not imported the debtors sheet yet. Ageing, dues and follow-up status will appear here once it is loaded."}

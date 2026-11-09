@@ -1,9 +1,17 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { CustomerAgeingRow, LiveCollection, ReceiptAgeingSplit, SummaryRow } from "@/debtors-tracker/types";
 import { formatCompactINR, formatINR, isAdvanceReceipt, shortDate } from "@/debtors-tracker/types";
 import { AGEING_BUCKETS as BUCKETS } from "@/debtors-tracker/buckets";
+import {
+  debtorRegionLabel,
+  matchesDebtorRegion,
+  summarizeDebtorRegions,
+  topSituationLabel,
+  type DebtorRegionFilter,
+  type DebtorRegionSummary,
+} from "@/debtors-tracker/regions";
 import ReceiptAgeingMini from "../ReceiptAgeingMini";
 import PromiseOverview from "../PromiseOverview";
 import { Card, EmptyState, MiniStat } from "../ui";
@@ -168,6 +176,141 @@ function AdvanceQuadrant({
   );
 }
 
+const REGION_TILE_TONES: Record<string, string> = {
+  R1: "ring-indigo-500/60 bg-indigo-50/60 dark:bg-indigo-500/10",
+  R2: "ring-sky-500/60 bg-sky-50/60 dark:bg-sky-500/10",
+  R3: "ring-amber-500/60 bg-amber-50/60 dark:bg-amber-500/10",
+  R4: "ring-emerald-500/60 bg-emerald-50/60 dark:bg-emerald-500/10",
+};
+
+/**
+ * Always-visible per-region comparison: one clickable tile per R1–R4 +
+ * Unmapped. Clicking a tile scopes the receivables section below to it.
+ */
+function RegionStrip({
+  rows, active, onPick,
+}: {
+  rows: DebtorRegionSummary[];
+  active: DebtorRegionFilter;
+  onPick: (f: DebtorRegionFilter) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+      <button
+        onClick={() => onPick("ALL")}
+        title="Show all regions"
+        className={`rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
+          active === "ALL"
+            ? "border-zinc-900/30 bg-zinc-900/[0.04] ring-1 ring-zinc-900/30 dark:border-zinc-100/30 dark:bg-white/[0.06] dark:ring-zinc-100/30"
+            : "border-zinc-200/70 bg-white dark:border-zinc-800/80 dark:bg-zinc-900/40"
+        }`}
+      >
+        <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400 dark:text-zinc-500">All regions</div>
+        <div className="mt-1.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+          {formatINR(rows.reduce((a, r) => a + r.grossDue, 0), false)}
+        </div>
+        <div className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
+          gross · {rows.reduce((a, r) => a + r.customers, 0)} customers
+        </div>
+      </button>
+      {rows.map((r) => {
+        const isActive = active === r.key;
+        const tone = r.region ? (REGION_TILE_TONES[r.region] ?? "") : "";
+        return (
+          <button
+            key={r.key}
+            onClick={() => onPick(r.key)}
+            title={`${r.label} — gross ${formatINR(r.grossDue, false)} · net ${formatINR(r.netDue, false)} · top situation ${topSituationLabel(r)}`}
+            className={`rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
+              isActive
+                ? `border-transparent ring-1 ${tone}`
+                : "border-zinc-200/70 bg-white dark:border-zinc-800/80 dark:bg-zinc-900/40"
+            }`}
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+              {r.region || "Unmapped"}
+            </div>
+            <div className="mt-1.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+              {formatINR(r.grossDue, false)}
+            </div>
+            <div className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
+              net {formatINR(r.netDue, false)} · {r.customers} customer{r.customers === 1 ? "" : "s"}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Per-region payment conditions: where each region's money lies across the
+ * ageing buckets, plus the CRM situation mix (top situation + promised
+ * count). Computed from the same customer rows as the Ageing tab, so the
+ * two views can never disagree.
+ */
+function RegionBreakdown({ rows }: { rows: DebtorRegionSummary[] }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800/70">
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Region breakdown</h3>
+          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+            Each region&apos;s dues across the ageing buckets, with the CRM situation where most of its customers lie
+          </p>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[900px] border-collapse text-xs">
+          <thead>
+            <tr className="text-left text-[10px] uppercase tracking-[0.1em] text-zinc-400 dark:text-zinc-500">
+              <th className="px-4 py-2.5 font-semibold">Region</th>
+              <th className="px-3 py-2.5 text-right font-semibold">Customers</th>
+              <th className="px-3 py-2.5 text-right font-semibold">Gross due</th>
+              <th className="px-3 py-2.5 text-right font-semibold">Net due</th>
+              <th className="px-3 py-2.5 text-right font-semibold">Not due</th>
+              <th className="px-3 py-2.5 text-right font-semibold">0–30</th>
+              <th className="px-3 py-2.5 text-right font-semibold">31–60</th>
+              <th className="px-3 py-2.5 text-right font-semibold">61–90</th>
+              <th className="px-3 py-2.5 text-right font-semibold">91–180</th>
+              <th className="px-3 py-2.5 text-right font-semibold">&gt;180</th>
+              <th className="px-4 py-2.5 text-right font-semibold">Situation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.key}
+                className="border-t border-zinc-100 tabular-nums hover:bg-zinc-50/70 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40"
+                title={`${r.label}: ${r.customers} customers · ${r.invoices} invoices · promised-to-pay ${r.promisedCount}`}
+              >
+                <td className="whitespace-nowrap px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.label}</td>
+                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{r.customers}</td>
+                <td className="px-3 py-2 text-right font-medium text-rose-600 dark:text-rose-400">{formatINR(r.grossDue, false)}</td>
+                <td className="px-3 py-2 text-right font-medium text-amber-600 dark:text-amber-400">{formatINR(r.netDue, false)}</td>
+                <td className="px-3 py-2 text-right text-sky-600 dark:text-sky-400">{formatINR(r.notDue)}</td>
+                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket0to30)}</td>
+                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket31to60)}</td>
+                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket61to90)}</td>
+                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket91to180)}</td>
+                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucketAbove180)}</td>
+                <td className="whitespace-nowrap px-4 py-2 text-right text-zinc-500 dark:text-zinc-400">
+                  {topSituationLabel(r)}
+                  {r.promisedCount > 0 && (
+                    <span className="ml-1.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                      ♥ {r.promisedCount} promised
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 export default function SummaryTab({
   summary, collections, customers, asOfIST, receiptAgeing,
 }: {
@@ -177,9 +320,37 @@ export default function SummaryTab({
   asOfIST: string;
   receiptAgeing?: ReceiptAgeingSplit | null;
 }) {
-  const s = summary;
-  const bucketTotal = BUCKETS.reduce((sum, b) => sum + Math.max(0, s[b.key]), 0);
-  const avgReceivable = s.customerCount > 0 ? s.totalReceivable / s.customerCount : 0;
+  // Region scoping is client-side over the customer rows (they carry region);
+  // receipts carry no region, so the Collections section below stays global.
+  const [regionFilter, setRegionFilter] = useState<DebtorRegionFilter>("ALL");
+  const regionRows = useMemo(() => summarizeDebtorRegions(customers), [customers]);
+  const regionCustomers = useMemo(
+    () => customers.filter((r) => matchesDebtorRegion(r, regionFilter)),
+    [customers, regionFilter],
+  );
+  const rs = useMemo(() => {
+    const acc = {
+      totalReceivable: 0, notDue: 0, grossDue: 0, advanceReceived: 0, netDue: 0,
+      bucket0to30: 0, bucket31to60: 0, bucket61to90: 0, bucket91to180: 0, bucketAbove180: 0,
+      invoiceCount: 0, customerCount: regionCustomers.length,
+    };
+    for (const r of regionCustomers) {
+      acc.totalReceivable += r.totalReceivable || 0;
+      acc.notDue += r.notDue || 0;
+      acc.grossDue += r.grossDue || 0;
+      acc.advanceReceived += r.advanceReceived || 0;
+      acc.netDue += r.netDue || 0;
+      acc.bucket0to30 += r.bucket0to30 || 0;
+      acc.bucket31to60 += r.bucket31to60 || 0;
+      acc.bucket61to90 += r.bucket61to90 || 0;
+      acc.bucket91to180 += r.bucket91to180 || 0;
+      acc.bucketAbove180 += r.bucketAbove180 || 0;
+      acc.invoiceCount += r.invoiceCount || 0;
+    }
+    return { ...acc, above90Total: acc.bucket91to180 + acc.bucketAbove180 };
+  }, [regionCustomers]);
+  const bucketTotal = BUCKETS.reduce((sum, b) => sum + Math.max(0, rs[b.key]), 0);
+  const avgReceivable = rs.customerCount > 0 ? rs.totalReceivable / rs.customerCount : 0;
 
   const monthPrefix = asOfIST.slice(0, 7);
   const sevenDayStart = dayOffset(asOfIST, 6);
@@ -245,29 +416,43 @@ export default function SummaryTab({
           icon="receivables"
           right={
             <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <label className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                Region
+                <select
+                  value={regionFilter}
+                  onChange={(e) => setRegionFilter(e.target.value as DebtorRegionFilter)}
+                  className="bg-transparent font-medium text-zinc-800 outline-none dark:text-zinc-200"
+                >
+                  {(["ALL", "R1", "R2", "R3", "R4", "UNMAPPED"] as const).map((f) => (
+                    <option key={f} value={f}>{debtorRegionLabel(f)}</option>
+                  ))}
+                </select>
+              </label>
               <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-                {s.customerCount} customers
+                {rs.customerCount} customers{regionFilter !== "ALL" ? ` · ${debtorRegionLabel(regionFilter)}` : ""}
               </span>
               <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-                {s.invoiceCount} invoices
+                {rs.invoiceCount} invoices
               </span>
             </div>
           }
         />
 
+        <RegionStrip rows={regionRows} active={regionFilter} onPick={setRegionFilter} />
+
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <MetricCard label="Total debtors receivable" value={formatINR(s.totalReceivable, false)} hint="Open invoice value across all customers" emphasis />
-          <MetricCard label="Not due" value={formatINR(s.notDue)} hint="Not crossed the due date" accent="sky" />
-          <MetricCard label="Gross due / overdue" value={formatINR(s.grossDue, false)} hint="Past due, before customer advances" accent="rose" />
-          <MetricCard label="Advance received" value={formatINR(s.advanceReceived)} hint="Received beyond invoice value" accent="emerald" />
-          <MetricCard label="Net due" value={formatINR(s.netDue, false)} hint="Gross due − advances" accent="amber" emphasis />
+          <MetricCard label="Total debtors receivable" value={formatINR(rs.totalReceivable, false)} hint={`Open invoice value${regionFilter !== "ALL" ? ` · ${debtorRegionLabel(regionFilter)}` : " across all customers"}`} emphasis />
+          <MetricCard label="Not due" value={formatINR(rs.notDue)} hint="Not crossed the due date" accent="sky" />
+          <MetricCard label="Gross due / overdue" value={formatINR(rs.grossDue, false)} hint="Past due, before customer advances" accent="rose" />
+          <MetricCard label="Advance received" value={formatINR(rs.advanceReceived)} hint="Received beyond invoice value" accent="emerald" />
+          <MetricCard label="Net due" value={formatINR(rs.netDue, false)} hint="Gross due − advances" accent="amber" emphasis />
         </div>
 
         <Card className="overflow-hidden">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800/70">
             <div>
               <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Ageing distribution</h3>
-              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Past-due exposure across {s.customerCount} customer{s.customerCount === 1 ? "" : "s"}</p>
+              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Past-due exposure across {rs.customerCount} customer{rs.customerCount === 1 ? "" : "s"}{regionFilter !== "ALL" ? ` · ${debtorRegionLabel(regionFilter)}` : ""}</p>
             </div>
             <div className="text-right">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Past due</div>
@@ -279,7 +464,7 @@ export default function SummaryTab({
             <div className="flex h-4 w-full overflow-hidden rounded-full bg-zinc-100 ring-1 ring-inset ring-zinc-200/60 dark:bg-zinc-800 dark:ring-zinc-700/40">
               {bucketTotal > 0
                 ? BUCKETS.map((b) => {
-                    const value = Math.max(0, s[b.key]);
+                    const value = Math.max(0, rs[b.key]);
                     if (value <= 0) return null;
                     return (
                       <div
@@ -295,7 +480,7 @@ export default function SummaryTab({
 
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-5">
               {BUCKETS.map((b) => {
-                const value = Math.max(0, s[b.key]);
+                const value = Math.max(0, rs[b.key]);
                 const pct = bucketTotal > 0 ? (value / bucketTotal) * 100 : 0;
                 return (
                   <div key={b.key} className={`rounded-xl border p-3 ${b.tile}`}>
@@ -311,15 +496,17 @@ export default function SummaryTab({
             </div>
 
             <div className="grid grid-cols-2 gap-4 border-t border-zinc-100 pt-4 sm:grid-cols-4 dark:border-zinc-800/60">
-              <MiniStat label="Above 90 days" value={formatINR(s.above90Total, false)} />
+              <MiniStat label="Above 90 days" value={formatINR(rs.above90Total, false)} />
               <MiniStat label="Avg receivable / customer" value={formatINR(avgReceivable, false)} />
-              <MiniStat label="Invoices" value={String(s.invoiceCount)} />
-              <MiniStat label="Customers" value={String(s.customerCount)} />
+              <MiniStat label="Invoices" value={String(rs.invoiceCount)} />
+              <MiniStat label="Customers" value={String(rs.customerCount)} />
             </div>
           </div>
         </Card>
 
-        <PromiseOverview customers={customers} asOfIST={asOfIST} />
+        <RegionBreakdown rows={regionRows} />
+
+        <PromiseOverview customers={regionCustomers} asOfIST={asOfIST} />
       </section>
 
       <section className="relative space-y-4 border-t border-zinc-200/80 pt-8 dark:border-zinc-800/80">
@@ -327,7 +514,7 @@ export default function SummaryTab({
         <SectionHeading
           eyebrow="Collections"
           title="Receipts & daily pace"
-          description="Money received against invoices — totals, latest activity and the daily collection rhythm."
+          description="Money received against invoices — totals, latest activity and the daily collection rhythm. Receipts carry no region, so this section always covers all regions."
           accent="emerald"
           icon="collections"
           right={
