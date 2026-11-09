@@ -243,74 +243,6 @@ function RegionStrip({
   );
 }
 
-/**
- * Per-region payment conditions: where each region's money lies across the
- * ageing buckets, plus the CRM situation mix (top situation + promised
- * count). Computed from the same customer rows as the Ageing tab, so the
- * two views can never disagree.
- */
-function RegionBreakdown({ rows }: { rows: DebtorRegionSummary[] }) {
-  return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800/70">
-        <div>
-          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Region breakdown</h3>
-          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Each region&apos;s dues across the ageing buckets, with the CRM situation where most of its customers lie
-          </p>
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[900px] border-collapse text-xs">
-          <thead>
-            <tr className="text-left text-[10px] uppercase tracking-[0.1em] text-zinc-400 dark:text-zinc-500">
-              <th className="px-4 py-2.5 font-semibold">Region</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Customers</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Gross due</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Net due</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Not due</th>
-              <th className="px-3 py-2.5 text-right font-semibold">0–30</th>
-              <th className="px-3 py-2.5 text-right font-semibold">31–60</th>
-              <th className="px-3 py-2.5 text-right font-semibold">61–90</th>
-              <th className="px-3 py-2.5 text-right font-semibold">91–180</th>
-              <th className="px-3 py-2.5 text-right font-semibold">&gt;180</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Situation</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr
-                key={r.key}
-                className="border-t border-zinc-100 tabular-nums hover:bg-zinc-50/70 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40"
-                title={`${r.label}: ${r.customers} customers · ${r.invoices} invoices · promised-to-pay ${r.promisedCount}`}
-              >
-                <td className="whitespace-nowrap px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.label}</td>
-                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{r.customers}</td>
-                <td className="px-3 py-2 text-right font-medium text-rose-600 dark:text-rose-400">{formatINR(r.grossDue, false)}</td>
-                <td className="px-3 py-2 text-right font-medium text-amber-600 dark:text-amber-400">{formatINR(r.netDue, false)}</td>
-                <td className="px-3 py-2 text-right text-sky-600 dark:text-sky-400">{formatINR(r.notDue)}</td>
-                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket0to30)}</td>
-                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket31to60)}</td>
-                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket61to90)}</td>
-                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucket91to180)}</td>
-                <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-400">{formatINR(r.bucketAbove180)}</td>
-                <td className="whitespace-nowrap px-4 py-2 text-right text-zinc-500 dark:text-zinc-400">
-                  {topSituationLabel(r)}
-                  {r.promisedCount > 0 && (
-                    <span className="ml-1.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-                      ♥ {r.promisedCount} promised
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
-}
-
 export default function SummaryTab({
   summary, collections, customers, asOfIST, receiptAgeing,
 }: {
@@ -503,8 +435,6 @@ export default function SummaryTab({
             </div>
           </div>
         </Card>
-
-        <RegionBreakdown rows={regionRows} />
 
         <PromiseOverview customers={regionCustomers} asOfIST={asOfIST} />
       </section>
