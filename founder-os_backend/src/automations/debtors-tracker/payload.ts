@@ -8,6 +8,7 @@ import { cached } from '../../shared/cache';
 import { DEBTORS_CACHE_PREFIX, DEBTORS_TTL_MS } from './cache';
 import { loadCustomerContacts } from './customers';
 import { customerKeyOf } from './customers';
+import { loadPrimaryPdfByInvoice } from './attachments';
 import { buildCustomerAgeing, buildLiveInvoices } from './ledger';
 import { buildReceiptAgeing, receiptBucketAt } from './receipt-ageing';
 import { latestReminderByCustomer, loadRecentReminders, reminderConfigured, reminderMode } from './reminders';
@@ -25,15 +26,25 @@ export async function getDebtorsTrackerData(): Promise<DebtorsTrackerPayload> {
 
 async function computePayload(): Promise<DebtorsTrackerPayload> {
   const today = todayIST();
-  const [invoiceRows, collRows, contacts, reminders, remarkIndex] = await Promise.all([
+  const [invoiceRows, collRows, contacts, reminders, remarkIndex, pdfByInvoice] = await Promise.all([
     prisma.debtorInvoice.findMany({ where: { deleted: false } }) as Promise<any[]>,
     prisma.paymentCollection.findMany({ where: { deleted: false } }) as Promise<any[]>,
     loadCustomerContacts(),
     loadRecentReminders(500),
     loadRemarkIndex(),
+    loadPrimaryPdfByInvoice().catch(() => new Map()),
   ]);
 
   const { liveInvoices, advanceByCustomer } = buildLiveInvoices(invoiceRows, collRows, today);
+  for (const inv of liveInvoices) {
+    const pdf = (pdfByInvoice as Map<string, any>).get(String((inv as any).id));
+    if (pdf) {
+      (inv as any).invoicePdf = {
+        id: String(pdf.id), fileName: String(pdf.fileName), url: String(pdf.url),
+        source: String(pdf.source), uploadedBy: String(pdf.uploadedBy || ''),
+      };
+    }
+  }
   const dues = buildCustomerAgeing(liveInvoices, advanceByCustomer);
   const receiptAgeing = buildReceiptAgeing(invoiceRows, collRows, today);
 

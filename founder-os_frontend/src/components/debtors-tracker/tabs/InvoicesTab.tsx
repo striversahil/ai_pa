@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { LiveInvoice } from "@/debtors-tracker/types";
+import { planZipFiles, uploadInvoicePdf } from "@/debtors-tracker/api";
 import { BUCKET_LABELS, formatDays, formatINR, shortDate } from "@/debtors-tracker/types";
 import { describeSortSpecs, isDefaultSort, nextSortSpecs, type SortSpec } from "@/debtors-tracker/multi-sort";
 import { useColumnOrder } from "@/hooks/useColumnOrder";
@@ -18,7 +19,7 @@ const INVOICE_SORT_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_COLUMNS = [
-  "customer", "invoice", "date", "due", "dueMonth", "amount", "received",
+  "customer", "invoice", "pdf", "date", "due", "dueMonth", "amount", "received",
   "balance", "overdue", "bucket", "status", "owner", "place", "remarks", "edit",
 ] as const;
 
@@ -31,21 +32,84 @@ type InvoiceColumn = {
 };
 
 export default function InvoicesTab({
-  invoices, onEdit, onGoToAccounts,
+  invoices, onEdit, onGoToAccounts, canAccounts, onChanged,
 }: {
   invoices: LiveInvoice[];
   onEdit: (inv: LiveInvoice) => void;
   onGoToAccounts: () => void;
+  /** Accounts users get the zip-upload + missing-PDF review tools. */
+  canAccounts?: boolean;
+  onChanged?: () => void;
 }) {
   const [bucket, setBucket] = useState<string>("ALL");
   const [q, setQ] = useState("");
+  const [pdfFilter, setPdfFilter] = useState<"all" | "with" | "missing">("all");
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
   const [sortSpecs, setSortSpecs] = useState<SortSpec[]>(DEFAULT_INVOICE_SORT);
-  const { order, move } = useColumnOrder("pt:invoice-columns:v1", DEFAULT_COLUMNS);
+  const { order, move } = useColumnOrder("pt:invoice-columns:v2", DEFAULT_COLUMNS);
+  const [zipBusy, setZipBusy] = useState(false);
+  const [zipReport, setZipReport] = useState<null | {
+    total: number; attached: number; failed: { fileName: string; error: string }[];
+    ambiguous: { fileName: string; trailing: string }[]; unmapped: { fileName: string; trailing: string }[];
+  }>(null);
+  const zipInput = useRef<HTMLInputElement | null>(null);
+
+  const uploadZip = async (file: File | undefined) => {
+    if (!file || zipBusy) return;
+    setZipBusy(true);
+    setZipReport(null);
+    try {
+      const { default: JSZip } = await import("jszip");
+      const zip = await (JSZip as any).loadAsync(await file.arrayBuffer());
+      const blobs = new Map<string, Blob>();
+      const jobs: Promise<void>[] = [];
+      (zip as any).forEach((relPath: string, entry: any) => {
+        if (entry.dir) return;
+        if (!/\.pdf$/i.test(relPath)) return;
+        const base = (relPath.split("/").pop() || relPath).slice(0, 200);
+        jobs.push((async () => {
+          const data = await entry.async("blob");
+          if (!blobs.has(base.toLowerCase())) blobs.set(base.toLowerCase(), data);
+        })());
+      });
+      await Promise.all(jobs);
+      if (blobs.size === 0) throw new Error("No PDFs found in the zip");
+      // Recover original-cased names (map is keyed lowercase).
+      const origNames: string[] = [];
+      (zip as any).forEach((relPath: string, entry: any) => {
+        if (entry.dir || !/\.pdf$/i.test(relPath)) return;
+        const base = (relPath.split("/").pop() || relPath).slice(0, 200);
+        if (blobs.has(base.toLowerCase()) && !origNames.some((n) => n.toLowerCase() === base.toLowerCase())) origNames.push(base);
+      });
+      const plan = await planZipFiles(origNames);
+      const byId = new Map(plan.matched.map((m) => [m.fileName.toLowerCase(), m.invoiceId]));
+      let attached = 0;
+      const failed: { fileName: string; error: string }[] = [];
+      for (const name of origNames) {
+        const invoiceId = byId.get(name.toLowerCase());
+        if (!invoiceId) continue;
+        const blob = blobs.get(name.toLowerCase());
+        if (!blob) continue;
+        try {
+          await uploadInvoicePdf(invoiceId, new File([blob], name, { type: "application/pdf" }));
+          attached++;
+        } catch (e: any) {
+          failed.push({ fileName: name, error: e?.message ?? "upload failed" });
+        }
+      }
+      setZipReport({ total: origNames.length, attached, failed, ambiguous: plan.ambiguous, unmapped: plan.unmapped });
+      onChanged?.();
+    } catch (e: any) {
+      alert(e?.message ?? "Zip upload failed");
+    } finally {
+      setZipBusy(false);
+      if (zipInput.current) zipInput.current.value = "";
+    }
+  };
 
   const changeSort = (key: string) => {
-    if (key === "edit") return;
+    if (key === "edit" || key === "pdf") return;
     setSortSpecs((prev) => nextSortSpecs(prev, key, DEFAULT_INVOICE_SORT, INVOICE_TEXT_FIRST));
   };
   const customSort = !isDefaultSort(sortSpecs, DEFAULT_INVOICE_SORT);
@@ -98,6 +162,7 @@ export default function InvoicesTab({
     };
     const rows = invoices
       .filter((inv) => bucket === "ALL" || inv.bucket === bucket)
+      .filter((inv) => pdfFilter === "all" || (pdfFilter === "with" ? !!inv.invoicePdf : !inv.invoicePdf))
       .filter((inv) =>
         !needle ||
         inv.customerName.toLowerCase().includes(needle) ||
@@ -114,7 +179,7 @@ export default function InvoicesTab({
       const fb = (b.invoiceDate || b.dueDate || "").localeCompare(a.invoiceDate || a.dueDate || "");
       return fb !== 0 ? fb : b.balance - a.balance;
     });
-  }, [invoices, bucket, q, sortSpecs]);
+  }, [invoices, bucket, pdfFilter, q, sortSpecs]);
 
   const columns: InvoiceColumn[] = [
     {
@@ -124,6 +189,20 @@ export default function InvoicesTab({
     {
       key: "invoice", label: "Invoice",
       render: (inv) => <td key="invoice" className={`${TDC} max-w-[140px] truncate font-mono`}>{inv.invoiceNo}</td>,
+    },
+    {
+      key: "pdf", ariaLabel: "Invoice PDF",
+      render: (inv) => (
+        <td key="pdf" className={`${TDC} whitespace-nowrap text-center`} onClick={(e) => { if (inv.invoicePdf) e.stopPropagation(); }}>
+          {inv.invoicePdf ? (
+            <a href={inv.invoicePdf.url} target="_blank" rel="noreferrer" title={`${inv.invoicePdf.fileName} (${inv.invoicePdf.source === "bulk-zip" ? "from zip" : "manual"}${inv.invoicePdf.uploadedBy ? ` · ${inv.invoicePdf.uploadedBy}` : ""}) — opens the PDF`}>
+              📎
+            </a>
+          ) : (
+            <span className="text-zinc-300 dark:text-zinc-600" title="No PDF attached yet">—</span>
+          )}
+        </td>
+      ),
     },
     {
       key: "date", label: "Date",
@@ -203,9 +282,46 @@ export default function InvoicesTab({
       <Card className="flex flex-col gap-3 p-3">
         <div className="flex flex-wrap items-center gap-2">
           <SearchInput value={q} onChange={setQ} placeholder="Search customer, invoice, owner, state…" />
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            {(["all", "with", "missing"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setPdfFilter(f)}
+                className={`rounded-full px-2.5 py-1 font-medium ring-1 ${pdfFilter === f ? "bg-indigo-600 text-white ring-transparent" : "text-zinc-500 ring-zinc-300 hover:bg-zinc-100 dark:text-zinc-400 dark:ring-zinc-700 dark:hover:bg-zinc-800"}`}
+                title={f === "all" ? "All invoices" : f === "with" ? "Only invoices with a PDF" : "Only invoices missing a PDF"}
+              >
+                {f === "all" ? "📎 All" : f === "with" ? "📎 With PDF" : "📎 Missing"}
+              </button>
+            ))}
+          </div>
           <div className="flex-1" />
+          {canAccounts && (
+            <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white ${zipBusy ? "bg-zinc-400" : "bg-indigo-600 hover:bg-indigo-500"}`}>
+              {zipBusy ? "Uploading…" : "📤 Upload invoices.zip"}
+              <input ref={zipInput} type="file" accept=".zip" className="hidden" disabled={zipBusy} onChange={(e) => { uploadZip(e.target.files?.[0]); }} />
+            </label>
+          )}
           <span className="text-xs text-zinc-400 dark:text-zinc-500">Click headers to stack sorts · again to flip · third click clears · drag to reorder · {filtered.length} of {invoices.length}</span>
         </div>
+        {zipReport && (
+          <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-2.5 text-xs text-zinc-600 dark:text-zinc-300">
+            <span className="font-bold text-indigo-600 dark:text-indigo-300">
+              Zip import: {zipReport.attached} attached of {zipReport.total}
+            </span>
+            {zipReport.failed.length > 0 && <span> · {zipReport.failed.length} failed</span>}
+            {zipReport.ambiguous.length > 0 && <span> · {zipReport.ambiguous.length} ambiguous (open the invoice to attach manually)</span>}
+            {zipReport.unmapped.length > 0 && <span> · {zipReport.unmapped.length} unmatched</span>}
+            {(zipReport.ambiguous.length > 0 || zipReport.unmapped.length > 0) && (
+              <details className="mt-1">
+                <summary className="cursor-pointer font-semibold text-indigo-500">Review files needing manual attach</summary>
+                <ul className="mt-1 max-h-40 space-y-0.5 overflow-auto font-mono text-[11px]">
+                  {zipReport.ambiguous.map((a) => <li key={a.fileName}>⚠ {a.fileName} — {a.trailing} matches several invoices</li>)}
+                  {zipReport.unmapped.map((u) => <li key={u.fileName}>○ {u.fileName} — no invoice ends in {u.trailing || "?"}</li>)}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
         {customSort && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
             <span className="rounded-full bg-indigo-500/10 px-2.5 py-1 font-medium tabular-nums text-indigo-600 dark:text-indigo-400">

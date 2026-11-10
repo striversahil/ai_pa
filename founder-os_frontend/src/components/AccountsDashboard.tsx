@@ -5,6 +5,7 @@ import { useLiveDashboard, useOptimisticMutation, patchRowInLists, mapRowInLists
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
 import PaymentDues, { type PaymentDueRow, type PaymentSummary } from "@/components/accounts/PaymentDues";
+import DispatchCash, { type CashEntry, type CashSummary } from "@/components/accounts/DispatchCash";
 import { inr, inrShort } from "@/components/accounts/payment-calendar";
 
 interface FileItem {
@@ -133,6 +134,8 @@ interface DashData {
   payments?: PaymentDueRow[];
   paymentHistory?: PaymentDueRow[];
   paymentSummary?: PaymentSummary;
+  cashEntries?: CashEntry[];
+  cashSummary?: CashSummary;
   team?: TeamData | null;
 }
 
@@ -463,7 +466,7 @@ function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today }: {
   );
 }
 
-type AccountsView = "dashboard" | "tasks" | "incomplete" | "history" | "senior" | "junior" | "my" | "dues" | "controller";
+type AccountsView = "dashboard" | "tasks" | "incomplete" | "history" | "senior" | "junior" | "my" | "dues" | "cash" | "controller";
 
 // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
 // (MIS/root see every lane; others see Dashboard + their own "My Tasks").
@@ -481,6 +484,9 @@ function fmtToday(iso: string): string {
 export default function AccountsDashboard() {
   const { me } = useAuth();
   const canMIS = !!me && (me.isAdmin || me.scopes.includes("mis"));
+  // Dispatch cash: adds from accounts OR dispatch floor; edits from accounts/MIS.
+  const canCashAdd = !!me && (me.isAdmin || me.scopes.includes("mis") || me.scopes.includes("accounts") || me.scopes.includes("dispatch") || me.scopes.includes("crm"));
+  const canCashEdit = !!me && (me.isAdmin || me.scopes.includes("mis") || me.scopes.includes("accounts"));
   const [view, setView] = useState<AccountsView>("dashboard");
 
   // Today only — no date filter. The backend serves the current IST day.
@@ -608,6 +614,7 @@ export default function AccountsDashboard() {
         { key: "senior", label: "Senior", icon: "👔" },
         { key: "junior", label: "Junior", icon: "🧾" },
         { key: "dues", label: "Payment dues", icon: "💳" },
+        { key: "cash", label: "Dispatch cash", icon: "💵" },
         { key: "controller", label: "Controller", icon: "🎛️" },
       ]
       : selfRole
@@ -615,9 +622,11 @@ export default function AccountsDashboard() {
           { key: "dashboard", label: "Dashboard", icon: "📊" },
           { key: "my", label: "My Tasks", icon: selfRole === "senior" ? "👔" : "🧾" },
           { key: "dues", label: "Payment dues", icon: "💳" },
+          { key: "cash", label: "Dispatch cash", icon: "💵" },
         ]
         : [
           { key: "dashboard", label: "Dashboard", icon: "📊" },
+          { key: "cash", label: "Dispatch cash", icon: "💵" },
         ];
   const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
   const isIncompleteView = view === "incomplete";
@@ -871,6 +880,7 @@ export default function AccountsDashboard() {
 
       {data && view === "controller" && (canMIS ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to MIS-level users.</div>)}
       {data && view === "dues" && <PaymentDues dues={data.payments ?? []} history={data.paymentHistory ?? []} summary={data.paymentSummary} onRefresh={() => dash.refresh()} />}
+      {data && view === "cash" && <DispatchCash entries={data.cashEntries ?? []} summary={data.cashSummary} canAdd={canCashAdd} canEdit={canCashEdit} onRefresh={() => dash.refresh()} />}
         </div>
       </div>
     </div>

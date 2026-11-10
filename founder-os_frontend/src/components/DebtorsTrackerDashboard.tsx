@@ -287,7 +287,13 @@ export default function DebtorsTrackerDashboard() {
         />
       )}
       {data && activeView === "invoices" && (
-        <InvoicesTab invoices={data.invoices} onEdit={setEditing} onGoToAccounts={() => setView("accounts")} />
+        <InvoicesTab
+          invoices={data.invoices}
+          onEdit={setEditing}
+          onGoToAccounts={() => setView("accounts")}
+          canAccounts={canAccounts}
+          onChanged={() => dash.refresh()}
+        />
       )}
       {data && activeView === "collections" && (
         <CollectionsTab

@@ -13,6 +13,9 @@ import {
   createAttachmentRecord, getAttachment, deleteAttachmentRecord, toAttachmentJson,
   resolveSelfAccountant, payDue,
 } from '../../automations/accounts/service';
+import {
+  listCashEntries, createCashEntry, updateCashEntry, deleteCashEntry,
+} from '../../automations/accounts/cash';
 
 async function actorName(c: any): Promise<string | null> {
   try {
@@ -176,6 +179,75 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
     } catch (e: any) { return c.json({ error: e?.message ?? 'pay failed' }, 400); }
+  });
+
+  // ── Dispatch cash report (Worker-only) ────────────────────────────────
+  // Simple in/out ledger. Reads + adds: accounts OR dispatch floor (the floor
+  // records its own spends). Edits/deletes: accounts/MIS only, so history
+  // can't be rewritten from the floor.
+  async function cashReadGate(c: any) {
+    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    if (!me) throw new Error('Authentication required');
+    const scopes = ((me as any)?.scopes ?? []) as string[];
+    if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts') || scopes.includes('dispatch')) return me;
+    throw new Error("Requires 'accounts' or 'dispatch' permission");
+  }
+  async function cashWriteGate(c: any) {
+    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    if (!me) throw new Error('Authentication required');
+    const scopes = ((me as any)?.scopes ?? []) as string[];
+    if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts')) return me;
+    throw new Error("Requires 'accounts' permission");
+  }
+
+  app.get('/api/accounts/cash', async (c) => {
+    try { await cashReadGate(c); } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    try {
+      const { entries, summary } = await listCashEntries(1000);
+      return c.json({ entries, summary });
+    } catch (e: any) { return c.json({ error: e?.message ?? 'load failed' }, 400); }
+  });
+
+  app.post('/api/accounts/cash', async (c) => {
+    let me: any;
+    try { me = await cashReadGate(c); } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const row = await createCashEntry(body || {}, me?.user?.name ?? me?.user?.email ?? null);
+      notifyLive(c, { type: LiveEvent.Accounts });
+      return c.json(row, 201);
+    } catch (e: any) { return c.json({ error: e?.message ?? 'create failed' }, 400); }
+  });
+
+  app.patch('/api/accounts/cash/:id', async (c) => {
+    try { await cashWriteGate(c); } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const row = await updateCashEntry(c.req.param('id'), body || {});
+      notifyLive(c, { type: LiveEvent.Accounts });
+      return c.json(row);
+    } catch (e: any) { return c.json({ error: e?.message ?? 'update failed' }, 400); }
+  });
+
+  app.delete('/api/accounts/cash/:id', async (c) => {
+    try { await cashWriteGate(c); } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
+    }
+    try {
+      await deleteCashEntry(c.req.param('id'));
+      notifyLive(c, { type: LiveEvent.Accounts });
+      return c.json({ ok: true });
+    } catch (e: any) { return c.json({ error: e?.message ?? 'delete failed' }, 400); }
   });
 
   // ── MIS export: date-range full ledger (pending/inprogress/done + remarks + file links) ──

@@ -62,6 +62,14 @@ export interface LiveInvoice {
   ledgerLink: string;
   lastImportAt: string | null;
   importedBy: string;
+  /** Primary invoice PDF (bulk-zip or manual). Null when no PDF attached yet. */
+  invoicePdf: {
+    id: string;
+    fileName: string;
+    url: string;
+    source: string;
+    uploadedBy: string;
+  } | null;
 }
 
 export interface CustomerAgeingRow {

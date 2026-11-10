@@ -799,13 +799,18 @@ async function computeDashboard(
   // Payment dues ride the same payload (no lane scoping). Fetch once.
   const paymentDues = await getPaymentDues(dateStr);
   const paymentHistory = await getPaymentHistory(dateStr);
+  // Dispatch cash ledger rides along too (small table, no lane scoping).
+  const { listCashEntries } = await import('./cash');
+  const cashReport = await listCashEntries(1000).catch(() => ({
+    entries: [], summary: { opening: 0, totalIn: 0, totalOut: 0, closing: 0, count: 0 },
+  }));
   return {
     meta: {
       date: dateStr,
       today: istDateStr(),
       // Calc version tag (shown tiny in the UI header): proves which backend
       // logic produced these numbers. Bump when the dashboard math changes.
-      computeV: 'slot-2',
+      computeV: 'slot-3',
       total: items.length,
       open: openCount,
       inProgress: inProgressCount,
@@ -839,6 +844,8 @@ async function computeDashboard(
     payments: paymentDues,
     paymentHistory,
     paymentSummary: summarizePayments(paymentDues, paymentHistory),
+    cashEntries: (cashReport as any).entries,
+    cashSummary: (cashReport as any).summary,
     team: { ...team, incompleteToday: (team as any).overdueToday },
   };
 }

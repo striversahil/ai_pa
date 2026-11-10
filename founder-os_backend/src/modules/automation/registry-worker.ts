@@ -189,6 +189,9 @@ export const AUTOMATION_ACCESS_SCOPES: Record<string, string[]> = {
   'debtors-tracker': ['debtors-tracker', 'payment-tracker', 'accounts'],
   // Legacy slug: dashboard bookmarks and old clients keep working.
   'payment-tracker': ['debtors-tracker', 'payment-tracker', 'accounts'],
+  // Dispatch floor opens the Accounts dashboard for the cash report tab only
+  // (task lanes stay lane-scoped server-side; cash writes gate per route).
+  'accounts': ['accounts', 'dispatch'],
 };
 
 export function accessScopesFor(slug: string, scope?: string | null): string[] {

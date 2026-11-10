@@ -4,7 +4,7 @@
  */
 import { cacheDelPrefix } from '../../shared/cache';
 
-export const DEBTORS_CACHE_PREFIX = 'debtors-tracker:data:v13:';
+export const DEBTORS_CACHE_PREFIX = 'debtors-tracker:data:v15:';
 export const DEBTORS_TTL_MS = 5 * 60 * 1000;
 
 export async function invalidateDebtorsCache(): Promise<void> {

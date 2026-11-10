@@ -1695,6 +1695,49 @@ model DebtorInvoice {
   @@index([dueDate])
 }
 
+// Per-invoice PDF attachments (migration 0118). Bytes live in Workers KV
+// (CHAT_FILES); this table is the durable metadata, keyed by invoice row id
+// so ageing-sheet re-pastes never wipe it. One invoice can hold several PDFs
+// (bulk-zip + manual); the newest row is the primary view/download target.
+model DebtorInvoiceAttachment {
+  id         String   @id @default(uuid())
+  invoiceId  String
+  invoiceNo  String   @default("")
+  fileName   String   @default("")
+  mime       String   @default("application/pdf")
+  size       Int      @default(0)
+  kvKey      String?  @unique
+  source     String   @default("manual") // bulk-zip | manual
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([invoiceId])
+  @@index([invoiceNo])
+}
+
+// Dispatch floor cash ledger (migration 0119): simple in/out entries with a
+// derived running balance. Opening balance = kind 'opening' rows; credits /
+// top-ups = direction 'in'.
+model DispatchCashEntry {
+  id        String   @id @default(uuid())
+  day       String
+  direction String   @default("out") // in | out
+  kind      String   @default("expense") // opening | credit | expense | other
+  amount    Float    @default(0)
+  party     String   @default("")
+  purpose   String   @default("")
+  mode      String   @default("")
+  ref       String   @default("")
+  note      String   @default("")
+  enteredBy String   @default("")
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+
+  @@index([day])
+  @@index([deleted])
+}
+
 // Collections ledger: pasted receipts / credit notes (negative = debit note).
 // Matched to DebtorInvoice rows by invoice no, else the customer's oldest
 // open invoice; 'none' rows stay visible in the ledger for manual fix-up.
@@ -2044,6 +2087,90 @@ model DeviceCall {
   @@index([deviceId])
 }
 
+// ── Field Staff daily visits (Sales → Field Staff tab, migration 0117) ───────
+// Mobile-web surface: check-in per location, GPS pings while open, mill rows
+// (machine profile + requirement → auto Field-Staff enquiry), per-visit
+// expenses + per-visit follow-ups. Raw D1 via modules/field-visits/store.ts.
+model FieldVisit {
+  id            String   @id @default(uuid())
+  telecallerId  String
+  day           String // YYYY-MM-DD IST
+  city          String   @default("")
+  address       String   @default("")
+  lat           Float?
+  lng           Float?
+  note          String   @default("")
+  checkInAt     DateTime
+  lastPingAt    DateTime?
+  checkOutAt    DateTime?
+  createdBy     String   @default("")
+  createdByName String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([day])
+  @@index([telecallerId])
+  @@index([telecallerId, day])
+}
+
+model FieldMillVisit {
+  id              String  @id @default(uuid())
+  visitId         String
+  millName        String  @default("")
+  keyContact      String  @default("")
+  designation     String  @default("")
+  phone           String  @default("")
+  rollerPlantNos  String  @default("")
+  attaChakkiNos   String  @default("")
+  chakkiSize      String  @default("")
+  runningTime     String  @default("")
+  products        String  @default("")
+  millAgeYrs      String  @default("")
+  machineBrand    String  @default("")
+  requirement     String  @default("")
+  isNewSuggested  Boolean @default(true)
+  isNewManual     Boolean?
+  matchMasterId   String  @default("")
+  matchMasterName String  @default("")
+  enquiryId       String  @default("")
+  followUpNeeded  Boolean @default(false)
+  createdBy       String  @default("")
+  createdByName   String  @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([visitId])
+}
+
+model FieldExpense {
+  id            String   @id @default(uuid())
+  visitId       String
+  amount        Float    @default(0)
+  description   String   @default("")
+  createdBy     String   @default("")
+  createdByName String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([visitId])
+}
+
+model FieldFollowup {
+  id            String   @id @default(uuid())
+  visitId       String
+  millVisitId   String   @default("")
+  dueDate       String   @default("")
+  note          String   @default("")
+  owner         String   @default("")
+  status        String   @default("open")
+  createdBy     String   @default("")
+  createdByName String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([visitId])
+  @@index([status])
+}
+
 // -- Stock (manual inventory: auto-SKU catalogue + dated movements) --
 // Closing stock is derived (sum of movements <= day), never stored. SKU is
 // system-generated (CAT-0007), never typed. Multi-location with transfer;
@@ -2064,6 +2191,10 @@ model StockItem {
   reorderLevel Float    @default(0)
   minLevel     Float    @default(0)
   maxLevel     Float    @default(0)
+  avgDailyConsumption Float @default(0)
+  leadTimeDays Float @default(0)
+  safetyFactor Float @default(0)
+  moq          Float    @default(0)
   imageUrl     String   @default("")
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())

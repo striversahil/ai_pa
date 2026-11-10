@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { LiveInvoice } from "@/debtors-tracker/types";
 import { formatINR } from "@/debtors-tracker/types";
-import { patchInvoice, deleteInvoice, FOLLOW_UP_FIELDS, type InvoiceEditableField } from "@/debtors-tracker/api";
+import { deleteInvoiceAttachment, patchInvoice, deleteInvoice, uploadInvoicePdf, FOLLOW_UP_FIELDS, type InvoiceEditableField } from "@/debtors-tracker/api";
 import { REGIONS } from "@/telecalling/regions";
 
 interface Props {
@@ -51,8 +51,36 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved, canAccount
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   if (!invoice) return null;
+
+  const attachPdf = async (file: File | undefined) => {
+    if (!file) return;
+    setPdfBusy(true);
+    setErr(null);
+    try {
+      await uploadInvoicePdf(invoice.id, file);
+      onSaved(`PDF attached to invoice ${invoice.invoiceNo}.`);
+    } catch (e: any) {
+      setErr(e?.message ?? "PDF upload failed");
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  const detachPdf = async () => {
+    if (!invoice.invoicePdf || !window.confirm(`Remove ${invoice.invoicePdf.fileName} from invoice ${invoice.invoiceNo}?`)) return;
+    setPdfBusy(true);
+    setErr(null);
+    try {
+      await deleteInvoiceAttachment(invoice.invoicePdf.id);
+      onSaved(`PDF removed from invoice ${invoice.invoiceNo}.`);
+    } catch (e: any) {
+      setErr(e?.message ?? "Remove failed");
+      setPdfBusy(false);
+    }
+  };
 
   const set = (key: string, value: string) => setValues({ ...values, [key]: value });
 
@@ -143,6 +171,36 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved, canAccount
         </div>
 
         {err && <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>}
+
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
+          <div className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📎 Invoice PDF</div>
+          {invoice.invoicePdf ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <a href={invoice.invoicePdf.url} target="_blank" rel="noreferrer" className="font-medium text-indigo-500 hover:underline" title="Opens the PDF">
+                {invoice.invoicePdf.fileName}
+              </a>
+              <span className="text-[11px] text-zinc-500">
+                ({invoice.invoicePdf.source === "bulk-zip" ? "from zip" : "manual"}{invoice.invoicePdf.uploadedBy ? ` · ${invoice.invoicePdf.uploadedBy}` : ""})
+              </span>
+              <a href={`${invoice.invoicePdf.url}?download=1`} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-2.5 py-1 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                Download
+              </a>
+              {canAccounts && (
+                <button onClick={detachPdf} disabled={pdfBusy} className="rounded-lg border border-rose-300 dark:border-rose-800 px-2.5 py-1 text-xs font-semibold text-rose-600 dark:text-rose-400 disabled:opacity-50">
+                  {pdfBusy ? "Working…" : "Remove"}
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-zinc-500">No PDF attached yet{canAccounts ? " — attach the invoice PDF below." : "."}</p>
+          )}
+          {canAccounts && (
+            <label className={`mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white ${pdfBusy ? "bg-zinc-400" : "bg-indigo-600 hover:bg-indigo-500"}`}>
+              {pdfBusy ? "Uploading…" : invoice.invoicePdf ? "Replace PDF" : "Attach PDF"}
+              <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={pdfBusy} onChange={(e) => { attachPdf(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+          )}
+        </div>
 
         <div className="flex items-center gap-3">
           {canAccounts && (

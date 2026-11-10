@@ -19,6 +19,7 @@ import {
   updateInvoiceFields, deleteInvoice, deleteCollection, resetDebtorsTracker,
   INVOICE_EDITABLE_FIELDS, FOLLOW_UP_FIELDS, updateCustomerSituation, runReminderDryRun, updateCustomerContact, getCustomerLedger,
   recordReceivablesExport, addCustomerRemark, deleteCustomerRemark, listCustomerRemarks,
+  addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments, planZipMatches,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
 
@@ -312,6 +313,99 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
       });
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, report });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Invoice PDF attachments (bulk-zip + manual; Worker-only) ──
+  // Reads: any tracker viewer. Writes: accounts only.
+  app.get(`${prefix}/invoices/:id/attachments`, async (c) => {
+    try { await requireTrackerRead(c); } catch (e) { return scopeError(c, e); }
+    try {
+      return c.json({ attachments: await listInvoiceAttachments(c.req.param('id')) });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.post(`${prefix}/invoices/:id/attachment`, async (c) => {
+    try { await requireAccountsScope(c); } catch (e) { return scopeError(c, e); }
+    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+    let form: FormData;
+    try { form = await c.req.formData(); } catch { return c.json({ error: 'Expected multipart/form-data' }, 400); }
+    const file = form.get('file');
+    if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
+    const mime = file.type || 'application/pdf';
+    if (mime !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+      return c.json({ error: 'Invoice attachment must be a PDF file' }, 400);
+    }
+    if (file.size > 20 * 1024 * 1024) return c.json({ error: 'File too large (max 20MB)' }, 413);
+    if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
+    const invoiceId = c.req.param('id');
+    const key = `inv/${String(invoiceId).replace(/[^A-Za-z0-9_-]/g, '_')}/${crypto.randomUUID()}.pdf`;
+    await c.env.CHAT_FILES.put(key, await file.arrayBuffer(), {
+      metadata: { name: file.name, type: mime, invoice: invoiceId },
+    });
+    try {
+      const row = await addInvoiceAttachment({
+        invoiceId, fileName: file.name.slice(0, 200), mime, size: file.size,
+        kvKey: key, source: 'manual', uploadedBy: await actorName(c),
+      });
+      notifyLive(c, { type: LiveEvent.Debtors });
+      return c.json({ ok: true, attachment: row }, 201);
+    } catch (e) {
+      try { await c.env.CHAT_FILES.delete(key); } catch { /* orphan bytes */ }
+      return errorResponse(c, e);
+    }
+  });
+
+  // Bulk ZIP import, step 1 (planning): the dashboard unzips locally (browser)
+  // and POSTs `{ files: [fileName...] }`. Matching is by trailing number;
+  // ambiguous/unmapped entries are reported for manual follow-up — the client
+  // then uploads only the matched PDFs one by one to the single-attach route
+  // above. Server-side zip parsing is avoided on purpose (Worker-safe).
+  app.post(`${prefix}/invoices/plan-zip`, async (c) => {
+    try { await requireAccountsScope(c); } catch (e) { return scopeError(c, e); }
+    const body = await c.req.json().catch(() => ({}));
+    const files = Array.isArray((body as any)?.files) ? (body as any).files : [];
+    if (files.length === 0) return c.json({ error: 'files[] required (unzip the archive in the browser first)' }, 400);
+    if (files.length > 2000) return c.json({ error: 'Too many files (max 2000)' }, 400);
+    try {
+      const plan = await planZipMatches(
+        files.slice(0, 2000).map((f: any) => ({ fileName: String(typeof f === 'string' ? f : f?.fileName ?? '').slice(0, 200) })),
+      );
+      return c.json({ ok: true, ...plan });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // Serve PDF bytes by attachment id (never exposes raw KV keys). Open bearer
+  // URL like /api/crm/files/:id so View/Download links just work.
+  app.get(`${prefix}/invoice-files/:id`, async (c) => {
+    try { await requireTrackerRead(c); } catch (e) { return scopeError(c, e); }
+    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
+    const { deps } = await import('../context');
+    const { prisma } = deps();
+    const row: any = await (prisma as any).debtorInvoiceAttachment.findUnique({
+      where: { id: c.req.param('id') ?? '' },
+    }).catch(() => null);
+    if (!row?.kvKey) return c.json({ error: 'Attachment not found' }, 404);
+    const obj = await c.env.CHAT_FILES.getWithMetadata(String(row.kvKey), 'arrayBuffer');
+    if (obj.value === null) return c.json({ error: 'File not found' }, 404);
+    const headers = new Headers();
+    headers.set('Content-Type', 'application/pdf');
+    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+    if (String(c.req.query('download') || '') === '1') {
+      headers.set('Content-Disposition', `attachment; filename="${String(row.fileName || 'invoice.pdf').replace(/["\\]/g, '')}"`);
+    }
+    return new Response(obj.value, { headers });
+  });
+
+  app.delete(`${prefix}/attachments/:id`, async (c) => {
+    try { await requireAccountsScope(c); } catch (e) { return scopeError(c, e); }
+    try {
+      const { kvKey } = await deleteInvoiceAttachment(c.req.param('id'));
+      if (c.env.CHAT_FILES && kvKey) {
+        try { await c.env.CHAT_FILES.delete(String(kvKey)); } catch { /* best-effort */ }
+      }
+      notifyLive(c, { type: LiveEvent.Debtors });
+      return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }
   });
 }

@@ -22,6 +22,10 @@ export {
   FOLLOW_UP_FIELDS,
 } from './imports';
 export { getDebtorsTrackerData } from './payload';
+export {
+  addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments,
+  loadPrimaryPdfByInvoice, planZipMatches, trailingNumber,
+} from './attachments';
 export { getCustomerLedger } from './customer-ledger';
 export {
   runReminderDryRun,

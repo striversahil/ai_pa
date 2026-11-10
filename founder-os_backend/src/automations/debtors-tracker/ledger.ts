@@ -106,6 +106,7 @@ export function buildLiveInvoices(
       ledgerLink: inv.ledgerLink || '',
       lastImportAt: inv.lastImportAt ?? null,
       importedBy: inv.importedBy || '',
+      invoicePdf: null,
     };
   });
 

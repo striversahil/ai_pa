@@ -68,6 +68,58 @@ export async function deleteCollection(id: string): Promise<void> {
   });
 }
 
+/** Invoice PDF attachment (manual): single PDF per invoice row. */
+export interface InvoicePdf {
+  id: string;
+  fileName: string;
+  url: string;
+  source: string;
+  uploadedBy: string;
+  createdAt: string;
+}
+
+export async function uploadInvoicePdf(invoiceId: string, file: File): Promise<InvoicePdf> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`/api/debtors-tracker/invoices/${encodeURIComponent(invoiceId)}/attachment`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Upload failed (${res.status})`);
+  }
+  const body = (await res.json().catch(() => ({}))) as { attachment?: InvoicePdf };
+  if (!body?.attachment?.id) throw new Error("Upload response was invalid");
+  return body.attachment;
+}
+
+export async function deleteInvoiceAttachment(attachmentId: string): Promise<void> {
+  await request(`/api/debtors-tracker/attachments/${encodeURIComponent(attachmentId)}`, {
+    method: "DELETE",
+  });
+}
+
+export interface ZipPlan {
+  matched: { invoiceId: string; invoiceNo: string; customerName: string; fileName: string }[];
+  ambiguous: { fileName: string; trailing: string; candidates: { invoiceId: string; invoiceNo: string; customerName: string }[] }[];
+  unmapped: { fileName: string; trailing: string }[];
+}
+
+/** Bulk-zip step 1: send unzipped PDF filenames, get the match plan. */
+export async function planZipFiles(fileNames: string[]): Promise<ZipPlan> {
+  const res = await fetch(`/api/debtors-tracker/invoices/plan-zip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files: fileNames }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Plan failed (${res.status})`);
+  }
+  return res.json() as Promise<ZipPlan>;
+}
+
 /** Fresh start: wipes both ledgers (invoices + collections) + reminders. */
 export async function resetDebtorsTracker(): Promise<void> {
   await request(`/api/debtors-tracker/data`, { method: "DELETE" });
