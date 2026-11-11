@@ -219,6 +219,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   CorePermRule: ['createdAt', 'updatedAt'],
   CoreAccessConfig: ['updatedAt'],
   CoreCustomer: ['lastEstimateDate', 'lastSalesOrderDate', 'reviewedAt', 'createdAt', 'updatedAt'],
+  CoreSale: ['createdAt', 'updatedAt'],
+  CoreEnquiry: ['createdAt', 'updatedAt'],
   CoreFieldPolicy: ['updatedAt'],
   HlpDashboard: ['createdAt', 'updatedAt'],
   HlpWidget: [],
@@ -362,6 +364,8 @@ const ID_FIELDS: Record<string, string> = {
   CorePermRule: 'id',
   CoreAccessConfig: 'entityType',
   CoreCustomer: 'id',
+  CoreSale: 'id',
+  CoreEnquiry: 'id',
   CoreFieldPolicy: 'id',
   CoreSeries: 'key',
   HlpDashboard: 'id',
@@ -1111,6 +1115,8 @@ export class D1PrismaClient {
   get coreAction() { return this.model('CoreAction'); }
   get coreAuditEvent() { return this.model('CoreAuditEvent'); }
   get coreCustomer() { return this.model('CoreCustomer'); }
+  get coreSale() { return this.model('CoreSale'); }
+  get coreEnquiry() { return this.model('CoreEnquiry'); }
   get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }

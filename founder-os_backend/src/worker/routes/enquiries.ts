@@ -475,6 +475,11 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if ((r as any).status === 201 && (r.body as any)?.id) {
       await runEnquiryAi(c, String((r.body as any).id), true);
       bustQueues(c);
+      // Phase 3c dual-write: project the new enquiry header (linked only).
+      try {
+        const { mirrorEnquiries } = await import('../../modules/core/sales');
+        await mirrorEnquiries([String((r.body as any).id)]);
+      } catch { /* non-fatal */ }
     }
     return c.json(r.body, r.status as any);
   });
@@ -498,6 +503,11 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(runEnquiryAi(c, eid, withIntake));
       else await runEnquiryAi(c, eid, withIntake);
       bustQueues(c);
+      // Phase 3c dual-write: project the edited enquiry header.
+      try {
+        const { mirrorEnquiries } = await import('../../modules/core/sales');
+        await mirrorEnquiries([eid]);
+      } catch { /* non-fatal */ }
     }
     return c.json(r.body, r.status as any);
   });

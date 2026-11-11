@@ -1,0 +1,55 @@
+// prisma/core/04-sales.prisma — CANONICAL sales spine (Phase 3c).
+// NOT yet wired to the Prisma generator. D1 reality: 0128_core_sales.sql.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+//
+// Headers only: line items stay Zoho/D1-native until the finance cut-over.
+// core_sale.id REUSES Estimate.estimateId; converterId carries the closer-or-
+// generator winner (never recomputed); masterCustomerId is the unique exact
+// name match or '' (never guessed). core_enquiry.id reuses Enquiry.id;
+// estimateId resolves via estNumber (+org preference on clashes).
+
+model CoreSale {
+  id               String  @id
+  estimateNumber   String  @default("")
+  customerName     String  @default("")
+  masterCustomerId String  @default("")
+  organizationId   String  @default("")
+  total            Float   @default(0)
+  date             String  @default("")
+  status           String  @default("")
+  region           String  @default("")
+  createdBy        String?
+  converterId      String  @default("")
+  closeDay         String?
+  closeValue       Float   @default(0)
+  acceptedAt       String?
+  declinedAt       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status])
+  @@index([region])
+  @@index([masterCustomerId])
+  @@index([estimateNumber])
+  @@map("core_sale")
+}
+
+model CoreEnquiry {
+  id              String  @id
+  estNumber       String  @default("")
+  estimateId      String  @default("")
+  status          String  @default("new")
+  source          String  @default("TL")
+  assignedAgentId String  @default("")
+  clientCompany   String  @default("")
+  contactName     String  @default("")
+  contactPhone    String  @default("")
+  rateStatus      String  @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([estNumber])
+  @@index([estimateId])
+  @@index([status])
+  @@map("core_enquiry")
+}

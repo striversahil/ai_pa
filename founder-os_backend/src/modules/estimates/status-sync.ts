@@ -107,5 +107,16 @@ export async function applyStatusUpdates(
     }
     updated++;
   }
+  // Phase 3c dual-write: project touched headers + linked enquiries into core
+  // (never throws; no-op off-Worker). Closes are mirrored too — only the
+  // backfill was open-only.
+  try {
+    const { mirrorSales, mirrorEnquiriesForSales } = await import('../core/sales');
+    const touched = [...new Set((updates || []).map((u) => String(u?.estimateId ?? '')).filter(Boolean))];
+    if (touched.length) {
+      await mirrorSales(touched);
+      await mirrorEnquiriesForSales(touched);
+    }
+  } catch { /* non-fatal — the D1 write above is already committed */ }
   return { updated, closesCredited, enquiriesAutoSent } as any;
 }

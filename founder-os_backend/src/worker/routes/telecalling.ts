@@ -300,6 +300,11 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       data: { region },
     });
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    // Phase 3c dual-write: region is carried attribution — project it.
+    try {
+      const { mirrorSales } = await import('../../modules/core/sales');
+      await mirrorSales([estimateId]);
+    } catch { /* non-fatal */ }
     notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true, estimateId, region, wasUnmapped: linked, estimate: est as any });
   });

@@ -390,6 +390,14 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
         create: { key: 'sales_copilot:last_complete_sync_at', value: lastSyncAt },
       });
     }
+    // Phase 3c dual-write: project the synced batch into core_sale (covers
+    // creates + metadata edits; status changes already mirrored via
+    // applyStatusUpdates above — re-mirroring is idempotent).
+    try {
+      const { mirrorSales } = await import('../../modules/core/sales');
+      const ids = Array.isArray(estimates) ? estimates.map((e: any) => String(e?.estimateId ?? '')).filter(Boolean) : [];
+      if (ids.length) await mirrorSales(ids);
+    } catch { /* non-fatal */ }
     notifyLive(c, { type: 'estimates' });
     if (upserted > 0 || lastSyncAt) {
       const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
