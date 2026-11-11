@@ -24,9 +24,10 @@ const SalesDispatchPanel = dynamic(() => import("./SalesDispatchPanel"), { ssr: 
 const CallsPanel = dynamic(() => import("./CallsPanel"), { ssr: false });
 const FieldStaffPanel = dynamic(() => import("./FieldStaffPanel"), { ssr: false });
 const SalesObjectionsPanel = dynamic(() => import("./SalesObjectionsPanel"), { ssr: false });
+const MyWorkPanel = dynamic(() => import("./MyWorkPanel"), { ssr: false });
 const SalesControllerPanel = dynamic(() => import("./SalesControllerPanel"), { ssr: false });
 
-type SalesTab = "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "field" | "objections" | "controller";
+type SalesTab = "mywork" | "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "field" | "objections" | "controller";
 
 interface WorkspaceTab {
   key: SalesTab;
@@ -40,10 +41,13 @@ export default function SalesWorkspace() {
   const { me } = useAuth();
   const caps = masterCapabilities(me);
   const canManage = hasSalesManagerAccess(me);
-  const [storedTab, setStoredTab] = useLocalStorage<SalesTab>(SALES_TAB_STORAGE_KEY, "leaderboard");
+  const [storedTab, setStoredTab] = useLocalStorage<SalesTab>(SALES_TAB_STORAGE_KEY, "mywork");
 
   const tabs = useMemo<WorkspaceTab[]>(() => {
     const out: WorkspaceTab[] = [];
+    // My Work first: this login's queue (projected from open assignments).
+    // Same audience as the leaderboard — server scopes every row.
+    if (canView(me, "telecalling") || canManage) out.push({ key: "mywork", label: "My Work", icon: "📌" });
     // Leaderboard: everyone on the `sales` automation holds `telecalling`.
     if (canView(me, "telecalling")) out.push({ key: "leaderboard", label: "Leaderboard", icon: "🏆" });
     if (canView(me, "enquiry-tracker")) out.push({ key: "enquiries", label: "Enquiries", icon: "📋" });
@@ -115,6 +119,7 @@ export default function SalesWorkspace() {
       </div>
 
       <div>
+        {active === "mywork" && <MyWorkPanel />}
         {active === "leaderboard" && <TelecallingDashboard />}
         {active === "enquiries" && <EnquiryTracker />}
         {active === "master" && <MasterDataView />}
