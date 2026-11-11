@@ -1,0 +1,129 @@
+// prisma/core/05-order.prisma — CANONICAL order/dispatch spine (Phase 4a).
+// NOT yet wired to the Prisma generator. D1 reality: 0130_core_orders.sql.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+//
+// core_sales_order.id REUSES CrmSalesOrder.id; lines/events/proofs/attachments
+// reuse their source ids. masterCustomerId = unique exact match or ''.
+// Orders CAN vanish at source — sourceState mirrors as fact (no tombstones).
+// Stock (entries/reservations/warehouse) lands in 4b, not here.
+
+model CoreSalesOrder {
+  id                 String  @id
+  org                String  @default("")
+  soNumber           String  @default("")
+  zohoId             String  @default("")
+  customerName       String  @default("")
+  masterCustomerId   String  @default("")
+  value              Float   @default(0)
+  currency           String  @default("INR")
+  orderStatus        String  @default("")
+  invoicedStatus     String  @default("")
+  shippedStatus      String  @default("")
+  paidStatus         String  @default("")
+  status             String  @default("open")
+  salesperson        String  @default("")
+  referenceNumber    String  @default("")
+  region             String  @default("")
+  billingAddress     String  @default("")
+  shippingAddress    String  @default("")
+  paymentTerms       String  @default("")
+  createdDate        String  @default("")
+  lifecycle          String  @default("unscheduled")
+  sourceState        String  @default("active")
+  fingerprint        String  @default("")
+  missCount          Int     @default(0)
+  firstSeenAt        DateTime?
+  lastSeenAt         DateTime?
+  deletedDetectedAt  DateTime?
+  localCancelledAt   DateTime?
+  localCancelledBy   String?
+  localCancelReason  String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([org, soNumber])
+  @@index([lifecycle])
+  @@index([region])
+  @@index([masterCustomerId])
+  @@map("core_sales_order")
+}
+
+model CoreSoLine {
+  id                    String  @id
+  soId                  String  @default("")
+  lineKey               String  @default("")
+  name                  String  @default("")
+  sku                   String  @default("")
+  description           String  @default("")
+  qty                   Float   @default(0)
+  unit                  String  @default("")
+  rate                  Float   @default(0)
+  itemTotal             Float   @default(0)
+  dispatchState         String  @default("unscheduled")
+  tentativeDispatchDate String?
+  delayReason           String?
+  dispatchedQty         Float   @default(0)
+  dispatchedAt          DateTime?
+  scheduledBy           String?
+  scheduledAt           DateTime?
+  amendedQty            Float?
+  removedAt             DateTime?
+  removedBy             String?
+  isLocalAdded          Boolean @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([soId, lineKey])
+  @@index([dispatchState])
+  @@map("core_so_line")
+}
+
+model CoreStageEvent {
+  id        String  @id
+  soId      String  @default("")
+  soNumber  String  @default("")
+  itemId    String?
+  kind      String  @default("")
+  fromDate  String?
+  toDate    String?
+  reason    String?
+  actor     String  @default("")
+  qty       Float?
+  day       String  @default("")
+  createdAt DateTime @default(now())
+
+  @@index([soId])
+  @@index([kind])
+  @@map("core_stage_event")
+}
+
+model CoreDispatchProof {
+  id        String  @id
+  soId      String  @default("")
+  soNumber  String  @default("")
+  invoiceId String  @default("")
+  beforeId  String?
+  afterId   String?
+  actor     String  @default("")
+  day       String  @default("")
+  createdAt DateTime @default(now())
+
+  @@index([soId])
+  @@map("core_dispatch_proof")
+}
+
+model CoreAttachment {
+  id          String  @id
+  soNumber    String  @default("")
+  kind        String  @default("other")
+  fileName    String  @default("")
+  mime        String  @default("application/octet-stream")
+  size        Int     @default(0)
+  storageKey  String  @default("")
+  uploadedBy  String  @default("")
+  createdAt   DateTime @default(now())
+
+  @@unique([storageKey])
+  @@index([soNumber])
+  @@map("core_attachment")
+}

@@ -30,6 +30,16 @@ import {
   type ScheduleEntry,
 } from './scheduling';
 import { orderFlags, orderMatchesView, salesBucket, type ViewOrder } from './queues';
+
+/** Phase 4a dual-write: project the touched order spine into core (never throws). */
+async function mirrorOrderTouch(orderId: string): Promise<void> {
+  try {
+    const { mirrorOrders } = await import('../core/orders');
+    const id = String(orderId ?? '');
+    if (id) await mirrorOrders([id]);
+  } catch { /* non-fatal */ }
+}
+
 import {
   buildEstimateRegionIndex,
   normalizeRegionFilter,
@@ -207,6 +217,12 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   // the card and counted in the KPIs, so it no longer reorders the list — the
   // desk works one rolling, newest-first stack.
   filtered.sort(sortNewestFirst);
+  // Phase 4a floor shadow (floor-read-only, log-only): compare Crm* vs core
+  // order spine + log diffs. Served values never change.
+  try {
+    const { shadowCompareFloor } = await import('../core/orders');
+    await shadowCompareFloor();
+  } catch { /* never block the floor */ }
   return filtered.slice(0, limit);
 }
 
@@ -740,6 +756,7 @@ export async function scheduleOrder(args: {
 
   const fresh = await loadRawItems(str(orderRow.id));
   const lifecycle = await refreshLifecycle(orderRow, fresh);
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)), lifecycle };
 }
 
@@ -801,6 +818,7 @@ export async function rescheduleOrder(args: {
 
   const fresh = await loadRawItems(str(orderRow.id));
   const lifecycle = await refreshLifecycle(orderRow, fresh);
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)), lifecycle };
 }
 
@@ -917,6 +935,7 @@ export async function dispatchOrder(args: {
     args.actor || null,
     today,
   );
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)), lifecycle, credited };
 }
 
@@ -1034,6 +1053,7 @@ export async function attachProofDocs(args: {
   const data: Record<string, unknown> = {};
   for (const [slot, id] of incoming) data[slot] = id;
   await prisma.crmDispatchProof.update({ where: { id: str(proof.id) }, data: data as any });
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)) };
 }
 
@@ -1095,6 +1115,7 @@ export async function confirmSourceDeletion(args: {
   today?: string;
 }): Promise<{ soNumber: string; removed: boolean }> {
   const orderRow = await loadRawOrder(args.idOrSo);
+  await mirrorOrderTouch(str(orderRow.id));
   if (str(orderRow.sourceState) !== 'deleted_source') {
     throw new CrmError('Only orders flagged as deleted at source can be confirmed.', 409, 'not_deleted');
   }
@@ -1153,6 +1174,7 @@ export async function updateAddresses(args: {
     actor: args.actor,
     day: today,
   });
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)) };
 }
 
@@ -1285,6 +1307,7 @@ export async function amendOrderItems(args: {
 
   const fresh = await loadRawItems(str(orderRow.id));
   const lifecycle = await refreshLifecycle(orderRow, fresh);
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)), lifecycle };
 }
 
@@ -1330,6 +1353,7 @@ export async function cancelOrderLocal(args: {
     actor: args.actor,
     day: today,
   });
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)), lifecycle: 'cancelled' };
 }
 
@@ -1358,6 +1382,7 @@ export async function reopenOrderLocal(args: {
   });
   const fresh = await loadRawItems(str(orderRow.id));
   const lifecycle = await refreshLifecycle(orderRow, fresh);
+  await mirrorOrderTouch(str(orderRow.id));
   return { order: await getOrder(str(orderRow.id)), lifecycle };
 }
 
@@ -1852,6 +1877,12 @@ export async function syncOrders(args: {
     const ids = [...new Set(withItems.map((w) => w.soId))];
     await recomputeLifecyclesById(ids);
   }
+
+  // Phase 4a dual-write: project the synced batch into the core order spine.
+  try {
+    const { mirrorOrdersByKeys } = await import('../core/orders');
+    if (seen.size) await mirrorOrdersByKeys([...seen]);
+  } catch { /* non-fatal */ }
 
   return result;
 }

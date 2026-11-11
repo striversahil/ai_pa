@@ -222,6 +222,11 @@ const DATE_FIELDS: Record<string, string[]> = {
   CoreSale: ['createdAt', 'updatedAt'],
   CoreEnquiry: ['createdAt', 'updatedAt'],
   CoreCredit: ['createdAt'],
+  CoreSalesOrder: ['firstSeenAt', 'lastSeenAt', 'deletedDetectedAt', 'localCancelledAt', 'createdAt', 'updatedAt'],
+  CoreSoLine: ['dispatchedAt', 'scheduledAt', 'removedAt', 'createdAt', 'updatedAt'],
+  CoreStageEvent: ['createdAt'],
+  CoreDispatchProof: ['createdAt'],
+  CoreAttachment: ['createdAt'],
   CoreFieldPolicy: ['updatedAt'],
   HlpDashboard: ['createdAt', 'updatedAt'],
   HlpWidget: [],
@@ -368,6 +373,11 @@ const ID_FIELDS: Record<string, string> = {
   CoreSale: 'id',
   CoreEnquiry: 'id',
   CoreCredit: 'id',
+  CoreSalesOrder: 'id',
+  CoreSoLine: 'id',
+  CoreStageEvent: 'id',
+  CoreDispatchProof: 'id',
+  CoreAttachment: 'id',
   CoreFieldPolicy: 'id',
   CoreSeries: 'key',
   HlpDashboard: 'id',
@@ -1120,6 +1130,11 @@ export class D1PrismaClient {
   get coreSale() { return this.model('CoreSale'); }
   get coreEnquiry() { return this.model('CoreEnquiry'); }
   get coreCredit() { return this.model('CoreCredit'); }
+  get coreSalesOrder() { return this.model('CoreSalesOrder'); }
+  get coreSoLine() { return this.model('CoreSoLine'); }
+  get coreStageEvent() { return this.model('CoreStageEvent'); }
+  get coreDispatchProof() { return this.model('CoreDispatchProof'); }
+  get coreAttachment() { return this.model('CoreAttachment'); }
   get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }
