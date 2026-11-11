@@ -320,6 +320,12 @@ export async function loadClientQueue(from: string, to: string): Promise<{ clien
   }
   const names = rows.map((r) => String(r?.customerName ?? ''));
   const classes = await classifyClients(names);
+  // Phase 3b shadow: compare MasterCustomer vs core_customer on Controller
+  // reads only. Served values never change — diffs log as SystemJob rows.
+  try {
+    const { shadowCompareCustomers } = await import('../../modules/core/customers');
+    await shadowCompareCustomers();
+  } catch { /* never block the Controller */ }
   const [rules] = await Promise.all([loadTypeRules()]);
   // Unique master type bases for the rule editor (with master row counts).
   let master: MasterEntry[] = [];

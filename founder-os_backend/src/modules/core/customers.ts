@@ -113,3 +113,90 @@ export async function mirrorCustomerRemoved(masterId: string, name: string): Pro
     } catch { /* never throw */ }
   }
 }
+
+// ── Phase 3b: shadow compare (Controller-only, log-only, any-field) ─────────
+// Served values NEVER change here — MasterCustomer stays the read truth.
+// Diffs surface as `customer-shadow` SystemJob rows; the flip gate is one
+// quiet week. Throttled in-memory (best-effort across isolates).
+
+const SHADOW_COMPARE_COLS = MIRROR_COLUMNS.filter((c) => c !== 'createdAt');
+const COUNT_COLS = new Set(['estimateCount', 'salesOrderCount']);
+
+let lastShadowAt = 0;
+const SHADOW_THROTTLE_MS = 5 * 60 * 1000;
+
+function normShadow(col: string, v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (COUNT_COLS.has(col)) return String(Number(v as any) || 0);
+  return String(v);
+}
+
+function hashSig(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+async function readAllShadow(db: any, table: string, extraWhere: string): Promise<Map<string, any>> {
+  const out = new Map<string, any>();
+  let cursor = '';
+  for (let page = 0; page < 40; page++) {
+    const res = await db.prepare(
+      `SELECT ${QUOTED} FROM "${table}" WHERE "id" > ? ${extraWhere} ORDER BY "id" LIMIT 500`,
+    ).bind(cursor).all();
+    const rows: any[] = (res as any)?.results ?? [];
+    if (!rows.length) break;
+    for (const r of rows) out.set(String(r.id ?? ''), r);
+    cursor = String(rows[rows.length - 1]?.id ?? '');
+    if (rows.length < 500) break;
+  }
+  return out;
+}
+
+export async function shadowCompareCustomers(): Promise<void> {
+  try {
+    const now = Date.now();
+    if (now - lastShadowAt < SHADOW_THROTTLE_MS) return;
+    lastShadowAt = now;
+    const db = getD1Database();
+    if (!db) return;
+    const [master, core] = await Promise.all([
+      readAllShadow(db, 'MasterCustomer', ''),
+      readAllShadow(db, 'core_customer', `AND "status" <> 'DELETED'`),
+    ]);
+    const missing: string[] = [];
+    const extra: string[] = [];
+    const changed: Array<{ id: string; fields: string[] }> = [];
+    for (const [id, m] of master) {
+      const c = core.get(id);
+      if (!c) { missing.push(id); continue; }
+      const fields = SHADOW_COMPARE_COLS.filter((col) => normShadow(col, (m as any)[col]) !== normShadow(col, (c as any)[col]));
+      if (fields.length) changed.push({ id, fields });
+    }
+    for (const id of core.keys()) if (!master.has(id)) extra.push(id);
+    if (!missing.length && !extra.length && !changed.length) return; // quiet run: nothing logged
+    const sig = hashSig(JSON.stringify({ missing, extra, changed }));
+    const recent: any[] = await db.prepare(
+      `SELECT "detail" FROM "core_system_job" WHERE "key" = 'customer-shadow' ORDER BY "startedAt" DESC LIMIT 5`,
+    ).all().then((r: any) => r?.results ?? []).catch(() => []);
+    for (const j of recent) {
+      try {
+        if (JSON.parse(String((j as any)?.detail ?? '{}')).sig === sig) return; // same diff already logged
+      } catch { /* keep looking */ }
+    }
+    await db.prepare(
+      `INSERT INTO "core_system_job" ("id", "key", "status", "startedAt", "finishedAt", "detail") VALUES (?, 'customer-shadow', 'DIFF', ?, ?, ?)`,
+    ).bind(
+      newId(), new Date().toISOString(), new Date().toISOString(),
+      JSON.stringify({
+        sig, checked: master.size,
+        missing: missing.length, extra: extra.length, changed: changed.length,
+        sample: { missing: missing.slice(0, 20), extra: extra.slice(0, 20), changed: changed.slice(0, 50) },
+      }),
+    ).run();
+  } catch (e: any) {
+    try {
+      logger.warn({ err: e?.message }, 'shadowCompareCustomers failed (non-blocking)');
+    } catch { /* never throw */ }
+  }
+}
