@@ -17,6 +17,8 @@ export class PrismaAuthStore implements AuthStore {
       picture: row.picture,
       isRoot: !!row.isRoot,
       createdAt: row.createdAt.toISOString(),
+      displayName: row.displayName ?? null,
+      positionOverride: row.positionOverride ?? null,
     };
   }
 
@@ -144,6 +146,22 @@ export class PrismaAuthStore implements AuthStore {
         data: keys.map((roleKey) => ({ userId, roleKey })),
         skipDuplicates: true,
       }),
+    ]);
+  }
+  async updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }) {
+    const data: Record<string, string | null> = {};
+    if (patch.displayName !== undefined) data.displayName = patch.displayName;
+    if (patch.positionOverride !== undefined) data.positionOverride = patch.positionOverride;
+    if (Object.keys(data).length > 0) {
+      await this.prisma.authUser.update({ where: { id }, data }).catch(() => {});
+    }
+  }
+  async deleteUser(id: string) {
+    await this.prisma.$transaction([
+      this.prisma.authUserScope.deleteMany({ where: { userId: id } }),
+      this.prisma.authUserRole.deleteMany({ where: { userId: id } }),
+      this.prisma.authSession.deleteMany({ where: { userId: id } }),
+      this.prisma.authUser.deleteMany({ where: { id } }),
     ]);
   }
 }

@@ -1,0 +1,21 @@
+name: schema-guard
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Core lock and schema boundaries
+        run: node scripts/schema-guard.mjs --base ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
+      - name: Prisma schema valid
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+        run: npx --yes prisma@6 validate --schema prisma/schema

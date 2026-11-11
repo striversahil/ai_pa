@@ -2,6 +2,7 @@ import { AuthScope, AuthRole, AuthUser, AuthError, MeResponse, ROOT_EMAIL } from
 import { AuthStore, createAuthStore } from "./store";
 import { buildGoogleAuthUrl, exchangeGoogleCode, GoogleConfig } from "./google";
 import { SESSION_COOKIE, SESSION_MAX_AGE, readSessionCookie } from "./session";
+import { POSITION_ORDER } from "./positions";
 
 /** Scope that grants user & role management (Admin panel) WITHOUT root access.
  *  Holders can assign roles, but top-down only: never the root user, never
@@ -310,6 +311,41 @@ export async function deleteRole(store: AuthStore, key: string) {
 
 export async function setUserRoles(store: AuthStore, userId: string, keys: string[]) {
   await store.setUserRoles(userId, keys);
+}
+
+/** Hard-remove a login (user row + scopes + roles + all sessions). Roster
+ *  rows are untouched — re-signup returns as Unmapped/no-access. */
+export async function deleteUser(store: AuthStore, userId: string) {
+  await store.deleteUser(userId);
+}
+
+/** Display/grouping overrides (never access). Returns the cleaned patch. */
+export function cleanProfilePatch(input: { displayName?: unknown; positionOverride?: unknown }): {
+  displayName?: string | null;
+  positionOverride?: string | null;
+} {
+  const patch: { displayName?: string | null; positionOverride?: string | null } = {};
+  if (input.displayName !== undefined) {
+    const v = String(input.displayName ?? "").trim();
+    if (v.length > 200) throw new AuthError("FORBIDDEN", "display name too long (max 200)", 400);
+    patch.displayName = v || null;
+  }
+  if (input.positionOverride !== undefined) {
+    const v = String(input.positionOverride ?? "").trim().toLowerCase();
+    if (v && !POSITION_ORDER.includes(v as any)) {
+      throw new AuthError("FORBIDDEN", `position must be one of: ${POSITION_ORDER.join(", ")} (or empty for auto)`, 400);
+    }
+    patch.positionOverride = v || null;
+  }
+  return patch;
+}
+
+export async function setUserProfile(
+  store: AuthStore,
+  userId: string,
+  patch: { displayName?: string | null; positionOverride?: string | null },
+) {
+  await store.updateUserProfile(userId, patch);
 }
 
 export { createAuthStore, SESSION_COOKIE, ROOT_EMAIL };

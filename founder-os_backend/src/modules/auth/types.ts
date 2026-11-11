@@ -9,6 +9,12 @@ export interface AuthUser {
   picture: string | null;
   isRoot: boolean;
   createdAt: string;
+  /** Manager-set display name (Users portal). Shown instead of the Google
+   *  name; Google sign-in never overwrites it. Null = use `name`. */
+  displayName?: string | null;
+  /** Manager-set position override (Users portal). Null/empty = auto-resolve
+   *  from rosters + scopes. Display/grouping only — never grants access. */
+  positionOverride?: string | null;
 }
 
 export interface AuthScope {

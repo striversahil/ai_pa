@@ -17,10 +17,20 @@ import {
   deleteScope as svcDeleteScope,
   setUserRoles as svcSetUserRoles,
   setUserScopes as svcSetUserScopes,
+  deleteUser as svcDeleteUser,
   requireManager,
   requireUser,
   roleGrantBlocker,
   startLogin,
+} from "./service";
+import {
+  resolveOrgPosition,
+  POSITION_SUGGESTED_SCOPES,
+  type RosterSnapshot,
+} from "./positions";
+import {
+  cleanProfilePatch,
+  setUserProfile as svcSetUserProfile,
 } from "./service";
 import { clearSessionCookieHeader, readSessionCookie, sessionCookieHeader } from "./session";
 import { AuthError, ROOT_EMAIL } from "./types";
@@ -106,7 +116,11 @@ function isTargetRoot(target: { isRoot: boolean; email: string }): boolean {
 export async function authListUsers(store: AuthStore, cookieHeader: string | null): Promise<AuthResult> {
   try {
     const { me, root } = await asUserManager(store, cookieHeader);
-    const users = await listUsers(store);
+    const allUsers = await listUsers(store);
+    // The root user is never listed in the Users portal (for anyone,
+    // including root — the portal manages logins, and the root row is
+    // unmanageable by design). Root identity stays visible via /api/auth/me.
+    const users = allUsers.filter((u: any) => !isTargetRoot(u));
     if (root || me.isAdmin) return json(200, users);
     // Non-root managers see everyone (their job) but role keys outside their
     // own power are masked to a count — names stay hidden, not just disabled.
@@ -277,6 +291,114 @@ export async function authSetUserRoles(
       keys = [...new Set([...keys, ...current.filter((k) => locked(k))])];
     }
     await svcSetUserRoles(store, userId, keys);
+    invalidateAllSessionCaches();
+    return json(200, { ok: true });
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+/**
+ * Org-position map for the Users portal: one entry per (non-root) login,
+ * resolved roster-first (Telecaller/Accounts/Digital-Marketing/HR emails) with
+ * scope-derived fallbacks (sales-head, MIS, procurement). `loadRosters` runs
+ * AFTER the manager gate passes, so unauthenticated callers never trigger
+ * roster reads. Display + guidance only — access still flows via roles.
+ */
+export async function authUserPositions(
+  store: AuthStore,
+  cookieHeader: string | null,
+  loadRosters: () => Promise<RosterSnapshot>,
+): Promise<AuthResult> {
+  try {
+    await asUserManager(store, cookieHeader);
+    const rosters = await loadRosters();
+    const users = (await listUsers(store)).filter((u: any) => !isTargetRoot(u));
+    const out: Record<string, {
+      position: string;
+      department: string;
+      via: string;
+      auto: string;
+      override: string | null;
+      suggestedScopes: string[];
+    }> = {};
+    for (const u of users as any[]) {
+      const scopes: string[] = [...(u.scopes ?? [])];
+      // Effective scopes = direct ∪ role scopes (same union getMe uses).
+      try {
+        const snap = await store.getAuthSnapshot(u.id);
+        for (const rs of Object.values(snap.roleScopes ?? {})) {
+          for (const s of rs as string[]) if (!scopes.includes(s)) scopes.push(s);
+        }
+      } catch { /* snapshot best-effort — direct scopes still resolve */ }
+      const override = (u.positionOverride ?? null) as string | null;
+      const r = resolveOrgPosition({ email: u.email, scopes, override }, rosters);
+      out[u.id] = { ...r, override, suggestedScopes: POSITION_SUGGESTED_SCOPES[r.position] ?? [] };
+    }
+    return json(200, { positions: out });
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+/**
+ * Manager-set identity overrides (Users portal): display name + position.
+ * Display/grouping only — never access. Managers may edit any non-root login
+ * (including their own name); the root user stays untouchable.
+ */
+export async function authSetUserProfile(
+  store: AuthStore,
+  cookieHeader: string | null,
+  userId: string,
+  body: { displayName?: unknown; positionOverride?: unknown },
+): Promise<AuthResult> {
+  try {
+    await asUserManager(store, cookieHeader);
+    if (!userId) return json(400, { error: "user id required" });
+    const target = await store.getUserById(userId);
+    if (!target) return json(404, { error: "user not found" });
+    if (isTargetRoot(target)) return json(403, { error: "Only root can modify the root user" });
+    const patch = cleanProfilePatch(body ?? {});
+    await svcSetUserProfile(store, userId, patch);
+    return json(200, { ok: true });
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+/**
+ * Hard-remove a login (user row + direct scopes + role joins + ALL sessions).
+ * Roster rows are untouched. Guards: manager gate; never root; never self
+ * (no lockout); non-root managers may only delete users whose CURRENT roles
+ * are all within their own grantable power (same top-down rule as role saves).
+ */
+export async function authDeleteUser(
+  store: AuthStore,
+  cookieHeader: string | null,
+  userId: string,
+): Promise<AuthResult> {
+  try {
+    const { me, root } = await asUserManager(store, cookieHeader);
+    if (!userId) return json(400, { error: "user id required" });
+    const target = await store.getUserById(userId);
+    if (!target) return json(404, { error: "user not found" });
+    if (isTargetRoot(target)) return json(403, { error: "The root user cannot be removed" });
+    if (me.user.id === target.id) return json(403, { error: "You cannot remove your own login" });
+    if (!root && !me.isAdmin) {
+      const roles = await listRoles(store);
+      const byKey = new Map(roles.map((r) => [r.key, r]));
+      const current = await store.getUserRoleKeys(userId);
+      for (const k of current) {
+        const r = byKey.get(k);
+        if (r && roleGrantBlocker(me.scopes, r.scopeKeys ?? []) !== null) {
+          return json(403, { error: `Only root can remove a user holding '${k}' — ask root` });
+        }
+      }
+    }
+    await svcDeleteUser(store, userId);
     invalidateAllSessionCaches();
     return json(200, { ok: true });
   } catch (e: any) {

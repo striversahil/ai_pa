@@ -1,0 +1,3683 @@
+// ═════════════════════════════════════════════════════════════════════════════
+// BUI FOUNDER OS — consolidated schema (target state after the "expand" phase)
+// ═════════════════════════════════════════════════════════════════════════════
+// How to read this file
+//   1. Every pre-existing model is kept with its original table name, columns
+//      and types, so current application code keeps working unchanged.
+//      Additions to existing models are marked with "⟶".
+//   2. Integrity fixes from plan §11 are applied: string join-columns became
+//      real foreign keys, blank-string FK columns became nullable, and
+//      ledger/history tables no longer cascade-delete.
+//      Run migrations/01_preflight_cleanup.sql BEFORE applying this schema.
+//   3. The control plane (Employee, Customer, BusinessAction, governance,
+//      approvals, notifications, workflow, integrations, Data Explorer) is
+//      appended at the end of the file.
+//
+// Single source of truth — who owns what (field-level detail lives in the
+// DataOwnership table, seeded by migrations/04_data_ownership_seed.sql)
+//   BUI owns     : Employee + org structure, Customer master, Enquiry, estimate
+//                  follow-up/assignment, SO operational lifecycle, product/SKU,
+//                  vendor rates, stock ledger, dispatch, actions, approvals,
+//                  workflows, audit.
+//   Zoho Books   : estimate/SO/invoice financial values and statuses, payments.
+//                  Mirrored read-only; changes only via IntegrationCommand.
+//   NeoDove      : call execution + recordings. Imported as CustomerActivity.
+//
+// Deliberately deferred to the "contract" phase (needs app-code changes):
+//   • Float money columns → Decimal(18,2)    • "YYYY-MM-DD" strings → DateTime/Date
+//   • JSON-in-String columns → Json           • legacy region strings → Region FK
+//   • free-text actor columns (createdBy, actor, doneBy…) → Employee FK
+//   • retiring Telecaller.region/region2, PaymentCustomer, legacy task tables
+// ═════════════════════════════════════════════════════════════════════════════
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Priority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Contact {
+  id              String    @id @default(uuid())
+  chatId          String    @unique
+  name            String
+  pushName        String?
+  phoneNumber     String
+  isGroup         Boolean   @default(false)
+  picture         String?
+  lastMessageAt   DateTime?
+  lastMessageBody String?
+  unreadCount     Int       @default(0)
+  hasInbound      Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([name])
+  @@index([lastMessageAt])
+  @@index([isGroup])
+}
+
+model Message {
+  id                   String    @id @default(uuid())
+  wahaMessageId        String?   @unique
+  chatId               String
+  sender               String
+  body                 String
+  timestamp            DateTime
+  processed            Boolean   @default(false)
+  isHistorical         Boolean   @default(false)
+  quotedMessageId      String?
+  quotedBody           String?
+  quotedSender         String?
+  mediaUrl             String?
+  classification       String?
+  classificationReason String?
+  classifiedAt         DateTime?
+  slaDeadline          DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@index([chatId])
+  @@index([processed])
+  @@index([classification])
+  @@index([slaDeadline])
+}
+
+// Persistent intent to send a WhatsApp message later. Created only when the
+// morning queue (Redis) is unavailable at deferral time, so an outbound message
+// is never lost just because Redis was down. A recovery sweep re-enqueues
+// PENDING intents into the morning queue once Redis is back.
+model OutboundIntent {
+  id            String    @id @default(uuid())
+  chatId        String
+  messageBody   String
+  status        String    @default("PENDING") // PENDING | ENQUEUED
+  targetDelayMs Int?
+  createdAt     DateTime  @default(now())
+  enqueuedAt    DateTime?
+
+  @@index([status, createdAt])
+}
+
+model Email {
+  id        String   @id @default(uuid())
+  subject   String
+  sender    String
+  body      String
+  processed Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([processed])
+}
+
+model Digest {
+  id              String   @id @default(uuid())
+  chatId          String
+  chatName        String
+  summary         String
+  priority        Priority @default(medium)
+  category        String
+  sentiment       String
+  requiresFounder Boolean  @default(false)
+  suggestedReply  String?
+  createdAt       DateTime @default(now())
+
+  @@index([chatId])
+}
+
+model Task {
+  id        String     @id @default(uuid())
+  title     String
+  owner     String
+  status    TaskStatus @default(PENDING)
+  deadline  DateTime?
+  source    String // "WHATSAPP" | "EMAIL" | "MANUAL"
+  sourceId  String?
+  createdAt DateTime   @default(now())
+}
+
+// Per-chat "Pending From Me" ledger. One row per open item the founder owes in a
+// specific WhatsApp chat/group. A single chat can have multiple open items, so
+// the founder can see exactly what is pending from their side in each
+// conversation — eliminating context loss. Items are created by the WhatsApp
+// digest automation (AI-extracted) and auto-resolved when the founder sends a
+// message in the chat (or manually via the API).
+model ChatPendingItem {
+  id              String    @id @default(uuid())
+  chatId          String
+  chatName        String
+  description     String
+  status          String    @default("OPEN") // OPEN | DONE | CANCELLED
+  dueDate         DateTime?
+  sourceMessageId String?
+  resolvedBy      String? // "SEND" | "MANUAL" | "AI"
+  createdAt       DateTime  @default(now())
+  resolvedAt      DateTime?
+
+  @@index([chatId, status])
+  @@index([status, createdAt])
+}
+
+// Private per-chat note written by the founder. One note per chat/group: it
+// records what the founder wants to watch for, remember, or check in that
+// conversation. Visible only to the founder; it is also fed to the digest AI as
+// personal context so it can surface what the founder cares about.
+model ChatNote {
+  chatId    String   @id
+  content   String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FounderNote {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model Estimate {
+  estimateId           String               @id
+  estimateNumber       String
+  customerName         String
+  total                Float
+  date                 String
+  status               String
+  lastSyncTime         DateTime             @default(now())
+  skipMatching         Boolean              @default(false)
+  assignedTelecallerId String?
+  // Zoho Books organization this estimate belongs to (multi-org sync:
+  // BUI + DPG share one login; see scripts/zoho-sync/orgs.js). '' = legacy
+  // rows backfilled by migration 0043. Non-primary org rows use a namespaced
+  // estimateId (`<org>:<zohoId>`) so per-org ids can never collide.
+  organizationId       String               @default("")
+  // Telecaller who originated this estimate = the agent who created the
+  // mapping B2B enquiry (Enquiry.estNumber = Estimate.estimateNumber).
+  // Synced on enquiry save + claim button (first-Zoho-comment inference is
+  // fallback only for unmapped rows). Generator credit on close = 20% of the
+  // slab; the other 80% is credited by sales-head closer pick.
+  createdBy            String?
+  // Sales region owning this estimate (R1–R4; '' = Unmapped). Stamped from
+  // the creating staff's roster region via the mapping enquiry. Estimates with
+  // createdBy but '' region land in the Unmapped bucket until MIS/root/
+  // sales-head links them (region-set endpoint).
+  region               String               @default("")
+  // IST day (YYYY-MM-DD) this estimate BECAME accepted/confirmed — the
+  // leaderboard's authoritative "won on" date (migration 0082). Stamped by
+  // modules/estimates/status-sync.ts on every accepting transition, cleared
+  // when the estimate leaves a close status, never overwritten otherwise.
+  // Backfill: first close-credit day, else `date`. Period filters read THIS,
+  // not `date`, so a July estimate accepted in October stays July business.
+  acceptedAt           String?
+  // IST day (YYYY-MM-DD) this estimate BECAME declined — the mirror of
+  // acceptedAt (migration 0086). Stamped by modules/estimates/status-sync.ts
+  // on entry into `declined`, cleared when the estimate leaves that status.
+  // Backfill: `date` (no status-history table exists). The leaderboard's
+  // Declined figure filters on THIS, so a July quote declined in October
+  // counts in October once tracking is live.
+  declinedAt           String?
+  // MIS override: estimate is ALWAYS held by this one agent, never re-poached
+  // at EOD even when red/zombie.
+  lockedTelecallerId   String?
+  // MIS override: never assign this estimate to any agent (stays unassigned,
+  // excluded from the assignment engine entirely).
+  skipAssignment       Boolean              @default(false)
+  // Lead-details block extracted from the first Zoho comments by the GH runner
+  // (Enquiry Number / Source Lead / Location / Contact / Mobile). Surfaces as
+  // chips on the Telecalling follow-ups and the ZohoEstimates view.
+  enquiryNumber        String?
+  sourceLead           String?
+  location             String?
+  contactName          String?
+  contactPhone         String?
+  contactEmail         String?
+  // 0 until the GH runner has captured even ONE lead-detail field from the
+  // first Zoho comments; while 0 the 15-min capture loop keeps re-processing
+  // the estimate (agents can take ~40 min to post the lead block).
+  detailsCaptured      Boolean              @default(false)
+  // Bounded AI retry budget: each 15-min pass that extracts <3 fields consumes
+  // one attempt. At MAX_DETAILS_ATTEMPTS (10, worker route) detailsFailed flips
+  // to true and the estimate leaves the capture loop for good (UI shows
+  // "Details unavailable"). A later >=3-field capture still stores + resets.
+  detailsAttempts      Int                  @default(0)
+  detailsFailed        Boolean              @default(false)
+  // Sales-agent call disposition on a conversion follow-up (set from the
+  // Lead Conversion view, NOT by any engine): NO_ANSWER (client not picking
+  // up), BUSY (client busy), CALLBACK (follow up on callbackDate, max +10d).
+  // Sticky until the agent changes/clears it; engines never write or clear it.
+  callTag              String?
+  callbackDate         String?
+  callTagBy            String?
+  callTagAt            String?
+  // Dated next step (set by the holder or MIS from the follow-up view):
+  // a concrete customer commitment with a date ("client confirms on 15th").
+  // While nextStepDate is today or future the estimate is protected from the
+  // red-risk/EOD penalty no matter the AI verdict; once past, the missed
+  // commitment reads red until chased. Engines never write or clear these.
+  nextStep             String?
+  nextStepDate         String?
+  comments             Comment[]
+  classification       Classification?
+  assignments          EstimateAssignment[]
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId     String?
+  customerMaster       Customer?            @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+  // ⟶ Parent enquiry (replaces the Enquiry.estNumber = estimateNumber string join).
+  enquiryId            String?
+  enquiry              Enquiry?             @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
+  salesOrders          CrmSalesOrder[]
+
+  @@index([organizationId])
+  @@index([customerMasterId])
+  @@index([enquiryId])
+  @@index([organizationId, estimateNumber])
+}
+
+model Comment {
+  commentId       String   @id
+  estimateId      String
+  description     String
+  commentedBy     String
+  date            String
+  dateDescription String
+  dateFormatted   String?
+  estimate        Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+}
+
+model Classification {
+  estimateId       String   @id
+  meaningfulUpdate Boolean  @default(false)
+  notAnswering     String
+  movingSlow       String
+  underDiscussion  String
+  confirm          String
+  intentScore      Int
+  reasoning        String
+  summary          String   @default("")
+  salesAgent       String   @default("Unassigned")
+  processedAt      DateTime @default(now())
+  estimate         Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+}
+
+// Telecaller / closing-team roster. Estimates are auto-assigned (round-robin)
+// to telecallers flagged `assignEstimateFollowUps` (the conversion specialists);
+// the `order` field sequences the rotation. Everyone non-deleted is still shown
+// in the leaderboard / Lead Gen views.
+model Telecaller {
+  id                      String                 @id @default(uuid())
+  name                    String
+  email                   String?
+  // Contact details — used to reach the agent and map incentives/payouts.
+  phone                   String?
+  whatsapp                String?
+  // Lead-conversion specialist flag: only telecallers with this ON are
+  // eligible as a CLOSER (the 80% share of a close, picked by sales-head).
+  // Off = the telecaller still generates leads (NeoDove) but can never close.
+  assignEstimateFollowUps Boolean                @default(true)
+  // Staff type: 'telecaller' (dashboard-using sales agent) | 'field_staff'
+  // (never operates the dashboard; sales agents log their enquiries for them,
+  // and the enquiry/region/20% generator credit belongs to the field staff).
+  type                    String                 @default("telecaller")
+  // Sales hierarchy (founder table, 2026-10-22): 'TL1' | 'TL2' — '' = unset.
+  tlLevel                 String                 @default("")
+  // Region this staff member works ('R1'–'R4'; '' = unmapped staff, shown
+  // highlighted in the dashboard but gets no region data).
+  region                  String                 @default("")
+  // Second region for TL1s (founder rule 2026-11-05: one TL1 handles TWO
+  // regions at once, pair decided by the sales-head). TL2s keep this ''.
+  region2                 String                 @default("")
+  order                   Int                    @default(0)
+  // Soft delete: hidden from the roster/leaderboard/assignment engine but kept
+  // for history; restorable from the MIS Controller.
+  deleted                 Boolean                @default(false)
+  // Optional link to the telecaller's NeoDove agent identity so Lead Generation
+  // (calls connected / leads generated) can be merged with Lead Conversion.
+  neodoveUserId           String?
+  neodoveUserName         String?
+  createdAt               DateTime               @default(now())
+  // Absentee flag (MIS Controller): when set, the agent holds no pipeline — her
+  // open estimates are dealt as temp covers to the active specialists (see
+  // EstimateAssignment.tempForTelecallerId) and return on "mark present".
+  absentSince             DateTime?
+  // ⟶ Central Employee identity (plan §3). One legacy row per employee.
+  employeeId              String?                @unique
+  employee                Employee?              @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignments             EstimateAssignment[]
+  scoreEvents             TelecallerScoreEvent[]
+}
+
+// History of which estimate was assigned to which telecaller, and when. The
+// latest row for an estimate (by assignedAt) is its current owner. End-of-day
+// reassignment of "unsatisfactory" estimates appends a new row (reassignedFromId
+// links to the previous one) and flips the previous row to status 'reassigned'.
+model EstimateAssignment {
+  id                  String     @id @default(uuid())
+  estimateId          String
+  telecallerId        String
+  assignedAt          DateTime   @default(now())
+  day                 String // YYYY-MM-DD the assignment was made
+  reassignedFromId    String? // previous EstimateAssignment id (reassignment chain)
+  status              String     @default("assigned") // assigned | reassigned | resolved
+  // Why the previous holder lost this estimate at EOD (e.g. "unsatisfactory
+  // remark: customer not answering"). Shown to the losing agent so the
+  // snatch mechanic teaches what loses a deal.
+  snatchReason        String?
+  // Absentee cover provenance: when this row is a TEMP cover (the holder is
+  // covering for an absent agent), this is the ABSENT agent's id the estimate
+  // returns to when MIS marks her present. Null = a normal assignment.
+  tempForTelecallerId String?
+  estimate            Estimate   @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
+  telecaller          Telecaller @relation(fields: [telecallerId], references: [id], onDelete: Cascade)
+
+  @@index([estimateId])
+  @@index([telecallerId])
+  @@index([day])
+}
+
+// Event-ledger scoring for the sales leaderboard. Per close (region model):
+// the ENQUIRY GENERATOR (Estimate.createdBy) gets a `generator` kind row worth
+// 20% of the close slab, written automatically by recordConversionClose; the
+// CLOSER gets a `closer` kind row worth the other 80%, written by creditCloser
+// Share on the sales-head pick (re-pick rewrites). Legacy rows have kind ''
+// (+100 close fallback / −10 remark / −15 snatch — historic only). The day
+// field (IST date) lets any timeframe be summed with a simple filter, so the
+// weekly leaderboard restarts at zero naturally each Monday.
+model TelecallerScoreEvent {
+  id           String     @id @default(uuid())
+  telecallerId String
+  estimateId   String
+  kind         String     @default("") // "" legacy · "generator" · "closer"
+  delta        Int // +slab share on close · −10 remark · −15 snatch (legacy)
+  day          String // YYYY-MM-DD the event occurred (IST)
+  reason       String?
+  createdAt    DateTime   @default(now())
+  telecaller   Telecaller @relation(fields: [telecallerId], references: [id], onDelete: Cascade)
+
+  @@index([telecallerId])
+  @@index([day])
+  @@index([estimateId])
+}
+
+// Event-ledger scoring for the CRM sales-order pipeline (mirrors
+// TelecallerScoreEvent). Every measurable movement of a sales order credits or
+// debits the owning department's point balance: +50 CRM confirm,
+// +25 Procurement allocation, +50 Accounts invoice, +50 Dispatch ship,
+// +100 Accounts payment received, +25 CRM new order, −20 cancel (charged to
+// the department that owned the stage the order was in). The day field (IST
+// date) lets any timeframe be summed with a simple filter, so each department
+// dashboard's leaderboard restarts naturally every week. `actor` is the Zoho
+// salesperson for CRM/Dispatch credits; Accounts/Procurement are team desks
+// (actor NULL).
+model DepartmentScoreEvent {
+  id        String   @id @default(uuid())
+  dept      String // crm | accounts | dispatch | procurement
+  soNumber  String
+  points    Int
+  reason    String
+  actor     String?
+  day       String // YYYY-MM-DD the event occurred (IST)
+  createdAt DateTime @default(now())
+
+  @@index([dept])
+  @@index([day])
+  @@index([actor])
+  @@index([soNumber])
+}
+
+// Manual CRM status changes (local override layer). When a CRM operator
+// manually advances/cancels an order from the dashboard, the action is recorded
+// here. The runner applies these overrides on top of Zoho's raw status before
+// computing pendingStep(), so the snapshot reflects the manual change and the
+// diff logic scores points automatically.
+model CrmOrderAction {
+  id        String   @id @default(uuid())
+  soNumber  String
+  action    String // confirm | invoice | ship | payment | cancel | void
+  fromStage String? // stage the order was in before this action
+  toStage   String // stage after this action
+  reason    String?
+  actor     String // who performed the action (MIS user name)
+  day       String // YYYY-MM-DD (IST)
+  createdAt DateTime @default(now())
+
+  @@index([soNumber])
+  @@index([day])
+  @@index([action])
+}
+
+// SO document attachments (invoice PDFs, LR copies, POD) uploaded by the
+// accounts team from the CRM dashboard. Metadata lives here (D1/Postgres —
+// durable, keyed by SO number so snapshot refreshes can never wipe it); file
+// bytes live in Workers KV (CHAT_FILES). Merged into the CRM pipeline payload
+// per SO at serve time.
+model SoAttachment {
+  id         String   @id @default(uuid())
+  soNumber   String
+  kind       String   @default("other") // invoice | packing_before | packing_after | lr | pod | other
+  fileName   String
+  mime       String   @default("application/octet-stream")
+  size       Int      @default(0)
+  kvKey      String   @unique
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([soNumber])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String // e.g. "MESSAGE_RECEIVED", "MESSAGE_CLASSIFIED", "MESSAGE_SENT", "SLA_BREACHED", "WAHA_RECONNECT"
+  entityType String // e.g. "MESSAGE", "CONTACT", "SESSION"
+  entityId   String?
+  metadata   String? // JSON string with context (chatId, sender, result, etc.)
+  createdAt  DateTime @default(now())
+
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+  @@index([entityType, entityId])
+}
+
+// BrainContext: Normalized, searchable index of all company context
+// Powers the Company Brain (Pillar 1) — unified search across all data sources
+model BrainContext {
+  id         String   @id @default(uuid())
+  source     String // "WHATSAPP" | "EMAIL" | "DIGEST" | "ESTIMATE" | "TASK" | "COMMENT"
+  sourceId   String // Foreign key reference to original record
+  entityName String? // Customer, person, or company this relates to (for filtering)
+  content    String // Full normalized text content for search
+  metadata   String? // JSON string: extra context (e.g. subject, chatName, estimateNo, score)
+  indexedAt  DateTime @default(now())
+  eventDate  DateTime // When the original event occurred (for timeline ordering)
+
+  @@unique([source, sourceId]) // Prevent duplicate indexing
+  @@index([source])
+  @@index([entityName])
+  @@index([eventDate])
+}
+
+// Automation framework: one row per automation folder in src/automations/.
+// rule.json is the template; runtime-editable fields (enabled, cooldownMs,
+// configJson) persist across redeploys. The Json fields are JSON-encoded strings.
+model Automation {
+  id            String    @id @default(uuid())
+  slug          String    @unique // folder name in src/automations/
+  name          String
+  description   String?
+  type          String    @default("rule") // "rule" | "handler"
+  triggerJson   String
+  conditionJson String?
+  actionsJson   String?
+  configJson    String?
+  dedupField    String?
+  enabled       Boolean   @default(true)
+  cooldownMs    Int       @default(0)
+  lastRunAt     DateTime?
+  runCount      Int       @default(0)
+  readmePath    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  runs AutomationRun[]
+
+  @@index([enabled])
+}
+
+// One fire of a rule automation. The unique (automationId, dedupKey) makes
+// double-firing structurally impossible — the same logical event (e.g. one
+// enquiry message) can never fire twice, even across restarts.
+model AutomationRun {
+  id           String     @id @default(uuid())
+  automationId String
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  dedupKey     String
+  status       String     @default("SUCCESS") // SUCCESS | SKIPPED | FAILED
+  payloadJson  String?
+  error        String?
+  createdAt    DateTime   @default(now())
+
+  @@unique([automationId, dedupKey])
+  @@index([automationId, createdAt])
+}
+
+// Parsed DPP price-quote lines (dpp-prices-dashboard automation). One row per
+// item parsed from a DPP price message; KPI aggregates are computed from these.
+model PriceQuote {
+  id        String   @id @default(uuid())
+  messageId String   @unique
+  dppChatId String
+  itemName  String
+  unitPrice Float?
+  currency  String   @default("INR")
+  rawLine   String
+  quotedAt  DateTime
+  createdAt DateTime @default(now())
+
+  @@index([dppChatId])
+  @@index([quotedAt])
+}
+
+// Generic key/value runtime state (e.g. pipeline completion watermarks that
+// aren't tied to a single row). Not user-editable config — that lives in
+// Automation.configJson.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// Token storage for web authentication tokens (NeoDove, Zoho, etc.)
+// One row per token source. Updated via webhook POST.
+model Token {
+  id        String   @id @default(uuid())
+  source    String   @unique // e.g. "neodove", "zoho", "google"
+  token     String // the actual token value
+  metadata  String? // JSON string: extra context (expires_at, user_id, etc.)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([source])
+}
+
+// WhatsApp Marketing (whatsapp-marketing automation). One row per marketing
+// campaign. A campaign targets its own lead list (MarketingLead) at its own
+// trigger time (one-shot scheduledAt, or a recurring cron) through a provider
+// (WABA Meta Cloud API, or an AiSensy-style campaign service).
+model MarketingCampaign {
+  id                  String    @id @default(uuid())
+  name                String
+  description         String?
+  type                String    @default("promotional") // promotional | reengagement | invoice | seasonal | custom
+  provider            String    @default("waba") // waba | aisensy
+  status              String    @default("draft") // draft | active | paused | completed | archived
+  scheduleType        String    @default("one_shot") // one_shot | recurring
+  scheduledAt         DateTime? // one-shot fire time (Asia/Kolkata)
+  cron                String? // recurring schedule, e.g. "0 9 * * MON"
+  timezone            String    @default("Asia/Kolkata")
+  templateName        String? // WABA approved template name
+  templateLanguage    String    @default("en")
+  templateParams      String? // JSON array of static param values (or lead field mappings)
+  messageBody         String? // free-text body (session sends) or {{lead.<field>}} templated
+  mediaUrl            String? // optional media attached to the message (e.g. invoice PDF)
+  mediaFilename       String?
+  senderPhoneNumberId String? // WABA: phone number ID to send from
+  aisensyCampaignName String? // AiSensy: name of the live API campaign
+  enabled             Boolean   @default(true)
+  lastRunAt           DateTime?
+  runCount            Int       @default(0)
+  statsJson           String? // cached aggregates: { total, sent, delivered, read, failed }
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  leads MarketingLead[]
+  runs  MarketingCampaignRun[]
+
+  @@index([enabled, status])
+  @@index([provider])
+}
+
+// One target lead inside a marketing campaign. Deduped per (campaign, phone).
+model MarketingLead {
+  id               String            @id @default(uuid())
+  campaignId       String
+  campaign         MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  phoneNumber      String // E.164, e.g. 919876543210
+  name             String?
+  attributes       String? // JSON object: lead-specific values used to fill {{lead.<key>}}
+  status           String            @default("pending") // pending | sent | delivered | read | failed | optout
+  messageId        String?
+  error            String?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  createdAt        DateTime          @default(now())
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId String?
+  customerMaster   Customer?         @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+
+  @@unique([campaignId, phoneNumber])
+  @@index([customerMasterId])
+  @@index([campaignId, status])
+}
+
+// One execution of a campaign: a run iterates the pending leads and sends.
+model MarketingCampaignRun {
+  id         String            @id @default(uuid())
+  campaignId String
+  campaign   MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  status     String            @default("running") // running | completed | failed | partial
+  total      Int               @default(0)
+  sent       Int               @default(0)
+  failed     Int               @default(0)
+  skipped    Int               @default(0)
+  error      String?
+  startedAt  DateTime          @default(now())
+  finishedAt DateTime?
+
+  @@index([campaignId, startedAt])
+}
+
+// ── Auth: Google-login users, sessions, and category-based permissions ──────
+// striversahil@gmail.com is root (isRoot). Root can create scopes (categories)
+// and grant them to users; each dashboard view requires a scope.
+model AuthUser {
+  id               String          @id @default(uuid())
+  email            String          @unique
+  name             String
+  picture          String?
+  isRoot           Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  // Users portal overrides (migration 0124): manager-set display name +
+  // position override. Null = Google name / auto-resolved position.
+  displayName      String?
+  positionOverride String?
+  // ⟶ Central Employee identity (plan §3). One legacy row per employee.
+  employeeId       String?         @unique
+  employee         Employee?       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  sessions         AuthSession[]
+  userScopes       AuthUserScope[]
+  userRoles        AuthUserRole[]
+  chatMessages     ChatMessage[]
+  chatMembers      ChatMember[]
+  chatReadStates   ChatReadState[]
+}
+
+model AuthSession {
+  id        String   @id @default(uuid())
+  userId    String
+  user      AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AuthScope {
+  key         String          @id
+  label       String
+  description String?
+  userScopes  AuthUserScope[]
+  roleScopes  AuthRoleScope[]
+}
+
+model AuthUserScope {
+  userId   String
+  user     AuthUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scopeKey String
+  scope    AuthScope @relation(fields: [scopeKey], references: [key], onDelete: Cascade)
+
+  @@id([userId, scopeKey])
+}
+
+// Roles bundle automation-dashboard scopes. A user's effective scopes =
+// direct scopes (auth_user_scope) ∪ scopes of their roles (auth_role_scope).
+model AuthRole {
+  key             String               @id
+  label           String
+  description     String?
+  roleScopes      AuthRoleScope[]
+  userRoles       AuthUserRole[]
+  permissionRules DataPermissionRule[]
+}
+
+model AuthRoleScope {
+  roleKey  String
+  role     AuthRole  @relation(fields: [roleKey], references: [key], onDelete: Cascade)
+  scopeKey String
+  scope    AuthScope @relation(fields: [scopeKey], references: [key], onDelete: Cascade)
+
+  @@id([roleKey, scopeKey])
+}
+
+model AuthUserRole {
+  userId  String
+  user    AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleKey String
+  role    AuthRole @relation(fields: [roleKey], references: [key], onDelete: Cascade)
+
+  @@id([userId, roleKey])
+}
+
+// ── Team chat (Discord-style channels + messages) ─────────────────────────────
+// Channels are visible to every approved member; message ids are sequential
+// Ints for cheap "load older" pagination (id < before).
+model ChatChannel {
+  id          String          @id @default(uuid())
+  name        String
+  description String?
+  category    String?
+  type        String          @default("channel") // "channel" (public) | "dm" (two users)
+  createdBy   String
+  createdAt   DateTime        @default(now())
+  messages    ChatMessage[]
+  members     ChatMember[]
+  readStates  ChatReadState[]
+}
+
+model ChatMessage {
+  id          Int           @id @default(autoincrement())
+  channelId   String
+  channel     ChatChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      AuthUser      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body        String
+  createdAt   DateTime      @default(now())
+  editedAt    DateTime?
+  deletedAt   DateTime?
+  attachments String?
+  replyToId   Int?
+  replyTo     ChatMessage?  @relation("ChatReply", fields: [replyToId], references: [id])
+  replies     ChatMessage[] @relation("ChatReply")
+
+  @@index([channelId, id])
+}
+
+model ChatReadState {
+  userId     String
+  user       AuthUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId  String
+  channel    ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  lastReadId Int         @default(0)
+
+  @@id([userId, channelId])
+}
+
+model ChatMember {
+  channelId String
+  channel   ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      AuthUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+}
+
+// ── Enquiry Tracker (live sales pipeline) ────────────────────────────────────
+model Enquiry {
+  id                     String           @id @default(uuid())
+  estNumber              String
+  // Zoho Books organization the linked estimate belongs to (multi-org:
+  // BUI + DPG share EST number series — see scripts/zoho-sync/orgs.js).
+  // Resolved from the linked estimate on save/claim (unique match auto-tags;
+  // on a cross-org number clash the agent picks at Check & Assign time).
+  // '' = untagged/legacy, read as the primary (BUI) org.
+  organizationId         String           @default("")
+  // Daily enquiry number: Enquiry No {dailyNo} - {DD} {MON} {source}.
+  // Auto-assigned at creation, counter resets every IST day.
+  dailyNo                Int?
+  // Enquiry source: TL | AI | Incoming | B2B (default TL).
+  source                 String           @default("TL")
+  // Sales-agent lead details (parsed by AI from the first 1–2 comments).
+  enquiryNumber          String
+  sourceLead             String
+  location               String
+  clientCompany          String
+  contactName            String
+  contactEmail           String
+  contactPhone           String
+  title                  String
+  description            String
+  priority               String           @default("medium")
+  status                 String           @default("new")
+  assignedAgentId        String
+  // Field-staff referral: the field staff whose lead this is (source
+  // "Field Staff"). Immutable origin — survives a later lead reassignment.
+  // assignedAgentId is set to the same staff id at creation.
+  fieldStaffId           String           @default("")
+  // The sales agent who actually typed/logged the enquiry (audit only);
+  // '' for pre-existing rows and root test rows.
+  loggedByAgentId        String           @default("")
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  imageUrls              String?
+  activities             String?
+  additionalRequirements String?
+  // Procurement workflow stage: '' (legacy) | rate_pending | rates_received | finalized.
+  rateStatus             String           @default("")
+  // Explicit procurement handoff: ISO instant of "Submit to Management".
+  procurementSubmittedAt String           @default("")
+  // Sent-revision marker: ISO instant when management reopened a `sent`
+  // enquiry for additional scope (revise flow). While set, the Zoho
+  // non-draft status does NOT auto-promote/conclude the row, so the new
+  // items loop through procurement → management → sent again. Cleared on
+  // the next mark-as-sent. '' = no open revision.
+  sentRevisionAt         String           @default("")
+  // Manual line items (JSON array text): [{ name, qty, spec, media, rates, markup... }].
+  // [{ name, qty, spec }] — one entry per purchasable item in the enquiry.
+  items                  String?
+  // Write-maintained search identity (migration 0058): lowercased scalars +
+  // item names/specs/vendors. The search path LIKEs this tight column instead
+  // of sweeping the items blob. Never served to clients.
+  searchText             String           @default("")
+  comments               EnquiryComment[]
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId       String?
+  customerMaster         Customer?        @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+  estimates              Estimate[]
+
+  @@index([organizationId])
+  @@index([fieldStaffId])
+  @@index([customerMasterId])
+  @@index([organizationId, estNumber])
+}
+
+model EnquiryComment {
+  id         String   @id @default(uuid())
+  enquiryId  String
+  enquiry    Enquiry  @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  agentId    Int
+  content    String
+  createdAt  DateTime @default(now())
+  parentId   String?
+  imageUrl   String?
+  // Discussion scope: 'sales' (private) or 'procurement' (shared ops thread).
+  visibility String   @default("sales")
+
+  @@index([enquiryId, createdAt])
+}
+
+// ── Product master (KYP catalogue as data, not JSON) ─────────────────────────
+// Source of truth for the intake category lookup + spec-check + copilot.
+// Seeded once from data/know_your_product_v2.json (migration 0046 + seed).
+// Identity only — the checklist lives in KypGuide (one question per row).
+model ProductItem {
+  id         String       @id @default(uuid())
+  category   String
+  name       String       @unique
+  aliases    String? // JSON array text
+  active     Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  guide      KypGuide[]
+  rates      VendorRate[]
+  stockItems StockItem[] // SKUs that are variants of this catalogue product
+
+  @@index([category, active])
+}
+
+// Ultimate guide table: one row per checklist question per product.
+// attrKey is a stable slug — never rename it (VendorRate.attrValues keys off it).
+model KypGuide {
+  id         String      @id @default(uuid())
+  productId  String
+  product    ProductItem @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attrKey    String
+  question   String
+  guideNote  String?
+  sortOrder  Int         @default(0)
+  isRequired Boolean     @default(true)
+  condition  String? // JSON text, nullable
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([productId, attrKey])
+  @@index([productId, sortOrder])
+}
+
+// Vendor master: one row per supplier (dropdown source, no free text).
+model Vendor {
+  id              String       @id @default(uuid())
+  name            String       @unique
+  contactPerson   String?
+  contactPhone1   String?
+  contactPhone2   String?
+  location        String?
+  address         String?
+  yearEstablished Int?
+  vendorType      String       @default("") // Manufacturer | Distributor | Trader
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  rates           VendorRate[]
+  preferredFor    StockItem[]
+}
+
+// Priced facts: one row per vendor quote. The rate keys off the attribute
+// snapshot (attrKey canonical string), NOT the bare item — same item with
+// different dims/brand is a different key and never falsely exact-matches.
+model VendorRate {
+  id              String       @id @default(uuid())
+  vendorId        String
+  // Was Cascade. Vendors are deactivated (active=false), never deleted with their rate history.
+  vendor          Vendor       @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  productId       String?
+  product         ProductItem? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  attrValues      String? // JSON text {attrKey: value as quoted}
+  attrKey         String       @default("")
+  pricePerUnit    Float?
+  unit            String       @default("")
+  discountPercent Float?
+  baseRate        Float?
+  weightPerUnit   Float?
+  packageQty      String?
+  packageDims     String?
+  moq             String?
+  deliveryDays    Int?
+  imageUrl        String? // vendor-quoted item photo (uploaded KV path or https URL)
+  videoUrl        String? // vendor manufacturing video (https URL)
+  quotedAt        DateTime     @default(now())
+  enquiryRef      String?
+  notes           String? // vendor extras matching no KYP key (delivery notes, stray details) — never spec keys
+  missingSpecs    String? // JSON text: required checklist questions unanswered at filing
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([productId, attrKey])
+  @@index([vendorId])
+}
+
+// ── Accounts (recurring compliance taskbar: senior / junior + MIS control) ──
+// Roster of accountants. MIS maps each person to senior|junior (role field);
+// the dashboard splits the taskbar into Senior / Junior sections by it.
+model Accountant {
+  id         String            @id @default(uuid())
+  name       String
+  email      String?
+  phone      String?
+  role       String            @default("junior") // senior | junior
+  order      Int               @default(0)
+  deleted    Boolean           @default(false)
+  createdAt  DateTime          @default(now())
+  logs       AccountsTaskLog[]
+  // ⟶ Central Employee identity (plan §3). One legacy row per employee.
+  employeeId String?           @unique
+  employee   Employee?         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([deleted, order])
+}
+
+// Recurring task definition. MIS-owned: daily / weekly / monthly /
+// quarterly / yearly cadence, owner role (senior|junior|either), optional
+// dueDay (monthly: 1-31, yearly: day-of-month) + dueMonth (yearly: 1-12).
+// kind='payment' rows are recurring bills (Payment dues tab) — task rows
+// ignore the payment-only columns below.
+model AccountsTaskTemplate {
+  id           String            @id @default(uuid())
+  title        String
+  description  String?
+  frequency    String            @default("daily") // daily | weekly | monthly | quarterly | yearly
+  ownerRole    String            @default("either") // senior | junior | either
+  dueDay       Int? // legacy/simple rule: monthly day, yearly day, weekly weekday (0-6 Sun=0)
+  dueMonth     Int? // legacy/simple rule: yearly month (1-12)
+  // Rich schedule grammar (see data/accounts_follow_up.json legend):
+  // not_applicable | fixed_day | day_range | multiple_days | weekday |
+  // week_of_month | month_day_range | multi_occurrence |
+  // variable_per_item | to_be_decided. Engine evaluates ruleJson; the
+  // legacy dueDay/dueMonth path covers simple MIS-created tasks (ruleType null).
+  ruleType     String?
+  ruleJson     String?
+  rawText      String?
+  // Verbatim sheet-fidelity columns (data/accounts_follow_up.json per-task fields).
+  isShared     Boolean           @default(false)
+  employeeRaw  String?
+  department   String?
+  sheetStatus  String?
+  active       Boolean           @default(true)
+  order        Int               @default(0)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  logs         AccountsTaskLog[]
+  // ── Payment dues (kind='payment' templates; task rows ignore these) ──────
+  kind         String            @default("task") // task | payment
+  biller       String?
+  category     String?
+  amount       Float?
+  remindDays   String            @default("7,3,1") // CSV days-before-due, e.g. "7,3,1"
+  // Optional bill number: card number, mobile number, loan/account no.,
+  // policy no. … (label chosen per category in the UI; task rows ignore it).
+  identifier   String?
+  statementDay Int? // credit cards: statement day of month (1-31); amount is known only from here
+  // Credit-card billing model: 'fixed' = due on dueDay each month;
+  // 'after_statement' = due graceDays after the statement (statementDay +
+  // graceDays, may spill into the next month). Task rows ignore both.
+  dueMode      String            @default("fixed")
+  graceDays    Int?
+
+  @@index([active, frequency])
+  @@index([kind, active])
+}
+
+// One concrete task instance per (template, due date, slot). Status + remark
+// is the daily logging surface: accountants tick done / not_done with a
+// remark; past unresolved rows read as incomplete (never rewritten).
+// slot: 'main' for ordinary tasks; shared templates get one instance per
+// lane ('senior' + 'junior') so each lane completes its own copy — a Done in
+// one lane must never flip the other lane's card.
+model AccountsTaskLog {
+  id           String                   @id @default(uuid())
+  templateId   String
+  template     AccountsTaskTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  dueDate      String // YYYY-MM-DD (IST)
+  slot         String                   @default("main") // main | senior | junior (lane copy for shared templates)
+  status       String                   @default("pending") // pending | done | not_done | skipped | overdue (legacy) | inprogress (legacy)
+  remark       String?
+  doneBy       String?
+  // Time taken to finish, entered as hours+minutes on the taskbar and stored
+  // as integer minutes. NULL = not recorded (optional, never blocks Done).
+  timeSpentMin Int?
+  accountantId String?
+  accountant   Accountant?              @relation(fields: [accountantId], references: [id], onDelete: SetNull)
+  updatedBy    String?
+  // ── Payment proof (kind='payment' cycles only; task rows ignore these) ───
+  paidAmount   Float?
+  paidRef      String?
+  updatedAt    DateTime                 @updatedAt
+  createdAt    DateTime                 @default(now())
+  attachments  AccountsTaskAttachment[]
+
+  @@unique([templateId, dueDate, slot])
+  @@index([dueDate, status])
+  @@index([accountantId])
+}
+
+// Proof files attached to a task log (bank reco PDFs, challans, screenshots).
+// Metadata is durable in D1; bytes live in Workers KV (CHAT_FILES, same locker
+// as team-chat + SO files). Listed on the taskbar next to the remark.
+model AccountsTaskAttachment {
+  id         String          @id @default(uuid())
+  logId      String
+  log        AccountsTaskLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String          @default("application/octet-stream")
+  size       Int             @default(0)
+  kvKey      String          @unique
+  uploadedBy String          @default("")
+  createdAt  DateTime        @default(now())
+
+  @@index([logId])
+}
+
+// ── WhatsApp Business Autopilot ──────────────────────────────────────────────
+// Structured business-operating layer under the WhatsApp conversation flow
+// (see whatsapp-business-autopilot-architecture.md). The core loop runs on the
+// GH Actions runner (scripts/whatsapp-autopilot-runner.js); these tables are
+// its source of truth. Phase 0 (shadow mode): transitions are recorded and the
+// task queue is populated, but no tool/action ever sends a customer message.
+
+// One trackable piece of business work inside one chat (a price enquiry, an
+// order, a complaint...). A group chat with four things going on is four
+// independent rows instead of one blurred feed.
+model WaTask {
+  id             String    @id @default(uuid())
+  chatId         String
+  chatName       String
+  taskType       String    @default("general") // price_enquiry | order | complaint | support | general | ...
+  item           String? // the concrete subject (e.g. "Item B, size 6 inch")
+  status         String    @default("open") // open | waiting | needs_clarification | needs_review | completed | cancelled
+  priority       String?
+  assignedTo     String?
+  rootMessageId  String? // wa_message_id that opened this task (lineage root)
+  summary        String?
+  // Optimistic concurrency (§4.10): every transition write is conditioned on
+  // version; a conflicting writer re-reads and re-runs against fresh state.
+  version        Int       @default(1)
+  lastInboundAt  DateTime?
+  lastOutboundAt DateTime?
+  waitingSince   DateTime?
+  waitTimeoutAt  DateTime?
+  followUpDueAt  DateTime?
+  followUpCount  Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  history   WaTaskHistory[]
+  actions   WaAction[]
+  overrides OverrideLog[]
+
+  @@index([chatId, status])
+  @@index([status])
+  @@index([followUpDueAt])
+  @@index([waitTimeoutAt])
+  @@index([createdAt])
+}
+
+// message → parent → root lineage + task association per message. Keyed by the
+// WhatsApp message id (stable across environments), unique for idempotency.
+model MessageLineage {
+  id                String   @id @default(uuid())
+  waMessageId       String   @unique
+  parentWaMessageId String?
+  rootWaMessageId   String?
+  taskId            String?
+  associationMethod String   @default("llm") // deterministic | llm | human
+  confidence        Float?
+  resolutionStatus  String   @default("resolved") // resolved | pending (parent not yet seen)
+  createdAt         DateTime @default(now())
+
+  @@index([taskId])
+  @@index([rootWaMessageId])
+}
+
+// Full audit trail of every transition on a task — makes every decision
+// reconstructable and thresholds tunable from real data (§8).
+model WaTaskHistory {
+  id          String   @id @default(uuid())
+  taskId      String
+  task        WaTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  transition  String // create | update | complete | reopen | wait | clarify | review | action
+  triggeredBy String   @default("llm") // llm | human | system
+  messageId   String? // triggering WhatsApp message id
+  notes       String?
+  confidence  Float? // transition-confidence at decision time
+  occurredAt  DateTime @default(now())
+
+  @@index([taskId, occurredAt])
+}
+
+// Proposed/executed business actions (tools). In shadow mode every row stays
+// `pending` — nothing is ever sent; the review UI approves/rejects them.
+model WaAction {
+  id          String    @id @default(uuid())
+  taskId      String?
+  task        WaTask?   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  toolName    String // send_reply | forward_message | check_inventory | schedule_follow_up | escalate_to_human | request_clarification | broadcast_to_vendors
+  inputJson   String? // JSON args the LLM proposed
+  outputJson  String? // JSON result (null in shadow mode)
+  status      String    @default("pending") // pending | approved | rejected | executed_manual | success | failed
+  requestedBy String    @default("llm") // llm | human | system
+  reason      String?
+  error       String?
+  createdAt   DateTime  @default(now())
+  executedAt  DateTime?
+
+  @@index([taskId])
+  @@index([status, createdAt])
+}
+
+// Every time a human overrides the system's association/transition decision,
+// log it next to the system's original call + confidence — the data that tells
+// you whether a threshold should move (§8).
+model OverrideLog {
+  id               String   @id @default(uuid())
+  taskId           String?
+  task             WaTask?  @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  messageId        String?
+  decisionType     String // association | transition
+  systemDecision   String?
+  systemConfidence Float?
+  humanDecision    String
+  reviewer         String?
+  overriddenAt     DateTime @default(now())
+
+  @@index([taskId])
+  @@index([decisionType])
+}
+
+// ── Digital Marketing (single manager taskbar, daily metrics + weekly posts) ──
+model DigitalMarketingManager {
+  id         String                    @id @default(uuid())
+  name       String
+  email      String?
+  phone      String?
+  role       String                    @default("manager") // manager only today, but keep role for lane parity
+  order      Int                       @default(0)
+  deleted    Boolean                   @default(false)
+  createdAt  DateTime                  @default(now())
+  logs       DigitalMarketingTaskLog[]
+  // ⟶ Central Employee identity (plan §3). One legacy row per employee.
+  employeeId String?                   @unique
+  employee   Employee?                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([deleted, order])
+}
+
+model DigitalMarketingTaskTemplate {
+  id            String                    @id @default(uuid())
+  title         String
+  description   String?
+  frequency     String                    @default("daily") // daily | weekly | monthly | quarterly | yearly
+  ownerRole     String                    @default("manager") // manager | either
+  dueDay        Int?
+  dueMonth      Int?
+  ruleType      String?
+  ruleJson      String?
+  rawText       String?
+  isShared      Boolean                   @default(false)
+  employeeRaw   String?
+  department    String?
+  sheetStatus   String?
+  // Metrics schema for daily numeric tasks (Meta/B2B/Whatsapp/Email). JSON array of {key,label,type} stored as string.
+  metricsSchema String?
+  active        Boolean                   @default(true)
+  order         Int                       @default(0)
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  logs          DigitalMarketingTaskLog[]
+
+  @@index([active, frequency])
+}
+
+model DigitalMarketingTaskLog {
+  id           String                           @id @default(uuid())
+  templateId   String
+  template     DigitalMarketingTaskTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  dueDate      String // YYYY-MM-DD IST
+  status       String                           @default("pending") // pending | inprogress (legacy) | done | not_done | skipped | overdue (legacy)
+  remark       String?
+  doneBy       String?
+  // Structured metrics for the 4 daily numeric tasks (stored as JSON string).
+  metricsJson  String?
+  // Legacy timeSpent kept for parity.
+  timeSpentMin Int?
+  accountantId String?
+  accountant   DigitalMarketingManager?         @relation(fields: [accountantId], references: [id], onDelete: SetNull)
+  updatedBy    String?
+  updatedAt    DateTime                         @updatedAt
+  createdAt    DateTime                         @default(now())
+  attachments  DigitalMarketingTaskAttachment[]
+
+  @@unique([templateId, dueDate])
+  @@index([dueDate, status])
+  @@index([accountantId])
+}
+
+model DigitalMarketingTaskAttachment {
+  id         String                  @id @default(uuid())
+  logId      String
+  log        DigitalMarketingTaskLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String                  @default("application/octet-stream")
+  size       Int                     @default(0)
+  kvKey      String                  @unique
+  uploadedBy String                  @default("")
+  createdAt  DateTime                @default(now())
+
+  @@index([logId])
+}
+
+// ── Digital Marketing ADS registry (migration 0113, manual ad runs) ──
+model DigitalMarketingAd {
+  id              String                         @id @default(uuid())
+  type            String                         @default("meta") // google | meta | whatsapp | email | twitter | other
+  title           String                         @default("")
+  startDate       String // YYYY-MM-DD (mandatory)
+  endDate         String // YYYY-MM-DD (mandatory, >= startDate)
+  amountSpent     Float                          @default(0)
+  leads           Int                            @default(0)
+  enquiries       Int                            @default(0)
+  dataDescription String                         @default("")
+  status          String                         @default("planned") // planned | live | completed
+  createdBy       String?
+  createdAt       DateTime                       @default(now())
+  updatedAt       DateTime                       @updatedAt
+  attachments     DigitalMarketingAdAttachment[]
+
+  @@index([startDate])
+  @@index([status])
+}
+
+model DigitalMarketingAdAttachment {
+  id         String             @id @default(uuid())
+  adId       String
+  ad         DigitalMarketingAd @relation(fields: [adId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String             @default("application/octet-stream")
+  size       Int                @default(0)
+  kvKey      String             @unique
+  uploadedBy String             @default("")
+  createdAt  DateTime           @default(now())
+
+  @@index([adId])
+}
+
+// ── Digital Marketing Open Tasks (migration 0120, free-form tasks + daily progress) ──
+model DigitalMarketingOpenTask {
+  id          String                               @id @default(uuid())
+  title       String                               @default("")
+  description String                               @default("")
+  startDate   String // YYYY-MM-DD (mandatory)
+  endDate     String // YYYY-MM-DD (mandatory, >= startDate)
+  status      String                               @default("open") // open | done (manual tick, dates display-only)
+  doneAt      String?
+  createdBy   String?
+  createdAt   DateTime                             @default(now())
+  updatedAt   DateTime                             @updatedAt
+  entries     DigitalMarketingOpenTaskEntry[]
+  attachments DigitalMarketingOpenTaskAttachment[]
+
+  @@index([startDate])
+  @@index([status])
+}
+
+model DigitalMarketingOpenTaskEntry {
+  id          String                               @id @default(uuid())
+  taskId      String
+  task        DigitalMarketingOpenTask             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  date        String // YYYY-MM-DD, one editable note per day
+  note        String                               @default("")
+  updatedBy   String                               @default("")
+  createdAt   DateTime                             @default(now())
+  updatedAt   DateTime                             @updatedAt
+  attachments DigitalMarketingOpenTaskAttachment[]
+
+  @@unique([taskId, date])
+  @@index([taskId])
+}
+
+model DigitalMarketingOpenTaskAttachment {
+  id         String                         @id @default(uuid())
+  taskId     String
+  task       DigitalMarketingOpenTask       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  entryId    String?
+  entry      DigitalMarketingOpenTaskEntry? @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String                         @default("application/octet-stream")
+  size       Int                            @default(0)
+  kvKey      String                         @unique
+  uploadedBy String                         @default("")
+  createdAt  DateTime                       @default(now())
+
+  @@index([taskId])
+  @@index([entryId])
+}
+
+// ── Human Resources (ad-hoc delegated task list + fixed/variable expenses) ──
+model HumanResourcesMember {
+  id                      String                          @id @default(uuid())
+  name                    String
+  email                   String?
+  // Explicit platform-login link (may differ from the contact email). Falls
+  // back to `email` when empty — see resolveSelfHumanResourcesMember.
+  loginEmail              String?
+  phone                   String?
+  designation             String?
+  employeeCode            String?                         @unique
+  photoUrl                String?
+  department              String?
+  joiningDate             String?
+  exitDate                String?
+  employmentType          String?                         @default("full_time")
+  active                  Boolean                         @default(true)
+  dateOfBirth             String?
+  address                 String?
+  // Contact split: phone/email = OFFICE; the emergency* pair is now shown as
+  // PERSONAL CONTACT / PERSONAL EMAIL (labels only — columns are kept for the
+  // API contract); personalPhone is the new PERSONAL PHONE.
+  emergencyContactName    String?
+  emergencyContactPhone   String?
+  personalPhone           String?
+  pan                     String?
+  aadhaarLast4            String?
+  bankName                String?
+  bankAccountNumber       String?
+  bankIfsc                String?
+  pfNumber                String?
+  esiNumber               String?
+  notes                   String?
+  salaryTemplateId        String?
+  salaryTemplate          HumanResourcesSalaryTemplate?   @relation(fields: [salaryTemplateId], references: [id], onDelete: SetNull)
+  salaryInputMode         String? // gross | basic
+  salaryInputAmount       Float?
+  salaryTemplateAppliedAt DateTime?
+  // ⟶ Central Employee identity (plan §3). One legacy row per employee.
+  employeeId              String?                         @unique
+  employee                Employee?                       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  order                   Int                             @default(0)
+  deleted                 Boolean                         @default(false)
+  createdAt               DateTime                        @default(now())
+  tasks                   HumanResourcesTask[]
+  salaryComponents        HumanResourcesSalaryComponent[]
+  attendance              HumanResourcesAttendance[]
+  leaves                  HumanResourcesLeave[]
+  salarySlips             HumanResourcesSalarySlip[]
+
+  @@index([deleted, order])
+  @@index([deleted, active, order])
+}
+
+model HumanResourcesSalaryComponent {
+  id            String                        @id @default(uuid())
+  memberId      String
+  member        HumanResourcesMember          @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  name          String
+  componentType String // earning | deduction
+  calcType      String                        @default("fixed") // fixed | percent_basic | percent_gross | formula | balance
+  value         Float
+  formula       String?
+  code          String?
+  cap           Float?
+  floor         Float?
+  templateId    String?
+  template      HumanResourcesSalaryTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  isBasic       Boolean                       @default(false)
+  order         Int                           @default(0)
+  deleted       Boolean                       @default(false)
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+
+  @@index([memberId, deleted, order])
+  @@index([templateId])
+}
+
+model HumanResourcesSalaryTemplate {
+  id          String                                  @id @default(uuid())
+  name        String
+  description String?
+  inputMode   String                                  @default("gross") // gross | basic
+  isDefault   Boolean                                 @default(false)
+  deleted     Boolean                                 @default(false)
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime                                @default(now())
+  updatedAt   DateTime                                @updatedAt
+  components  HumanResourcesSalaryTemplateComponent[]
+  snapshots   HumanResourcesSalaryComponent[]
+  employees   HumanResourcesMember[]
+
+  @@index([deleted, isDefault])
+}
+
+model HumanResourcesSalaryTemplateComponent {
+  id            String                       @id @default(uuid())
+  templateId    String
+  template      HumanResourcesSalaryTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  componentType String                       @default("earning") // earning | deduction
+  calcType      String                       @default("fixed") // fixed | percent_basic | percent_gross | formula | balance
+  value         Float                        @default(0)
+  formula       String?
+  cap           Float?
+  floor         Float?
+  isBasic       Boolean                      @default(false)
+  order         Int                          @default(0)
+  deleted       Boolean                      @default(false)
+  createdAt     DateTime                     @default(now())
+  updatedAt     DateTime                     @updatedAt
+
+  @@index([templateId, deleted, order])
+}
+
+model HumanResourcesAttendance {
+  id        String               @id @default(uuid())
+  memberId  String
+  member    HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  date      String // YYYY-MM-DD IST
+  inTime    String? // HH:mm IST
+  outTime   String? // HH:mm IST
+  status    String               @default("present") // present | half_day | absent | holiday
+  notes     String?
+  createdBy String?
+  updatedBy String?
+  deleted   Boolean              @default(false)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@unique([memberId, date])
+  @@index([date, deleted])
+}
+
+model HumanResourcesLeave {
+  id        String               @id @default(uuid())
+  memberId  String
+  member    HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  leaveType String // casual | sick | earned | unpaid | other
+  paid      Boolean              @default(true)
+  startDate String // YYYY-MM-DD IST
+  endDate   String // YYYY-MM-DD IST
+  days      Float                @default(0)
+  reason    String?
+  createdBy String?
+  updatedBy String?
+  deleted   Boolean              @default(false)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([memberId, startDate])
+  @@index([startDate, endDate, deleted])
+}
+
+model HumanResourcesHoliday {
+  id        String   @id @default(uuid())
+  date      String   @unique // YYYY-MM-DD IST
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+}
+
+// National holidays excluded from the sales deficit (Sales Leaderboard).
+// One global date list: each region owes ₹1L per working day, so a holiday
+// knocks ₹1L off every region's target. Sunday rows are allowed but are a
+// ledger no-op (Sundays already accrue ₹0).
+model SalesHoliday {
+  day          String   @id // YYYY-MM-DD IST
+  label        String   @default("")
+  markedBy     String   @default("")
+  markedByName String   @default("")
+  createdAt    DateTime @default(now())
+
+  @@index([day])
+}
+
+model HumanResourcesSalarySlip {
+  id                  String               @id @default(uuid())
+  memberId            String
+  member              HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  month               String // YYYY-MM IST
+  status              String               @default("draft") // draft | finalized | paid
+  employeeName        String
+  employeeCode        String?
+  designation         String?
+  department          String?
+  workingDays         Float                @default(0)
+  eligibleDays        Float                @default(0)
+  payableDays         Float                @default(0)
+  presentDays         Float                @default(0)
+  halfDays            Float                @default(0)
+  absentDays          Float                @default(0)
+  paidLeaveDays       Float                @default(0)
+  unpaidLeaveDays     Float                @default(0)
+  holidayDays         Float                @default(0)
+  unmarkedDays        Float                @default(0)
+  perDay              Float                @default(0)
+  monthlyGross        Float                @default(0)
+  earnedGross         Float                @default(0)
+  absenceDeduction    Float                @default(0)
+  componentDeductions Float                @default(0)
+  manualDeductions    Float                @default(0)
+  totalDeductions     Float                @default(0)
+  netPay              Float                @default(0)
+  snapshot            String               @default("{}")
+  notes               String?
+  finalizedAt         DateTime?
+  paidAt              DateTime?
+  createdBy           String?
+  updatedBy           String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([memberId, month])
+  @@index([month, status])
+}
+
+model HumanResourcesTask {
+  id                String                  @id @default(uuid())
+  title             String
+  description       String?
+  assignedToId      String?
+  assignedTo        HumanResourcesMember?   @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  dueDate           String // YYYY-MM-DD IST
+  dueTime           String? // HH:mm IST
+  priority          String                  @default("normal") // low | normal | high | urgent
+  status            String                  @default("pending") // pending | in_progress | done
+  remark            String?
+  // hr = delegated by an HR/MIS user; self = created by the employee.
+  origin            String                  @default("hr")
+  // Roster member who created a self task (null for HR-assigned tasks).
+  createdByMemberId String?
+  createdBy         String?
+  updatedBy         String?
+  deleted           Boolean                 @default(false)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  logs              HumanResourcesTaskLog[]
+
+  @@index([deleted, status, dueDate])
+  @@index([assignedToId, dueDate])
+  @@index([origin])
+}
+
+// Append-only daily journal for a delegated task: every status change and every
+// remark becomes one row, tagged with the IST day it was written. The task row
+// keeps a mirror of the latest status/remark so older views stay correct.
+model HumanResourcesTaskLog {
+  id             String             @id @default(uuid())
+  taskId         String
+  task           HumanResourcesTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  memberId       String? // assignee at the time of writing (per-employee reporting)
+  logDate        String // YYYY-MM-DD IST
+  kind           String             @default("remark") // remark | status
+  status         String? // status after the change (kind=status)
+  remark         String?
+  authorName     String?
+  authorMemberId String?
+  createdAt      DateTime           @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([memberId, logDate])
+  @@index([logDate])
+}
+
+model HumanResourcesExpense {
+  id           String   @id @default(uuid())
+  title        String
+  expenseType  String // fixed | variable
+  category     String?
+  amount       Float
+  expenseDate  String // YYYY-MM-DD IST
+  expenseMonth String // YYYY-MM IST
+  paymentMode  String?
+  notes        String?
+  createdBy    String?
+  updatedBy    String?
+  deleted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([deleted, expenseMonth, expenseType])
+  @@index([expenseDate])
+}
+
+model HumanResourcesFundTxn {
+  id        String   @id @default(uuid())
+  title     String
+  amount    Float
+  txnDate   String // YYYY-MM-DD IST
+  notes     String?
+  createdBy String?
+  updatedBy String?
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deleted, txnDate])
+}
+
+model HumanResourcesInventoryItem {
+  id           String                       @id @default(uuid())
+  name         String
+  category     String?
+  unit         String                       @default("pcs")
+  reorderLevel Float                        @default(0)
+  unitCost     Float?
+  notes        String?
+  order        Int                          @default(0)
+  deleted      Boolean                      @default(false)
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+  transactions HumanResourcesInventoryTxn[]
+
+  @@index([deleted, order])
+}
+
+model HumanResourcesInventoryTxn {
+  id        String                      @id @default(uuid())
+  itemId    String
+  item      HumanResourcesInventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  txnType   String // opening | purchase | consumption | adjustment
+  quantity  Float
+  txnDate   String // YYYY-MM-DD IST
+  txnMonth  String // YYYY-MM IST
+  notes     String?
+  expenseId String? // optional expense created with a stock-in
+  createdBy String?
+  deleted   Boolean                     @default(false)
+  createdAt DateTime                    @default(now())
+
+  @@index([itemId, txnDate])
+  @@index([txnMonth, txnType])
+  @@index([expenseId])
+}
+
+// Hiring kit: a position (job title) can hold any number of JD and SOP PDFs.
+// PDF bytes live in CHAT_FILES KV; rows here hold metadata only.
+model HumanResourcesHiringPosition {
+  id        String                      @id @default(uuid())
+  name      String
+  nameKey   String                      @unique // normalised name — prevents "Sales Exec" duplicates
+  createdBy String                      @default("")
+  createdAt DateTime                    @default(now())
+  updatedAt DateTime                    @default(now())
+  docs      HumanResourcesPositionDoc[]
+
+  @@index([nameKey])
+}
+
+model HumanResourcesPositionDoc {
+  id         String                       @id @default(uuid())
+  positionId String
+  position   HumanResourcesHiringPosition @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  kind       String                       @default("jd") // jd | sop
+  title      String                       @default("")
+  fileName   String
+  mime       String                       @default("application/pdf")
+  size       Int                          @default(0)
+  kvKey      String                       @unique
+  uploadedBy String                       @default("")
+  createdAt  DateTime                     @default(now())
+  updatedAt  DateTime                     @default(now())
+
+  @@index([positionId])
+  @@index([positionId, kind])
+}
+
+model LinkedinPost {
+  id            String    @id @default(uuid())
+  batchDate     String
+  topic         String
+  pillar        String    @default("")
+  format        String    @default("")
+  researchBrief String    @default("")
+  postDraft     String    @default("")
+  postFinal     String    @default("")
+  hashtags      String    @default("")
+  visualBrief   String    @default("")
+  imagePrompt   String    @default("")
+  hasImage      Boolean   @default(false)
+  status        String    @default("draft")
+  picked        Boolean   @default(false)
+  postedAt      DateTime?
+  linkedinUrn   String    @default("")
+  createdAt     DateTime  @default(now())
+
+  @@unique([batchDate, topic])
+  @@index([batchDate])
+  @@index([status])
+}
+
+// ── Debtors Tracker (migration 0069) ─────────────────────────────────────────
+// Debtors ledger imported by pasting the accounts ageing sheet (Excel clipboard
+// TSV). One row per invoice; upsert key = (invoiceNo, customerName).
+model DebtorInvoice {
+  id                String                    @id @default(uuid())
+  customerName      String
+  invoiceNo         String
+  invoiceDate       String?
+  creditPeriodDays  Int?
+  dueDate           String?
+  invoiceAmount     Float                     @default(0)
+  baseReceived      Float                     @default(0)
+  collectedAtImport Float                     @default(0)
+  contactName       String                    @default("")
+  contactPhone      String                    @default("")
+  contactMail       String                    @default("")
+  lastCallDate      String?
+  callStatus        String                    @default("")
+  paymentStatus     String                    @default("")
+  remarks           String                    @default("")
+  accountStatus     String                    @default("")
+  mis               String                    @default("")
+  accountsRemarks   String                    @default("")
+  employee          String                    @default("")
+  state             String                    @default("")
+  region            String                    @default("")
+  ledgerLink        String                    @default("")
+  importedBy        String                    @default("")
+  lastImportAt      String?
+  deleted           Boolean                   @default(false)
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @default(now())
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId  String?
+  customerMaster    Customer?                 @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+  attachments       DebtorInvoiceAttachment[]
+  collections       PaymentCollection[]
+
+  @@unique([invoiceNo, customerName])
+  @@index([customerName])
+  @@index([dueDate])
+  @@index([customerMasterId])
+}
+
+// Per-invoice PDF attachments (migration 0118). Bytes live in Workers KV
+// (CHAT_FILES); this table is the durable metadata, keyed by invoice row id
+// so ageing-sheet re-pastes never wipe it. One invoice can hold several PDFs
+// (bulk-zip + manual); the newest row is the primary view/download target.
+model DebtorInvoiceAttachment {
+  id         String        @id @default(uuid())
+  invoiceId  String
+  invoice    DebtorInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  invoiceNo  String        @default("")
+  fileName   String        @default("")
+  mime       String        @default("application/pdf")
+  size       Int           @default(0)
+  kvKey      String?       @unique
+  source     String        @default("manual") // bulk-zip | manual
+  uploadedBy String        @default("")
+  createdAt  DateTime      @default(now())
+
+  @@index([invoiceId])
+  @@index([invoiceNo])
+}
+
+// Dispatch floor cash ledger (migration 0119): simple in/out entries with a
+// derived running balance. Opening balance = kind 'opening' rows; credits /
+// top-ups = direction 'in'.
+model DispatchCashEntry {
+  id        String   @id @default(uuid())
+  day       String
+  direction String   @default("out") // in | out
+  kind      String   @default("expense") // opening | credit | expense | other
+  amount    Float    @default(0)
+  party     String   @default("")
+  purpose   String   @default("")
+  mode      String   @default("")
+  ref       String   @default("")
+  note      String   @default("")
+  enteredBy String   @default("")
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+
+  @@index([day])
+  @@index([deleted])
+}
+
+// Collections ledger: pasted receipts / credit notes (negative = debit note).
+// Matched to DebtorInvoice rows by invoice no, else the customer's oldest
+// open invoice; 'none' rows stay visible in the ledger for manual fix-up.
+model PaymentCollection {
+  id                String         @id @default(uuid())
+  customerName      String
+  invoiceNo         String         @default("")
+  // Optional receipt/transaction reference from the source export. Strongest
+  // dedupe key when present.
+  receiptNo         String         @default("")
+  collectionDate    String?
+  amount            Float          @default(0)
+  mode              String         @default("")
+  remarks           String         @default("")
+  weekStart         String         @default("")
+  matchStatus       String         @default("none")
+  resolvedInvoiceId String?
+  resolvedInvoice   DebtorInvoice? @relation(fields: [resolvedInvoiceId], references: [id], onDelete: SetNull)
+  dedupKey          String         @unique
+  importedBy        String         @default("")
+  deleted           Boolean        @default(false)
+  createdAt         DateTime       @default(now())
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId  String?
+  customerMaster    Customer?      @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+
+  @@index([customerName])
+  @@index([collectionDate])
+  @@index([resolvedInvoiceId])
+  @@index([customerMasterId])
+}
+
+// Customer contact master for the Debtors Tracker. Keyed by the normalized
+// customer name because the pasted accounting sheets carry no customer code.
+// Phone/email drive the daily WhatsApp reminder (accounts-only editing).
+model PaymentCustomer {
+  id                 String    @id @default(uuid())
+  customerKey        String    @unique
+  customerName       String
+  phone              String    @default("")
+  email              String    @default("")
+  /**
+   * Sales region (R1–R4); '' = unassigned. Mirrored onto invoice rows.
+   */
+  region             String    @default("")
+  whatsappOptIn      Boolean   @default(false)
+  optInAt            String?
+  notes              String    @default("")
+  /**
+   * CRM follow-up state ('' = unset) + remarks. Sales + accounts editable.
+   */
+  situation          String    @default("")
+  situationRemarks   String    @default("")
+  situationUpdatedAt String?
+  situationUpdatedBy String    @default("")
+  /**
+   * Current promised-to-pay date (IST YYYY-MM-DD + the day count the agent
+   * picked). Persists when the situation moves to Not answering / Busy / etc.
+   * Cleared on Paid / Closed; a newer promise replaces it.
+   */
+  promisedDate       String?
+  promisedDays       Int?
+  promisedAt         String?
+  promisedBy         String    @default("")
+  updatedBy          String    @default("")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now())
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId   String?
+  customerMaster     Customer? @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+
+  @@index([customerName])
+  @@index([customerMasterId])
+}
+
+// Dated, append-only CRM remark log for a customer (one row per call/day note).
+// PaymentCustomer.situationRemarks mirrors the latest row for compact previews.
+model PaymentCustomerRemark {
+  id           String    @id @default(uuid())
+  customerKey  String
+  customerName String    @default("")
+  /**
+   * IST date of the call (YYYY-MM-DD).
+   */
+  day          String
+  remark       String
+  actor        String    @default("")
+  deleted      Boolean   @default(false)
+  deletedAt    DateTime?
+  deletedBy    String    @default("")
+  createdAt    DateTime  @default(now())
+
+  @@index([customerKey, createdAt])
+  @@index([createdAt])
+}
+
+// Every reminder attempt. Dry-run rows record the exact aggregated message
+// that a live WABA send would deliver. dedupKey = customerKey|runDay|channel.
+model PaymentReminder {
+  id                String   @id @default(uuid())
+  customerKey       String
+  customerName      String
+  phone             String   @default("")
+  channel           String   @default("whatsapp")
+  kind              String   @default("due")
+  status            String   @default("dry_run")
+  amount            Float    @default(0)
+  invoiceCount      Int      @default(0)
+  invoiceNos        String   @default("")
+  oldestDueDate     String?
+  message           String   @default("")
+  providerMessageId String   @default("")
+  error             String   @default("")
+  runDay            String
+  trigger           String   @default("cron")
+  dedupKey          String?  @unique
+  createdAt         DateTime @default(now())
+
+  @@index([customerKey])
+  @@index([runDay])
+  @@index([createdAt])
+}
+
+// Debtors Tracker — one row per "Download as CSV" of the overdue receivables
+// export. The global count shown in every exported row is COUNT(*) over this
+// table: INSERT-only, so concurrent downloads can never lose an increment.
+model DebtorsExportEvent {
+  id        String   @id @default(uuid())
+  actor     String   @default("")
+  source    String   @default("receivables-csv")
+  rowCount  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ── CRM order workflow (migration 0097) ──────────────────────────────────────
+// The dispatch floor: SOs sync from Zoho into rows, line items carry the
+// tentative dispatch date, and every promise/slip is appended to the audit.
+// Zoho Books stays read-only — nothing here writes back.
+model CrmSalesOrder {
+  id                      String             @id @default(uuid())
+  org                     String             @default("")
+  soNumber                String
+  zohoId                  String             @default("")
+  customerName            String             @default("")
+  customerId              String             @default("")
+  value                   Float              @default(0)
+  currency                String             @default("INR")
+  orderStatus             String             @default("")
+  invoicedStatus          String             @default("")
+  shippedStatus           String             @default("")
+  paidStatus              String             @default("")
+  status                  String             @default("open") // open | closed | cancelled | void
+  salesperson             String             @default("")
+  referenceNumber         String             @default("") // the Zoho reference — carries the EST number (EST-024014)
+  // Sales region owning this order (R1–R4; '' = unmapped). DERIVED on every
+  // sync tick from referenceNumber → Estimate.region (org-preferring), so the
+  // Controller's re-home propagates automatically. Never hand-edited.
+  region                  String             @default("")
+  // Client addresses come from the Zoho detail call (list responses omit them).
+  // A human edit sets the matching EditedAt/By marker — the sync never
+  // overwrites a locally edited address (local wins permanently).
+  billingAddress          String             @default("")
+  shippingAddress         String             @default("")
+  billingAddressEditedAt  DateTime?
+  billingAddressEditedBy  String?
+  shippingAddressEditedAt DateTime?
+  shippingAddressEditedBy String?
+  // Payment line extracted from Zoho's free-text `terms` block
+  // ("**Payment**: Advance 100% received"). Source-owned, display-only.
+  paymentTerms            String             @default("")
+  createdDate             String             @default("") // YYYY-MM-DD IST
+  // unscheduled | partially_scheduled | scheduled | partially_dispatched | dispatched | cancelled
+  lifecycle               String             @default("unscheduled")
+  sourceState             String             @default("active") // active | deleted_source
+  soDelayReason           String?
+  fingerprint             String             @default("")
+  missCount               Int                @default(0)
+  firstSeenAt             DateTime           @default(now())
+  lastSeenAt              DateTime           @default(now())
+  deletedDetectedAt       DateTime?
+  // Full-SO floor cancel (client-confirmed). Distinct from Zoho status=cancelled.
+  localCancelledAt        DateTime?
+  localCancelledBy        String?
+  localCancelReason       String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  // NOTE: customerId above is the ZOHO contact id (source-owned). The canonical
+  // BUI customer is customerMasterId; the Zoho id is also recorded in
+  // CustomerExternalIdentity(system = ZOHO_BOOKS, organizationId = org).
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId        String?
+  customerMaster          Customer?          @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+  // ⟶ Originating estimate (replaces referenceNumber → estimateNumber string join).
+  estimateId              String?
+  estimate                Estimate?          @relation(fields: [estimateId], references: [estimateId], onDelete: SetNull)
+  items                   CrmSoItem[]
+  scheduleEvents          CrmScheduleEvent[]
+  dispatchProofs          CrmDispatchProof[]
+
+  @@unique([org, soNumber])
+  @@index([lifecycle])
+  @@index([sourceState])
+  @@index([region])
+  @@index([customerMasterId])
+  @@index([estimateId])
+}
+
+model CrmSoItem {
+  id                    String             @id @default(uuid())
+  soId                  String
+  // FK added (plan §11). Restrict: order lines are history, never cascade-deleted.
+  salesOrder            CrmSalesOrder      @relation(fields: [soId], references: [id], onDelete: Restrict)
+  // ⟶ Product identity: the SKU master row this line resolves to (matched on sku).
+  stockItemId           String?
+  stockItem             StockItem?         @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  scheduleEvents        CrmScheduleEvent[]
+  lineKey               String
+  name                  String             @default("")
+  sku                   String             @default("")
+  description           String             @default("")
+  qty                   Float              @default(0)
+  unit                  String             @default("")
+  rate                  Float              @default(0)
+  itemTotal             Float              @default(0)
+  dispatchState         String             @default("unscheduled") // unscheduled | scheduled | dispatched
+  tentativeDispatchDate String? // YYYY-MM-DD
+  delayReason           String?
+  dispatchedQty         Float              @default(0)
+  dispatchedAt          DateTime?
+  scheduledBy           String?
+  scheduledAt           DateTime?
+  // Client-confirmed qty override (NULL = follow Zoho qty). The sync never clears it.
+  amendedQty            Float?
+  // Floor removal marker — removed lines stay in DB but leave every queue.
+  removedAt             DateTime?
+  removedBy             String?
+  // True for lines added by the floor (no Zoho lineKey; the sync ignores them).
+  isLocalAdded          Boolean            @default(false)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@unique([soId, lineKey])
+  @@index([dispatchState])
+  @@index([tentativeDispatchDate])
+  @@index([stockItemId])
+}
+
+model CrmScheduleEvent {
+  id         String        @id @default(uuid())
+  soId       String
+  salesOrder CrmSalesOrder @relation(fields: [soId], references: [id], onDelete: Restrict)
+  soNumber   String        @default("")
+  itemId     String?
+  item       CrmSoItem?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  kind       String // schedule | reschedule | delay | dispatch | partial_dispatch | source_deleted | confirmed_removal | address_updated | item_amended | item_removed | item_added | order_cancelled_local | order_reopened_local
+  fromDate   String?
+  toDate     String?
+  reason     String?
+  actor      String        @default("")
+  qty        Float?
+  day        String        @default("")
+  createdAt  DateTime      @default(now())
+
+  @@index([soId])
+  @@index([kind])
+  @@index([day])
+  @@index([itemId])
+}
+
+// ── Dispatch proof (2026-11-04): every Mark dispatched consumes one fresh
+// invoice PDF (packing photos ride along when the floor has them). UNIQUE per
+// file so a repeat partial must upload a fresh invoice. `items` is a JSON
+// snapshot of the batch ([{ itemId, name, qty, unit }]) so the panel can list
+// previously dispatched batches with their quantities.
+model CrmDispatchProof {
+  id            String         @id @default(uuid())
+  // Was String @default(""). Blanks normalised to NULL before the FK is added.
+  soId          String?
+  salesOrder    CrmSalesOrder? @relation(fields: [soId], references: [id], onDelete: Restrict)
+  soNumber      String         @default("")
+  invoiceId     String         @unique @default("")
+  beforeId      String?        @unique
+  afterId       String?        @unique
+  transportId   String?        @unique
+  courierId     String?        @unique
+  packingListId String?        @unique
+  items         String         @default("[]")
+  actor         String         @default("")
+  day           String         @default("")
+  createdAt     DateTime       @default(now())
+
+  @@index([soId])
+  @@index([soNumber])
+}
+
+// ── Manual connected-call log (TEMPORARY, founder 2026-11-03) ───────────────
+// Backfill while NeoDove is unreliable: one row per (agent, IST day) with the
+// hand-counted connected calls + screenshot proof in CHAT_FILES KV. Remove
+// this model + routes + tab when NeoDove is trusted again.
+model ManualCallLog {
+  id              String   @id @default(uuid())
+  telecallerId    String
+  day             String // YYYY-MM-DD IST
+  connectedCalls  Int      @default(0)
+  note            String   @default("")
+  screenshotKvKey String   @default("")
+  screenshotName  String   @default("")
+  screenshotMime  String   @default("")
+  screenshotSize  Int      @default(0)
+  createdBy       String   @default("")
+  createdByName   String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([telecallerId, day])
+  @@index([day])
+  @@index([telecallerId])
+}
+
+// ── Android call recording + logging devices (migration 0107) ───────────────
+model DeviceRegistration {
+  id           String    @id @default(uuid())
+  telecallerId String
+  tokenHash    String    @unique
+  deviceId     String
+  label        String    @default("")
+  status       String    @default("active")
+  loggingOnly  Boolean   @default(false)
+  consentAt    DateTime?
+  lastSeenAt   DateTime?
+  appVersion   String    @default("")
+  pairedBy     String    @default("")
+  pairedByName String    @default("")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  revokedAt    DateTime?
+  revokedBy    String    @default("")
+
+  @@index([telecallerId, status])
+}
+
+model DevicePairCode {
+  code         String    @id
+  telecallerId String
+  expiresAt    DateTime
+  usedAt       DateTime?
+  createdBy    String    @default("")
+  createdAt    DateTime  @default(now())
+
+  @@index([telecallerId])
+}
+
+model DeviceCall {
+  id                  String    @id @default(uuid())
+  deviceId            String
+  telecallerId        String
+  idempotencyKey      String    @unique
+  direction           String    @default("UNKNOWN")
+  numberE164          String    @default("")
+  numberHash          String    @default("")
+  contactName         String    @default("")
+  attemptAt           DateTime
+  ringStartAt         DateTime?
+  connectAt           DateTime?
+  endAt               DateTime?
+  status              String    @default("FAILED")
+  callLogType         Int?
+  durationSec         Int       @default(0)
+  ringSec             Int       @default(0)
+  simSlot             Int?
+  day                 String
+  recordingState      String    @default("none")
+  recordingKey        String    @default("")
+  recordingBytes      Int       @default(0)
+  recordingParts      Int       @default(0)
+  recordingUploadedAt DateTime?
+  audioSource         String    @default("")
+  receivedAt          DateTime
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([telecallerId, attemptAt])
+  @@index([day])
+  @@index([numberHash])
+  @@index([deviceId])
+}
+
+// ── Field Staff daily visits (Sales → Field Staff tab, migration 0117) ───────
+// Mobile-web surface: check-in per location, GPS pings while open, mill rows
+// (machine profile + requirement → auto Field-Staff enquiry), per-visit
+// expenses + per-visit follow-ups. Raw D1 via modules/field-visits/store.ts.
+model FieldVisit {
+  id            String           @id @default(uuid())
+  telecallerId  String
+  day           String // YYYY-MM-DD IST
+  city          String           @default("")
+  address       String           @default("")
+  lat           Float?
+  lng           Float?
+  note          String           @default("")
+  checkInAt     DateTime
+  lastPingAt    DateTime?
+  checkOutAt    DateTime?
+  createdBy     String           @default("")
+  createdByName String           @default("")
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  millVisits    FieldMillVisit[]
+  expenses      FieldExpense[]
+  followups     FieldFollowup[]
+
+  @@index([day])
+  @@index([telecallerId])
+  @@index([telecallerId, day])
+}
+
+model FieldMillVisit {
+  id                String           @id @default(uuid())
+  visitId           String
+  visit             FieldVisit       @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  millName          String           @default("")
+  keyContact        String           @default("")
+  designation       String           @default("")
+  phone             String           @default("")
+  rollerPlantNos    String           @default("")
+  attaChakkiNos     String           @default("")
+  chakkiSize        String           @default("")
+  runningTime       String           @default("")
+  products          String           @default("")
+  millAgeYrs        String           @default("")
+  machineBrand      String           @default("")
+  requirement       String           @default("")
+  isNewSuggested    Boolean          @default(true)
+  isNewManual       Boolean?
+  matchMasterId     String           @default("")
+  matchMasterName   String           @default("")
+  enquiryId         String           @default("")
+  followUpNeeded    Boolean          @default(false)
+  createdBy         String           @default("")
+  createdByName     String           @default("")
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  // ⟶ Customer master link (plan §4). Nullable until backfilled + reviewed.
+  customerMasterId  String?
+  customerMaster    Customer?        @relation(fields: [customerMasterId], references: [id], onDelete: Restrict)
+  // ⟶ The mill as a PLANT address of the customer (machine profile lands in millProfile).
+  customerAddressId String?
+  customerAddress   CustomerAddress? @relation(fields: [customerAddressId], references: [id], onDelete: SetNull)
+
+  @@index([visitId])
+  @@index([customerMasterId])
+}
+
+model FieldExpense {
+  id            String     @id @default(uuid())
+  visitId       String
+  visit         FieldVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  amount        Float      @default(0)
+  description   String     @default("")
+  createdBy     String     @default("")
+  createdByName String     @default("")
+  createdAt     DateTime   @default(now())
+
+  @@index([visitId])
+}
+
+model FieldFollowup {
+  id            String     @id @default(uuid())
+  visitId       String
+  visit         FieldVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  millVisitId   String     @default("")
+  dueDate       String     @default("")
+  note          String     @default("")
+  owner         String     @default("")
+  status        String     @default("open")
+  createdBy     String     @default("")
+  createdByName String     @default("")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([visitId])
+  @@index([status])
+}
+
+// -- Stock (manual inventory: auto-SKU catalogue + dated movements) --
+// Closing stock is derived (sum of movements <= day), never stored. SKU is
+// system-generated (CAT-0007), never typed. Multi-location with transfer;
+// available = on-hand minus reserved (open SO reservations).
+model StockItem {
+  id                  String             @id @default(uuid())
+  sku                 String             @unique
+  productName         String
+  category            String             @default("")
+  brand               String             @default("")
+  barcode             String             @default("")
+  unit                String             @default("pcs")
+  unitPurchase        String             @default("")
+  unitFactor          Float              @default(1)
+  purchaseRate        Float              @default(0)
+  saleRate            Float              @default(0)
+  supplier            String             @default("")
+  reorderLevel        Float              @default(0)
+  minLevel            Float              @default(0)
+  maxLevel            Float              @default(0)
+  avgDailyConsumption Float              @default(0)
+  leadTimeDays        Float              @default(0)
+  safetyFactor        Float              @default(0)
+  moq                 Float              @default(0)
+  imageUrl            String             @default("")
+  active              Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  movements           StockMovement[]
+  reservations        StockReservation[]
+  // ⟶ Product identity: SKU → KYP catalogue product; supplier string → Vendor.
+  productId           String?
+  product             ProductItem?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  preferredVendorId   String?
+  preferredVendor     Vendor?            @relation(fields: [preferredVendorId], references: [id], onDelete: SetNull)
+  soItems             CrmSoItem[]
+
+  @@index([active, sku])
+  @@index([productId])
+  @@index([category, active])
+}
+
+model StockLocation {
+  id           String             @id @default(uuid())
+  name         String             @unique
+  active       Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  movementsOut StockMovement[]    @relation("MovementFrom")
+  movementsIn  StockMovement[]    @relation("MovementTo")
+  reservations StockReservation[]
+}
+
+model StockMovement {
+  id           String         @id @default(uuid())
+  itemId       String
+  // Was Cascade. The stock ledger is history: an item with movements cannot be deleted (deactivate it).
+  item         StockItem      @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  day          String
+  kind         String
+  qty          Float
+  // Were String @default(""). Blanks normalised to NULL before the FKs are added.
+  locationId   String?
+  location     StockLocation? @relation("MovementFrom", fields: [locationId], references: [id], onDelete: Restrict)
+  toLocationId String?
+  toLocation   StockLocation? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: Restrict)
+  rate         Float          @default(0)
+  status       String         @default("approved")
+  refType      String         @default("")
+  refId        String         @default("")
+  note         String         @default("")
+  createdBy    String         @default("")
+  createdAt    DateTime       @default(now())
+
+  @@index([itemId, day])
+  @@index([day, kind])
+  @@index([locationId, day])
+  @@index([toLocationId])
+}
+
+model StockReservation {
+  id         String         @id @default(uuid())
+  itemId     String
+  // Was Cascade. Reservation history is preserved.
+  item       StockItem      @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  locationId String?
+  location   StockLocation? @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  qty        Float
+  refType    String         @default("SO")
+  refId      String         @default("")
+  status     String         @default("open")
+  day        String         @default("")
+  createdBy  String         @default("")
+  createdAt  DateTime       @default(now())
+
+  @@index([itemId, status])
+  @@index([refId, status])
+  @@index([locationId])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ═══  BUI FOUNDER OS — CONTROL PLANE (added by the consolidation plan)      ═══
+// ═════════════════════════════════════════════════════════════════════════════
+// Conventions for everything below this line:
+//   • Timestamps are UTC (timestamptz). Render in Asia/Kolkata in the UI.
+//   • Calendar-only dates use @db.Date (no more "YYYY-MM-DD" strings).
+//   • Money is Decimal(18,2). Structured payloads are Json (jsonb).
+//   • History tables use validFrom/validTo: the open row (validTo = null) is
+//     the current state; closing a row + opening a new one preserves history.
+//   • "Exactly one open row" rules (e.g. one primary department) are enforced
+//     with partial unique indexes in SQL — Prisma cannot express them. See
+//     migrations/02_constraints.sql.
+
+// ── Enums ────────────────────────────────────────────────────────────────────
+
+enum EmployeeStatus {
+  ACTIVE
+  ON_LEAVE
+  SUSPENDED
+  EXITED
+}
+
+enum ReportingLineType {
+  DIRECT
+  DOTTED
+}
+
+enum TeamRole {
+  MEMBER
+  LEAD
+  DEPUTY
+}
+
+enum RegionResponsibility {
+  PRIMARY
+  SECONDARY
+}
+
+enum CustomerStatus {
+  PROSPECT
+  ACTIVE
+  DORMANT
+  BLOCKED
+  MERGED
+}
+
+enum ContactRole {
+  OWNER
+  DIRECTOR
+  PURCHASE_MANAGER
+  MILL_MANAGER
+  ACCOUNTS
+  OTHER
+}
+
+enum AddressType {
+  OFFICE
+  PLANT
+  BILLING
+  DELIVERY
+  OTHER
+}
+
+enum ExternalSystem {
+  ZOHO_BOOKS
+  NEODOVE
+  WHATSAPP
+  AISENSY
+  N8N
+  LEGACY_PAYMENT_CUSTOMER
+  LEGACY_DEBTOR_SHEET
+  OTHER
+}
+
+enum CustomerOwnershipRole {
+  ACCOUNT_OWNER
+  SALES_OWNER
+  COLLECTION_OWNER
+  FIELD_OWNER
+}
+
+enum ActivityType {
+  CALL
+  MEETING
+  FIELD_VISIT
+  WHATSAPP
+  EMAIL
+  NOTE
+  SYSTEM
+}
+
+enum ActivityDirection {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+enum ActorType {
+  EMPLOYEE
+  AUTOMATION
+  INTEGRATION
+  WORKFLOW
+  SYSTEM
+}
+
+enum ActionStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING
+  BLOCKED
+  DONE
+  CANCELLED
+}
+
+enum ActionEventType {
+  CREATED
+  ASSIGNED
+  STATUS_CHANGED
+  DUE_CHANGED
+  PRIORITY_CHANGED
+  COMMENTED
+  ESCALATED
+  COMPLETED
+  REOPENED
+}
+
+enum OwnerSystem {
+  BUI
+  ZOHO_BOOKS
+  NEODOVE
+  WHATSAPP
+  DERIVED
+}
+
+enum WriteMode {
+  BUI_WRITE // edited directly in BUI
+  READ_ONLY_MIRROR // synced in, never edited in BUI
+  WRITE_VIA_COMMAND // edited in BUI only through IntegrationCommand
+  DERIVED // computed, never edited
+}
+
+enum PermissionAction {
+  VIEW
+  CREATE
+  EDIT
+  DELETE
+  APPROVE
+  EXPORT
+}
+
+enum PermissionScope {
+  OWN
+  TEAM
+  REGION
+  DEPARTMENT
+  ALL
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+enum ApprovalType {
+  DISCOUNT
+  SPECIAL_PRICE
+  PURCHASE
+  CREDIT_EXCEPTION
+  DATA_CORRECTION
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+  EXECUTED
+  EXECUTION_FAILED
+  STALE // underlying record changed after the request was raised
+}
+
+enum ApprovalEventType {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  DELEGATED
+  ESCALATED
+  COMMENTED
+  CANCELLED
+  EXECUTED
+  EXECUTION_FAILED
+  MARKED_STALE
+}
+
+enum NotificationChannel {
+  IN_APP
+  WHATSAPP
+  EMAIL
+  PUSH
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
+}
+
+enum WorkflowStatus {
+  RUNNING
+  WAITING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum WorkflowStepType {
+  ACTION
+  APPROVAL
+  NOTIFICATION
+  INTEGRATION_COMMAND
+  WAIT
+  CONDITION
+}
+
+enum WorkflowStepStatus {
+  PENDING
+  RUNNING
+  WAITING
+  DONE
+  FAILED
+  SKIPPED
+}
+
+enum IssueSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IssueStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  IGNORED
+}
+
+enum IntegrationEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum IntegrationCommandStatus {
+  PENDING_APPROVAL
+  QUEUED
+  IN_FLIGHT
+  SUCCEEDED
+  FAILED // retryable
+  DEAD // retries exhausted, needs a human
+  UNKNOWN // timed out — outcome must be reconciled, never assumed
+  CANCELLED
+}
+
+enum SyncStatus {
+  IDLE
+  RUNNING
+  HEALTHY
+  STALE
+  FAILING
+}
+
+// ── 1. Organisation foundation ───────────────────────────────────────────────
+
+// The single employee identity. Legacy rosters (Telecaller, HumanResourcesMember,
+// Accountant, DigitalMarketingManager) and the login (AuthUser) each point here
+// through a unique employeeId, so one person can never become two employees.
+// Sensitive HR/payroll fields (PAN, bank, salary) deliberately stay in
+// HumanResourcesMember, which is HR-owned and permission-restricted.
+model Employee {
+  id             String         @id @default(uuid())
+  employeeCode   String?        @unique
+  fullName       String
+  displayName    String?
+  workEmail      String?        @unique
+  phoneE164      String?
+  whatsappE164   String?
+  status         EmployeeStatus @default(ACTIVE)
+  employmentType String? // full_time | part_time | contract | intern
+  joiningDate    DateTime?      @db.Date
+  exitDate       DateTime?      @db.Date
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  // legacy identity links (each legacy table holds the FK)
+  authUser         AuthUser?
+  telecaller       Telecaller?
+  hrMember         HumanResourcesMember?
+  accountant       Accountant?
+  marketingManager DigitalMarketingManager?
+
+  // organisation history
+  departmentAssignments EmployeeDepartmentAssignment[]
+  positionAssignments   EmployeePositionAssignment[]
+  regionAssignments     EmployeeRegionAssignment[]
+  teamMemberships       TeamMembership[]
+  reportingLines        EmployeeReportingLine[]        @relation("ReportingEmployee")
+  directReports         EmployeeReportingLine[]        @relation("ReportingManager")
+
+  // CRM
+  customersCreated        Customer[]           @relation("CustomerCreatedBy")
+  customerAssignments     CustomerAssignment[] @relation("CustomerAssignee")
+  customerAssignmentsMade CustomerAssignment[] @relation("CustomerAssignedBy")
+  customerActivities      CustomerActivity[]
+  customerNotes           CustomerNote[]
+
+  // work, governance, approvals
+  actionsAssigned     BusinessAction[]      @relation("ActionAssignee")
+  actionsCreated      BusinessAction[]      @relation("ActionCreator")
+  actionsCompleted    BusinessAction[]      @relation("ActionCompleter")
+  actionEvents        BusinessActionEvent[]
+  auditEvents         AuditEvent[]
+  permissionRules     DataPermissionRule[]
+  approvalsRequested  ApprovalRequest[]     @relation("ApprovalRequester")
+  approvalsAwaiting   ApprovalRequest[]     @relation("ApprovalCurrentApprover")
+  approvalEvents      ApprovalEvent[]
+  notifications       Notification[]
+  workflowsStarted    WorkflowInstance[]
+  dataIssuesAssigned  DataQualityIssue[]    @relation("IssueAssignee")
+  dataIssuesResolved  DataQualityIssue[]    @relation("IssueResolver")
+  integrationCommands IntegrationCommand[]
+
+  @@index([status])
+  @@index([fullName])
+}
+
+model Department {
+  id        String       @id @default(uuid())
+  code      String       @unique // SALES | CRM | ACCOUNTS | HR | PURCHASE | INVENTORY | DISPATCH | MARKETING | MANAGEMENT
+  name      String
+  parentId  String?
+  parent    Department?  @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children  Department[] @relation("DepartmentTree")
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+
+  positions           Position[]
+  teams               Team[]
+  employeeAssignments EmployeeDepartmentAssignment[]
+  actions             BusinessAction[]
+  approvals           ApprovalRequest[]
+  workflowDefinitions WorkflowDefinition[]
+  dataOwnerships      DataOwnership[]
+  permissionRules     DataPermissionRule[]
+  entityDefinitions   DataEntityDefinition[]
+}
+
+// Job role in the hierarchy (Founder, Head, TL1, TL2, Telecaller, Field
+// Executive, Accountant…). Not the same as HumanResourcesHiringPosition, which
+// is the hiring-kit document folder and stays as it is.
+model Position {
+  id           String      @id @default(uuid())
+  code         String      @unique // FOUNDER | DEPT_HEAD | TL1 | TL2 | TELECALLER | FIELD_EXEC | ACCOUNTANT_SR | ACCOUNTANT_JR ...
+  name         String
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  rank         Int         @default(100) // lower = more senior; used for escalation
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @db.Timestamptz(3)
+
+  assignments     EmployeePositionAssignment[]
+  actions         BusinessAction[]
+  permissionRules DataPermissionRule[]
+}
+
+model Team {
+  id           String     @id @default(uuid())
+  code         String     @unique
+  name         String
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  regionId     String?
+  region       Region?    @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  parentId     String?
+  parent       Team?      @relation("TeamTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Team[]     @relation("TeamTree")
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
+
+  memberships         TeamMembership[]
+  customerAssignments CustomerAssignment[]
+  actions             BusinessAction[]
+
+  @@index([departmentId])
+}
+
+// Sales regions. code matches the legacy strings already stored on Estimate,
+// Telecaller, CrmSalesOrder, PaymentCustomer and DebtorInvoice ('R1'–'R4'),
+// so legacy rows can be joined on code until they get a real regionId.
+model Region {
+  id        String   @id @default(uuid())
+  code      String   @unique // R1 | R2 | R3 | R4
+  name      String
+  states    String[] // Indian states/UTs covered, for routing new customers
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  employeeAssignments EmployeeRegionAssignment[]
+  teams               Team[]
+  customerAssignments CustomerAssignment[]
+}
+
+model EmployeeDepartmentAssignment {
+  id           String     @id @default(uuid())
+  employeeId   String
+  employee     Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  isPrimary    Boolean    @default(true)
+  validFrom    DateTime   @default(now()) @db.Timestamptz(3)
+  validTo      DateTime?  @db.Timestamptz(3)
+  reason       String?
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@index([employeeId, validTo])
+  @@index([departmentId, validTo])
+}
+
+model EmployeePositionAssignment {
+  id         String    @id @default(uuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  positionId String
+  position   Position  @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  isPrimary  Boolean   @default(true)
+  validFrom  DateTime  @default(now()) @db.Timestamptz(3)
+  validTo    DateTime? @db.Timestamptz(3)
+  reason     String?
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([employeeId, validTo])
+  @@index([positionId, validTo])
+}
+
+// TL1s hold two regions at once (founder rule 2026-11-05) → one PRIMARY + one
+// SECONDARY open row. Replaces Telecaller.region / Telecaller.region2.
+model EmployeeRegionAssignment {
+  id             String               @id @default(uuid())
+  employeeId     String
+  employee       Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  regionId       String
+  region         Region               @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  responsibility RegionResponsibility @default(PRIMARY)
+  validFrom      DateTime             @default(now()) @db.Timestamptz(3)
+  validTo        DateTime?            @db.Timestamptz(3)
+  reason         String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
+
+  @@index([employeeId, validTo])
+  @@index([regionId, validTo])
+}
+
+model TeamMembership {
+  id         String    @id @default(uuid())
+  teamId     String
+  team       Team      @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  role       TeamRole  @default(MEMBER)
+  validFrom  DateTime  @default(now()) @db.Timestamptz(3)
+  validTo    DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([teamId, validTo])
+  @@index([employeeId, validTo])
+}
+
+model EmployeeReportingLine {
+  id         String            @id @default(uuid())
+  employeeId String
+  employee   Employee          @relation("ReportingEmployee", fields: [employeeId], references: [id], onDelete: Restrict)
+  managerId  String
+  manager    Employee          @relation("ReportingManager", fields: [managerId], references: [id], onDelete: Restrict)
+  type       ReportingLineType @default(DIRECT)
+  validFrom  DateTime          @default(now()) @db.Timestamptz(3)
+  validTo    DateTime?         @db.Timestamptz(3)
+  createdAt  DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@index([employeeId, validTo])
+  @@index([managerId, validTo])
+}
+
+// ── 2. Canonical customer master ─────────────────────────────────────────────
+
+// One row per real business. Replaces the five places a customer is identified
+// today: Estimate.customerName, Enquiry.clientCompany, CrmSalesOrder.customerId
+// (Zoho), PaymentCustomer.customerKey and DebtorInvoice.customerName.
+// Duplicates are never deleted: the loser gets status MERGED + mergedIntoId.
+model Customer {
+  id             String         @id @default(uuid())
+  customerNo     Int            @unique @default(autoincrement()) // display as CUS-000123
+  legalName      String
+  displayName    String
+  normalizedName String // lowercase, punctuation/suffix stripped — matching key, NOT unique
+  gstin          String?        @unique
+  pan            String?
+  customerType   String? // mill | trader | dealer | oem | other
+  status         CustomerStatus @default(PROSPECT)
+  source         String? // first acquisition channel: TL | AI | Incoming | B2B | Field Staff | Marketing
+  website        String?
+  mergedIntoId   String?
+  mergedInto     Customer?      @relation("CustomerMerge", fields: [mergedIntoId], references: [id], onDelete: Restrict)
+  mergedFrom     Customer[]     @relation("CustomerMerge")
+  mergedAt       DateTime?      @db.Timestamptz(3)
+  createdById    String?
+  createdBy      Employee?      @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+  version        Int            @default(1) // optimistic concurrency + approval staleness check
+
+  contacts           CustomerContact[]
+  addresses          CustomerAddress[]
+  externalIdentities CustomerExternalIdentity[]
+  assignments        CustomerAssignment[]
+  activities         CustomerActivity[]
+  notes              CustomerNote[]
+  tagAssignments     CustomerTagAssignment[]
+
+  // links from existing department tables
+  enquiries          Enquiry[]
+  estimates          Estimate[]
+  salesOrders        CrmSalesOrder[]
+  debtorInvoices     DebtorInvoice[]
+  paymentCollections PaymentCollection[]
+  paymentCustomers   PaymentCustomer[]
+  marketingLeads     MarketingLead[]
+  fieldMillVisits    FieldMillVisit[]
+
+  actions   BusinessAction[]
+  approvals ApprovalRequest[]
+
+  @@index([normalizedName])
+  @@index([status])
+  @@index([mergedIntoId])
+}
+
+model CustomerContact {
+  id            String      @id @default(uuid())
+  customerId    String
+  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  name          String
+  designation   String?
+  role          ContactRole @default(OTHER)
+  phoneE164     String?
+  whatsappE164  String?
+  email         String?
+  isPrimary     Boolean     @default(false)
+  whatsappOptIn Boolean     @default(false)
+  optInAt       DateTime?   @db.Timestamptz(3)
+  verifiedAt    DateTime?   @db.Timestamptz(3)
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+
+  activities CustomerActivity[]
+
+  @@index([customerId])
+  @@index([phoneE164])
+  @@index([whatsappE164])
+  @@index([email])
+}
+
+// Offices, plants/mills, billing and delivery addresses. A mill is a PLANT
+// address; its machine profile (roller plants, chakki count/size, brand,
+// running time) lives in millProfile, fed by FieldMillVisit.
+model CustomerAddress {
+  id                String      @id @default(uuid())
+  customerId        String
+  customer          Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  type              AddressType
+  label             String? // mill / plant / branch name
+  line1             String
+  line2             String?
+  city              String?
+  district          String?
+  state             String?
+  stateCode         String? // GST state code
+  pincode           String?
+  country           String      @default("IN")
+  gstin             String? // branch GSTIN can differ by state
+  latitude          Float?
+  longitude         Float?
+  millProfile       Json?
+  isDefaultBilling  Boolean     @default(false)
+  isDefaultShipping Boolean     @default(false)
+  active            Boolean     @default(true)
+  createdAt         DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime    @updatedAt @db.Timestamptz(3)
+
+  fieldMillVisits FieldMillVisit[]
+
+  @@index([customerId, type])
+  @@index([state])
+}
+
+// Zoho contact ids per organisation (BUI and DPG are separate Zoho orgs that
+// share one login), NeoDove lead ids, WhatsApp chat ids, legacy name keys.
+model CustomerExternalIdentity {
+  id             String         @id @default(uuid())
+  customerId     String
+  customer       Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  system         ExternalSystem
+  organizationId String         @default("") // Zoho org; '' for single-tenant systems
+  externalId     String
+  externalName   String?
+  isPrimary      Boolean        @default(true)
+  linkedAt       DateTime       @default(now()) @db.Timestamptz(3)
+  lastSyncedAt   DateTime?      @db.Timestamptz(3)
+
+  @@unique([system, organizationId, externalId])
+  @@index([customerId])
+}
+
+model CustomerAssignment {
+  id           String                @id @default(uuid())
+  customerId   String
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  role         CustomerOwnershipRole @default(ACCOUNT_OWNER)
+  employeeId   String?
+  employee     Employee?             @relation("CustomerAssignee", fields: [employeeId], references: [id], onDelete: Restrict)
+  teamId       String?
+  team         Team?                 @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  regionId     String?
+  region       Region?               @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  validFrom    DateTime              @default(now()) @db.Timestamptz(3)
+  validTo      DateTime?             @db.Timestamptz(3)
+  reason       String?
+  assignedById String?
+  assignedBy   Employee?             @relation("CustomerAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime              @default(now()) @db.Timestamptz(3)
+
+  @@index([customerId, role, validTo])
+  @@index([employeeId, validTo])
+  @@index([regionId, validTo])
+  @@index([teamId, validTo])
+}
+
+// The customer timeline. Imported activity (NeoDove calls, DeviceCall rows,
+// field mill visits, WhatsApp messages) is idempotent on
+// (sourceSystem, sourceType, sourceId) so re-syncs never duplicate.
+model CustomerActivity {
+  id           String             @id @default(uuid())
+  customerId   String
+  customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  contactId    String?
+  contact      CustomerContact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  employeeId   String?
+  employee     Employee?          @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  type         ActivityType
+  direction    ActivityDirection?
+  subject      String?
+  body         String?
+  outcome      String? // connected | not_answering | busy | callback | interested | order | ...
+  durationSec  Int?
+  occurredAt   DateTime           @db.Timestamptz(3)
+  sourceSystem String             @default("BUI") // BUI | NEODOVE | DEVICE | WHATSAPP | FIELD
+  sourceType   String? // e.g. DeviceCall, FieldMillVisit, Message
+  sourceId     String?
+  recordingRef String? // pointer only; NeoDove/device remains owner of the recording
+  metadata     Json?
+  createdAt    DateTime           @default(now()) @db.Timestamptz(3)
+
+  @@unique([sourceSystem, sourceType, sourceId])
+  @@index([customerId, occurredAt])
+  @@index([employeeId, occurredAt])
+  @@index([type, occurredAt])
+}
+
+model CustomerNote {
+  id         String    @id @default(uuid())
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  authorId   String?
+  author     Employee? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  body       String
+  pinned     Boolean   @default(false)
+  visibility String    @default("internal") // internal | sales | accounts | management
+  deletedAt  DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([customerId, createdAt])
+}
+
+model CustomerTag {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  label     String
+  category  String? // segment | risk | product_interest | lifecycle
+  color     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  assignments CustomerTagAssignment[]
+}
+
+model CustomerTagAssignment {
+  customerId String
+  customer   Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tagId      String
+  tag        CustomerTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt  DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@id([customerId, tagId])
+  @@index([tagId])
+}
+
+// ── 3. Universal action engine ───────────────────────────────────────────────
+
+// Every department's unit of work. Legacy task tables (HumanResourcesTask,
+// AccountsTaskLog, FieldFollowup, ChatPendingItem, WaTask, Task,
+// DigitalMarketingOpenTask) are bridged with (legacySource, legacyId) — one
+// action per legacy row, never two — until the legacy tables are retired.
+model BusinessAction {
+  id                 String            @id @default(uuid())
+  actionNo           Int               @unique @default(autoincrement()) // display as ACT-000123
+  title              String
+  description        String?
+  departmentId       String
+  department         Department        @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  assigneeId         String?
+  assignee           Employee?         @relation("ActionAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  assignedPositionId String? // queue-style assignment to a role
+  assignedPosition   Position?         @relation(fields: [assignedPositionId], references: [id], onDelete: Restrict)
+  assignedTeamId     String?
+  assignedTeam       Team?             @relation(fields: [assignedTeamId], references: [id], onDelete: Restrict)
+  creatorType        ActorType         @default(EMPLOYEE)
+  creatorId          String?
+  creator            Employee?         @relation("ActionCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  priority           Priority          @default(medium)
+  status             ActionStatus      @default(OPEN)
+  dueAt              DateTime?         @db.Timestamptz(3)
+  startedAt          DateTime?         @db.Timestamptz(3)
+  completedAt        DateTime?         @db.Timestamptz(3)
+  completedById      String?
+  completedBy        Employee?         @relation("ActionCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+  completionNote     String?
+  outcome            String?
+  // what this work is about (polymorphic, resolved through DataEntityDefinition)
+  entityType         String? // Estimate | Enquiry | CrmSalesOrder | DebtorInvoice | Customer | StockItem | Employee ...
+  entityId           String?
+  customerId         String? // denormalised for the customer timeline + "my customers" queries
+  customer           Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  sourceModule       String            @default("manual") // estimates | crm | accounts | hr | dispatch | purchase | marketing | workflow | manual
+  legacySource       String? // HumanResourcesTask | AccountsTaskLog | FieldFollowup | ChatPendingItem | WaTask | Task | DigitalMarketingOpenTask
+  legacyId           String?
+  parentId           String?
+  parent             BusinessAction?   @relation("ActionTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children           BusinessAction[]  @relation("ActionTree")
+  workflowInstanceId String?
+  workflowInstance   WorkflowInstance? @relation(fields: [workflowInstanceId], references: [id], onDelete: SetNull)
+  escalationLevel    Int               @default(0)
+  lastEscalatedAt    DateTime?         @db.Timestamptz(3)
+  version            Int               @default(1)
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
+
+  events       BusinessActionEvent[]
+  workflowStep WorkflowStep?
+  dataIssues   DataQualityIssue[]
+
+  @@unique([legacySource, legacyId])
+  @@index([assigneeId, status, dueAt])
+  @@index([departmentId, status, dueAt])
+  @@index([assignedPositionId, status])
+  @@index([assignedTeamId, status])
+  @@index([entityType, entityId])
+  @@index([customerId, status])
+  @@index([status, dueAt])
+}
+
+model BusinessActionEvent {
+  id              String          @id @default(uuid())
+  actionId        String
+  action          BusinessAction  @relation(fields: [actionId], references: [id], onDelete: Restrict)
+  type            ActionEventType
+  fromStatus      ActionStatus?
+  toStatus        ActionStatus?
+  fromAssigneeId  String?
+  toAssigneeId    String?
+  note            String?
+  data            Json?
+  actorType       ActorType       @default(EMPLOYEE)
+  actorEmployeeId String?
+  actorEmployee   Employee?       @relation(fields: [actorEmployeeId], references: [id], onDelete: SetNull)
+  occurredAt      DateTime        @default(now()) @db.Timestamptz(3)
+
+  @@index([actionId, occurredAt])
+  @@index([actorEmployeeId, occurredAt])
+}
+
+// ── 4. Governance: ownership, permissions, audit ─────────────────────────────
+
+// Field-level single-source-of-truth register. fieldName '*' = whole entity
+// default; a specific field overrides it. The app's write path checks this
+// before any update: READ_ONLY_MIRROR fields are rejected, WRITE_VIA_COMMAND
+// fields become an IntegrationCommand.
+model DataOwnership {
+  id                String      @id @default(uuid())
+  entityType        String // Estimate | CrmSalesOrder | Customer | DebtorInvoice | StockItem ...
+  fieldName         String      @default("*")
+  ownerSystem       OwnerSystem
+  writeMode         WriteMode
+  ownerDepartmentId String?
+  ownerDepartment   Department? @relation(fields: [ownerDepartmentId], references: [id], onDelete: Restrict)
+  requiresApproval  Boolean     @default(false)
+  conflictPolicy    String      @default("owner_wins") // owner_wins | local_wins_once_edited | manual_review
+  notes             String?
+  createdAt         DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime    @updatedAt @db.Timestamptz(3)
+
+  @@unique([entityType, fieldName])
+}
+
+// Record- and field-level permissions. A rule targets ONE subject: an AuthRole,
+// a Position, a Department or a single Employee. AuthScope/AuthRole keep
+// controlling which dashboard views open; these rules control which rows and
+// fields inside them can be read or changed. Enforced on the backend only.
+model DataPermissionRule {
+  id           String           @id @default(uuid())
+  roleKey      String?
+  role         AuthRole?        @relation(fields: [roleKey], references: [key], onDelete: Cascade)
+  positionId   String?
+  position     Position?        @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  departmentId String?
+  department   Department?      @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  employeeId   String?
+  employee     Employee?        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  entityType   String
+  fieldName    String           @default("*")
+  action       PermissionAction
+  scope        PermissionScope  @default(OWN)
+  effect       PermissionEffect @default(ALLOW)
+  conditions   Json? // extra predicates, e.g. {"maxAmount": 80000}
+  priority     Int              @default(100) // DENY at equal priority wins
+  active       Boolean          @default(true)
+  createdAt    DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime         @updatedAt @db.Timestamptz(3)
+
+  @@index([entityType, action, active])
+  @@index([roleKey])
+  @@index([positionId])
+  @@index([employeeId])
+}
+
+// Immutable business change history (UPDATE/DELETE revoked in SQL — see
+// migrations/02_constraints.sql). The existing AuditLog stays as the WhatsApp
+// pipeline's operational log.
+model AuditEvent {
+  id                String           @id @default(uuid())
+  occurredAt        DateTime         @default(now()) @db.Timestamptz(3)
+  actorType         ActorType
+  actorEmployeeId   String?
+  actorEmployee     Employee?        @relation(fields: [actorEmployeeId], references: [id], onDelete: Restrict)
+  actorLabel        String? // automation slug / integration name when not an employee
+  source            String // ui | api | automation | integration | workflow | migration
+  entityType        String
+  entityId          String
+  operation         String // create | update | delete | merge | assign | approve | export | login
+  changes           Json? // {"field": {"from": x, "to": y}}
+  reason            String?
+  approvalRequestId String?
+  approvalRequest   ApprovalRequest? @relation(fields: [approvalRequestId], references: [id], onDelete: Restrict)
+  correlationId     String? // ties together all events from one request / workflow
+  ipAddress         String?
+  userAgent         String?
+
+  @@index([entityType, entityId, occurredAt])
+  @@index([actorEmployeeId, occurredAt])
+  @@index([occurredAt])
+  @@index([correlationId])
+}
+
+// ── 5. Approvals ─────────────────────────────────────────────────────────────
+
+// Stores the exact proposed change and the snapshot it was based on. Before
+// executing, the executor re-reads the record; if baseVersion no longer
+// matches, the request becomes STALE instead of applying an outdated change.
+model ApprovalRequest {
+  id                 String            @id @default(uuid())
+  requestNo          Int               @unique @default(autoincrement()) // APR-000123
+  type               ApprovalType
+  status             ApprovalStatus    @default(PENDING)
+  title              String
+  reason             String?
+  departmentId       String
+  department         Department        @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  entityType         String
+  entityId           String
+  customerId         String?
+  customer           Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  proposedChange     Json // exact field → new value set to apply
+  baseSnapshot       Json? // record state when the request was raised
+  baseVersion        String? // version / updatedAt / hash used for the staleness check
+  amount             Decimal?          @db.Decimal(18, 2)
+  requestedById      String
+  requestedBy        Employee          @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  currentStage       Int               @default(1)
+  totalStages        Int               @default(1)
+  currentApproverId  String?
+  currentApprover    Employee?         @relation("ApprovalCurrentApprover", fields: [currentApproverId], references: [id], onDelete: Restrict)
+  dueAt              DateTime?         @db.Timestamptz(3)
+  decidedAt          DateTime?         @db.Timestamptz(3)
+  executedAt         DateTime?         @db.Timestamptz(3)
+  executionResult    Json?
+  executionError     String?
+  idempotencyKey     String?           @unique
+  workflowInstanceId String?
+  workflowInstance   WorkflowInstance? @relation(fields: [workflowInstanceId], references: [id], onDelete: SetNull)
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
+
+  events              ApprovalEvent[]
+  auditEvents         AuditEvent[]
+  integrationCommands IntegrationCommand[]
+  workflowStep        WorkflowStep?
+
+  @@index([status, currentApproverId])
+  @@index([entityType, entityId])
+  @@index([requestedById, createdAt])
+  @@index([type, status])
+}
+
+model ApprovalEvent {
+  id              String            @id @default(uuid())
+  requestId       String
+  request         ApprovalRequest   @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  stage           Int               @default(1)
+  type            ApprovalEventType
+  actorEmployeeId String?
+  actorEmployee   Employee?         @relation(fields: [actorEmployeeId], references: [id], onDelete: Restrict)
+  note            String?
+  data            Json?
+  occurredAt      DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@index([requestId, occurredAt])
+}
+
+// ── 6. Notifications ─────────────────────────────────────────────────────────
+
+model Notification {
+  id          String    @id @default(uuid())
+  recipientId String
+  recipient   Employee  @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  type        String // action_assigned | action_overdue | approval_needed | approval_decided | escalation | sync_failure ...
+  title       String
+  body        String?
+  priority    Priority  @default(medium)
+  entityType  String?
+  entityId    String?
+  link        String?
+  dedupKey    String?   @unique // e.g. "overdue:<actionId>:<day>" — one reminder per action per day
+  readAt      DateTime? @db.Timestamptz(3)
+  archivedAt  DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  deliveries NotificationDelivery[]
+
+  @@index([recipientId, readAt, createdAt])
+}
+
+model NotificationDelivery {
+  id                String              @id @default(uuid())
+  notificationId    String
+  notification      Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  channel           NotificationChannel
+  status            DeliveryStatus      @default(QUEUED)
+  destination       String? // phone / email / device token
+  providerMessageId String?
+  attempts          Int                 @default(0)
+  nextAttemptAt     DateTime?           @db.Timestamptz(3)
+  lastError         String?
+  sentAt            DateTime?           @db.Timestamptz(3)
+  deliveredAt       DateTime?           @db.Timestamptz(3)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@unique([notificationId, channel])
+  @@index([status, nextAttemptAt])
+}
+
+// ── 7. Business workflows ────────────────────────────────────────────────────
+// Business-process orchestration. The existing Automation / AutomationRun stay
+// for technical rule automations; a rule may START a WorkflowInstance.
+
+model WorkflowDefinition {
+  id           String      @id @default(uuid())
+  key          String // discount_approval | overdue_collection | so_dispatch ...
+  version      Int         @default(1)
+  name         String
+  description  String?
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  triggerType  String // manual | event | schedule
+  triggerSpec  Json?
+  definition   Json // ordered steps, approval stages, routing rules, SLAs
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @db.Timestamptz(3)
+
+  instances WorkflowInstance[]
+
+  @@unique([key, version])
+}
+
+model WorkflowInstance {
+  id             String             @id @default(uuid())
+  definitionId   String
+  definition     WorkflowDefinition @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  status         WorkflowStatus     @default(RUNNING)
+  entityType     String?
+  entityId       String?
+  context        Json?
+  currentStepKey String?
+  startedById    String?
+  startedBy      Employee?          @relation(fields: [startedById], references: [id], onDelete: SetNull)
+  idempotencyKey String?            @unique
+  correlationId  String?
+  error          String?
+  startedAt      DateTime           @default(now()) @db.Timestamptz(3)
+  completedAt    DateTime?          @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(3)
+
+  steps     WorkflowStep[]
+  actions   BusinessAction[]
+  approvals ApprovalRequest[]
+
+  @@index([status, updatedAt])
+  @@index([entityType, entityId])
+}
+
+model WorkflowStep {
+  id                   String              @id @default(uuid())
+  instanceId           String
+  instance             WorkflowInstance    @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+  stepKey              String
+  sequence             Int
+  type                 WorkflowStepType
+  status               WorkflowStepStatus  @default(PENDING)
+  input                Json?
+  output               Json?
+  error                String?
+  attempts             Int                 @default(0)
+  scheduledAt          DateTime?           @db.Timestamptz(3)
+  startedAt            DateTime?           @db.Timestamptz(3)
+  completedAt          DateTime?           @db.Timestamptz(3)
+  actionId             String?             @unique
+  action               BusinessAction?     @relation(fields: [actionId], references: [id], onDelete: SetNull)
+  approvalRequestId    String?             @unique
+  approvalRequest      ApprovalRequest?    @relation(fields: [approvalRequestId], references: [id], onDelete: SetNull)
+  integrationCommandId String?             @unique
+  integrationCommand   IntegrationCommand? @relation(fields: [integrationCommandId], references: [id], onDelete: SetNull)
+  createdAt            DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@unique([instanceId, stepKey])
+  @@index([status, scheduledAt])
+}
+
+// ── 8. Data quality ──────────────────────────────────────────────────────────
+
+model DataQualityIssue {
+  id           String          @id @default(uuid())
+  ruleKey      String // duplicate_customer | missing_followup | orphan_so_item | unmapped_region | stale_sync ...
+  fingerprint  String          @unique // ruleKey|entityType|entityId|field — re-detection updates, never duplicates
+  severity     IssueSeverity   @default(MEDIUM)
+  status       IssueStatus     @default(OPEN)
+  entityType   String
+  entityId     String
+  fieldName    String?
+  description  String
+  details      Json?
+  assigneeId   String?
+  assignee     Employee?       @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  actionId     String?
+  action       BusinessAction? @relation(fields: [actionId], references: [id], onDelete: SetNull)
+  detectedAt   DateTime        @default(now()) @db.Timestamptz(3)
+  lastSeenAt   DateTime        @default(now()) @db.Timestamptz(3)
+  resolvedAt   DateTime?       @db.Timestamptz(3)
+  resolvedById String?
+  resolvedBy   Employee?       @relation("IssueResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status, severity])
+  @@index([ruleKey, status])
+  @@index([entityType, entityId])
+}
+
+// ── 9. Integration layer ─────────────────────────────────────────────────────
+
+// Replaces plaintext Token rows over time: credentials live in a secret store
+// (Workers secret / KMS-encrypted blob); this row holds only a reference.
+model IntegrationConnection {
+  id             String    @id @default(uuid())
+  provider       String // zoho_books | neodove | waba | aisensy | n8n | google
+  organizationId String    @default("") // Zoho org (BUI / DPG)
+  label          String?
+  secretRef      String // name/key of the secret in the secret store — never the secret itself
+  scopes         String[]
+  status         String    @default("active") // active | expired | revoked | error
+  expiresAt      DateTime? @db.Timestamptz(3)
+  lastHealthyAt  DateTime? @db.Timestamptz(3)
+  lastError      String?
+  metadata       Json?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([provider, organizationId])
+}
+
+// Every inbound webhook, stored before processing.
+model IntegrationEvent {
+  id              String                 @id @default(uuid())
+  provider        String
+  organizationId  String                 @default("")
+  eventType       String
+  externalEventId String?
+  idempotencyKey  String                 @unique
+  payload         Json
+  headers         Json?
+  signatureValid  Boolean?
+  status          IntegrationEventStatus @default(RECEIVED)
+  attempts        Int                    @default(0)
+  error           String?
+  receivedAt      DateTime               @default(now()) @db.Timestamptz(3)
+  processedAt     DateTime?              @db.Timestamptz(3)
+
+  @@index([provider, status, receivedAt])
+  @@index([eventType])
+}
+
+// Every outbound write to an external system. Nothing is assumed applied
+// until status = SUCCEEDED with an externalRef/response from the provider.
+model IntegrationCommand {
+  id                String                   @id @default(uuid())
+  provider          String
+  organizationId    String                   @default("")
+  commandType       String // zoho.estimate.update_status | neodove.lead.create | waba.message.send ...
+  entityType        String?
+  entityId          String?
+  payload           Json
+  idempotencyKey    String                   @unique
+  status            IntegrationCommandStatus @default(QUEUED)
+  attempts          Int                      @default(0)
+  maxAttempts       Int                      @default(5)
+  nextAttemptAt     DateTime?                @db.Timestamptz(3)
+  lastError         String?
+  response          Json?
+  externalRef       String?
+  requestedById     String?
+  requestedBy       Employee?                @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  approvalRequestId String?
+  approvalRequest   ApprovalRequest?         @relation(fields: [approvalRequestId], references: [id], onDelete: Restrict)
+  createdAt         DateTime                 @default(now()) @db.Timestamptz(3)
+  sentAt            DateTime?                @db.Timestamptz(3)
+  confirmedAt       DateTime?                @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @db.Timestamptz(3)
+
+  workflowStep WorkflowStep?
+
+  @@index([status, nextAttemptAt])
+  @@index([provider, commandType])
+  @@index([entityType, entityId])
+}
+
+// Sync checkpoints per provider/org/resource. Takes over the sync watermarks
+// currently kept in Setting.
+model IntegrationSyncState {
+  id                String     @id @default(uuid())
+  provider          String
+  organizationId    String     @default("")
+  resource          String // estimates | salesorders | invoices | contacts | calls ...
+  cursor            String?
+  status            SyncStatus @default(IDLE)
+  lastAttemptAt     DateTime?  @db.Timestamptz(3)
+  lastSuccessAt     DateTime?  @db.Timestamptz(3)
+  lastError         String?
+  consecutiveErrors Int        @default(0)
+  recordsLastRun    Int        @default(0)
+  staleAfterMinutes Int        @default(60)
+  updatedAt         DateTime   @updatedAt @db.Timestamptz(3)
+
+  @@unique([provider, organizationId, resource])
+}
+
+// ── 10. Data Explorer registry ───────────────────────────────────────────────
+// Describes the real tables so the Explorer can search/filter/open them. It
+// never copies their data.
+model DataEntityDefinition {
+  id           String      @id @default(uuid())
+  key          String      @unique // customer | estimate | enquiry | sales_order | invoice | stock_item ...
+  label        String
+  modelName    String // Prisma model, e.g. CrmSalesOrder
+  tableName    String
+  primaryKey   String      @default("id")
+  displayField String
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  searchFields Json // ["soNumber","customerName"]
+  filters      Json // [{field, type, label}] — department/region/employee/status/date
+  columns      Json
+  relations    Json? // [{label, entityKey, foreignKey}] for "open linked record"
+  detailRoute  String?
+  ownerSystem  OwnerSystem @default(BUI)
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @db.Timestamptz(3)
+}

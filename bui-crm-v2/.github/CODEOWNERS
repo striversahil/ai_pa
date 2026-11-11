@@ -1,0 +1,14 @@
+# Core data layer: every change needs the owner's review.
+# Replace @your-github-username with your handle, then enable
+# "Require review from Code Owners" in branch protection for main.
+/prisma/schema/core.prisma      @your-github-username
+/prisma/schema/legacy.prisma    @your-github-username
+/prisma/sql/core/               @your-github-username
+/prisma/core.lock               @your-github-username
+/scripts/schema-guard.mjs       @your-github-username
+/AGENTS.md                      @your-github-username
+/CLAUDE.md                      @your-github-username
+/opencode.json                  @your-github-username
+/.claude/                       @your-github-username
+/.github/                       @your-github-username
+/.githooks/                     @your-github-username

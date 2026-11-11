@@ -19,12 +19,18 @@ export interface AuthStore {
   deleteScope(key: string): Promise<void>;
   getUserScopeKeys(userId: string): Promise<string[]>;
   setUserScopes(userId: string, keys: string[]): Promise<void>;
+  /** Manager-set identity overrides (display name + position). Null clears. */
+  updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }): Promise<void>;
   listUsers(): Promise<Array<AuthUser & { scopes: string[]; roles: string[] }>>;
   listRoles(): Promise<AuthRole[]>;
   createRole(key: string, label: string, description: string | null, scopeKeys: string[]): Promise<AuthRole>;
   deleteRole(key: string): Promise<void>;
   getUserRoleKeys(userId: string): Promise<string[]>;
   setUserRoles(userId: string, keys: string[]): Promise<void>;
+  /** Hard-remove a login: user row + direct scopes + role joins + ALL sessions.
+   *  Roster rows (Telecaller/HR/Accounts/…) are untouched — the person still
+   *  exists as staff, only the platform login dies. */
+  deleteUser(id: string): Promise<void>;
   /** One-shot auth snapshot: user + scopes + roles + role→scopes, in as few
    *  D1 round-trips as possible (the hot path runs on every API request). */
   getAuthSnapshot(userId: string): Promise<{ user: AuthUser | null; scopes: string[]; roles: string[]; roleScopes: Record<string, string[]> }>;
@@ -62,6 +68,8 @@ class MemoryAuthStore implements AuthStore {
       picture: input.picture,
       isRoot: input.email === ROOT_EMAIL,
       createdAt: new Date().toISOString(),
+      displayName: null,
+      positionOverride: null,
     };
     this.users.set(user.id, user);
     return user;
@@ -104,6 +112,12 @@ class MemoryAuthStore implements AuthStore {
   async getUserScopeKeys(userId: string) {
     return [...(this.userScopes.get(userId) ?? [])];
   }
+  async updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }) {
+    const u = this.users.get(id);
+    if (!u) return;
+    if (patch.displayName !== undefined) u.displayName = patch.displayName;
+    if (patch.positionOverride !== undefined) u.positionOverride = patch.positionOverride;
+  }
   async setUserScopes(userId: string, keys: string[]) {
     this.userScopes.set(userId, new Set(keys));
   }
@@ -131,6 +145,14 @@ class MemoryAuthStore implements AuthStore {
   }
   async setUserRoles(userId: string, keys: string[]) {
     this.userRoles.set(userId, new Set(keys));
+  }
+  async deleteUser(id: string) {
+    this.users.delete(id);
+    this.userScopes.delete(id);
+    this.userRoles.delete(id);
+    for (const [sid, s] of this.sessions) {
+      if (s.userId === id) this.sessions.delete(sid);
+    }
   }
   async getAuthSnapshot(userId: string) {
     return {
@@ -178,6 +200,8 @@ class D1AuthStore implements AuthStore {
       picture: row.picture,
       isRoot: !!row.isRoot,
       createdAt: row.createdAt,
+      displayName: row.displayName ?? null,
+      positionOverride: row.positionOverride ?? null,
     };
   }
 
@@ -201,6 +225,8 @@ class D1AuthStore implements AuthStore {
       picture: input.picture,
       isRoot: input.email === ROOT_EMAIL,
       createdAt: new Date().toISOString(),
+      displayName: null,
+      positionOverride: null,
     };
     await this.db
       .prepare(
@@ -209,6 +235,14 @@ class D1AuthStore implements AuthStore {
       .bind(user.id, user.email, user.name, user.picture, user.isRoot ? 1 : 0, user.createdAt)
       .run();
     return user;
+  }
+  async updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }) {
+    if (patch.displayName !== undefined) {
+      await this.db.prepare("UPDATE auth_user SET displayName = ? WHERE id = ?").bind(patch.displayName, id).run();
+    }
+    if (patch.positionOverride !== undefined) {
+      await this.db.prepare("UPDATE auth_user SET positionOverride = ? WHERE id = ?").bind(patch.positionOverride, id).run();
+    }
   }
   async getUserById(id: string) {
     const row = await this.db.prepare("SELECT * FROM auth_user WHERE id = ?").bind(id).first();
@@ -317,6 +351,18 @@ class D1AuthStore implements AuthStore {
     for (const k of keys) {
       await this.db.prepare("INSERT OR IGNORE INTO auth_user_role (userId, roleKey) VALUES (?, ?)").bind(userId, k).run();
     }
+  }
+  async deleteUser(id: string) {
+    // Children first (FKs are CASCADE, but explicit deletes keep the
+    // in-memory/mock D1 paths honest too).
+    await this.db.prepare("DELETE FROM auth_user_scope WHERE userId = ?").bind(id).run();
+    try {
+      if (await this.ensureRoleTables()) {
+        await this.db.prepare("DELETE FROM auth_user_role WHERE userId = ?").bind(id).run();
+      }
+    } catch { /* role tables may not exist yet — user row delete still proceeds */ }
+    await this.db.prepare("DELETE FROM auth_session WHERE userId = ?").bind(id).run();
+    await this.db.prepare("DELETE FROM auth_user WHERE id = ?").bind(id).run();
   }
   async getAuthSnapshot(userId: string) {
     const rolesReady = await this.ensureRoleTables();

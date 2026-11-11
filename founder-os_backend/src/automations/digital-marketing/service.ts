@@ -3,7 +3,29 @@ import { logger } from '../../shared/logger';
 import { cached, cacheDel } from '../../shared/cache';
 
 export const FREQUENCIES = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
-export const OWNER_ROLES = ['manager', 'either'] as const;
+export const OWNER_ROLES = ['senior', 'junior', 'either'] as const;
+
+/**
+ * Senior/Junior split (2026-11-11): the roster role is now senior|junior
+ * (was manager|either). Legacy 'manager' rows/templates predate the split and
+ * read as Senior (migration 0123 backfills the data; this stays defensive).
+ * Mirror: founder-os_frontend/src/components/DigitalMarketingDashboard.tsx
+ * (lane filter) — change both together, never drift.
+ */
+export function normalizeDmRosterRole(role: unknown): string {
+  const r = String(role ?? '').toLowerCase();
+  if (r === 'junior') return 'junior';
+  return 'senior'; // senior | manager (legacy) | blank | anything unknown → senior
+}
+
+/** Task-lane match with legacy-'manager'-means-senior back-compat. */
+export function dmLaneMatches(rosterRole: string, ownerRole: string): boolean {
+  const r = String(rosterRole ?? '').toLowerCase() === 'manager' ? 'senior' : String(rosterRole ?? '').toLowerCase();
+  const o = String(ownerRole ?? 'either').toLowerCase();
+  if (o === 'either') return true;
+  if (o === r) return true;
+  return o === 'manager' && r === 'senior';
+}
 // Per-day workflow: pending → done, or pending → not_done (explicitly conceded
 // with a reason + owner). `inprogress` / `skipped` / `overdue` are legacy (old
 // UI offered inprogress; rollover once materialised overdue). Tasks never carry
@@ -348,7 +370,7 @@ async function computeDashboard(
   // nothing but the team board.
   const laneRole = scope && !scope.isAdmin ? (scope.scope?.selfRole ?? null) : null;
   const laneEnforced = !!scope && !scope.isAdmin;
-  const inLane = (t: any) => !laneEnforced || (laneRole !== null && (t.ownerRole === 'either' || t.ownerRole === laneRole));
+  const inLane = (t: any) => !laneEnforced || (laneRole !== null && dmLaneMatches(laneRole, t.ownerRole));
   const dueTemplates = active.filter((t) => inLane(t) && isDueOn(t, dateStr));
   const carried = await getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr);
   // Range grace: while a window is still open, earlier unresolved days inside
@@ -424,7 +446,7 @@ async function computeDashboard(
   const openCount = items.filter((i) => OPEN.has(i.status)).length;
   const inProgressCount = items.filter((i) => i.status === 'inprogress').length;
   const doneCount = items.filter((i) => i.status === 'done').length;
-  const split = (role: string) => items.filter((i) => i.ownerRole === role || i.ownerRole === 'either');
+  const split = (role: string) => items.filter((i) => dmLaneMatches(role, i.ownerRole));
   // Frequency breakdown for TODAY — lets the dashboard show daily / weekly / monthly / quarterly / yearly completion vs incomplete.
   const FREQ_ORDER = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
   const freqStats = FREQ_ORDER.map((freq) => {
@@ -646,9 +668,10 @@ async function computeDashboard(
       // the Who-picker, lane labels, and the team board.
       id: r.id, name: r.name, role: r.role, order: r.order,
     })),
-    manager: laneEnforced && laneRole !== 'manager' ? [] : split('manager'),
-    senior: [],
-    junior: [],
+    // `manager` is a back-compat alias of the senior lane (legacy consumers).
+    manager: laneEnforced && !dmLaneMatches(laneRole ?? '', 'senior') ? [] : split('senior'),
+    senior: laneEnforced && !dmLaneMatches(laneRole ?? '', 'senior') ? [] : split('senior'),
+    junior: laneEnforced && !dmLaneMatches(laneRole ?? '', 'junior') ? [] : split('junior'),
     items,
     overdueList,
     incompleteList: overdueList,
@@ -943,7 +966,10 @@ export async function listDigitalMarketingManagers(includeDeleted = false) {
 export async function createDigitalMarketingManager(input: Record<string, any>) {
   const name = String(input.name || '').trim();
   if (!name) throw new Error('name required');
-  const role = ['manager', 'either'].includes(String(input.role)) ? String(input.role) : 'manager';
+  if (String(input.role ?? '').toLowerCase() === 'either') {
+    throw new Error("roster role must be senior|junior ('either' is a task-lane value, not a person)");
+  }
+  const role = normalizeDmRosterRole(input.role);
   const row = await prisma.digitalMarketingManager.create({
     data: {
       name,
@@ -964,8 +990,10 @@ export async function updateDigitalMarketingManager(id: string, input: Record<st
   if (input.email !== undefined) data.email = input.email ? String(input.email) : null;
   if (input.phone !== undefined) data.phone = input.phone ? String(input.phone) : null;
   if (input.role !== undefined) {
-    if (!['manager', 'either'].includes(String(input.role))) throw new Error('role must be manager|either');
-    data.role = String(input.role);
+    if (String(input.role ?? '').toLowerCase() === 'either') {
+      throw new Error("roster role must be senior|junior ('either' is a task-lane value, not a person)");
+    }
+    data.role = normalizeDmRosterRole(input.role);
   }
   if (input.order !== undefined) data.order = Number(input.order);
   if (input.deleted !== undefined) data.deleted = !!input.deleted;
@@ -997,10 +1025,13 @@ function cleanTemplateInput(input: Record<string, any>, partial = false) {
     data.frequency = String(input.frequency);
   }
   if (input.ownerRole !== undefined) {
-    if (!(OWNER_ROLES as readonly string[]).includes(String(input.ownerRole))) {
+    const ow = String(input.ownerRole);
+    if (!(OWNER_ROLES as readonly string[]).includes(ow) && ow !== 'manager') {
       throw new Error(`ownerRole must be ${OWNER_ROLES.join('|')}`);
     }
-    data.ownerRole = String(input.ownerRole);
+    data.ownerRole = ow === 'manager' ? 'senior' : ow; // legacy → Senior
+  } else if (!partial) {
+    data.ownerRole = 'either'; // single team, visible to everyone
   }
   if (input.dueDay !== undefined) data.dueDay = input.dueDay === null ? null : Number(input.dueDay);
   if (input.dueMonth !== undefined) data.dueMonth = input.dueMonth === null ? null : Number(input.dueMonth);
@@ -1263,7 +1294,7 @@ async function computeTeam(
     if (String(l.dueDate) === todayStr) c.today += 1;
   }
   // Open items in each member's role lane today (shared context, not assignment).
-  const openByRole = { manager: 0 };
+  const openByRole = { senior: 0, junior: 0, manager: 0 };
   let doneToday = 0;
   let openToday = 0;
   let inProgressToday = 0;
@@ -1275,12 +1306,15 @@ async function computeTeam(
     openToday += 1;
     if (l.status === 'inprogress') inProgressToday += 1;
     const role = String(l.template?.ownerRole || 'either');
-    if (role === 'manager' || role === 'either') openByRole.manager += 1;
+    // Legacy 'manager' templates read as Senior (migration 0123 backfills).
+    if (role === 'senior' || role === 'manager' || role === 'either') openByRole.senior += 1;
+    if (role === 'junior' || role === 'either') openByRole.junior += 1;
   }
+  openByRole.manager = openByRole.senior; // back-compat alias
   const completionPct = doneToday + openToday > 0 ? Math.round((doneToday / (doneToday + openToday)) * 100) : 100;
   const members = roster.map((r) => {
     const c = credit.get(String(r.id))!;
-    const lane = openByRole.manager;
+    const lane = String(r.role) === 'junior' ? openByRole.junior : openByRole.senior;
     return {
       id: r.id, name: r.name, role: r.role,
       doneToday: c.today, doneWeek: c.week, doneMonth: c.month,

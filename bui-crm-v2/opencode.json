@@ -1,0 +1,32 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "permission": {
+    "edit": {
+      "*": "allow",
+      "prisma/schema/core.prisma": "deny",
+      "prisma/schema/legacy.prisma": "deny",
+      "prisma/sql/core/*": "deny",
+      "prisma/core.lock": "deny",
+      "scripts/schema-guard.mjs": "deny",
+      "AGENTS.md": "deny",
+      "CLAUDE.md": "deny",
+      "opencode.json": "deny",
+      ".claude/*": "deny",
+      ".github/*": "deny",
+      ".githooks/*": "deny"
+    },
+    "bash": {
+      "*": "allow",
+      "*prisma/schema/core.prisma*": "ask",
+      "*prisma/schema/legacy.prisma*": "ask",
+      "*prisma/sql/core/*": "ask",
+      "*core.lock*": "ask",
+      "node scripts/schema-guard.mjs --sign*": "deny",
+      "git commit --no-verify*": "deny",
+      "git commit -n *": "deny",
+      "git push --force*": "deny",
+      "git config core.hooksPath*": "deny"
+    }
+  }
+}

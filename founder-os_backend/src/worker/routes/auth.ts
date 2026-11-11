@@ -2,7 +2,10 @@
 // routes/auth.ts — Google OAuth + user/role/scope admin API.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, publicOrigin, isSecure, AuthRoutes, type Bindings } from '../context';
+import { authStore, deps, publicOrigin, isSecure, AuthRoutes, type Bindings } from '../context';
+import { listAccountants } from '../../automations/accounts/service';
+import { listDigitalMarketingManagers } from '../../automations/digital-marketing/service';
+import { listEmployees } from '../../automations/human-resources/employees';
 
 export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/auth/google', async (c) => {
@@ -27,6 +30,30 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   app.get('/api/auth/users', async (c) => {
     const r = await AuthRoutes.authListUsers(authStore(c), c.req.header('cookie') ?? null);
+    return c.json(r.body, r.status as any);
+  });
+  app.get('/api/auth/positions', async (c) => {    // Worker-only (Express is frozen — no mirror). Roster reads run AFTER the
+    // manager gate inside authUserPositions, via this loader closure.
+    const r = await AuthRoutes.authUserPositions(authStore(c), c.req.header('cookie') ?? null, async () => {
+      const { prisma } = deps();
+      const [tcs, accts, mkts, hrs] = await Promise.all([
+        prisma.telecaller.findMany({}).catch(() => []),
+        listAccountants(false).catch(() => []),
+        listDigitalMarketingManagers(false).catch(() => []),
+        listEmployees(false).catch(() => []),
+      ]);
+      return {
+        telecallers: (tcs as any[]).map((t) => ({ email: t.email ?? null, name: t.name ?? null, type: t.type ?? null })),
+        accountants: (accts as any[]).map((r) => ({ email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
+        marketers: (mkts as any[]).map((r) => ({ email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
+        hrMembers: (hrs as any[]).map((r) => ({ email: r.email ?? null, loginEmail: r.loginEmail ?? null, name: r.name ?? null })),
+      };
+    });
+    return c.json(r.body, r.status as any);
+  });
+  app.delete('/api/auth/users/:id', async (c) => {
+    // Worker-only (Express is frozen — no mirror).
+    const r = await AuthRoutes.authDeleteUser(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null);
     return c.json(r.body, r.status as any);
   });
   app.get('/api/auth/scopes', async (c) => {
@@ -61,6 +88,13 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.put('/api/auth/users/:id/roles', async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const r = await AuthRoutes.authSetUserRoles(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);
+    return c.json(r.body, r.status as any);
+  });
+  app.put('/api/auth/users/:id/profile', async (c) => {
+    // Worker-only (Express is frozen — no mirror). Identity overrides:
+    // display name + position. Display/grouping only, never access.
+    const body = await c.req.json().catch(() => ({}));
+    const r = await AuthRoutes.authSetUserProfile(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body ?? {});
     return c.json(r.body, r.status as any);
   });
 }

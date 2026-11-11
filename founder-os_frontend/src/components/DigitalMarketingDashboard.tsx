@@ -228,7 +228,7 @@ function TaskRow({ t, roster, identity, onLogged, today }: {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const lane = roster.filter((r) => t.ownerRole === "either" || r.role === t.ownerRole);
+  const lane = roster.filter((r) => t.ownerRole === "either" || r.role === t.ownerRole || (t.ownerRole === "manager" && r.role === "senior")); // legacy 'manager' = Senior (backend dmLaneMatches mirror)
   const isIncomplete = !!((t as any).incomplete ?? t.overdue);
   const metricsPayload = () => ((t as any).metricsSchema
     ? Object.fromEntries(Object.entries(metrics).map(([k, v]) => [k, v.trim() === "" ? null : (isNaN(Number(v)) ? v.trim() : Number(v))]))
@@ -761,7 +761,8 @@ function RosterRowEditor({ row, busy, onSave, onRemove, onRestore }: {
   onRestore?: () => void;
 }) {
   const [email, setEmail] = useState(row.email ?? "");
-  const dirty = email !== (row.email ?? "");
+  const [role, setRole] = useState(row.role === "junior" ? "junior" : "senior");
+  const dirty = email !== (row.email ?? "") || role !== (row.role === "junior" ? "junior" : "senior");
   if (row.deleted) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 px-2.5 py-1.5 text-xs opacity-70">
@@ -773,12 +774,17 @@ function RosterRowEditor({ row, busy, onSave, onRemove, onRestore }: {
   return (
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 px-2.5 py-1.5 text-xs space-y-1.5">
       <div className="flex items-center gap-2">
-        <span className="font-semibold flex-1 truncate">{row.name}</span>
+        <span className="font-semibold flex-1 truncate">{row.name} <span className="font-normal text-zinc-500">· {row.role === "junior" ? "Junior" : "Senior"}</span></span>
         <button disabled={busy} onClick={onRemove} className="text-rose-500 hover:text-rose-400 cursor-pointer border-0 bg-transparent text-sm" title="Remove">✕</button>
       </div>
       <div className="flex gap-1.5">
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email — maps this person" className="flex-1 min-w-0 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-[11px] outline-none focus:border-indigo-500" />
-        <button disabled={busy || !dirty} onClick={() => onSave({ email: email.trim() || null })} className="px-2 py-1 text-[11px] font-bold rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0">Save</button>
+        <select value={role} onChange={(e) => setRole(e.target.value)} title="Senior or Junior"
+          className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1 text-[11px] outline-none">
+          <option value="senior">Senior</option>
+          <option value="junior">Junior</option>
+        </select>
+        <button disabled={busy || !dirty} onClick={() => onSave({ email: email.trim() || null, role })} className="px-2 py-1 text-[11px] font-bold rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0">Save</button>
       </div>
       {row.phone && <div className="text-[10px] text-zinc-400">{row.phone}</div>}
     </div>
@@ -993,6 +999,7 @@ function Controller({ onChanged }: { onChanged: () => void }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState("senior");
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
@@ -1037,7 +1044,12 @@ function Controller({ onChanged }: { onChanged: () => void }) {
         <div className="grid grid-cols-2 gap-1.5">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name — e.g. Ramesh" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email — e.g. ramesh@…" className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500" />
-          <button disabled={busy || !name.trim()} onClick={() => { api("/api/digital-marketing/roster", "POST", { name: name.trim(), email: email.trim() || null }); setName(""); setEmail(""); }} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0 col-span-2">Add</button>
+          <select value={role} onChange={(e) => setRole(e.target.value)}
+            className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs">
+            <option value="senior">Senior</option>
+            <option value="junior">Junior</option>
+          </select>
+          <button disabled={busy || !name.trim()} onClick={() => { api("/api/digital-marketing/roster", "POST", { name: name.trim(), email: email.trim() || null, role }); setName(""); setEmail(""); }} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 cursor-pointer border-0">Add</button>
         </div>
         {loadError && <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5 text-xs text-rose-400">Controller failed to load: {loadError} <button onClick={() => load()} className="ml-1 underline cursor-pointer">Retry</button></div>}
         <label className="flex items-center gap-1.5 text-[11px] text-zinc-500 cursor-pointer">

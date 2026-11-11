@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { USER_ADMIN_SCOPE } from "@/auth/permissions";
+import { POSITION_META, POSITION_ORDER, displayNameOf, positionOf, type PositionInfo } from "@/auth/org-positions";
 import AdminTable from "./admin/AdminTable";
 import { Drawer, UserDrawer, RoleDrawer } from "./admin/AdminDrawers";
 import type { ScopeRow, RoleRow, UserRow, DashboardRow } from "./admin/AdminDrawers";
@@ -23,6 +24,8 @@ export default function UserAdmin() {
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
   const [userDrafts, setUserDrafts] = useState<Record<string, string[]>>({});
+  const [positions, setPositions] = useState<Record<string, PositionInfo> | null>(null);
+  const [positionFilter, setPositionFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("users");
   const [roleFilter, setRoleFilter] = useState("");
@@ -30,14 +33,16 @@ export default function UserAdmin() {
   const [roleDrawer, setRoleDrawer] = useState<{ mode: "create" } | { mode: "edit"; role: RoleRow } | null>(null);
 
   const load = useCallback(async () => {
-    const [u, s, r, d] = await Promise.all([
+    const [u, s, r, d, p] = await Promise.all([
       fetch("/api/auth/users").then((res) => res.json()),
       fetch("/api/auth/scopes").then((res) => res.json()),
       fetch("/api/auth/roles").then((res) => res.json()),
       fetch("/api/automations").then((res) => res.json()),
+      fetch("/api/auth/positions").then((res) => (res.ok ? res.json() : { positions: {} })).catch(() => ({ positions: {} })),
     ]);
-    const usersArr: UserRow[] = Array.isArray(u) ? u : [];
+    const usersArr: UserRow[] = (Array.isArray(u) ? u : []).filter((x: any) => !x.isRoot);
     setUsers(usersArr);
+    setPositions(p?.positions ?? {});
     setScopes(Array.isArray(s) ? s : []);
     setRoles(Array.isArray(r) ? r : []);
     setDashboards((Array.isArray(d) ? d : []).filter((x: any) => x.hasDashboard));
@@ -144,8 +149,55 @@ export default function UserAdmin() {
     }
   };
 
+  const saveUserProfile = async (userId: string, patch: { displayName: string | null; positionOverride: string | null }) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/auth/users/${userId}/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) alert(await res.text());
+    } finally {
+      setBusy(false);
+      reload();
+    }
+  };
+
   const managingUser = managingId ? users.find((u) => u.id === managingId) ?? null : null;
   const usersInRole = roleFilter ? users.filter((u) => (userDrafts[u.id] ?? u.roles).includes(roleFilter)) : users;
+
+  const removeUser = async (user: UserRow) => {
+    if (!confirm(`Remove ${displayNameOf(user)} (${user.email}) from the platform? Their login, roles and sessions are deleted immediately. Staff roster entries are kept.`)) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/auth/users/${user.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const t = await res.text();
+        alert(t || "Remove failed");
+        return;
+      }
+      if (managingId === user.id) setManagingId(null);
+    } finally {
+      setBusy(false);
+      reload();
+    }
+  };
+  const managingPosition = managingUser ? positionOf(positions, managingUser.id) : null;
+  // Roles whose scopes cover the position's suggestion — shown as SUGGESTED
+  // in the drawer so the manager picks the right grant in one glance.
+  const suggestedRoleKeys = useMemo(() => {
+    const need = managingPosition?.suggestedScopes ?? [];
+    if (!need.length) return [];
+    return roles.filter((r) => need.every((s) => r.scopeKeys.includes(s))).map((r) => r.key);
+  }, [roles, managingPosition]);
+  const positionCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const u of users) m.set(positionOf(positions, u.id).position, (m.get(positionOf(positions, u.id).position) ?? 0) + 1);
+    return m;
+  }, [users, positions]);
+  const visibleUsers = usersInRole.filter((u) =>
+    !positionFilter || positionOf(positions, u.id).position === positionFilter);
 
   if (!me || !canManage) return <div className="p-8 text-zinc-500">Admin access required.</div>;
 
@@ -192,19 +244,29 @@ export default function UserAdmin() {
       {tab === "users" && (
         <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 sm:p-6">
           <AdminTable<UserRow>
-            rows={usersInRole}
+            rows={visibleUsers}
             rowKey={(u) => u.id}
             searchPlaceholder="Search name or email…"
-            toSearchText={(u) => `${u.name} ${u.email}`}
+            toSearchText={(u) => `${displayNameOf(u)} ${u.name} ${u.email} ${POSITION_META[positionOf(positions, u.id).position].label}`}
             emptyText={users.length === 0 ? "No users yet — anyone with a Google account can sign up, then appears here." : "No users match."}
             onRowClick={(u) => setManagingId(u.id)}
             toolbarExtra={
-              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
-                title="Filter by role"
-                className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-2 text-xs outline-none max-w-[160px]">
-                <option value="">All roles</option>
-                {roles.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
-              </select>
+              <>
+                <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
+                  title="Filter by role"
+                  className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-2 text-xs outline-none max-w-[160px]">
+                  <option value="">All roles</option>
+                  {roles.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+                </select>
+                <select value={positionFilter} onChange={(e) => setPositionFilter(e.target.value)}
+                  title="Filter by position"
+                  className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-2 text-xs outline-none max-w-[190px]">
+                  <option value="">All positions</option>
+                  {POSITION_ORDER.map((p) => (
+                    <option key={p} value={p}>{POSITION_META[p].label} ({positionCounts.get(p) ?? 0})</option>
+                  ))}
+                </select>
+              </>
             }
             columns={[
               {
@@ -214,15 +276,36 @@ export default function UserAdmin() {
                   <span className="flex items-center gap-2.5 min-w-0">
                     {u.picture
                       ? <img src={u.picture} alt="" className="h-8 w-8 rounded-full shrink-0" />
-                      : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">{(u.name || u.email || "U").charAt(0).toUpperCase()}</span>}
+                      : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">{(displayNameOf(u) || u.email || "U").charAt(0).toUpperCase()}</span>}
                     <span className="min-w-0">
-                      <span className="block font-semibold truncate">{u.name}
+                      <span className="block font-semibold truncate">{displayNameOf(u)}
+                        {u.displayName && u.displayName.trim() !== (u.name || "").trim() && (
+                          <span className="ml-1.5 font-normal text-[11px] text-zinc-500">({u.name})</span>
+                        )}
                         {u.isRoot && <span className="ml-1.5 text-[10px] bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded">ROOT</span>}
                       </span>
                       <span className="block text-[11px] text-zinc-500 truncate">{u.email}</span>
                     </span>
                   </span>
                 ),
+              },
+              {
+                key: "position", header: "Position",
+                sortValue: (u) => POSITION_ORDER.indexOf(positionOf(positions, u.id).position),
+                render: (u) => {
+                  const info = positionOf(positions, u.id);
+                  const meta = POSITION_META[info.position];
+                  const tone = meta.department === "sales"
+                    ? "border-sky-500/30 bg-sky-500/10 text-sky-500 dark:text-sky-400"
+                    : meta.department === "operations"
+                      ? "border-violet-500/30 bg-violet-500/10 text-violet-500 dark:text-violet-400"
+                      : "border-zinc-500/30 bg-zinc-500/10 text-zinc-500";
+                  return (
+                    <span title={info.via || undefined} className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${tone}`}>
+                      {meta.label}
+                    </span>
+                  );
+                },
               },
               {
                 key: "roles", header: "Roles",
@@ -264,10 +347,19 @@ export default function UserAdmin() {
               {
                 key: "action", header: "", className: "text-right",
                 render: (u) => (
-                  <button onClick={(e) => { e.stopPropagation(); setManagingId(u.id); }}
-                    className="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 cursor-pointer border-0 whitespace-nowrap">
-                    Manage
-                  </button>
+                  <span className="inline-flex gap-1.5 justify-end">
+                    <button onClick={(e) => { e.stopPropagation(); setManagingId(u.id); }}
+                      className="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 cursor-pointer border-0 whitespace-nowrap">
+                      Manage
+                    </button>
+                    {me?.user.id !== u.id && (
+                      <button onClick={(e) => { e.stopPropagation(); void removeUser(u); }} disabled={busy}
+                        title={`Remove ${u.name} from the platform`}
+                        className="rounded-lg border border-rose-500/40 text-rose-500 hover:bg-rose-500/10 text-xs font-bold px-2.5 py-1.5 disabled:opacity-40 cursor-pointer bg-transparent whitespace-nowrap">
+                        Remove
+                      </button>
+                    )}
+                  </span>
                 ),
               },
             ]}
@@ -389,6 +481,7 @@ export default function UserAdmin() {
       {managingUser && (
         <Drawer title={`Manage ${managingUser.name}`} subtitle={managingUser.email} onClose={() => setManagingId(null)}>
           <UserDrawer
+            key={managingUser.id}
             user={managingUser}
             roles={roles}
             scopeGroups={scopeGroups}
@@ -401,6 +494,11 @@ export default function UserAdmin() {
             locked={!isRoot && managingUser.isRoot}
             grantableScopes={grantableScopes}
             hiddenCount={managingUser.hiddenRoles ?? 0}
+            positionLabel={managingPosition ? POSITION_META[managingPosition.position].label : undefined}
+            suggestedScopes={managingPosition?.suggestedScopes ?? []}
+            suggestedRoleKeys={suggestedRoleKeys}
+            autoPositionLabel={managingPosition ? POSITION_META[managingPosition.auto].label : undefined}
+            onSaveProfile={(patch) => saveUserProfile(managingUser.id, patch)}
           />
         </Drawer>
       )}

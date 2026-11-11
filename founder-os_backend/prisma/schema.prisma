@@ -633,6 +633,10 @@ model AuthUser {
   picture    String?
   isRoot     Boolean         @default(false)
   createdAt  DateTime        @default(now())
+  // Users portal overrides (migration 0124): manager-set display name +
+  // position override. Null = Google name / auto-resolved position.
+  displayName      String?
+  positionOverride String?
   sessions   AuthSession[]
   userScopes AuthUserScope[]
   userRoles  AuthUserRole[]
