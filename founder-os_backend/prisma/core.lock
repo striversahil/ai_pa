@@ -1,6 +1,6 @@
 {
   "signedBy": "striversahil@gmail.com",
-  "signedAt": "2026-11-11T17:35:33.521Z",
+  "signedAt": "2026-11-11T17:43:59.185Z",
   "files": {
     "migrations/0125_core_foundation.sql": "3a2779be49f5e08160da2981b30ee924188f2cba2189074051bbfed24ec36fdc",
     "migrations/0126_core_identity.sql": "c4766e18acbea714405aaec811dee9c4f38896063d4f32195cb0477937044699",
@@ -8,7 +8,7 @@
     "prisma/core/02-identity.prisma": "e64aa5dca1528016992f8f88ad09b8c381b33722c75898fd9bfa1f7b60b81789",
     "prisma/core/03-customer.prisma": "cdc2b08d9329cad53dbcc42e94bea6ddbdd63524711f72badd1cc64f7c7a4240",
     "prisma/core/04-sales.prisma": "788e5d7b440c4628ef9fd071c955cc72b73af5ae35348b0daf3af54f25bf2066",
-    "prisma/core/05-order.prisma": "79735d5cfabf45a1e0a570409576ac71c14795cdd9ca1bd5f68a8f4f518e7b2c",
+    "prisma/core/05-order.prisma": "75671b2d99821a76354120461b6c9bf7e2bca2758f24dfe5a37b6a842d9610d3",
     "prisma/core/07-work.prisma": "4e74961550d2527b7d47d9548b533b512c40055999a77449584055e223575a41",
     "src/modules/core/actor.ts": "5d0c0cde2bc98f2aaaa93fc3a14ec49eacad62216d99fd05696c3de6334f1241",
     "src/modules/core/audit.ts": "ad4b5c8d58420830e231d54d2e0deb345c3de499e6827455b45824256d8d5438",
@@ -20,6 +20,7 @@
     "src/modules/core/projectors.ts": "7db18796f2833fcee2c36a49bfb31a819fdf94442b9edafb8345454fd60387f3",
     "src/modules/core/sales.ts": "035a9fc2c54a303a3276add35c36cd8285d914bfbc61e0b0598c20519d31d3dc",
     "src/modules/core/stages.ts": "90d4d088c2d049c86568c8529180f0c29d5d1f2b57642ccc4bd2a1f3d1d1a678",
+    "src/modules/core/stock.ts": "6691d33bf1a9b91affe3304011312b33e086ae67e4cb4bcb6cc48cecfaa147aa",
     "src/modules/core/sync.ts": "23f3cf2dbade835e2f1d4385498d3513f57469f72df63f88574fa18b470c9f51",
     "src/worker/routes/work.ts": "e5fea1d072e438cbc20e693b673694b5006d58f9006aa413349df0ca771e9560",
     "scripts/core-guard.mjs": "cc65f1e903bd2f2e3555c178ccacd2776c099f9707bbec73a7782d593bc03837"

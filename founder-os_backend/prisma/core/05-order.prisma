@@ -127,3 +127,51 @@ model CoreAttachment {
   @@index([soNumber])
   @@map("core_attachment")
 }
+
+// Phase 4b: stock ledger (entries), obligations (reservations), places.
+// Item master stays legacy for now — core holds movements + reservations.
+model CoreStockEntry {
+  id          String  @id
+  itemId      String  @default("")
+  day         String  @default("")
+  kind        String  @default("adjustment")
+  qty         Float   @default(0)
+  locationId  String  @default("")
+  toLocationId String @default("")
+  rate        Float   @default(0)
+  status      String  @default("approved")
+  refType     String  @default("")
+  refId       String  @default("")
+  note        String  @default("")
+  createdBy   String  @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([itemId, day])
+  @@map("core_stock_entry")
+}
+
+model CoreReservation {
+  id         String  @id
+  itemId     String  @default("")
+  locationId String  @default("")
+  qty        Float   @default(0)
+  refType    String  @default("SO")
+  refId      String  @default("")
+  status     String  @default("open")
+  day        String  @default("")
+  createdBy  String  @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([itemId, status])
+  @@index([refId, status])
+  @@map("core_reservation")
+}
+
+model CoreWarehouse {
+  id        String  @id
+  name      String  @default("")
+  active    Boolean @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("core_warehouse")
+}

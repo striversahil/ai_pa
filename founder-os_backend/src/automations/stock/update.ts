@@ -6,6 +6,26 @@ import { generateSku } from './sku';
 
 const KINDS = new Set(['opening', 'purchase-in', 'sales-out', 'transfer', 'adjustment']);
 
+/** Phase 4b dual-write helpers: project touched rows into core (never throws). */
+async function mirrorEntries(ids: string[]): Promise<void> {
+  try {
+    const { mirrorStockEntries } = await import('../../modules/core/stock');
+    if (ids.length) await mirrorStockEntries(ids);
+  } catch { /* non-fatal */ }
+}
+async function mirrorResvs(ids: string[]): Promise<void> {
+  try {
+    const { mirrorReservations } = await import('../../modules/core/stock');
+    if (ids.length) await mirrorReservations(ids);
+  } catch { /* non-fatal */ }
+}
+async function mirrorWh(id: string): Promise<void> {
+  try {
+    const { mirrorWarehouse } = await import('../../modules/core/stock');
+    if (id) await mirrorWarehouse(id);
+  } catch { /* non-fatal */ }
+}
+
 async function defaultLocation(): Promise<string> {
   const locs = await (prisma as any).stockLocation.findMany({}).catch(() => []);
   const main = (locs as any[]).find((l) => String(l.name) === 'MAIN');
@@ -79,9 +99,11 @@ export async function postStockMovement(input: any, createdBy: string) {
     const out = await (prisma as any).stockMovement.create({
       data: { itemId, day, kind, qty, locationId: loc, toLocationId: to, rate: Number(input?.rate ?? 0) || 0, status: 'approved', refType: String(input?.refType ?? ''), refId: String(input?.refId ?? ''), note: String(input?.note ?? '').slice(0, 500), createdBy },
     });
-    await (prisma as any).stockMovement.create({
+    const inl = await (prisma as any).stockMovement.create({
       data: { itemId, day, kind, qty: Math.abs(qty), locationId: to, toLocationId: loc, rate: Number(input?.rate ?? 0) || 0, status: 'approved', refType: String(input?.refType ?? ''), refId: String(input?.refId ?? ''), note: String(input?.note ?? '').slice(0, 500), createdBy },
     });
+    // Phase 4b dual-write: both transfer legs.
+    await mirrorEntries([String((out as any)?.id ?? ''), String((inl as any)?.id ?? '')].filter(Boolean));
     await invalidateStockCache();
     return out;
   }
@@ -89,12 +111,16 @@ export async function postStockMovement(input: any, createdBy: string) {
   const row = await (prisma as any).stockMovement.create({
     data: { itemId, day, kind, qty, locationId: loc, toLocationId: '', rate: Number(input?.rate ?? 0) || 0, status, refType: String(input?.refType ?? ''), refId: String(input?.refId ?? ''), note: String(input?.note ?? '').slice(0, 500), createdBy },
   });
+  // Phase 4b dual-write.
+  await mirrorEntries([String((row as any)?.id ?? '')].filter(Boolean));
   await invalidateStockCache();
   return row;
 }
 
 export async function approveMovement(id: string) {
   const row = await (prisma as any).stockMovement.update({ where: { id: String(id) }, data: { status: 'approved' } });
+  // Phase 4b dual-write: status transition converges in core.
+  await mirrorEntries([String(id)]);
   await invalidateStockCache();
   return row;
 }
@@ -103,6 +129,8 @@ export async function createLocation(name: string) {
   const n = String(name ?? '').trim().toUpperCase();
   if (!n) throw new Error('name is required');
   const row = await (prisma as any).stockLocation.create({ data: { name: n, active: true } });
+  // Phase 4b dual-write.
+  await mirrorWh(String((row as any)?.id ?? ''));
   await invalidateStockCache();
   return row;
 }
@@ -114,6 +142,8 @@ export async function reserveStock(input: any, createdBy: string) {
   const row = await (prisma as any).stockReservation.create({
     data: { itemId, locationId: String(input?.locationId ?? ''), qty, refType: String(input?.refType ?? 'SO'), refId: String(input?.refId ?? ''), status: 'open', day: validateDay(input?.day ?? new Date().toISOString().slice(0, 10)), createdBy },
   });
+  // Phase 4b dual-write.
+  await mirrorResvs([String((row as any)?.id ?? '')].filter(Boolean));
   await invalidateStockCache();
   return row;
 }
@@ -122,11 +152,14 @@ export async function releaseReservation(id: string, mode: 'released' | 'consume
   const r = await (prisma as any).stockReservation.findUnique({ where: { id: String(id) } });
   if (!r) throw new Error('reservation not found');
   if (mode === 'consumed') {
-    await (prisma as any).stockMovement.create({
+    const mv = await (prisma as any).stockMovement.create({
       data: { itemId: String(r.itemId), day: String(r.day), kind: 'sales-out', qty: -Math.abs(Number(r.qty)), locationId: String(r.locationId ?? ''), status: 'approved', refType: String(r.refType), refId: String(r.refId), note: 'reservation consumed', createdBy: 'system' },
     });
+    // Phase 4b dual-write: the consumed movement + the reservation transition.
+    await mirrorEntries([String((mv as any)?.id ?? '')].filter(Boolean));
   }
   const row = await (prisma as any).stockReservation.update({ where: { id: String(id) }, data: { status: mode } });
+  await mirrorResvs([String(id)]);
   await invalidateStockCache();
   return row;
 }

@@ -227,6 +227,9 @@ const DATE_FIELDS: Record<string, string[]> = {
   CoreStageEvent: ['createdAt'],
   CoreDispatchProof: ['createdAt'],
   CoreAttachment: ['createdAt'],
+  CoreStockEntry: ['createdAt'],
+  CoreReservation: ['createdAt'],
+  CoreWarehouse: ['createdAt'],
   CoreFieldPolicy: ['updatedAt'],
   HlpDashboard: ['createdAt', 'updatedAt'],
   HlpWidget: [],
@@ -378,6 +381,9 @@ const ID_FIELDS: Record<string, string> = {
   CoreStageEvent: 'id',
   CoreDispatchProof: 'id',
   CoreAttachment: 'id',
+  CoreStockEntry: 'id',
+  CoreReservation: 'id',
+  CoreWarehouse: 'id',
   CoreFieldPolicy: 'id',
   CoreSeries: 'key',
   HlpDashboard: 'id',
@@ -1135,6 +1141,9 @@ export class D1PrismaClient {
   get coreStageEvent() { return this.model('CoreStageEvent'); }
   get coreDispatchProof() { return this.model('CoreDispatchProof'); }
   get coreAttachment() { return this.model('CoreAttachment'); }
+  get coreStockEntry() { return this.model('CoreStockEntry'); }
+  get coreReservation() { return this.model('CoreReservation'); }
+  get coreWarehouse() { return this.model('CoreWarehouse'); }
   get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }

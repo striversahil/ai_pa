@@ -41,7 +41,7 @@ export async function getStockPlanning(): Promise<StockPlanning> {
 
 export async function getStockData(days = 14): Promise<StockPayload> {
   const span = Math.min(Math.max(Number(days) || 14, 1), 31);
-  return cached(`${STOCK_CACHE_KEY}:${span}`, STOCK_TTL_MS, async () => {
+  const payload = await cached<StockPayload>(`${STOCK_CACHE_KEY}:${span}`, STOCK_TTL_MS, async () => {
     const [items, movesRaw, locs, resRaw, planning] = await Promise.all([
       (prisma as any).stockItem.findMany({ orderBy: [{ sku: 'asc' }] }),
       (prisma as any).stockMovement.findMany({ orderBy: [{ day: 'asc' }] }),
@@ -173,6 +173,12 @@ export async function getStockData(days = 14): Promise<StockPayload> {
       })).reverse(),
     };
   });
+  // Phase 4b stock shadow (stock-read-only, log-only). Never blocks the read.
+  try {
+    const { shadowCompareStock } = await import('../../modules/core/stock');
+    await shadowCompareStock();
+  } catch { /* non-fatal */ }
+  return payload;
 }
 
 export function validateDay(day: unknown): string {
