@@ -1,0 +1,17 @@
+{
+  "signedBy": "striversahil@gmail.com",
+  "signedAt": "2026-11-11T15:21:52.106Z",
+  "files": {
+    "migrations/0125_core_foundation.sql": "3a2779be49f5e08160da2981b30ee924188f2cba2189074051bbfed24ec36fdc",
+    "prisma/core/01-platform.prisma": "9dee2b3d12e0cccb5c8bb6eae6a6f765ea80c26dacc5cbf8a58d15adb573bf50",
+    "prisma/core/07-work.prisma": "4e74961550d2527b7d47d9548b533b512c40055999a77449584055e223575a41",
+    "src/modules/core/actor.ts": "5d0c0cde2bc98f2aaaa93fc3a14ec49eacad62216d99fd05696c3de6334f1241",
+    "src/modules/core/audit.ts": "ad4b5c8d58420830e231d54d2e0deb345c3de499e6827455b45824256d8d5438",
+    "src/modules/core/events.ts": "a772e724473283066110ab806751f2fcb6434a1dba41415500e2e83a50b2e35e",
+    "src/modules/core/numbering.ts": "ca432934aaa063d4a17a68ca0fc3ff96a21002947b4f1c01aa084a3cf8ca8b78",
+    "src/modules/core/permissions.ts": "e0081fbf257d1cef2a94aff1f4e248edc63f969fe1e01c8337bd2cb363066627",
+    "src/modules/core/stages.ts": "90d4d088c2d049c86568c8529180f0c29d5d1f2b57642ccc4bd2a1f3d1d1a678",
+    "src/worker/routes/work.ts": "52c96fd86785258d61e111fc7ac097bc2d79625350d090c054394100add66808",
+    "scripts/core-guard.mjs": "795cd0bab590dea5c544255164ffdcf9451e6313c9943e6397b7eb26771556b9"
+  }
+}

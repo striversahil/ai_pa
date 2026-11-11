@@ -1,0 +1,101 @@
+// prisma/core/01-platform.prisma — CANONICAL core platform tables (Phase 0).
+// NOT yet wired to the Prisma generator (single-file schema.prisma is live).
+// Phase 1 enables multi-file schema and moves these in verbatim.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+//
+// D1 reality lives in migrations/0125_core_foundation.sql (same tables).
+
+model CoreDomainEvent {
+  sequence      BigInt   @id @default(autoincrement())
+  eventType     String
+  entityType    String
+  entityId      String
+  payload       String?
+  actorType     String?
+  actorId       String?
+  correlationId String?
+  occurredAt    DateTime @default(now())
+
+  @@index([eventType, sequence])
+  @@index([entityType, entityId])
+  @@map("core_domain_event")
+}
+
+model CoreRowChange {
+  id            BigInt   @id @default(autoincrement())
+  occurredAt    DateTime @default(now())
+  schemaName    String   @default("core")
+  tableName     String
+  rowId         String
+  operation     String
+  changedFields String   @default("[]")
+  oldData       String?
+  newData       String?
+  actorType     String?
+  actorId       String?
+  requestId     String?
+  dbUser        String   @default("worker")
+  txId          String?
+
+  @@index([tableName, rowId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@map("core_row_change")
+}
+
+model CoreAuditEvent {
+  id                String   @id @default(uuid())
+  occurredAt        DateTime @default(now())
+  actorType         String   @default("")
+  actorId           String?
+  sessionId         String?
+  source            String   @default("dashboard")
+  entityType        String
+  entityId          String
+  operation         String
+  changes           String?
+  reason            String?
+  approvalRequestId String?
+  correlationId     String?
+  requestId         String?
+
+  @@index([entityType, entityId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@map("core_audit_event")
+}
+
+model CoreAccessLog {
+  id              BigInt   @id @default(autoincrement())
+  occurredAt      DateTime @default(now())
+  actorType       String   @default("")
+  actorId         String   @default("")
+  sessionId       String?
+  accessType      String
+  entityType      String
+  entityId        String?
+  recordIds       String   @default("[]")
+  resultCount     Int      @default(0)
+  screen          String?
+  filters         String?
+  sensitiveFields String   @default("[]")
+  ipAddress       String?
+  userAgent       String?
+  requestId       String?
+
+  @@index([actorId, occurredAt])
+  @@map("core_access_log")
+}
+
+model CoreZohoLink {
+  id         String   @id @default(uuid())
+  system     String
+  namespace  String   @default("")
+  externalId String
+  entityType String
+  entityId   String
+  importedAt DateTime @default(now())
+  metadata   String?
+
+  @@unique([system, namespace, externalId, entityType])
+  @@index([entityType, entityId])
+  @@map("core_zoho_link")
+}

@@ -1,0 +1,101 @@
+// prisma/core/07-work.prisma — CANONICAL work queue tables (Phase 0).
+// NOT yet wired to the Prisma generator. D1 reality: 0125_core_foundation.sql.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+
+model CoreAction {
+  id                  String   @id @default(uuid())
+  category            String
+  title               String   @default("")
+  entityType          String?
+  entityId            String?
+  assigneeId          String?
+  assignedPositionId  String?
+  assignedTeamId      String?
+  departmentId        String?
+  regionId            String?
+  dueAt               DateTime?
+  priority            String   @default("MEDIUM")
+  status              String   @default("OPEN")
+  escalationPolicyId  String?
+  escalationLevel     Int      @default(0)
+  nextEscalationAt    DateTime?
+  completedAt         DateTime?
+  completedBy         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  events CoreActionEvent[]
+
+  @@index([assigneeId, status])
+  @@index([status, nextEscalationAt])
+  @@map("core_action")
+}
+
+model CoreActionEvent {
+  id        String     @id @default(uuid())
+  actionId  String
+  action    CoreAction @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  eventType String
+  actorType String?
+  actorId   String?
+  note      String?
+  createdAt DateTime   @default(now())
+
+  @@index([actionId, createdAt])
+  @@map("core_action_event")
+}
+
+model CoreNotification {
+  id         String    @id @default(uuid())
+  employeeId String    @default("")
+  channel    String    @default("IN_APP")
+  title      String    @default("")
+  body       String    @default("")
+  entityType String?
+  entityId   String?
+  actionId   String?
+  status     String    @default("QUEUED")
+  createdAt  DateTime  @default(now())
+  sentAt     DateTime?
+
+  @@index([employeeId, status, createdAt])
+  @@map("core_notification")
+}
+
+model CoreNotificationPref {
+  id           String   @id @default(uuid())
+  employeeId   String
+  channel      String   @default("IN_APP")
+  enabled      Boolean  @default(true)
+  quietFromMin Int?
+  quietToMin   Int?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([employeeId, channel])
+  @@map("core_notification_pref")
+}
+
+model CoreNotificationTemplate {
+  key       String
+  channel   String
+  locale    String   @default("en")
+  subject   String?
+  body      String   @default("")
+  variables String   @default("[]")
+  updatedAt DateTime @updatedAt
+
+  @@id([key, channel, locale])
+  @@map("core_notification_template")
+}
+
+model CoreSystemJob {
+  id         String    @id @default(uuid())
+  key        String
+  status     String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  detail     String?
+
+  @@index([key, startedAt])
+  @@map("core_system_job")
+}

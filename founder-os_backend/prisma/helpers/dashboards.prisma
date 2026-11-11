@@ -1,0 +1,55 @@
+// prisma/helpers/dashboards.prisma — CANONICAL helper tables (Phase 0).
+// AI-editable. Never business facts; snapshots rebuildable from core.
+// Locked? NO — helpers are free to evolve. Guard checks hlp_* prefix only.
+// D1 reality: 0125_core_foundation.sql.
+
+model HlpDashboard {
+  id                String   @id @default(uuid())
+  key               String   @unique
+  name              String   @default("")
+  requiredScreenKey String   @default("")
+  layout            String?
+  isDefaultFor      String   @default("[]")
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  widgets HlpWidget[]
+
+  @@map("hlp_dashboard")
+}
+
+model HlpWidget {
+  id          String       @id @default(uuid())
+  dashboardId String
+  dashboard   HlpDashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  key         String
+  type        String       @default("table")
+  title       String       @default("")
+  dataSource  String       @default("")
+  config      String?
+  position    String?
+  sortOrder   Int          @default(0)
+
+  @@unique([dashboardId, key])
+  @@map("hlp_widget")
+}
+
+model HlpFlag {
+  key         String   @id
+  description String?
+  enabled     Boolean  @default(false)
+  rules       String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("hlp_flag")
+}
+
+model HlpCursor {
+  consumerKey  String   @id
+  lastSequence Int      @default(0)
+  lastError    String?
+  updatedAt    DateTime @updatedAt
+
+  @@map("hlp_cursor")
+}
