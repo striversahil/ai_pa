@@ -229,3 +229,133 @@ export async function mirrorEnquiriesForSales(estimateIds: string[]): Promise<vo
     } catch { /* never throw */ }
   }
 }
+
+// ── Phase 3d: sales shadow (leaderboard-only, log-only, ₹1 money tolerance) ──
+// Served values NEVER change — the leaderboard keeps reading Estimate + score
+// events. Two comparisons, one log:
+//   A. headers: live OPEN estimates (sent/draft) vs core_sale (any field;
+//      money within ₹1; createdAt/updatedAt excluded — mirror timestamps).
+//   B. ledger: core rows closed after 3c (closeDay set) vs score events —
+//      converterId must equal the closer-winner else generator, closeDay must
+//      equal the winning event day. Pre-3c closes (in the ledger but not in
+//      core) are out of scope until the finance cut-over — never logged.
+// Flip gate: legacy score-event writes stop after 7 days of closes with zero
+// DIFF rows. Throttled in-memory (best-effort across isolates).
+
+const SALE_SHADOW_COLS = ['estimateNumber', 'customerName', 'organizationId', 'status', 'region', 'date'] as const;
+
+let lastSalesShadowAt = 0;
+
+async function readAllSalesShadow(db: any, table: string, where: string): Promise<Map<string, any>> {
+  const out = new Map<string, any>();
+  let cursor = '';
+  for (let page = 0; page < 40; page++) {
+    const res = await db.prepare(
+      `SELECT * FROM "${table}" WHERE "id" > ? ${where} ORDER BY "id" LIMIT 500`,
+    ).bind(cursor).all().catch(() => null);
+    const rows: any[] = ((res as any)?.results ?? []);
+    if (!rows.length) break;
+    for (const r of rows) out.set(String(r.id ?? r.estimateId ?? ''), r);
+    cursor = String(rows[rows.length - 1]?.id ?? rows[rows.length - 1]?.estimateId ?? '');
+    if (rows.length < 500) break;
+  }
+  return out;
+}
+
+export async function shadowCompareSales(): Promise<void> {
+  try {
+    const now = Date.now();
+    if (now - lastSalesShadowAt < 5 * 60 * 1000) return;
+    lastSalesShadowAt = now;
+    const db = getD1Database();
+    if (!db) return;
+    const [live, core] = await Promise.all([
+      readAllSalesShadow(db, 'Estimate', `AND lower("status") IN ('sent', 'draft')`),
+      readAllSalesShadow(db, 'core_sale', ''),
+    ]);
+    const missing: string[] = [];
+    const extra: string[] = [];
+    const changed: Array<{ id: string; fields: string[] }> = [];
+    for (const [id, e] of live) {
+      const c = core.get(id);
+      if (!c) { missing.push(id); continue; }
+      const fields: string[] = [];
+      for (const col of SALE_SHADOW_COLS) {
+        if (String((e as any)[col] ?? '') !== String((c as any)[col] ?? '')) fields.push(col);
+      }
+      if (Math.abs((Number((e as any).total) || 0) - (Number((c as any).total) || 0)) > 1) fields.push('total');
+      if (String((e as any).createdBy ?? '') !== String((c as any).createdBy ?? '')) fields.push('createdBy');
+      const freshMaster = await resolveMasterId(db, (e as any).customerName);
+      if (freshMaster !== String((c as any).masterCustomerId ?? '')) fields.push('masterCustomerId');
+      if (fields.length) changed.push({ id, fields });
+    }
+    // Core rows whose live row is no longer open: newly-closed (verify via the
+    // ledger below) vs anything else (triage).
+    const closedCheck: string[] = [];
+    for (const [id, c] of core) {
+      if (live.has(id)) continue;
+      const lr: any = await db.prepare(`SELECT "status" FROM "Estimate" WHERE "estimateId" = ?`).bind(id).all()
+        .then((r: any) => (r?.results ?? [])[0]).catch(() => null);
+      const st = String(lr?.status ?? '').toLowerCase();
+      if (['accepted', 'confirmed', 'declined'].includes(st)) closedCheck.push(id);
+      else extra.push(`${id} (live:${st || 'gone'})`);
+    }
+    // Ledger compare on newly-closed core rows only.
+    const ledger: Array<{ id: string; issue: string }> = [];
+    for (const id of closedCheck) {
+      const c = core.get(id);
+      try {
+        const res = await db.prepare(
+          `SELECT "telecallerId", "kind", "day" FROM "TelecallerScoreEvent" WHERE "estimateId" = ? AND "kind" IN ('generator', 'closer') ORDER BY "day" DESC`,
+        ).bind(id).all().catch(() => null);
+        const evts: any[] = ((res as any)?.results ?? []);
+        if (!evts.length) { ledger.push({ id, issue: 'no-credit-row' }); continue; }
+        const winner = evts.find((e) => String(e.kind) === 'closer') ?? evts.find((e) => String(e.kind) === 'generator') ?? evts[0];
+        if (String((c as any).converterId ?? '') !== String(winner.telecallerId ?? '')) {
+          ledger.push({ id, issue: `converter ${String((c as any).converterId ?? '')} != ledger ${String(winner.telecallerId ?? '')}` });
+        }
+        if (String((c as any).closeDay ?? '') !== String(winner.day ?? '')) {
+          ledger.push({ id, issue: `closeDay ${String((c as any).closeDay ?? '')} != ledger day ${String(winner.day ?? '')}` });
+        }
+        const live2: any = await db.prepare(`SELECT "total", "acceptedAt" FROM "Estimate" WHERE "estimateId" = ?`).bind(id).all()
+          .then((r: any) => (r?.results ?? [])[0]).catch(() => null);
+        if (Math.abs((Number((c as any).closeValue) || 0) - (Number(live2?.total) || 0)) > 1) {
+          ledger.push({ id, issue: 'closeValue != live total' });
+        }
+        if (String((c as any).closeDay ?? '') !== String(live2?.acceptedAt ?? '')) {
+          ledger.push({ id, issue: 'closeDay != acceptedAt' });
+        }
+      } catch { /* per-row best-effort */ }
+    }
+    if (!missing.length && !extra.length && !changed.length && !ledger.length) return; // quiet run
+    const sig = hashSig(JSON.stringify({ missing, extra, changed, ledger }));
+    const recent: any[] = await db.prepare(
+      `SELECT "detail" FROM "core_system_job" WHERE "key" = 'sales-shadow' ORDER BY "startedAt" DESC LIMIT 5`,
+    ).all().then((r: any) => r?.results ?? []).catch(() => []);
+    for (const j of recent) {
+      try {
+        if (JSON.parse(String((j as any)?.detail ?? '{}')).sig === sig) return;
+      } catch { /* keep looking */ }
+    }
+    await db.prepare(
+      `INSERT INTO "core_system_job" ("id", "key", "status", "startedAt", "finishedAt", "detail") VALUES (?, 'sales-shadow', 'DIFF', ?, ?, ?)`,
+    ).bind(
+      newId(), nowIso(), nowIso(),
+      JSON.stringify({
+        sig, openChecked: live.size, coreRows: core.size, newlyClosed: closedCheck.length,
+        missing: missing.length, extra: extra.length, changed: changed.length, ledger: ledger.length,
+        sample: { missing: missing.slice(0, 20), extra: extra.slice(0, 20), changed: changed.slice(0, 50), ledger: ledger.slice(0, 50) },
+      }),
+    ).run();
+  } catch (e: any) {
+    try {
+      logger.warn({ err: e?.message }, 'shadowCompareSales failed (non-blocking)');
+    } catch { /* never throw */ }
+  }
+}
+
+function hashSig(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
